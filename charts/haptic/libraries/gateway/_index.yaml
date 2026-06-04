@@ -23,6 +23,27 @@ _helm_load:
       value: 'spec.gatewayClassName={{ .Values.gatewayClass.name }}'
     - path: watchedResources.gatewayclasses.fieldSelector
       value: 'spec.controllerName={{ .Values.gatewayClass.controllerName }}'
+  # TCPRoute is Experimental-channel only — its CRD is absent from the Gateway
+  # API Standard install most clusters use (including CI's). Watching a
+  # non-existent CRD makes the controller's watcher fail to sync so it never
+  # becomes Ready, and the analysis snippet references the typed resources.tcproutes
+  # field which only exists when the resource is watched. So when the TCPRoute CRD
+  # is NOT served, strip the whole TCPRoute feature — the watch, its snippets, and
+  # its tests — together. TCPRoute routing is then simply inactive (there are no
+  # TCPRoutes without the CRD). Offline `helm template` keeps it via --api-versions.
+  unset:
+    - path: watchedResources.tcproutes
+      when: &noTCPRoute '{{ not (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1alpha2/TCPRoute") }}'
+    - path: templateSnippets.util-gateway-tcproute-analysis
+      when: *noTCPRoute
+    - path: templateSnippets.backends-502-gateway-tcproute
+      when: *noTCPRoute
+    - path: templateSnippets.frontends-700-gateway-tcp-listener
+      when: *noTCPRoute
+    - path: validationTests.test-tcproute-basic-l4-forward
+      when: *noTCPRoute
+    - path: validationTests.test-tcproute-unattached-no-frontend
+      when: *noTCPRoute
 
 watchedResources:
   gatewayclasses:
@@ -68,6 +89,21 @@ watchedResources:
     # compatibility). The conformance fixtures use the v1 apiVersion.
     apiVersion: gateway.networking.k8s.io/v1
     resources: tlsroutes
+    indexBy: ["metadata.namespace", "metadata.name"]
+    statusPatch: true
+
+  tcproutes:
+    # TCPRoute is on the Gateway API *Experimental* channel and (unlike
+    # TLSRoute) has NOT graduated to v1 as of v1.5 — its CRD serves only
+    # v1alpha2 (served+storage). The apiVersion here MUST match the CRD's
+    # served version, since the offline schema resolver keys typed access
+    # on (apiVersion, plural) → GVK. The conformance fixtures and the
+    # tests/schemas CRD both use v1alpha2.
+    # NOTE: this whole entry (plus the TCPRoute snippets/tests) is stripped by
+    # _helm_load.unset when the cluster does not serve the TCPRoute CRD, so a
+    # Standard-channel install never tries to watch a non-existent resource.
+    apiVersion: gateway.networking.k8s.io/v1alpha2
+    resources: tcproutes
     indexBy: ["metadata.namespace", "metadata.name"]
     statusPatch: true
 

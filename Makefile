@@ -114,6 +114,7 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 	@echo "Running kubeconform..."
 	helm template charts/haptic \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+		--api-versions=gateway.networking.k8s.io/v1alpha2/TCPRoute \
 		| docker run --rm -i ghcr.io/yannh/kubeconform:$(KUBECONFORM_VERSION) \
 			-kubernetes-version $(KUBE_VERSION) \
 			-schema-location default \
@@ -134,6 +135,7 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 	@echo "Running kubeconform..."
 	helm template charts/haptic \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+		--api-versions=gateway.networking.k8s.io/v1alpha2/TCPRoute \
 		| kubeconform \
 			-kubernetes-version $(KUBE_VERSION) \
 			-schema-location default \

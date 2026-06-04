@@ -1,0 +1,197 @@
+validationTests:
+  test-httproute-retry-attempts-and-codes:
+    description: "HTTPRoute spec.rules[].retry (experimental) maps to backend `retries <attempts>` plus `retry-on <conditions>`. attempts -> retries N; codes -> retry-on <code list> (HAProxy supports per-status retry-on tokens). Exponential backoff is NOT expressible and is deferred."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: retry-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: retry-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: retry-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+              targetRef:
+                kind: Pod
+                name: retry-pod-1
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: retry-route
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - retry.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                retry:
+                  attempts: 4
+                  codes:
+                    - 503
+                    - 500
+                  backoff: 100ms
+                backendRefs:
+                  - name: retry-svc
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+retries 4$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+retry-on 503 500$'
+
+  test-httproute-retry-attempts-only-default-codes:
+    description: "retry.attempts set but no codes -> emit `retries N` and a `retry-on` covering the spec-mandated retriable 5xx defaults (500 502 503 504)."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: retry2-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: retry2-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: retry2-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+              targetRef:
+                kind: Pod
+                name: retry2-pod-1
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: retry2-route
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - retry2.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                retry:
+                  attempts: 2
+                backendRefs:
+                  - name: retry2-svc
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+retries 2$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+retry-on 500 502 503 504$'
+
+  test-httproute-no-retry-no-directive:
+    description: "A route rule without retry must NOT emit retries/retry-on (no regression for the common case)."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: noretry-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: noretry-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: noretry-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.3"]
+              targetRef:
+                kind: Pod
+                name: noretry-pod-1
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: noretry-route
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - noretry.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                backendRefs:
+                  - name: noretry-svc
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'backend gtw_default_noretry-route[\s\S]*?retry-on'

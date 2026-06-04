@@ -1,0 +1,153 @@
+# nginx-ingress library — default-backend annotation validation tests.
+# A per-Ingress default-backend Service catches requests to the Ingress's
+# host(s) that match no rule path.
+validationTests:
+  test-nginx-ingress-default-backend:
+    description: default-backend annotation emits a backend pool plus a per-host catch-all path entry routing unmatched requests to that Service
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: app-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: errors-service
+          spec:
+            ports:
+              - port: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: app-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: app-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: errors-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: errors-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.9"]
+          ports:
+            - port: 9000
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: db-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/default-backend: "errors-service"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: db.example.com
+                http:
+                  paths:
+                    - path: /app
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: app-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend default_db-ingress_default-backend_errors-service"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10\\.0\\.0\\.9:9000"
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "db\\.example\\.com/ BACKEND:default_db-ingress_default-backend_errors-service"
+
+  test-nginx-ingress-default-backend-cross-namespace:
+    description: default-backend annotation accepts a namespace/name reference
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: shared
+            name: fallback-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: fallback-service-abc
+            namespace: shared
+            labels:
+              kubernetes.io/service-name: fallback-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.1.7"]
+          ports:
+            - port: 8081
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: xns-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/default-backend: "shared/fallback-service"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: xns.example.com
+                http:
+                  paths:
+                    - path: /main
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10\\.0\\.1\\.7:8081"

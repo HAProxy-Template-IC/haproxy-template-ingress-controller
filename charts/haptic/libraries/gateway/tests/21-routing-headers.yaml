@@ -34,12 +34,10 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_header-route_0\" \\} \\{ req\\.hdr\\(X-Version\\) \"v1\" \\}"
-        description: Must generate header exact match condition
 
   test-httproute-header-regex:
     description: HTTPRoute with regex header matching
@@ -76,12 +74,10 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_regex-header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_regex-header-route_0\" \\} \\{ req\\.hdr\\(User-Agent\\) -m reg \"\\^Mozilla\\.\\*\" \\}"
-        description: Must generate header regex match condition
 
   test-httproute-query-params:
     description: HTTPRoute with query parameter matching
@@ -121,12 +117,10 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_query-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_query-route_0\" \\} \\{ urlp\\(version\\) \"v2\" \\} \\{ urlp\\(filter\\) -m reg \"\\^active\\.\\*\" \\}"
-        description: Must generate query parameter match conditions
 
   test-httproute-regex-dollar-escaping:
     description: HTTPRoute with query parameter regex containing dollar signs for anchoring
@@ -163,12 +157,10 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_regex-dollar-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_regex-dollar-route_0\" \\} \\{ urlp\\(token\\) -m reg \"\\^secret\\[0-9\\]\\+\\\\\\$\" \\}"
-        description: Must generate query parameter regex with escaped dollar sign
 
   test-grpcroute-headers:
     description: GRPCRoute with header matching (Exact and RegularExpression)
@@ -209,12 +201,10 @@ validationTests:
                     port: 9090
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\}.*\\{ req\\.hdr\\(X-API-Version\\) \"v1\" \\} \\{ req\\.hdr\\(User-Agent\\) -m reg \"\\^grpc-\\.\\*\" \\}"
-        description: Must generate header match conditions for GRPCRoute
 
   test-grpcroute-method-regex:
     description: GRPCRoute with RegularExpression method type
@@ -248,12 +238,10 @@ validationTests:
                     port: 9090
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-regex-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-regex-route_0\" \\} \\{ path -m reg \"/com\\.example\\.\\*/Get\\.\\*\" \\}"
-        description: "GRPCRoute method match emits a `path` ACL — the URL path fetch — not `req.hdr(:path)`. HAProxy's `req.hdr` targets regular HTTP/1.1 headers and yields an empty string for the HTTP/2 `:path` pseudo-header, so a `req.hdr(:path)` matcher would silently never fire and gRPC traffic would fall through to default_backend (404)."
   test-httproute-all-matchers:
     description: HTTPRoute with all matcher types combined (method + headers + query params)
     fixtures:
@@ -294,12 +282,10 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_combined-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_combined-route_0\" \\} \\{ method POST \\} \\{ req\\.hdr\\(Content-Type\\) \"application/json\" \\} \\{ urlp\\(version\\) \"v2\" \\}"
-        description: Must combine all matchers with AND logic
 
   test-grpcroute-multiple-headers:
     description: GRPCRoute with multiple header matchers of different types
@@ -343,12 +329,10 @@ validationTests:
                     port: 9090
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "\\{ req\\.hdr\\(X-Tenant-ID\\) \"tenant1\" \\} \\{ req\\.hdr\\(X-Environment\\) \"production\" \\} \\{ req\\.hdr\\(Authorization\\) -m reg \"\\^Bearer \\.\\*\" \\}"
-        description: Must combine all header matchers with AND logic
 
   test-httproute-invalid-regex:
     description: HTTPRoute with invalid regex pattern (negative test)
@@ -384,7 +368,6 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: "invalid\\.example\\.com"
-        description: Invalid regex should not generate routing config
 
   test-httproute-header-matching-conformance-fixture:
     description: "Mirrors the upstream Gateway-API conformance suite's HTTPRouteHeaderMatching fixture: a Gateway with a wildcard-hostname HTTP listener on port 80, and an HTTPRoute whose rules use ONLY header matchers (no path, no method, no host). This is the scenario that fails in CI shards (404 instead of 200). The chart must emit set-var statements that pick the right backend based on header values, even though the request has no path-or-host specificity that would normally drive map lookups."
@@ -464,16 +447,13 @@ validationTests:
                     port: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "\\{ req\\.hdr\\(version\\) \"one\" \\}"
-        description: "The rule matching `version: one` must emit a header-value predicate. Failing this means the chart silently dropped the header matcher."
       - type: contains
         target: haproxy.cfg
         pattern: "\\{ req\\.hdr\\(color\\) \"blue\" \\}"
-        description: "The rule matching `color: blue` (one of an OR-list of two color values) must emit its predicate too."
   test-httproute-header-edge-cases:
     description: HTTPRoute with edge case header matching (special characters)
     fixtures:
@@ -509,9 +489,7 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "\\{ req\\.hdr\\(X-Special-Chars\\) \"value-with-dashes_and_underscores\\.dots\" \\}"
-        description: Must handle special characters in header values

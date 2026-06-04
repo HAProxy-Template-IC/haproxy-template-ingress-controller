@@ -1,0 +1,109 @@
+# nginx-ingress library — server-alias validation tests.
+# An alias host routes to the same backends as the Ingress's rule host(s).
+validationTests:
+  test-nginx-ingress-server-alias:
+    description: server-alias adds alias hostnames to the host map pointing at the same normalized host key as the rule host
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: alias-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: alias-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: alias-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: alias-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/server-alias: "www.example.com, alias.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: app.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: alias-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:host.map
+        pattern: "www\\.example\\.com app\\.example\\.com"
+      - type: contains
+        target: map:host.map
+        pattern: "alias\\.example\\.com app\\.example\\.com"
+
+  test-nginx-ingress-server-alias-wildcard:
+    description: server-alias normalizes a wildcard alias the same way rule hosts are normalized (leading * stripped)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: aliasw-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: aliasw-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: aliasw-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: aliasw-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/server-alias: "*.wild.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: primary.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: aliasw-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:host.map
+        pattern: "\\.wild\\.example\\.com primary\\.example\\.com"

@@ -1574,9 +1574,7 @@ validationTests:
     fixtures: {}
     assertions:
       - type: haproxy_valid
-        description: Base configuration must be valid
       - type: deterministic
-        description: Template rendering must be deterministic (identical output on repeated renders)
 
   test-k8s-haproxy-service-default-ports:
     description: "k8sResources.haproxy-service emits whatever ports the chart hands it under `extraContext.haproxyService.ports`. The chart's default builds an http / https / stats triple from `haproxy.service."
@@ -1585,19 +1583,15 @@ validationTests:
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "kind: Service"
-        description: Must emit a Service resource
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "name: http\n"
-        description: Default http port is emitted
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "name: https\n"
-        description: Default https port is emitted
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "name: stats"
-        description: Default stats port is emitted
 
   test-k8s-haproxy-service-extra-ports:
     description: Operators using haptic without Gateway API (e.g. exposing a raw TCP frontend via a custom haproxyConfig snippet) declare additional Service ports through `haproxy.service.extraPorts` in values.yaml.
@@ -1638,15 +1632,12 @@ validationTests:
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "name: postgres"
-        description: Operator-declared extra port is emitted
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "port: 5432"
-        description: Extra port number reaches the rendered Service
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "name: http\n"
-        description: Default http port still emitted alongside the extras
 
   test-address-discovery:
     description: Address discovery reads LoadBalancer status from controller service
@@ -1669,7 +1660,6 @@ validationTests:
                 - hostname: "lb.example.com"
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with controller service fixture
 
   test-address-discovery-multiple-services:
     description: Address discovery aggregates addresses from multiple LoadBalancer services
@@ -1717,18 +1707,15 @@ validationTests:
             loadBalancer: {}
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with multiple controller services
 
   test-status-frontend-prometheus-exporter:
     description: Status frontend exposes Prometheus exporter on /metrics by default
     fixtures: {}
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "http-request use-service prometheus-exporter if { path /metrics }"
-        description: Prometheus exporter must be enabled on status frontend
 
   test-guid-directives:
     description: GUIDs are present on frontends, backends, and default_backend
@@ -1758,19 +1745,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config with GUIDs must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "guid fe:status"
-        description: Status frontend must have guid
       - type: contains
         target: haproxy.cfg
         pattern: "guid fe:http_frontend"
-        description: HTTP frontend must have guid
       - type: contains
         target: haproxy.cfg
         pattern: "guid be:default_backend"
-        description: Default backend must have guid
 
   test-shm-stats-max-objects:
     description: shm-stats-file-max-objects uses configurable fixed value
@@ -1781,15 +1764,12 @@ validationTests:
     fixtures: {}
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "shm-stats-file /dev/shm/haproxy-stats"
-        description: shm-stats-file must be present
       - type: contains
         target: haproxy.cfg
         pattern: "shm-stats-file-max-objects 50000"
-        description: Max objects must use the configured fixed value
 
   test-default-backend-cross-namespace:
     description: Default backend resolves endpoints from a different namespace
@@ -1836,19 +1816,15 @@ validationTests:
               protocol: TCP
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.1.0.1:8080"
-        description: First pod must appear as server
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_2 10.1.0.2:8080"
-        description: Second pod must appear as server
       - type: not_contains
         target: haproxy.cfg
         pattern: "http-request return status 404"
-        description: Must not use 404 fallback when service is configured
 
   test-default-backend-named-port:
     description: Default backend resolves a Service port referenced by name (port.name) to the correct numeric pod port
@@ -1893,11 +1869,9 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.2.0.1:9000 "
-        description: Default backend must resolve named port to the correct numeric pod port
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.2.0.1:80 "
-        description: Must not regress to port-80 fallback for default backend named-port references
 
   test-default-backend-same-namespace:
     description: Default backend works with explicit namespace
@@ -1939,12 +1913,9 @@ validationTests:
               protocol: TCP
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.2.0.1:8080"
-        description: Pod must appear as server
       - type: not_contains
         target: haproxy.cfg
         pattern: "http-request return status 404"
-        description: Must not use 404 fallback when service is configured

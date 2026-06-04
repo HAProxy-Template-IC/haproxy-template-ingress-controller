@@ -1,0 +1,57 @@
+# nginx-ingress library — server-alias host map entries.
+#
+# The map-host-* extension point feeds host.map, which the frontend routing
+# logic consults to turn an incoming Host header into the normalized host_match
+# key used for path lookups. server-alias adds extra hostnames that resolve to
+# the same host_match key as the Ingress's rule host(s), so they route to the
+# same backends without duplicating any path entries.
+templateSnippets:
+  map-host-720-nginx-ingress-server-alias:
+    template: |
+      {#-
+        Nginx Ingress Server Alias
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#server-alias
+
+        Annotation: nginx.ingress.kubernetes.io/server-alias: "host1,host2,..."
+
+        Each listed alias is added to host.map pointing at the SAME normalized
+        key as the Ingress's rule host. The frontend then resolves a request to
+        an alias host into that key and reuses every path/backend entry the rule
+        host already registered.
+
+        Wildcard aliases ("*.foo.com") are normalized the same way rule hosts
+        are (the leading "*" is stripped to suffix form ".foo.com"), matching
+        host.map's wildcard convention.
+
+        Generated host.map entries:
+          <alias-key> <rule-host-key>
+      -#}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var aliasAnn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/server-alias"] -%}
+        {%- if aliasAnn != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {#- Collect the rule hosts this Ingress already serves. Each alias
+              maps to the FIRST such host's key — nginx attaches the alias to
+              the server block, which in HAPTIC's model is the rule host's
+              routing key. -#}
+          {%- var ruleHostKey = "" -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- if ruleHostKey == "" && rule.Host != "" -%}
+              {%- ruleHostKey = MapKeyForHost(rule.Host) -%}
+            {%- end -%}
+          {%- end -%}
+          {%- if ruleHostKey != "" -%}
+      {{ "\n" }}# nginx-ingress/server-alias ({{ ns }}/{{ name }}){{ "\n" }}
+            {%- for _, rawAlias := range split(aliasAnn, ",") -%}
+              {%- var alias = trimSpace(rawAlias) -%}
+              {%- if alias != "" -%}
+                {%- var aliasKey = MapKeyForHost(alias) -%}
+      {{ aliasKey }} {{ ruleHostKey }}{{ "\n" }}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}

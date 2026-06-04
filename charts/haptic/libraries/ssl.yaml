@@ -907,7 +907,6 @@ validationTests:
     fixtures: {}  # Uses _global fixtures
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with SSL certificate loaded
 
   test-ssl-https-frontend-basic:
     description: Verify HTTPS frontend is generated with correct bind options
@@ -941,22 +940,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "frontend https"
-        description: Must generate HTTPS frontend
 
       - type: contains
         target: haproxy.cfg
         pattern: "bind .*:443.*ssl crt"
-        description: HTTPS frontend must bind with SSL options on the chart's https port
 
       - type: contains
         target: haproxy.cfg
         pattern: "alpn h2,http/1.1"
-        description: HTTPS frontend must enable ALPN negotiation
 
   test-ssl-crtlist-basic:
     description: Verify crt-list file is generated with OCSP configuration
@@ -988,22 +983,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "ssl crt-list .*/certificate-list\\.txt"
-        description: HTTPS frontend must use crt-list for certificate loading
 
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: "default\\.pem \\[ocsp-update on\\]"
-        description: CRT-list must include default certificate with OCSP enabled
 
       - type: not_contains
         target: crt-list:certificate-list.txt
         pattern: "^\\s*$"
-        description: CRT-list must not contain empty lines
 
   test-ssl-certificate-dots-in-name:
     description: SSL certificate with dots in secret name must use sanitized filename
@@ -1065,12 +1056,10 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid (certificate file must be found with sanitized name)
 
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: "default_api_example_com-tls\\.pem"
-        description: CRT-list must reference sanitized filename (underscores replace dots in secret name)
 
   test-ssl-certificate-custom-namespace:
     description: Default SSL certificate from a custom namespace (e.g. cert-manager) loads correctly
@@ -1090,4 +1079,3 @@ validationTests:
             tls.key: *test_tls_key
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid when default SSL cert is in a custom namespace

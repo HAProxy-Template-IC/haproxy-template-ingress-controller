@@ -143,6 +143,7 @@ echo -e "${YELLOW}Rendering Helm chart...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
     --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+    --api-versions=gateway.networking.k8s.io/v1alpha2/TCPRoute \
     $HAPROXY_VERSION_ARG \
     --set controller.templateLibraries.gateway.enabled=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \

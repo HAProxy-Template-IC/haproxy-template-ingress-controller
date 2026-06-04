@@ -1,0 +1,133 @@
+# haproxy-ingress library — server-alias / server-alias-regex validation tests.
+# Extra hostnames routing to the same backends as the Ingress's primary host.
+validationTests:
+  # ==========================================================================
+  # server-alias: extra exact hostnames → primary host's routes
+  # ==========================================================================
+
+  test-haproxy-ingress-server-alias:
+    description: server-alias routes extra hostnames to the same backends as the primary host
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: alias-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: alias-ingress
+            annotations:
+              haproxy-ingress.github.io/server-alias: "alias1.example.com,alias2.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: primary.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: alias-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^primary\\.example\\.com primary\\.example\\.com$"
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^alias1\\.example\\.com primary\\.example\\.com$"
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^alias2\\.example\\.com primary\\.example\\.com$"
+
+  test-haproxy-ingress-server-alias-single:
+    description: server-alias with a single hostname (no comma) works
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: alias-single-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: alias-single-ingress
+            annotations:
+              haproxy-ingress.github.io/server-alias: "www.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: alias-single-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^www\\.example\\.com example\\.com$"
+
+  # ==========================================================================
+  # server-alias-regex: regex-matched hostnames → primary host's routes
+  # ==========================================================================
+
+  test-haproxy-ingress-server-alias-regex:
+    description: server-alias-regex maps a regex of hostnames to the primary host key
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: alias-regex-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: alias-regex-ingress
+            annotations:
+              haproxy-ingress.github.io/server-alias-regex: "^app[0-9]+\\.example\\.com$"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: app.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: alias-regex-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:host-regex.map"
+        pattern: "\\^app\\[0-9\\]\\+\\\\\\.example\\\\\\.com\\$ app\\.example\\.com"

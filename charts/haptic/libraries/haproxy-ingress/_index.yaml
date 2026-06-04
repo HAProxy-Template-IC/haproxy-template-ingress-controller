@@ -7,14 +7,19 @@
 #
 # Split library (ADR-0008): this _index.yaml is the load-rule authority
 # (_helm_load + watchedResources). Production templateSnippets live in the
-# sibling fragments by concern — 10-path-maps, 20-backend-directives,
-# 30-frontend-filters, 40-features, 50-auth-spoe — and validationTests live
-# under tests/ (annotations, auth, waf). All fragments merge into one library
-# at chart-render time; the merge order is lexicographic, but since each
-# snippet/test name is unique the source file it lives in is purely
-# organisational.
+# sibling fragments by concern — 10-path-maps, 15-server-alias,
+# 20-backend-directives, 30-frontend-filters, 40-features,
+# 45-config-sections, 50-auth-spoe — and validationTests live under tests/
+# (annotations, auth, waf, server-alias, config-sections). All fragments
+# merge into one library at chart-render time; the merge order is
+# lexicographic, but since each snippet/test name is unique the source file
+# it lives in is purely organisational.
 #
 # Supported annotations (see each section for details):
+#
+# Host Aliasing:
+#   - server-alias (extra exact hostnames → primary host's routes)
+#   - server-alias-regex (regex of hostnames → primary host's routes)
 #
 # Path Matching:
 #   - path-type: regex, exact, prefix, begin
@@ -31,6 +36,15 @@
 #   - secure-crt-secret, secure-verify-hostname
 #   - config-backend
 #   - initial-weight, limit-connections, backend-protocol
+#   - rewrite-target
+#   - proxy-body-size
+#   - ssl-ciphers-backend, ssl-cipher-suites-backend
+#   - agent-check-port, agent-check-addr, agent-check-interval, agent-check-send
+#
+# Raw Directive Injection:
+#   - config-frontend (raw directives into the http frontend)
+#   - config-global (raw directives into the global section)
+#   - config-defaults (raw directives into the defaults section)
 #
 # Frontend Filters:
 #   - allowlist-source-range, denylist-source-range
@@ -39,6 +53,7 @@
 #   - hsts, hsts-max-age, hsts-include-subdomains, hsts-preload
 #   - app-root
 #   - redirect-to, redirect-to-code
+#   - default-backend-redirect, default-backend-redirect-code
 #   - cors-enable, cors-allow-origin, cors-allow-methods
 #   - cors-allow-headers, cors-allow-credentials, cors-max-age
 #
@@ -58,7 +73,7 @@
 #   - waf-mode: deny | detect (default deny; detect = shadow mode)
 #
 # Advanced:
-#   - limit-rps, limit-whitelist
+#   - limit-rps, limit-rpm, limit-whitelist
 
 # Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
 _helm_load:

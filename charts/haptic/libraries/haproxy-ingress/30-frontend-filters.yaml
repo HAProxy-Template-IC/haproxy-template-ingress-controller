@@ -268,6 +268,54 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
+  frontend-filters-680-haproxy-ingress-default-backend-redirect:
+    template: |
+      {#-
+        HAProxy-Ingress Default Backend Redirect
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#default-backend-redirect
+
+        Annotations:
+          - haproxy-ingress.github.io/default-backend-redirect: "<url>" (required to enable)
+          - haproxy-ingress.github.io/default-backend-redirect-code: "301|302|303|307|308" (optional, default: 302)
+
+        Redirects requests that match one of this Ingress's hosts but no
+        configured path. frontend-filters-* run AFTER the routing cascade in
+        "frontend-routing-logic" (see base.yaml frontend http_frontend), so
+        txn.backend_name is already set for matched paths and empty otherwise.
+        The guard `!{ var(txn.backend_name) -m found }` therefore fires exactly
+        on unmatched requests — the same condition base.yaml uses to fall
+        through to default_backend — scoped to this Ingress's host(s).
+
+        Generated HAProxy Config:
+          http-request redirect location <url> code <code> if <host-match> !{ var(txn.backend_name) -m found }
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var redirectURL = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect"] %}
+          {%- if redirectURL != "" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
+            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
+            {%- var codeValid = false %}
+            {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
+            {%- if !codeValid %}
+              {{- fail("Invalid value '" + code + "' for annotation 'haproxy-ingress.github.io/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxy-ingress/default-backend-redirect ({{ key }})
+      http-request redirect location {{ redirectURL }} code {{ code }} if {{ HostMatchCondition(hosts) }} !{ var(txn.backend_name) -m found }
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
   # ============================================================================
   # Phase 5: SSL Features
   # ============================================================================

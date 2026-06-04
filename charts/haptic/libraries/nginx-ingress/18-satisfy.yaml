@@ -1,0 +1,114 @@
+# nginx-ingress library — satisfy ("any"/"all").
+#
+# nginx.ingress.kubernetes.io/satisfy controls how an IP allow-list
+# (whitelist-source-range) combines with basic auth:
+#   - "all" (default): AND — the request must pass the allow-list AND
+#     authenticate. This is the existing independent behavior (the frontend
+#     whitelist deny and the backend unconditional auth challenge both fire),
+#     so no extra config is emitted for satisfy=all.
+#   - "any": OR — the request passes if EITHER its source IP is in the
+#     allow-list OR it authenticates. HAProxy expresses this as a single
+#     conditional auth challenge in the backend that only fires for
+#     non-allow-listed, unauthenticated requests.
+#
+# Because the whitelist deny lives in the frontend (frontend-filters-700) and
+# auth lives in the backend (backend-directives-760), satisfy=any needs both
+# of those independent gates suppressed for the affected Ingress and replaced
+# by the combined backend check here. The two existing snippets guard on
+# SatisfyAnyMode() so the suppression stays scoped to satisfy=any Ingresses.
+templateSnippets:
+  # Shared predicate: is this Ingress in "satisfy=any combined" mode? True only
+  # when satisfy=any AND a whitelist AND basic auth with a resolvable Secret are
+  # all present — i.e. when there are genuinely two gates to OR together.
+  util-nginx-ingress-satisfy:
+    template: |
+      {%- macro SatisfyAnyMode(ingress *resources.ingresses.T) string -%}
+        {%%
+          if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/satisfy"] != "any" {
+            show ""
+            return
+          }
+          if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/whitelist-source-range"] == "" {
+            show ""
+            return
+          }
+          if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-type"] != "basic" {
+            show ""
+            return
+          }
+          var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"]
+          if authSecret == "" {
+            show ""
+            return
+          }
+          var ns = ingress.Metadata.Namespace
+          var secretNs = ns
+          var secretName = authSecret
+          if strings_contains(authSecret, "/") {
+            var parts = split(authSecret, "/")
+            secretNs = parts[0]
+            secretName = parts[1]
+          }
+          // Reuse the same cached lookup the auth snippets use so all three
+          // snippets agree on whether the userlist exists.
+          var secAny, _ = shared.ComputeIfAbsent("nginx_auth_secret:" + secretNs + "/" + secretName, func() any {
+            return resources.secrets.GetSingle(secretNs, secretName)
+          })
+          var sec, _ = secAny.(*resources.secrets.T)
+          if sec == nil {
+            show ""
+            return
+          }
+          // Non-empty marker = combined mode is active.
+          show "any"
+        %%}
+      {%- end macro -%}
+
+  backend-directives-765-nginx-ingress-satisfy-any:
+    template: |
+      {#-
+        Nginx Ingress satisfy=any combined IP-or-auth gate.
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#satisfy
+
+        Emits, in the backend:
+          acl ni_satisfy_ip_<ns>_<name> src <cidrs>
+          http-request auth realm "<realm>" if !ni_satisfy_ip_<ns>_<name> !{ http_auth(<userlist>) }
+
+        The challenge only fires for requests whose source IP is NOT in the
+        allow-list AND that have not authenticated — exactly the OR semantics of
+        satisfy=any. The independent whitelist deny (frontend-filters-700) and
+        unconditional auth challenge (backend-directives-760) are suppressed for
+        this Ingress via SatisfyAnyMode().
+      -#}
+      {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
+      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- if ingress != nil %}
+        {%- if SatisfyAnyMode(ingress) != "" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var key = ns + "/" + name %}
+          {%- var whitelist = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/whitelist-source-range"] %}
+          {%- var authRealm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-realm"] %}
+          {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
+          {#- Config-injection guard: the realm is interpolated into a quoted
+              HAProxy string, so a value containing a double-quote or newline
+              could break out and smuggle directives. Reject those characters. -#}
+          {%- if !regex_search(authRealm, "^[^\"\\r\\n]*$") %}
+            {{- fail("Invalid auth-realm '" + authRealm + "' on Ingress '" + key + "': must not contain double-quotes or newlines.") -}}
+          {%- end %}
+          {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] %}
+          {%- var secretNs = ns %}
+          {%- var secretName = authSecret %}
+          {%- if strings_contains(authSecret, "/") %}
+            {%- var parts = split(authSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var userlistName = "ni_auth_" + secretNs + "_" + secretName %}
+          {%- var aclName = "ni_satisfy_ip_" + ns + "_" + name %}
+      # nginx-ingress/satisfy-any ({{ key }})
+      acl {{ aclName }} src {{ ValidateCidrList(whitelist, "nginx.ingress.kubernetes.io/whitelist-source-range", key) }}
+      http-request auth realm "{{ authRealm }}" if !{{ aclName }} !{ http_auth({{ userlistName }}) }
+        {%- end %}
+      {%- end -%}

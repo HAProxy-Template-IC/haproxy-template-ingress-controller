@@ -35,9 +35,19 @@ Args (list): [library dict, root context]
              testrunner echoes on failure, not part of the test logic. The
              test name already identifies the case. Dropping it from the
              rendered HAProxyTemplateConfig keeps the Helm release Secret
-             clear of the K8s 1 MiB limit (these descriptions sum to ~47 KB
-             across the bundled libraries). */ -}}
-      {{- $_ := set $filteredTests $testName (omit $testDef "_helm_skip_test" "description") }}
+             clear of the K8s 1 MiB limit. This applies at BOTH levels: the
+             test-level description and each assertion's `description` (the
+             assertion's type/target/pattern fully define it). Together these
+             sum to ~120 KB across the bundled libraries. */ -}}
+      {{- $stripped := omit $testDef "_helm_skip_test" "description" }}
+      {{- if $stripped.assertions }}
+        {{- $cleanAssertions := list }}
+        {{- range $assertion := $stripped.assertions }}
+          {{- $cleanAssertions = append $cleanAssertions (omit $assertion "description") }}
+        {{- end }}
+        {{- $_ := set $stripped "assertions" $cleanAssertions }}
+      {{- end }}
+      {{- $_ := set $filteredTests $testName $stripped }}
     {{- end }}
   {{- end }}
   {{- $_ := set $library "validationTests" $filteredTests }}
@@ -182,8 +192,16 @@ Each entry in `$libraryFiles` is either:
         {{- end }}
       {{- end }}
     {{- end }}
-    {{- range $unsetPath := $loadHints.unset | default list }}
-      {{- include "haptic.unsetNested" (list $library $unsetPath) }}
+    {{- range $unsetItem := $loadHints.unset | default list }}
+      {{- /* An unset item is either a bare dotted-path string (always removed)
+             or a {path, when} map (removed only when `when` tpls to "true").
+             The conditional form lets a library strip resource-specific
+             watches/snippets/tests when their optional CRD is absent. */ -}}
+      {{- if kindIs "string" $unsetItem }}
+        {{- include "haptic.unsetNested" (list $library $unsetItem) }}
+      {{- else if eq (tpl ($unsetItem.when | default "true") $context | trim) "true" }}
+        {{- include "haptic.unsetNested" (list $library $unsetItem.path) }}
+      {{- end }}
     {{- end }}
     {{- $_ := unset $library "_helm_load" }}
     {{- $library = include "haptic.filterTests" (list $library $context) | fromYaml }}

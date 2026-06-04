@@ -49,83 +49,67 @@ validationTests:
                     weight: 30
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "backend gtw_default_split-route_app-v1_80"
-        description: Must generate backend for app-v1
 
       - type: contains
         target: haproxy.cfg
         pattern: "backend gtw_default_split-route_app-v2_80"
-        description: Must generate backend for app-v2
 
       - type: contains
         target: map:path-prefix.map
         pattern: "split.example.com/app/ GW_ROUTE_ID:http:default_split-route_0"
-        description: Path map must use GW_ROUTE_ID qualifier
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "0:default_split-route_0 gtw_default_split-route_app-v1_80"
-        description: Weighted map must contain first entry for v1
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "69:default_split-route_0 gtw_default_split-route_app-v1_80"
-        description: Weighted map must contain last entry for v1 (weight 70 = entries 0-69)
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "70:default_split-route_0 gtw_default_split-route_app-v2_80"
-        description: Weighted map must contain first entry for v2
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "99:default_split-route_0 gtw_default_split-route_app-v2_80"
-        description: Weighted map must contain last entry for v2 (weight 30 = entries 70-99)
 
       - type: not_contains
         target: map:weighted-multi-backend.map
         pattern: "0:default_split-route_0 gtw_default_split-route_app-v1_801:default_split-route_0"
-        description: Entries must be on separate lines (not concatenated)
 
       - type: not_contains
         target: map:weighted-multi-backend.map
         pattern: "69:default_split-route_0 gtw_default_split-route_app-v1_8070:default_split-route_0"
-        description: Boundary entries (v1 end / v2 start) must be on separate lines
 
       # Map Formatting Tests - Ensure comments don't concatenate with entries
       - type: not_contains
         target: map:host.map
         pattern: "hosts\\)\\S"
-        description: Host map comments must not concatenate with entries (Gateway API)
 
       - type: not_contains
         target: map:path-prefix.map
         pattern: "paths\\)\\S"
-        description: Path prefix map comments must not concatenate with entries (Gateway API)
 
       - type: not_contains
         target: map:weighted-multi-backend.map
         pattern: "rules\\)\\S"
-        description: Weighted map comments must not concatenate with entries
 
       - type: contains
         target: map:host.map
         pattern: "(?m)^split\\.example\\.com split\\.example\\.com$"
-        description: Host map entries must start at beginning of line (Gateway API)
 
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^split\\.example\\.com/app/ GW_ROUTE_ID:"
-        description: Path map entries must start at beginning of line (Gateway API)
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "(?m)^\\d+:default_split-route_0 gtw_"
-        description: Weighted map entries must start at beginning of line
 
   test-httproute-weight-no-matches:
     description: HTTPRoute with no matches block defaults to PathPrefix /
@@ -173,12 +157,10 @@ validationTests:
                     weight: 50
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: map:path-prefix.map
         pattern: "default.example.com/ GW_ROUTE_ID:http:default_default-path_0"
-        description: Missing matches must default to PathPrefix / with weight 100
 
   test-httproute-weight-default:
     description: HTTPRoute with default weights (omitted weight defaults to 1)
@@ -228,22 +210,18 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: map:path-exact.map
         pattern: "weight.example.com/test GW_ROUTE_ID:http:default_default-weight_0"
-        description: Omitted weights must default to 1 (total weight = 2)
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "0:default_default-weight_0 gtw_default_default-weight_app-v1_80"
-        description: Default weight creates single entry for v1
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "1:default_default-weight_0 gtw_default_default-weight_app-v2_80"
-        description: Default weight creates single entry for v2
 
   test-httproute-precedence:
     description: Complex precedence ordering with multiple conflicting routes
@@ -316,7 +294,6 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       # Verify routes are ordered by Gateway API precedence (most specific first)
       - type: match_order
@@ -325,7 +302,6 @@ validationTests:
           - "/api/v1/users/.*default_route1_0"   # Most specific: longest path + method + headers
           - "/api/v1/ .*default_route1_1"        # Medium: medium path + method
           - "/api/ .*default_route1_2"           # Least specific: shortest path, no extra matchers
-        description: Routes must be ordered by Gateway API precedence (most specific first)
 
   test-httproute-same-path-matcher-precedence:
     description: Routes with SAME path sorted by matcher specificity (method/headers/query)
@@ -414,28 +390,23 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       # Verify all 4 rules are present (including catch-all)
       - type: contains
         target: haproxy.cfg
         pattern: 'gw_rule_id.*precedence-test_0'
-        description: Rule 0 (GET + 1 header) must be present
 
       - type: contains
         target: haproxy.cfg
         pattern: 'gw_rule_id.*precedence-test_1'
-        description: Rule 1 (catch-all) must be present
 
       - type: contains
         target: haproxy.cfg
         pattern: 'gw_rule_id.*precedence-test_2'
-        description: Rule 2 (GET + 2 headers + 1 query) must be present
 
       - type: contains
         target: haproxy.cfg
         pattern: 'gw_rule_id.*precedence-test_3'
-        description: Rule 3 (GET only) must be present
 
   test-httproute-weighted-with-matchers:
     description: Weighted routing combined with method/header matchers
@@ -485,22 +456,18 @@ validationTests:
                     weight: 10
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_canary-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_canary-route_0\" \\} \\{ method GET \\} \\{ req\\.hdr\\(X-Canary\\) \"true\" \\}"
-        description: Must generate txn.gw_rule_id with conditions
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "0:default_canary-route_0 gtw_default_canary-route_canary-v1_80"
-        description: Weighted map must contain v1 entries
 
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "90:default_canary-route_0 gtw_default_canary-route_canary-v2_80"
-        description: Weighted map must contain v2 entries
 
   test-httproute-same-route-conflicts:
     description: Multiple rules in same HTTPRoute with path conflicts
@@ -554,22 +521,18 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: map:path-prefix.map
         pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_multi-rule_0__default_multi-rule_1"
-        description: Same route conflicts must include both rule indices
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_multi-rule_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_multi-rule_0__default_multi-rule_1\" \\} \\{ req\\.hdr\\(Authorization\\) \"Bearer\" \\}"
-        description: Must set txn.gw_rule_id for rule index 0 with header matcher
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.path_match\\) str\\(BACKEND:gtw_default_multi-rule_public-service_80\\) if \\{ var\\(txn\\.gw_rule_id\\) -m str \"default_multi-rule_1\" \\}"
-        description: Must set txn.path_match for rule index 1 based on txn.gw_rule_id
 
   test-httproute-cross-route-conflicts:
     description: Multiple separate HTTPRoutes with conflicting paths (different matchers)
@@ -628,12 +591,10 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: map:path-prefix.map
         pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_route-get_0__default_route-post_0"
-        description: Cross-route conflicts must be detected and marked with GW_ROUTE_ID qualifier
 
   test-httproute-grpcroute-precedence:
     description: Mixed HTTPRoute and GRPCRoute on same hostname (precedence validation)
@@ -692,22 +653,18 @@ validationTests:
                     port: 9090
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: map:host.map
         pattern: "api\\.example\\.com api\\.example\\.com"
-        description: Shared hostname must be in host map
 
       - type: contains
         target: map:path-prefix.map
         pattern: "api\\.example\\.com/rest/ GW_ROUTE_ID:http:default_http-route_0"
-        description: HTTPRoute path must route to HTTP service
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-route_0\" \\} \\{ path \"/com\\.example\\.Service/GetData\" \\}"
-        description: "GRPCRoute method match emits a `path` ACL — the URL path fetch — not `req.hdr(:path)`. HAProxy's `req.hdr` targets regular HTTP/1.1 headers and yields an empty string for the HTTP/2 `:path` pseudo-header, so a `req.hdr(:path)` matcher would silently never fire and gRPC traffic would fall through to default_backend (404)."
   test-gateway-http-listener-isolation:
     description: Multi-listener Gateway routes are isolated per-listener (mirrors GatewayHTTPListenerIsolation)
     fixtures:
@@ -823,32 +780,26 @@ validationTests:
                     port: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy config compiles with multi-listener isolation Gateway
 
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^/empty-hostname/ GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
-        description: Empty-hostname route's path map entry has no host prefix
 
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^\\.example\\.com/wildcard-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0$"
-        description: wildcard-example-com route's path map entry uses .example.com host prefix
 
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-foo-example-com_0$"
-        description: wildcard-foo-example-com route's path map entry uses .foo.example.com host prefix
 
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
-        description: abc-foo-example-com route's path map entry uses exact host prefix
 
       - type: contains
         target: map:host-regex.map
         pattern: "(?ms)foo\\\\\\.example\\\\\\.com\\$ \\.foo\\.example\\.com.*\\^\\[\\^\\.\\]\\+\\(\\?:\\\\\\.\\[\\^\\.\\]\\+\\)\\*\\\\\\.example\\\\\\.com\\$ \\.example\\.com"
-        description: More-specific wildcard regex entry comes before less-specific (so map_reg first-match-wins picks the right listener)
 
       # Conformance shape: trace each of the 16
       # GatewayHTTPListenerIsolation upstream cases through the
@@ -867,7 +818,6 @@ validationTests:
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^/empty-hostname GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
-        description: "Case 1 (Host=bar.com Path=/empty-hostname): catch-all listener owns this path → 200. Routing chain: host_match falls through to \"\" (catch-all), path-prefix-exact.map lookup keyed by \"\" + \"/empty-hostname\" hits the entry."
       # Cases targeting the wildcard-example-com listener
       # (Host=bar.example.com):
       #   5: /empty-hostname            → 404
@@ -876,7 +826,6 @@ validationTests:
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^\\.example\\.com/wildcard-example-com GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0$"
-        description: "Case 6 (Host=bar.example.com Path=/wildcard-example-com): regsub strips \"bar\" → host_match=\".example.com\", path lookup keyed \".example.com/wildcard-example-com\" hits the path-prefix-exact entry → 200."
       # Cases targeting the wildcard-foo-example-com listener
       # (Host=bar.foo.example.com):
       #   9-10: /empty-hostname / /wildcard-example-com → 404
@@ -885,7 +834,6 @@ validationTests:
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com GW_ROUTE_ID:http:default_attaches-to-wildcard-foo-example-com_0$"
-        description: "Case 11 (Host=bar.foo.example.com Path=/wildcard-foo-example-com): regsub strips \"bar\" → host_match=\".foo.example.com\", path lookup keyed \".foo.example.com/wildcard-foo-example-com\" hits the path-prefix-exact entry → 200."
       # Cases targeting the abc-foo-example-com listener
       # (Host=abc.foo.example.com — exact match in host.map):
       #   13-15: /empty-hostname / /wildcard-* / /wildcard-foo-* → 404
@@ -893,7 +841,6 @@ validationTests:
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
-        description: "Case 16 (Host=abc.foo.example.com Path=/abc-foo-example-com): host.map exact match → host_match=\"abc.foo.example.com\", path lookup keyed \"abc.foo.example.com/abc-foo-example-com\" hits the path-prefix-exact entry → 200."
       # The 12 404-expected cases are pinned implicitly: a 404
       # case (e.g. Case 13: Host=abc.foo.example.com,
       # Path=/empty-hostname) routes to the abc-foo-example-com
@@ -905,7 +852,6 @@ validationTests:
       - type: not_contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^abc\\.foo\\.example\\.com/empty-hostname GW_ROUTE_ID"
-        description: "Case 13 fails-open assertion: there is NO \"abc.foo.example.com/empty-hostname\" entry; the request falls through to the default backend → 404 as the conformance test expects (the empty-hostname listener's route doesn't bleed into the abc-foo-example-com listener)."
   test-gateway-listener-isolation-hostname-intersection:
     description: Catch-all listener routes drop hostnames more-specifically claimed by sibling listeners
     fixtures:
@@ -970,22 +916,18 @@ validationTests:
                     port: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy config compiles
 
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^bar\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
-        description: bar.com path entry kept (no sibling claims bar.com)
 
       - type: not_contains
         target: map:path-prefix.map
         pattern: "(?m)^\\.example\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
-        description: "*.example.com dropped (claimed by wildcard-example-com sibling)"
 
       - type: not_contains
         target: map:path-prefix.map
         pattern: "(?m)^abc\\.example\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
-        description: abc.example.com dropped (claimed by abc-example-com sibling)
 
   # SupportGatewayInfrastructurePropagation (Standard channel) regression
   # tests. The chart's per-Gateway loop in util-generate-gateway-status-patches
@@ -1047,16 +989,12 @@ validationTests:
                     weight: 0
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "gtw_default_weight-zero-excludes_app-v1_80"
-        description: Backend with weight=70 must appear in the weighted-backend map
       - type: contains
         target: map:weighted-multi-backend.map
         pattern: "gtw_default_weight-zero-excludes_app-v2_80"
-        description: Backend with weight=30 must appear
       - type: not_contains
         target: map:weighted-multi-backend.map
         pattern: "app-v3-excluded"
-        description: "Backend with weight=0 MUST NOT appear (Gateway-API spec: weight=0 means excluded). Before the issue #52 fix the typed struct couldn't distinguish weight=0 from weight unset and a single phantom entry leaked into the map."

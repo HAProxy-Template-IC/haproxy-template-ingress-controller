@@ -1,0 +1,96 @@
+validationTests:
+  test-gateway-listener-tls-options-version-and-ciphers:
+    description: "GEP-2907 per-listener TLS options: spec.tls.options keys (tls-min-version, tls-max-version, tls-cipher-suites) map to per-bind ssl-min-ver / ssl-max-ver / ciphers / ciphersuites on the listener's own phase-4 HTTPS bind. A bare 1.2/1.3 version normalises to TLSv1.2/TLSv1.3. Cipher list is partitioned: TLS_* suites -> ciphersuites (TLS1.3), the rest -> ciphers (TLS<=1.2). ALPN override is DEFERRED (the bind's hardcoded `alpn h2,http/1.1` from the shared crt-list macro can't be duplicated)."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsopts
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+                  options:
+                    gateway.networking.k8s.io/tls-min-version: "1.2"
+                    gateway.networking.k8s.io/tls-max-version: "1.3"
+                    gateway.networking.k8s.io/tls-cipher-suites: "ECDHE-ECDSA-AES128-GCM-SHA256,TLS_AES_256_GCM_SHA384"
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:18000 ssl crt-list \S+ alpn h2,http/1\.1 ssl-min-ver TLSv1\.2 ssl-max-ver TLSv1\.3 ciphers ECDHE-ECDSA-AES128-GCM-SHA256 ciphersuites TLS_AES_256_GCM_SHA384$'
+
+  test-gateway-listener-tls-options-min-version-only:
+    description: "Only tls-min-version set -> only ssl-min-ver appended; no max/ciphers noise."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsmin
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+                  options:
+                    gateway.networking.k8s.io/tls-min-version: "1.3"
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:18000 ssl crt-list \S+ alpn h2,http/1\.1 ssl-min-ver TLSv1\.3$'

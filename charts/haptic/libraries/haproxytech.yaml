@@ -132,6 +132,10 @@ templateSnippets:
         Annotations:
           - haproxy.org/ssl-redirect: "true" or "false" (per-Ingress override)
           - haproxy.org/ssl-redirect-code: redirect status code (default: "302")
+          - haproxy.org/ssl-redirect-port: when set, the redirect targets this
+            explicit https port via frontend-filters-055-haproxytech-ssl-redirect-port
+            instead of the shared scheme-redirect map; such hosts are intentionally
+            NOT registered here to avoid a double redirect.
 
         Behavior:
           - Annotation "true" → redirect
@@ -155,7 +159,12 @@ templateSnippets:
         {%- if first_seen("haproxytech_sslRedirect", key) %}
           {%- var sslRedirect = ingress.Metadata.Annotations["haproxy.org/ssl-redirect"] %}
           {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && sslRedirectDefault == "true") %}
-          {%- if shouldRedirect %}
+          {#- ssl-redirect-port targets an explicit port via a dedicated frontend-filter
+              ('frontend-filters-055-haproxytech-ssl-redirect-port'). Those hosts must NOT
+              be registered into the shared sslRedirectHosts map or ssl.yaml's
+              scheme-redirect would also fire for them (double redirect). -#}
+          {%- var redirectPort = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-port"] %}
+          {%- if shouldRedirect && redirectPort == "" %}
             {%- var code = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-code"] %}
             {%- if code == "" %}{%- code = "302" %}{%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -163,6 +172,55 @@ templateSnippets:
                 {%- var redirectHosts []any = gf["sslRedirectHosts"] -%}
                 {%- gf["sslRedirectHosts"] = append(redirectHosts, map[string]any{"host": toLower(rule.Host), "code": code}) -%}
               {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-055-haproxytech-ssl-redirect-port:
+    template: |
+      {#-
+        HAProxy SSL Redirect to an explicit port (haproxy.org/ssl-redirect-port).
+
+        Extension Point: frontend-filters-* (priority 055 - runs alongside ssl.yaml's
+        frontend-filters-050-ssl-redirect). Hosts handled here are intentionally
+        excluded from the shared sslRedirectHosts map by
+        features-100-haproxytech-ssl-redirect, so only this port-targeted redirect
+        fires for them.
+
+        Rewrites the request to https on the explicit port, preserving the original
+        request URI. The Host header is read (field(1,:) strips any existing port)
+        but never set here — this is a terminal redirect, so it does not corrupt
+        host-based routing.
+
+        Annotations:
+          - haproxy.org/ssl-redirect: must be "true" (or ssl_redirect_default)
+          - haproxy.org/ssl-redirect-port: explicit https port
+          - haproxy.org/ssl-redirect-code: redirect status code (default "302")
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- var sslRedirectDefault = extraContext | dig_string("", "ssl_redirect_default") -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var redirectPort = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-port"] %}
+        {%- if redirectPort != "" %}
+          {%- if toint(redirectPort) <= 0 %}
+            {{- fail("Invalid value '" + redirectPort + "' for annotation 'haproxy.org/ssl-redirect-port' on Ingress '" + key + "'. Must be a positive integer port.") -}}
+          {%- end %}
+          {%- var sslRedirect = ingress.Metadata.Annotations["haproxy.org/ssl-redirect"] %}
+          {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && sslRedirectDefault == "true") %}
+          {%- if shouldRedirect %}
+            {%- var code = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haproxytech/frontend-filters-haproxytech-ssl-redirect-port (for {{ key }})
+      http-request redirect location https://%[hdr(host),field(1,:)]:{{ redirectPort }}%[capture.req.uri] code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -420,8 +478,12 @@ templateSnippets:
           {%- if check != "true" && check != "false" %}
             {{- fail("Invalid value '" + check + "' for annotation 'haproxy.org/check' on Ingress '" + key + "'. Valid values: 'true', 'false'") -}}
           {%- end %}
-      # haproxytech/backend-directives-haproxytech-health-checks
-      # Note: check annotation value: {{ check }}
+          {#- check=false disables health checks. ingress.yaml emits
+              `default-server <checkDirective>` (default "check"); set it to
+              "no-check" so the backend's servers are not health-checked. -#}
+          {%- if check == "false" %}
+            {%- serverOpts["checkDirective"] = "no-check" %}
+          {%- end %}
         {%- end %}
       {%- end -%}
 
@@ -439,14 +501,25 @@ templateSnippets:
       option httpchk GET {{ checkHttp }}
           {%- end %}
         {%- end %}
-        {%- if checkInterval != "" %}
-      # Note: check-interval annotation value: {{ checkInterval }}
+        {#- check-interval sets `inter <duration>` on default-server (the check
+            interval). Skipped when checks are disabled via haproxy.org/check=false
+            (no-check makes inter meaningless). The 200-health-checks snippet runs
+            first, so checkDirective is already set when we read it here. -#}
+        {%- if checkInterval != "" && (serverOpts | dig("checkDirective") | fallback("check") | tostring()) != "no-check" %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "inter " + checkInterval) %}
         {%- end %}
       {%- end -%}
 
   backend-directives-250-haproxytech-rate-limiting:
     template: |
-      {#- HAProxy rate limiting -#}
+      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {#- HAProxy rate limiting.
+          Annotations:
+            - haproxy.org/rate-limit-requests: deny threshold (enables the feature)
+            - haproxy.org/rate-limit-period: stick-table window (default "1s")
+            - haproxy.org/rate-limit-size: stick-table size (default "100k")
+            - haproxy.org/rate-limit-status-code: deny status (default "403")
+            - haproxy.org/rate-limit-whitelist: comma-separated CIDRs never denied -#}
       {%- if ingress != nil %}
         {%- var rateReq = ingress.Metadata.Annotations["haproxy.org/rate-limit-requests"] %}
         {%- if rateReq != "" %}
@@ -456,6 +529,17 @@ templateSnippets:
           {%- if size == "" %}{%- size = "100k" %}{%- end %}
           {%- var status = ingress.Metadata.Annotations["haproxy.org/rate-limit-status-code"] %}
           {%- if status == "" %}{%- status = "403" %}{%- end %}
+          {#- rate-limit-whitelist: comma-separated CIDRs never subject to the deny.
+              Appended as a trailing negated src guard so the deny only fires for
+              non-whitelisted sources, mirroring haproxy-ingress' limit-whitelist. -#}
+          {%- var whitelist = ingress.Metadata.Annotations["haproxy.org/rate-limit-whitelist"] %}
+          {%- var guard = "" %}
+          {%- if whitelist != "" %}
+            {%- var validated = ValidateCidrList(whitelist, "haproxy.org/rate-limit-whitelist", ingress.Metadata.Namespace + "/" + ingress.Metadata.Name) %}
+            {%- if validated != "" %}
+              {%- guard = " !{ src " + validated + " }" %}
+            {%- end %}
+          {%- end %}
       # haproxytech/backend-directives-haproxytech-rate-limiting
       {#- `peers localinstance` (base.yaml global-top-050-peers) replicates the -#}
       {#- per-source counter from the old worker to the new one on reload, so a -#}
@@ -464,7 +548,7 @@ templateSnippets:
       {#- per-pod, matching haproxytech/kubernetes-ingress. -#}
       stick-table type ip size {{ size }} expire {{ period }} store http_req_rate({{ period }}) peers localinstance
       http-request track-sc0 src
-      http-request deny deny_status {{ status }} if { sc_http_req_rate(0) gt {{ rateReq }} }
+      http-request deny deny_status {{ status }} if { sc_http_req_rate(0) gt {{ rateReq }} }{{ guard }}
         {%- end %}
       {%- end -%}
 
@@ -805,19 +889,15 @@ validationTests:
                 targetPort: 8443
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
         pattern: "userlist auth_auth-system_shared-auth"
-        description: Must generate userlist named auth_{secretNamespace}_{secretName}
       - type: contains
         target: haproxy.cfg
         pattern: "user admin password"
-        description: User entries must have password
       - type: contains
         target: haproxy.cfg
         pattern: "http_auth\\(auth_auth-system_shared-auth\\)"
-        description: Backend must use http_auth with per-secret userlist
 
   test-auth-custom-realm:
     description: Basic authentication with custom realm
@@ -864,15 +944,12 @@ validationTests:
               - port: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request auth realm "API-Access"'
-        description: Backend must use custom auth realm
       - type: not_contains
         target: haproxy.cfg
         pattern: 'realm "RestrictedArea"'
-        description: Must not use default realm when custom realm specified
 
   test-haproxytech-basic-auth-missing-secret:
     description: >-
@@ -916,15 +993,12 @@ validationTests:
                             number: 8080
     assertions:
       - type: haproxy_valid
-        description: render must succeed (auth cleanly skipped), NOT panic on the absent Secret
       - type: not_contains
         target: haproxy.cfg
         pattern: "userlist auth_default_absent-secret"
-        description: no userlist is emitted when the referenced Secret is absent
       - type: not_contains
         target: haproxy.cfg
         pattern: "http_auth(auth_default_absent-secret)"
-        description: no http_auth ACL ref is emitted when the referenced Secret is absent
 
   test-auth-realm-with-spaces-strict:
     description: Auth realm with spaces fails in strict mode (default)
@@ -973,7 +1047,6 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "realm cannot contain spaces"
-        description: Must fail with clear error about spaces in realm
 
   test-auth-realm-with-spaces-sanitize:
     description: Auth realm with spaces auto-sanitized when sanitize_auth_realm=true
@@ -1022,11 +1095,9 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request auth realm "DeepL-demo"'
-        description: Realm must have spaces replaced with dashes
 
   test-auth-per-secret-userlists:
     description: Ingresses sharing the same secret share the same userlist (deduplication for performance)
@@ -1100,23 +1171,18 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
         pattern: "userlist auth_default_shared-credentials"
-        description: Both ingresses share the same userlist based on secret reference
       - type: not_contains
         target: haproxy.cfg
         pattern: "userlist default-app1-ingress"
-        description: Must NOT generate per-ingress userlists
       - type: not_contains
         target: haproxy.cfg
         pattern: "userlist default-app2-ingress"
-        description: Must NOT generate per-ingress userlists
       - type: contains
         target: haproxy.cfg
         pattern: "http_auth\\(auth_default_shared-credentials\\)"
-        description: Both backends use http_auth with shared userlist
 
   test-load-balance-hdr-parameter:
     description: Load balance with hdr(header-name) parameter for header-based routing
@@ -1152,11 +1218,9 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
         pattern: "balance hdr\\(x-session-id\\)"
-        description: Must use hdr() balance algorithm with header name
 
   test-haproxytech-cors-regex-anchor:
     description: CORS origin with regex $ anchor must not cause HAProxy parse error
@@ -1195,15 +1259,12 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with regex $ anchor in CORS origin
       - type: contains
         target: haproxy.cfg
         pattern: "Access-Control-Allow-Origin"
-        description: Must set CORS origin header
       - type: contains
         target: haproxy.cfg
         pattern: "com\\$'"
-        description: Origin regex must contain the $ anchor followed by closing quote
 
   test-haproxytech-auth-password-hash-validation-reject:
     description: Password hash validation rejects non-matching hashes
@@ -1254,15 +1315,12 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "Bcrypt hashes not allowed"
-        description: Must reject bcrypt hash with custom error message
       - type: contains
         target: rendering_error
         pattern: "admin"
-        description: Error must include username
       - type: contains
         target: rendering_error
         pattern: "pattern"
-        description: Error must include pattern info
 
   test-haproxytech-auth-password-hash-validation-allow:
     description: Password hash validation allows matching hashes
@@ -1310,11 +1368,9 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "user admin password"
-        description: User must be in config
 
   test-haproxytech-ssl-redirect-default-enabled:
     description: SSL redirect applies when annotation absent and ssl_redirect_default is "true"
@@ -1350,11 +1406,9 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https"
-        description: SSL redirect must be generated from default
 
   test-haproxytech-ssl-redirect-default-opt-out:
     description: SSL redirect does not apply when annotation is "false" even with default
@@ -1392,11 +1446,9 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: not_contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https"
-        description: SSL redirect must not be generated when opted out
 
   test-haproxytech-ssl-redirect-no-default:
     description: SSL redirect does not apply when annotation absent and no default
@@ -1430,11 +1482,9 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: not_contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https"
-        description: SSL redirect must not be generated without default or annotation
 
   test-haproxytech-ssl-redirect-many-hosts:
     description: SSL redirect works with many hosts using map-based matching
@@ -1480,15 +1530,191 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with map-based SSL redirect
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https code 302 if.*map_str.*ssl-redirect-302\\.map.*-m found"
-        description: Must use map-based matching for SSL redirect
       - type: contains
         target: map:ssl-redirect-302.map
         pattern: "host01\\.example\\.com 1"
-        description: Map file must contain redirect hosts
+
+  test-haproxytech-rate-limit-whitelist:
+    description: >-
+      haproxy.org/rate-limit-whitelist appends a trailing '!{ src <cidrs> }' guard
+      to the rate-limit deny line so whitelisted sources are never denied.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: api-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-whitelist-ingress
+            annotations:
+              haproxy.org/rate-limit-requests: "10"
+              haproxy.org/rate-limit-period: "10s"
+              haproxy.org/rate-limit-whitelist: "10.0.0.0/8, 192.168.1.5"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rl.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: api-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "stick-table type ip size 100k expire 10s store http_req_rate\\(10s\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 403 if \\{ sc_http_req_rate\\(0\\) gt 10 \\} !\\{ src 10\\.0\\.0\\.0/8 192\\.168\\.1\\.5 \\}"
+
+  test-haproxytech-rate-limit-no-whitelist:
+    description: >-
+      Without haproxy.org/rate-limit-whitelist the deny line must not carry a src guard
+      (regression guard for the whitelist extension).
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: api-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-plain-ingress
+            annotations:
+              haproxy.org/rate-limit-requests: "10"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rl-plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: api-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 403 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "gt 10 \\} !\\{ src"
+
+  test-haproxytech-ssl-redirect-port:
+    description: >-
+      haproxy.org/ssl-redirect-port redirects to https on the explicit port instead of
+      the default scheme redirect.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ssl-redirect-port-ingress
+            annotations:
+              haproxy.org/ssl-redirect: "true"
+              haproxy.org/ssl-redirect-port: "8443"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: secure.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect location https://%\\[hdr\\(host\\),field\\(1,:\\)\\]:8443%\\[capture.req.uri\\] code 302"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "redirect scheme https code 302 if.*ssl-redirect-302\\.map"
+
+  test-haproxytech-ssl-redirect-no-port-default:
+    description: >-
+      Without haproxy.org/ssl-redirect-port the default scheme redirect path is used
+      (regression guard for the port variant).
+    extraContext:
+      ssl_redirect_default: "true"
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: test-svc
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ssl-redirect-no-port-ingress
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: test-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect scheme https code 302 if"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "redirect location https://%\\[hdr\\(host\\)"
 
   test-pod-maxconn-basic:
     description: pod-maxconn divides total by ready HAProxy pod count with power-of-2 quantization
@@ -1545,15 +1771,12 @@ validationTests:
                 status: "True"
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with pod-maxconn
       - type: contains
         target: haproxy.cfg
         pattern: "maxconn 50"
-        description: Per-pod maxconn must be 100/2=50 (2 pods quantized to 2)
       - type: contains
         target: haproxy.cfg
         pattern: "pod-maxconn: 100 total / 2 ready pods"
-        description: Comment must show ready pod count
 
   test-pod-maxconn-only-counts-ready-pods:
     description: pod-maxconn ignores non-Running and non-Ready pods
@@ -1627,19 +1850,15 @@ validationTests:
                 status: "False"
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "maxconn 50"
-        description: Per-pod maxconn must be 100/2=50 (only 2 of 4 pods are Running+Ready, quantized to 2)
       - type: contains
         target: haproxy.cfg
         pattern: "2 ready pods"
-        description: Comment must show only ready pod count, not total
       - type: not_contains
         target: haproxy.cfg
         pattern: "4 ready pods"
-        description: Must not count Pending or not-Ready pods
 
   test-haproxytech-ssl-passthrough-named-port:
     description: haproxy.org/ssl-passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port (mirrors the original unifi-controller bug scenario)
@@ -1699,8 +1918,176 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.42:8443 "
-        description: The exact unifi reproduction (via haproxy.org/ssl-passthrough) must produce a server line on the actual pod port
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.42:80 "
-        description: Must not regress to port-80 fallback for haproxytech SSL passthrough
+
+  # ==========================================================================
+  # Health check toggle (haproxy.org/check) and interval (haproxy.org/check-interval)
+  # ==========================================================================
+
+  test-haproxytech-check-disable:
+    description: haproxy.org/check=false disables health checks via default-server no-check
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: nocheck-svc
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: nocheck-svc-abc
+            labels:
+              kubernetes.io/service-name: nocheck-svc
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: nocheck-ingress
+            annotations:
+              haproxy.org/check: "false"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: nocheck.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: nocheck-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server no-check"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "default-server check"
+
+  test-haproxytech-check-interval:
+    description: haproxy.org/check-interval sets the inter parameter on default-server
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: interval-svc
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: interval-svc-abc
+            labels:
+              kubernetes.io/service-name: interval-svc
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: interval-ingress
+            annotations:
+              haproxy.org/check-interval: "10s"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: interval.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: interval-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check inter 10s"
+
+  # ==========================================================================
+  # Scale server slots (haproxy.org/scale-server-slots)
+  # ==========================================================================
+
+  test-haproxytech-scale-server-slots:
+    description: haproxy.org/scale-server-slots overrides the pre-allocated slot count
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: slots-svc
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: slots-svc-abc
+            labels:
+              kubernetes.io/service-name: slots-svc
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: slots-ingress
+            annotations:
+              haproxy.org/scale-server-slots: "5"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: slots.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: slots-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_5 "
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_6 "

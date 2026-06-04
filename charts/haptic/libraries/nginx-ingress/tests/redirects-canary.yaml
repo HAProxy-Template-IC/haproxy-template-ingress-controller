@@ -50,11 +50,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "redirect location https://new.example.com code 301"
-        description: Must redirect with 301 to new URL
 
   test-nginx-ingress-temporal-redirect:
     description: Nginx Ingress temporal-redirect generates 302 redirect
@@ -104,11 +102,176 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "redirect location https://temp.example.com code 302"
-        description: Must redirect with 302 to temp URL
+
+  test-nginx-ingress-permanent-redirect-code:
+    description: permanent-redirect-code overrides the default 301 redirect status
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: permcode-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: permcode-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/permanent-redirect: "https://new.example.com"
+              nginx.ingress.kubernetes.io/permanent-redirect-code: "308"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: permcode.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: permcode-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "redirect location https://new.example.com code 308"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "redirect location https://new.example.com code 301"
+
+  test-nginx-ingress-temporal-redirect-code:
+    description: temporal-redirect-code overrides the default 302 redirect status
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: tempcode-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: tempcode-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/temporal-redirect: "https://temp.example.com"
+              nginx.ingress.kubernetes.io/temporal-redirect-code: "307"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: tempcode.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: tempcode-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "redirect location https://temp.example.com code 307"
+
+  test-nginx-ingress-from-to-www-redirect-apex:
+    description: from-to-www-redirect on an apex host redirects to the www. form (301)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: apexwww-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: apexwww-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/from-to-www-redirect: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: apexwww-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect prefix https://www.example.com code 301 if \\{ var\\(txn.host\\) -m str example.com \\} \\{ ssl_fc \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect prefix http://www.example.com code 301 if \\{ var\\(txn.host\\) -m str example.com \\} !\\{ ssl_fc \\}"
+
+  test-nginx-ingress-from-to-www-redirect-www:
+    description: from-to-www-redirect on a www. host redirects to the apex form (301)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: wwwapex-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: wwwapex-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/from-to-www-redirect: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: www.foo.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: wwwapex-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect prefix https://foo.com code 301 if \\{ var\\(txn.host\\) -m str www.foo.com \\} \\{ ssl_fc \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect prefix http://foo.com code 301 if \\{ var\\(txn.host\\) -m str www.foo.com \\} !\\{ ssl_fc \\}"
 
   test-nginx-ingress-redirect-with-many-siblings:
     # Reproducer for the test-e2e:[3.x] flake where TestIngressNginxTemporalRedirect /
@@ -320,11 +483,9 @@ validationTests:
                           port: {number: 80}
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with all the sibling Ingresses present
       - type: contains
         target: haproxy.cfg
         pattern: "redirect location https://flake-repro.example.com/temp code 302"
-        description: redirect rule MUST be in the rendered config — anchors the test against silent omission under the chart's many-Ingress iteration path
 
   test-nginx-ingress-upstream-hash-header:
     description: Nginx Ingress upstream-hash-by translates $http_ variables
@@ -374,15 +535,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "balance hash req\\.hdr\\(x-forwarded-for\\)"
-        description: Must translate $http_x_forwarded_for to req.hdr
       - type: contains
         target: haproxy.cfg
         pattern: "hash-type consistent"
-        description: Must use consistent hashing
 
   test-nginx-ingress-canary-by-header:
     description: Nginx Ingress canary by header generates use_backend rule
@@ -471,15 +629,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend"
-        description: Must generate use_backend rule for canary
       - type: contains
         target: haproxy.cfg
         pattern: "req\\.hdr\\(X-Canary\\)"
-        description: Must match on canary header
 
   test-nginx-ingress-canary-by-weight:
     description: Nginx Ingress canary by weight generates randomized use_backend
@@ -568,8 +723,6 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "rand\\(100\\) lt 20"
-        description: Must use weighted random for canary routing

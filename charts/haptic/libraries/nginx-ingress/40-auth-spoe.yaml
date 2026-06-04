@@ -182,6 +182,7 @@ templateSnippets:
         Generates:
           http-request auth realm "<realm>" unless { http_auth(ni_auth_<secretNs>_<secretName>) }
       -#}
+      {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -226,7 +227,11 @@ templateSnippets:
                 userlist snippet never produced — `haproxy -c` then fails with
                 "unable to find userlist". -#}
             {%- var nginxAuthSecret, _ = nginxAuthSecretAny.(*resources.secrets.T) %}
-            {%- if nginxAuthSecret != nil %}
+            {#- Under satisfy=any the auth challenge is folded into the combined
+                IP-or-auth gate emitted by backend-directives-765, so suppress
+                the unconditional challenge here (an allow-listed IP must pass
+                without authenticating). -#}
+            {%- if nginxAuthSecret != nil && SatisfyAnyMode(ingress) == "" %}
       # nginx-ingress/backend-directives-auth ({{ key }})
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
             {%- end %}
