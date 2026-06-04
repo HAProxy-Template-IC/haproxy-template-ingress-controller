@@ -151,6 +151,137 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
+  # oauth: oauth2_proxy — a convenience that desugars onto the external-auth
+  # machinery (the auth-url / auth-signin / auth-method / auth-extract-headers
+  # maps + the spoa-hub SPOE wiring); no new SPOA plugin. Per upstream
+  # haproxy-ingress, the oauth2-proxy backend is the one this Ingress already
+  # routes the oauth-uri-prefix path (default /oauth2) to, so the address is
+  # derived from that path's Service. auth-url takes precedence, so the oauth
+  # desugaring is skipped when auth-url is also set on the same Ingress.
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#oauth
+  #
+  # Annotations: oauth (oauth2_proxy|oauth2-proxy), oauth-uri-prefix (/oauth2),
+  #   oauth-headers (X-Auth-Request-Email).
+  #
+  # IMPORTANT: emits an http:// auth URL pointing at the in-cluster oauth2-proxy
+  # Service — the spoa-hub external-auth plugin must run with allow_plaintext
+  # for a plain-HTTP oauth2-proxy.
+  map-auth-url-510-haproxy-ingress-oauth:
+    template: |-
+      {%- import "util-service-port-resolution" for ResolveServicePort -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
+        {%- if oauth != "" && authUrl == "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- if oauth != "oauth2_proxy" && oauth != "oauth2-proxy" -%}
+            {{- fail("Invalid value '" + oauth + "' for annotation 'haproxy-ingress.github.io/oauth' on Ingress '" + ns + "/" + name + "'. Only 'oauth2_proxy' (or 'oauth2-proxy') is supported.") -}}
+          {%- end -%}
+          {%- var prefix = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth-uri-prefix"] -%}
+          {%- if prefix == "" -%}{%- prefix = "/oauth2" -%}{%- end -%}
+          {%- if len(prefix) > 1 && hasSuffix(prefix, "/") -%}{%- prefix = prefix[:len(prefix)-1] -%}{%- end -%}
+          {%- var emitted = false -%}
+          {%- for _, path := range ingress.Spec.Rules[*].Http.Paths -%}
+            {%- if !emitted && path.Path == prefix && path.Backend.Service.Name != "" -%}
+              {%- var parts = split(ResolveServicePort(ns, path.Backend.Service.Name, path.Backend.Service.Port), " ") -%}
+      {{ "\n" }}{{ ns }}/{{ name }} http://{{ path.Backend.Service.Name }}.{{ ns }}.svc:{{ parts[0] }}{{ prefix }}/auth
+              {%- emitted = true -%}
+            {%- end -%}
+          {%- end -%}
+          {%- if !emitted -%}
+            {{- fail("Ingress '" + ns + "/" + name + "' sets 'haproxy-ingress.github.io/oauth: " + oauth + "' but has no Ingress path '" + prefix + "' routing to the oauth2-proxy Service. Add a path for '" + prefix + "' (haproxy-ingress derives the oauth2-proxy backend from that path).") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  map-auth-signin-510-haproxy-ingress-oauth:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
+        {#- An explicit auth-signin takes precedence over the oauth desugaring (its
+            -500- snippet renders first and would shadow this entry). -#}
+        {%- var authSignin = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-signin"] -%}
+        {%- if (oauth == "oauth2_proxy" || oauth == "oauth2-proxy") && authUrl == "" && authSignin == "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- var prefix = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth-uri-prefix"] -%}
+          {%- if prefix == "" -%}{%- prefix = "/oauth2" -%}{%- end -%}
+          {%- if len(prefix) > 1 && hasSuffix(prefix, "/") -%}{%- prefix = prefix[:len(prefix)-1] -%}{%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ prefix }}/start?rd=%[path]
+        {%- end -%}
+      {%- end -%}
+
+  map-auth-method-510-haproxy-ingress-oauth:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
+        {#- Explicit auth-method takes precedence over the oauth desugaring. -#}
+        {%- var authMethod = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-method"] -%}
+        {%- if (oauth == "oauth2_proxy" || oauth == "oauth2-proxy") && authUrl == "" && authMethod == "" -%}
+      {{ "\n" }}{{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} HEAD
+        {%- end -%}
+      {%- end -%}
+
+  map-auth-extract-headers-510-haproxy-ingress-oauth:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
+        {#- Explicit auth-headers-succeed owns the extract-headers channel. -#}
+        {%- var authHeadersSucceed = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
+        {%- if (oauth == "oauth2_proxy" || oauth == "oauth2-proxy") && authUrl == "" && authHeadersSucceed == "" -%}
+          {%- var headers = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth-headers"] -%}
+          {%- if headers == "" -%}{%- headers = "X-Auth-Request-Email" -%}{%- end -%}
+      {{ "\n" }}{{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} {{ headers }}
+        {%- end -%}
+      {%- end -%}
+
+  frontend-spoe-set-pass-headers-510-haproxy-ingress-oauth:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Forward the oauth-headers (default X-Auth-Request-Email) from the
+          oauth2-proxy auth reply to the backend on success — mirrors the
+          auth-headers-succeed handler (frontend-spoe-set-pass-headers-500).
+          Only active for the oauth desugaring (auth-url absent). -#}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
+        {#- Explicit auth-headers-succeed owns the set-header channel (its -500-
+            snippet would otherwise emit a duplicate set-header line). -#}
+        {%- var authHeadersSucceed = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
+        {%- if (oauth == "oauth2_proxy" || oauth == "oauth2-proxy") && authUrl == "" && authHeadersSucceed == "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var ingressName = ingress.Metadata.Name -%}
+          {%- var headers = ingress.Metadata.Annotations["haproxy-ingress.github.io/oauth-headers"] -%}
+          {%- if headers == "" -%}{%- headers = "X-Auth-Request-Email" -%}{%- end -%}
+          {%- for _, h := range split(headers, ",") -%}
+            {%- var htok = h | strip() -%}
+            {#- oauth-headers items may be <header>[:<source>]; key the var on the header name. -#}
+            {%- var name = htok -%}
+            {%- if index(htok, ":") > 0 -%}{%- name = htok[:index(htok, ":")] | strip() -%}{%- end -%}
+            {%- if name != "" -%}
+              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/oauth-headers", ns, ingressName) -}}
+              {%- var varName = replace(toLower(name), "-", "_") -%}
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+      {%- end -%}
+
   # External-auth request-headers allowlist. Per-ingress comma-separated
   # list of request header names the SPOA hub forwards to the auth
   # service, populated from the haproxy-ingress.github.io/auth-headers-request
