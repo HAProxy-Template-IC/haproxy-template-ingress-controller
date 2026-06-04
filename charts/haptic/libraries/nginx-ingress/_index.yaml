@@ -41,8 +41,10 @@
 #
 # Session Affinity:
 #   - affinity: cookie
-#   - session-cookie-name, session-cookie-hash, session-cookie-path
+#   - session-cookie-name, session-cookie-path
 #   - session-cookie-secure, session-cookie-samesite
+#   (session-cookie-hash is accepted but NOT configurable in HAProxy — it emits a
+#    warning; dynamic cookies always hash via dynamic-cookie-key)
 #
 # Authentication:
 #   - auth-type, auth-secret, auth-realm
