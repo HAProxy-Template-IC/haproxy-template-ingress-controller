@@ -1769,3 +1769,155 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header Connection keep-alive"
+
+  test-nginx-ingress-mirror-target:
+    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
+    description: "mirror-target mirrors the Ingress's requests to the spoa-hub mirror plugin — host-gated gw_mirror_target_1 + send-spoe-group mirror-1-group, plus option http-buffer-request. Only the authority of the nginx URL template is used as arg_target."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: mt-service}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mt-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/mirror-target: "https://mirror.example.com$request_uri"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: mirror-app.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: mt-service, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn.gw_mirror_target_1\\) str\\(mirror.example.com:443\\) if \\{ var\\(txn.host\\) -m str mirror-app.example.com \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn.gw_mirror_scheme_1\\) str\\(https\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "send-spoe-group spoa-hub mirror-1-group if \\{ var\\(txn.host\\) -m str mirror-app.example.com \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "option http-buffer-request"
+
+  test-nginx-ingress-mirror-target-same-host-distinct-index:
+    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
+    description: "two mirror-target Ingresses sharing a host get DISTINCT mirror indices (no shared-slot collision)."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: mh-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mh-ingress-a
+            annotations:
+              nginx.ingress.kubernetes.io/mirror-target: "http://mirror-a.example.com$request_uri"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shared.example.com
+                http:
+                  paths:
+                    - {path: /a, pathType: Prefix, backend: {service: {name: mh-svc, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mh-ingress-b
+            annotations:
+              nginx.ingress.kubernetes.io/mirror-target: "http://mirror-b.example.com$request_uri"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shared.example.com
+                http:
+                  paths:
+                    - {path: /b, pathType: Prefix, backend: {service: {name: mh-svc, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn.gw_mirror_target_1\\) str\\(mirror-a.example.com:80\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn.gw_mirror_target_2\\) str\\(mirror-b.example.com:80\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "send-spoe-group spoa-hub mirror-2-group"
+
+  test-nginx-ingress-mirror-target-hostless-rejected:
+    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
+    description: "mirror-target on a host-less Ingress is rejected (no host to gate on)."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: mhl-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mhl-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/mirror-target: "http://mirror.example.com$request_uri"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: mhl-svc, port: {number: 80}}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "host-less / default-backend mirroring is not supported"
+
+  test-nginx-ingress-mirror-target-bad-port-rejected:
+    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
+    description: "mirror-target with an out-of-range port is rejected at render time."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: mbp-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mbp-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/mirror-target: "http://mirror.example.com:99999$request_uri"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: mbp.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: mbp-svc, port: {number: 80}}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Port must be 1-65535"

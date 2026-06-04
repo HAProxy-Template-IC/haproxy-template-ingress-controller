@@ -461,3 +461,134 @@ templateSnippets:
             {%- end %}
           {%- end %}
       {%- end -%}
+
+  # nginx mirror-target needs the full request body buffered before the SPOE
+  # mirror notification fires (else PUT/POST bodies arrive empty at the plugin)
+  # — mirrors gateway/frontend-extra-200-gateway-mirror-buffer. Also the
+  # plugin-enabled guard: mirror-target with the spoa-hub mirror plugin disabled
+  # would emit `send-spoe-group spoa-hub mirror-1-group` for a non-existent SPOE
+  # group (a `haproxy -c` failure), so fail() with an actionable message.
+  frontend-extra-205-nginx-ingress-mirror-buffer:
+    template: |
+      {%- var hasMirror = false %}
+      {%- var firstKey = "" %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/mirror-target"] != "" %}
+          {%- hasMirror = true %}
+          {%- if firstKey == "" %}{%- firstKey = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}{%- end %}
+        {%- end %}
+      {%- end %}
+      {%- if hasMirror %}
+        {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() %}
+        {%- var mirrorEnabled = false %}
+        {%- for _, p := range plugins %}
+          {%- if p.(map[string]any)["name"].(string) == "mirror" %}
+            {%- mirrorEnabled = true %}
+          {%- end %}
+        {%- end %}
+        {%- if !mirrorEnabled %}
+          {{- fail("Ingress " + firstKey + " sets 'nginx.ingress.kubernetes.io/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
+        {%- end %}
+      # nginx-ingress/mirror-buffer: buffer the request body so it reaches the mirror plugin
+      option http-buffer-request
+      {%- end %}
+
+  frontend-filters-555-nginx-ingress-mirror:
+    template: |
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {#-
+        Nginx Ingress mirror-target — fire-and-forget request mirroring via the
+        spoa-hub mirror plugin (the same machinery the Gateway RequestMirror
+        filter uses). Mirroring applies to all of the Ingress's hosts/paths.
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#mirror
+
+        Only `mirror-target` is honoured. `mirror-host` (the plugin forces the
+        mirrored Host to the target authority) and `mirror-request-body: off`
+        (the plugin always forwards the buffered body) require a mirror-plugin
+        change and are NOT supported.
+
+        mirror-target is an nginx URL template (scheme://host[:port]$request_uri);
+        only the authority (host:port) is used as the plugin's arg_target — the
+        plugin re-attaches the live request path/query. Default port 80 (http) /
+        443 (https).
+
+        INDEXING: each mirror-target Ingress gets its OWN mirror index (1, 2, …)
+        so two Ingresses that share a host (a common fan-out pattern) never
+        overwrite each other's target on a shared slot. The plugin floors its
+        slot count at mirrorStaticMinSlots (default 4), so indices up to that
+        floor always have a `mirror-<i>-group`; if there are MORE mirror-target
+        Ingresses than slots, the render fail()s and asks the operator to raise
+        spoaHub.mirrorStaticMinSlots. Mirroring is host-scoped: a host-less
+        Ingress is rejected, and when several Ingresses share a host each
+        mirrors all of that host's traffic to its own target.
+
+        Generated HAProxy Config (per mirror-target Ingress, with index <i>):
+          http-request set-var(txn.gw_mirror_target_<i>) str(<host:port>) if <host-match>
+          http-request set-var(txn.gw_mirror_scheme_<i>) str(http|https) if <host-match>
+          http-request set-var(txn.gw_mirror_timeout_ms_<i>) int(<ms>) if <host-match>
+          http-request set-var(txn.gw_mirror_retries_<i>) int(<n>) if <host-match>
+          http-request send-spoe-group spoa-hub mirror-<i>-group if <host-match>
+      -#}
+      {%- var maxSlots = toint(extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback("4")) %}
+      {%- var idx = 0 %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var mt = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/mirror-target"] %}
+        {%- if mt != "" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var key = ns + "/" + name %}
+          {#- Host gate (mirroring is host-scoped). A mirror-target Ingress with no
+              host can't be gated, so reject it rather than buffer-without-mirror. -#}
+          {%- var hosts = []string{} %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+          {%- end %}
+          {%- if len(hosts) == 0 %}
+            {{- fail("Ingress '" + key + "' sets 'nginx.ingress.kubernetes.io/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule.") -}}
+          {%- end %}
+          {%- idx = idx + 1 %}
+          {%- if idx > maxSlots %}
+            {{- fail("Ingress '" + key + "' is mirror-target Ingress #" + tostring(idx) + ", exceeding the " + tostring(maxSlots) + " available mirror slots. Raise spoaHub.mirrorStaticMinSlots to >= " + tostring(idx) + " or reduce the number of mirror-target Ingresses.") -}}
+          {%- end %}
+          {#- Parse scheme + authority. The value is scheme://host[:port] followed
+              by an nginx path/variable (e.g. $request_uri) appended with no '/'
+              separator, so the authority ends at the first '/' or '$'. -#}
+          {%- var scheme = "http" %}
+          {%- var rest = mt %}
+          {%- if hasPrefix(mt, "https://") %}
+            {%- scheme = "https" %}
+            {%- rest = mt[8:] %}
+          {%- else if hasPrefix(mt, "http://") %}
+            {%- rest = mt[7:] %}
+          {%- end %}
+          {%- var cut = len(rest) %}
+          {%- var sl = index(rest, "/") %}
+          {%- var dl = index(rest, "$") %}
+          {%- if sl >= 0 && sl < cut %}{%- cut = sl %}{%- end %}
+          {%- if dl >= 0 && dl < cut %}{%- cut = dl %}{%- end %}
+          {%- var authority = rest[:cut] %}
+          {%- if !strings_contains(authority, ":") %}
+            {%- if scheme == "https" %}{%- authority = authority + ":443" %}{%- else %}{%- authority = authority + ":80" %}{%- end %}
+          {%- end %}
+          {%- if !regex_search(authority, "^[A-Za-z0-9._-]+:[0-9]{1,5}$") %}
+            {{- fail("Invalid value '" + mt + "' for annotation 'nginx.ingress.kubernetes.io/mirror-target' on Ingress '" + key + "'. Expected scheme://host[:port][/path]; could not derive a host:port authority (got '" + authority + "').") -}}
+          {%- end %}
+          {#- Bound the port to 1-65535 (the charset regex alone accepts :0 and :99999). -#}
+          {%- var portNum = toint(authority[index(authority, ":")+1:]) %}
+          {%- if portNum < 1 || portNum > 65535 %}
+            {{- fail("Invalid port '" + tostring(portNum) + "' in 'nginx.ingress.kubernetes.io/mirror-target' on Ingress '" + key + "'. Port must be 1-65535.") -}}
+          {%- end %}
+          {%- var safeAuthority = ValidateConfigValue(authority, "nginx.ingress.kubernetes.io/mirror-target", key, false) %}
+          {%- var cond = HostMatchCondition(hosts) %}
+          {%- var timeoutMs = toint(extraContext | dig("timeout_server") | fallback("50000")) %}
+          {%- var retriesCount = toint(extraContext | dig("retries") | fallback("3")) %}
+      # nginx-ingress/mirror-target ({{ key }})
+      http-request set-var(txn.gw_mirror_target_{{ idx }}) str({{ safeAuthority }}) if {{ cond }}
+      http-request set-var(txn.gw_mirror_scheme_{{ idx }}) str({{ scheme }}) if {{ cond }}
+      http-request set-var(txn.gw_mirror_timeout_ms_{{ idx }}) int({{ timeoutMs }}) if {{ cond }}
+      http-request set-var(txn.gw_mirror_retries_{{ idx }}) int({{ retriesCount }}) if {{ cond }}
+      http-request send-spoe-group spoa-hub mirror-{{ idx }}-group if {{ cond }}
+        {%- end %}
+      {%- end %}
