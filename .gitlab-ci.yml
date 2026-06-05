@@ -92,6 +92,9 @@ variables:
     - changes:
         - charts/**/*
         - .gitlab-ci.yml
+        # Re-run chart-test (which runs `make chart-size-check`) when the
+        # release-Secret size estimator itself changes, so a broken gate is caught.
+        - scripts/check-chart-release-size.py
 
 .rules-docs:
   rules:
