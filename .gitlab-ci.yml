@@ -40,7 +40,7 @@ variables:
   # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
   HELM_UNITTEST_VERSION: "1.1.0"
   # renovate: datasource=github-releases depName=yannh/kubeconform
-  KUBECONFORM_VERSION: "0.7.0"
+  KUBECONFORM_VERSION: "0.8.0"
   # renovate: datasource=pypi depName=yamllint
   YAMLLINT_VERSION: "1.38.0"
   # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
