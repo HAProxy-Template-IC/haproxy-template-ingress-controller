@@ -122,6 +122,9 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 			-skip haproxy-haptic.org/v1alpha1/HAProxyTemplateConfig,haproxy-haptic.org/v1alpha1/HAProxyConfig,haproxy-haptic.org/v1alpha1/HAProxyMapFile \
 			-summary
 	@echo ""
+	@echo "Checking release-Secret size..."
+	@$(MAKE) --no-print-directory chart-size-check
+	@echo ""
 	@echo "All chart linting passed!"
 
 # CI target (runs all chart linting - tools must be installed)
@@ -143,7 +146,25 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 			-skip haproxy-haptic.org/v1alpha1/HAProxyTemplateConfig,haproxy-haptic.org/v1alpha1/HAProxyConfig,haproxy-haptic.org/v1alpha1/HAProxyMapFile \
 			-summary
 	@echo ""
+	@echo "Checking release-Secret size..."
+	@$(MAKE) --no-print-directory chart-size-check
+	@echo ""
 	@echo "All chart linting passed!"
+
+chart-size-check: ## Estimate the Helm release-Secret size; fail if it nears the 1 MiB Secret limit
+	@# Renders the WORST-CASE profile (every bundled library enabled, Gateway
+	@# CRDs present) and estimates the base64(gzip(json(release))) payload Helm
+	@# stores in its release Secret. The hard 1,048,576-byte Secret limit caused
+	@# a silent e2e/install failure once the chart approached it (chart MR !1105);
+	@# this gate catches a regression in `make`/CI BEFORE an install fails. The
+	@# estimator reconstructs Helm's release object offline (subchart source is
+	@# NOT stored), accurate to ~2% against real installs — see the script header.
+	@# nginxIngress + spoaHub are the two default-disabled libraries; enabling
+	@# both makes the worst case explicit (spoaHub already merges by default via
+	@# its OR-helper, so the flag is belt-and-suspenders against a future change).
+	@python3 scripts/check-chart-release-size.py charts/haptic \
+		--set controller.templateLibraries.nginxIngress.enabled=true \
+		--set controller.templateLibraries.spoaHub.enabled=true
 
 ## Security & vulnerability scanning
 
