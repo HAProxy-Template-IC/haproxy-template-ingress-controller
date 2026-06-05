@@ -24,6 +24,19 @@ const (
 	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
+// configValidationTimeout bounds the config-validation scatter-gather. It must
+// be strictly LARGER than the validationtests validator's own worst-case total,
+// so that validator always self-reports its result (pass / "invalid: did not
+// complete") rather than being declared a missing responder. That worst case is
+// bootstrap (≤5s) + engine-compile/version-detect setup (≤~5s for a very large
+// config; not itself ctx-bounded, but CPU-bound and sub-second in practice) +
+// the 25s test-run cap ≈ 35s. The 45s envelope keeps ~10s of margin so a large-
+// but-valid config is never false-rejected. The validator's internal run cap —
+// not this number — is the binding suite limit; this is just the outer envelope.
+// Config-load only: rare, operator-initiated, never on the reconciliation hot
+// path, so a budget well above the sub-second structural validators is correct.
+const configValidationTimeout = 45 * time.Second
+
 // DefaultReinitDebounceInterval is the default time to wait after the last config
 // change before signaling controller reinitialization. This allows rapid CRD updates
 // to be coalesced, ensuring templates are fully rendered before reinitialization starts.
@@ -269,16 +282,18 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	// Create validation request
 	req := events.NewConfigValidationRequest(event.Config, event.Version)
 
-	// Send request and wait for responses using scatter-gather
-	// Timeout is set to 10 seconds based on expected validation performance:
-	// - Small configs (10 templates, 5 JSONPaths): ~50-100ms
-	// - Medium configs (100 templates, 20 JSONPaths): ~200-500ms
-	// - Large configs (1000 templates, 100 JSONPaths): ~2-5 seconds
-	// The 10s timeout provides adequate headroom even for very large configs
-	// or systems under high CPU pressure. If validation consistently approaches
-	// this timeout, consider investigating performance bottlenecks.
+	// Send request and wait for responses using scatter-gather.
+	// The structural / template-syntax / JSONPath validators are sub-second even
+	// for large configs. The long pole is the validationtests validator, which
+	// runs the config's entire embedded suite (engine build + every test's
+	// `haproxy -c`) — seconds for the bundled chart, potentially more for a very
+	// large config. The timeout is sized so a slow-but-valid config load is NOT
+	// false-rejected (a timed-out responder aggregates to "invalid", which would
+	// refuse a perfectly good config); config loads are rare and operator-
+	// initiated, never on the reconciliation hot path. If validation consistently
+	// approaches this, investigate the validationtests suite / apiserver latency.
 	result, err := h.eventBus.Request(ctx, req, busevents.RequestOptions{
-		Timeout:            10 * time.Second,
+		Timeout:            configValidationTimeout,
 		ExpectedResponders: h.validators,
 	})
 

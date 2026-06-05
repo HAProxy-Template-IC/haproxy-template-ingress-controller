@@ -367,6 +367,10 @@ func setupComponents(
 	basicValidator := validator.NewBasicValidator(bus, logger)
 	templateValidator := validator.NewTemplateValidator(bus, logger, typeBootstrapper)
 	jsonpathValidator := validator.NewJSONPathValidator(bus, logger)
+	// Runs the config's embedded validationTests before the config is accepted,
+	// so the daemon never loads (at startup or on a live change) a config whose
+	// tests fail — matching the guarantee of the `controller validate` CLI.
+	validationTestsValidator := validator.NewValidationTestsValidator(bus, logger, typeBootstrapper)
 
 	// Create config change channel for reinitialization signaling
 	configChangeCh := make(chan *coreconfig.Config, 1)
@@ -432,6 +436,14 @@ func setupComponents(
 	g.Go(func() error {
 		if err := jsonpathValidator.Start(gCtx); err != nil {
 			logger.Error("jsonpath validator failed", "error", err)
+			cancel()
+			return err
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := validationTestsValidator.Start(gCtx); err != nil {
+			logger.Error("validationtests validator failed", "error", err)
 			cancel()
 			return err
 		}

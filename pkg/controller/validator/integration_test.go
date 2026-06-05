@@ -12,7 +12,7 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// with all three validators (basic, template, jsonpath) running concurrently.
+// with all four validators (basic, template, jsonpath, validationtests) running concurrently.
 func TestValidationScatterGather(t *testing.T) {
 	ctx, bus := setupValidationTest(t)
 	cfg := createInvalidTestConfig()
@@ -28,9 +28,9 @@ func TestValidationScatterGather(t *testing.T) {
 		t.Fatalf("Request() returned error: %v", err)
 	}
 
-	// Verify we got responses from all three validators
-	if len(result.Responses) != 3 {
-		t.Errorf("Expected 3 responses, got %d", len(result.Responses))
+	// Verify we got responses from all four validators
+	if len(result.Responses) != 4 {
+		t.Errorf("Expected 4 responses, got %d", len(result.Responses))
 	}
 
 	// Collect and verify responses
@@ -60,9 +60,9 @@ func TestValidationScatterGather_ValidConfig(t *testing.T) {
 		t.Fatalf("Request() returned error: %v", err)
 	}
 
-	// Verify we got responses from all three validators
-	if len(result.Responses) != 3 {
-		t.Errorf("Expected 3 responses, got %d", len(result.Responses))
+	// Verify we got responses from all four validators
+	if len(result.Responses) != 4 {
+		t.Errorf("Expected 4 responses, got %d", len(result.Responses))
 	}
 
 	// Verify all validators returned valid=true
@@ -101,6 +101,7 @@ func setupValidationTest(t *testing.T) (context.Context, *busevents.EventBus) {
 	basicValidator := NewBasicValidator(bus, logger)
 	templateValidator := NewTemplateValidator(bus, logger, stubTypeBootstrapper)
 	jsonpathValidator := NewJSONPathValidator(bus, logger)
+	validationTestsValidator := NewValidationTestsValidator(bus, logger, stubTypeBootstrapper)
 
 	bus.Start()
 
@@ -110,6 +111,7 @@ func setupValidationTest(t *testing.T) (context.Context, *busevents.EventBus) {
 	go basicValidator.Start(ctx)
 	go templateValidator.Start(ctx)
 	go jsonpathValidator.Start(ctx)
+	go validationTestsValidator.Start(ctx)
 
 	return ctx, bus
 }

@@ -17,6 +17,12 @@ const (
 
 	// ValidatorNameJSONPath is the name for the JSONPath expression validator.
 	ValidatorNameJSONPath = "jsonpath"
+
+	// ValidatorNameValidationTests is the name for the validator that runs the
+	// config's embedded validationTests (the same suite the `controller validate`
+	// CLI runs) before a config is accepted, so the daemon never loads a config
+	// whose tests fail.
+	ValidatorNameValidationTests = "validationtests"
 )
 
 // AllValidatorNames returns a slice of all validator names.
@@ -26,5 +32,6 @@ func AllValidatorNames() []string {
 		ValidatorNameBasic,
 		ValidatorNameTemplate,
 		ValidatorNameJSONPath,
+		ValidatorNameValidationTests,
 	}
 }
