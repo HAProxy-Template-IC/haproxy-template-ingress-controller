@@ -52,6 +52,7 @@ type CachedStore struct {
 	namespace string                          // Namespace for fetching (empty = all)
 	indexer   *indexer.Indexer                // Indexer for processing fetched resources
 	logger    *slog.Logger                    // Logger for debug and warning messages
+	projected bool                            // Informer delivers body-stripped objects (see Projected)
 }
 
 // DefaultMaxCacheSize is the default maximum number of entries in the LRU cache.
@@ -84,6 +85,18 @@ type CachedStoreConfig struct {
 
 	// Logger for debug and warning messages (optional, uses slog.Default if nil)
 	Logger *slog.Logger
+
+	// Projected indicates the informer feeding this store delivers
+	// body-stripped (projected) objects — only identity, indexBy, and
+	// fieldSelector fields survive (see pkg/k8s/watcher projection, ADR-0012).
+	//
+	// In projected mode the store must NOT cache the projected body on
+	// Add/Update (a warm render read would otherwise be served a husk).
+	// Instead the value cache is populated only by the live API GET in
+	// fetchResourceByRef (full body), and Update/Delete invalidate any stale
+	// cached body so the next read re-fetches. Off by default; on only for
+	// `store: on-demand` (CachedStore) watchers.
+	Projected bool
 }
 
 // NewCachedStore creates a new API-backed store with caching.
@@ -124,6 +137,7 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 		namespace: cfg.Namespace,
 		indexer:   cfg.Indexer,
 		logger:    logger,
+		projected: cfg.Projected,
 	}, nil
 }
 
@@ -248,7 +262,12 @@ func (s *CachedStore) Add(resource any, keys []string) error {
 	ns, name := extractNamespaceName(resource)
 	keyStr := makeKeyString(keys)
 	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{namespace: ns, name: name, indexKeys: keys})
-	s.cacheResource(ns, name, resource)
+	if !s.projected {
+		// Non-projected: the informer delivered a full body, so cache it for
+		// free. Projected: the body is a husk — leave the value cache to be
+		// populated by the live API GET in fetchResourceByRef.
+		s.cacheResource(ns, name, resource)
+	}
 
 	return nil
 }
@@ -280,7 +299,13 @@ func (s *CachedStore) Update(resource any, keys []string) error {
 	}
 	s.refs[keyStr] = refs
 
-	s.cacheResource(ns, name, resource)
+	if s.projected {
+		// Projected: the new body is a husk. Invalidate any stale full body
+		// so the next render read re-fetches the current object live.
+		s.cache.Remove(ns + "/" + name)
+	} else {
+		s.cacheResource(ns, name, resource)
+	}
 
 	return nil
 }

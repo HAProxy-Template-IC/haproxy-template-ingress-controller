@@ -144,6 +144,12 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 			Namespace: cfg.Namespace,
 			Indexer:   idx,
 			Logger:    logger,
+			// On-demand kinds are read by live API GET, never from the
+			// informer/store-cached body, so the informer copy can be
+			// body-stripped to save memory (see createInformer's
+			// SetTransform). Projected mode tells the store not to cache the
+			// stripped body (ADR-0012).
+			Projected: true,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("creating cached store: %w", err)
@@ -218,6 +224,19 @@ func (w *Watcher) createInformer() error {
 
 	// Get informer for resource
 	w.informer = informerFactory.ForResource(w.config.GVR).Informer()
+
+	// For on-demand (CachedStore) kinds, body-strip the objects the informer
+	// retains in its internal cache. The render reads the full body via a live
+	// API GET (CachedStore.fetchResourceByRef), so the informer never needs to
+	// hold it. Must be installed before the informer is started (Run). Only
+	// the indexBy / fieldSelector / identity fields survive, so handler-side
+	// key extraction and field-selector evaluation still work. See ADR-0012.
+	if w.config.StoreType == types.StoreTypeCached {
+		roots := projectionRoots(w.config.IndexBy, w.config.FieldSelector)
+		if err := w.informer.SetTransform(newProjectionTransform(roots, w.indexer)); err != nil {
+			return fmt.Errorf("installing projection transform: %w", err)
+		}
+	}
 
 	// Add event handlers
 	_, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
