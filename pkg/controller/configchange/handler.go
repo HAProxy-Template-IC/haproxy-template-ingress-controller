@@ -241,15 +241,13 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 			h.debounceTimer.Fired()
 			h.sendPendingConfig()
 		case event := <-h.eventChan:
-			switch e := event.(type) {
-			case *events.ConfigParsedEvent:
-				h.handleConfigParsed(ctx, e)
-			case *events.ConfigValidatedEvent:
-				h.handleConfigValidated(e)
-			case *events.BecameLeaderEvent:
-				h.handleBecameLeader(e)
-			case *events.CredentialsUpdatedEvent:
-				h.handleSecretRotation("credentials", e.SecretVersion, &h.initialCredentialsVersion)
+			// ConfigParsedEvent is dispatched here (it coalesces internally);
+			// every other handled type goes through the single dispatchSideEvent
+			// switch, shared with coalesceToLatestParsed so the two can't drift.
+			if parsed, ok := event.(*events.ConfigParsedEvent); ok {
+				h.handleConfigParsed(ctx, parsed)
+			} else {
+				h.dispatchSideEvent(event)
 			}
 		}
 	}
@@ -270,6 +268,13 @@ func (h *ConfigChangeHandler) cleanup() {
 
 // handleConfigParsed coordinates validation for a parsed config using scatter-gather pattern.
 func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *events.ConfigParsedEvent) {
+	// Coalesce superseded config loads. Validation is now multi-second (the
+	// validationtests validator runs the full embedded suite), so if the operator
+	// made several edits in quick succession, newer ConfigParsedEvents may already
+	// be queued. Validating a config that's already been replaced wastes that run
+	// and delays the config the operator actually wants — skip ahead to the latest.
+	event = h.coalesceToLatestParsed(event)
+
 	// If no validators are configured, skip validation and immediately publish validated event
 	if len(h.validators) == 0 {
 		h.logger.Debug("No validators configured, skipping validation", "version", event.Version)
@@ -342,6 +347,50 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 			"validation_errors", validationErrors)
 		// Publish invalid event with TemplateConfig reference for status updates
 		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, validationErrors))
+	}
+}
+
+// coalesceToLatestParsed non-blockingly drains the subscription channel and
+// returns the newest ConfigParsedEvent (the passed one if nothing newer is
+// queued). Any other event types pulled while draining are dispatched inline so
+// none are lost — this is the same set the Start() loop handles. Because the
+// drain is non-blocking, the common case (no pending events) returns the
+// original event immediately with no added latency.
+func (h *ConfigChangeHandler) coalesceToLatestParsed(latest *events.ConfigParsedEvent) *events.ConfigParsedEvent {
+	for {
+		select {
+		case ev := <-h.eventChan:
+			if parsed, ok := ev.(*events.ConfigParsedEvent); ok {
+				h.logger.Debug("Coalescing superseded config-parsed event",
+					"skipped_version", latest.Version, "newer_version", parsed.Version)
+				latest = parsed
+				continue
+			}
+			// Any other handled type is dispatched normally so it isn't lost
+			// just because we drained the channel here.
+			h.dispatchSideEvent(ev)
+		default:
+			return latest
+		}
+	}
+}
+
+// dispatchSideEvent handles every subscribed event type EXCEPT ConfigParsedEvent
+// (which both callers special-case for coalescing). It's the single source of
+// truth for that dispatch, shared by the Start loop and coalesceToLatestParsed
+// so they can't drift. The default arm makes drift loud: if a new event type is
+// added to the subscription but not here, we log rather than silently drop it.
+func (h *ConfigChangeHandler) dispatchSideEvent(event busevents.Event) {
+	switch e := event.(type) {
+	case *events.ConfigValidatedEvent:
+		h.handleConfigValidated(e)
+	case *events.BecameLeaderEvent:
+		h.handleBecameLeader(e)
+	case *events.CredentialsUpdatedEvent:
+		h.handleSecretRotation("credentials", e.SecretVersion, &h.initialCredentialsVersion)
+	default:
+		h.logger.Warn("ConfigChangeHandler received an unhandled event type; dropping",
+			"type", fmt.Sprintf("%T", event))
 	}
 }
 

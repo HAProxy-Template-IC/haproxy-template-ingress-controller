@@ -132,6 +132,47 @@ func TestConfigChangeHandler_HandleConfigParsed_NoValidators(t *testing.T) {
 	assert.Equal(t, testConfig, validated.Config)
 }
 
+func TestConfigChangeHandler_CoalescesSupersededConfigParsed(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+
+	// No validators: handleConfigParsed coalesces, then short-circuits to
+	// publishValidated — so the published ConfigValidatedEvent identifies which
+	// config actually got validated.
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+
+	eventChan := bus.Subscribe("test-sub", 50)
+
+	cfg1 := &coreconfig.Config{}
+	cfg2 := &coreconfig.Config{}
+	// Publish both BEFORE bus.Start() so they're flushed into the handler's
+	// subscription buffer together; when the handler picks up v1, v2 is already
+	// queued and must be coalesced ahead of.
+	bus.Publish(events.NewConfigParsedEvent(cfg1, nil, "v1", "sv1"))
+	bus.Publish(events.NewConfigParsedEvent(cfg2, nil, "v2", "sv2"))
+	bus.Start()
+
+	go handler.Start(t.Context())
+
+	// Only the latest config (v2) should be validated.
+	validated := testutil.WaitForEvent[*events.ConfigValidatedEvent](t, eventChan, testutil.LongTimeout)
+	assert.Equal(t, "v2", validated.Version, "handler should validate the latest config, not the superseded one")
+	assert.Same(t, cfg2, validated.Config)
+
+	// The superseded config (v1) must NOT also be validated.
+	deadline := time.After(testutil.NoEventTimeout)
+	for {
+		select {
+		case ev := <-eventChan:
+			if cv, ok := ev.(*events.ConfigValidatedEvent); ok {
+				t.Fatalf("superseded config produced a second ConfigValidatedEvent (version %s)", cv.Version)
+			}
+		case <-deadline:
+			return
+		}
+	}
+}
+
 func TestConfigChangeHandler_HandleConfigValidated_SignalController(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 	configCh := make(chan *coreconfig.Config, 1)
