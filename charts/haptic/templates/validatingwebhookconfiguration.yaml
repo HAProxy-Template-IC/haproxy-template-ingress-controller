@@ -67,21 +67,29 @@ webhooks:
 {{- /*
   HAProxyTemplateConfig admission webhook. Validates the controller's own
   CRD at apply time — operators see template errors with line-numbered
-  haproxy -c output before the resource ever lands in etcd. With this
+  haproxy -c output, AND the config's embedded validationTests are run,
+  before the resource ever lands in etcd. Running validationTests here (the
+  same suite the daemon's load gate runs) is what stops the "time bomb": a
+  config that fails its tests is refused at apply, so it can never sit in
+  etcd waiting to crash-loop the next fresh controller pod. With this
   upstream gate in place, the leader-side reconcile pipeline can safely
   skip haproxy -c (saves ~94 ms on every render).
 
   failurePolicy: Ignore is intentional — the worst case of webhook
-  unavailability is "operator gets a delayed error from the dataplane API
-  rejection on the next reload" rather than "broken config silently runs".
+  unavailability is "operator gets a delayed error from the daemon's load
+  gate / dataplane API rejection" rather than "broken config silently runs".
   This avoids the chicken-and-egg of first install (controller starting
   while Helm applies the CRD) and any recovery scenario (operator must be
-  able to apply CRD fixes while the controller is degraded).
+  able to apply CRD fixes while the controller is degraded — an unreachable
+  webhook fails open).
 
-  timeoutSeconds: 5 is shorter than the watched-resource webhook's 10 s —
-  CRD updates are infrequent (operator-triggered), so a quick timeout
-  failing back to Ignore is preferable to a 10 s hang during partial-
-  degradation scenarios.
+  timeoutSeconds: 10 (raised from 5) — the admission path now runs three
+  phases: per-admission schema bootstrap (≤2 s), render + haproxy -c, and the
+  validationTests suite (~4 s for the bundled chart), so it needs headroom. The
+  controller self-imposes a shorter internal deadline (configAdmissionTimeout,
+  9 s = 2 s bootstrap + ~2 s render + 5 s test budget) and admits-with-warning
+  if a phase can't finish, so a slow suite or a degraded controller never
+  blocks the apply — the load gate still enforces.
 */}}
 {{- if $htcCfg.enabled }}
   - name: haproxytemplateconfig.validation.{{ $webhookSvcName }}
@@ -109,7 +117,7 @@ webhooks:
     sideEffects: None
     admissionReviewVersions:
       - v1
-    timeoutSeconds: 5
+    timeoutSeconds: 10
 {{- end }}
 {{- end }}
 {{- end }}

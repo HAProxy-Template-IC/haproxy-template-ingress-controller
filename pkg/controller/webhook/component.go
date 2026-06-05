@@ -47,6 +47,16 @@ const (
 
 	// DefaultWebhookPath is the default URL path for validation requests.
 	DefaultWebhookPath = "/validate"
+
+	// configAdmissionTimeout is the internal deadline for HAProxyTemplateConfig
+	// admission (createConfigValidator). It's larger than the 5 s
+	// watched-resource deadline because the config path runs three phases on this
+	// context: per-admission schema bootstrap (≤2 s), render + `haproxy -c`
+	// (sub-second in practice), and the embedded validationTests suite
+	// (configValidationTestsBudget = 5 s). 2 + ~2 + 5 = 9 s; kept under the
+	// chart's 10 s timeoutSeconds so the controller returns a structured decision
+	// before the API server gives up.
+	configAdmissionTimeout = 9 * time.Second
 )
 
 // Component is the webhook adapter component that manages webhook lifecycle.
@@ -512,16 +522,20 @@ func (c *Component) createConfigValidator() webhook.ValidationFunc {
 			return false, err.Error(), nil, nil
 		}
 
-		// Hard 5 s internal deadline mirrors createResourceValidator. Kept
-		// shorter than the chart-side timeoutSeconds (also 5 s, but
-		// failurePolicy=Ignore there so a timeout admits anyway). Parent
-		// is c.serverCtx so iteration shutdown cancels in-flight validations.
-		// See createResourceValidator for the serverCtx-nil fallback rationale.
+		// Internal deadline for the config admission. Longer than the 5 s
+		// watched-resource deadline because this path additionally runs the
+		// config's validationTests suite (~4 s for the bundled chart) on top of
+		// render + `haproxy -c`, so a config that fails its own tests is denied
+		// at admission rather than entering etcd to crash-loop a future pod.
+		// Kept under the chart-side timeoutSeconds (10 s, failurePolicy=Ignore so
+		// a timeout admits anyway and never blocks operator recovery). Parent is
+		// c.serverCtx so iteration shutdown cancels in-flight validations. See
+		// createResourceValidator for the serverCtx-nil fallback rationale.
 		parent := c.serverCtx
 		if parent == nil {
 			parent = context.Background()
 		}
-		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		ctx, cancel := context.WithTimeout(parent, configAdmissionTimeout)
 		defer cancel()
 
 		allowed, reason, warnings := c.configValidator(

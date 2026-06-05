@@ -18,18 +18,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configtest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -54,11 +49,6 @@ const validationTestsBootstrapTimeout = 5 * time.Second
 // cancellable (the shared dataplane validation path takes no context), but those
 // checks are sub-second, so the bound holds in practice.
 const validationTestsRunTimeout = 25 * time.Second
-
-// maxReportedFailures bounds how many failed-test names are folded into the
-// validation response so a config with a broken shared snippet (which can fail
-// hundreds of tests at once) produces an actionable, not overwhelming, message.
-const maxReportedFailures = 10
 
 // ValidationTestsValidator runs the config's embedded validationTests — the
 // exact suite the `controller validate` CLI runs — as a scatter-gather
@@ -153,7 +143,7 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 
 	v.logger.Debug("Running validationTests", "version", req.Version, "test_count", len(cfg.ValidationTests))
 
-	results, err := v.runTests(cfg)
+	result, err := v.runTests(cfg)
 	if err != nil {
 		v.logger.Error("validationTests could not run",
 			"version", req.Version, "error", err)
@@ -162,35 +152,35 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 	}
 
 	duration := time.Since(start)
-	if results.FailedTests == 0 {
+	switch {
+	case result.Incomplete:
+		// Daemon load gate fails CLOSED on an incomplete run: never accept a
+		// config we didn't finish validating.
+		v.logger.Error("validationTests did not complete in time",
+			"version", req.Version, "run_timeout", v.runTimeout, "duration_ms", duration.Milliseconds())
+		v.respond(req, false, []string{fmt.Sprintf(
+			"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", v.runTimeout)})
+	case result.Passed:
 		v.logger.Debug("validationTests passed",
-			"version", req.Version,
-			"total", results.TotalTests,
-			"skipped", results.SkippedTests,
-			"duration_ms", duration.Milliseconds())
+			"version", req.Version, "duration_ms", duration.Milliseconds())
 		v.respond(req, true, nil)
-		return
+	default:
+		v.logger.Error("validationTests failed",
+			"version", req.Version, "duration_ms", duration.Milliseconds(), "failures", result.Failures)
+		v.respond(req, false, result.Failures)
 	}
-
-	failures := summarizeTestFailures(results)
-	v.logger.Error("validationTests failed",
-		"version", req.Version,
-		"failed", results.FailedTests,
-		"total", results.TotalTests,
-		"duration_ms", duration.Milliseconds(),
-		"failures", failures)
-	v.respond(req, false, failures)
 }
 
-// runTests builds the engine + temporary validation tree and executes the
-// suite. Any setup error is returned so the caller can fail validation with a
-// clear reason rather than silently skipping the gate.
-func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config) (*testrunner.TestResults, error) {
+// runTests resolves typed schemas, builds the engine, and runs the suite via the
+// shared configtest helper (the same one the admission webhook uses, so the two
+// gates can't drift). Any setup error is returned so the caller can fail
+// validation with a clear reason rather than silently skipping the gate.
+func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config) (configtest.Result, error) {
 	bootstrapCtx, cancel := context.WithTimeout(v.baseCtx(), validationTestsBootstrapTimeout)
 	defer cancel()
 	bootstrapResult, err := v.bootstrap(bootstrapCtx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("schema acquisition failed (typed validationTests cannot run without real schemas): %w", err)
+		return configtest.Result{}, fmt.Errorf("schema acquisition failed (typed validationTests cannot run without real schemas): %w", err)
 	}
 
 	engine, err := helpers.NewEngineFromConfigWithOptions(
@@ -199,45 +189,10 @@ func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config) (*testrunner
 		helpers.EngineOptions{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("building validation engine: %w", err)
+		return configtest.Result{}, fmt.Errorf("building validation engine: %w", err)
 	}
 
-	paths, capabilities, haproxyVersion, cleanup, err := buildTestValidationPaths(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("preparing HAProxy validation environment: %w", err)
-	}
-	defer cleanup()
-
-	runner := testrunner.New(cfg, engine, paths, &testrunner.Options{
-		Logger:             v.logger,
-		Capabilities:       capabilities,
-		HAProxyVersion:     haproxyVersion,
-		TypedResourceTypes: bootstrapResult.Types,
-	})
-
-	// Bound the run so a slow/wedged suite can't run orphaned past the
-	// scatter-gather deadline or wedge this validator's event loop (see
-	// validationTestsRunTimeout).
-	runCtx, cancel := context.WithTimeout(v.baseCtx(), v.runTimeout)
-	defer cancel()
-	results, err := runner.RunTests(runCtx, "")
-	if err != nil {
-		return nil, fmt.Errorf("executing validationTests: %w", err)
-	}
-
-	// CRITICAL: RunTests does NOT report context cancellation as an error. On
-	// timeout its workers stop early and the un-run tests are silently absent
-	// from the results — counted in neither PassedTests nor FailedTests. So a
-	// timed-out run looks like "0 failures" and would be fail-OPEN (accepting a
-	// config we never finished validating). Treat any incomplete run as a hard
-	// rejection: fail-closed is the whole point of the gate.
-	if runCtx.Err() != nil {
-		return nil, fmt.Errorf(
-			"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config: %w",
-			v.runTimeout, runCtx.Err())
-	}
-
-	return results, nil
+	return configtest.RunValidationTests(v.baseCtx(), cfg, engine, bootstrapResult.Types, v.runTimeout, v.logger)
 }
 
 // respond publishes the validator's ConfigValidationResponse.
@@ -248,106 +203,4 @@ func (v *ValidationTestsValidator) respond(req *events.ConfigValidationRequest, 
 		valid,
 		errs,
 	))
-}
-
-// summarizeTestFailures turns the failed per-test results into a bounded,
-// human-readable error list for the ConfigValidationResponse.
-func summarizeTestFailures(results *testrunner.TestResults) []string {
-	out := make([]string, 0, maxReportedFailures+1)
-	reported := 0
-	for i := range results.TestResults {
-		tr := &results.TestResults[i]
-		if tr.Passed || tr.Skipped {
-			continue
-		}
-		if reported >= maxReportedFailures {
-			out = append(out, fmt.Sprintf("... and %d more failing test(s)", results.FailedTests-reported))
-			break
-		}
-		out = append(out, fmt.Sprintf("validationTest %q failed: %s", tr.TestName, firstFailureReason(tr)))
-		reported++
-	}
-	if len(out) == 0 {
-		// Defensive: FailedTests>0 but no per-test detail surfaced.
-		out = append(out, fmt.Sprintf("%d validationTest(s) failed", results.FailedTests))
-	}
-	return out
-}
-
-// buildTestValidationPaths creates a temporary HAProxy validation tree mirroring
-// the production layout (maps/ssl/general dirs + config-file path) so the
-// testrunner's `haproxy_valid` assertions can run `haproxy -c`. The returned
-// cleanup removes the temp tree. Mirrors cmd/controller's setupValidationPaths
-// but operates on the already-converted config.
-func buildTestValidationPaths(cfg *coreconfig.Config) (
-	paths *dataplane.ValidationPaths,
-	capabilities dataplane.Capabilities,
-	haproxyVersion *dataplane.Version,
-	cleanup func(),
-	err error,
-) {
-	localVersion, err := dataplane.DetectLocalVersion()
-	if err != nil {
-		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("detecting local HAProxy version: %w", err)
-	}
-	capabilities = dataplane.CapabilitiesFromVersion(localVersion)
-
-	tempDir, err := os.MkdirTemp("", "haproxy-cfgtest-*")
-	if err != nil {
-		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("creating temp dir: %w", err)
-	}
-
-	basePaths := dataplane.PathConfig{
-		MapsDir:    filepath.Join(tempDir, filepath.Base(cfg.Dataplane.MapsDir)),
-		SSLDir:     filepath.Join(tempDir, filepath.Base(cfg.Dataplane.SSLCertsDir)),
-		GeneralDir: filepath.Join(tempDir, filepath.Base(cfg.Dataplane.GeneralStorageDir)),
-		ConfigFile: filepath.Join(tempDir, names.MainTemplateName),
-	}
-	resolvedPaths := dataplane.ResolvePaths(basePaths, capabilities)
-
-	dirsToCreate := []string{resolvedPaths.MapsDir, resolvedPaths.SSLDir, resolvedPaths.GeneralDir}
-	if resolvedPaths.CRTListDir != resolvedPaths.SSLDir && resolvedPaths.CRTListDir != resolvedPaths.GeneralDir {
-		dirsToCreate = append(dirsToCreate, resolvedPaths.CRTListDir)
-	}
-	for _, dir := range dirsToCreate {
-		if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
-			_ = os.RemoveAll(tempDir)
-			return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("creating directory: %w", mkErr)
-		}
-	}
-
-	cleanup = func() { _ = os.RemoveAll(tempDir) }
-	return resolvedPaths.ToValidationPaths(), capabilities, localVersion, cleanup, nil
-}
-
-// firstFailureReason extracts a short reason from a failed test result, joining
-// any per-assertion error messages (plus a render error, if the test failed
-// because rendering itself errored).
-func firstFailureReason(tr *testrunner.TestResult) string {
-	reasons := assertionFailureMessages(tr)
-	if len(reasons) == 0 {
-		return "no assertion detail reported"
-	}
-	return strings.Join(reasons, "; ")
-}
-
-// assertionFailureMessages collects the failure messages from a failed test:
-// the render error (if any) followed by each failed assertion's message.
-func assertionFailureMessages(tr *testrunner.TestResult) []string {
-	var msgs []string
-	if tr.RenderError != "" {
-		msgs = append(msgs, "render error: "+tr.RenderError)
-	}
-	for i := range tr.Assertions {
-		a := &tr.Assertions[i]
-		if a.Passed {
-			continue
-		}
-		msg := a.Error
-		if msg == "" {
-			msg = a.Type + " assertion failed"
-		}
-		msgs = append(msgs, msg)
-	}
-	return msgs
 }
