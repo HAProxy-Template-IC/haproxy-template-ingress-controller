@@ -236,6 +236,7 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 	metrics.SetResourceCount("test", 0)
 	metrics.SetEventSubscribers(0)
 	metrics.RecordHAProxyPodRejected("version_mismatch_older")
+	metrics.RecordConfigRejected("validationtests")
 
 	// Gather all metrics
 	metricFamilies, err := registry.Gather()
@@ -255,6 +256,7 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 		"haptic_event_subscribers",
 		"haptic_events_published_total",
 		"haptic_haproxy_pods_rejected_total",
+		"haptic_config_rejected_total",
 	}
 
 	// Collect registered metric names

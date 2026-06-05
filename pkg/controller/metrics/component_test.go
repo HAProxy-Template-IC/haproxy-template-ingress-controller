@@ -38,6 +38,35 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, component)
 }
 
+func TestComponent_ConfigInvalidEvent_IncrementsRejectedCounter(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+	eventBus := busevents.NewEventBus(100)
+
+	component := New(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go component.Start(ctx)
+	time.Sleep(10 * time.Millisecond)
+	eventBus.Start()
+
+	// A config rejected by the validationtests validator.
+	eventBus.Publish(events.NewConfigInvalidEvent("v1", nil, map[string][]string{
+		"validationtests": {`validationTest "x" failed: ...`},
+	}))
+	time.Sleep(100 * time.Millisecond)
+
+	got := testutil.ToFloat64(metrics.ConfigRejectedTotal.WithLabelValues("validationtests"))
+	assert.Equal(t, 1.0, got, "validationtests rejection should increment the counter")
+
+	// An empty error map still counts once, under "coordinator".
+	eventBus.Publish(events.NewConfigInvalidEvent("v2", nil, nil))
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ConfigRejectedTotal.WithLabelValues("coordinator")))
+}
+
 func TestComponent_ReconciliationEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)

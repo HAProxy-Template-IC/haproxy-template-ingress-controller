@@ -1463,3 +1463,141 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 func TestPartialDeploymentFailure(t *testing.T) {
 	testEnv.Test(t, buildPartialDeploymentFailureFeature())
 }
+
+// TestConfigRejectedByValidationTests exercises the daemon-side validationTests
+// load gate: a HAProxyTemplateConfig whose embedded validationTests fail must be
+// rejected (surfaced on status.validationErrors), the last-good config must keep
+// serving, and the haptic_config_rejected_total metric must record it.
+func TestConfigRejectedByValidationTests(t *testing.T) {
+	testEnv.Test(t, buildValidationTestsGateFeature())
+}
+
+func buildValidationTestsGateFeature() types.Feature {
+	return features.New("Error Scenarios - validationTests load gate").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			namespace := envconf.RandomName("test-vt-gate", 32)
+			ctx = StoreNamespaceInContext(ctx, namespace)
+			t.Logf("Test namespace: %s", namespace)
+
+			client, err := cfg.NewClient()
+			require.NoError(t, err)
+
+			if err := CreateControllerEnvironment(ctx, t, client, namespace, DefaultControllerEnvironmentOptions()); err != nil {
+				t.Fatal("Failed to create controller environment:", err)
+			}
+			return ctx
+		}).
+		Assess("config failing its validationTests is rejected and last-good kept", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			namespace, err := GetNamespaceFromContext(ctx)
+			require.NoError(t, err)
+			client, err := cfg.NewClient()
+			require.NoError(t, err)
+			clientset := Clientset()
+
+			require.NoError(t, WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout))
+
+			debugClient, err := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Second)
+			require.NoError(t, err)
+			metricsClient, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
+			require.NoError(t, err)
+
+			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
+			require.NoError(t, err, "Initial config should be available")
+
+			initialConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
+			require.NoError(t, err)
+			require.Contains(t, initialConfig, "backend test-backend", "initial config should have the valid backend")
+
+			// Inject a deliberately-failing validationTest (the template itself
+			// stays valid, so this exercises the validationTests gate specifically,
+			// not HAProxy syntax/schema validation).
+			t.Log("Adding a validationTest that can never pass...")
+			failing := map[string]interface{}{
+				"test-gate-canary-must-fail": map[string]interface{}{
+					"description": "deliberately failing test to exercise the validationTests load gate",
+					// fixtures is required by the CRD schema; an empty set is fine —
+					// the contains assertion below fails regardless of resources.
+					"fixtures": map[string]interface{}{},
+					"assertions": []interface{}{
+						map[string]interface{}{
+							"type":        "contains",
+							"target":      "haproxy.cfg",
+							"pattern":     "HAPTIC_GATE_CANARY_NEVER_RENDERED",
+							"description": "guaranteed to fail — pattern never appears in the render",
+						},
+					},
+				},
+			}
+			require.NoError(t, SetHAProxyTemplateConfigValidationTests(ctx, client, namespace, ControllerCRDName, failing))
+
+			// The gate rejects in the config-validation phase (before reinit). The
+			// most reliable signal is the rejection metric, which is exposed on
+			// /metrics independent of any status-subresource RBAC.
+			t.Log("Waiting for the gate to reject the config (haptic_config_rejected_total)...")
+			gateLabel := `haptic_config_rejected_total{validator="validationtests"}`
+			ok := pollUntil(ctx, 120*time.Second, 3*time.Second, func() bool {
+				m, mErr := metricsClient.GetMetrics(ctx)
+				return mErr == nil && strings.Contains(m, gateLabel)
+			})
+			if !ok {
+				pod, _ := GetControllerPod(ctx, client, namespace)
+				if pod != nil {
+					DumpPodLogs(ctx, t, clientset, pod)
+				}
+				t.Fatalf("gate did not record a validationtests rejection in %s", gateLabel)
+			}
+			t.Log("Gate recorded the rejection in haptic_config_rejected_total")
+
+			// Operator-facing observability: the failure must also surface on
+			// status.validationErrors, naming the failing test.
+			errs, err := GetHAProxyTemplateConfigValidationErrors(ctx, client, namespace, ControllerCRDName)
+			require.NoError(t, err)
+			joined := strings.Join(errs, "\n")
+			assert.Contains(t, joined, "test-gate-canary-must-fail",
+				"status.validationErrors should name the failing validationTest")
+
+			// Controller must still be running on the last-good config.
+			require.NoError(t, WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, 30*time.Second),
+				"controller should keep running after rejecting the config")
+			currentConfig, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
+			require.NoError(t, err)
+			assert.Contains(t, currentConfig, "backend test-backend",
+				"last-good config must keep serving after the bad config is rejected")
+
+			// Removing the failing test must let the config be accepted again.
+			t.Log("Clearing the failing validationTest; config should be accepted again...")
+			require.NoError(t, SetHAProxyTemplateConfigValidationTests(ctx, client, namespace, ControllerCRDName, nil))
+			debugClient, err = EnsureDebugClientReady(ctx, t, client, clientset, namespace, 30*time.Second)
+			require.NoError(t, err)
+			ok = pollUntil(ctx, 120*time.Second, 3*time.Second, func() bool {
+				errs, _ := GetHAProxyTemplateConfigValidationErrors(ctx, client, namespace, ControllerCRDName)
+				return len(errs) == 0
+			})
+			assert.True(t, ok, "status.validationErrors should clear once the failing test is removed")
+			return ctx
+		}).
+		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				return ctx
+			}
+			return CleanupControllerEnvironment(ctx, t, client)
+		}).
+		Feature()
+}
+
+// pollUntil calls fn every interval until it returns true or the timeout
+// elapses (or ctx is done). Returns whether fn succeeded.
+func pollUntil(ctx context.Context, timeout, interval time.Duration, fn func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return false
+		}
+		if fn() {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	return fn()
+}
