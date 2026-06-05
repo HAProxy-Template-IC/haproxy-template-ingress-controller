@@ -11,6 +11,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Added
 
+- The controller now runs the config's embedded `validationTests` before accepting a `HAProxyTemplateConfig` — at startup and on every change — so it never loads a config whose tests fail (previously only the `controller validate` CLI ran them). A failing change is rejected and the last-good config keeps serving; at startup the controller stays unready until a passing config is present. Failing test names and reasons are surfaced on the CR's `status.validationErrors`. Runs only on config load, never on the reconciliation hot path.
 - **Typed watched resources** — chart templates can access watched resources through compile-time typed top-level globals (e.g. `gateways`, `httproutes`); field access is type-checked at controller startup. Schemas come from the live apiserver, or `--schema-dir` offline. See [ADR-0010](./docs/adr/0010-typed-watched-resources.md).
 - `spec.k8sResources` declares full Kubernetes resources reconciled via Server-Side Apply, with an `OwnerReference` to the `HAProxyTemplateConfig` CR so `helm uninstall` GCs them. Replaces the imperative `renderResource()` template function.
 - `resourceapplier` partial-ownership mode (`haproxy-haptic.org/ownership: partial`): chart-owned and haptic-owned entries coexist on one resource via field-manager-aware list-map merging; orphan cleanup never deletes a partial-mode resource.
