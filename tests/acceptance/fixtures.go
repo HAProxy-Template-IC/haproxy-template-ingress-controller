@@ -618,6 +618,14 @@ func NewRole(namespace, name string) *rbacv1.Role {
 				Verbs:     []string{"get", "watch", "list"},
 			},
 			{
+				// Mirrors the chart ClusterRole — the status_updater writes
+				// validation outcomes (incl. config-gate rejections) to
+				// haproxytemplateconfigs/status.
+				APIGroups: []string{"haproxy-haptic.org"},
+				Resources: []string{"haproxytemplateconfigs/status"},
+				Verbs:     []string{"get", "update", "patch"},
+			},
+			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxycfgs"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},

@@ -946,6 +946,64 @@ func UpdateHAProxyTemplateConfigTemplate(ctx context.Context, client klient.Clie
 	return fmt.Errorf("failed to update HAProxyTemplateConfig after %d retries: %w", maxRetries, lastErr)
 }
 
+// SetHAProxyTemplateConfigValidationTests writes spec.validationTests on the
+// named HAProxyTemplateConfig (replacing any existing set). Pass nil to clear
+// them. Used by the gate acceptance test to inject a deliberately-failing test
+// and then remove it. Mirrors UpdateHAProxyTemplateConfigTemplate's optimistic-
+// concurrency retry.
+func SetHAProxyTemplateConfigValidationTests(ctx context.Context, client klient.Client, namespace, name string, tests map[string]interface{}) error {
+	dynamicClient, err := getDynamicClient(client.RESTConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+	gvr := haproxyTemplateConfigGVR()
+
+	maxRetries := 5
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		existing, err := dynamicClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get existing HAProxyTemplateConfig: %w", err)
+		}
+		if tests == nil {
+			unstructured.RemoveNestedField(existing.Object, "spec", "validationTests")
+		} else if err := unstructured.SetNestedField(existing.Object, tests, "spec", "validationTests"); err != nil {
+			return fmt.Errorf("failed to set spec.validationTests: %w", err)
+		}
+		_, err = dynamicClient.Resource(gvr).Namespace(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+		if err != nil {
+			if strings.Contains(err.Error(), "Conflict") || strings.Contains(err.Error(), "conflict") ||
+				strings.Contains(err.Error(), "resourceVersion") || strings.Contains(err.Error(), "modified") {
+				lastErr = err
+				time.Sleep(time.Duration(attempt*100) * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("failed to update HAProxyTemplateConfig validationTests: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("failed to set validationTests after %d retries: %w", maxRetries, lastErr)
+}
+
+// GetHAProxyTemplateConfigValidationErrors reads status.validationErrors off the
+// named HAProxyTemplateConfig — where the config-validation gate (including the
+// validationtests validator) surfaces why a config was refused.
+func GetHAProxyTemplateConfigValidationErrors(ctx context.Context, client klient.Client, namespace, name string) ([]string, error) {
+	dynamicClient, err := getDynamicClient(client.RESTConfig())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+	obj, err := dynamicClient.Resource(haproxyTemplateConfigGVR()).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HAProxyTemplateConfig: %w", err)
+	}
+	errs, _, err := unstructured.NestedStringSlice(obj.Object, "status", "validationErrors")
+	if err != nil {
+		return nil, fmt.Errorf("reading status.validationErrors: %w", err)
+	}
+	return errs, nil
+}
+
 // getDynamicClient creates a dynamic Kubernetes client with rate limiting disabled.
 // This is necessary for parallel test execution where multiple tests may need
 // to update HAProxyTemplateConfig resources simultaneously.

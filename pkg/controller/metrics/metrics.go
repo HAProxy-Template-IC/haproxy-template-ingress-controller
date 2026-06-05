@@ -87,6 +87,15 @@ type Metrics struct {
 	// "deployment.skipped" in the pipeline status, masking a real fault.
 	HAProxyPodsRejectedTotal *prometheus.CounterVec
 
+	// ConfigRejectedTotal counts HAProxyTemplateConfig loads refused by the
+	// config-validation gate, labelled by the validator that rejected it
+	// (basic / template / jsonpath / validationtests), or "coordinator" when the
+	// scatter-gather itself failed — a validator timed out or didn't respond —
+	// rather than a specific validator refusing the config. Persistent growth
+	// means the controller is repeatedly refusing a new config and continuing to
+	// serve the last-good one — the operator's config never took effect.
+	ConfigRejectedTotal *prometheus.CounterVec
+
 	// Build info metric
 	BuildInfo *prometheus.GaugeVec
 }
@@ -289,6 +298,13 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			[]string{"reason"},
 		),
 
+		ConfigRejectedTotal: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_config_rejected_total",
+			"Total number of HAProxyTemplateConfig loads refused by the config-validation gate, labelled by the validator that rejected the config (basic, template, jsonpath, validationtests) or \"coordinator\" when a validator timed out / didn't respond. Non-zero growth means the controller is refusing a new config and continuing on the last-good one.",
+			[]string{"validator"},
+		),
+
 		// Build info metric
 		BuildInfo: pkgmetrics.NewGaugeVec(
 			registry,
@@ -405,6 +421,12 @@ func (m *Metrics) RecordWebhookCertRotation() {
 // translates each event into a counter increment.
 func (m *Metrics) RecordHAProxyPodRejected(reason string) {
 	m.HAProxyPodsRejectedTotal.WithLabelValues(reason).Inc()
+}
+
+// RecordConfigRejected increments the config-rejection counter for the given
+// validator (the one whose check failed).
+func (m *Metrics) RecordConfigRejected(validator string) {
+	m.ConfigRejectedTotal.WithLabelValues(validator).Inc()
 }
 
 // SetIsLeader sets whether this replica is the leader.

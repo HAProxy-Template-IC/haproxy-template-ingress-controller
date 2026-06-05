@@ -80,6 +80,7 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 		events.EventTypeBecameLeader,
 		events.EventTypeLostLeadership,
 		events.EventTypeHAProxyPodRejected,
+		events.EventTypeConfigInvalid,
 	)
 
 	return &Component{
@@ -164,6 +165,16 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.handleLostLeadership(e)
 	case *events.HAProxyPodRejectedEvent:
 		c.metrics.RecordHAProxyPodRejected(e.Reason)
+	case *events.ConfigInvalidEvent:
+		// One increment per validator that rejected the config. The map is keyed
+		// by validator name; an empty/absent map still counts as one rejection
+		// under the "coordinator" label so a refusal is never silently uncounted.
+		if len(e.ValidationErrors) == 0 {
+			c.metrics.RecordConfigRejected("coordinator")
+		}
+		for validatorName := range e.ValidationErrors {
+			c.metrics.RecordConfigRejected(validatorName)
+		}
 	}
 }
 
