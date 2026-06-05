@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
@@ -112,6 +113,54 @@ defaults
 				strings.Contains(msg, "unrecognized")
 			if !matched {
 				t.Fatalf("admission denial reason did not mention the bad directive or a parser error.\nfull error: %s", msg)
+			}
+			return ctx
+		})
+
+	testEnv.Test(t, feature.Feature())
+}
+
+// TestHAProxyTemplateConfigAdmission_RejectsFailingValidationTests verifies the
+// webhook runs the config's embedded validationTests and DENIES a config whose
+// tests fail — refusing it at apply so it never lands in etcd to crash-loop a
+// future fresh controller pod. The template itself is valid HAProxy (so this
+// exercises the validationTests gate specifically, not syntax/schema).
+func TestHAProxyTemplateConfigAdmission_RejectsFailingValidationTests(t *testing.T) {
+	feature := features.New("HAProxyTemplateConfig admission denies failing validationTests").
+		Assess("apply is denied with a reason naming the failing test", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			ns := NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, ns)
+
+			hc, err := hapticclient.NewForConfig(client.RESTConfig())
+			if err != nil {
+				t.Fatalf("build haptic clientset: %v", err)
+			}
+
+			crd := minimalValidHAProxyTemplateConfig(ns, "failing-vt-canary")
+			crd.Spec.ValidationTests = map[string]v1alpha1.ValidationTest{
+				"test-gate-canary-must-fail": {
+					Description: "deliberately failing test to exercise the admission validationTests gate",
+					Fixtures:    map[string][]runtime.RawExtension{},
+					Assertions: []v1alpha1.ValidationAssertion{{
+						Type:        "contains",
+						Target:      "haproxy.cfg",
+						Pattern:     "HAPTIC_GATE_CANARY_NEVER_RENDERED",
+						Description: "guaranteed to fail — pattern never appears in the render",
+					}},
+				},
+			}
+
+			_, err = hc.HaproxyTemplateICV1alpha1().HAProxyTemplateConfigs(ns).Create(ctx, crd, metav1.CreateOptions{})
+			if err == nil {
+				t.Fatalf("expected admission to deny a config whose validationTests fail, but Create succeeded")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "validationTests") && !strings.Contains(msg, "test-gate-canary-must-fail") {
+				t.Fatalf("admission denial reason did not reference the failing validationTest.\nfull error: %s", msg)
 			}
 			return ctx
 		})

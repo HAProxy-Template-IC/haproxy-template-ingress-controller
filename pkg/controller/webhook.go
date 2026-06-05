@@ -166,6 +166,7 @@ func createDryRunValidator(
 	pluggableValidator *pluggablevalidator.Manager,
 	engineWiring typedRendererWiring,
 	gvrMapper meta.RESTMapper,
+	k8sClient *client.Client,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
 	rules := webhook.ExtractWebhookRules(cfg)
@@ -247,6 +248,12 @@ func createDryRunValidator(
 		HTTPStoreComponent: httpStoreComponent,
 		Declarations:       engineWiring.Declarations,
 		TypedResourceTypes: engineWiring.TypedResourceTypes,
+		// Bootstrap schemas from the PROSPECTIVE config at admission, mirroring
+		// the daemon load gate, so both gates build the engine from the same
+		// type set (engineWiring above is the startup-fixed fallback). The
+		// load-gate's TypeBootstrapper and the webhook's SchemaBootstrapper
+		// share an underlying signature, so the closure converts directly.
+		Bootstrap: webhook.SchemaBootstrapper(newIterationTypeBootstrapper(k8sClient, logger)),
 	})
 
 	// DryRunValidator is only needed when at least one watched resource

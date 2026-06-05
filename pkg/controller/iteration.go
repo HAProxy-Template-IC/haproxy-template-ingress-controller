@@ -207,7 +207,7 @@ func runIteration(
 	// validation can dispatch the rendered file set to validator sidecars
 	// (e.g. SPOA hub --validate-socket) after the standard pipeline
 	// passes. A nil Manager is the no-validators-configured case.
-	dryrunValidator, configValidator, err := maybeCreateWebhookValidators(setup, cfg, reconComponents, pluggableMgr, logger)
+	dryrunValidator, configValidator, err := maybeCreateWebhookValidators(setup, cfg, reconComponents, pluggableMgr, k8sClient, logger)
 	if err != nil {
 		return err
 	}
@@ -321,6 +321,7 @@ func maybeCreateWebhookValidators(
 	cfg *coreconfig.Config,
 	reconComponents *reconciliationComponents,
 	pluggableMgr *pluggablevalidator.Manager,
+	k8sClient *client.Client,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
 	// The webhook server runs whenever the chart mounted a TLS cert
@@ -333,7 +334,7 @@ func maybeCreateWebhookValidators(
 	// tuple is nil when no watched-resource rules exist; the ConfigValidator
 	// is always present so HAProxyTemplateConfig admissions land on a real
 	// handler instead of the pure server's fail-open path.
-	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, reconComponents.storeProvider, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, reconComponents.gvrMapper, logger)
+	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, reconComponents.storeProvider, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, reconComponents.gvrMapper, k8sClient, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating webhook validators: %w", err)
 	}

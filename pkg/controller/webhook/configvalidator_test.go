@@ -16,13 +16,17 @@ package webhook
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -43,6 +47,71 @@ func newConfigValidatorForTest(t *testing.T) *ConfigValidator {
 			Logger: testutil.NewTestLogger(),
 		}),
 		StoreProvider: stubProvider{},
+	})
+}
+
+// TestConfigValidator_resolveSchemas pins the per-admission bootstrap parity:
+// when a live bootstrapper is wired, admission derives its declarations/types
+// from the PROSPECTIVE config (matching the daemon load gate); a bootstrap
+// failure degrades to the startup-fixed wiring rather than blinding the gate.
+func TestConfigValidator_resolveSchemas(t *testing.T) {
+	cfg := &coreconfig.Config{HAProxyConfig: coreconfig.HAProxyConfig{Template: "frontend x\n  bind *:80\n"}}
+
+	newValidator := func(c *ConfigValidatorConfig) *ConfigValidator {
+		c.Logger = testutil.NewTestLogger()
+		c.StrictValidator = validation.NewValidationService(&validation.ValidationServiceConfig{Logger: testutil.NewTestLogger()})
+		c.StoreProvider = stubProvider{}
+		return NewConfigValidator(c)
+	}
+
+	t.Run("nil bootstrap returns startup-fixed wiring", func(t *testing.T) {
+		startupDecls := map[string]any{"sentinel": 1}
+		startupTypes := map[string]reflect.Type{"svc": reflect.TypeOf(struct{}{})}
+		v := newValidator(&ConfigValidatorConfig{Declarations: startupDecls, TypedResourceTypes: startupTypes})
+
+		decls, types := v.resolveSchemas(context.Background(), cfg, "haptic", "haptic-config")
+		assert.Equal(t, startupDecls, decls)
+		assert.Equal(t, startupTypes, types)
+	})
+
+	t.Run("bootstrap success uses prospective-config schemas", func(t *testing.T) {
+		var gotCfg *coreconfig.Config
+		sentinelType := reflect.TypeOf(0)
+		v := newValidator(&ConfigValidatorConfig{
+			Declarations: map[string]any{"stale": true}, // must NOT be returned on success
+			Bootstrap: func(_ context.Context, c *coreconfig.Config) (*typebootstrap.Result, error) {
+				gotCfg = c
+				return &typebootstrap.Result{
+					Types:  map[string]reflect.Type{"widget": sentinelType},
+					Kinds:  map[string]string{},
+					Errors: map[string]error{},
+				}, nil
+			},
+		})
+
+		decls, types := v.resolveSchemas(context.Background(), cfg, "haptic", "haptic-config")
+		assert.Same(t, cfg, gotCfg, "bootstrap must receive the prospective config")
+		assert.Equal(t, sentinelType, types["widget"], "must use the bootstrapped types")
+		assert.NotContains(t, decls, "stale", "must not fall back to startup declarations on success")
+	})
+
+	t.Run("bootstrap error falls back to startup-fixed wiring", func(t *testing.T) {
+		startupDecls := map[string]any{"sentinel": 1}
+		startupTypes := map[string]reflect.Type{"svc": reflect.TypeOf(struct{}{})}
+		called := false
+		v := newValidator(&ConfigValidatorConfig{
+			Declarations:       startupDecls,
+			TypedResourceTypes: startupTypes,
+			Bootstrap: func(_ context.Context, _ *coreconfig.Config) (*typebootstrap.Result, error) {
+				called = true
+				return nil, errors.New("schema fetch failed")
+			},
+		})
+
+		decls, types := v.resolveSchemas(context.Background(), cfg, "haptic", "haptic-config")
+		assert.True(t, called, "bootstrap must be attempted")
+		assert.Equal(t, startupDecls, decls, "must fall back to startup declarations on bootstrap error")
+		assert.Equal(t, startupTypes, types)
 	})
 }
 

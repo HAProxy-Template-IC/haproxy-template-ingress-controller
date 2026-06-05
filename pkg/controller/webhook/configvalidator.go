@@ -20,22 +20,63 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configtest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	ctrlhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
+// SchemaBootstrapper resolves the typed-resource reflect.Types and declarations
+// for a prospective config from live schemas. It mirrors the
+// validator.TypeBootstrapper the daemon load gate uses; the two share the same
+// underlying signature so the controller wiring can convert one to the other.
+//
+// When set on a ConfigValidator, admission bootstraps schemas from the
+// PROSPECTIVE config — exactly as the load gate does on load — so the two gates
+// build the test/render engine from the same type set. This is what makes the
+// "a config the webhook admits will load" guarantee hold even when the
+// prospective config changes its own typed `watchedResources` relative to what
+// the controller was started with. Without it, the webhook validated against
+// the startup-fixed type set, which could both false-reject a config that adds
+// a new typed watched resource and false-admit one whose tests pass under the
+// stale types but fail under the new ones.
+type SchemaBootstrapper func(ctx context.Context, cfg *coreconfig.Config) (*typebootstrap.Result, error)
+
 // HAProxyTemplateConfigGVK is the canonical GVK string the webhook server
 // uses to dispatch admission requests for the controller's own CRD.
 const HAProxyTemplateConfigGVK = "haproxy-haptic.org/v1alpha1.HAProxyTemplateConfig"
+
+// configValidationTestsBudget bounds the validationTests run at admission.
+//
+// It is sized so the suite RELIABLY gets its full budget within the config-GVK
+// internal deadline (configAdmissionTimeout = 9s in component.go), accounting
+// for everything that runs first on the same context:
+//
+//	schema bootstrap (≤ typeBootstrapFetchTimeout = 2s)
+//	+ render + `haproxy -c`        (≤ ~2s even for a large config)
+//	+ this budget                  (5s)
+//	= 9s internal deadline         (< 10s chart timeoutSeconds)
+//
+// Because RunValidationTests bounds the run with context.WithTimeout(ctx,
+// budget) — i.e. min(budget, time left on the admission ctx) — the suite gets
+// the full 5s whenever bootstrap+render ≤ 4s, which always holds (bootstrap
+// self-caps at 2s, render is sub-second in practice). The bundled suite is
+// ~3.9s, so 5s leaves margin. A suite that still can't finish is admitted with a
+// warning (the load gate enforces authoritatively on load) rather than blocking
+// the apply.
+const configValidationTestsBudget = 5 * time.Second
 
 // ConfigValidator validates a prospective HAProxyTemplateConfig admission by:
 //  1. Parsing the admitted CRD spec into a *config.Config.
@@ -60,6 +101,7 @@ type ConfigValidator struct {
 	httpStoreComponent *ctrlhttpstore.Component
 	declarations       map[string]any
 	typedResourceTypes map[string]reflect.Type
+	bootstrap          SchemaBootstrapper
 }
 
 // ConfigValidatorConfig wires the ConfigValidator's dependencies. All fields
@@ -99,8 +141,18 @@ type ConfigValidatorConfig struct {
 
 	// TypedResourceTypes is the per-resource generated Go type map fed
 	// to the ephemeral RenderService so it wraps each store snapshot
-	// into the typed shape expected by templates.
+	// into the typed shape expected by templates. Used as the fallback
+	// when Bootstrap is nil or its live-schema resolution fails.
 	TypedResourceTypes map[string]reflect.Type
+
+	// Bootstrap (optional) resolves typed schemas from the PROSPECTIVE config
+	// at admission, so admission builds the engine from the same type set the
+	// daemon load gate will use on load (true parity — see SchemaBootstrapper).
+	// When nil, the validator falls back to the startup-fixed Declarations /
+	// TypedResourceTypes (the prior behavior; still correct for configs that
+	// don't change their own typed watchedResources). Production wires the live
+	// bootstrapper; unit tests may leave it nil or pass a stub.
+	Bootstrap SchemaBootstrapper
 }
 
 // NewConfigValidator constructs a ConfigValidator. Panics if any required
@@ -125,6 +177,7 @@ func NewConfigValidator(cfg *ConfigValidatorConfig) *ConfigValidator {
 		httpStoreComponent: cfg.HTTPStoreComponent,
 		declarations:       cfg.Declarations,
 		typedResourceTypes: cfg.TypedResourceTypes,
+		bootstrap:          cfg.Bootstrap,
 	}
 }
 
@@ -157,11 +210,16 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 		return false, fmt.Sprintf("parsing HAProxyTemplateConfig: %v", err), nil
 	}
 
+	// Resolve the typed-resource declarations + reflect.Types this admission
+	// renders/tests against, bootstrapping from the PROSPECTIVE config when a
+	// live bootstrapper is wired (true parity with the load gate).
+	declarations, typedResourceTypes := v.resolveSchemas(ctx, cfg, namespace, name)
+
 	// Compile an ephemeral template engine from the prospective config's
 	// templates. Failure here means a Scriggo-level syntax problem in the
 	// templates — surface it as a render-phase error (same simplification
 	// path operators see for any other render failure).
-	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, v.declarations, helpers.EngineOptions{})
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, declarations, helpers.EngineOptions{})
 	if err != nil {
 		return false, dataplane.SimplifyRenderingError(fmt.Errorf("compiling templates: %w", err)), nil
 	}
@@ -176,7 +234,7 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 		Logger:             v.logger,
 		Capabilities:       v.capabilities,
 		HTTPStoreComponent: v.httpStoreComponent,
-		TypedResourceTypes: v.typedResourceTypes,
+		TypedResourceTypes: typedResourceTypes,
 	})
 
 	// Strict pipeline: runs full syntax + schema + `haproxy -c`. This is
@@ -202,9 +260,60 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 		return false, dataplane.SimplifyValidationError(valResult.Error), nil
 	}
 
+	// Run the config's embedded validationTests at admission, via the same
+	// configtest helper AND (when a bootstrapper is wired) the same
+	// prospective-config schema set the daemon load gate uses. This is what
+	// keeps the two consistent: a config admitted here will load — so a config
+	// that FAILS its own tests is refused now, never entering etcd to crash-loop
+	// the next fresh controller pod. The run is bounded so it can't approach the
+	// webhook timeout; on an incomplete run (pathologically large suite /
+	// contention) we admit with a warning and let the load gate enforce — the
+	// webhook is failurePolicy:Ignore, so this path never blocks an operator's
+	// recovery apply. (Already-observed failures still deny even on a cut-short
+	// run; see configtest.RunValidationTests.)
+	testResult, testErr := configtest.RunValidationTests(ctx, cfg, engine, typedResourceTypes, configValidationTestsBudget, v.logger)
+	switch {
+	case testErr != nil:
+		v.logger.Warn("validationTests could not run at admission; admitting (load gate still enforces)",
+			"namespace", namespace, "name", name, "error", testErr)
+		return true, "", []string{fmt.Sprintf("validationTests could not run at admission: %v — the controller's load gate will still enforce them", testErr)}
+	case testResult.Incomplete:
+		v.logger.Warn("validationTests did not finish within the admission budget; admitting (load gate still enforces)",
+			"namespace", namespace, "name", name, "budget", configValidationTestsBudget)
+		return true, "", []string{fmt.Sprintf("validationTests did not finish within %s at admission and were not fully checked here — the controller's load gate will enforce them", configValidationTestsBudget)}
+	case !testResult.Passed:
+		v.logger.Info("HAProxyTemplateConfig admission denied: validationTests failed",
+			"namespace", namespace, "name", name, "failures", testResult.Failures)
+		return false, "validationTests failed:\n  " + strings.Join(testResult.Failures, "\n  "), nil
+	}
+
 	v.logger.Debug("HAProxyTemplateConfig admission validated successfully",
 		"namespace", namespace,
 		"name", name,
 		"operation", operation)
 	return true, "", nil
+}
+
+// resolveSchemas returns the typed-resource declarations + reflect.Types the
+// admission render/test should use for cfg. When a live bootstrapper is wired,
+// it derives them from the PROSPECTIVE config — exactly as the daemon load gate
+// does on load — so both gates build the engine from the same type set (true
+// parity: a config the webhook admits will load, even when it changes its own
+// typed watchedResources relative to the running controller).
+//
+// On bootstrap failure it degrades to the startup-fixed wiring rather than
+// skipping validation: a transient schema-fetch failure shouldn't blind the
+// gate, and the load gate re-bootstraps and enforces on load anyway. With no
+// bootstrapper wired (unit tests), it returns the startup-fixed wiring directly.
+func (v *ConfigValidator) resolveSchemas(ctx context.Context, cfg *coreconfig.Config, namespace, name string) (declarations map[string]any, typedResourceTypes map[string]reflect.Type) {
+	if v.bootstrap == nil {
+		return v.declarations, v.typedResourceTypes
+	}
+	bootstrapResult, err := v.bootstrap(ctx, cfg)
+	if err != nil {
+		v.logger.Warn("per-admission schema bootstrap failed; validating with startup-fixed schemas (load gate re-bootstraps on load)",
+			"namespace", namespace, "name", name, "error", err)
+		return v.declarations, v.typedResourceTypes
+	}
+	return helpers.BuildAdditionalDeclarations(cfg, bootstrapResult), bootstrapResult.Types
 }
