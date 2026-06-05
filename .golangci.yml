@@ -272,6 +272,12 @@ linters:
       - path: pkg/controller/resourceapplier/
         linters:
           - goconst
+      # projection.go computes the unstructured top-level map keys to retain
+      # (apiVersion, kind, metadata) for the on-demand informer body-strip —
+      # same K8s-field-name-as-map-key case as resourceapplier above.
+      - path: pkg/k8s/watcher/projection.go
+        linters:
+          - goconst
       - path: pkg/templating/filters(_status|_string)?\.go
         linters:
           - goconst

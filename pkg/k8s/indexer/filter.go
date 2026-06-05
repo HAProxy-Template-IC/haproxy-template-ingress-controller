@@ -232,6 +232,26 @@ func parseJSONPathPattern(pattern string) []string {
 	return segments
 }
 
+// RootField returns the top-level (first) field segment of a JSONPath
+// expression, or "" if the pattern is empty. It is resource-agnostic — it
+// only parses the JSONPath string — and is used to compute the set of
+// top-level object fields a projection must retain so that index-key
+// extraction and field-selector evaluation still work on the projected
+// object.
+//
+// Examples:
+//   - "metadata.name"                          -> "metadata"
+//   - "metadata.labels['kubernetes.io/x']"     -> "metadata"
+//   - "spec.rules[0].host"                     -> "spec"
+//   - "status"                                 -> "status"
+func RootField(pattern string) string {
+	segments := parseJSONPathPattern(pattern)
+	if len(segments) == 0 {
+		return ""
+	}
+	return segments[0]
+}
+
 // FilterError represents an error during field filtering.
 type FilterError struct {
 	Pattern string
