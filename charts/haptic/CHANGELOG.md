@@ -11,6 +11,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Changed
 
+- gateway library: the cluster-wide `configmaps` watch now defaults to `store: on-demand` (CachedStore) instead of `full`. It is only read by name for BackendTLSPolicy CA bundles and never iterated, so keeping every cluster ConfigMap body resident was pure overhead; on-demand keeps just references resident and fetches bodies live on access (matching the `secrets` watch).
 - Template libraries (`gateway`, `nginx-ingress`, `haproxy-ingress`, `haproxytech`) are now packaged as conditional **subcharts** instead of files bundled into the parent. A release stores only the source of the libraries it enables — disabled libraries are pruned from the Helm release Secret — so an install with all libraries enabled no longer exceeds the Kubernetes 1 MiB Secret limit (it previously did, breaking `helm install`). No values changes: the same `controller.templateLibraries.<x>.enabled` flags gate subchart inclusion, and the rendered `HAProxyTemplateConfig` is byte-identical. `base`/`ssl`/`ingress`/`ingress-annotations-compat`/`spoa-hub` remain in the parent.
 
 ### Added
