@@ -43,7 +43,7 @@ ARG MARKDOWNLINT_VERSION=0.14.0
 # renovate: datasource=github-releases depName=goreleaser/goreleaser
 ARG GORELEASER_VERSION=2.16.0
 # renovate: datasource=github-releases depName=sigstore/cosign
-ARG COSIGN_VERSION=3.0.6
+ARG COSIGN_VERSION=3.1.1
 # renovate: datasource=github-releases depName=anchore/syft
 ARG SYFT_VERSION=1.45.1
 # renovate: datasource=github-releases depName=helm/helm versioning=semver allowedVersions=<4
