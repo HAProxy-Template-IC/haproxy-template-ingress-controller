@@ -19,7 +19,7 @@ require (
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260602211720-a3d7ebb74be3
+	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260608181320-2c626a96b2d3
 	golang.org/x/sync v0.21.0
 	golang.org/x/text v0.37.0
 	golang.org/x/vuln v1.3.0
@@ -289,7 +289,7 @@ require (
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20260209203927-2842357ff358 // indirect
-	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
