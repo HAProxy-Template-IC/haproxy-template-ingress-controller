@@ -707,6 +707,8 @@ func (c *Component) Start(ctx context.Context) error {
 ### Testing
 
 - **Don't use real Kubernetes API in unit tests** - Use fake clients from `k8s.io/client-go/kubernetes/fake`
+- **Never shell out to external binaries in unit tests** - Mock through a seam instead; for haproxy use `pkg/dataplane/dataplanetest.InstallFakeHAProxy` in the package's `TestMain` (see `pkg/dataplane/CLAUDE.md`). Real-binary verdicts belong in integration tests
+- **Tests must only listen on loopback** - Bind `127.0.0.1`/`localhost:0`, never `:port`/`0.0.0.0` (the `httptest` package does this right by default). All-interface binds trigger a Windows Firewall whitelist prompt for every freshly built test binary
 - **Integration tests are slow** - Keep them focused and minimal
 - **Mock EventBus carefully** - Subscribe before publishing to avoid race conditions
 

@@ -682,6 +682,10 @@ func TestServer_Start_ContextCancellation(t *testing.T) {
 		CertPEM: certPEM,
 		KeyPEM:  keyPEM,
 		Port:    29443, // Use unique port to avoid conflicts
+		// Loopback, not the 0.0.0.0 default: binding all interfaces makes
+		// Windows Firewall prompt to whitelist every freshly built test
+		// binary. Tests must only ever listen on loopback.
+		BindAddress: "127.0.0.1",
 	})
 	require.NoError(t, err)
 

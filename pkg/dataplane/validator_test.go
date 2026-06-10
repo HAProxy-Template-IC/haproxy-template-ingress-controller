@@ -144,6 +144,10 @@ backend api-servers
 }
 
 func TestValidateConfiguration_SyntaxError(t *testing.T) {
+	// Simulate haproxy rejecting the malformed config (unit tests never
+	// shell out; the real binary's verdict is integration-test territory).
+	installRejectingHAProxy(t, "parsing [haproxy.cfg:9] : 'backend' section requires a name")
+
 	// Config with completely invalid structure that parser will reject
 	config := `
 global
@@ -206,6 +210,10 @@ func TestValidateConfiguration_EmptyConfig(t *testing.T) {
 }
 
 func TestValidateConfiguration_SemanticError(t *testing.T) {
+	// Simulate haproxy rejecting the dangling use_backend reference (unit
+	// tests never shell out; the real verdict is integration-test territory).
+	installRejectingHAProxy(t, "unable to find required backend: 'nonexistent'")
+
 	// Valid syntax but semantic error: use_backend refers to non-existent backend
 	config := `
 global

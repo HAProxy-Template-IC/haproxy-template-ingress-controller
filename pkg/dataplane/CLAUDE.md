@@ -257,7 +257,8 @@ type Capabilities = client.Capabilities
 When the controller runs alongside HAProxy (e.g., in sidecar mode), use `CapabilitiesFromVersion()` to detect capabilities from the local HAProxy binary:
 
 ```go
-// Detect local HAProxy version (shells out to `haproxy -v`; no context arg).
+// Detect local HAProxy version (runs `haproxy -v` via the installed
+// HAProxyExecutor — see haproxy_exec.go; no context arg).
 localVersion, err := dataplane.DetectLocalVersion()
 if err != nil {
     return fmt.Errorf("failed to detect local HAProxy: %w", err)
@@ -743,6 +744,38 @@ func TestSync_Integration(t *testing.T) {
     assert.True(t, result.Success)
 }
 ```
+
+### Faking the HAProxy Binary (required in unit tests)
+
+**Unit tests must never shell out to external binaries.** Both places this
+package executes haproxy (`DetectLocalVersion` → `haproxy -v`, semantic
+validation → `haproxy -c`) go through the `HAProxyExecutor` seam in
+`haproxy_exec.go`. Any test package whose tests reach those paths installs the
+fake once per package:
+
+```go
+func TestMain(m *testing.M) {
+    restore := dataplanetest.InstallFakeHAProxy()
+    code := m.Run()
+    restore()
+    os.Exit(code)
+}
+```
+
+The default fake reports version 3.2.0 and accepts every config. Tests that
+need haproxy to _reject_ a config simulate the verdict per test (safe only
+because these packages don't use `t.Parallel`):
+
+```go
+t.Cleanup(dataplanetest.InstallFakeHAProxy(
+    dataplanetest.WithRejectAll("parsing [haproxy.cfg:5] : unknown keyword 'invalid_directive'")))
+```
+
+Such tests verify error _plumbing_ (phase classification, message extraction,
+caching), not haproxy's actual judgment — whether the real binary accepts or
+rejects a given construct is integration-test territory. pkg/dataplane's own
+internal tests can't import `dataplanetest` (cycle); they use the equivalent
+local fake in `main_test.go` via `SetHAProxyExecutor`.
 
 ### Mock Testing
 

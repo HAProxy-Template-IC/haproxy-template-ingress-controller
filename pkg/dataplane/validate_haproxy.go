@@ -15,6 +15,7 @@
 package dataplane
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -247,16 +248,13 @@ func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error
 // to append "none" to all server resolution methods, allowing startup/validation to
 // proceed even when DNS resolution fails. Servers with unresolvable hostnames will
 // start in RMAINT (DOWN) state instead of causing validation failure.
+//
+// Execution goes through the installed HAProxyExecutor (see haproxy_exec.go)
+// so unit tests can substitute a fake instead of shelling out.
 func runHAProxyCheck(configPath, configContent string, skipDNSValidation bool) error {
 	// Serialize HAProxy execution to work around concurrent execution issues
 	haproxyCheckMutex.Lock()
 	defer haproxyCheckMutex.Unlock()
-
-	// Find haproxy binary
-	haproxyBin, err := exec.LookPath("haproxy")
-	if err != nil {
-		return fmt.Errorf("haproxy binary not found: %w", err)
-	}
 
 	// Get absolute path for config file
 	absConfigPath, err := filepath.Abs(configPath)
@@ -275,14 +273,15 @@ func runHAProxyCheck(configPath, configContent string, skipDNSValidation bool) e
 		args = []string{"-c", "-f", filepath.Base(absConfigPath)}
 	}
 
-	// Run haproxy with the constructed arguments
-	// Set working directory to config file directory so relative paths work
-	cmd := exec.Command(haproxyBin, args...)
-	cmd.Dir = filepath.Dir(absConfigPath)
-
-	// Capture both stdout and stderr
-	output, err := cmd.CombinedOutput()
+	// Run haproxy with the working directory set to the config file
+	// directory so relative paths inside the config resolve.
+	output, err := getHAProxyExecutor().Check(filepath.Dir(absConfigPath), args...)
 	if err != nil {
+		// Lookup failures (no binary on PATH) carry no haproxy output to
+		// interpret — surface them directly, matching the pre-seam behavior.
+		if len(output) == 0 && errors.Is(err, exec.ErrNotFound) {
+			return err
+		}
 		return interpretHAProxyExitError(output, err, configContent)
 	}
 
