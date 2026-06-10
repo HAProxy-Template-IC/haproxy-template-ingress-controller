@@ -25,7 +25,7 @@ import (
 )
 
 func TestAddAuthHeaders(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
 
 	tests := []struct {
 		name        string
@@ -35,49 +35,49 @@ func TestAddAuthHeaders(t *testing.T) {
 	}{
 		{
 			name: "basic with username and password",
-			auth: &AuthConfig{Type: "basic", Username: "alice", Password: "s3cret"},
+			auth: &AuthConfig{Type: AuthTypeBasic, Username: "alice", Password: "s3cret"},
 			wantHeaders: map[string]string{
 				"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte("alice:s3cret")),
 			},
 		},
 		{
 			name: "basic with username only",
-			auth: &AuthConfig{Type: "basic", Username: "alice"},
+			auth: &AuthConfig{Type: AuthTypeBasic, Username: "alice"},
 			wantHeaders: map[string]string{
 				"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte("alice:")),
 			},
 		},
 		{
 			name: "basic with password only",
-			auth: &AuthConfig{Type: "basic", Password: "pw"},
+			auth: &AuthConfig{Type: AuthTypeBasic, Password: "pw"},
 			wantHeaders: map[string]string{
 				"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte(":pw")),
 			},
 		},
 		{
 			name:        "basic with neither sets nothing",
-			auth:        &AuthConfig{Type: "basic"},
+			auth:        &AuthConfig{Type: AuthTypeBasic},
 			wantMissing: []string{"Authorization"},
 		},
 		{
 			name: "bearer with token",
-			auth: &AuthConfig{Type: "bearer", Token: "mytoken"},
+			auth: &AuthConfig{Type: AuthTypeBearer, Token: "mytoken"},
 			wantHeaders: map[string]string{
 				"Authorization": "Bearer mytoken",
 			},
 		},
 		{
 			name:        "bearer without token sets nothing",
-			auth:        &AuthConfig{Type: "bearer"},
+			auth:        &AuthConfig{Type: AuthTypeBearer},
 			wantMissing: []string{"Authorization"},
 		},
 		{
 			name: "header type sets all headers",
 			auth: &AuthConfig{
-				Type: "header",
+				Type: AuthTypeHeader,
 				Headers: map[string]string{
-					"X-API-Key":  "abc123",
-					"X-Tenant":   "acme",
+					"X-API-Key": "abc123",
+					"X-Tenant":  "acme",
 				},
 			},
 			wantHeaders: map[string]string{
@@ -94,8 +94,8 @@ func TestAddAuthHeaders(t *testing.T) {
 			wantHeaders: map[string]string{"X-Api-Key": "abc"},
 		},
 		{
-			name: "unknown type with no headers does nothing",
-			auth: &AuthConfig{Type: "unknown"},
+			name:        "unknown type with no headers does nothing",
+			auth:        &AuthConfig{Type: "unsupported"},
 			wantMissing: []string{"Authorization", "X-Api-Key"},
 		},
 	}
@@ -117,10 +117,10 @@ func TestAddAuthHeaders(t *testing.T) {
 // TestAddAuthHeaders_DoesNotOverwriteCustomHeaderForBasicAndBearer verifies
 // that the basic/bearer paths don't accidentally write to a header conflict.
 func TestAddAuthHeaders_OverwriteSameHeaderTwice(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
 	req.Header.Set("Authorization", "Original")
 
-	addAuthHeaders(req, &AuthConfig{Type: "bearer", Token: "newtoken"})
+	addAuthHeaders(req, &AuthConfig{Type: AuthTypeBearer, Token: "newtoken"})
 
 	require.Equal(t, "Bearer newtoken", req.Header.Get("Authorization"))
 }

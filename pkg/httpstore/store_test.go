@@ -298,7 +298,7 @@ func TestHTTPStore_BasicAuth(t *testing.T) {
 	// With auth - should succeed
 	// Use a different URL to avoid cached empty result from failed fetch
 	result, err := store.Fetch(ctx, server.URL+"/auth", FetchOptions{}, &AuthConfig{
-		Type:     "basic",
+		Type:     AuthTypeBasic,
 		Username: "user",
 		Password: "pass",
 	})
@@ -324,7 +324,7 @@ func TestHTTPStore_BearerAuth(t *testing.T) {
 
 	// With bearer token
 	result, err := store.Fetch(ctx, server.URL, FetchOptions{}, &AuthConfig{
-		Type:  "bearer",
+		Type:  AuthTypeBearer,
 		Token: "mytoken",
 	})
 	require.NoError(t, err)
@@ -349,7 +349,7 @@ func TestHTTPStore_CustomHeaders(t *testing.T) {
 
 	// With custom headers
 	result, err := store.Fetch(ctx, server.URL, FetchOptions{}, &AuthConfig{
-		Type: "header",
+		Type: AuthTypeHeader,
 		Headers: map[string]string{
 			"X-API-Key": "secret123",
 		},
@@ -551,7 +551,7 @@ func TestHTTPStore_GetEntry(t *testing.T) {
 
 	// Fetch with auth headers
 	auth := &AuthConfig{
-		Type: "header",
+		Type: AuthTypeHeader,
 		Headers: map[string]string{
 			"X-API-Key": "secret",
 		},
@@ -663,7 +663,7 @@ func TestHTTPStore_FetchWithHeaderAuth(t *testing.T) {
 
 	ctx := context.Background()
 	auth := &AuthConfig{
-		Type: "header",
+		Type: AuthTypeHeader,
 		Headers: map[string]string{
 			"X-API-Key":    "my-api-key",
 			"X-Custom-Key": "custom-value",
@@ -690,7 +690,7 @@ func TestHTTPStore_FetchWithUnknownAuthType(t *testing.T) {
 	ctx := context.Background()
 	// Unknown auth type falls through to default which uses Headers
 	auth := &AuthConfig{
-		Type: "unknown",
+		Type: "unsupported",
 		Headers: map[string]string{
 			"X-Custom-Auth": "some-token",
 		},

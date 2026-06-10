@@ -26,8 +26,8 @@ import (
 // needs to satisfy the Component interface; nothing actually starts.
 type builderTestComponent struct{ name string }
 
-func (c *builderTestComponent) Name() string                     { return c.name }
-func (c *builderTestComponent) Start(_ context.Context) error    { return nil }
+func (c *builderTestComponent) Name() string                  { return c.name }
+func (c *builderTestComponent) Start(_ context.Context) error { return nil }
 
 func TestRegistryBuilder_AllReplica(t *testing.T) {
 	registry := NewRegistry()

@@ -92,9 +92,21 @@ func (o FetchOptions) WithDefaults() FetchOptions {
 	return o
 }
 
+// Supported AuthConfig.Type values.
+const (
+	// AuthTypeBasic selects HTTP basic authentication (Username/Password).
+	AuthTypeBasic = "basic"
+
+	// AuthTypeBearer selects bearer-token authentication (Token).
+	AuthTypeBearer = "bearer"
+
+	// AuthTypeHeader selects custom-header authentication (Headers).
+	AuthTypeHeader = "header"
+)
+
 // AuthConfig configures HTTP authentication.
 type AuthConfig struct {
-	// Type is the authentication type: "basic", "bearer", or "header".
+	// Type is the authentication type: AuthTypeBasic, AuthTypeBearer, or AuthTypeHeader.
 	Type string
 
 	// Username for basic auth.

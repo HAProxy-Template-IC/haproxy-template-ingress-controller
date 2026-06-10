@@ -51,9 +51,11 @@ type signalingMock struct {
 	subAutoSignal bool          // if true, signal as soon as Start() runs
 }
 
-func newSignalingMock(name string) *signalingMock {
+// newSignalingMock returns a signaling mock named "leader-only" — every test
+// in this file exercises exactly one leader-only component under that name.
+func newSignalingMock() *signalingMock {
 	return &signalingMock{
-		mockComponent: mockComponent{name: name, startedChan: make(chan struct{})},
+		mockComponent: mockComponent{name: "leader-only", startedChan: make(chan struct{})},
 		subReady:      make(chan struct{}),
 		subRelease:    make(chan struct{}),
 	}
@@ -142,7 +144,7 @@ func TestStartLeaderOnlyComponentsAsync_WaitsForSubscriptionReady(t *testing.T) 
 	registry := NewRegistry()
 	registry.Register(newMockComponent("all-replica"))
 
-	leader := newSignalingMock("leader-only")
+	leader := newSignalingMock()
 	registry.Register(leader, LeaderOnly())
 
 	// Start all-replica components first (not as leader yet).
@@ -197,7 +199,7 @@ func TestStartLeaderOnlyComponentsAsync_PropagatesNonCanceledStartError(t *testi
 	// failed mid-flight.
 	registry := NewRegistry()
 
-	leader := newSignalingMock("leader-only")
+	leader := newSignalingMock()
 	leader.subAutoSignal = true                  // signal ready immediately
 	leader.startErr = errors.New("startup boom") // then fail
 	registry.Register(leader, LeaderOnly())
@@ -234,7 +236,7 @@ func TestStartLeaderOnlyComponentsAsync_CanceledContextDoesNotPropagateAsError(t
 	// caller's error-tracking goroutine doesn't surface false alerts.
 	registry := NewRegistry()
 
-	leader := newSignalingMock("leader-only")
+	leader := newSignalingMock()
 	leader.subAutoSignal = true
 	registry.Register(leader, LeaderOnly())
 
@@ -270,7 +272,7 @@ func TestStartLeaderOnlyComponentsAsync_PromotesStandbyToStarting(t *testing.T) 
 	// non-leader sits in Standby; when leadership is acquired it must
 	// actually start, not be silently skipped.
 	registry := NewRegistry()
-	leader := newSignalingMock("leader-only")
+	leader := newSignalingMock()
 	leader.subAutoSignal = true
 	registry.Register(leader, LeaderOnly())
 
