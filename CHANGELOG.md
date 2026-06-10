@@ -39,6 +39,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Fixed
 
+- HAProxy target paths (map/cert/general-file references in rendered configs and DataPlane API identifiers) are now handled with slash-only path semantics, so they no longer pick up the host OS path separator when the controller binary runs on Windows (no-op on Linux).
 - Eliminated intermittent 503s during rolling restarts of single-replica backends: a newly-Ready pod's endpoint change now reaches the live workers within `option redispatch`'s rescue window even when it coalesces with another tenant's in-flight or interval-gated structural deploy, and runtime applies retry across a concurrent reload (master socket briefly down).
 - Deployment scheduler now bounds reloads to ≤1 per `minDeploymentInterval` under concurrent churn, eliminating a reload storm that could surface as `<BADREQ>` 400s or dropped connections on the h2c loopback.
 - Auxiliary-file UPDATEs no longer trigger a separate dataplane auto-reload; all aux changes batch into the main config sync's single reload, fixing SPOE-group and crt-list shrink races.

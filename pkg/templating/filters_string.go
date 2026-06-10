@@ -17,7 +17,7 @@ package templating
 import (
 	"encoding/base64"
 	"fmt"
-	"path/filepath"
+	"path"
 	"regexp"
 	"strings"
 	"unicode"
@@ -363,6 +363,8 @@ func scriggoIsDigit(s any) bool {
 //	{%- var certPath, _ = fileRegistry.Register("cert", filename, content) -%}
 //	{%- var certFilename = basename(certPath) -%}
 //	{# certFilename is now "default_api_example_com-tls.pem" #}
-func scriggoBasename(path string) string {
-	return filepath.Base(path)
+func scriggoBasename(filePath string) string {
+	// path.Base (not filepath.Base): the input is always a slash-separated
+	// HAProxy target path, regardless of the OS the controller runs on.
+	return path.Base(filePath)
 }

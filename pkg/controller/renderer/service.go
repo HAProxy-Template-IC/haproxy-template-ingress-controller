@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
+	"path"
 	"reflect"
 	"runtime"
 	"strings"
@@ -148,7 +148,7 @@ type RenderServiceConfig struct {
 // NewRenderService creates a new RenderService.
 //
 // The service uses relative paths derived from the config's Dataplane settings.
-// The directory names are extracted using filepath.Base() to get just the final
+// The directory names are extracted using path.Base() to get just the final
 // directory component (e.g., /etc/haproxy/maps → maps).
 //
 // These relative paths are resolved by HAProxy using the `default-path origin <baseDir>`
@@ -158,14 +158,16 @@ type RenderServiceConfig struct {
 //   - DataPlane API deployment: baseDir points to where files are stored (e.g., /etc/haproxy)
 func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 	// Create path resolver with relative paths derived from config.
-	// Use filepath.Base() to extract just the directory name from absolute paths.
-	// Use filepath.Dir() to get the base directory from any absolute path.
-	sslDir := filepath.Base(cfg.Config.Dataplane.SSLCertsDir)
-	generalDir := filepath.Base(cfg.Config.Dataplane.GeneralStorageDir)
+	// Use path.Base() to extract just the directory name from absolute paths.
+	// Use path.Dir() to get the base directory from any absolute path.
+	// The slash-only path package is used (not filepath) because these are
+	// HAProxy target paths, always slash-separated regardless of host OS.
+	sslDir := path.Base(cfg.Config.Dataplane.SSLCertsDir)
+	generalDir := path.Base(cfg.Config.Dataplane.GeneralStorageDir)
 
 	// BaseDir is the parent of the auxiliary directories (e.g., /etc/haproxy).
 	// This is used with "default-path origin" to resolve relative paths.
-	baseDir := filepath.Dir(cfg.Config.Dataplane.MapsDir)
+	baseDir := path.Dir(cfg.Config.Dataplane.MapsDir)
 
 	// CRT-list files are always stored in general file storage, regardless of HAProxy version.
 	// This is because the native CRT-list API (POST ssl_crt_lists) triggers a reload without
@@ -175,7 +177,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 
 	pathResolver := &templating.PathResolver{
 		BaseDir:    baseDir,
-		MapsDir:    filepath.Base(cfg.Config.Dataplane.MapsDir),
+		MapsDir:    path.Base(cfg.Config.Dataplane.MapsDir),
 		SSLDir:     sslDir,
 		CRTListDir: crtListDir,
 		GeneralDir: generalDir,
@@ -464,7 +466,7 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 		func(name, content string) auxiliaryfiles.GeneralFile {
 			return auxiliaryfiles.GeneralFile{
 				Filename: name,
-				Path:     filepath.Join(s.pathResolver.GeneralDir, name),
+				Path:     path.Join(s.pathResolver.GeneralDir, name),
 				Content:  content,
 			}
 		})

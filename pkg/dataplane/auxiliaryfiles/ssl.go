@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"path/filepath"
+	"path"
 	"slices"
 	"strings"
 
@@ -87,7 +87,8 @@ func calculateCertIdentifier(content string) string {
 // newSSLCertificateOps wires the generic clientFileOps helper to the DataplaneClient
 // methods that operate on SSL certificate storage. The API expects filenames only
 // (e.g. "cert.pem") even though SSLCertificate.Path may be a full path, so each
-// per-id call is normalized via filepath.Base.
+// per-id call is normalized via path.Base (slash-only — paths are HAProxy
+// target paths regardless of host OS).
 func newSSLCertificateOps(c *client.DataplaneClient) FileOperations[SSLCertificate] {
 	return &clientFileOps[SSLCertificate]{
 		getAll:     c.GetAllSSLCertificates,
@@ -95,7 +96,7 @@ func newSSLCertificateOps(c *client.DataplaneClient) FileOperations[SSLCertifica
 		create:     c.CreateSSLCertificate,
 		update:     c.UpdateSSLCertificate,
 		deleteFn:   c.DeleteSSLCertificate,
-		idForAPI:   filepath.Base,
+		idForAPI:   path.Base,
 	}
 }
 
@@ -114,7 +115,7 @@ func newSSLCertificateOps(c *client.DataplaneClient) FileOperations[SSLCertifica
 //  4. Return diff with create, update, and delete operations
 //
 // Path normalization: The API returns filenames only (e.g., "cert.pem"), but SSLCertificate.Path
-// may contain full paths (e.g., "/etc/haproxy/ssl/cert.pem"). We normalize using filepath.Base()
+// may contain full paths (e.g., "/etc/haproxy/ssl/cert.pem"). We normalize using path.Base()
 // for comparison.
 func CompareSSLCertificates(ctx context.Context, c *client.DataplaneClient, desired []SSLCertificate) (*SSLCertificateDiff, error) {
 	// Normalize desired certificates to use filenames for identifiers
@@ -124,7 +125,7 @@ func CompareSSLCertificates(ctx context.Context, c *client.DataplaneClient, desi
 	normalizedDesired := make([]SSLCertificate, len(desired))
 	for i, cert := range desired {
 		normalizedDesired[i] = SSLCertificate{
-			Path:    client.SanitizeSSLCertName(filepath.Base(cert.Path)),
+			Path:    client.SanitizeSSLCertName(path.Base(cert.Path)),
 			Content: calculateCertIdentifier(cert.Content),
 		}
 	}
@@ -153,7 +154,7 @@ func CompareSSLCertificates(ctx context.Context, c *client.DataplaneClient, desi
 	// normalized entry from the generic diff against it.
 	desiredMap := make(map[string]SSLCertificate)
 	for _, cert := range desired {
-		desiredMap[client.SanitizeSSLCertName(filepath.Base(cert.Path))] = cert
+		desiredMap[client.SanitizeSSLCertName(path.Base(cert.Path))] = cert
 	}
 
 	return &SSLCertificateDiff{

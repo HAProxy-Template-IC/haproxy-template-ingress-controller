@@ -2,7 +2,7 @@ package auxiliaryfiles
 
 import (
 	"context"
-	"path/filepath"
+	"path"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
@@ -22,8 +22,8 @@ import (
 //  5. Return diff with create, update, and delete operations
 //
 // Path normalization: The API returns filenames only (e.g., "ca-bundle.pem"), but SSLCaFile.Path
-// may contain full paths (e.g., "/etc/haproxy/ssl/ca/ca-bundle.pem"). We normalize using filepath.Base()
-// for comparison.
+// may contain full paths (e.g., "/etc/haproxy/ssl/ca/ca-bundle.pem"). We normalize using path.Base()
+// for comparison (slash-only — these are HAProxy target paths regardless of host OS).
 func CompareSSLCaFiles(ctx context.Context, c *client.DataplaneClient, desired []SSLCaFile) (*SSLCaFileDiff, error) {
 	return compareSSLStorageFiles(
 		ctx,
@@ -32,7 +32,7 @@ func CompareSSLCaFiles(ctx context.Context, c *client.DataplaneClient, desired [
 		newSSLCaConfig(c),
 		func(f SSLCaFile) SSLCaFile {
 			return SSLCaFile{
-				Path:    filepath.Base(f.Path),
+				Path:    path.Base(f.Path),
 				Content: f.Content,
 			}
 		},

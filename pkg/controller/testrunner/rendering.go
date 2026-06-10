@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
@@ -53,13 +54,14 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 
 	// Create base path configuration
 	// IMPORTANT: Subdirectory names are derived from configured dataplane paths
-	// using filepath.Base() to ensure consistency between production and validation.
+	// using path.Base() (slash-only — the configured dirs are HAProxy target
+	// paths) to ensure consistency between production and validation.
 	// HAProxy requires absolute paths to locate files, so we create absolute paths
 	// within the isolated test directory (e.g., /tmp/haproxy-validate-12345/worker-0/test-1/maps).
 	basePaths := dataplane.PathConfig{
-		MapsDir:    filepath.Join(testDir, filepath.Base(r.config.Dataplane.MapsDir)),
-		SSLDir:     filepath.Join(testDir, filepath.Base(r.config.Dataplane.SSLCertsDir)),
-		GeneralDir: filepath.Join(testDir, filepath.Base(r.config.Dataplane.GeneralStorageDir)),
+		MapsDir:    filepath.Join(testDir, path.Base(r.config.Dataplane.MapsDir)),
+		SSLDir:     filepath.Join(testDir, path.Base(r.config.Dataplane.SSLCertsDir)),
+		GeneralDir: filepath.Join(testDir, path.Base(r.config.Dataplane.GeneralStorageDir)),
 		ConfigFile: filepath.Join(testDir, names.MainTemplateName),
 	}
 

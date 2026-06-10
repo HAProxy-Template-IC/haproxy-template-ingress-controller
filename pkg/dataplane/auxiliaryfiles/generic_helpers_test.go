@@ -11,7 +11,7 @@ package auxiliaryfiles
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,12 +60,12 @@ func TestClientFileOps_ApiID(t *testing.T) {
 	})
 
 	t.Run("idForAPI hook is applied to the input", func(t *testing.T) {
-		o := &clientFileOps[GeneralFile]{idForAPI: filepath.Base}
+		o := &clientFileOps[GeneralFile]{idForAPI: path.Base}
 		assert.Equal(t, "400.http", o.apiID("/etc/haproxy/files/400.http"))
 	})
 
 	t.Run("idForAPI hook is applied even for already-bare ids", func(t *testing.T) {
-		o := &clientFileOps[GeneralFile]{idForAPI: filepath.Base}
+		o := &clientFileOps[GeneralFile]{idForAPI: path.Base}
 		assert.Equal(t, "400.http", o.apiID("400.http"))
 	})
 }
@@ -79,7 +79,7 @@ func TestClientFileOps_ApiID(t *testing.T) {
 func TestClientFileOps_Create_FallsBackToUpdateOnAlreadyExists(t *testing.T) {
 	var createCalls, updateCalls int
 	o := &clientFileOps[GeneralFile]{
-		idForAPI: filepath.Base,
+		idForAPI: path.Base,
 		create: func(_ context.Context, id, content string) (string, error) {
 			createCalls++
 			assert.Equal(t, "400.http", id, "create must receive the apiID-normalized id")

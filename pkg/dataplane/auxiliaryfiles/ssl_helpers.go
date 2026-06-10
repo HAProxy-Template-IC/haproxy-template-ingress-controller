@@ -3,7 +3,7 @@ package auxiliaryfiles
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -33,7 +33,9 @@ func (o *sslStorageOps[T]) GetContent(ctx context.Context, id string) (string, e
 func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) (string, error) {
 	// Normalize to filename only - DataPlane API expects just the filename,
 	// not a path with directory components like "ssl/filename.pem".
-	name := filepath.Base(id)
+	// path.Base (not filepath.Base): ids are slash-separated HAProxy target
+	// paths regardless of the OS the controller runs on.
+	name := path.Base(id)
 	reloadID, err := o.create(ctx, name, content)
 	if err != nil {
 		if isAlreadyExistsError(err) {
@@ -49,7 +51,7 @@ func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) (stri
 
 func (o *sslStorageOps[T]) Update(ctx context.Context, id, content string) (string, error) {
 	// Normalize to filename only - DataPlane API expects just the filename.
-	name := filepath.Base(id)
+	name := path.Base(id)
 	reloadID, err := o.update(ctx, name, content)
 	if err != nil && o.recoverFrom500(ctx, err, name, "update") {
 		return "", nil
@@ -117,7 +119,7 @@ func (o *sslStorageOps[T]) verifyExistsWithRetry(ctx context.Context, name strin
 
 func (o *sslStorageOps[T]) Delete(ctx context.Context, id string) error {
 	// Normalize to filename only - DataPlane API expects just the filename.
-	name := filepath.Base(id)
+	name := path.Base(id)
 	return o.delete(ctx, name)
 }
 
@@ -163,7 +165,7 @@ func compareSSLStorageFiles[T FileItem](
 	// originals (which carry the full caller-supplied paths).
 	desiredMap := make(map[string]T)
 	for _, file := range desired {
-		desiredMap[filepath.Base(getPath(file))] = file
+		desiredMap[path.Base(getPath(file))] = file
 	}
 
 	return &FileDiffGeneric[T]{

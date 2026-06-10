@@ -501,6 +501,33 @@ kubectl delete ns -l 'kubernetes.io/metadata.name~=test-'
 kind delete cluster --name=haproxy-test
 ```
 
+### Full Suite + KEEP_CLUSTER=true on Memory-Capped Docker
+
+**Problem**: The full suite fails in batches on Docker Desktop (Windows/macOS) or
+any Docker environment with a hard memory ceiling, with symptoms that look like
+infrastructure flakiness: apiserver `TLS handshake timeout`, kube-controller-manager
+`leaderelection lost`, pods rejected with `serviceaccount "default" not found`.
+
+The cause is not parallelism, the race detector, or etcd fsync latency (all ruled
+out experimentally). `KEEP_CLUSTER=true` — the local default — keeps every finished
+test's namespace **with its HAProxy pod still running**, so load grows linearly
+during the run (~130 pods ≈ 20 GiB by mid-suite). Once the Docker VM's memory
+ceiling is hit, the kernel enters reclaim thrash: measured in-VM scheduler stalls
+of 1–10 s (idle baseline ~6 ms), which blows the controller-manager's 10 s
+leader-election renew deadline and stalls the apiserver. Tests then die in batches
+in the second half of the run. CI is immune because it sets `KEEP_CLUSTER: "false"`
+(per-test cleanup keeps it at ~4 concurrent pods); a Linux host without a VM
+memory ceiling is immune because the accumulated idle pods just sit in native RAM.
+
+**Solution**: For full-suite runs on memory-capped Docker, disable keep-alive:
+
+```bash
+KEEP_CLUSTER=false make test-integration
+```
+
+Reserve `KEEP_CLUSTER=true` for debugging individual tests, where the accumulation
+stays small and the kept namespace is actually useful.
+
 ## Testing Strategies
 
 ### Table-Driven Tests

@@ -17,7 +17,7 @@ package configpublisher
 import (
 	"crypto/sha256"
 	"fmt"
-	"path/filepath"
+	"path"
 	"strings"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
@@ -70,7 +70,7 @@ func (p *Publisher) generateRuntimeConfigName(templateConfigName string) string 
 // The result is a Kubernetes-safe resource name segment.
 func sanitizeResourceName(prefix, source string, replacements ...string) string {
 	name := source
-	if ext := filepath.Ext(name); ext != "" {
+	if ext := path.Ext(name); ext != "" {
 		name = name[:len(name)-len(ext)]
 	}
 	for i := 0; i+1 < len(replacements); i += 2 {
@@ -86,15 +86,15 @@ func (p *Publisher) generateMapFileName(mapName string) string {
 // Replace underscores with hyphens to comply with DNS-1123 subdomain naming
 // (Kubernetes secret names can't contain underscores).
 func (p *Publisher) generateSecretName(certPath string) string {
-	return sanitizeResourceName("haproxy-cert-", filepath.Base(certPath), "_", "-")
+	return sanitizeResourceName("haproxy-cert-", path.Base(certPath), "_", "-")
 }
 
 func (p *Publisher) generateGeneralFileName(fileName string) string {
-	return sanitizeResourceName("haproxy-file-", filepath.Base(fileName), "_", "-", ".", "-")
+	return sanitizeResourceName("haproxy-file-", path.Base(fileName), "_", "-", ".", "-")
 }
 
 func (p *Publisher) generateCRTListFileName(listPath string) string {
-	return sanitizeResourceName("haproxy-crtlist-", filepath.Base(listPath), "_", "-")
+	return sanitizeResourceName("haproxy-crtlist-", path.Base(listPath), "_", "-")
 }
 
 func calculateChecksum(content string) string {

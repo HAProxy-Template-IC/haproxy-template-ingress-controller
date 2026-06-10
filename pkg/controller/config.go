@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
+	"path"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -247,12 +247,14 @@ type validationDirConfig struct {
 
 // extractValidationDirConfig derives directory names from dataplane configuration.
 // The BaseDir is the parent of MapsDir, and individual directory names are extracted
-// using filepath.Base() to get just the directory name component.
+// using path.Base() to get just the directory name component. The slash-only path
+// package is used (not filepath) because these are HAProxy target paths, which are
+// always slash-separated regardless of the OS the controller runs on.
 func extractValidationDirConfig(dataplaneConfig *coreconfig.DataplaneConfig) validationDirConfig {
 	return validationDirConfig{
-		BaseDir:     filepath.Dir(dataplaneConfig.MapsDir),
-		MapsDir:     filepath.Base(dataplaneConfig.MapsDir),
-		SSLCertsDir: filepath.Base(dataplaneConfig.SSLCertsDir),
-		GeneralDir:  filepath.Base(dataplaneConfig.GeneralStorageDir),
+		BaseDir:     path.Dir(dataplaneConfig.MapsDir),
+		MapsDir:     path.Base(dataplaneConfig.MapsDir),
+		SSLCertsDir: path.Base(dataplaneConfig.SSLCertsDir),
+		GeneralDir:  path.Base(dataplaneConfig.GeneralStorageDir),
 	}
 }

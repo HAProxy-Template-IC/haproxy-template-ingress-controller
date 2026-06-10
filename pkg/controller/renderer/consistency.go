@@ -16,7 +16,7 @@ package renderer
 
 import (
 	"fmt"
-	"path/filepath"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -74,7 +74,7 @@ func validateAuxiliaryFilesConsistency(haproxyConfig string, auxFiles *dataplane
 
 	registered := make(map[string]struct{}, len(auxFiles.MapFiles))
 	for _, m := range auxFiles.MapFiles {
-		registered[filepath.Base(m.Path)] = struct{}{}
+		registered[path.Base(m.Path)] = struct{}{}
 	}
 
 	var missing []string
@@ -109,7 +109,7 @@ func extractMapReferences(haproxyConfig string) map[string]struct{} {
 		// `map_*` is also occasionally used with stick-table converters
 		// like `map_str(`var(txn.x)`)` — but those are followed by a
 		// `,delim` second arg or a non-`.map` filename).
-		base := filepath.Base(arg)
+		base := path.Base(arg)
 		if !strings.HasSuffix(base, ".map") {
 			continue
 		}

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 
@@ -593,13 +594,14 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("converting config spec: %w", err)
 	}
 
-	// Derive subdirectory names from configured dataplane paths using filepath.Base()
+	// Derive subdirectory names from configured dataplane paths using path.Base()
+	// (slash-only — the configured dirs are HAProxy target paths regardless of host OS).
 	// This extracts the final directory name (e.g., "/etc/haproxy/maps" → "maps")
 	// and maintains consistency with production while using relative paths for validation
 	basePaths := dataplane.PathConfig{
-		MapsDir:    filepath.Join(tempDir, filepath.Base(cfg.Dataplane.MapsDir)),
-		SSLDir:     filepath.Join(tempDir, filepath.Base(cfg.Dataplane.SSLCertsDir)),
-		GeneralDir: filepath.Join(tempDir, filepath.Base(cfg.Dataplane.GeneralStorageDir)),
+		MapsDir:    filepath.Join(tempDir, path.Base(cfg.Dataplane.MapsDir)),
+		SSLDir:     filepath.Join(tempDir, path.Base(cfg.Dataplane.SSLCertsDir)),
+		GeneralDir: filepath.Join(tempDir, path.Base(cfg.Dataplane.GeneralStorageDir)),
 		ConfigFile: filepath.Join(tempDir, names.MainTemplateName),
 	}
 

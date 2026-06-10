@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,8 +61,9 @@ func TestResolvedPaths_ToValidationPaths(t *testing.T) {
 	validationPaths := resolved.ToValidationPaths()
 
 	require.NotNil(t, validationPaths)
-	// TempDir is derived from ConfigFile's parent directory
-	assert.Equal(t, "/tmp/haproxy-validate-12345", validationPaths.TempDir)
+	// TempDir is derived from ConfigFile's parent directory via filepath.Dir,
+	// which uses the host OS separator (backslashes on Windows).
+	assert.Equal(t, filepath.FromSlash("/tmp/haproxy-validate-12345"), validationPaths.TempDir)
 	assert.Equal(t, "/tmp/haproxy-validate-12345/maps", validationPaths.MapsDir)
 	assert.Equal(t, "/tmp/haproxy-validate-12345/ssl", validationPaths.SSLCertsDir)
 	assert.Equal(t, "/tmp/haproxy-validate-12345/crtlist", validationPaths.CRTListDir)
