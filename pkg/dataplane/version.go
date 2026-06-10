@@ -3,7 +3,6 @@ package dataplane
 import (
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
@@ -107,21 +106,16 @@ func ParseVersionString(version string) (*Version, error) {
 	}, nil
 }
 
-// DetectLocalVersion runs "haproxy -v" and returns the local HAProxy version.
+// DetectLocalVersion runs "haproxy -v" (via the installed HAProxyExecutor)
+// and returns the local HAProxy version.
 // Returns an error if haproxy is not found or version cannot be parsed.
 func DetectLocalVersion() (*Version, error) {
-	haproxyBin, err := exec.LookPath("haproxy")
+	output, err := getHAProxyExecutor().Version()
 	if err != nil {
-		return nil, fmt.Errorf("haproxy binary not found: %w", err)
+		return nil, err
 	}
 
-	cmd := exec.Command(haproxyBin, "-v")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("running haproxy -v: %w", err)
-	}
-
-	return ParseHAProxyVersionOutput(string(output))
+	return ParseHAProxyVersionOutput(output)
 }
 
 // VersionFromAPIInfo converts client.VersionInfo (from /v3/info) to Version.

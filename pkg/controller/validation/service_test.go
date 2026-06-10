@@ -25,6 +25,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 )
 
 func TestNewValidationService(t *testing.T) {
@@ -79,6 +80,10 @@ backend http_back
 }
 
 func TestValidationService_Validate_SyntaxError(t *testing.T) {
+	// Simulate haproxy rejecting the config (unit tests never shell out).
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(
+		dataplanetest.WithRejectAll("parsing [haproxy.cfg:5] : unknown keyword 'invalid_directive' in 'defaults' section")))
+
 	svc := NewValidationService(&ValidationServiceConfig{
 		Logger:            slog.Default(),
 		SkipDNSValidation: true,
@@ -142,6 +147,11 @@ backend http_back
 }
 
 func TestValidationService_Validate_MissingMapFile(t *testing.T) {
+	// Simulate haproxy failing to open the missing map (unit tests never
+	// shell out).
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(
+		dataplanetest.WithRejectAll("parsing [haproxy.cfg:12] : error opening file <maps/missing.map> for ACL")))
+
 	svc := NewValidationService(&ValidationServiceConfig{
 		Logger:            slog.Default(),
 		SkipDNSValidation: true,
@@ -418,6 +428,10 @@ func TestValidationService_CacheMiss_AuxFileChange(t *testing.T) {
 }
 
 func TestValidationService_FailureNotCached(t *testing.T) {
+	// Simulate haproxy rejecting the config (unit tests never shell out).
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(
+		dataplanetest.WithRejectAll("parsing [haproxy.cfg:5] : unknown keyword 'invalid_directive' in 'defaults' section")))
+
 	svc := NewValidationService(&ValidationServiceConfig{
 		Logger:            slog.Default(),
 		SkipDNSValidation: true,

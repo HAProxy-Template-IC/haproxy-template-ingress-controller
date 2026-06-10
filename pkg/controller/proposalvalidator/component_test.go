@@ -29,6 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -204,6 +205,12 @@ func TestComponent_ValidateSync_BaselineAlsoFails_Admits(t *testing.T) {
 	// validation (haproxy -c) rejects the config regardless of which stores
 	// or overlays are applied. Both proposed and baseline runs hit the same
 	// failure → the new resource isn't the cause → admit.
+	//
+	// The rejection is simulated via the fake executor (unit tests never
+	// shell out); it applies to every check, which is exactly the
+	// "baseline fails too" condition this test needs.
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(
+		dataplanetest.WithRejectAll("parsing [haproxy.cfg:3] : unknown keyword 'nosuch_directive_haproxy_will_reject'")))
 	template := `global
     daemon
     nosuch_directive_haproxy_will_reject this_is_an_alert_trigger

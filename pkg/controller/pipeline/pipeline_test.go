@@ -26,6 +26,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -159,6 +160,10 @@ backend http_back
 }
 
 func TestPipeline_Execute_InvalidConfig(t *testing.T) {
+	// Simulate haproxy rejecting the config (unit tests never shell out).
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(
+		dataplanetest.WithRejectAll("parsing [haproxy.cfg:5] : unknown keyword 'invalid_directive' in 'defaults' section")))
+
 	// This template produces invalid HAProxy configuration
 	template := `global
     daemon
@@ -208,6 +213,10 @@ backend http_back
 }
 
 func TestPipeline_ExecuteWithResult_InvalidConfig(t *testing.T) {
+	// Simulate haproxy rejecting the config (unit tests never shell out).
+	t.Cleanup(dataplanetest.InstallFakeHAProxy(
+		dataplanetest.WithRejectAll("parsing [haproxy.cfg:11] : unable to find required backend 'nonexistent_backend'")))
+
 	template := `global
     daemon
 
