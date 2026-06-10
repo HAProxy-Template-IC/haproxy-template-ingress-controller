@@ -191,19 +191,19 @@ func (s *HTTPStore) doFetch(
 // addAuthHeaders adds authentication headers to the request.
 func addAuthHeaders(req *http.Request, auth *AuthConfig) {
 	switch auth.Type {
-	case "basic":
+	case AuthTypeBasic:
 		if auth.Username != "" || auth.Password != "" {
 			credentials := base64.StdEncoding.EncodeToString(
 				[]byte(auth.Username + ":" + auth.Password))
 			req.Header.Set("Authorization", "Basic "+credentials)
 		}
 
-	case "bearer":
+	case AuthTypeBearer:
 		if auth.Token != "" {
 			req.Header.Set("Authorization", "Bearer "+auth.Token)
 		}
 
-	case "header":
+	case AuthTypeHeader:
 		// Custom headers for API key authentication etc.
 		for key, value := range auth.Headers {
 			req.Header.Set(key, value)

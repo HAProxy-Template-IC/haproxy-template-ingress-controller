@@ -100,7 +100,7 @@ func TestRequireGET(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/test", nil)
+			req := httptest.NewRequest(tt.method, "/test", http.NoBody)
 			w := httptest.NewRecorder()
 			handler(w, req)
 

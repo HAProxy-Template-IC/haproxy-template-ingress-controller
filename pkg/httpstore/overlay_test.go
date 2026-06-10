@@ -79,10 +79,10 @@ func TestHTTPOverlay_GetContent(t *testing.T) {
 	overlay := NewHTTPOverlay(store)
 
 	tests := []struct {
-		name    string
-		url     string
-		want    string
-		wantOK  bool
+		name   string
+		url    string
+		want   string
+		wantOK bool
 	}{
 		{name: "pending URL returns pending content", url: "http://pending", want: "new-http://pending", wantOK: true},
 		{name: "accepted-only URL returns accepted content", url: "http://accepted-only", want: "accepted-content", wantOK: true},

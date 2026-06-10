@@ -46,52 +46,64 @@ func (r *Registry) validateDependencies(components []*registeredComponent, start
 // detectCycles uses DFS to detect circular dependencies.
 // Must be called with r.mu held.
 func (r *Registry) detectCycles(components []*registeredComponent) error {
-	// Build set of components being started
-	inSet := make(map[string]bool)
-	for _, comp := range components {
-		inSet[comp.component.Name()] = true
+	d := &cycleDetector{
+		byName:   r.byName,
+		inSet:    make(map[string]bool, len(components)),
+		visited:  make(map[string]bool),
+		recStack: make(map[string]bool),
 	}
 
-	visited := make(map[string]bool)
-	recStack := make(map[string]bool)
-
-	var dfs func(name string) error
-	dfs = func(name string) error {
-		visited[name] = true
-		recStack[name] = true
-
-		comp, exists := r.byName[name]
-		if !exists {
-			return nil // Unknown component, skip
-		}
-
-		for _, depName := range comp.config.dependencies {
-			if !inSet[depName] {
-				continue // Dependency not in current start set, skip
-			}
-
-			if !visited[depName] {
-				if err := dfs(depName); err != nil {
-					return err
-				}
-			} else if recStack[depName] {
-				return fmt.Errorf("circular dependency detected: %s -> %s", name, depName)
-			}
-		}
-
-		recStack[name] = false
-		return nil
+	// Build set of components being started
+	for _, comp := range components {
+		d.inSet[comp.component.Name()] = true
 	}
 
 	for _, comp := range components {
 		name := comp.component.Name()
-		if !visited[name] {
-			if err := dfs(name); err != nil {
+		if !d.visited[name] {
+			if err := d.visit(name); err != nil {
 				return err
 			}
 		}
 	}
 
+	return nil
+}
+
+// cycleDetector holds the DFS state for circular-dependency detection.
+type cycleDetector struct {
+	byName   map[string]*registeredComponent
+	inSet    map[string]bool // components in the current start set
+	visited  map[string]bool
+	recStack map[string]bool // components on the current DFS path
+}
+
+// visit walks the dependencies of name depth-first and returns an error
+// when it reaches a component that is already on the current DFS path.
+func (d *cycleDetector) visit(name string) error {
+	d.visited[name] = true
+	d.recStack[name] = true
+
+	comp, exists := d.byName[name]
+	if !exists {
+		return nil // Unknown component, skip
+	}
+
+	for _, depName := range comp.config.dependencies {
+		if !d.inSet[depName] {
+			continue // Dependency not in current start set, skip
+		}
+
+		if !d.visited[depName] {
+			if err := d.visit(depName); err != nil {
+				return err
+			}
+		} else if d.recStack[depName] {
+			return fmt.Errorf("circular dependency detected: %s -> %s", name, depName)
+		}
+	}
+
+	d.recStack[name] = false
 	return nil
 }
 

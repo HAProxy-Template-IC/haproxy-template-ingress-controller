@@ -69,14 +69,10 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	@echo "Running golangci-lint..."
 ifdef CI
 	$(GOLANGCI_LINT) run --output.code-climate.path=gl-code-quality-report.json \
-		./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... \
-		./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... \
-		./pkg/stores/... ./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
+		./cmd/... ./examples/... ./pkg/... ./tests/... ./tools/...
 else
 	$(GOLANGCI_LINT) run \
-		./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... \
-		./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... \
-		./pkg/stores/... ./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
+		./cmd/... ./examples/... ./pkg/... ./tests/... ./tools/...
 endif
 	@echo "Running arch-go..."
 	$(ARCH_GO)
@@ -89,7 +85,7 @@ endif
 
 lint-fix: ## Run golangci-lint with auto-fix
 	@echo "Running golangci-lint with auto-fix..."
-	$(GOLANGCI_LINT) run --fix ./cmd/... ./examples/... ./pkg/apis/... ./pkg/controller/... ./pkg/core/... ./pkg/dataplane/... ./pkg/events/... ./pkg/k8s/... ./pkg/stores/... ./pkg/templating/... ./pkg/webhook/... ./tests/... ./tools/...
+	$(GOLANGCI_LINT) run --fix ./cmd/... ./examples/... ./pkg/... ./tests/... ./tools/...
 
 ## Chart linting
 

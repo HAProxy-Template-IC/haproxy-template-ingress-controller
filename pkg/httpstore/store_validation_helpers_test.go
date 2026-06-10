@@ -19,6 +19,7 @@ import (
 // of a checksum followed by "..." for compact log output. The contract:
 //   - prefix is at most 16 characters of the input
 //   - "..." is always appended (even when the input is shorter than 16)
+//
 // Pin both branches so a future refactor can't quietly change log
 // fingerprints (operator-facing during validation incidents).
 func TestChecksumPrefix(t *testing.T) {
