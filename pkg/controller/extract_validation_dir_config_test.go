@@ -29,7 +29,7 @@ import (
 // from SSLCertsDir or GeneralStorageDir. If those three configured paths
 // share the same parent (the common case), this is invisible — but if a
 // future refactor "harmonises" the derivation by, say, taking
-// filepath.Dir(SSLCertsDir) or stitching parents together, the
+// path.Dir(SSLCertsDir) or stitching parents together, the
 // validation tree silently diverges from the runtime layout and local
 // haproxy -c validation passes against a wrong-shaped tree.
 //
@@ -40,9 +40,9 @@ import (
 //  2. Mismatched parents — BaseDir tracks MapsDir's parent specifically,
 //     ignoring SSLCertsDir/GeneralStorageDir parents. This is the case
 //     a "let's compute base from all three" refactor would silently break.
-//  3. Single-path dir names (no slash) — filepath.Dir returns "." and
-//     filepath.Base returns the input unchanged.
-//  4. Trailing slash on MapsDir — filepath.Dir treats the trailing slash
+//  3. Single-path dir names (no slash) — path.Dir returns "." and
+//     path.Base returns the input unchanged.
+//  4. Trailing slash on MapsDir — path.Dir treats the trailing slash
 //     as part of the path and returns the dir itself, which is a real
 //     foot-gun if operators include a trailing slash in their config.
 //  5. Deeply nested MapsDir — only the immediate parent becomes BaseDir,
@@ -91,7 +91,7 @@ func TestExtractValidationDirConfig(t *testing.T) {
 				GeneralStorageDir: "general",
 			},
 			want: validationDirConfig{
-				BaseDir:     ".", // filepath.Dir("maps") → "."
+				BaseDir:     ".", // path.Dir("maps") → "."
 				MapsDir:     "maps",
 				SSLCertsDir: "ssl",
 				GeneralDir:  "general",
@@ -105,8 +105,8 @@ func TestExtractValidationDirConfig(t *testing.T) {
 				GeneralStorageDir: "/etc/haproxy/general",
 			},
 			want: validationDirConfig{
-				BaseDir:     "/etc/haproxy/maps", // filepath.Dir strips only the trailing /
-				MapsDir:     "maps",              // filepath.Base ignores trailing /
+				BaseDir:     "/etc/haproxy/maps", // path.Dir strips only the trailing /
+				MapsDir:     "maps",              // path.Base ignores trailing /
 				SSLCertsDir: "ssl",
 				GeneralDir:  "general",
 			},

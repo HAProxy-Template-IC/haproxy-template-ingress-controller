@@ -15,7 +15,7 @@
 package testrunner
 
 import (
-	"path/filepath"
+	"path"
 	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
@@ -100,7 +100,7 @@ func (r *Runner) findMapFile(mapName string, auxiliaryFiles *dataplane.Auxiliary
 		return ""
 	}
 	for _, mapFile := range auxiliaryFiles.MapFiles {
-		if mapFile.Path == mapName || filepath.Base(mapFile.Path) == mapName {
+		if mapFile.Path == mapName || path.Base(mapFile.Path) == mapName {
 			return mapFile.Content
 		}
 	}
@@ -131,7 +131,7 @@ func (r *Runner) findCertificate(certName string, auxiliaryFiles *dataplane.Auxi
 		// Extract basename from the absolute path for comparison
 		// sslCert.Path is like "/tmp/.../ssl/certs.crt-list"
 		// certName is like "certs.crt-list"
-		if filepath.Base(sslCert.Path) == certName {
+		if path.Base(sslCert.Path) == certName {
 			return sslCert.Content
 		}
 	}
@@ -149,7 +149,7 @@ func (r *Runner) findCRTListFile(crtListName string, auxiliaryFiles *dataplane.A
 		// Extract basename from the absolute path for comparison
 		// crtList.Path is like "/tmp/.../ssl/certificate-list.txt"
 		// crtListName is like "certificate-list.txt"
-		if filepath.Base(crtList.Path) == crtListName {
+		if path.Base(crtList.Path) == crtListName {
 			return crtList.Content
 		}
 	}

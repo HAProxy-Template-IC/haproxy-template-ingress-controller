@@ -3,7 +3,7 @@ package auxiliaryfiles
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
+	"path"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
@@ -24,7 +24,7 @@ func CRTListsToGeneralFiles(crtLists []CRTListFile) []GeneralFile {
 	generalFiles := make([]GeneralFile, len(crtLists))
 	for i, crtList := range crtLists {
 		// Use the base filename as the identifier, sanitized to match API storage
-		filename := filepath.Base(crtList.Path)
+		filename := path.Base(crtList.Path)
 		sanitizedFilename := client.SanitizeStorageName(filename)
 		generalFiles[i] = GeneralFile{
 			Filename: sanitizedFilename,
@@ -57,7 +57,7 @@ func convertCRTListDiffToFileDiff(crtListDiff *CRTListDiff) *FileDiff {
 //
 // Path normalization: The API returns filenames only (e.g., "certificate-list.txt"), but
 // CRTListFile.Path may contain full paths (e.g., "/etc/haproxy/certs/certificate-list.txt").
-// We normalize using filepath.Base() for comparison.
+// We normalize using path.Base() for comparison.
 //
 // Storage strategy: Always uses general file storage instead of native CRT-list API.
 // The native CRT-list API (POST ssl_crt_lists) triggers a reload but doesn't support

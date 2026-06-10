@@ -85,7 +85,7 @@ var _ types.Store = (*mockTypedStore)(nil)
 
 // testDataplaneConfig returns a Dataplane config with proper directory paths
 // for testing. The RenderService extracts directory names from these paths
-// using filepath.Base().
+// using path.Base().
 func testDataplaneConfig() config.DataplaneConfig {
 	return config.DataplaneConfig{
 		MapsDir:           "/etc/haproxy/maps",

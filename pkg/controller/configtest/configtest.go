@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -148,10 +149,12 @@ func buildValidationPaths(cfg *config.Config) (
 		return nil, dataplane.Capabilities{}, nil, nil, fmt.Errorf("creating temp dir: %w", err)
 	}
 
+	// path.Base (not filepath.Base) for the inner extraction: the configured
+	// dirs are slash-separated HAProxy target paths regardless of host OS.
 	basePaths := dataplane.PathConfig{
-		MapsDir:    filepath.Join(tempDir, filepath.Base(cfg.Dataplane.MapsDir)),
-		SSLDir:     filepath.Join(tempDir, filepath.Base(cfg.Dataplane.SSLCertsDir)),
-		GeneralDir: filepath.Join(tempDir, filepath.Base(cfg.Dataplane.GeneralStorageDir)),
+		MapsDir:    filepath.Join(tempDir, path.Base(cfg.Dataplane.MapsDir)),
+		SSLDir:     filepath.Join(tempDir, path.Base(cfg.Dataplane.SSLCertsDir)),
+		GeneralDir: filepath.Join(tempDir, path.Base(cfg.Dataplane.GeneralStorageDir)),
 		ConfigFile: filepath.Join(tempDir, names.MainTemplateName),
 	}
 	resolvedPaths := dataplane.ResolvePaths(basePaths, capabilities)

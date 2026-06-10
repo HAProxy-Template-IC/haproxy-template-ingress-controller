@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -162,8 +163,10 @@ func (pr *PathResolver) GetPath(args ...any) (any, error) {
 		filenameStr = sanitizeStorageName(filenameStr)
 	}
 
-	// Construct full path by joining base directory with filename
-	fullPath := filepath.Join(basePath, filenameStr)
+	// Construct full path by joining base directory with filename.
+	// path.Join (not filepath.Join): these are HAProxy target paths that must
+	// always use forward slashes, regardless of the OS the controller runs on.
+	fullPath := path.Join(basePath, filenameStr)
 
 	return fullPath, nil
 }

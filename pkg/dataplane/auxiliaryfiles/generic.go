@@ -43,7 +43,7 @@ func isAlreadyExistsError(err error) bool {
 // "already exists" errors, which is the standard recovery for storage that has
 // the file on disk but missing from the storage listing (e.g. after a raw
 // config push + reload). The optional idForAPI hook normalizes the controller
-// side identifier before each per-id API call (e.g. filepath.Base for storage
+// side identifier before each per-id API call (e.g. path.Base for storage
 // APIs that take a filename rather than a full path).
 type clientFileOps[T FileItem] struct {
 	getAll     func(context.Context) ([]string, error)

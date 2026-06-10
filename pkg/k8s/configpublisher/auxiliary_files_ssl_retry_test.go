@@ -10,7 +10,7 @@ package configpublisher
 
 import (
 	"context"
-	"path/filepath"
+	"path"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -92,7 +92,7 @@ func TestCreateOrUpdateSSLSecret_RetriesOnAlreadyExistsCreate(t *testing.T) {
 	req := &PublishRequest{TemplateConfigNamespace: "default"}
 	owner := &haproxyv1alpha1.HAProxyCfg{ObjectMeta: metav1.ObjectMeta{Name: "owner", UID: types.UID("u1")}}
 	cert := auxiliaryfiles.SSLCertificate{Path: "/etc/haproxy/ssl/cert.pem", Content: "desired-cert"}
-	name := publisher.generateSecretName(filepath.Base(cert.Path))
+	name := publisher.generateSecretName(path.Base(cert.Path))
 
 	secretsGVR := corev1.SchemeGroupVersion.WithResource("secrets")
 	var createCalls int

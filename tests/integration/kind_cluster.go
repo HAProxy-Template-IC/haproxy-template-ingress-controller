@@ -220,11 +220,40 @@ func (k *KindCluster) CreateNamespace(name string) (*Namespace, error) {
 		return nil, fmt.Errorf("failed to create namespace: %w", err)
 	}
 
+	// Wait for the "default" ServiceAccount before handing the namespace to
+	// tests. The SA is populated asynchronously by kube-controller-manager;
+	// creating a pod before it exists fails with "serviceaccount \"default\"
+	// not found". Fast CI machines mask the race, but a busy control plane
+	// (or one recovering from a lost leader-election lease) widens it to
+	// whole seconds.
+	if err := k.waitForDefaultServiceAccount(ctx, created.Name); err != nil {
+		return nil, fmt.Errorf("waiting for default service account in %s: %w", created.Name, err)
+	}
+
 	return &Namespace{
 		Name:      created.Name,
 		cluster:   k,
 		clientset: k.clientset,
 	}, nil
+}
+
+// waitForDefaultServiceAccount polls until kube-controller-manager has
+// created the "default" ServiceAccount in the namespace. The 60s budget is
+// generous on purpose: it must cover a controller-manager restart (lost
+// leader-election lease under load), after which the SA controller needs to
+// re-sync every namespace.
+func (k *KindCluster) waitForDefaultServiceAccount(ctx context.Context, namespace string) error {
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		_, err := k.clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, "default", metav1.GetOptions{})
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("default service account not created within 60s: %w", err)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // CleanupOldTestNamespacesAsync triggers asynchronous cleanup of old test namespaces.

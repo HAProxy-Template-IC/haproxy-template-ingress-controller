@@ -17,7 +17,7 @@ package configpublisher
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"path"
 	"strconv"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
@@ -70,7 +70,7 @@ func retriableWrite(err error) bool {
 
 // createOrUpdateMapFile creates or updates a HAProxyMapFile resource.
 func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, mapFile auxiliaryfiles.MapFile) (string, error) {
-	name := p.generateMapFileName(filepath.Base(mapFile.Path))
+	name := p.generateMapFileName(path.Base(mapFile.Path))
 	checksum := calculateChecksum(mapFile.Content) // Checksum of original content
 
 	// Compress if content exceeds threshold
@@ -78,7 +78,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 
 	// Build spec and labels once (these don't change between retries)
 	spec := haproxyv1alpha1.HAProxyMapFileSpec{
-		MapName:    filepath.Base(mapFile.Path),
+		MapName:    path.Base(mapFile.Path),
 		Path:       mapFile.Path,
 		Entries:    result.content,
 		Checksum:   checksum,
@@ -155,7 +155,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 
 // createOrUpdateSSLSecret creates or updates a Secret for SSL certificates.
 func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, cert auxiliaryfiles.SSLCertificate) (string, error) {
-	name := p.generateSecretName(filepath.Base(cert.Path))
+	name := p.generateSecretName(path.Base(cert.Path))
 	checksum := calculateChecksum(cert.Content) // Checksum of original content
 
 	// Compress if content exceeds threshold
@@ -337,7 +337,7 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 
 	// Build spec and labels once (these don't change between retries)
 	spec := haproxyv1alpha1.HAProxyCRTListFileSpec{
-		ListName:   filepath.Base(crtListFile.Path),
+		ListName:   path.Base(crtListFile.Path),
 		Path:       crtListFile.Path,
 		Entries:    result.content,
 		Checksum:   checksum,

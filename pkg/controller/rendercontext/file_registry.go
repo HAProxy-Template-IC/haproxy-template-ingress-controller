@@ -16,7 +16,7 @@ package rendercontext
 
 import (
 	"fmt"
-	"path/filepath"
+	"path"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -114,7 +114,7 @@ func (r *FileRegistry) Register(args ...any) (string, error) {
 		return "", fmt.Errorf("file_registry.Register: computing path: %w", err)
 	}
 
-	path, ok := pathInterface.(string)
+	resolvedPath, ok := pathInterface.(string)
 	if !ok {
 		return "", fmt.Errorf("file_registry.Register: path resolver returned unexpected type %T", pathInterface)
 	}
@@ -144,10 +144,10 @@ func (r *FileRegistry) Register(args ...any) (string, error) {
 		Type:     fileType,
 		Filename: filename,
 		Content:  content,
-		Path:     path,
+		Path:     resolvedPath,
 	}
 
-	return path, nil
+	return resolvedPath, nil
 }
 
 // GetFiles converts all registered files to dataplane AuxiliaryFiles structure.
@@ -181,7 +181,7 @@ func (r *FileRegistry) GetFiles() *dataplane.AuxiliaryFiles {
 
 		case "file":
 			files.GeneralFiles = append(files.GeneralFiles, auxiliaryfiles.GeneralFile{
-				Filename: filepath.Base(reg.Path),
+				Filename: path.Base(reg.Path),
 				Path:     reg.Path,
 				Content:  reg.Content,
 			})
