@@ -16,26 +16,26 @@ import (
 )
 
 // getCachedValidatorForVersion is the read-side dispatcher that picks a
-// per-HAProxy-version CachedValidator from one of three lazily-initialised
-// slots (v3.0, v3.1, v3.2). The mapping rule is non-obvious in two
+// per-HAProxy-version CachedValidator from one of four lazily-initialised
+// slots (v3.0, v3.1, v3.2, v3.3). The mapping rule is non-obvious in two
 // places:
 //
 //   - Unknown / nil version conservatively falls back to the v3.0 slot
 //     (most restrictive schema).
-//   - Versions NEWER than v3.2 (e.g. v3.3, v4.0) intentionally clamp to
-//     the v3.2 validator because v3.2 is "the newest schema currently
+//   - Versions NEWER than v3.3 (e.g. v3.4, v4.0) intentionally clamp to
+//     the v3.3 validator because v3.3 is "the newest schema currently
 //     bundled". This is a documented design choice — a refactor that
-//     started routing v3.3+ to a non-existent v3.3 slot, or that crashed
+//     started routing v3.4+ to a non-existent v3.4 slot, or that crashed
 //     on unknown versions, would be a regression.
 //
-// Pin every branch (nil, < v3.0, exact v3.0/v3.1/v3.2, > v3.2 by minor,
-// > v3.x by major) plus the slot reuse / lazy-init contract on
+// Pin every branch (nil, < v3.0, exact v3.0/v3.1/v3.2/v3.3, > v3.3 by
+// minor, > v3.x by major) plus the slot reuse / lazy-init contract on
 // repeated calls.
 func TestGetCachedValidatorForVersion(t *testing.T) {
 	tests := []struct {
 		name        string
 		version     *Version
-		wantVersion string // ValidatorSet().Version() returns "v30" / "v31" / "v32"
+		wantVersion string // ValidatorSet().Version() returns "v30" / "v31" / "v32" / "v33"
 	}{
 		{
 			name:        "nil version falls back to v3.0 (most restrictive default)",
@@ -68,24 +68,29 @@ func TestGetCachedValidatorForVersion(t *testing.T) {
 			wantVersion: "v32",
 		},
 		{
-			name:        "v3.3 (newer minor than bundled) clamps to v32 (newest bundled schema)",
+			name:        "v3.3 exact maps to v33 slot",
 			version:     &Version{Major: 3, Minor: 3},
-			wantVersion: "v32",
+			wantVersion: "v33",
 		},
 		{
-			name:        "v3.99 (far-future minor) still clamps to v32",
+			name:        "v3.4 (newer minor than bundled) clamps to v33 (newest bundled schema)",
+			version:     &Version{Major: 3, Minor: 4},
+			wantVersion: "v33",
+		},
+		{
+			name:        "v3.99 (far-future minor) still clamps to v33",
 			version:     &Version{Major: 3, Minor: 99},
-			wantVersion: "v32",
+			wantVersion: "v33",
 		},
 		{
-			name:        "Major > 3 (e.g. v4.x) clamps to v32 (no v4 slot exists)",
+			name:        "Major > 3 (e.g. v4.x) clamps to v33 (no v4 slot exists)",
 			version:     &Version{Major: 4, Minor: 0},
-			wantVersion: "v32",
+			wantVersion: "v33",
 		},
 		{
-			name:        "Major > 3 with high minor still clamps to v32",
+			name:        "Major > 3 with high minor still clamps to v33",
 			version:     &Version{Major: 5, Minor: 7},
-			wantVersion: "v32",
+			wantVersion: "v33",
 		},
 	}
 
@@ -122,7 +127,9 @@ func TestGetCachedValidatorForVersion_SlotReuse(t *testing.T) {
 	v31b := getCachedValidatorForVersion(&Version{Major: 3, Minor: 1})
 	v32a := getCachedValidatorForVersion(&Version{Major: 3, Minor: 2})
 	v32b := getCachedValidatorForVersion(&Version{Major: 3, Minor: 2})
-	v33 := getCachedValidatorForVersion(&Version{Major: 3, Minor: 3})
+	v33a := getCachedValidatorForVersion(&Version{Major: 3, Minor: 3})
+	v33b := getCachedValidatorForVersion(&Version{Major: 3, Minor: 3})
+	v34 := getCachedValidatorForVersion(&Version{Major: 3, Minor: 4})
 
 	// Same-version calls must return the SAME pointer (sync.Once
 	// guarantees one CachedValidator per slot).
@@ -130,11 +137,13 @@ func TestGetCachedValidatorForVersion_SlotReuse(t *testing.T) {
 	assert.Same(t, v30a, v30nil, "nil-version fallback must reuse the v3.0 slot, not allocate fresh")
 	assert.Same(t, v31a, v31b, "repeated v3.1 lookups must return the same cached validator")
 	assert.Same(t, v32a, v32b, "repeated v3.2 lookups must return the same cached validator")
-	assert.Same(t, v32a, v33, "v3.3 clamp must reuse the v3.2 slot, not allocate fresh")
+	assert.Same(t, v33a, v33b, "repeated v3.3 lookups must return the same cached validator")
+	assert.Same(t, v33a, v34, "v3.4 clamp must reuse the v3.3 slot, not allocate fresh")
 
 	// Different versions must return DIFFERENT pointers (slot
-	// segregation: a v3.0 cache must not pollute v3.1 / v3.2).
+	// segregation: a v3.0 cache must not pollute v3.1 / v3.2 / v3.3).
 	assert.NotSame(t, v30a, v31a, "v3.0 and v3.1 must use distinct slots / caches")
 	assert.NotSame(t, v30a, v32a, "v3.0 and v3.2 must use distinct slots / caches")
 	assert.NotSame(t, v31a, v32a, "v3.1 and v3.2 must use distinct slots / caches")
+	assert.NotSame(t, v32a, v33a, "v3.2 and v3.3 must use distinct slots / caches")
 }

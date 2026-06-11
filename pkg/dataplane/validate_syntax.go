@@ -56,6 +56,7 @@ var (
 	validatorSlotV30 = &cachedValidatorSlot{major: 3, minor: 0}
 	validatorSlotV31 = &cachedValidatorSlot{major: 3, minor: 1}
 	validatorSlotV32 = &cachedValidatorSlot{major: 3, minor: 2}
+	validatorSlotV33 = &cachedValidatorSlot{major: 3, minor: 3}
 )
 
 // validateSyntax performs syntax validation using client-native parser.
@@ -82,16 +83,18 @@ func validateSyntax(config string) (*parser.StructuredConfig, error) {
 
 // getCachedValidatorForVersion returns the cached validator for a HAProxy
 // version. Unknown or pre-3.x versions fall back to the v3.0 validator;
-// versions newer than v3.2 fall back to the v3.2 validator (since that is the
+// versions newer than v3.3 fall back to the v3.3 validator (since that is the
 // newest schema currently bundled).
 func getCachedValidatorForVersion(version *Version) *validators.CachedValidator {
 	if version == nil || version.Major < 3 {
 		return validatorSlotV30.get()
 	}
 	if version.Major > 3 {
-		return validatorSlotV32.get()
+		return validatorSlotV33.get()
 	}
 	switch {
+	case version.Minor >= 3:
+		return validatorSlotV33.get()
 	case version.Minor >= 2:
 		return validatorSlotV32.get()
 	case version.Minor >= 1:
