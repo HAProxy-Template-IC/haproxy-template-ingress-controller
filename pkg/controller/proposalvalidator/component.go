@@ -17,11 +17,13 @@ package proposalvalidator
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
@@ -46,15 +48,24 @@ const (
 // The component uses RenderValidatePipeline with CompositeStoreProvider to render
 // and validate configurations with proposed changes overlaid on actual stores.
 type Component struct {
-	eventBus  *busevents.EventBus
-	eventChan <-chan busevents.Event
+	// Base is the embedded event-loop scaffold for async mode. It is nil in
+	// sync-only mode (SyncOnly=true), where no subscription occurs and
+	// Start() must not be called.
+	*component.Base
+
 	pipeline  *pipeline.Pipeline
 	baseStore stores.StoreProvider
-	logger    *slog.Logger
+
+	// logger is kept alongside Base's (it carries the same component
+	// annotation) because the sync-only path (ValidateSync from the
+	// webhook) has no Base to provide one.
+	logger *slog.Logger
 }
 
 // Name returns the unique identifier for this component.
-// Implements the lifecycle.Component interface.
+// Implements the lifecycle.Component interface. Kept as an override (rather
+// than relying on the promoted Base.Name) because sync-only components have
+// no Base.
 func (c *Component) Name() string {
 	return ComponentName
 }
@@ -94,43 +105,40 @@ func New(cfg *ComponentConfig) *Component {
 		logger = slog.Default()
 	}
 
-	var eventChan <-chan busevents.Event
-	if !cfg.SyncOnly && cfg.EventBus != nil {
-		// Subscribe only to ProposalValidationRequestedEvent during construction per event bus contract.
-		// Using SubscribeTypes prevents buffer overflow from unrelated events.
-		eventChan = cfg.EventBus.SubscribeTypes("proposalvalidator", EventBufferSize,
-			events.EventTypeProposalValidationRequested)
-	}
-
-	return &Component{
-		eventBus:  cfg.EventBus,
-		eventChan: eventChan,
+	c := &Component{
 		pipeline:  cfg.Pipeline,
 		baseStore: cfg.BaseStoreProvider,
-		logger:    logger.With("component", "proposalvalidator"),
+		logger:    logger.With("component", ComponentName),
 	}
+	if !cfg.SyncOnly && cfg.EventBus != nil {
+		// The Base subscribes only to ProposalValidationRequestedEvent during
+		// construction per the event bus contract; the typed subscription
+		// prevents buffer overflow from unrelated events. Sync-only
+		// components skip the subscription entirely (Base stays nil).
+		c.Base = component.New(&component.Config{
+			EventBus:   cfg.EventBus,
+			Logger:     logger,
+			Name:       ComponentName,
+			BufferSize: EventBufferSize,
+			Handler:    c,
+			EventTypes: []string{events.EventTypeProposalValidationRequested},
+		})
+	}
+	return c
 }
 
-// Start runs the component's event loop.
-//
-// It listens for ProposalValidationRequestedEvent and processes validation requests.
+// Start runs the embedded component.Base event loop until the context is
+// cancelled. It listens for ProposalValidationRequestedEvent and processes
+// validation requests. Must not be called in sync-only mode (Base is nil).
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Info("proposal validator started")
-
-	for {
-		select {
-		case event := <-c.eventChan:
-			c.handleEvent(event)
-
-		case <-ctx.Done():
-			c.logger.Info("proposal validator shutting down")
-			return ctx.Err()
-		}
+	if c.Base == nil {
+		return fmt.Errorf("%s: Start called on a sync-only instance (no event subscription)", ComponentName)
 	}
+	return c.Base.Start(ctx)
 }
 
-// handleEvent processes incoming events.
-func (c *Component) handleEvent(event busevents.Event) {
+// HandleEvent implements component.EventHandler: it processes incoming events.
+func (c *Component) HandleEvent(event busevents.Event) {
 	if e, ok := event.(*events.ProposalValidationRequestedEvent); ok {
 		c.handleValidationRequest(e)
 	}
@@ -176,7 +184,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 			"request_id", req.ID,
 			"error", err,
 		)
-		c.eventBus.Publish(events.NewProposalValidationFailedEvent(
+		c.EventBus().Publish(events.NewProposalValidationFailedEvent(
 			req.ID,
 			"setup",
 			err,
@@ -199,7 +207,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 			"request_id", req.ID,
 			"error", err,
 		)
-		c.eventBus.Publish(events.NewProposalValidationFailedEvent(
+		c.EventBus().Publish(events.NewProposalValidationFailedEvent(
 			req.ID,
 			"render",
 			err,
@@ -216,7 +224,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 			"error", validationResult.Error,
 			"duration_ms", time.Since(startTime).Milliseconds(),
 		)
-		c.eventBus.Publish(events.NewProposalValidationFailedEvent(
+		c.EventBus().Publish(events.NewProposalValidationFailedEvent(
 			req.ID,
 			validationResult.Phase,
 			validationResult.Error,
@@ -231,7 +239,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 		"source", req.Source,
 		"duration_ms", time.Since(startTime).Milliseconds(),
 	)
-	c.eventBus.Publish(events.NewProposalValidationCompletedEvent(
+	c.EventBus().Publish(events.NewProposalValidationCompletedEvent(
 		req.ID,
 		time.Since(startTime).Milliseconds(),
 	))

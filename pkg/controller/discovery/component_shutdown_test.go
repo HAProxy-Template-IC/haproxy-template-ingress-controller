@@ -35,11 +35,12 @@ func TestStart_StopsRetryTimerOnShutdown(t *testing.T) {
 	c.retryTimer = time.AfterFunc(50*time.Millisecond, func() { fired <- struct{}{} })
 	c.retryTimerMu.Unlock()
 
-	// ctx already cancelled → Start takes the ctx.Done() path immediately, and
-	// its defer must stop the armed timer well before the 50ms delay elapses.
+	// ctx already cancelled → Start takes the ctx.Done() path immediately
+	// (component.Base returns nil on graceful shutdown), and its defer must
+	// stop the armed timer well before the 50ms delay elapses.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, c.Start(ctx), context.Canceled)
+	require.NoError(t, c.Start(ctx))
 
 	select {
 	case <-fired:

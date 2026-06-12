@@ -54,12 +54,15 @@ const (
 //
 // The component publishes deployment result events for observability.
 type Component struct {
+	*component.Base
 	*component.ReadySignal
 
-	eventBus             *busevents.EventBus
-	eventChan            <-chan busevents.Event // Event subscription channel (subscribed in Start())
-	logger               *slog.Logger
 	deploymentInProgress atomic.Bool // Defensive: prevents concurrent deployments if scheduler has bugs
+
+	// ctx is the event-loop context captured by Start. Handlers run only
+	// on the loop goroutine and use it for Dataplane API calls so syncs
+	// abort on shutdown.
+	ctx context.Context
 
 	// reloadVerificationTimeout bounds how long the Dataplane sync waits for a
 	// graceful reload to be reported as completed before failing the sync.
@@ -105,31 +108,36 @@ type SyncOptions struct {
 // Returns:
 //   - A new Component instance ready to be started
 func New(eventBus *busevents.EventBus, logger *slog.Logger, opts SyncOptions) *Component {
-	// Note: eventChan is NOT subscribed here - subscription happens in Start().
-	// This is a leader-only component that subscribes when Start() is called
-	// (after leadership is acquired). All-replica components replay their state
-	// on BecameLeaderEvent to ensure leader-only components receive current state.
-	return &Component{
+	c := &Component{
 		ReadySignal:               component.NewReadySignal(),
-		eventBus:                  eventBus,
-		logger:                    logger.With("component", ComponentName),
 		reloadVerificationTimeout: opts.ReloadVerificationTimeout,
 		syncTimeout:               opts.Timeout,
 		versionCache:              newConfigVersionCache(),
 		healthTracker:             lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}
-}
-
-// Name returns the unique identifier for this component.
-// Implements the lifecycle.Component interface.
-func (c *Component) Name() string {
-	return ComponentName
+	// Subscription happens here, at construction (component.Base), before
+	// EventBus.Start(). The Deployer remains a leader-only component: its
+	// event loop only runs once Start() is called after leadership is
+	// acquired, and the subscribed event types (DeploymentScheduledEvent,
+	// DeploymentCancelRequestEvent) are published only by the leader-only
+	// DeploymentScheduler.
+	c.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: EventBufferSize,
+		Handler:    c,
+		EventTypes: []string{
+			events.EventTypeDeploymentScheduled,
+			events.EventTypeDeploymentCancelRequest,
+		},
+	})
+	return c
 }
 
 // Start begins the deployer's event loop.
 //
 // This method blocks until the context is cancelled or an error occurs.
-// It subscribes to events when called (after leadership is acquired).
 //
 // Parameters:
 //   - ctx: Context for cancellation and lifecycle management
@@ -138,43 +146,56 @@ func (c *Component) Name() string {
 //   - nil when context is cancelled (graceful shutdown)
 //   - Error only in exceptional circumstances
 func (c *Component) Start(ctx context.Context) error {
-	// Subscribe when starting (after leadership acquired).
-	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
-	// Subscribe to both DeploymentScheduledEvent and DeploymentCancelRequestEvent.
-	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, EventBufferSize,
-		events.EventTypeDeploymentScheduled,
-		events.EventTypeDeploymentCancelRequest)
+	// Discard events buffered before this leadership term. The construction-
+	// time subscription persists across terms, so DeploymentScheduledEvents
+	// queued when leadership was lost would otherwise replay a stale
+	// deployment into the new term (the old subscribe-per-term code discarded
+	// them implicitly). Must run before MarkReady: current-term events only
+	// start flowing once this term's scheduler renders, which is gated behind
+	// the readiness signal.
+	c.FlushPending()
 
-	// Signal that subscription is complete for SubscriptionReadySignaler interface.
+	// Signal that subscription is complete for the SubscriptionReadySignaler
+	// interface. Subscription itself happened at construction (component.Base),
+	// so the signal can fire before the loop starts.
 	c.MarkReady()
 
 	// Clear version cache on start (handles leadership transitions - fresh state)
 	c.versionCache.clear()
 
-	c.logger.Debug("deployer starting")
+	c.ctx = ctx
+	err := c.Base.Start(ctx)
 
-	for {
-		select {
-		case event := <-c.eventChan:
-			c.handleEvent(ctx, event)
-
-		case <-ctx.Done():
-			c.logger.Info("Deployer shutting down", "reason", ctx.Err())
-			// Cancel any active deployment on shutdown
-			c.cancelActiveDeployment("shutdown")
-			return nil
-		}
-	}
+	// Cancel any active deployment on shutdown
+	c.cancelActiveDeployment("shutdown")
+	return err
 }
 
-// handleEvent processes events from the EventBus.
-func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
+// HandleEvent implements component.EventHandler: it routes events to the
+// appropriate handler.
+func (c *Component) HandleEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.DeploymentScheduledEvent:
-		c.handleDeploymentScheduled(ctx, e)
+		c.performDeployment(c.ctx, e)
 	case *events.DeploymentCancelRequestEvent:
 		c.handleDeploymentCancelRequest(e)
 	}
+}
+
+// CoalescesOn implements component.CoalescingHandler: after each dispatch,
+// the embedded component.Base drains the subscription channel and processes
+// only the LATEST pending coalescible DeploymentScheduledEvent ("latest
+// wins"), superseding intermediates. Non-coalescible events (e.g. from
+// drift_prevention, validation_fallback) are always processed and never
+// skipped.
+//
+// This coalescing is load-bearing: deployment is single-threaded, but the
+// validator + scheduler upstream can fire many DeploymentScheduledEvents
+// during a single deployment. Without it, the deployer would process every
+// queued event in FIFO order — deploying the OLDEST pending config first
+// and falling further and further behind under load.
+func (c *Component) CoalescesOn() string {
+	return events.EventTypeDeploymentScheduled
 }
 
 // HealthCheck implements the lifecycle.HealthChecker interface.

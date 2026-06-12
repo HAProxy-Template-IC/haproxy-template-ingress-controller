@@ -11,23 +11,23 @@ package deployer
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// handleDeploymentScheduled has a coalesce-drain post-loop that the
-// existing deployer tests do NOT exercise. The flow is:
+// The deployer coalesces DeploymentScheduledEvents via component.Base's
+// CoalescingHandler hook (CoalescesOn in component.go). The flow is:
 //
-//  1. Process the supplied event (performDeployment).
-//  2. After it returns, drain c.eventChan via coalesce.DrainLatest:
+//  1. The event loop dispatches one event (performDeployment).
+//  2. After the dispatch returns, Base drains the subscription channel:
 //     for runs of all-coalescible DeploymentScheduledEvents, only the
 //     latest survives — older ones are superseded.
-//  3. Process the latest coalescible event found.
+//  3. The latest coalescible event found is dispatched.
 //  4. Loop until the channel is empty.
 //
 // The drain path is load-bearing because deployment is single-threaded
@@ -40,28 +40,22 @@ import (
 // deployer jumps straight to the LATEST queued config, dropping the
 // stale intermediates.
 //
-// A regression that removed the drain loop, the supersession bookkeeping,
-// or the "process latest" call at the bottom would silently re-introduce
-// the FIFO backlog and the deployer would lag arbitrarily behind the
-// scheduler under load.
+// A regression that removed the CoalescesOn hook (or returned the wrong
+// event type from it) would silently re-introduce the FIFO backlog and
+// the deployer would lag arbitrarily behind the scheduler under load.
 //
-// Pin the all-coalescible case (the common steady-state path): N
-// coalescible events queued + one passed in → exactly TWO
+// Pin the all-coalescible case (the common steady-state path): one event
+// dispatched + N coalescible events queued → exactly TWO
 // performDeployment calls (initial + latest queued). The intermediate
 // queued events must be SUPERSEDED. This is the contract that protects
 // the deployer from falling behind.
 func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 	bus := testutil.NewTestBus()
 	completedChan := bus.Subscribe("completion-observer", 50)
-	bus.Start()
 
+	// createTestDeployer subscribes the component via component.Base.
 	deployer := createTestDeployer(bus)
-
-	// Inject a buffered channel as the deployer's subscription —
-	// pre-fill it before calling handleDeploymentScheduled so the
-	// drain loop has events to find.
-	queued := make(chan busevents.Event, 10)
-	deployer.eventChan = queued
+	bus.Start()
 
 	mkScheduled := func(id string) *events.DeploymentScheduledEvent {
 		return events.NewDeploymentScheduledEvent(
@@ -79,32 +73,82 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 		)
 	}
 
-	// Pre-queue 3 coalescible events. The first two must be superseded
-	// by the third on drain.
-	queued <- mkScheduled("queued-A-superseded")
-	queued <- mkScheduled("queued-B-superseded")
-	queued <- mkScheduled("queued-C-latest")
+	// Queue 4 coalescible events in the component's subscription buffer
+	// BEFORE the event loop starts. The loop dispatches the first, then
+	// Base's coalescing drain supersedes A & B and dispatches only C.
+	bus.Publish(mkScheduled("initial"))
+	bus.Publish(mkScheduled("queued-A-superseded"))
+	bus.Publish(mkScheduled("queued-B-superseded"))
+	bus.Publish(mkScheduled("queued-C-latest"))
 
-	// Process initial event. handleDeploymentScheduled then drains the
-	// channel, supersedes A & B, and processes only C.
-	deployer.handleDeploymentScheduled(context.Background(),
-		mkScheduled("initial"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Drive Base.Start directly, bypassing Component.Start: the component's
+	// Start flushes pre-buffered events (leadership-term boundary), but this
+	// test deliberately pre-buffers to exercise the coalescing drain — the
+	// flush contract has its own test (TestStart_FlushesStaleEventsFromPreviousTerm).
+	deployer.ctx = ctx
+	go deployer.Base.Start(ctx)
 
-	// Collect all DeploymentCompletedEvents observed.
-	var observed []string
-	for len(completedChan) > 0 {
-		ev := <-completedChan
-		if completed, ok := ev.(*events.DeploymentCompletedEvent); ok {
-			observed = append(observed, completed.CorrelationID())
-		}
-	}
+	// Collect the DeploymentCompletedEvents observed.
+	first := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.EventTimeout)
+	second := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.EventTimeout)
 
 	// EXACTLY 2 deployments — the initial one + the latest of the
 	// drained queue. The intermediate queued events MUST be superseded.
-	assert.Equal(t, []string{"initial", "queued-C-latest"}, observed,
-		"handleDeploymentScheduled MUST process the initial event and then "+
+	assert.Equal(t, []string{"initial", "queued-C-latest"},
+		[]string{first.CorrelationID(), second.CorrelationID()},
+		"the deployer MUST process the first dispatched event and then "+
 			"jump straight to the latest queued coalescible event, "+
 			"superseding the intermediates. A regression that drained FIFO "+
 			"instead of latest-wins would leave the deployer lagging "+
 			"arbitrarily behind the scheduler under load")
+
+	// No third deployment: A and B were superseded, never deployed.
+	testutil.AssertNoEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.NoEventTimeout)
+}
+
+// The deployer's subscription persists across leadership terms (it embeds
+// component.Base, which subscribes at construction). Events buffered while
+// the deployer was NOT running — i.e. scheduled deployments from a previous
+// leadership term — must be discarded at Start, not replayed: a stale
+// render pushed into a new term would overwrite the fresh state until the
+// next reconcile corrected it.
+func TestStart_FlushesStaleEventsFromPreviousTerm(t *testing.T) {
+	bus := testutil.NewTestBus()
+	completedChan := bus.Subscribe("completion-observer", 50)
+
+	deployer := createTestDeployer(bus)
+	bus.Start()
+
+	// A "previous term" event, buffered before Start.
+	stale := events.NewDeploymentScheduledEvent(
+		"global\n  daemon\n", nil, nil, []dataplane.Endpoint{},
+		"runtime-config", "haptic", "test", "", nil, true,
+		events.WithCorrelation("stale-prev-term", "stale-prev-term"),
+	)
+	bus.Publish(stale)
+
+	// Let the bus route it into the deployer's subscription buffer before
+	// Start flushes; otherwise the flush could race the routing goroutine
+	// and the test would pass vacuously.
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go deployer.Start(ctx)
+
+	// The stale event must NOT produce a deployment.
+	testutil.AssertNoEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.NoEventTimeout)
+
+	// A current-term event still deploys.
+	fresh := events.NewDeploymentScheduledEvent(
+		"global\n  daemon\n", nil, nil, []dataplane.Endpoint{},
+		"runtime-config", "haptic", "test", "", nil, true,
+		events.WithCorrelation("fresh-current-term", "fresh-current-term"),
+	)
+	bus.Publish(fresh)
+	completed := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.EventTimeout)
+	assert.Equal(t, "fresh-current-term", completed.CorrelationID(),
+		"the current term's scheduled deployment must still be processed after the flush")
 }

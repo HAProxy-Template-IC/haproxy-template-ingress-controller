@@ -27,9 +27,9 @@
 package reconciler
 
 import (
-	"context"
 	"log/slog"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -76,9 +76,7 @@ const (
 // (resource_change, http_resource_change) may be superseded downstream by a
 // newer trigger; command triggers are always processed.
 type Reconciler struct {
-	eventBus  *busevents.EventBus
-	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger    *slog.Logger
+	*component.Base
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
@@ -93,55 +91,35 @@ type Reconciler struct {
 // Returns:
 //   - A new Reconciler instance ready to be started
 func New(eventBus *busevents.EventBus, logger *slog.Logger) *Reconciler {
+	r := &Reconciler{
+		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
+	}
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps.
 	// Use typed subscription to only receive events we handle (reduces buffer pressure).
-	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
-		events.EventTypeResourceIndexUpdated,
-		events.EventTypeIndexSynchronized,
-		events.EventTypeHTTPResourceUpdated,
-		events.EventTypeHTTPResourceAccepted,
-		events.EventTypeDriftPreventionTriggered,
-		events.EventTypeBecameLeader,
-	)
-
-	return &Reconciler{
-		eventBus:      eventBus,
-		eventChan:     eventChan,
-		logger:        logger,
-		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
-	}
+	r.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: EventBufferSize,
+		Handler:    r,
+		EventTypes: []string{
+			events.EventTypeResourceIndexUpdated,
+			events.EventTypeIndexSynchronized,
+			events.EventTypeHTTPResourceUpdated,
+			events.EventTypeHTTPResourceAccepted,
+			events.EventTypeDriftPreventionTriggered,
+			events.EventTypeBecameLeader,
+		},
+	})
+	return r
 }
 
-// Name returns the unique identifier for this component.
-// Implements the lifecycle.Component interface.
-func (r *Reconciler) Name() string {
-	return ComponentName
-}
-
-// Start begins the reconciler's event loop.
-//
-// This method blocks until the context is cancelled. The component is already
-// subscribed to the EventBus (subscription happens in New()), so this method
-// only dispatches events to their handlers; each handler triggers
-// reconciliation immediately. Exits cleanly on ctx cancellation.
-func (r *Reconciler) Start(ctx context.Context) error {
-	r.logger.Debug("reconciler starting (immediate trigger; no reconciler-level debounce)")
-
-	for {
-		select {
-		case event := <-r.eventChan:
-			r.handleEvent(event)
-
-		case <-ctx.Done():
-			r.logger.Info("Reconciler shutting down", "reason", ctx.Err())
-			return nil
-		}
-	}
-}
-
-// handleEvent processes events from the EventBus.
-func (r *Reconciler) handleEvent(event busevents.Event) {
+// HandleEvent implements component.EventHandler: it dispatches events to
+// their handlers, tracking processing time for the health check. Each
+// handler triggers reconciliation immediately — there is no reconciler-level
+// debounce.
+func (r *Reconciler) HandleEvent(event busevents.Event) {
 	// Track processing for health check stall detection
 	r.healthTracker.StartProcessing()
 	defer r.healthTracker.EndProcessing()
@@ -177,7 +155,7 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 	// Skip initial sync events - we don't want to trigger reconciliation
 	// until the initial sync is complete.
 	if event.ChangeStats.IsInitialSync {
-		r.logger.Debug("Skipping initial sync event",
+		r.Logger().Debug("Skipping initial sync event",
 			"resource_type", event.ResourceTypeName,
 			"created", event.ChangeStats.Created,
 			"modified", event.ChangeStats.Modified,
@@ -188,14 +166,14 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 	// Skip HAProxy pod changes - they are deployment targets, not configuration sources.
 	// Pod changes trigger deployment via HAProxyPodsDiscoveredEvent → Deployer component.
 	if event.ResourceTypeName == names.HAProxyPodsResourceType {
-		r.logger.Debug("Skipping HAProxy pod change (deployment target, not config source)",
+		r.Logger().Debug("Skipping HAProxy pod change (deployment target, not config source)",
 			"created", event.ChangeStats.Created,
 			"modified", event.ChangeStats.Modified,
 			"deleted", event.ChangeStats.Deleted)
 		return
 	}
 
-	r.logger.Debug("Resource change detected, triggering reconciliation",
+	r.Logger().Debug("Resource change detected, triggering reconciliation",
 		"resource_type", event.ResourceTypeName,
 		"created", event.ChangeStats.Created,
 		"modified", event.ChangeStats.Modified,
@@ -209,7 +187,7 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 // the initial reconciliation so the first render happens with a complete view
 // of cluster state.
 func (r *Reconciler) handleIndexSynchronized(event *events.IndexSynchronizedEvent) {
-	r.logger.Info("All indices synchronized, triggering initial reconciliation",
+	r.Logger().Info("All indices synchronized, triggering initial reconciliation",
 		"resource_counts", event.ResourceCounts)
 	r.triggerReconciliation(reasonIndexSynchronized)
 }
@@ -219,7 +197,7 @@ func (r *Reconciler) handleIndexSynchronized(event *events.IndexSynchronizedEven
 // When external HTTP content changes (e.g. IP blocklists, API responses), this
 // triggers a re-render to incorporate the new content.
 func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedEvent) {
-	r.logger.Debug("HTTP resource change detected, triggering reconciliation",
+	r.Logger().Debug("HTTP resource change detected, triggering reconciliation",
 		"url", event.URL,
 		"content_size", event.ContentSize)
 	r.triggerReconciliation(reasonHTTPResourceChange)
@@ -231,7 +209,7 @@ func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedE
 // succeeds), trigger reconciliation to re-render the production configuration
 // with the new accepted content.
 func (r *Reconciler) handleHTTPResourceAccepted(event *events.HTTPResourceAcceptedEvent) {
-	r.logger.Debug("HTTP resource accepted, triggering immediate reconciliation",
+	r.Logger().Debug("HTTP resource accepted, triggering immediate reconciliation",
 		"url", event.URL,
 		"content_size", event.ContentSize)
 	r.triggerReconciliation(reasonHTTPResourceAccepted)
@@ -254,7 +232,7 @@ func (r *Reconciler) handleDriftPrevention(_ *events.DriftPreventionTriggeredEve
 // This bootstraps leader-only components (renderer, drift monitor) with fresh
 // state — the new leader's first reconciliation produces a current render.
 func (r *Reconciler) handleBecameLeader(_ *events.BecameLeaderEvent) {
-	r.logger.Info("Became leader, triggering immediate reconciliation")
+	r.Logger().Info("Became leader, triggering immediate reconciliation")
 	r.triggerReconciliation(reasonBecameLeader)
 }
 
@@ -275,12 +253,12 @@ func (r *Reconciler) triggerReconciliation(reason string) {
 	// Create event with new correlation ID to trace this reconciliation cycle.
 	event := events.NewReconciliationTriggeredEvent(reason, coalescible, events.WithNewCorrelation())
 
-	r.logger.Debug("Triggering reconciliation",
+	r.Logger().Debug("Triggering reconciliation",
 		"reason", reason,
 		"coalescible", coalescible,
 		"correlation_id", event.CorrelationID())
 
-	r.eventBus.Publish(event)
+	r.EventBus().Publish(event)
 }
 
 // isCoalescibleReason determines if a trigger reason produces coalescible events.

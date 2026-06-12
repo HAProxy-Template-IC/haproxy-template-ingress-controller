@@ -234,6 +234,28 @@ func (b *Base) dispatch(event busevents.Event) {
 	b.handler.HandleEvent(event)
 }
 
+// FlushPending discards every event currently buffered on the subscription
+// channel without dispatching it. Leader-only components that embed Base —
+// and are therefore subscribed for the whole process lifetime, not per
+// leadership term — call this at Start entry so events buffered during a
+// previous leadership term (or while not leader) are not replayed into the
+// new term. Events that arrive after the flush are dispatched normally.
+func (b *Base) FlushPending() {
+	flushed := 0
+	for {
+		select {
+		case <-b.eventChan:
+			flushed++
+		default:
+			if flushed > 0 {
+				b.logger.Debug(b.name+" discarded stale buffered events at start",
+					"count", flushed)
+			}
+			return
+		}
+	}
+}
+
 // Stop signals the event loop to exit. Safe to call multiple times.
 func (b *Base) Stop() {
 	b.stopOnce.Do(func() {

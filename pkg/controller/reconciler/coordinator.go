@@ -123,6 +123,13 @@ func (c *Coordinator) Name() string {
 // Start begins the coordinator's event loop.
 //
 // This method blocks until the context is cancelled.
+//
+// NOTE: deliberately NOT converted to embed component.Base. Base subscribes
+// at construction, but the coordinator is a leader-only component whose
+// input (ReconciliationTriggeredEvent) is published by the all-replica
+// Reconciler on EVERY replica — a constructor-time subscription would have
+// follower replicas fill the buffer and log critical drops continuously.
+// Subscribing here, on leadership, keeps followers unsubscribed entirely.
 func (c *Coordinator) Start(ctx context.Context) error {
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
@@ -132,6 +139,10 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		CoordinatorEventBufferSize,
 		events.EventTypeReconciliationTriggered,
 	)
+	// Unsubscribe on loop exit: without this, every leadership
+	// re-acquisition on the same instance would stack another subscription
+	// whose orphaned channel fills up and logs critical drops forever.
+	defer c.eventBus.UnsubscribeTyped(c.eventChan)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	c.MarkReady()

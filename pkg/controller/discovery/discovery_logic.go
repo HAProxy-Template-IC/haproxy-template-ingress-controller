@@ -37,16 +37,16 @@ import (
 //  6. Publishes HAProxyPodTerminatedEvent for removed pods
 //  7. Publishes HAProxyPodsDiscoveredEvent with version-validated endpoints
 func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfig.Credentials, source string) {
-	c.logger.Debug("triggering HAProxy pod discovery", "source", source)
+	c.Logger().Debug("triggering HAProxy pod discovery", "source", source)
 
 	// Call pure Discovery component with logger for debugging
-	candidates, err := c.discovery.DiscoverEndpointsWithLogger(podStore, credentials, c.logger)
+	candidates, err := c.discovery.DiscoverEndpointsWithLogger(podStore, credentials, c.Logger())
 	if err != nil {
-		c.logger.Error("discovery failed", "error", err)
+		c.Logger().Error("discovery failed", "error", err)
 		return
 	}
 
-	c.logger.Debug("discovered candidate pods", "count", len(candidates))
+	c.Logger().Debug("discovered candidate pods", "count", len(candidates))
 
 	// Build map of current candidates for tracking removals
 	currentCandidates := make(map[string]string)
@@ -62,7 +62,7 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	// metrics component can increment haptic_haproxy_pods_rejected_total.
 	admittedEndpoints, rejections := c.filterByVersion(candidates, credentials)
 	for _, r := range rejections {
-		c.eventBus.Publish(events.NewHAProxyPodRejectedEvent(r.podName, r.reason))
+		c.EventBus().Publish(events.NewHAProxyPodRejectedEvent(r.podName, r.reason))
 	}
 
 	// Log summary - only at INFO level when count changes or pods are admitted
@@ -73,12 +73,12 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 
 	countChanged := len(admittedEndpoints) != previousCount
 	if len(admittedEndpoints) > 0 || countChanged {
-		c.logger.Info("Discovered HAProxy pods",
+		c.Logger().Info("Discovered HAProxy pods",
 			"source", source,
 			"candidates", len(candidates),
 			"admitted", len(admittedEndpoints))
 	} else {
-		c.logger.Debug("Discovered HAProxy pods",
+		c.Logger().Debug("Discovered HAProxy pods",
 			"source", source,
 			"candidates", len(candidates),
 			"admitted", len(admittedEndpoints))
@@ -95,13 +95,13 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	for podName, podNamespace := range c.lastEndpoints {
 		if _, exists := currentEndpoints[podName]; !exists {
 			// Pod was removed from admitted set
-			c.logger.Info("Detected pod termination",
+			c.Logger().Info("Detected pod termination",
 				"pod_name", podName,
 				"pod_namespace", podNamespace)
 
 			// Publish HAProxyPodTerminatedEvent (without holding lock)
 			c.mu.Unlock()
-			c.eventBus.Publish(events.NewHAProxyPodTerminatedEvent(podName, podNamespace))
+			c.EventBus().Publish(events.NewHAProxyPodTerminatedEvent(podName, podNamespace))
 			c.mu.Lock()
 		}
 	}
@@ -121,7 +121,7 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	c.discoveredReplayer.Cache(event)
 
 	// Publish HAProxyPodsDiscoveredEvent
-	c.eventBus.Publish(event)
+	c.EventBus().Publish(event)
 }
 
 // rejection captures a pod rejected during admission, accumulated under
@@ -159,7 +159,7 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 
 		// Check if already admitted
 		if cachedEndpoint, exists := c.admittedPods[podName]; exists {
-			c.logger.Debug("pod already admitted, using cached version",
+			c.Logger().Debug("pod already admitted, using cached version",
 				"pod", podName,
 				"version", cachedEndpoint.DetectedFullVersion)
 			admitted = append(admitted, cachedEndpoint)
@@ -183,7 +183,7 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 			if comparison > 0 {
 				direction = "newer"
 			}
-			c.logger.Error("rejecting pod: remote HAProxy version does not match local",
+			c.Logger().Error("rejecting pod: remote HAProxy version does not match local",
 				"pod", podName,
 				"remote_version", remoteVersion.Full,
 				"local_version", c.localVersion.Full,
@@ -213,7 +213,7 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 			DetectedFullVersion:  remoteVersion.Full,
 		}
 
-		c.logger.Info("Pod admitted with matching version",
+		c.Logger().Info("Pod admitted with matching version",
 			"pod", podName,
 			"version", remoteVersion.Full)
 
@@ -246,7 +246,7 @@ func (c *Component) checkRemoteVersion(endpoint *dataplane.Endpoint) (*dataplane
 	}
 
 	// Call the exported DetectVersion function
-	versionInfo, err := client.DetectVersion(ctx, clientEndpoint, c.logger)
+	versionInfo, err := client.DetectVersion(ctx, clientEndpoint, c.Logger())
 	if err != nil {
 		return nil, fmt.Errorf("detecting version for pod %s: %w", endpoint.PodName, err)
 	}
@@ -281,7 +281,7 @@ func (c *Component) handleVersionCheckFailure(podName string, err error) {
 		}
 	}
 
-	c.logger.Warn("version check failed, will retry",
+	c.Logger().Warn("version check failed, will retry",
 		"pod", podName,
 		"error", err,
 		"retry_count", retry.retryCount,
@@ -296,7 +296,7 @@ func (c *Component) cleanupRemovedPods(currentCandidates map[string]string) {
 	// Clean up admitted pods
 	for podName := range c.admittedPods {
 		if _, exists := currentCandidates[podName]; !exists {
-			c.logger.Debug("cleaning up state for removed pod", "pod", podName)
+			c.Logger().Debug("cleaning up state for removed pod", "pod", podName)
 			delete(c.admittedPods, podName)
 			delete(c.pendingRetries, podName)
 		}
@@ -348,7 +348,7 @@ func (c *Component) scheduleRetryTimerLocked() {
 	// Calculate delay (minimum 1 second to avoid tight loops)
 	delay := max(time.Until(nextRetry), time.Second)
 
-	c.logger.Debug("scheduling retry timer for pending pods",
+	c.Logger().Debug("scheduling retry timer for pending pods",
 		"pending_count", len(c.pendingRetries),
 		"delay", delay)
 
@@ -359,7 +359,7 @@ func (c *Component) scheduleRetryTimerLocked() {
 
 // handleRetryTimer is called when the retry timer fires to re-check pending pods.
 func (c *Component) handleRetryTimer() {
-	c.logger.Debug("retry timer fired, re-triggering discovery for pending pods")
+	c.Logger().Debug("retry timer fired, re-triggering discovery for pending pods")
 
 	// Get current state
 	c.mu.RLock()
@@ -371,7 +371,7 @@ func (c *Component) handleRetryTimer() {
 	c.mu.RUnlock()
 
 	if pendingCount == 0 {
-		c.logger.Debug("no pending pods to retry")
+		c.Logger().Debug("no pending pods to retry")
 		return
 	}
 
@@ -379,7 +379,7 @@ func (c *Component) handleRetryTimer() {
 	if hasCredentials && hasDataplanePort && podStore != nil {
 		c.triggerDiscovery(podStore, *credentials, "retry_timer")
 	} else {
-		c.logger.Warn("retry timer fired but cannot discover pods, missing requirements",
+		c.Logger().Warn("retry timer fired but cannot discover pods, missing requirements",
 			"has_credentials", hasCredentials,
 			"has_dataplane_port", hasDataplanePort,
 			"has_pod_store", podStore != nil)

@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -34,12 +35,14 @@ import (
 // ComponentName is the unique identifier for the index synchronization tracker component.
 const ComponentName = "index-tracker"
 
+// EventBufferSize is the buffer size for the event subscription.
+const EventBufferSize = 100
+
 // IndexSynchronizationTracker monitors resource synchronization and publishes
 // an event when all resource types have completed initial sync.
 type IndexSynchronizationTracker struct {
-	eventBus          *busevents.EventBus
-	eventChan         <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger            *slog.Logger
+	*component.Base
+
 	expectedResources map[string]bool // resourceTypeName -> synced
 	resourceCounts    map[string]int  // resourceTypeName -> count
 	mu                sync.Mutex
@@ -65,45 +68,40 @@ func New(
 		expectedResources[name] = false
 	}
 
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(ComponentName, 100,
-		events.EventTypeResourceSyncComplete,
-	)
-
-	return &IndexSynchronizationTracker{
-		eventBus:          eventBus,
-		eventChan:         eventChan,
-		logger:            logger,
+	t := &IndexSynchronizationTracker{
 		expectedResources: expectedResources,
 		resourceCounts:    make(map[string]int),
 		allSynced:         false,
 	}
+	// The Base subscribes to the EventBus during construction (before
+	// EventBus.Start()). This ensures proper startup synchronization without
+	// timing-based sleeps. Typed subscription (EventTypes, not a catch-all)
+	// so we only receive events we handle (reduces buffer pressure).
+	t.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: EventBufferSize,
+		Handler:    t,
+		EventTypes: []string{events.EventTypeResourceSyncComplete},
+	})
+	return t
 }
 
-// Start begins monitoring resource synchronization events.
-//
-// This method:
-//   - Tracks which resources have synced
-//   - Publishes IndexSynchronizedEvent when all expected resources are synced
-//   - Runs until ctx is cancelled
+// Start begins monitoring resource synchronization events by running the
+// embedded component.Base event loop until ctx is cancelled.
 func (t *IndexSynchronizationTracker) Start(ctx context.Context) error {
-	t.logger.Debug("index synchronization tracker started",
+	t.Logger().Debug("index synchronization tracker started",
 		"expected_resources", len(t.expectedResources))
 
-	for {
-		select {
-		case event := <-t.eventChan:
-			// Handle ResourceSyncCompleteEvent
-			if syncEvent, ok := event.(*events.ResourceSyncCompleteEvent); ok {
-				t.handleResourceSyncComplete(syncEvent)
-			}
+	return t.Base.Start(ctx)
+}
 
-		case <-ctx.Done():
-			t.logger.Debug("index synchronization tracker stopping")
-			return nil
-		}
+// HandleEvent implements component.EventHandler: it dispatches
+// ResourceSyncCompleteEvent to the sync tracker.
+func (t *IndexSynchronizationTracker) HandleEvent(event busevents.Event) {
+	if syncEvent, ok := event.(*events.ResourceSyncCompleteEvent); ok {
+		t.handleResourceSyncComplete(syncEvent)
 	}
 }
 
@@ -119,14 +117,14 @@ func (t *IndexSynchronizationTracker) handleResourceSyncComplete(event *events.R
 
 	// Check if this is an expected resource
 	if _, expected := t.expectedResources[resourceTypeName]; !expected {
-		t.logger.Warn("received sync complete for unexpected resource",
+		t.Logger().Warn("received sync complete for unexpected resource",
 			"resource_type", resourceTypeName)
 		return
 	}
 
 	// Check if already marked as synced
 	if t.expectedResources[resourceTypeName] {
-		t.logger.Debug("resource already marked as synced, ignoring duplicate event",
+		t.Logger().Debug("resource already marked as synced, ignoring duplicate event",
 			"resource_type", resourceTypeName)
 		return
 	}
@@ -135,7 +133,7 @@ func (t *IndexSynchronizationTracker) handleResourceSyncComplete(event *events.R
 	t.expectedResources[resourceTypeName] = true
 	t.resourceCounts[resourceTypeName] = initialCount
 
-	t.logger.Debug("resource synced",
+	t.Logger().Debug("resource synced",
 		"resource_type", resourceTypeName,
 		"initial_count", initialCount,
 		"synced_count", t.syncedCount(),
@@ -145,12 +143,12 @@ func (t *IndexSynchronizationTracker) handleResourceSyncComplete(event *events.R
 	if t.allResourcesSynced() && !t.allSynced {
 		t.allSynced = true
 
-		t.logger.Debug("all resource indices synchronized",
+		t.Logger().Debug("all resource indices synchronized",
 			"total_resources", len(t.expectedResources),
 			"resource_counts", t.resourceCounts)
 
 		// Publish IndexSynchronizedEvent
-		t.eventBus.Publish(events.NewIndexSynchronizedEvent(t.resourceCounts))
+		t.EventBus().Publish(events.NewIndexSynchronizedEvent(t.resourceCounts))
 	}
 }
 

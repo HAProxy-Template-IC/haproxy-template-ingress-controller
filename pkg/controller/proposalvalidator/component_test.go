@@ -104,7 +104,7 @@ backend http_back
 	})
 
 	require.NotNil(t, component)
-	assert.NotNil(t, component.eventBus)
+	assert.NotNil(t, component.Base, "async mode must embed the component.Base event loop")
 	assert.NotNil(t, component.pipeline)
 	assert.NotNil(t, component.baseStore)
 	assert.NotNil(t, component.logger)
