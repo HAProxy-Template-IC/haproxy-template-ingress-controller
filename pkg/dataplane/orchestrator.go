@@ -131,7 +131,13 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 
 	if !auxDiffs.hasChanges {
 		result := o.createNoChangesResult(startTime, &diff.Summary)
-		if preCachedVersion > 0 {
+		// Never report the headerless sentinel (1) as a cacheable
+		// version: after a skip_version push (runtime bypass) every
+		// state reads as 1, so a version-1 cache entry could later
+		// false-hit against a body the bypass has since changed and
+		// silently skip a needed sync (permanent drift). See
+		// fetchCurrentConfig and SyncResult.PostSyncVersion.
+		if preCachedVersion > headerlessConfigVersion {
 			result.PostSyncVersion = preCachedVersion
 		}
 		return result, nil

@@ -251,3 +251,100 @@ func TestParseAndCompareConfigs_ParsesDesiredWhenOnlyCurrentPreParsed(t *testing
 	assert.Equal(t, int32(1), mockParser.parseCalled.Load(),
 		"parser should be called once for desired config only")
 }
+
+// After a runtime-bypass apply (skip_version push) the pod's config has no
+// `# _version` header and GetVersion reads it as 1 — for ANY body. A cached
+// entry at version 1 must therefore never satisfy the cache check: the cached
+// body and the pod's actual body can differ while both read as 1, and a false
+// hit would let the comparator no-op against a stale baseline (permanent
+// drift that even drift-prevention deploys can't correct).
+func TestFetchCurrentConfig_HeaderlessSentinelForcesFetch(t *testing.T) {
+	var rawConfigCalls atomic.Int32
+
+	orch, cleanup := createTestOrchestratorWithParser(t, func(w http.ResponseWriter, r *http.Request) {
+		if v3InfoResponse(w, r) {
+			return
+		}
+		switch r.URL.Path {
+		case "/services/haproxy/configuration/version":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "1") // headerless sentinel
+		case "/services/haproxy/configuration/raw":
+			rawConfigCalls.Add(1)
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "global\n  daemon\n")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, &mockConfigParser{})
+	defer cleanup()
+
+	cachedConfig := &parserconfig.StructuredConfig{}
+	opts := &SyncOptions{
+		CachedCurrentConfig: cachedConfig,
+		CachedConfigVersion: 1, // equal to the pod's sentinel reading
+	}
+
+	configStr, preParsedCurrent, preCachedVersion, err := orch.fetchCurrentConfig(context.Background(), opts)
+
+	require.NoError(t, err)
+	assert.Equal(t, "global\n  daemon\n", configStr, "must fetch the actual config despite version equality at 1")
+	assert.Nil(t, preParsedCurrent, "must not serve the cached config for the headerless sentinel")
+	assert.Equal(t, int64(1), preCachedVersion)
+	assert.Equal(t, int32(1), rawConfigCalls.Load(), "GetRawConfiguration must be called")
+}
+
+// The no-changes path must not report the headerless sentinel (1) as a
+// cacheable PostSyncVersion: the deployer would store (1, body) and a later
+// reconcile against a post-bypass pod (which always reads version 1) could
+// false-hit that entry. Real versions (>1) must still be reported so the
+// deployer's version cache keeps working.
+func TestSync_NoChanges_PostSyncVersionGuardsHeaderlessSentinel(t *testing.T) {
+	tests := []struct {
+		name            string
+		podVersion      string
+		wantPostVersion int64
+	}{
+		{name: "headerless sentinel is not reported", podVersion: "1", wantPostVersion: 0},
+		{name: "real version is reported", podVersion: "7", wantPostVersion: 7},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orch, cleanup := createTestOrchestratorWithParser(t, func(w http.ResponseWriter, r *http.Request) {
+				if v3InfoResponse(w, r) {
+					return
+				}
+				switch r.URL.Path {
+				case "/services/haproxy/configuration/version":
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprint(w, tt.podVersion)
+				case "/services/haproxy/configuration/raw":
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprint(w, "global\n  daemon\n")
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}, &mockConfigParser{})
+			defer cleanup()
+
+			opts := &SyncOptions{
+				// Cached config present but at a non-matching version so the
+				// sync takes the full-fetch path and reaches the no-changes
+				// branch with preCachedVersion = the pod's reading.
+				CachedCurrentConfig: &parserconfig.StructuredConfig{},
+				CachedConfigVersion: 99,
+				// Matching checksums skip the auxiliary-file comparison, so
+				// the equal config diff lands in the no-changes branch.
+				ContentChecksum:      "abc",
+				LastDeployedChecksum: "abc",
+			}
+
+			result, err := orch.sync(context.Background(), "global\n  daemon\n", opts, nil)
+
+			require.NoError(t, err)
+			require.Equal(t, SyncModeNoChanges, result.SyncMode)
+			assert.Equal(t, tt.wantPostVersion, result.PostSyncVersion)
+		})
+	}
+}
