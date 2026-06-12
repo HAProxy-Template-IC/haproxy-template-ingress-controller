@@ -69,6 +69,16 @@ type SyncResult struct {
 	// Callers can cache this alongside the desired parsed config to skip
 	// redundant GetRawConfiguration() + parse on subsequent syncs when the
 	// pod's version hasn't changed. Zero means version was not captured.
+	//
+	// Never carries 1: version 1 is the headerless sentinel — a config
+	// written by a skip_version push (the runtime bypass) has no
+	// `# _version=N` header and GetVersion reads it as 1 regardless of
+	// body, so 1 cannot discriminate states and must never be cached
+	// (see fetchCurrentConfig). The runtime fast path (SyncRuntimeFast)
+	// deliberately leaves PostSyncVersion zero and PostSyncParsedConfig
+	// nil: it is fetch-free by design, and its skip_version push strips
+	// the version header, forcing the next versioned sync to take a
+	// cache miss and re-fetch the pod's actual state.
 	PostSyncVersion int64
 
 	// PostSyncParsedConfig is the pod's actual configuration AFTER the sync

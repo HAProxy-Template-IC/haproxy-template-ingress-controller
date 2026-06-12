@@ -231,12 +231,20 @@ func (c *DataplaneClient) PushRawConfigurationSkipReload(ctx context.Context, co
 // of waiting in the pending slot behind an in-flight ~200ms structural reload.
 // The caller passes the CURRENT on-disk config as the body (so a co-batched
 // reconcile's structural changes are NOT written to disk without a reload); only
-// the runtime actions take effect on the live worker. The push still bumps the
-// config version, so skip_version drops the optimistic-lock check; the gated
-// scheduled deploy runs only after the in-flight one finishes and re-fetches the
-// version, so there is no collision. The runtime change persists across the
-// scheduled deploy's structural reload because that deploy re-renders the
-// current endpoints (config-driven; no server-state-file — ADR-0011).
+// the runtime actions take effect on the live worker.
+//
+// NB: skip_version does NOT bump the config version — the dataplane writes the
+// pushed body VERBATIM, without the `# _version=N` header and without
+// incrementing anything (client-native raw.go writes the header only on the
+// versioned path; transaction.go skips IncrementTransactionVersion when
+// skipVersion is set). After this push GetVersion reads the missing header as
+// 1, the headerless sentinel. The orchestrator therefore treats version 1 as
+// uncacheable and never satisfies a version-cache check with it (see
+// headerlessConfigVersion in pkg/dataplane), so the next versioned sync always
+// re-fetches the pod's actual config and re-stamps the header. The runtime
+// change persists across the scheduled deploy's structural reload because that
+// deploy re-renders the current endpoints (config-driven; no server-state-file
+// — ADR-0011).
 func (c *DataplaneClient) PushRawConfigurationSkipReloadSkipVersion(ctx context.Context, config, runtimeActions string) error {
 	// Same reload-clobber retry as PushRawConfigurationSkipReload (see there).
 	return retryWhileReloadInProgress(ctx, c.logger, func() error {

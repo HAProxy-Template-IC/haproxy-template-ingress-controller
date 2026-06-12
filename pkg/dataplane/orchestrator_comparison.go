@@ -27,6 +27,15 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
+// headerlessConfigVersion is what GetVersion reports when the pod's config
+// file carries no `# _version=N` header. The dataplane API (via
+// client-native) writes the pushed body VERBATIM on skip_version pushes —
+// no header, no version increment (client-native raw.go / transaction.go) —
+// so after every runtime-bypass apply the pod reads as version 1 no matter
+// what body is on disk. Version 1 therefore cannot discriminate states:
+// it must never satisfy a version-cache check and never be cached.
+const headerlessConfigVersion = 1
+
 // fetchCurrentConfig obtains the current HAProxy configuration, either from cache or by fetching.
 //
 // When CachedCurrentConfig is set in opts, it first calls GetVersion() (lightweight ~100 bytes)
@@ -59,14 +68,26 @@ func (o *orchestrator) fetchCurrentConfig(ctx context.Context, opts *SyncOptions
 				"error", versionErr)
 		} else {
 			preCachedVersion = podVersion
-			if podVersion == opts.CachedConfigVersion {
+			// Version 1 is the headerless sentinel, not a real version:
+			// a skip_version push (runtime bypass) writes the config body
+			// verbatim WITHOUT the `# _version=N` header, and GetVersion
+			// reads a missing header as 1 — regardless of what body is on
+			// disk. Two different post-bypass states both report 1, so
+			// equality at 1 proves nothing; force a full fetch to compare
+			// against the pod's actual config.
+			switch podVersion {
+			case headerlessConfigVersion:
+				o.logger.Debug("Pod config version is the headerless sentinel; forcing full fetch",
+					"pod_version", podVersion)
+			case opts.CachedConfigVersion:
 				o.logger.Debug("Config version cache hit, skipping full fetch+parse",
 					"version", podVersion)
 				return "", opts.CachedCurrentConfig, preCachedVersion, nil
+			default:
+				o.logger.Debug("Config version cache miss, fetching full config",
+					"cached_version", opts.CachedConfigVersion,
+					"pod_version", podVersion)
 			}
-			o.logger.Debug("Config version cache miss, fetching full config",
-				"cached_version", opts.CachedConfigVersion,
-				"pod_version", podVersion)
 		}
 	}
 
