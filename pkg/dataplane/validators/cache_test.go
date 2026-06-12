@@ -20,8 +20,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
+
+// cacheLen counts entries across all shards (test-only observability).
+func cacheLen(c *Cache) int {
+	total := 0
+	for i := range c.shards {
+		total += c.shards[i].Len()
+	}
+	return total
+}
 
 func TestCache_GetAdd(t *testing.T) {
 	cache := NewCache()
@@ -90,53 +98,18 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// Should not panic and cache should have entries
-	assert.Greater(t, cache.Len(), 0)
-}
-
-func TestCache_Purge(t *testing.T) {
-	cache := NewCache()
-
-	// Add entries across multiple shards
-	for i := range uint64(100) {
-		cache.Add(i, nil)
-	}
-	require.Greater(t, cache.Len(), 0)
-
-	// Purge and verify
-	cache.Purge()
-	assert.Equal(t, 0, cache.Len())
-
-	// Verify entries are gone
-	_, ok := cache.Get(0)
-	assert.False(t, ok)
-}
-
-func TestCache_Stats(t *testing.T) {
-	cache := NewCache()
-
-	stats := cache.Stats()
-	assert.Equal(t, 0, stats.Entries)
-	assert.Equal(t, NumShards, stats.Shards)
-
-	// Add some entries
-	for i := range uint64(50) {
-		cache.Add(i, nil)
-	}
-
-	stats = cache.Stats()
-	assert.Equal(t, 50, stats.Entries)
-	assert.Equal(t, NumShards, stats.Shards)
+	assert.Greater(t, cacheLen(cache), 0)
 }
 
 func TestCache_Len(t *testing.T) {
 	cache := NewCache()
 
-	assert.Equal(t, 0, cache.Len())
+	assert.Equal(t, 0, cacheLen(cache))
 
 	// Add entries that go to different shards
 	for i := range uint64(200) {
 		cache.Add(i, nil)
 	}
 
-	assert.Equal(t, 200, cache.Len())
+	assert.Equal(t, 200, cacheLen(cache))
 }

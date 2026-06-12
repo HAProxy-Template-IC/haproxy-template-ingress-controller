@@ -36,7 +36,8 @@
 //
 //	// Start HTTP server
 //	server := introspection.NewServer(":6060", registry)
-//	server.Start(ctx)
+//	server.Setup()
+//	go server.Serve(ctx)
 //
 //	// Query variables:
 //	// GET /debug/vars - list all variables

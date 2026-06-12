@@ -45,7 +45,7 @@ type TemplateExtraction struct {
 	EntryPoints []string
 }
 
-// NewEngineFromConfig creates a template engine from configuration.
+// NewEngineFromConfigWithOptions creates a template engine from configuration.
 //
 // This is a convenience function that handles the common pattern of:
 //  1. Extracting templates from configuration
@@ -54,28 +54,8 @@ type TemplateExtraction struct {
 //
 // All standard filters (sort_by, glob_match, b64decode, strip, trim, debug) and the
 // fail() function are registered internally by each engine. Callers only need to
-// pass custom filters/functions if they have additional ones beyond the standard set.
-//
-// Parameters:
-//   - cfg: Configuration containing templates and engine settings
-//   - globalFunctions: Optional custom global functions. Can be nil (fail is auto-registered)
-//   - postProcessorConfigs: Optional post-processor configurations. Can be nil
-//
-// Returns the initialized Engine or an error if initialization fails.
-//
-// For domain-specific type declarations (e.g., currentConfig), use NewEngineFromConfigWithOptions.
-func NewEngineFromConfig(
-	cfg *config.Config,
-	globalFunctions map[string]templating.GlobalFunc,
-	postProcessorConfigs map[string][]templating.PostProcessorConfig,
-) (templating.Engine, error) {
-	return NewEngineFromConfigWithOptions(cfg, globalFunctions, postProcessorConfigs, nil, EngineOptions{})
-}
-
-// NewEngineFromConfigWithOptions creates a template engine with additional options.
-//
-// This is the full-featured version of NewEngineFromConfig that accepts EngineOptions
-// for controlling profiling and other engine-specific settings.
+// pass custom filters/functions if they have additional ones beyond the standard set
+// (globalFunctions can be nil).
 //
 // If postProcessorConfigs is nil, post-processors are automatically extracted from
 // the configuration. Pass an explicit empty map to disable post-processing.
@@ -108,34 +88,18 @@ func NewEngineFromConfigWithOptions(
 		return nil, fmt.Errorf("invalid template engine type: %q (valid: %s)", engineName, templating.EngineNameScriggo)
 	}
 
-	// Create engine with all components
+	// Create engine with all components.
 	// Note: All standard filters and the fail() function are registered internally.
-	// We pass nil for filters since none are needed beyond the engine's built-in set.
-	// The *WithDeclarations constructors handle nil additionalDeclarations gracefully.
-	var (
-		engine templating.Engine
-		err    error
-	)
-	if options.EnableProfiling {
-		engine, err = templating.NewScriggoWithProfilingAndDeclarations(
-			extraction.AllTemplates,
-			extraction.EntryPoints,
-			nil,
-			globalFunctions,
-			postProcessorConfigs,
-			additionalDeclarations,
-		)
-	} else {
-		engine, err = templating.NewScriggoWithDeclarations(
-			extraction.AllTemplates,
-			extraction.EntryPoints,
-			nil,
-			globalFunctions,
-			postProcessorConfigs,
-			additionalDeclarations,
-		)
-	}
-	return engine, err
+	// No custom Filters are passed since none are needed beyond the engine's
+	// built-in set. templating.New handles nil Functions/PostProcessors/Declarations
+	// gracefully.
+	return templating.New(extraction.AllTemplates, &templating.Options{
+		EntryPoints:    extraction.EntryPoints,
+		Functions:      globalFunctions,
+		PostProcessors: postProcessorConfigs,
+		Declarations:   additionalDeclarations,
+		Profiling:      options.EnableProfiling,
+	})
 }
 
 // ExtractTemplatesFromConfig extracts all templates from the configuration structure.

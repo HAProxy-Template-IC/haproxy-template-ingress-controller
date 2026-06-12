@@ -50,25 +50,6 @@ type RetryConfig struct {
 	Logger *slog.Logger
 }
 
-// DefaultRetryConfig returns a RetryConfig with sensible defaults.
-func DefaultRetryConfig() RetryConfig {
-	return RetryConfig{
-		MaxAttempts: 1,
-		RetryIf:     nil,
-		Backoff:     BackoffNone,
-		BaseDelay:   100 * time.Millisecond,
-		Logger:      nil,
-	}
-}
-
-// IsVersionConflict returns a RetryCondition that retries on version conflict errors.
-func IsVersionConflict() RetryCondition {
-	return func(err error) bool {
-		_, ok := errors.AsType[*VersionConflictError](err)
-		return ok
-	}
-}
-
 // IsConnectionError returns a RetryCondition that retries on transient connection errors.
 //
 // This condition detects network-level connection failures such as:

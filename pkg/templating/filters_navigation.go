@@ -537,46 +537,6 @@ func isValueInList(value, list any) bool {
 	return false
 }
 
-// isEmpty checks if a value is "empty" (for selectattr truthiness test).
-func isEmpty(value any) bool {
-	if value == nil {
-		return true
-	}
-
-	switch v := value.(type) {
-	case string:
-		return v == ""
-	case int, int64, float64:
-		return false // Numbers are not empty
-	case bool:
-		return !v
-	case []any:
-		return len(v) == 0
-	case map[string]any:
-		return len(v) == 0
-	default:
-		// Try reflection for other slice/map types
-		rv := reflect.ValueOf(value)
-		switch rv.Kind() {
-		case reflect.Slice, reflect.Map, reflect.Array:
-			return rv.Len() == 0
-		case reflect.Pointer:
-			return rv.IsNil()
-		}
-		return false
-	}
-}
-
-// scriggoJoinKey joins multiple values into a composite key string.
-// Automatically converts all values to strings using scriggoToString.
-//
-// Usage in Scriggo templates:
-//
-//	{%- var key = join_key("_", namespace, name, serviceName, port) %}
-//
-// This is cleaner than:
-//
-//	{%- var key = tostring(ns) + "_" + tostring(name) + "_" + tostring(svc) + "_" + tostring(port) %}
 func scriggoJoinKey(sep string, parts ...any) string {
 	if len(parts) == 0 {
 		return ""

@@ -19,9 +19,8 @@ import (
     "gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
 
-p := configpublisher.New(k8sClient, crdClient, logger)
-// or:
 p := configpublisher.NewWithListers(k8sClient, crdClient, listers, logger)
+// pass nil listers to fall back to direct API reads
 
 result, err := p.PublishConfig(ctx, &configpublisher.PublishRequest{
     TemplateConfigName:      "haptic-config",

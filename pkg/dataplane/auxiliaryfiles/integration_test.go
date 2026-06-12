@@ -380,34 +380,3 @@ func TestCompareCRTLists_Integration(t *testing.T) {
 		assert.Empty(t, diff.ToDelete)
 	})
 }
-
-// Note: CRT-list files are always stored as general files to avoid reload on create
-// (native CRT-list API triggers reload without skip_reload support).
-func TestSyncCRTLists_Integration(t *testing.T) {
-	// CRT-lists are stored as general files, so we need general file storage mock
-	generalFiles := newMockStorage()
-	server := createTestServer(generalFiles, nil)
-	defer server.Close()
-
-	c := testutil.NewTestClient(t, server)
-	ctx := context.Background()
-
-	t.Run("sync nil diff", func(t *testing.T) {
-		_, err := SyncCRTLists(ctx, c, nil)
-		require.NoError(t, err)
-	})
-
-	t.Run("sync deletes", func(t *testing.T) {
-		generalFiles.put("todelete.txt", "content")
-
-		diff := &CRTListDiff{
-			ToDelete: []string{"todelete.txt"},
-		}
-
-		_, err := SyncCRTLists(ctx, c, diff)
-		require.NoError(t, err)
-
-		_, ok := generalFiles.get("todelete.txt")
-		assert.False(t, ok)
-	})
-}

@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -14,10 +13,6 @@ import (
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
-
-// ErrEnterpriseRequired is returned when an enterprise-only operation is attempted
-// on a HAProxy Community edition instance.
-var ErrEnterpriseRequired = errors.New("this operation requires HAProxy Enterprise edition")
 
 // errNotSupported returns an error indicating that the operation is not supported
 // by the given DataPlane API version (the version-specific function was nil).
@@ -188,178 +183,5 @@ func (c *DataplaneClient) DispatchWithCapability(
 
 	default:
 		return nil, fmt.Errorf("unexpected client type: %T", client)
-	}
-}
-
-// DispatchGeneric is a generic version of Dispatch for non-HTTP response types.
-// Use this when the return type is not *http.Response (e.g., for string, int64, etc.).
-//
-// This is a package-level function because it needs to work with any clientset,
-// not just DataplaneClient instances.
-//
-// Example (returning parsed data instead of raw response):
-//
-//	version, err := DispatchGeneric[int64](ctx, c.clientset, CallFunc[int64]{
-//	    V32: func(c *v32.Client) (int64, error) {
-//	        resp, err := c.GetConfigurationVersion(ctx, &v32.GetConfigurationVersionParams{})
-//	        if err != nil {
-//	            return 0, err
-//	        }
-//	        defer resp.Body.Close()
-//	        // ... parse version from response ...
-//	        return parsedVersion, nil
-//	    },
-//	    // ... similar for V31 and V30 ...
-//	})
-func DispatchGeneric[T any](
-	ctx context.Context,
-	clientset *Clientset,
-	call CallFunc[T],
-) (T, error) {
-	switch client := clientset.PreferredClient().(type) {
-	// Community edition clients
-	case *v33.Client:
-		if call.V33 == nil {
-			var zero T
-			return zero, errNotSupported("v3.3")
-		}
-		return call.V33(client)
-
-	case *v32.Client:
-		if call.V32 == nil {
-			var zero T
-			return zero, errNotSupported("v3.2")
-		}
-		return call.V32(client)
-
-	case *v31.Client:
-		if call.V31 == nil {
-			var zero T
-			return zero, errNotSupported("v3.1")
-		}
-		return call.V31(client)
-
-	case *v30.Client:
-		if call.V30 == nil {
-			var zero T
-			return zero, errNotSupported("v3.0")
-		}
-		return call.V30(client)
-
-	// Enterprise edition clients
-	case *v32ee.Client:
-		if call.V32EE == nil {
-			var zero T
-			return zero, errEnterpriseNotSupported("v3.2")
-		}
-		return call.V32EE(client)
-
-	case *v31ee.Client:
-		if call.V31EE == nil {
-			var zero T
-			return zero, errEnterpriseNotSupported("v3.1")
-		}
-		return call.V31EE(client)
-
-	case *v30ee.Client:
-		if call.V30EE == nil {
-			var zero T
-			return zero, errEnterpriseNotSupported("v3.0")
-		}
-		return call.V30EE(client)
-
-	default:
-		var zero T
-		return zero, fmt.Errorf("unexpected client type: %T", client)
-	}
-}
-
-// EnterpriseCallFunc represents versioned API call functions for enterprise-only endpoints.
-// Unlike CallFunc, this only includes enterprise edition clients since these endpoints
-// are not available in HAProxy Community edition.
-//
-// Example usage for WAF profile management:
-//
-//	resp, err := c.DispatchEnterpriseOnly(ctx, EnterpriseCallFunc[*http.Response]{
-//	    V32EE: func(c *v32ee.Client) (*http.Response, error) {
-//	        return c.GetWafProfiles(ctx, &v32ee.GetWafProfilesParams{})
-//	    },
-//	    V31EE: func(c *v31ee.Client) (*http.Response, error) {
-//	        return c.GetWafProfiles(ctx, &v31ee.GetWafProfilesParams{})
-//	    },
-//	    V30EE: func(c *v30ee.Client) (*http.Response, error) {
-//	        return c.GetWafProfiles(ctx, &v30ee.GetWafProfilesParams{})
-//	    },
-//	})
-type EnterpriseCallFunc[T any] struct {
-	// V32EE is the function to call for HAProxy Enterprise DataPlane API v3.2+
-	V32EE func(*v32ee.Client) (T, error)
-
-	// V31EE is the function to call for HAProxy Enterprise DataPlane API v3.1
-	V31EE func(*v31ee.Client) (T, error)
-
-	// V30EE is the function to call for HAProxy Enterprise DataPlane API v3.0
-	V30EE func(*v30ee.Client) (T, error)
-}
-
-// DispatchEnterpriseOnly executes the appropriate versioned function for enterprise-only endpoints.
-// Returns ErrEnterpriseRequired if connected to HAProxy Community edition.
-//
-// Use this for enterprise-exclusive features like:
-//   - WAF management (waf_profiles, waf_body_rules, waf/rulesets)
-//   - Bot management (botmgmt_profiles, captchas)
-//   - UDP load balancing (udp_lbs)
-//   - Keepalived/VRRP (vrrp_instances, vrrp_sync_groups)
-//   - Advanced logging (logs/config, logs/inputs, logs/outputs)
-//   - Git integration (git/settings, git/actions)
-//   - Dynamic updates (dynamic_update_rules)
-//   - ALOHA features (aloha/actions)
-//
-// Example:
-//
-//	resp, err := c.DispatchEnterpriseOnly(ctx, EnterpriseCallFunc[*http.Response]{
-//	    V32EE: func(c *v32ee.Client) (*http.Response, error) {
-//	        return c.GetWafProfiles(ctx, &v32ee.GetWafProfilesParams{TransactionId: &txID})
-//	    },
-//	    V31EE: func(c *v31ee.Client) (*http.Response, error) {
-//	        return c.GetWafProfiles(ctx, &v31ee.GetWafProfilesParams{TransactionId: &txID})
-//	    },
-//	    V30EE: func(c *v30ee.Client) (*http.Response, error) {
-//	        return c.GetWafProfiles(ctx, &v30ee.GetWafProfilesParams{TransactionId: &txID})
-//	    },
-//	})
-func (c *DataplaneClient) DispatchEnterpriseOnly(
-	ctx context.Context,
-	call EnterpriseCallFunc[*http.Response],
-) (*http.Response, error) {
-	// Check if connected to enterprise edition
-	if !c.clientset.IsEnterprise() {
-		return nil, ErrEnterpriseRequired
-	}
-
-	// Route to appropriate enterprise version
-	switch c.clientset.MinorVersion() {
-	case 3:
-		// No v33ee client yet (HAProxy Enterprise 3.3 not released).
-		// Fall through to v32ee which has the same API endpoints.
-		if call.V32EE == nil {
-			return nil, errEnterpriseNotSupported("v3.2")
-		}
-		return call.V32EE(c.clientset.V32EE())
-	case 2:
-		if call.V32EE == nil {
-			return nil, errEnterpriseNotSupported("v3.2")
-		}
-		return call.V32EE(c.clientset.V32EE())
-	case 1:
-		if call.V31EE == nil {
-			return nil, errEnterpriseNotSupported("v3.1")
-		}
-		return call.V31EE(c.clientset.V31EE())
-	default:
-		if call.V30EE == nil {
-			return nil, errEnterpriseNotSupported("v3.0")
-		}
-		return call.V30EE(c.clientset.V30EE())
 	}
 }

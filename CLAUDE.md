@@ -382,8 +382,8 @@ func TestEngine_Render(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            engine, err := templating.New(templating.EngineTypeScriggo,
-                map[string]string{"test": tt.template}, nil, nil, nil)
+            engine, err := templating.New(
+                map[string]string{"test": tt.template}, nil)
             require.NoError(t, err)
 
             got, err := engine.Render(context.Background(), "test", tt.context)
@@ -424,7 +424,7 @@ isn't tested via this shape. For an actual event-adapter test, see
 ```go
 func TestRendererComponent(t *testing.T) {
     bus := events.NewEventBus(100)
-    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+    engine, _ := templating.New(templates, nil)
     renderer := NewRendererComponent(bus, engine)
 
     // Subscribe to output events

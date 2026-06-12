@@ -176,23 +176,20 @@ func TestAuxiliaryFiles_Sort_HandlesEmptyAndSingleElement(t *testing.T) {
 }
 
 // SyncOptions defaults are part of the dataplane public contract.
-// DefaultSyncOptions and DryRunOptions both have safety-relevant defaults
-// that, if changed silently, would alter production sync behaviour:
+// DefaultSyncOptions has safety-relevant defaults that, if changed
+// silently, would alter production sync behaviour:
 //
 //   - DefaultSyncOptions.VerifyReload=true — operators rely on this to
 //     detect failed reloads. Flipping to false would silently mask
 //     regressions where HAProxy rejects the new config but Kubernetes
 //     keeps routing traffic.
-//   - DryRunOptions.VerifyReload=false — dry-run never reloads HAProxy,
-//     so polling reload status is a guaranteed timeout. Flipping to
-//     true would make every dry-run hit the reload-verification timeout.
 //   - DefaultSyncOptions.ReloadVerificationTimeout=10s — values higher
 //     than this serialize sync behind reloads; lower values race with
 //     the DataPlane API's own reload-delay setting.
 //
 // Pin every safety-relevant default so a regression in DefaultSyncOptions
-// or DryRunOptions surfaces immediately.
-func TestSyncOptions_DefaultAndDryRun_SafetyContracts(t *testing.T) {
+// surfaces immediately.
+func TestSyncOptions_Default_SafetyContracts(t *testing.T) {
 	t.Run("DefaultSyncOptions pins safety-relevant defaults", func(t *testing.T) {
 		opts := DefaultSyncOptions()
 		require.NotNil(t, opts)
@@ -216,21 +213,7 @@ func TestSyncOptions_DefaultAndDryRun_SafetyContracts(t *testing.T) {
 				"DataPlane API's reload-delay setting")
 	})
 
-	t.Run("DryRunOptions pins no-side-effects guarantees", func(t *testing.T) {
-		opts := DryRunOptions()
-		require.NotNil(t, opts)
-
-		// VerifyReload MUST be false in dry-run — no reload happens,
-		// so polling for reload status is a guaranteed timeout that
-		// would make every dry-run wait the full
-		// ReloadVerificationTimeout window.
-		assert.False(t, opts.VerifyReload,
-			"DryRunOptions.VerifyReload MUST be false — dry-run never "+
-				"reloads, so polling reload status would timeout for "+
-				"every call and defeat the point of dry-run latency")
-	})
-
-	t.Run("DefaultSyncOptions and DryRunOptions return independent instances", func(t *testing.T) {
+	t.Run("DefaultSyncOptions returns independent instances", func(t *testing.T) {
 		// Both functions must return fresh structs — if they shared
 		// a backing struct, callers mutating one would silently
 		// affect the other (and the very next caller would see the
@@ -242,11 +225,6 @@ func TestSyncOptions_DefaultAndDryRun_SafetyContracts(t *testing.T) {
 			"DefaultSyncOptions MUST return a fresh struct per call — "+
 				"shared instances would let callers silently mutate "+
 				"the defaults seen by the next caller")
-
-		c := DryRunOptions()
-		d := DryRunOptions()
-		require.NotSame(t, c, d,
-			"DryRunOptions MUST return a fresh struct per call")
 	})
 }
 

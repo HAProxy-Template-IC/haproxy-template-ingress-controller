@@ -39,7 +39,7 @@ if err != nil {
 go comp.Start(ctx)    // blocks inside until ctx is cancelled
 ```
 
-`Start(ctx)` is the entry point — the README previously used `Run(ctx)`, which doesn't exist. `IsLeader()` and `GetLeader()` are exposed for components that need to check state synchronously (e.g., webhook validators that behave differently on the leader).
+`Start(ctx)` is the entry point — the README previously used `Run(ctx)`, which doesn't exist. Leadership transitions are observed via the published events (`BecameLeaderEvent`, `LostLeadershipEvent`, `NewLeaderObservedEvent`); there are no synchronous state accessors.
 
 ## Events Published
 
@@ -62,7 +62,7 @@ The `OnStartedLeading` wrapper runs `EventBus.Pause()` → publish `BecameLeader
 
 The pure elector in `pkg/k8s/leaderelection` has no dependency on the event bus — that keeps it reusable outside this controller. All bus-coupled observability (logging via commentator, metrics via `pkg/controller/metrics`, leader-only gating via `pkg/controller/leadership`) is concentrated here.
 
-`Start` delegates directly to the pure elector's `Start`. `IsLeader` and `GetLeader` pass through the same way. If you find yourself adding business logic to this adapter, it probably belongs in the pure elector or a dedicated controller component instead.
+`Start` delegates directly to the pure elector's `Start`. If you find yourself adding business logic to this adapter, it probably belongs in the pure elector or a dedicated controller component instead.
 
 ## See Also
 

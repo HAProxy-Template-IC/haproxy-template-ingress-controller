@@ -43,7 +43,8 @@ func main() {
     // Start HTTP server
     server := introspection.NewServer(":6060", registry)
     ctx := context.Background()
-    go server.Start(ctx)
+    server.Setup()
+    go server.Serve(ctx)
 
     // Access via:
     // curl http://localhost:6060/debug/vars
@@ -87,14 +88,13 @@ Retrieves a variable and extracts a specific field using JSONPath.
 ```go
 func (r *Registry) Paths() []string
 func (r *Registry) All() (map[string]any, error)
-func (r *Registry) Len() int
 func (r *Registry) Clear()
 ```
 
 `Paths()` returns the sorted list of registered variable paths (used by the
 `/debug/vars` index handler). `All()` returns a `path → value` map by calling
 `Get()` on every registered variable; the first failure aborts and bubbles up.
-`Len()` is the size of the registry. `Clear()` empties the registry without
+`Clear()` empties the registry without
 tearing down the HTTP server — used between controller iterations so stale Vars
 from a previous iteration get garbage-collected.
 
@@ -145,10 +145,11 @@ func NewServer(addr string, registry *Registry) *Server
 Creates a new HTTP server bound to `addr` (e.g., ":6060"). Server binds to 0.0.0.0 for compatibility with kubectl port-forward.
 
 ```go
-func (s *Server) Start(ctx context.Context) error
+func (s *Server) Setup()
+func (s *Server) Serve(ctx context.Context) error
 ```
 
-Starts the HTTP server. Blocks until context is cancelled. Performs graceful shutdown with 10s timeout.
+`Setup()` finalises the routes (call it after registering custom handlers and the health checker). `Serve()` starts the HTTP server and blocks until context is cancelled. Performs graceful shutdown with 10s timeout.
 
 Exposes endpoints:
 

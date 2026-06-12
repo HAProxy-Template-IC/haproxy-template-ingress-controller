@@ -680,132 +680,19 @@ Each test gets isolated namespace, so parallel execution is safe.
 
 ## Enterprise Testing
 
-### Overview
-
-Enterprise-specific tests are located in `enterprise_*_test.go` files and exercise HAProxy Enterprise-only features. These tests gracefully skip when running against HAProxy Community edition.
-
-### Test Files
-
-| File | Features Tested |
-|------|-----------------|
-| `enterprise_waf_test.go` | WAF rulesets, body rules, global config, profiles |
-| `enterprise_keepalived_test.go` | VRRP instances, sync groups, track scripts, transactions |
-| `enterprise_udplb_test.go` | UDP load balancers, dgram binds, log targets, ACLs |
-| `enterprise_botmgmt_test.go` | Bot management profiles, CAPTCHAs |
-| `enterprise_misc_test.go` | Facts, Ping, Structured Config, Git, Logging, Dynamic Update, ALOHA |
-
-### Skip Helpers
-
-All enterprise tests use capability-based skip helpers from `env.go`:
-
-```go
-func TestWAFRulesets(t *testing.T) {
-    env := fixenv.New(t)
-    skipIfWAFNotSupported(t, env)  // Skips if WAF not available
-
-    // Test proceeds only on enterprise edition
-    ctx := context.Background()
-    dataplaneClient := TestDataplaneClient(env)
-    wafOps := enterprise.NewWAFOperations(dataplaneClient)
-    // ...
-}
-```
-
-**Available skip helpers:**
-
-| Helper | Skip Condition |
-|--------|----------------|
-| `skipIfNotEnterprise` | Not HAProxy Enterprise |
-| `skipIfWAFNotSupported` | No WAF support |
-| `skipIfWAFGlobalNotSupported` | No WAF global config (v3.2+ only) |
-| `skipIfWAFProfilesNotSupported` | No WAF profiles (v3.2+ only) |
-| `skipIfKeepalivedNotSupported` | No Keepalived/VRRP support |
-| `skipIfUDPLBNotSupported` | No UDP load balancing support |
-| `skipIfUDPLBACLsNotSupported` | No UDP LB ACLs (v3.2+ only) |
-| `skipIfBotManagementNotSupported` | No bot management support |
-| `skipIfGitIntegrationNotSupported` | No Git integration support |
-| `skipIfAdvancedLoggingNotSupported` | No advanced logging support |
-| `skipIfDynamicUpdateNotSupported` | No dynamic update support |
-| `skipIfALOHANotSupported` | No ALOHA support |
-| `skipIfPingNotSupported` | No Ping endpoint (v3.2+ only) |
-
-### Running Enterprise Tests
-
-Enterprise tests require HAProxy Enterprise. In CI, these tests are skipped automatically.
+`enterprise_botmgmt_test.go` exercises the full EE sync flow (parse config →
+compare → push) for Enterprise-only config sections (bot-management profiles,
+captchas, WAF profiles/global). It gracefully skips when running against
+HAProxy Community edition via the capability-based skip helpers in `env.go`
+(`skipIfBotManagementSyncNotSupported`, `skipIfCaptchaNotSupported`,
+`skipIfWAFProfilesNotSupported`, `skipIfWAFGlobalNotSupported`).
 
 ```bash
 # Run all integration tests (enterprise tests skip on community)
 make test-integration
 
-# Run specific enterprise test (requires enterprise HAProxy)
-KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestWAF -v
-
-# Run with verbose skip messages to see which tests are skipped
-go test -tags=integration ./tests/integration -v 2>&1 | grep -E "(SKIP|PASS|FAIL)"
-```
-
-### Version-Gated Features
-
-Some enterprise features require specific versions:
-
-| Feature | Required Version |
-|---------|-----------------|
-| WAF rulesets, body rules | All Enterprise versions |
-| WAF global config | v3.2+ Enterprise |
-| WAF profiles | v3.2+ Enterprise |
-| UDP LB ACLs | v3.2+ Enterprise |
-| Ping endpoint | v3.2+ Enterprise |
-
-Tests automatically check capabilities and skip appropriately:
-
-```go
-func TestWAFProfiles(t *testing.T) {
-    env := fixenv.New(t)
-    skipIfWAFProfilesNotSupported(t, env)  // Checks SupportsWAFProfiles capability
-
-    // Test proceeds only on v3.2+ enterprise
-}
-```
-
-### Adding New Enterprise Tests
-
-1. **Create test file**: `enterprise_<feature>_test.go`
-2. **Add skip helper** to `env.go` if new capability check needed
-3. **Use appropriate skip helper** at test start
-4. **Follow existing patterns** for transaction management and error handling
-
-Example pattern:
-
-```go
-//go:build integration
-
-package integration
-
-import (
-    "context"
-    "testing"
-
-    "github.com/rekby/fixenv"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
-
-    "haptic/pkg/dataplane/client/enterprise"
-)
-
-func TestNewEnterpriseFeature(t *testing.T) {
-    env := fixenv.New(t)
-    skipIfNewFeatureNotSupported(t, env)
-
-    ctx := context.Background()
-    dataplaneClient := TestDataplaneClient(env)
-    featureOps := enterprise.NewFeatureOperations(dataplaneClient)
-
-    t.Run("list-items", func(t *testing.T) {
-        items, err := featureOps.GetAllItems(ctx)
-        require.NoError(t, err)
-        assert.NotNil(t, items)
-    })
-}
+# Run the EE section sync tests (requires enterprise HAProxy)
+KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestSyncEnterpriseSections -v
 ```
 
 ## Resources

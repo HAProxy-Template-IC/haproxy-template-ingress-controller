@@ -15,9 +15,7 @@
 package templating
 
 import (
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -171,111 +169,6 @@ func (pr *PathResolver) GetPath(args ...any) (any, error) {
 	return fullPath, nil
 }
 
-// GlobMatch filters a list of strings by glob pattern.
-//
-// Usage in templates:
-//
-//	{%- set matching = template_snippets | glob_match("backend-annotation-*") %}
-//	{%- for snippet_name in matching %}
-//	  {{ render(snippet_name) }}
-//	{%- endfor %}
-//
-// Parameters:
-//   - in: List of strings to filter ([]any or []string)
-//   - args: Single argument specifying glob pattern (supports * and ? wildcards)
-//
-// Returns:
-//   - Filtered list containing only matching strings
-//   - Error if input is not a list, pattern is missing, or pattern is invalid
-func GlobMatch(in any, args ...any) (any, error) {
-	// Convert input to []any
-	var list []any
-
-	switch v := in.(type) {
-	case []any:
-		list = v
-	case []string:
-		// Convert []string to []any
-		list = make([]any, len(v))
-		for i, s := range v {
-			list[i] = s
-		}
-	default:
-		return nil, fmt.Errorf("glob_match: input must be a list, got %T", in)
-	}
-
-	// Validate pattern argument
-	if len(args) == 0 {
-		return nil, errors.New("glob_match: pattern argument required")
-	}
-
-	pattern, ok := args[0].(string)
-	if !ok {
-		return nil, fmt.Errorf("glob_match: pattern must be a string, got %T", args[0])
-	}
-
-	// Filter by glob pattern
-	var result []any
-	for _, item := range list {
-		str, ok := item.(string)
-		if !ok {
-			continue // Skip non-string items
-		}
-
-		matched, err := filepath.Match(pattern, str)
-		if err != nil {
-			return nil, fmt.Errorf("glob_match: invalid pattern %q: %w", pattern, err)
-		}
-
-		if matched {
-			result = append(result, str)
-		}
-	}
-
-	return result, nil
-}
-
-// B64Decode decodes a base64-encoded value.
-// The input is converted to string using lenient type conversion.
-//
-// Usage in templates:
-//
-//	{{ secret.data.username | b64decode }}
-//	{{ secret.data.password | b64decode }}
-//
-// Parameters:
-//   - in: Base64-encoded value to decode (converted to string)
-//
-// Returns:
-//   - Decoded string
-//   - Error if decoding fails
-//
-// Note: Kubernetes secrets automatically base64-encode all data values,
-// so this filter is needed to access the plain-text content.
-func B64Decode(in any, args ...any) (any, error) {
-	str := scriggoToString(in)
-
-	decoded, err := base64.StdEncoding.DecodeString(str)
-	if err != nil {
-		return nil, fmt.Errorf("b64decode: %w", err)
-	}
-
-	return string(decoded), nil
-}
-
-// Strip removes leading and trailing whitespace from a string.
-//
-// This is the shared core implementation used by the Scriggo engine.
-//
-// Usage in templates:
-//
-//	{{ "  hello world  " | strip }}  → "hello world"
-//
-// Parameters:
-//   - s: String to strip whitespace from
-//
-// Returns:
-//   - String with leading and trailing whitespace removed
 func Strip(s string) string {
 	return strings.TrimSpace(s)
 }

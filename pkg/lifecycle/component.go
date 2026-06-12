@@ -15,7 +15,7 @@
 // Package lifecycle provides component lifecycle management for the controller.
 //
 // This package implements a component registry pattern that allows declarative
-// configuration of component startup, dependency ordering, and health tracking.
+// configuration of component startup and health tracking.
 //
 // Example:
 //
@@ -42,7 +42,7 @@ import (
 // should block until the context is cancelled or an error occurs.
 type Component interface {
 	// Name returns a unique identifier for this component.
-	// This is used for logging, status tracking, and dependency resolution.
+	// This is used for logging and status tracking.
 	Name() string
 
 	// Start begins the component's operation.
@@ -91,7 +91,7 @@ type SubscriptionReadySignaler interface {
 	// SubscriptionReady returns a channel that is closed when the component has
 	// completed its event subscription and is ready to receive events.
 	// The registry will wait for this channel before considering the component
-	// ready for dependents.
+	// ready.
 	SubscriptionReady() <-chan struct{}
 }
 
@@ -139,20 +139,3 @@ type ComponentInfo struct {
 	// nil means health check not supported, true means healthy, false means unhealthy.
 	Healthy *bool `json:"healthy,omitempty"`
 }
-
-// CriticalityLevel defines how important a component is to the system.
-type CriticalityLevel int
-
-const (
-	// CriticalityCritical means the system cannot function without this component.
-	// If a critical component fails, the entire system should be considered unhealthy.
-	CriticalityCritical CriticalityLevel = iota
-
-	// CriticalityDegradable means the system can function with reduced capability
-	// if this component fails.
-	CriticalityDegradable
-
-	// CriticalityOptional means the system can function normally without this component.
-	// Optional components typically provide non-essential features.
-	CriticalityOptional
-)

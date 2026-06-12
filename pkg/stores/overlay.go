@@ -106,15 +106,7 @@ func (o *StoreOverlay) AddModification(obj runtime.Object) {
 type CompositeStore struct {
 	base    Store
 	overlay *StoreOverlay
-
-	// keyExtractor extracts index keys from a resource.
-	// This is needed to properly index additions and modifications.
-	keyExtractor KeyExtractor
 }
-
-// KeyExtractor extracts index keys from a resource.
-// The keys are used to index resources in the store.
-type KeyExtractor func(resource any) ([]string, error)
 
 // NewCompositeStore creates a new CompositeStore.
 //
@@ -125,18 +117,6 @@ func NewCompositeStore(base Store, overlay *StoreOverlay) *CompositeStore {
 	return &CompositeStore{
 		base:    base,
 		overlay: overlay,
-	}
-}
-
-// NewCompositeStoreWithKeyExtractor creates a new CompositeStore with a key extractor.
-//
-// The key extractor is needed for stores that use multi-key indexing.
-// Without it, additions and modifications cannot be properly matched with Get() queries.
-func NewCompositeStoreWithKeyExtractor(base Store, overlay *StoreOverlay, keyExtractor KeyExtractor) *CompositeStore {
-	return &CompositeStore{
-		base:         base,
-		overlay:      overlay,
-		keyExtractor: keyExtractor,
 	}
 }
 
@@ -267,38 +247,22 @@ func (s *CompositeStore) isModified(resource any) bool {
 	return false
 }
 
-// matchesKeys checks if a resource matches the given lookup keys.
+// matchesKeys checks if a resource matches the given lookup keys
+// using basic namespace/name matching.
 func (s *CompositeStore) matchesKeys(resource any, keys []string) bool {
-	if s.keyExtractor == nil {
-		// Without a key extractor, we can only do basic namespace/name matching
-		resKey := s.getResourceKey(resource)
-		if resKey == nil || len(keys) == 0 {
-			return false
-		}
-
-		// Match based on keys length:
-		// 1 key = namespace match
-		// 2 keys = namespace + name match
-		if len(keys) >= 1 && keys[0] != resKey.Namespace {
-			return false
-		}
-		if len(keys) >= 2 && keys[1] != resKey.Name {
-			return false
-		}
-		return true
-	}
-
-	// Use key extractor for full key matching
-	resourceKeys, err := s.keyExtractor(resource)
-	if err != nil || len(resourceKeys) < len(keys) {
+	resKey := s.getResourceKey(resource)
+	if resKey == nil || len(keys) == 0 {
 		return false
 	}
 
-	// Check if provided keys match the resource keys (prefix match)
-	for i, key := range keys {
-		if resourceKeys[i] != key {
-			return false
-		}
+	// Match based on keys length:
+	// 1 key = namespace match
+	// 2 keys = namespace + name match
+	if len(keys) >= 1 && keys[0] != resKey.Namespace {
+		return false
+	}
+	if len(keys) >= 2 && keys[1] != resKey.Name {
+		return false
 	}
 	return true
 }

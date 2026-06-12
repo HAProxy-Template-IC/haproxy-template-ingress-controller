@@ -53,7 +53,7 @@ func TestCreateOrUpdateSSLSecret_RetriesOnConflict(t *testing.T) {
 		return false, nil, nil // passthrough to the tracker
 	})
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 	req := &PublishRequest{TemplateConfigNamespace: "default"}
 	owner := &haproxyv1alpha1.HAProxyCfg{ObjectMeta: metav1.ObjectMeta{Name: "owner", UID: types.UID("u1")}}
 	cert := auxiliaryfiles.SSLCertificate{Path: "/etc/haproxy/ssl/cert.pem"}
@@ -87,7 +87,7 @@ func TestCreateOrUpdateSSLSecret_RetriesOnAlreadyExistsCreate(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	req := &PublishRequest{TemplateConfigNamespace: "default"}
 	owner := &haproxyv1alpha1.HAProxyCfg{ObjectMeta: metav1.ObjectMeta{Name: "owner", UID: types.UID("u1")}}

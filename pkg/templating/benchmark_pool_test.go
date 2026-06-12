@@ -87,7 +87,7 @@ server {{ item.(map[string]any)["name"] }} {{ item.(map[string]any)["address"] }
 		"shards":     (*[]any)(nil),
 		"operations": (*int)(nil),
 	}
-	engine, err := NewScriggoWithDeclarations(templates, []string{"main"}, nil, nil, nil, declarations)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main"}, Declarations: declarations})
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}

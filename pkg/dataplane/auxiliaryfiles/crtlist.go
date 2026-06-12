@@ -34,17 +34,6 @@ func CRTListsToGeneralFiles(crtLists []CRTListFile) []GeneralFile {
 	return generalFiles
 }
 
-// convertCRTListDiffToFileDiff converts a CRTListDiff to a FileDiff for general file storage.
-// Note: ToDelete paths are already sanitized filenames returned by the comparison,
-// so they don't need additional sanitization here.
-func convertCRTListDiffToFileDiff(crtListDiff *CRTListDiff) *FileDiff {
-	return &FileDiff{
-		ToCreate: CRTListsToGeneralFiles(crtListDiff.ToCreate),
-		ToUpdate: CRTListsToGeneralFiles(crtListDiff.ToUpdate),
-		ToDelete: crtListDiff.ToDelete, // Already sanitized from API response
-	}
-}
-
 // CompareCRTLists compares the current state of crt-list files in HAProxy storage
 // with the desired state, and returns a diff describing what needs to be created,
 // updated, or deleted.
@@ -98,33 +87,4 @@ func generalFilesToCRTLists(items []GeneralFile) []CRTListFile {
 		}
 	}
 	return out
-}
-
-// SyncCRTLists synchronizes crt-list files to the desired state by applying
-// the provided diff. This function should be called in two phases:
-//   - Phase 1 (pre-config): Call with diff containing ToCreate and ToUpdate
-//   - Phase 2 (post-config): Call with diff containing ToDelete
-//
-// The caller is responsible for splitting the diff into these phases.
-// Returns reload IDs from create/update operations that triggered reloads.
-//
-// Storage strategy: Always uses general file storage instead of native CRT-list API.
-// The native CRT-list API (POST ssl_crt_lists) triggers a reload but doesn't support
-// the skip_reload parameter. General file CREATE returns 201 without triggering a reload,
-// allowing us to batch all changes into a single reload during config sync.
-func SyncCRTLists(ctx context.Context, c *client.DataplaneClient, diff *CRTListDiff) ([]string, error) {
-	if diff == nil {
-		return nil, nil
-	}
-
-	// Always use general file storage for CRT-lists to avoid reload on create.
-	// Native CRT-list API triggers reload without skip_reload support.
-	// General file storage returns 201 (no reload), reducing total reloads.
-	slog.Debug("using general file storage for CRT-lists sync to avoid reload on create")
-
-	// Convert CRT-list diff to general file diff
-	generalDiff := convertCRTListDiffToFileDiff(diff)
-
-	// Sync using general file storage
-	return SyncGeneralFiles(ctx, c, generalDiff)
 }

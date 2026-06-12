@@ -143,49 +143,6 @@ func (p validationPhase) wrap(cause error) *ValidationError {
 	return &ValidationError{Phase: p.name, Message: p.message, Cause: cause}
 }
 
-// ConflictError represents unresolved version conflicts after exhausting retries.
-type ConflictError struct {
-	// Retries is the number of retry attempts made
-	Retries int
-
-	// ExpectedVersion is the version we tried to use
-	ExpectedVersion int64
-
-	// ActualVersion is the version that exists on the server
-	ActualVersion string
-}
-
-// Error implements the error interface.
-func (e *ConflictError) Error() string {
-	return fmt.Sprintf("version conflict after %d retries: expected version %d, server has %s",
-		e.Retries, e.ExpectedVersion, e.ActualVersion)
-}
-
-// OperationError represents a failure of a specific configuration operation.
-type OperationError struct {
-	// OperationType is "create", "update", or "delete"
-	OperationType string
-
-	// Section is the configuration section (e.g., "backend", "server")
-	Section string
-
-	// Resource is the resource identifier (e.g., backend name, server name)
-	Resource string
-
-	// Cause is the underlying error
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *OperationError) Error() string {
-	return fmt.Sprintf("%s %s '%s': %v", e.OperationType, e.Section, e.Resource, e.Cause)
-}
-
-// Unwrap returns the underlying cause for error unwrapping.
-func (e *OperationError) Unwrap() error {
-	return e.Cause
-}
-
 // Helper functions to create common error scenarios
 
 // NewConnectionError creates a ConnectionError.
@@ -221,49 +178,6 @@ func NewParseError(configType, configSnippet string, cause error) *SyncError {
 		Message: fmt.Sprintf("parsing %s configuration", configType),
 		Cause:   &ParseError{ConfigType: configType, ConfigSnippet: configSnippet, Cause: cause},
 		Hints:   hints,
-	}
-}
-
-// NewValidationError creates a ValidationError.
-func NewValidationError(message string, cause error) *SyncError {
-	return &SyncError{
-		Stage:   stageApply,
-		Message: "HAProxy rejected the configuration",
-		Cause:   &ValidationError{Phase: phaseNameSemantic, Message: message, Cause: cause},
-		Hints: []string{
-			"Review the validation error message from HAProxy",
-			"Check for references to non-existent backends or servers",
-			"Verify all directives are compatible with your HAProxy version",
-			"Ensure resource dependencies are satisfied",
-		},
-	}
-}
-
-// NewConflictError creates a ConflictError.
-func NewConflictError(retries int, expectedVersion int64, actualVersion string) *SyncError {
-	return &SyncError{
-		Stage:   "commit",
-		Message: fmt.Sprintf("version conflict after %d retries", retries),
-		Cause:   &ConflictError{Retries: retries, ExpectedVersion: expectedVersion, ActualVersion: actualVersion},
-		Hints: []string{
-			"Another process is modifying the HAProxy configuration concurrently",
-			"Coordinate configuration updates to avoid conflicts",
-			"Check if there are other automation tools modifying HAProxy",
-		},
-	}
-}
-
-// NewOperationError creates an OperationError.
-func NewOperationError(opType, section, resource string, cause error) *SyncError {
-	return &SyncError{
-		Stage:   stageApply,
-		Message: fmt.Sprintf("%s %s '%s'", opType, section, resource),
-		Cause:   &OperationError{OperationType: opType, Section: section, Resource: resource, Cause: cause},
-		Hints: []string{
-			fmt.Sprintf("Check if %s '%s' exists and is accessible", section, resource),
-			"Review the operation details for invalid values",
-			"Verify resource dependencies are satisfied",
-		},
 	}
 }
 

@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package lifecycle manages component lifecycles — registration, ordered
-// startup with dependency resolution, leader-only activation, and
-// status/health reporting. The entry point is Registry.
+// Package lifecycle manages component lifecycles — registration, startup,
+// leader-only activation, and status/health reporting. The entry point is
+// Registry.
 //
 // Responsibilities are split across files:
 //   - registry.go   — the Registry type plus Register / Count
 //   - startup.go    — StartAll and the startComponent goroutine logic
-//   - dependencies.go — dependency validation, cycle detection, ready-waits
-//   - leader.go     — StartLeaderOnlyComponents{,Async}
-//   - status.go     — Status, isHealthy, updateStatus, getComponent
+//   - leader.go     — StartLeaderOnlyComponentsAsync
+//   - status.go     — Status, updateStatus
 package lifecycle
 
 import (
@@ -41,8 +40,8 @@ type registeredComponent struct {
 // Registry manages component lifecycles.
 //
 // The Registry provides:
-//   - Component registration with options (leader-only, dependencies, criticality)
-//   - Ordered startup based on dependencies
+//   - Component registration with options (leader-only)
+//   - Concurrent component startup
 //   - Status tracking and health checks
 //   - Leader-only component management
 //
@@ -54,7 +53,7 @@ type registeredComponent struct {
 //
 //	// StartAll requires isLeader so leader-only components can be skipped
 //	// on follower replicas (they're started later via
-//	// StartLeaderOnlyComponents on the elected leader).
+//	// StartLeaderOnlyComponentsAsync on the elected leader).
 //	err := registry.StartAll(ctx, isLeader)
 type Registry struct {
 	components []*registeredComponent          // Stores pointers to avoid invalidation on slice growth
@@ -80,9 +79,6 @@ func (r *Registry) WithLogger(logger *slog.Logger) *Registry {
 
 // Register adds a component to the registry with optional configuration.
 //
-// Components are started in the order they are registered, respecting any
-// dependency constraints specified via DependsOn().
-//
 // Example:
 //
 //	registry.Register(reconciler.New(bus, logger))
@@ -91,9 +87,7 @@ func (r *Registry) Register(c Component, opts ...Option) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	config := registrationConfig{
-		criticality: CriticalityCritical, // Default to critical
-	}
+	config := registrationConfig{}
 	for _, opt := range opts {
 		opt(&config)
 	}
@@ -111,8 +105,7 @@ func (r *Registry) Register(c Component, opts ...Option) {
 
 	r.logger.Debug("Component registered",
 		"name", c.Name(),
-		"leader_only", config.leaderOnly,
-		"dependencies", config.dependencies)
+		"leader_only", config.leaderOnly)
 }
 
 // Count returns the number of registered components.

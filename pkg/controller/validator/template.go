@@ -122,12 +122,7 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	// enough operator signal.
 	if bootstrapErr == nil {
 		additionalDeclarations := helpers.BuildAdditionalDeclarations(cfg, bootstrapResult)
-		if _, err := templating.NewScriggoWithDeclarations(
-			extraction.AllTemplates,
-			extraction.EntryPoints,
-			nil, nil, nil,
-			additionalDeclarations,
-		); err != nil {
+		if _, err := templating.New(extraction.AllTemplates, &templating.Options{EntryPoints: extraction.EntryPoints, Declarations: additionalDeclarations}); err != nil {
 			errors = append(errors, templating.FormatCompilationError(err, "templates", ""))
 		}
 	}

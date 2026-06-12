@@ -53,7 +53,7 @@
 // # The handoff to templating
 //
 // [BuildEngineDeclarations] turns the typed-resource map into the
-// shape pkg/templating's NewScriggoWithDeclarations expects —
+// shape pkg/templating's Options.Declarations expects —
 // `map[string]any` of typed-nil pointers. Templates compile against
 // those declared types; the actual values arrive at render time
 // from the StoreWrapper (Phase 5, not built yet).

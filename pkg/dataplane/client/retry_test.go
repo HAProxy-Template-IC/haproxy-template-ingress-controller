@@ -12,20 +12,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultRetryConfig(t *testing.T) {
-	config := DefaultRetryConfig()
+// errRetriable is a local sentinel used to exercise WithRetry's RetryIf plumbing.
+var errRetriable = errors.New("retriable test error")
 
-	assert.Equal(t, 1, config.MaxAttempts)
-	assert.Nil(t, config.RetryIf)
-	assert.Equal(t, BackoffNone, config.Backoff)
-	assert.Equal(t, 100*time.Millisecond, config.BaseDelay)
-	assert.Nil(t, config.Logger)
+func retryOnSentinel() RetryCondition {
+	return func(err error) bool { return errors.Is(err, errRetriable) }
 }
 
 func TestWithRetry_Success(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
-		RetryIf:     IsVersionConflict(),
+		RetryIf:     retryOnSentinel(),
 	}
 
 	attempts := 0
@@ -42,7 +39,7 @@ func TestWithRetry_Success(t *testing.T) {
 func TestWithRetry_NoRetryOnNonMatchingError(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
-		RetryIf:     IsVersionConflict(),
+		RetryIf:     retryOnSentinel(),
 	}
 
 	attempts := 0
@@ -57,10 +54,10 @@ func TestWithRetry_NoRetryOnNonMatchingError(t *testing.T) {
 	assert.Equal(t, "some other error", err.Error())
 }
 
-func TestWithRetry_RetriesOnVersionConflict(t *testing.T) {
+func TestWithRetry_RetriesOnMatchingError(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
-		RetryIf:     IsVersionConflict(),
+		RetryIf:     retryOnSentinel(),
 		Backoff:     BackoffNone,
 	}
 
@@ -68,10 +65,7 @@ func TestWithRetry_RetriesOnVersionConflict(t *testing.T) {
 	result, err := WithRetry(context.Background(), config, func(attempt int) (string, error) {
 		attempts++
 		if attempt < 3 {
-			return "", &VersionConflictError{
-				ExpectedVersion: 1,
-				ActualVersion:   "2",
-			}
+			return "", errRetriable
 		}
 		return "success", nil
 	})
@@ -84,24 +78,20 @@ func TestWithRetry_RetriesOnVersionConflict(t *testing.T) {
 func TestWithRetry_ExhaustsMaxAttempts(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
-		RetryIf:     IsVersionConflict(),
+		RetryIf:     retryOnSentinel(),
 		Backoff:     BackoffNone,
 	}
 
 	attempts := 0
 	result, err := WithRetry(context.Background(), config, func(attempt int) (string, error) {
 		attempts++
-		return "", &VersionConflictError{
-			ExpectedVersion: 1,
-			ActualVersion:   "2",
-		}
+		return "", errRetriable
 	})
 
 	require.Error(t, err)
 	assert.Equal(t, "", result)
 	assert.Equal(t, 3, attempts, "should exhaust all attempts")
-	_, ok := errors.AsType[*VersionConflictError](err)
-	assert.True(t, ok, "should return version conflict error")
+	assert.ErrorIs(t, err, errRetriable, "should return the retriable error")
 }
 
 func TestWithRetry_ContextCancellation(t *testing.T) {
@@ -110,16 +100,13 @@ func TestWithRetry_ContextCancellation(t *testing.T) {
 
 	config := RetryConfig{
 		MaxAttempts: 3,
-		RetryIf:     IsVersionConflict(),
+		RetryIf:     retryOnSentinel(),
 	}
 
 	attempts := 0
 	result, err := WithRetry(ctx, config, func(attempt int) (string, error) {
 		attempts++
-		return "", &VersionConflictError{
-			ExpectedVersion: 1,
-			ActualVersion:   "2",
-		}
+		return "", errRetriable
 	})
 
 	require.Error(t, err)
@@ -131,7 +118,7 @@ func TestWithRetry_ContextCancellation(t *testing.T) {
 func TestWithRetry_BackoffLinear(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
-		RetryIf:     IsVersionConflict(),
+		RetryIf:     retryOnSentinel(),
 		Backoff:     BackoffLinear,
 		BaseDelay:   50 * time.Millisecond,
 	}
@@ -140,10 +127,7 @@ func TestWithRetry_BackoffLinear(t *testing.T) {
 	attempts := 0
 	_, _ = WithRetry(context.Background(), config, func(attempt int) (string, error) {
 		attempts++
-		return "", &VersionConflictError{
-			ExpectedVersion: 1,
-			ActualVersion:   "2",
-		}
+		return "", errRetriable
 	})
 	elapsed := time.Since(start)
 
@@ -155,7 +139,7 @@ func TestWithRetry_BackoffLinear(t *testing.T) {
 func TestWithRetry_BackoffExponential(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 4,
-		RetryIf:     IsVersionConflict(),
+		RetryIf:     retryOnSentinel(),
 		Backoff:     BackoffExponential,
 		BaseDelay:   50 * time.Millisecond,
 	}
@@ -164,10 +148,7 @@ func TestWithRetry_BackoffExponential(t *testing.T) {
 	attempts := 0
 	_, _ = WithRetry(context.Background(), config, func(attempt int) (string, error) {
 		attempts++
-		return "", &VersionConflictError{
-			ExpectedVersion: 1,
-			ActualVersion:   "2",
-		}
+		return "", errRetriable
 	})
 	elapsed := time.Since(start)
 
@@ -185,10 +166,7 @@ func TestWithRetry_NoRetryIfNil(t *testing.T) {
 	attempts := 0
 	result, err := WithRetry(context.Background(), config, func(attempt int) (string, error) {
 		attempts++
-		return "", &VersionConflictError{
-			ExpectedVersion: 1,
-			ActualVersion:   "2",
-		}
+		return "", errRetriable
 	})
 
 	require.Error(t, err)
@@ -199,7 +177,7 @@ func TestWithRetry_NoRetryIfNil(t *testing.T) {
 func TestWithRetry_MaxAttemptsValidation(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 0, // Invalid
-		RetryIf:     IsVersionConflict(),
+		RetryIf:     retryOnSentinel(),
 	}
 
 	attempts := 0
@@ -236,41 +214,6 @@ func TestCalculateBackoff(t *testing.T) {
 		t.Run(string(tt.strategy), func(t *testing.T) {
 			actual := calculateBackoff(tt.strategy, baseDelay, tt.attempt)
 			assert.Equal(t, tt.expected, actual)
-		})
-	}
-}
-
-func TestIsVersionConflict(t *testing.T) {
-	condition := IsVersionConflict()
-
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "version conflict error",
-			err: &VersionConflictError{
-				ExpectedVersion: 1,
-				ActualVersion:   "2",
-			},
-			expected: true,
-		},
-		{
-			name:     "other error",
-			err:      errors.New("some error"),
-			expected: false,
-		},
-		{
-			name:     "wrapped version conflict",
-			err:      errors.New("wrapped: " + (&VersionConflictError{ExpectedVersion: 1, ActualVersion: "2"}).Error()),
-			expected: false, // errors.As doesn't work with string wrapping
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, condition(tt.err))
 		})
 	}
 }

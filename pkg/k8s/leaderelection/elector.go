@@ -65,10 +65,9 @@ type Elector struct {
 	logger    *slog.Logger
 
 	// Internal state
-	mu       sync.RWMutex
-	elector  *leaderelection.LeaderElector
-	isLeader bool
-	leader   string
+	mu      sync.RWMutex
+	elector *leaderelection.LeaderElector
+	leader  string
 }
 
 // New creates a new leader elector.
@@ -113,8 +112,6 @@ func New(
 		clientset: clientset,
 		callbacks: callbacks,
 		logger:    logger,
-		isLeader:  false,
-		leader:    "",
 	}
 
 	return e, nil
@@ -152,7 +149,6 @@ func (e *Elector) Start(ctx context.Context) error {
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				e.mu.Lock()
-				e.isLeader = true
 				e.leader = e.config.Identity
 				e.mu.Unlock()
 
@@ -165,10 +161,9 @@ func (e *Elector) Start(ctx context.Context) error {
 				}
 			},
 			OnStoppedLeading: func() {
-				e.mu.Lock()
+				e.mu.RLock()
 				previousLeader := e.leader
-				e.isLeader = false
-				e.mu.Unlock()
+				e.mu.RUnlock()
 
 				e.logger.Warn("Stopped leading",
 					"identity", e.config.Identity,
@@ -219,20 +214,4 @@ func (e *Elector) Start(ctx context.Context) error {
 		"identity", e.config.Identity)
 
 	return nil
-}
-
-// IsLeader returns true if this instance is currently the leader.
-func (e *Elector) IsLeader() bool {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.isLeader
-}
-
-// GetLeader returns the identity of the current leader.
-//
-// Returns empty string if no leader has been observed yet.
-func (e *Elector) GetLeader() string {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.leader
 }

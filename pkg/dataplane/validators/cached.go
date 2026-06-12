@@ -34,25 +34,6 @@ func NewCachedValidator(major, minor int) *CachedValidator {
 	}
 }
 
-// NewCachedValidatorWithCache creates a cached validator with a pre-existing cache.
-// Use this to share a cache across multiple validator instances.
-func NewCachedValidatorWithCache(cache *Cache, major, minor int) *CachedValidator {
-	return &CachedValidator{
-		cache: cache,
-		set:   ForVersion(major, minor),
-	}
-}
-
-// ValidatorSet returns the underlying validator set.
-func (c *CachedValidator) ValidatorSet() *ValidatorSet {
-	return c.set
-}
-
-// Cache returns the underlying cache.
-func (c *CachedValidator) Cache() *Cache {
-	return c.cache
-}
-
 // validateCached looks up a cached validation result keyed by the model's
 // content hash, falling back to running the validator and caching the outcome.
 func validateCached[T any](c *CachedValidator, m T, hasher func(T) uint64, validator func(T) error) error {

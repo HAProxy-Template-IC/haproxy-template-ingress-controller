@@ -284,36 +284,6 @@ func TestDataplaneHighLevelClient(env fixenv.Env) *dataplane.Client {
 //
 // These helpers skip tests when HAProxy Enterprise features are not available.
 // Tests using these helpers will gracefully skip on community edition.
-//
-// Usage:
-//
-//	func TestWAFRulesets(t *testing.T) {
-//	    env := fixenv.New(t)
-//	    skipIfWAFNotSupported(t, env)
-//	    // Test proceeds only on enterprise edition
-//	}
-
-// skipIfNotEnterprise skips the test if HAProxy Enterprise is not detected.
-// This is the general-purpose skip for any enterprise-only test.
-func skipIfNotEnterprise(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsWAF {
-		t.Skipf("Skipping test: requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfWAFNotSupported skips the test if WAF features are not available.
-// WAF is available in all HAProxy Enterprise versions.
-func skipIfWAFNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsWAF {
-		t.Skipf("Skipping test: WAF requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
 
 // skipIfWAFGlobalNotSupported skips the test if WAF global config is not available.
 // WAF global configuration requires HAProxy Enterprise v3.2+.
@@ -333,50 +303,6 @@ func skipIfWAFProfilesNotSupported(t *testing.T, env fixenv.Env) {
 	dataplaneClient := TestDataplaneClient(env)
 	if !dataplaneClient.Capabilities().SupportsWAFProfiles {
 		t.Skipf("Skipping test: WAF profiles require HAProxy Enterprise v3.2+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfKeepalivedNotSupported skips the test if Keepalived/VRRP features are not available.
-// Keepalived is available in all HAProxy Enterprise versions.
-func skipIfKeepalivedNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsKeepalived {
-		t.Skipf("Skipping test: Keepalived requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfUDPLBNotSupported skips the test if UDP load balancing is not available.
-// UDP load balancing is available in all HAProxy Enterprise versions.
-func skipIfUDPLBNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsUDPLoadBalancing {
-		t.Skipf("Skipping test: UDP load balancing requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfUDPLBACLsNotSupported skips the test if UDP LB ACLs are not available.
-// UDP LB ACLs require HAProxy Enterprise v3.2+.
-func skipIfUDPLBACLsNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsUDPLBACLs {
-		t.Skipf("Skipping test: UDP LB ACLs require HAProxy Enterprise v3.2+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfBotManagementNotSupported skips the test if bot management is not available.
-// Bot management is available in all HAProxy Enterprise versions.
-func skipIfBotManagementNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsBotManagement {
-		t.Skipf("Skipping test: Bot management requires HAProxy Enterprise (detected version: %s)",
 			dataplaneClient.DetectedVersion())
 	}
 }
@@ -412,61 +338,6 @@ func skipIfCaptchaNotSupported(t *testing.T, env fixenv.Env) {
 	if os.Getenv("HAPEE_KEY") == "" {
 		t.Skip("Skipping test: Captcha tests require HAPEE_KEY environment variable " +
 			"to install the hapee-lb-captcha.so module from HAProxy Enterprise repository")
-	}
-}
-
-// skipIfGitIntegrationNotSupported skips the test if Git integration is not available.
-// Git integration is available in all HAProxy Enterprise versions.
-func skipIfGitIntegrationNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsGitIntegration {
-		t.Skipf("Skipping test: Git integration requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfAdvancedLoggingNotSupported skips the test if advanced logging is not available.
-// Advanced logging is available in all HAProxy Enterprise versions.
-func skipIfAdvancedLoggingNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsAdvancedLogging {
-		t.Skipf("Skipping test: Advanced logging requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfDynamicUpdateNotSupported skips the test if dynamic updates are not available.
-// Dynamic updates are available in all HAProxy Enterprise versions.
-func skipIfDynamicUpdateNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsDynamicUpdate {
-		t.Skipf("Skipping test: Dynamic updates require HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfALOHANotSupported skips the test if ALOHA features are not available.
-// ALOHA is available in all HAProxy Enterprise versions.
-func skipIfALOHANotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsALOHA {
-		t.Skipf("Skipping test: ALOHA requires HAProxy Enterprise (detected version: %s)",
-			dataplaneClient.DetectedVersion())
-	}
-}
-
-// skipIfPingNotSupported skips the test if the Ping endpoint is not available.
-// Ping endpoint requires HAProxy Enterprise v3.2+.
-func skipIfPingNotSupported(t *testing.T, env fixenv.Env) {
-	t.Helper()
-	dataplaneClient := TestDataplaneClient(env)
-	if !dataplaneClient.Capabilities().SupportsPing {
-		t.Skipf("Skipping test: Ping endpoint requires HAProxy Enterprise v3.2+ (detected version: %s)",
-			dataplaneClient.DetectedVersion())
 	}
 }
 
@@ -525,19 +396,4 @@ func skipIfConfigMetadataNotSupported(t *testing.T, env fixenv.Env) {
 		t.Skipf("Skipping test: config model metadata requires DataPlane API v3.2+ (detected version: %s)",
 			dataplaneClient.DetectedVersion())
 	}
-}
-
-// =============================================================================
-// Transaction Helper
-// =============================================================================
-
-// StartTestTransaction is a convenience function that creates a transaction
-// by first getting the current configuration version.
-// This is useful for tests that need to make transactional operations.
-func StartTestTransaction(ctx context.Context, c *client.DataplaneClient) (*client.Transaction, error) {
-	version, err := c.GetVersion(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get version: %w", err)
-	}
-	return c.CreateTransaction(ctx, version)
 }

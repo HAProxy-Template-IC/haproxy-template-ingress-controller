@@ -34,7 +34,6 @@ func (m *mockVar) Get() (any, error) {
 
 func TestNewRegistry(t *testing.T) {
 	reg := NewRegistry()
-	assert.Equal(t, 0, reg.Len())
 	assert.Equal(t, []string{}, reg.Paths())
 }
 
@@ -44,15 +43,14 @@ func TestPublish(t *testing.T) {
 	v1 := &mockVar{value: "test1"}
 	reg.Publish("var1", v1)
 
-	assert.Equal(t, 1, reg.Len())
 	assert.Equal(t, []string{"var1"}, reg.Paths())
 
 	// Publish another
 	v2 := &mockVar{value: "test2"}
 	reg.Publish("var2", v2)
 
-	assert.Equal(t, 2, reg.Len())
 	paths := reg.Paths()
+	assert.Len(t, paths, 2)
 	assert.Contains(t, paths, "var1")
 	assert.Contains(t, paths, "var2")
 
@@ -60,7 +58,7 @@ func TestPublish(t *testing.T) {
 	v3 := &mockVar{value: "test3"}
 	reg.Publish("var1", v3)
 
-	assert.Equal(t, 2, reg.Len(), "replacing should not increase count")
+	assert.Len(t, reg.Paths(), 2, "replacing should not increase count")
 }
 
 func TestPublishPanics(t *testing.T) {

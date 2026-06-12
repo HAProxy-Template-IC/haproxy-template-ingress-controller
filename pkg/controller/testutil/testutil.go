@@ -215,39 +215,6 @@ func RunComponentContextCancel(t *testing.T, bus *busevents.EventBus, startFunc 
 	}
 }
 
-// CreateTestSecretWithTLS creates an unstructured TLS Secret for testing.
-// The cert and key are base64-encoded as Kubernetes expects for Secret data.
-//
-// Example:
-//
-//	secret := testutil.CreateTestSecretWithTLS("my-tls", "default", "12345",
-//	    []byte("-----BEGIN CERTIFICATE-----\n..."),
-//	    []byte("-----BEGIN PRIVATE KEY-----\n..."))
-func CreateTestSecretWithTLS(name, namespace, resourceVersion string, certPEM, keyPEM []byte) *unstructured.Unstructured {
-	secret := &unstructured.Unstructured{}
-	secret.SetKind("Secret")
-	secret.SetAPIVersion("v1")
-	secret.SetName(name)
-	secret.SetNamespace(namespace)
-	secret.SetResourceVersion(resourceVersion)
-
-	data := map[string]any{}
-	if certPEM != nil {
-		data["tls.crt"] = base64.StdEncoding.EncodeToString(certPEM)
-	}
-	if keyPEM != nil {
-		data["tls.key"] = base64.StdEncoding.EncodeToString(keyPEM)
-	}
-
-	if len(data) > 0 {
-		if err := unstructured.SetNestedField(secret.Object, data, "data"); err != nil {
-			panic(err)
-		}
-	}
-
-	return secret
-}
-
 // CreateTestSecretWithStringData creates an unstructured Secret with string data.
 // This is useful for credentials secrets that don't need base64 encoding in tests.
 //

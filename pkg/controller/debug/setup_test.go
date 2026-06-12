@@ -134,8 +134,9 @@ func TestRegisterEventsHandler(t *testing.T) {
 	// This is the function we're testing - it should register the handler
 	RegisterEventsHandler(server, eventBuffer)
 
-	// Start the server
-	go server.Start(ctx)
+	// Start the server (two-phase: Setup finalizes routes, Serve binds)
+	server.Setup()
+	go server.Serve(ctx)
 	time.Sleep(100 * time.Millisecond) // Wait for server to start
 
 	baseURL := fmt.Sprintf("http://localhost:%d", port)

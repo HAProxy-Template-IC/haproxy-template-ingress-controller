@@ -35,8 +35,8 @@ var anyType = reflect.TypeOf((*any)(nil)).Elem()
 var keysArgType = reflect.SliceOf(anyType)
 
 // BuildEngineDeclarations turns a Bootstrap [Result] into the
-// `additionalDeclarations map[string]any` shape that
-// templating.NewScriggoWithDeclarations expects.
+// `map[string]any` shape that templating.Options.Declarations
+// expects.
 //
 // The contract is a single top-level global named "resources" whose
 // type is a dynamically-built struct ([reflect.StructOf]). The outer

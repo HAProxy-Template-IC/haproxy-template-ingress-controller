@@ -40,16 +40,16 @@ func TestForVersion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			vs := ForVersion(tt.major, tt.minor)
 			require.NotNil(t, vs)
-			assert.Equal(t, tt.expectedVersion, vs.Version())
+			assert.Equal(t, tt.expectedVersion, vs.version)
 		})
 	}
 }
 
 func TestValidatorSet_Version(t *testing.T) {
-	assert.Equal(t, "v30", ForVersion(3, 0).Version())
-	assert.Equal(t, "v31", ForVersion(3, 1).Version())
-	assert.Equal(t, "v32", ForVersion(3, 2).Version())
-	assert.Equal(t, "v33", ForVersion(3, 3).Version())
+	assert.Equal(t, "v30", ForVersion(3, 0).version)
+	assert.Equal(t, "v31", ForVersion(3, 1).version)
+	assert.Equal(t, "v32", ForVersion(3, 2).version)
+	assert.Equal(t, "v33", ForVersion(3, 3).version)
 }
 
 func TestValidatorSet_NilFunctions(t *testing.T) {

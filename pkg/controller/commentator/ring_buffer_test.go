@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	ctlevents "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // mockEvent is a simple test event implementation.
@@ -24,7 +23,7 @@ func TestNewRingBuffer(t *testing.T) {
 
 	assert.NotNil(t, rb)
 	assert.Equal(t, 100, rb.Capacity())
-	assert.Equal(t, 0, rb.Size())
+	assert.Equal(t, 0, rb.size)
 }
 
 func TestRingBuffer_Add(t *testing.T) {
@@ -38,7 +37,7 @@ func TestRingBuffer_Add(t *testing.T) {
 		})
 	}
 
-	assert.Equal(t, 3, rb.Size())
+	assert.Equal(t, 3, rb.size)
 }
 
 func TestRingBuffer_Add_Wraparound(t *testing.T) {
@@ -52,7 +51,7 @@ func TestRingBuffer_Add_Wraparound(t *testing.T) {
 		})
 	}
 
-	assert.Equal(t, 3, rb.Size())
+	assert.Equal(t, 3, rb.size)
 
 	// Add more to trigger wraparound
 	rb.Add(mockEvent{
@@ -61,7 +60,7 @@ func TestRingBuffer_Add_Wraparound(t *testing.T) {
 	})
 
 	// Size should remain at capacity
-	assert.Equal(t, 3, rb.Size())
+	assert.Equal(t, 3, rb.size)
 }
 
 func TestRingBuffer_FindByType(t *testing.T) {
@@ -123,75 +122,6 @@ func TestRingBuffer_FindByTypeInWindow(t *testing.T) {
 	assert.Len(t, events, 2)
 }
 
-func TestRingBuffer_FindRecent(t *testing.T) {
-	rb := NewRingBuffer(10)
-
-	// Add events
-	for i := range 5 {
-		rb.Add(mockEvent{
-			eventType: "test",
-			timestamp: time.Now().Add(time.Duration(i) * time.Second),
-		})
-	}
-
-	// Find 3 most recent
-	recent := rb.FindRecent(3)
-	assert.Len(t, recent, 3)
-
-	// Should be newest first
-	assert.True(t, recent[0].Timestamp().After(recent[1].Timestamp()))
-	assert.True(t, recent[1].Timestamp().After(recent[2].Timestamp()))
-}
-
-func TestRingBuffer_FindRecent_RequestMoreThanSize(t *testing.T) {
-	rb := NewRingBuffer(10)
-
-	// Add only 3 events
-	for range 3 {
-		rb.Add(mockEvent{
-			eventType: "test",
-			timestamp: time.Now(),
-		})
-	}
-
-	// Request 10 (more than available)
-	recent := rb.FindRecent(10)
-	assert.Len(t, recent, 3) // Should return only what's available
-}
-
-func TestRingBuffer_FindRecentByPredicate(t *testing.T) {
-	rb := NewRingBuffer(10)
-
-	// Add mixed events
-	rb.Add(mockEvent{eventType: "config.parsed", timestamp: time.Now()})
-	rb.Add(mockEvent{eventType: "deployment.started", timestamp: time.Now()})
-	rb.Add(mockEvent{eventType: "deployment.completed", timestamp: time.Now()})
-	rb.Add(mockEvent{eventType: "config.validated", timestamp: time.Now()})
-
-	// Find deployment events
-	deployments := rb.FindRecentByPredicate(10, func(e busevents.Event) bool {
-		return e.EventType() == "deployment.started" || e.EventType() == "deployment.completed"
-	})
-
-	assert.Len(t, deployments, 2)
-}
-
-func TestRingBuffer_FindRecentByPredicate_MaxCount(t *testing.T) {
-	rb := NewRingBuffer(10)
-
-	// Add many matching events
-	for range 10 {
-		rb.Add(mockEvent{eventType: "test", timestamp: time.Now()})
-	}
-
-	// Request only 3
-	events := rb.FindRecentByPredicate(3, func(e busevents.Event) bool {
-		return e.EventType() == "test"
-	})
-
-	assert.Len(t, events, 3)
-}
-
 func TestRingBuffer_TypeIndex_LazyCleanup(t *testing.T) {
 	rb := NewRingBuffer(3)
 
@@ -237,7 +167,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 	}
 
 	// Should have 100 events (capacity limit)
-	assert.Equal(t, 100, rb.Size())
+	assert.Equal(t, 100, rb.size)
 
 	// Should be able to find them
 	events := rb.FindByType("concurrent.test")

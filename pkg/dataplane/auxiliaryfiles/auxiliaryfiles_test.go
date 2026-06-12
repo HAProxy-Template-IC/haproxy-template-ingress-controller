@@ -980,60 +980,6 @@ func TestConvertCRTListsToGeneralFiles(t *testing.T) {
 	}
 }
 
-func TestConvertCRTListDiffToFileDiff(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    *CRTListDiff
-		expected *FileDiff
-	}{
-		{
-			name: "empty diff",
-			input: &CRTListDiff{
-				ToCreate: []CRTListFile{},
-				ToUpdate: []CRTListFile{},
-				ToDelete: []string{},
-			},
-			expected: &FileDiff{
-				ToCreate: []GeneralFile{},
-				ToUpdate: []GeneralFile{},
-				ToDelete: []string{},
-			},
-		},
-		{
-			name: "with creates and updates",
-			input: &CRTListDiff{
-				ToCreate: []CRTListFile{{Path: "/path/new.txt", Content: "new"}},
-				ToUpdate: []CRTListFile{{Path: "/path/updated.txt", Content: "updated"}},
-				ToDelete: []string{"old.txt"},
-			},
-			expected: &FileDiff{
-				ToCreate: []GeneralFile{{Filename: "new.txt", Content: "new"}},
-				ToUpdate: []GeneralFile{{Filename: "updated.txt", Content: "updated"}},
-				ToDelete: []string{"old.txt"},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertCRTListDiffToFileDiff(tt.input)
-			require.Len(t, result.ToCreate, len(tt.expected.ToCreate))
-			require.Len(t, result.ToUpdate, len(tt.expected.ToUpdate))
-			assert.Equal(t, tt.expected.ToDelete, result.ToDelete)
-
-			for i, expected := range tt.expected.ToCreate {
-				assert.Equal(t, expected.Filename, result.ToCreate[i].Filename)
-				assert.Equal(t, expected.Content, result.ToCreate[i].Content)
-			}
-
-			for i, expected := range tt.expected.ToUpdate {
-				assert.Equal(t, expected.Filename, result.ToUpdate[i].Filename)
-				assert.Equal(t, expected.Content, result.ToUpdate[i].Content)
-			}
-		})
-	}
-}
-
 func TestCategorizeFile(t *testing.T) {
 	tests := []struct {
 		name        string

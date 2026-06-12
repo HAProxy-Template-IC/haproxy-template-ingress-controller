@@ -24,7 +24,6 @@
 //	    pathResolver,
 //	    logger,
 //	    rendercontext.WithStores(stores),
-//	    rendercontext.WithCapabilities(capabilities),
 //	)
 //	res := builder.Build()
 //	ctx := res.Context
@@ -60,7 +59,6 @@ type Builder struct {
 	stores             map[string]stores.Store
 	haproxyPodStore    stores.Store
 	httpFetcher        templating.HTTPFetcher
-	capabilities       *dataplane.Capabilities
 	currentConfig      *parserconfig.StructuredConfig
 	typedResourceTypes map[string]reflect.Type
 }
@@ -92,14 +90,6 @@ func WithHTTPFetcher(fetcher templating.HTTPFetcher) Option {
 	}
 }
 
-// WithCapabilities sets the HAProxy capabilities for conditional template generation.
-// If nil, no capabilities map is added to the context.
-func WithCapabilities(caps *dataplane.Capabilities) Option {
-	return func(b *Builder) {
-		b.capabilities = caps
-	}
-}
-
 // WithCurrentConfig sets the current deployed HAProxy config for templates.
 // This enables slot-aware server assignment and other config-aware features.
 // The config is parsed from the HAProxyCfg CRD's spec.content field.
@@ -114,8 +104,8 @@ func WithCurrentConfig(cfg *parserconfig.StructuredConfig) Option {
 // produced by typebootstrap (pkg/controller/typebootstrap). When set,
 // Build emits one *additional* top-level context entry per supplied
 // type: the resource's name maps to a *[]*<generated-struct> value
-// populated by wrapping the matching store's snapshot through
-// typegen.WrapSlice.
+// populated by wrapping each item of the matching store's snapshot
+// through typegen.WrapInto.
 //
 // The typed entries coexist with the existing map-keyed
 // resources["<name>"] access — chart templates can adopt the typed
@@ -182,7 +172,6 @@ type BuildResult struct {
 //	  "renderedResourceCollector": RenderedResourceCollector,
 //	  "pathResolver": PathResolver,
 //	  "dataplane": Config.Dataplane,
-//	  "capabilities": map[string]bool (if set),
 //	  "currentConfig": *StructuredConfig (nil on first deployment),
 //	  "shared": map[string]any,
 //	  "runtimeEnvironment": RuntimeEnvironment,
@@ -247,11 +236,6 @@ func (b *Builder) Build() *BuildResult {
 		"runtimeEnvironment": &templating.RuntimeEnvironment{
 			GOMAXPROCS: runtime.GOMAXPROCS(0),
 		},
-	}
-
-	// Add capabilities if provided
-	if b.capabilities != nil {
-		templateContext["capabilities"] = CapabilitiesToMap(b.capabilities)
 	}
 
 	// Add current config if provided (NOT added when nil - Scriggo panics with nil pointer initializers)

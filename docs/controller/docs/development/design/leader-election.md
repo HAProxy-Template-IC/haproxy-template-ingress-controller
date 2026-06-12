@@ -95,7 +95,6 @@ The renderer is **not** a registered component. It lives in `pkg/controller/rend
 - Create and manage Lease lock in controller namespace
 - Use pod name as unique identity (via POD_NAME env var)
 - Publish leader election events to EventBus
-- Provide `IsLeader()` method for status queries
 - Handle graceful leadership release on shutdown
 
 **Event integration**:
@@ -428,9 +427,6 @@ func TestLeaderElector_Config(t *testing.T)
 
 // Test event publishing on leadership changes
 func TestLeaderElector_EventPublishing(t *testing.T)
-
-// Test IsLeader() method accuracy
-func TestLeaderElector_IsLeaderStatus(t *testing.T)
 
 // Test graceful shutdown
 func TestLeaderElector_GracefulShutdown(t *testing.T)

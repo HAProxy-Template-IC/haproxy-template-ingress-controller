@@ -60,7 +60,7 @@ func TestServer_HandleVar_InvalidJSONPathReturns500(t *testing.T) {
 
 	// "{.invalid[" is a syntactically broken JSONPath — ExtractField
 	// returns an error wrapping "invalid jsonpath expression".
-	resp, err := http.Get("http://" + server.Addr() + "/debug/vars/config?field={.invalid[")
+	resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars/config?field={.invalid[")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

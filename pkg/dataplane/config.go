@@ -130,14 +130,6 @@ func DefaultSyncOptions() *SyncOptions {
 	}
 }
 
-// DryRunOptions returns options configured for dry-run mode.
-func DryRunOptions() *SyncOptions {
-	return &SyncOptions{
-		Timeout:      1 * time.Minute,
-		VerifyReload: false, // No reload happens in dry-run
-	}
-}
-
 // DefaultAuxiliaryFiles returns an empty auxiliary files struct.
 func DefaultAuxiliaryFiles() *AuxiliaryFiles {
 	return &AuxiliaryFiles{}

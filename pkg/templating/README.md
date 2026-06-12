@@ -19,7 +19,7 @@ templates := map[string]string{
     "config":   "server {{ host }}:{{ port }}",
 }
 
-engine, err := templating.New(templates, nil, nil, nil)
+engine, err := templating.New(templates, nil)
 if err != nil {
     log.Fatal(err)   // compilation errors surface here, fail fast
 }
@@ -33,15 +33,19 @@ The engine is safe for concurrent use — compile once at startup, render concur
 ## `New` Signature
 
 ```go
-func New(
-    templates map[string]string,
-    customFilters map[string]FilterFunc,
-    customFunctions map[string]GlobalFunc,
-    postProcessorConfigs map[string][]PostProcessorConfig,
-) (Engine, error)
+func New(templates map[string]string, opts *Options) (*ScriggoEngine, error)
+
+type Options struct {
+    EntryPoints    []string                         // template names compiled explicitly; nil = all
+    Filters        map[string]FilterFunc            // custom filters merged over the built-in set
+    Functions      map[string]GlobalFunc            // custom global functions merged over the built-in set
+    PostProcessors map[string][]PostProcessorConfig // per-template post-processing chains
+    Declarations   map[string]any                   // domain-specific Scriggo type declarations
+    Profiling      bool                             // enable Scriggo's built-in profiler
+}
 ```
 
-`New` compiles every template as an entry point; use `NewScriggo` for explicit entry points or `NewScriggoWithDeclarations` for domain-specific type declarations. `customFilters` plug into the pipe syntax (`{{ value | myFilter }}`), `customFunctions` into the call syntax (`{{ myFunc(value) }}`), and `postProcessorConfigs` chain per-template transformations (regex replace, or a Scriggo template whose `input` variable is the previously rendered output). Passing `nil` for any of the three is fine.
+A nil `*Options` (or the zero value) compiles every template as an entry point with no custom filters, functions, post-processors, declarations, or profiling. Set `EntryPoints` to compile only some templates explicitly — the rest are snippets, discovered and compiled on demand via `render`/`render_glob` statements with `inherit_context`. `Filters` plug into the pipe syntax (`{{ value | myFilter }}`), `Functions` into the call syntax (`{{ myFunc(value) }}`), and `PostProcessors` chain per-template transformations (regex replace, or a Scriggo template whose `input` variable is the previously rendered output).
 
 ## Engine Interface (Highlights)
 
@@ -107,7 +111,7 @@ Scriggo needs to know the *type* of each runtime variable at compile time even t
 | `extraContext` | `*map[string]any` | User-defined variables from `templatingSettings.extraContext` |
 | typed-resource globals | `*[]*resources.<name>.T` | One per `watchedResources` entry when a schema is loaded — same name as the watched-resource key (e.g. `gateways`, `httproutes`). The `resources.<name>.T` selector chain is also a usable type expression in macro signatures, type assertions, and type-switch case clauses. |
 
-Callers can inject additional per-render declarations through `templating.NewScriggoWithDeclarations` — for example, the renderer and template validator both add `currentConfig` (`*parserconfig.StructuredConfig`, nil on first deployment) so slot-preserving templates can guard with `{% if !isNil(currentConfig) %}`. The typegen-derived typed globals are injected via the same mechanism — `pkg/k8s/typegen` builds the `reflect.Type` declarations the engine merges in before compile.
+Callers can inject additional per-render declarations through `Options.Declarations` — for example, the renderer and template validator both add `currentConfig` (`*parserconfig.StructuredConfig`, nil on first deployment) so slot-preserving templates can guard with `{% if !isNil(currentConfig) %}`. The typegen-derived typed globals are injected via the same mechanism — `pkg/k8s/typegen` builds the `reflect.Type` declarations the engine merges in before compile.
 
 To add a new runtime variable, declare it in `buildScriggoGlobals` with a nil pointer of the right type, then pass the value via the render context map — there's a walkthrough in `pkg/templating/CLAUDE.md`.
 

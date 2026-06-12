@@ -65,15 +65,9 @@ elector.Start(ctx)
 
 ### Thread-Safe State
 
-Internal state (isLeader, leader identity) protected by RWMutex for concurrent access:
-
-```go
-func (e *Elector) IsLeader() bool {
-    e.mu.RLock()
-    defer e.mu.RUnlock()
-    return e.isLeader
-}
-```
+Internal state (the observed leader identity) is protected by an RWMutex; the
+client-go election machinery invokes the wrapped callbacks from its own
+goroutine, so anything they touch must be safe for concurrent access.
 
 ## Testing Strategy
 
@@ -102,7 +96,6 @@ func TestElector_BecomesLeader(t *testing.T) {
     // Wait for election
     time.Sleep(2 * time.Second)
 
-    assert.True(t, elector.IsLeader())
     assert.True(t, becameLeader)
 }
 ```
@@ -176,9 +169,9 @@ callbacks.OnStartedLeading = func(ctx context.Context) {
 }
 ```
 
-`IsLeader()` and `GetLeader()` are useful for logging/observability, but
-spamming them inside hot paths instead of using the context is a smell —
-they're snapshot accessors, not synchronisation primitives.
+Leadership state should always be derived from the callback context — the
+elector deliberately exposes no snapshot accessors, because polling such
+accessors instead of using the context is racy.
 
 ### Forgetting to Handle OnStoppedLeading
 

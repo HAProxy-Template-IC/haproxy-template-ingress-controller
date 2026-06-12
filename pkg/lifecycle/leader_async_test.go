@@ -288,8 +288,7 @@ func TestStartLeaderOnlyComponentsAsync_PromotesStandbyToStarting(t *testing.T) 
 
 	// prepareLeaderOnlyComponents (called by Async) MUST find the
 	// Standby component and promote it.
-	componentsToStart, err := registry.prepareLeaderOnlyComponents()
-	require.NoError(t, err)
+	componentsToStart := registry.prepareLeaderOnlyComponents()
 	require.Len(t, componentsToStart, 1,
 		"a Standby leader-only component MUST be promoted on a subsequent "+
 			"start call — a regression that only matched StatusPending would "+

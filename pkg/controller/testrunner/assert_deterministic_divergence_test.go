@@ -77,10 +77,7 @@ func determinismRenderDeps(t *testing.T, template string) *RenderDependencies {
 		ConfigFile:        filepath.Join(tmpDir, "haproxy.cfg"),
 	}
 
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": template},
-		nil, nil, nil,
-	)
+	engine, err := templating.New(map[string]string{"haproxy.cfg": template}, nil)
 	require.NoError(t, err)
 
 	return &RenderDependencies{

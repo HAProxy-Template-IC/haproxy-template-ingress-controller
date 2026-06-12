@@ -16,7 +16,6 @@ package schemafetcher
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -437,19 +436,3 @@ func withGVK(t spec.StringOrArray, group, version, kind string) *spec.Schema {
 // distinguish "not set" from "set to false" for the
 // XPreserveUnknownFields field.
 func pointerTo[T any](v T) *T { return &v }
-
-// jsonRoundTrip is a debugging helper kept for triaging future
-// JSONSchemaProps ↔ spec.Schema divergence: marshal-then-unmarshal
-// the kube-openapi side and confirm the shape survives. Not used in
-// the standard test path, but mortgage-the-house easy to enable
-// when wire-format changes break the converter.
-//
-//lint:ignore U1000 retained as a debugging shim for future schema-shape regressions.
-func jsonRoundTrip(t *testing.T, in *spec.Schema) *spec.Schema {
-	t.Helper()
-	data, err := json.Marshal(in)
-	require.NoError(t, err)
-	var out spec.Schema
-	require.NoError(t, json.Unmarshal(data, &out))
-	return &out
-}

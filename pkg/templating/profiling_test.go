@@ -31,7 +31,7 @@ func TestScriggoProfiling_BasicTiming(t *testing.T) {
 		"sub.html":  `Middle`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "main.html", nil)
@@ -54,7 +54,7 @@ func TestScriggoProfiling_NestedRenders(t *testing.T) {
 		"inner.html": `X`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "main.html", nil)
@@ -80,7 +80,7 @@ func TestScriggoProfiling_DisabledNoOverhead(t *testing.T) {
 	}
 
 	// Create WITHOUT profiling
-	engine, err := NewScriggo(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "main.html", nil)
@@ -98,7 +98,7 @@ func TestScriggoProfiling_Enabled(t *testing.T) {
 		"sub.html":  `content`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	assert.True(t, engine.IsProfilingEnabled())
@@ -119,7 +119,7 @@ func TestScriggoProfiling_WithLoops(t *testing.T) {
 		"item.html": `X`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "main.html", nil)
@@ -139,7 +139,7 @@ func TestScriggoProfiling_ThreadSafe(t *testing.T) {
 		"sub.html":  `content`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -168,7 +168,7 @@ func TestScriggoProfiling_MultipleRenders(t *testing.T) {
 		"sub.html":  `content`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	// First render
@@ -191,7 +191,7 @@ func TestScriggoProfiling_NoRenders(t *testing.T) {
 		"main.html": `Hello World`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "main.html", nil)
@@ -212,7 +212,7 @@ func TestScriggoProfiling_ConditionalRender(t *testing.T) {
 			"sub.html":  `content`,
 		}
 
-		engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+		engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 		require.NoError(t, err)
 
 		output, err := engine.Render(context.Background(), "main.html", nil)
@@ -230,7 +230,7 @@ func TestScriggoProfiling_ConditionalRender(t *testing.T) {
 			"sub.html":  `content`,
 		}
 
-		engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+		engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 		require.NoError(t, err)
 
 		output, err := engine.Render(context.Background(), "main.html", nil)
@@ -251,7 +251,7 @@ func TestScriggoProfiling_DeeplyNested(t *testing.T) {
 		"l4.html":   `leaf`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "main.html", nil)
@@ -278,7 +278,7 @@ func TestScriggoProfiling_RenderWithProfiling_ReturnsStats(t *testing.T) {
 		"sub.html":  `Middle`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	output, stats, err := engine.RenderWithProfiling(context.Background(), "main.html", nil)
@@ -302,7 +302,7 @@ func TestScriggoProfiling_RenderWithProfiling_AggregatesLoopIterations(t *testin
 		"item.html": `X`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	output, stats, err := engine.RenderWithProfiling(context.Background(), "main.html", nil)
@@ -326,7 +326,7 @@ func TestScriggoProfiling_RenderWithProfiling_DisabledReturnsNil(t *testing.T) {
 	}
 
 	// Without profiling
-	engine, err := NewScriggo(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}})
 	require.NoError(t, err)
 
 	output, stats, err := engine.RenderWithProfiling(context.Background(), "main.html", nil)
@@ -344,7 +344,7 @@ func TestScriggoTracing_NestedOutput(t *testing.T) {
 	}
 
 	// Must use profiling-enabled engine for nested tracing
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	engine.EnableTracing()
@@ -368,7 +368,7 @@ func TestScriggoTracing_DeeplyNestedOutput(t *testing.T) {
 		"l3.html":   `leaf`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	engine.EnableTracing()
@@ -395,7 +395,7 @@ func TestScriggoTracing_NoProfilingFlatOutput(t *testing.T) {
 	}
 
 	// Without profiling - should get flat trace (only main template)
-	engine, err := NewScriggo(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}})
 	require.NoError(t, err)
 
 	engine.EnableTracing()
@@ -417,7 +417,7 @@ func TestScriggoTracing_LoopWithNesting(t *testing.T) {
 		"item.html": `X`,
 	}
 
-	engine, err := NewScriggoWithProfiling(templates, []string{"main.html"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main.html"}, Profiling: true})
 	require.NoError(t, err)
 
 	engine.EnableTracing()

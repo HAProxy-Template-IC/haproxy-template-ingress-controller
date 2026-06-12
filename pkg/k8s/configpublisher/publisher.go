@@ -46,15 +46,6 @@ type Publisher struct {
 	listers *Listers
 }
 
-// New creates a new Publisher instance.
-func New(k8sClient kubernetes.Interface, crdClient versioned.Interface, logger *slog.Logger) *Publisher {
-	return &Publisher{
-		k8sClient: k8sClient,
-		crdClient: crdClient,
-		logger:    logger,
-	}
-}
-
 // NewWithListers creates a Publisher with informer-backed listers for cached reads.
 // This significantly reduces API calls by checking the cache before doing status updates.
 func NewWithListers(k8sClient kubernetes.Interface, crdClient versioned.Interface, listers *Listers, logger *slog.Logger) *Publisher {

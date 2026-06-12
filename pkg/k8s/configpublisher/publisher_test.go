@@ -44,7 +44,7 @@ func TestPublishConfig_CreateNew(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -125,7 +125,7 @@ func TestPublishConfig_Update(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create initial runtime config
 	initialReq := PublishRequest{
@@ -171,7 +171,7 @@ func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config first
 	req := PublishRequest{
@@ -215,7 +215,7 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config
 	req := PublishRequest{
@@ -272,7 +272,7 @@ func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config
 	req := PublishRequest{
@@ -325,7 +325,7 @@ func TestCleanupPodReferences_RemovePod(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config
 	req := PublishRequest{
@@ -378,7 +378,7 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config
 	req := PublishRequest{
@@ -419,7 +419,7 @@ func TestUpdateDeploymentStatus_RuntimeConfigNotFound(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Try to update deployment status without creating runtime config first
 	update := DeploymentStatusUpdate{
@@ -441,7 +441,7 @@ func TestPublishConfig_GeneralFiles(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -486,7 +486,7 @@ func TestPublishConfig_CRTListFiles(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -530,7 +530,7 @@ func TestPublishConfig_WithCompression(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create large content that will benefit from compression
 	// Repeating patterns compress well
@@ -575,7 +575,7 @@ func TestPublishConfig_CompressionDisabled(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create large content
 	var largeContent strings.Builder
@@ -615,7 +615,7 @@ func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	req := PublishRequest{
 		TemplateConfigName:      "test-config",
@@ -665,7 +665,7 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config
 	req := PublishRequest{
@@ -714,7 +714,7 @@ func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config
 	req := PublishRequest{
@@ -762,7 +762,7 @@ func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config
 	req := PublishRequest{
@@ -810,7 +810,7 @@ func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
 
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config without adding any pods
 	req := PublishRequest{
@@ -848,7 +848,7 @@ func TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum(t *testing.T) {
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config with auxiliary files
 	result, err := publisher.PublishConfig(ctx, &PublishRequest{
@@ -953,7 +953,7 @@ func TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged(t *testing.T) {
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config with auxiliary files
 	result, err := publisher.PublishConfig(ctx, &PublishRequest{
@@ -1027,7 +1027,7 @@ func TestAuxiliaryFileSpec_UpdateWhenChecksumChanges(t *testing.T) {
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
 	installSSAListMapMergeReactor(crdClient)
-	publisher := New(k8sClient, crdClient, testLogger())
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
 
 	// Create runtime config with auxiliary files
 	result, err := publisher.PublishConfig(ctx, &PublishRequest{

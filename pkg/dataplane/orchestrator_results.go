@@ -22,7 +22,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 )
 
-// Operation type string constants used in AppliedOperation and PlannedOperation.
+// Operation type string constants used in AppliedOperation.
 const (
 	opCreate  = "create"
 	opUpdate  = "update"
@@ -43,19 +43,6 @@ func convertOperationsToApplied(ops []comparator.Operation) []AppliedOperation {
 		})
 	}
 	return applied
-}
-
-func convertOperationsToPlanned(ops []comparator.Operation) []PlannedOperation {
-	planned := make([]PlannedOperation, 0, len(ops))
-	for _, op := range ops {
-		planned = append(planned, PlannedOperation{
-			Type:        operationTypeToString(op.Type()),
-			Section:     op.Section(),
-			Resource:    extractResourceName(op),
-			Description: op.Describe(),
-		})
-	}
-	return planned
 }
 
 func operationTypeToString(opType sections.OperationType) string {

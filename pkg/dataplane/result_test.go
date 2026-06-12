@@ -231,49 +231,6 @@ func TestDiffDetails_String(t *testing.T) {
 	}
 }
 
-func TestDiffResult_String(t *testing.T) {
-	tests := []struct {
-		name     string
-		result   DiffResult
-		contains []string
-	}{
-		{
-			name: "no changes",
-			result: DiffResult{
-				HasChanges: false,
-			},
-			contains: []string{"No changes detected"},
-		},
-		{
-			name: "has changes",
-			result: DiffResult{
-				HasChanges: true,
-				PlannedOperations: []PlannedOperation{
-					{Type: "create", Section: "backend", Resource: "api"},
-					{Type: "update", Section: "frontend", Resource: "http"},
-				},
-				Details: DiffDetails{
-					TotalOperations: 2,
-					Creates:         1,
-					Updates:         1,
-					BackendsAdded:   []string{"api"},
-				},
-			},
-			contains: []string{"Total operations: 2", "Backends added: api"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.result.String()
-
-			for _, s := range tt.contains {
-				assert.Contains(t, result, s, "expected to contain: %s", s)
-			}
-		})
-	}
-}
-
 func TestDiffDetails_AppendResourceChanges(t *testing.T) {
 	details := &DiffDetails{}
 	parts := details.appendResourceChanges(

@@ -65,9 +65,7 @@ func createTestPipeline(t *testing.T, template string) *Pipeline {
 		},
 	}
 
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": template},
-		nil, nil, nil)
+	engine, err := templating.New(map[string]string{"haproxy.cfg": template}, nil)
 	require.NoError(t, err)
 
 	renderSvc := renderer.NewRenderService(&renderer.RenderServiceConfig{
@@ -98,9 +96,7 @@ func TestNew(t *testing.T) {
 		},
 	}
 
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": template},
-		nil, nil, nil)
+	engine, err := templating.New(map[string]string{"haproxy.cfg": template}, nil)
 	require.NoError(t, err)
 
 	renderSvc := renderer.NewRenderService(&renderer.RenderServiceConfig{

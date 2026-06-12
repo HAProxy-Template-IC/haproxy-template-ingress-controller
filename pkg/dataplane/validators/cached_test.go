@@ -22,6 +22,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newCachedValidatorSharing builds a CachedValidator on a shared cache
+// (test-only; production always owns its cache via NewCachedValidator).
+func newCachedValidatorSharing(cache *Cache, major, minor int) *CachedValidator {
+	return &CachedValidator{cache: cache, set: ForVersion(major, minor)}
+}
+
 func TestCachedValidator_CacheHitMiss(t *testing.T) {
 	cv := NewCachedValidator(3, 2)
 
@@ -34,12 +40,12 @@ func TestCachedValidator_CacheHitMiss(t *testing.T) {
 	// First call - cache miss, should validate
 	err := cv.ValidateServer(server)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, cv.Cache().Len())
+	assert.Equal(t, 1, cacheLen(cv.cache))
 
 	// Second call - cache hit, same result
 	err = cv.ValidateServer(server)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, cv.Cache().Len()) // Still 1, from cache
+	assert.Equal(t, 1, cacheLen(cv.cache)) // Still 1, from cache
 }
 
 func TestCachedValidator_CachesErrors(t *testing.T) {
@@ -56,11 +62,11 @@ func TestCachedValidator_CachesErrors(t *testing.T) {
 
 	// First call
 	err1 := cv.ValidateServer(server)
-	cacheLen := cv.Cache().Len()
+	entriesAfterFirst := cacheLen(cv.cache)
 
 	// Second call - should return cached result (whether error or not)
 	err2 := cv.ValidateServer(server)
-	assert.Equal(t, cacheLen, cv.Cache().Len()) // No new cache entry
+	assert.Equal(t, entriesAfterFirst, cacheLen(cv.cache)) // No new cache entry
 
 	// Both calls should return the same result
 	if err1 != nil {
@@ -73,8 +79,8 @@ func TestCachedValidator_CachesErrors(t *testing.T) {
 func TestCachedValidator_SharedCache(t *testing.T) {
 	cache := NewCache()
 
-	cv1 := NewCachedValidatorWithCache(cache, 3, 2)
-	cv2 := NewCachedValidatorWithCache(cache, 3, 2)
+	cv1 := newCachedValidatorSharing(cache, 3, 2)
+	cv2 := newCachedValidatorSharing(cache, 3, 2)
 
 	server := &models.Server{
 		Name:    "srv1",
@@ -85,21 +91,21 @@ func TestCachedValidator_SharedCache(t *testing.T) {
 	// Validate on cv1
 	err := cv1.ValidateServer(server)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, cache.Len())
+	assert.Equal(t, 1, cacheLen(cache))
 
 	// cv2 should see the cached entry (same cache)
 	err = cv2.ValidateServer(server)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, cache.Len()) // Still 1, shared cache hit
+	assert.Equal(t, 1, cacheLen(cache)) // Still 1, shared cache hit
 }
 
 func TestCachedValidator_Accessors(t *testing.T) {
 	cv := NewCachedValidator(3, 1)
 
-	assert.NotNil(t, cv.ValidatorSet())
-	assert.Equal(t, "v31", cv.ValidatorSet().Version())
-	assert.NotNil(t, cv.Cache())
-	assert.Equal(t, 0, cv.Cache().Len())
+	assert.NotNil(t, cv.set)
+	assert.Equal(t, "v31", cv.set.version)
+	assert.NotNil(t, cv.cache)
+	assert.Equal(t, 0, cacheLen(cv.cache))
 }
 
 func TestCachedValidator_AllModelTypes(t *testing.T) {
@@ -175,5 +181,5 @@ func TestCachedValidator_AllModelTypes(t *testing.T) {
 	}
 
 	// Verify all types added entries to cache
-	assert.Greater(t, cv.Cache().Len(), 0)
+	assert.Greater(t, cacheLen(cv.cache), 0)
 }

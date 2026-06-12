@@ -25,7 +25,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-func TestNewEngineFromConfig_ScriggoDefault(t *testing.T) {
+func TestNewEngineFromConfigWithOptions_ScriggoDefault(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
 			Template: "global\n    daemon",
@@ -35,13 +35,13 @@ func TestNewEngineFromConfig_ScriggoDefault(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngineFromConfig(cfg, nil, nil)
+	engine, err := NewEngineFromConfigWithOptions(cfg, nil, nil, nil, EngineOptions{})
 
 	require.NoError(t, err)
 	require.NotNil(t, engine)
 }
 
-func TestNewEngineFromConfig_Scriggo(t *testing.T) {
+func TestNewEngineFromConfigWithOptions_Scriggo(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
 			Template: "global\n    daemon",
@@ -51,14 +51,14 @@ func TestNewEngineFromConfig_Scriggo(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngineFromConfig(cfg, nil, nil)
+	engine, err := NewEngineFromConfigWithOptions(cfg, nil, nil, nil, EngineOptions{})
 
 	require.NoError(t, err)
 	require.NotNil(t, engine)
 	assert.True(t, engine.HasTemplate("haproxy.cfg"))
 }
 
-func TestNewEngineFromConfig_InvalidEngineType(t *testing.T) {
+func TestNewEngineFromConfigWithOptions_InvalidEngineType(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
 			Template: "global\n    daemon",
@@ -68,7 +68,7 @@ func TestNewEngineFromConfig_InvalidEngineType(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngineFromConfig(cfg, nil, nil)
+	engine, err := NewEngineFromConfigWithOptions(cfg, nil, nil, nil, EngineOptions{})
 
 	require.Error(t, err)
 	assert.Nil(t, engine)
@@ -76,7 +76,7 @@ func TestNewEngineFromConfig_InvalidEngineType(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid-engine")
 }
 
-func TestNewEngineFromConfig_WithGlobalFunctions(t *testing.T) {
+func TestNewEngineFromConfigWithOptions_WithGlobalFunctions(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
 			Template: "{{ custom_func() }}",
@@ -92,7 +92,7 @@ func TestNewEngineFromConfig_WithGlobalFunctions(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngineFromConfig(cfg, customFuncs, nil)
+	engine, err := NewEngineFromConfigWithOptions(cfg, customFuncs, nil, nil, EngineOptions{})
 
 	require.NoError(t, err)
 	require.NotNil(t, engine)
@@ -103,7 +103,7 @@ func TestNewEngineFromConfig_WithGlobalFunctions(t *testing.T) {
 	assert.Equal(t, "custom_output\n", output)
 }
 
-func TestNewEngineFromConfig_InvalidTemplate(t *testing.T) {
+func TestNewEngineFromConfigWithOptions_InvalidTemplate(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
 			Template: "{% if unclosed",
@@ -113,7 +113,7 @@ func TestNewEngineFromConfig_InvalidTemplate(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngineFromConfig(cfg, nil, nil)
+	engine, err := NewEngineFromConfigWithOptions(cfg, nil, nil, nil, EngineOptions{})
 
 	require.Error(t, err)
 	assert.Nil(t, engine)
@@ -175,7 +175,7 @@ func TestExtractTemplatesFromConfig_Empty(t *testing.T) {
 	assert.Equal(t, "", templates.AllTemplates["haproxy.cfg"])
 }
 
-func TestNewEngineFromConfig_FiltersRegistered(t *testing.T) {
+func TestNewEngineFromConfigWithOptions_FiltersRegistered(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
 			// Test glob_match filter - use static list since Scriggo needs globals
@@ -186,7 +186,7 @@ func TestNewEngineFromConfig_FiltersRegistered(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngineFromConfig(cfg, nil, nil)
+	engine, err := NewEngineFromConfigWithOptions(cfg, nil, nil, nil, EngineOptions{})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "haproxy.cfg", nil)
@@ -197,7 +197,7 @@ func TestNewEngineFromConfig_FiltersRegistered(t *testing.T) {
 	assert.NotContains(t, output, "other.test.org")
 }
 
-func TestNewEngineFromConfig_B64DecodeFilterRegistered(t *testing.T) {
+func TestNewEngineFromConfigWithOptions_B64DecodeFilterRegistered(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
 			// Test b64decode filter - "dGVzdA==" is base64 for "test"
@@ -208,7 +208,7 @@ func TestNewEngineFromConfig_B64DecodeFilterRegistered(t *testing.T) {
 		},
 	}
 
-	engine, err := NewEngineFromConfig(cfg, nil, nil)
+	engine, err := NewEngineFromConfigWithOptions(cfg, nil, nil, nil, EngineOptions{})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "haproxy.cfg", nil)

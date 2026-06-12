@@ -102,33 +102,6 @@ type AppliedOperation struct {
 	Description string
 }
 
-// DiffResult contains comparison results without applying changes.
-type DiffResult struct {
-	// HasChanges indicates whether any differences were detected
-	HasChanges bool
-
-	// PlannedOperations contains structured information about operations that would be executed
-	PlannedOperations []PlannedOperation
-
-	// Details contains detailed diff information
-	Details DiffDetails
-}
-
-// PlannedOperation represents an operation that would be executed.
-type PlannedOperation struct {
-	// Type is the operation type: "create", "update", or "delete"
-	Type string
-
-	// Section is the configuration section: "backend", "server", "frontend", "acl", "http-rule", etc.
-	Section string
-
-	// Resource is the resource name or identifier
-	Resource string
-
-	// Description is a human-readable description of what would be changed
-	Description string
-}
-
 // DiffDetails contains detailed diff information about configuration changes.
 type DiffDetails struct {
 	// Total operation counts
@@ -343,18 +316,4 @@ func (d *DiffDetails) appendSimpleCountChanges(parts []string, added, modified, 
 		parts = append(parts, fmt.Sprintf("- %s deleted: %d", resourceType, deleted))
 	}
 	return parts
-}
-
-// String returns a human-readable summary of the diff result.
-func (r *DiffResult) String() string {
-	if !r.HasChanges {
-		return noChangesDetected
-	}
-
-	parts := make([]string, 0, 2)
-	parts = append(parts,
-		fmt.Sprintf("Total operations: %d", len(r.PlannedOperations)),
-		fmt.Sprintf("\n%s", r.Details.String()))
-
-	return strings.Join(parts, "\n")
 }

@@ -46,39 +46,7 @@ func TestNewConfigChangeHandler(t *testing.T) {
 	// Can't directly compare bidirectional channel to send-only channel, just verify it's set
 	assert.NotNil(t, handler.configChangeCh)
 	assert.Equal(t, validators, handler.validators)
-	assert.NotNil(t, handler.stopCh)
 	assert.Equal(t, testDebounceInterval, handler.debounceInterval)
-}
-
-func TestConfigChangeHandler_StartAndStop(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-	configCh := make(chan *coreconfig.Config, 1)
-
-	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
-	bus.Start()
-
-	ctx := t.Context()
-
-	// Start handler in goroutine
-	done := make(chan struct{})
-	go func() {
-		handler.Start(ctx)
-		close(done)
-	}()
-
-	// Give handler time to start
-	time.Sleep(testutil.StartupDelay)
-
-	// Stop handler
-	handler.Stop()
-
-	// Verify handler stops gracefully
-	select {
-	case <-done:
-		// Success
-	case <-time.After(testutil.LongTimeout):
-		t.Fatal("handler did not stop in time")
-	}
 }
 
 func TestConfigChangeHandler_StartWithContextCancel(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -47,8 +48,6 @@ func TestNew_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, elector)
-	assert.False(t, elector.IsLeader())
-	assert.Empty(t, elector.GetLeader())
 }
 
 func TestNew_NilConfig(t *testing.T) {
@@ -146,26 +145,6 @@ func TestNew_WithCustomLogger(t *testing.T) {
 	require.NotNil(t, elector)
 }
 
-func TestElector_IsLeader_InitialState(t *testing.T) {
-	clientset := fake.NewClientset()
-	callbacks := Callbacks{}
-
-	elector, err := New(validConfig(), clientset, callbacks, nil)
-	require.NoError(t, err)
-
-	assert.False(t, elector.IsLeader())
-}
-
-func TestElector_GetLeader_InitialState(t *testing.T) {
-	clientset := fake.NewClientset()
-	callbacks := Callbacks{}
-
-	elector, err := New(validConfig(), clientset, callbacks, nil)
-	require.NoError(t, err)
-
-	assert.Empty(t, elector.GetLeader())
-}
-
 func TestElector_Start_BecomesLeader(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping leader election test in short mode")
@@ -219,10 +198,8 @@ func TestElector_Start_BecomesLeader(t *testing.T) {
 		case <-deadline:
 			t.Fatal("timeout waiting for leader election")
 		case <-ticker.C:
-			if elector.IsLeader() {
+			if startedLeading.Load() {
 				// Verify state
-				assert.True(t, startedLeading.Load())
-				assert.Equal(t, "test-pod-1", elector.GetLeader())
 				assert.Equal(t, "test-pod-1", newLeaderIdentity.Load())
 				cancel()
 				return
@@ -282,11 +259,12 @@ func TestElector_Start_OnStoppedLeadingCalled(t *testing.T) {
 
 	clientset := fake.NewClientset()
 
+	var startedLeading atomic.Bool
 	var stoppedLeading atomic.Bool
 
 	callbacks := Callbacks{
 		OnStartedLeading: func(_ context.Context) {
-			// Do nothing
+			startedLeading.Store(true)
 		},
 		OnStoppedLeading: func() {
 			stoppedLeading.Store(true)
@@ -325,7 +303,7 @@ func TestElector_Start_OnStoppedLeadingCalled(t *testing.T) {
 			cancel()
 			t.Fatal("timeout waiting for leader election")
 		case <-ticker.C:
-			if elector.IsLeader() {
+			if startedLeading.Load() {
 				ticker.Stop()
 				// Cancel to trigger stopped leading
 				cancel()
@@ -384,33 +362,13 @@ func TestElector_Callbacks_NilCallbacksHandledGracefully(t *testing.T) {
 	// Wait for leader election
 	time.Sleep(4 * time.Second)
 
-	// Should become leader without panicking
-	assert.True(t, elector.IsLeader())
-}
-
-func TestElector_ConcurrentAccess(t *testing.T) {
-	clientset := fake.NewClientset()
-	callbacks := Callbacks{}
-
-	elector, err := New(validConfig(), clientset, callbacks, nil)
+	// Should become leader without panicking — observe via the Lease
+	// resource the elector writes (no callbacks were provided).
+	lease, err := clientset.CoordinationV1().Leases("default").Get(
+		context.Background(), "nil-callback-lease", metav1.GetOptions{})
 	require.NoError(t, err)
-
-	// Concurrent access to IsLeader and GetLeader
-	done := make(chan struct{})
-	for range 10 {
-		go func() {
-			for range 100 {
-				_ = elector.IsLeader()
-				_ = elector.GetLeader()
-			}
-			done <- struct{}{}
-		}()
-	}
-
-	// Wait for all goroutines
-	for range 10 {
-		<-done
-	}
+	require.NotNil(t, lease.Spec.HolderIdentity)
+	assert.Equal(t, "test-pod-nil", *lease.Spec.HolderIdentity)
 }
 
 func TestNew_AllConfigFieldsUsed(t *testing.T) {

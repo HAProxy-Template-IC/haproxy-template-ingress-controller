@@ -20,7 +20,7 @@ func TestScriggoWhitespaceTrim(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			engine, err := NewScriggo(map[string]string{"test": tt.template}, []string{"test"}, nil, nil, nil)
+			engine, err := New(map[string]string{"test": tt.template}, &Options{EntryPoints: []string{"test"}})
 			if err != nil {
 				fmt.Printf("%s: Compile error: %v\n", tt.name, err)
 				return

@@ -39,7 +39,7 @@ func TestNew_EmptyResourceList(t *testing.T) {
 
 	require.NotNil(t, tracker)
 	assert.Empty(t, tracker.expectedResources)
-	assert.True(t, tracker.AllSynced()) // Empty list is already synced
+	assert.True(t, tracker.allResourcesSynced()) // Empty list is already synced
 }
 
 func TestHandleResourceSyncComplete_SingleResource(t *testing.T) {
@@ -50,20 +50,17 @@ func TestHandleResourceSyncComplete_SingleResource(t *testing.T) {
 	tracker := New(bus, logger, resourceNames)
 
 	// Initially not synced
-	assert.False(t, tracker.IsResourceSynced("ingresses"))
-	assert.False(t, tracker.AllSynced())
+	assert.False(t, tracker.expectedResources["ingresses"])
+	assert.False(t, tracker.allResourcesSynced())
 
 	// Simulate receiving ResourceSyncCompleteEvent
 	event := events.NewResourceSyncCompleteEvent("ingresses", 42)
 	tracker.handleResourceSyncComplete(event)
 
 	// Should now be synced
-	assert.True(t, tracker.IsResourceSynced("ingresses"))
-	assert.True(t, tracker.AllSynced())
-
-	count, err := tracker.GetResourceCount("ingresses")
-	require.NoError(t, err)
-	assert.Equal(t, 42, count)
+	assert.True(t, tracker.expectedResources["ingresses"])
+	assert.True(t, tracker.allResourcesSynced())
+	assert.Equal(t, 42, tracker.resourceCounts["ingresses"])
 }
 
 func TestHandleResourceSyncComplete_MultipleResources(t *testing.T) {
@@ -74,28 +71,27 @@ func TestHandleResourceSyncComplete_MultipleResources(t *testing.T) {
 	tracker := New(bus, logger, resourceNames)
 
 	// Initially not synced
-	assert.False(t, tracker.AllSynced())
+	assert.False(t, tracker.allResourcesSynced())
 
 	// Sync ingresses
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("ingresses", 10))
-	assert.True(t, tracker.IsResourceSynced("ingresses"))
-	assert.False(t, tracker.AllSynced())
+	assert.True(t, tracker.expectedResources["ingresses"])
+	assert.False(t, tracker.allResourcesSynced())
 
 	// Sync services
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("services", 20))
-	assert.True(t, tracker.IsResourceSynced("services"))
-	assert.False(t, tracker.AllSynced())
+	assert.True(t, tracker.expectedResources["services"])
+	assert.False(t, tracker.allResourcesSynced())
 
 	// Sync pods - should trigger all synced
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("pods", 30))
-	assert.True(t, tracker.IsResourceSynced("pods"))
-	assert.True(t, tracker.AllSynced())
+	assert.True(t, tracker.expectedResources["pods"])
+	assert.True(t, tracker.allResourcesSynced())
 
 	// Verify counts
-	counts := tracker.GetAllResourceCounts()
-	assert.Equal(t, 10, counts["ingresses"])
-	assert.Equal(t, 20, counts["services"])
-	assert.Equal(t, 30, counts["pods"])
+	assert.Equal(t, 10, tracker.resourceCounts["ingresses"])
+	assert.Equal(t, 20, tracker.resourceCounts["services"])
+	assert.Equal(t, 30, tracker.resourceCounts["pods"])
 }
 
 func TestHandleResourceSyncComplete_UnexpectedResource(t *testing.T) {
@@ -109,8 +105,8 @@ func TestHandleResourceSyncComplete_UnexpectedResource(t *testing.T) {
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("unknown", 99))
 
 	// Unexpected resource should not be tracked
-	assert.False(t, tracker.IsResourceSynced("unknown"))
-	assert.False(t, tracker.AllSynced())
+	assert.False(t, tracker.expectedResources["unknown"])
+	assert.False(t, tracker.allResourcesSynced())
 }
 
 func TestHandleResourceSyncComplete_DuplicateEvent(t *testing.T) {
@@ -122,68 +118,14 @@ func TestHandleResourceSyncComplete_DuplicateEvent(t *testing.T) {
 
 	// First event
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("ingresses", 42))
-	assert.True(t, tracker.IsResourceSynced("ingresses"))
-
-	count, err := tracker.GetResourceCount("ingresses")
-	require.NoError(t, err)
-	assert.Equal(t, 42, count)
+	assert.True(t, tracker.expectedResources["ingresses"])
+	assert.Equal(t, 42, tracker.resourceCounts["ingresses"])
 
 	// Duplicate event with different count - should be ignored
 	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("ingresses", 100))
 
 	// Count should not change
-	count, err = tracker.GetResourceCount("ingresses")
-	require.NoError(t, err)
-	assert.Equal(t, 42, count)
-}
-
-func TestGetResourceCount_NotSynced(t *testing.T) {
-	bus := busevents.NewEventBus(10)
-	logger := slog.Default()
-	resourceNames := []string{"ingresses"}
-
-	tracker := New(bus, logger, resourceNames)
-
-	// Resource exists but hasn't synced yet
-	count, err := tracker.GetResourceCount("ingresses")
-	require.Error(t, err)
-	assert.Equal(t, 0, count)
-	assert.Contains(t, err.Error(), "has not synced yet")
-}
-
-func TestGetResourceCount_Unknown(t *testing.T) {
-	bus := busevents.NewEventBus(10)
-	logger := slog.Default()
-	resourceNames := []string{"ingresses"}
-
-	tracker := New(bus, logger, resourceNames)
-
-	// Unknown resource
-	count, err := tracker.GetResourceCount("unknown")
-	require.Error(t, err)
-	assert.Equal(t, 0, count)
-	assert.Contains(t, err.Error(), "unknown resource type")
-}
-
-func TestGetAllResourceCounts_ReturnsDefensiveCopy(t *testing.T) {
-	bus := busevents.NewEventBus(10)
-	logger := slog.Default()
-	resourceNames := []string{"ingresses"}
-
-	tracker := New(bus, logger, resourceNames)
-	tracker.handleResourceSyncComplete(events.NewResourceSyncCompleteEvent("ingresses", 42))
-
-	// Get counts
-	counts := tracker.GetAllResourceCounts()
-	assert.Equal(t, 42, counts["ingresses"])
-
-	// Modify returned map
-	counts["ingresses"] = 999
-
-	// Internal state should not be affected
-	count, err := tracker.GetResourceCount("ingresses")
-	require.NoError(t, err)
-	assert.Equal(t, 42, count)
+	assert.Equal(t, 42, tracker.resourceCounts["ingresses"])
 }
 
 func TestStart_PublishesIndexSynchronizedEvent(t *testing.T) {

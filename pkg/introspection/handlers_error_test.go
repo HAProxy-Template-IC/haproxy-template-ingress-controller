@@ -71,7 +71,7 @@ func TestHandleAllVars_PropagatesVarErrorAs500(t *testing.T) {
 	cancel := startServer(t, server)
 	defer cancel()
 
-	resp, err := http.Get("http://" + server.Addr() + "/debug/vars/all")
+	resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars/all")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

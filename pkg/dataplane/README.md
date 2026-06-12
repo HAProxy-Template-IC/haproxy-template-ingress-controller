@@ -29,17 +29,6 @@ endpoint := &dataplane.Endpoint{
     Password: "secret",
 }
 
-// One-shot convenience functions (create client + operation + close).
-result, err := dataplane.Sync(ctx, endpoint, desiredConfig, auxFiles, nil)
-diff,   err := dataplane.DryRun(ctx, endpoint, desiredConfig)
-diff,   err := dataplane.Diff(ctx, endpoint, desiredConfig)
-```
-
-`Endpoint` is always passed as a pointer. `auxFiles` and `opts` are both `nil`-safe. `DryRun` and `Diff` are equivalent — both compare without applying.
-
-For anything more than a single call, create a `Client` once and reuse it:
-
-```go
 client, err := dataplane.NewClient(ctx, endpoint)
 if err != nil {
     log.Fatal(err)
@@ -47,8 +36,9 @@ if err != nil {
 defer client.Close()
 
 result, err := client.Sync(ctx, desiredConfig, auxFiles, opts)
-diff,   err := client.DryRun(ctx, desiredConfig)
 ```
+
+`Endpoint` is always passed as a pointer. `auxFiles` and `opts` are both `nil`-safe.
 
 ### `SyncOptions`
 
@@ -70,8 +60,6 @@ opts := &dataplane.SyncOptions{
 | `CachedCurrentConfig *parser.StructuredConfig` + `CachedConfigVersion int64` | Used together: `GetVersion()` is consulted first, and the expensive `GetRawConfiguration()`+parse round-trip is skipped if the live version on the pod matches `CachedConfigVersion`. |
 | `ContentChecksum string` + `LastDeployedChecksum string` | Used together: when both are set and equal, the orchestrator skips the auxiliary-file comparison entirely (no downloads from HAProxy). Drift-prevention syncs should leave `LastDeployedChecksum` empty to force a real check. |
 
-`DryRunOptions()` returns the preview variant — `VerifyReload: false` (no reload happens) and a shorter timeout (1m).
-
 ### `AuxiliaryFiles`
 
 ```go
@@ -90,11 +78,11 @@ aux := &dataplane.AuxiliaryFiles{
 
 | Purpose | Package |
 |---------|---------|
-| Public types and entry points (`Sync`, `DryRun`, `Diff`, `Client`, `Endpoint`, `SyncOptions`, `AuxiliaryFiles`) | `pkg/dataplane` (top level) |
+| Public types and entry points (`Client`, `Endpoint`, `SyncOptions`, `AuxiliaryFiles`) | `pkg/dataplane` (top level) |
 | Three-phase sync workflow (orchestrator + comparison + raw-push apply [runtime / reload] + per-version cache + runtime API) | `orchestrator_*.go` |
 | HAProxy three-phase validation (`haproxy -c` + OpenAPI schema + client-native syntax) | `validate_haproxy.go`, `validate_schema.go`, `validate_syntax.go`, `validator.go` |
 | Version detection (local binary + remote API) and capability matrix for DP API v3.0 / v3.1 / v3.2 / v3.3 | `version.go`, `capabilities.go` |
-| Dataplane API client (dispatcher pattern, transactions, retries) | `client/` (+ `client/enterprise/` for ALOHA / WAF / Bot / UDP / Keepalived / git / dynamic-update / logging / misc) |
+| Dataplane API client (dispatcher pattern, retries) | `client/` |
 | Config parsing via client-native | `parser/` (+ `parser/enterprise/` for Enterprise sections) |
 | Fine-grained diff engine | `comparator/` + `comparator/sections/` (operations are pure descriptors; execution is raw push in `orchestrator_*.go`) |
 | Raw-push execution (structural + runtime paths) | `orchestrator_*.go` (integrated) |
@@ -138,7 +126,6 @@ For user-facing surfaces (webhook responses, CLI output), call `dataplane.Simpli
 ## Common Pitfalls
 
 - **Skipping aux-file pre-sync.** If `haproxy.cfg` references `maps/host.map` and the file hasn't been uploaded yet, HAProxy validation fails. `AuxiliaryFiles` plus the orchestrator handle this automatically; bypassing them is almost always a bug.
-- **Leaking transactions.** The controller does not use transactions in its sync path — all production changes go through `Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`. `CreateTransaction` is retained only for enterprise integration tests; if you call it directly you own commit/abort responsibility (abort = `DELETE /v3/.../transactions/<id>`).
 - **Hand-rolling a retry loop.** The orchestrator re-resolves the config version on each sync and retries transient connection errors via `client.WithRetry` (3 attempts); don't layer your own retry loop on top.
 - **Pushing aux-file deletes before config.** Phase 3 must run *after* the main config is applied so we're not deleting files the live config still references.
 - **Using `List()` patterns at the dataplane layer.** This package operates on parsed config structures, not on Kubernetes stores — the `.List()` / `.Fetch()` semantics from `pkg/k8s` are irrelevant here.

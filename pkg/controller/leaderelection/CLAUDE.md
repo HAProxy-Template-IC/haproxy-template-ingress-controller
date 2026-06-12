@@ -88,8 +88,9 @@ type Component struct {
     // ...
 }
 
-func (c *Component) IsLeader() bool {
-    return c.elector.IsLeader()  // Delegate to pure component
+func (c *Component) Start(ctx context.Context) error {
+    c.eventBus.Publish(events.NewLeaderElectionStartedEvent(c.identity, c.leaseName, c.leaseNamespace))
+    return c.elector.Start(ctx)  // Delegate to pure component
 }
 ```
 

@@ -58,33 +58,3 @@ func (c *Cache) Get(hash uint64) (error, bool) {
 func (c *Cache) Add(hash uint64, result error) {
 	c.getShard(hash).Add(hash, result)
 }
-
-// Len returns the total number of cached entries across all shards.
-func (c *Cache) Len() int {
-	total := 0
-	for i := range c.shards {
-		total += c.shards[i].Len()
-	}
-	return total
-}
-
-// Purge clears all entries from the cache.
-func (c *Cache) Purge() {
-	for i := range c.shards {
-		c.shards[i].Purge()
-	}
-}
-
-// Stats returns cache statistics.
-type Stats struct {
-	Entries int
-	Shards  int
-}
-
-// Stats returns current cache statistics.
-func (c *Cache) Stats() Stats {
-	return Stats{
-		Entries: c.Len(),
-		Shards:  NumShards,
-	}
-}

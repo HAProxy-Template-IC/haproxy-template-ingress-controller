@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 func TestSetDefaults_AllUnset(t *testing.T) {
@@ -111,7 +112,8 @@ haproxy_config:
   template: "global"
 `
 
-	cfg, err := parseConfig(yamlConfig)
+	cfg := &Config{}
+	err := yaml.Unmarshal([]byte(yamlConfig), cfg)
 	assert.NoError(t, err)
 
 	// Before SetDefaults, leader election fields should be empty

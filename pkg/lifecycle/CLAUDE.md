@@ -9,7 +9,6 @@ Work in this package when:
 - Modifying component lifecycle management
 - Adding new registration options
 - Enhancing health check support
-- Implementing dependency ordering
 
 **DO NOT** work here for:
 
@@ -19,7 +18,7 @@ Work in this package when:
 
 ## Package Purpose
 
-Pure infrastructure package providing component lifecycle management. Components can be registered with the registry and started with configurable options like leader-only, dependencies, and criticality levels.
+Pure infrastructure package providing component lifecycle management. Components can be registered with the registry and started, optionally gated on leader election.
 
 ## Architecture
 
@@ -27,22 +26,17 @@ Pure infrastructure package providing component lifecycle management. Components
 Registry
     │
     ├── Register(component, opts...)
-    │       ├── LeaderOnly()
-    │       ├── DependsOn(...)
-    │       ├── Criticality(...)
-    │       └── OnError(handler)
+    │       └── LeaderOnly()
     │
     ├── StartAll(ctx, isLeader) error
     │       └── Starts all registered components
     │
-    ├── StartLeaderOnlyComponents(ctx) error
-    │       └── Starts only leader-only components
+    ├── StartLeaderOnlyComponentsAsync(ctx) (<-chan error, error)
+    │       └── Starts only leader-only components; returns once they're
+    │           subscription-ready, failures arrive on the error channel
     │
-    ├── Status() map[string]ComponentInfo
-    │       └── Returns status of all components
-    │
-    └── isHealthy() bool  (unexported, test-only)
-            └── Checks critical component health
+    └── Status() map[string]ComponentInfo
+            └── Returns status of all components
 ```
 
 ## Interfaces
@@ -74,8 +68,9 @@ type HealthChecker interface {
 Optional interface for components that can't subscribe to the bus during their
 constructor (typically leader-only components that subscribe inside `Start()`
 once they hold the lease). The registry waits for the returned channel to
-close before treating the component as ready, so dependents that `DependsOn`
-this one don't race against the late subscription.
+close before treating the component as ready, so
+`StartLeaderOnlyComponentsAsync` doesn't return (and the caller doesn't
+restart the EventBus) before the late subscription is in place.
 
 ```go
 type SubscriptionReadySignaler interface {
@@ -93,42 +88,6 @@ Component only runs when instance is leader:
 registry.Register(deployer, lifecycle.LeaderOnly())
 ```
 
-### DependsOn
-
-Component waits for the listed components to reach `StatusRunning` (and, if
-they implement `SubscriptionReadySignaler`, for their `SubscriptionReady`
-channel to close) before its own `Start()` is invoked. Used by the controller
-iteration to enforce the order between, e.g., the validator/renderer pair and
-the deployer that consumes their events.
-
-```go
-registry.Register(deployer, lifecycle.DependsOn("validator", "renderer"))
-```
-
-### Criticality
-
-Controls how component affects system health:
-
-```go
-registry.Register(metrics, lifecycle.Criticality(lifecycle.CriticalityOptional))
-```
-
-Levels:
-
-- `CriticalityCritical` - System fails if component fails (default)
-- `CriticalityDegradable` - System works with reduced capability
-- `CriticalityOptional` - System works normally without
-
-### OnError
-
-Custom error handler for component failures:
-
-```go
-registry.Register(reconciler, lifecycle.OnError(func(name string, err error) {
-    alerting.Send(fmt.Sprintf("Component %s failed: %v", name, err))
-}))
-```
-
 ## Usage Pattern
 
 ```go
@@ -137,19 +96,13 @@ registry := lifecycle.NewRegistry()
 
 // Idiomatic registration uses the fluent Build() API — that's what the
 // production controller wires up in pkg/controller/reconciliation.go.
-// Build() registers each component with default options (no DependsOn,
-// CriticalityCritical, no OnError handler).
 registry.Build().
     AllReplica(reconcilerComponent, rendererComponent, coordinatorComponent).
     LeaderOnly(deployerComponent, schedulerComponent).
     Done()
 
-// When you need per-component options (DependsOn, Criticality, OnError),
-// drop down to Register(...) directly:
-registry.Register(schedulerComponent,
-    lifecycle.LeaderOnly(),
-    lifecycle.DependsOn("deployer"),
-)
+// Register(...) directly is the lower-level alternative:
+registry.Register(schedulerComponent, lifecycle.LeaderOnly())
 
 // Start all-replica components (followers stop here)
 if err := registry.StartAll(ctx, isLeader); err != nil {
@@ -157,12 +110,17 @@ if err := registry.StartAll(ctx, isLeader); err != nil {
 }
 
 // Later, when becoming leader
-if err := registry.StartLeaderOnlyComponents(ctx); err != nil {
+errCh, err := registry.StartLeaderOnlyComponentsAsync(ctx)
+if err != nil {
     return fmt.Errorf("failed to start leader components: %w", err)
 }
+go func() {
+    if err := <-errCh; err != nil {
+        log.Error("Leader component failed", "err", err)
+    }
+}()
 
-// Health is exposed via Registry.Status() (the unexported isHealthy() helper
-// is only reachable from inside this package).
+// Health is exposed via Registry.Status().
 for name, info := range registry.Status() {
     if info.Status == lifecycle.StatusFailed {
         log.Error("Component failed", "name", name, "err", info.Error)

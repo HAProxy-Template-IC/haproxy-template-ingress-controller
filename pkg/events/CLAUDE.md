@@ -51,7 +51,7 @@ Thread-safe pub/sub coordinator with startup synchronization.
 // bus.go internals (real shape — not just []chan Event)
 type EventBus struct {
     subscribers      []subscriber           // universal subs; carries lossy flag, name, channel
-    typedSubscribers []*typedSubscription   // type-filtered subs (SubscribeTypes / Subscribe[T])
+    typedSubscribers []*typedSubscription   // type-filtered subs (SubscribeTypes)
     mu               sync.RWMutex
 
     // Startup coordination
@@ -81,30 +81,27 @@ the event (`int`, not `error`). Pre-start buffered events return `0`.
 
 ### Typed Subscriptions
 
-Filter events at the bus level for improved performance and type safety.
+Filter events at the bus level for improved performance.
 
-**Three patterns available:**
-
-1. **SubscribeTypes()** - Filter by event type strings at bus level (most efficient)
-2. **Subscribe\[T\]()** - Generic function returning typed channel (best type safety)
-3. **SubscribeMultiple()** - Filter multiple types with context cancellation
+**Pattern:** **SubscribeTypes()** filters by event type strings at the bus level
+(variants: `SubscribeTypesLeaderOnly` for components subscribing after leader
+election, `SubscribeTypesLossy` for observability consumers where silent drops
+are acceptable).
 
 **When to Use:**
 
 - Component only cares about specific event types
-- You want compile-time type safety
 - High-volume event streams where filtering matters
 
 **When NOT to Use:**
 
 - Commentator/logging (needs all events)
-- Components that already use type switches
 - Debugging (universal subscription is clearer)
 
-**Examples:**
+**Example:**
 
 ```go
-// Method 1: SubscribeTypes - efficient, filters at bus level
+// SubscribeTypes - efficient, filters at bus level
 eventChan := bus.SubscribeTypes("reconciler", 100, "reconciliation.triggered", "reconciliation.completed")
 for event := range eventChan {
     // Only receives the specified event types
@@ -114,24 +111,6 @@ for event := range eventChan {
     case *events.ReconciliationCompletedEvent:
         // handle
     }
-}
-
-// Method 2: Generic Subscribe - typed channel, best for single type
-ctx, cancel := context.WithCancel(context.Background())
-defer cancel()
-
-triggerChan := events.Subscribe[*events.ReconciliationTriggeredEvent](ctx, bus, 100)
-for trigger := range triggerChan {
-    // trigger is already *ReconciliationTriggeredEvent - no assertion needed
-    fmt.Println(trigger.Reason)
-}
-
-// Method 3: SubscribeMultiple - context-aware filtering
-multiChan := events.SubscribeMultiple(ctx, bus, 100,
-    "template.rendered",
-    "template.render.failed")
-for event := range multiChan {
-    // event matches one of the specified types
 }
 ```
 

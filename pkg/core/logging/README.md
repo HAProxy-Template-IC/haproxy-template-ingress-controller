@@ -7,9 +7,6 @@ Thin wrapper around `log/slog` that the controller's entry points use to build t
 ```go
 import "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 
-// Static: level set once at construction.
-logger := logging.NewLogger("INFO")
-
 // Dynamic: level stored in a package-global slog.LevelVar that SetLevel()
 // updates at runtime. The controller uses this so the CRD's
 // logging.level field can change verbosity without a pod restart.

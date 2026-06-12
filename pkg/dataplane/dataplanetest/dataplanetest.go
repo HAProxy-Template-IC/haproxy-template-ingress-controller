@@ -47,12 +47,6 @@ const DefaultFakeVersion = "3.2.0"
 // Option customizes the fake executor.
 type Option func(*fakeExecutor)
 
-// WithVersion makes the fake report the given HAProxy version (e.g. "3.3.0")
-// from `haproxy -v`.
-func WithVersion(version string) Option {
-	return func(f *fakeExecutor) { f.version = version }
-}
-
 // WithCheck replaces the config-check behavior. The default accepts every
 // config (nil error, no output). Use this to simulate haproxy rejecting a
 // config: return output containing an "[ALERT]" line together with a non-nil

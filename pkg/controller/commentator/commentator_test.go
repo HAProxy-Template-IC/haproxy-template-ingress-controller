@@ -41,7 +41,6 @@ func TestNewEventCommentator(t *testing.T) {
 	assert.NotNil(t, ec.logger)    // Logger is enhanced with component name
 	assert.NotNil(t, ec.ringBuffer)
 	assert.Equal(t, 500, ec.ringBuffer.Capacity())
-	assert.NotNil(t, ec.stopCh)
 }
 
 func TestEventCommentator_DetermineLogLevel(t *testing.T) {
@@ -513,8 +512,6 @@ func TestEventCommentator_ProcessEvent(t *testing.T) {
 	ec.processEvent(event)
 
 	// Verify it was added to ring buffer
-	assert.Equal(t, 1, ec.ringBuffer.Size())
-
 	foundEvents := ec.ringBuffer.FindByType(events.EventTypeConfigParsed)
 	require.Len(t, foundEvents, 1)
 }
@@ -546,42 +543,10 @@ func TestEventCommentator_StartStop(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify event was processed
-	assert.Equal(t, 1, ec.ringBuffer.Size())
+	assert.Len(t, ec.ringBuffer.FindByType(events.EventTypeConfigParsed), 1)
 
 	// Stop via context cancellation
 	cancel()
-
-	// Wait for goroutine to finish
-	select {
-	case <-done:
-		// Success
-	case <-time.After(1 * time.Second):
-		t.Fatal("commentator did not stop in time")
-	}
-}
-
-func TestEventCommentator_StopViaMethod(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	ctx := context.Background()
-
-	// Start event bus
-	bus.Start()
-
-	// Start commentator in goroutine
-	done := make(chan struct{})
-	go func() {
-		ec.Start(ctx)
-		close(done)
-	}()
-
-	// Give it time to start
-	time.Sleep(50 * time.Millisecond)
-
-	// Stop via Stop() method
-	ec.Stop()
 
 	// Wait for goroutine to finish
 	select {
@@ -898,80 +863,4 @@ func TestEventCommentator_AppendCorrelation(t *testing.T) {
 		// Verify attrs unchanged
 		assert.Len(t, result, 2)
 	})
-}
-
-func TestEventCommentator_Name(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	assert.Equal(t, ComponentName, ec.Name())
-	assert.Equal(t, "commentator", ec.Name())
-}
-
-func TestEventCommentator_FindByCorrelationID(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	// Add events with correlation
-	event1 := events.NewReconciliationTriggeredEvent("test", true, events.WithNewCorrelation())
-	correlationID := event1.CorrelationID()
-	ec.ringBuffer.Add(event1)
-
-	// Add event with same correlation (would be in same cycle)
-	event2 := events.NewReconciliationStartedEvent("test", events.WithCorrelation(correlationID, event1.EventID()))
-	ec.ringBuffer.Add(event2)
-
-	// Add event with different correlation
-	event3 := events.NewReconciliationTriggeredEvent("other", true, events.WithNewCorrelation())
-	ec.ringBuffer.Add(event3)
-
-	// Find by correlation ID
-	found := ec.FindByCorrelationID(correlationID, 10)
-	assert.Len(t, found, 2)
-
-	// Find with max count = 1
-	found = ec.FindByCorrelationID(correlationID, 1)
-	assert.Len(t, found, 1)
-
-	// Find with empty correlation ID
-	found = ec.FindByCorrelationID("", 10)
-	assert.Nil(t, found)
-
-	// Find with non-existent correlation ID
-	found = ec.FindByCorrelationID("non-existent", 10)
-	assert.Empty(t, found)
-}
-
-func TestEventCommentator_FindRecent(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	// Add some events
-	event1 := events.NewConfigParsedEvent(nil, nil, "v1", "s1")
-	event2 := events.NewConfigValidatedEvent(nil, nil, "v1", "s1")
-	event3 := events.NewConfigInvalidEvent("v1", nil, nil)
-
-	ec.ringBuffer.Add(event1)
-	time.Sleep(10 * time.Millisecond)
-	ec.ringBuffer.Add(event2)
-	time.Sleep(10 * time.Millisecond)
-	ec.ringBuffer.Add(event3)
-
-	// Find 2 most recent
-	found := ec.FindRecent(2)
-	assert.Len(t, found, 2)
-	// Newest first
-	assert.Equal(t, events.EventTypeConfigInvalid, found[0].EventType())
-	assert.Equal(t, events.EventTypeConfigValidated, found[1].EventType())
-
-	// Find more than available
-	found = ec.FindRecent(10)
-	assert.Len(t, found, 3)
-
-	// Find 0
-	found = ec.FindRecent(0)
-	assert.Empty(t, found)
 }

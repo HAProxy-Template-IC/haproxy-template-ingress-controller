@@ -46,59 +46,6 @@ var (
 	typeMismatchPattern = regexp.MustCompile(`expected (\w+), got (\w+)`)
 )
 
-// FormatRenderError formats a template rendering error into a human-readable multi-line string.
-//
-// This function parses template error messages to extract:
-//   - Line and column numbers
-//   - The actual problem (e.g., "unknown method", "undefined variable")
-//   - Contextual information
-//
-// And returns a nicely formatted multi-line error message with:
-//   - Clear section headers
-//   - Template snippet showing the error location
-//   - Actionable hints for fixing the error
-//
-// Parameters:
-//   - err: The error from template rendering (typically a *RenderError)
-//   - templateName: Name of the template that failed
-//   - templateContent: Full template content for extracting context
-//
-// Returns:
-//   - Formatted multi-line error string
-func FormatRenderError(err error, templateName, templateContent string) string {
-	if err == nil {
-		return ""
-	}
-	return formatParsedError(
-		"Template Rendering Error: "+templateName,
-		templateContent,
-		err,
-		parseTemplateError(err.Error()),
-		formatLocationLine,
-	)
-}
-
-// FormatCompilationError formats a template compilation error into a human-readable multi-line string.
-//
-// This function is similar to FormatRenderError but optimized for compilation/syntax errors.
-// It parses template error messages to extract:
-//   - Line and column numbers
-//   - The actual problem (syntax error, unexpected token, etc.)
-//   - Contextual information from the template source
-//
-// And returns a nicely formatted multi-line error message with:
-//   - Clear section headers
-//   - Template snippet showing the error location with surrounding lines
-//   - A caret (^) pointing to the exact column
-//   - Actionable hints for fixing the error
-//
-// Parameters:
-//   - err: The error from template compilation (typically a *CompilationError)
-//   - templateName: Name of the template that failed
-//   - templateContent: Full template content for extracting context
-//
-// Returns:
-//   - Formatted multi-line error string
 func FormatCompilationError(err error, templateName, templateContent string) string {
 	if err == nil {
 		return ""
@@ -112,8 +59,8 @@ func FormatCompilationError(err error, templateName, templateContent string) str
 	)
 }
 
-// formatParsedError builds the shared header / location / problem / template
-// context / hints layout used by FormatRenderError and FormatCompilationError.
+// formatParsedError builds the header / location / problem / template
+// context / hints layout used by FormatCompilationError.
 // formatLocation lets callers customise how a non-nil location renders.
 func formatParsedError(header, templateContent string, originalErr error, parsed parsedError, formatLocation func(*errorLocation) string) string {
 	var builder strings.Builder
@@ -152,13 +99,6 @@ func formatParsedError(header, templateContent string, originalErr error, parsed
 	return builder.String()
 }
 
-// formatLocationLine renders "Location: Line X, Column Y" unconditionally.
-func formatLocationLine(l *errorLocation) string {
-	return fmt.Sprintf("Location: Line %d, Column %d\n", l.Line, l.Column)
-}
-
-// formatLocationLineOptionalColumn renders the column only when it's non-zero.
-// Compilation errors sometimes lack column info and we want to omit it cleanly.
 func formatLocationLineOptionalColumn(l *errorLocation) string {
 	if l.Column > 0 {
 		return fmt.Sprintf("Location: Line %d, Column %d\n", l.Line, l.Column)
@@ -234,23 +174,6 @@ func generateCompilationHints(errorStr string) []string {
 	return hints
 }
 
-// parseTemplateError parses a template error string to extract structured information.
-func parseTemplateError(errorStr string) parsedError {
-	parsed := parsedError{}
-
-	// Extract line and column numbers
-	parsed.Location = extractLocation(errorStr)
-
-	// Extract the actual problem
-	parsed.Problem = extractProblem(errorStr)
-
-	// Generate hints based on error patterns
-	parsed.Hints = generateHints(errorStr)
-
-	return parsed
-}
-
-// extractLocation extracts line and column numbers from the error string.
 func extractLocation(errorStr string) *errorLocation {
 	// Try Line=X Col=Y pattern first (most specific)
 	if matches := lineColPattern.FindStringSubmatch(errorStr); len(matches) == 3 {
@@ -314,57 +237,6 @@ func extractProblem(errorStr string) string {
 	return ""
 }
 
-// generateHints generates actionable hints based on common error patterns.
-func generateHints(errorStr string) []string {
-	var hints []string
-
-	// Unknown method on map/dict
-	if strings.Contains(errorStr, "unknown method 'get'") || strings.Contains(errorStr, "invalid call to method 'get'") {
-		hints = append(hints,
-			"Map access should use dot notation (e.g., 'map.key') or",
-			"bracket syntax (e.g., 'map[\"key\"]'), not method calls like '.get()'.")
-	}
-
-	// Undefined variable
-	if strings.Contains(errorStr, "undefined variable") {
-		hints = append(hints,
-			"Check that the variable is defined in the rendering context.",
-			"Verify spelling and that the variable exists in the data passed to the template.")
-	}
-
-	// Method call on wrong type
-	if strings.Contains(errorStr, "invalid call to method") && !strings.Contains(errorStr, "get") {
-		hints = append(hints,
-			"You may be trying to call a method on a type that doesn't support it.",
-			"Check the type of the variable and use appropriate syntax for that type.")
-	}
-
-	// Type mismatch
-	if strings.Contains(errorStr, "expected") && strings.Contains(errorStr, "got") {
-		hints = append(hints,
-			"The template expects a different data type than what was provided.",
-			"Verify the types of variables in your rendering context.")
-	}
-
-	// Control structure errors
-	if strings.Contains(errorStr, "controlStructure") || strings.Contains(errorStr, "ForControlStructure") {
-		hints = append(hints,
-			"Check the syntax of your loop or conditional statement.",
-			"Ensure you're iterating over a list/array, not a single value.")
-	}
-
-	// Generic hint if no specific hint matched
-	if len(hints) == 0 {
-		hints = append(hints,
-			"Check your template syntax and the data passed to the template.",
-			"See Scriggo template documentation for syntax help.")
-	}
-
-	return hints
-}
-
-// extractTemplateContext extracts a few lines of template around the error location.
-// Shows the error line plus one line of context above and below.
 func extractTemplateContext(templateContent string, line, column int) string {
 	lines := strings.Split(templateContent, "\n")
 
@@ -405,38 +277,4 @@ func extractTemplateContext(templateContent string, line, column int) string {
 	}
 
 	return builder.String()
-}
-
-// FormatRenderErrorShort returns a shortened single-line version of the error.
-// Useful for logging contexts where multi-line output isn't appropriate.
-func FormatRenderErrorShort(err error, templateName string) string {
-	if err == nil {
-		return ""
-	}
-
-	parsed := parseTemplateError(err.Error())
-
-	var parts []string
-
-	// Template name
-	parts = append(parts, fmt.Sprintf("Template: %s", templateName))
-
-	// Location
-	if parsed.Location != nil {
-		parts = append(parts, fmt.Sprintf("Line %d Col %d", parsed.Location.Line, parsed.Location.Column))
-	}
-
-	// Problem
-	if parsed.Problem != "" {
-		parts = append(parts, parsed.Problem)
-	} else {
-		// Fallback to truncated error
-		problem := err.Error()
-		if len(problem) > 60 {
-			problem = problem[:57] + "..."
-		}
-		parts = append(parts, problem)
-	}
-
-	return strings.Join(parts, " | ")
 }

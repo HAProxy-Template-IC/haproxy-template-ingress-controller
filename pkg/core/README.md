@@ -16,12 +16,9 @@ import (
     "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
 
-// 1. Parse the YAML (typically spec.* from a HAProxyTemplateConfig CRD,
-//    serialised by pkg/controller/conversion).
-cfg, err := config.LoadConfig(configYAML)
-if err != nil {
-    log.Fatalf("parse: %v", err)
-}
+// 1. Obtain a *config.Config (the running controller gets one from
+//    pkg/controller/conversion.ParseCRD, which maps a HAProxyTemplateConfig
+//    CRD onto this struct).
 
 // 2. Fill in defaults.
 config.SetDefaults(cfg)
@@ -72,21 +69,18 @@ Authoritative list lives in `pkg/core/config/defaults.go`. Commonly surprising o
 Two serialisations exist for the same struct, and they don't agree — see `pkg/core/config/README.md` for the full mapping:
 
 - **CRD JSON keys** (what operators write in `kubectl apply`-style manifests, what `kubectl get -o yaml` prints): camelCase (`podSelector`, `watchedResources`, `indexBy`, `templatingSettings`).
-- **YAML keys consumed by `LoadConfig`** (the intermediate form `pkg/controller/conversion` produces): snake_case at the top level (`pod_selector`, `watched_resources`, `template_snippets`, `haproxy_config`, …) with a few nested fields in camelCase (`extraContext`, `currentConfig`, `httpResources`, `minHAProxyVersion`).
+- **YAML keys (`yaml:` struct tags)**: snake_case at the top level (`pod_selector`, `watched_resources`, `template_snippets`, `haproxy_config`, …) with a few nested fields in camelCase (`extraContext`, `currentConfig`, `httpResources`, `minHAProxyVersion`).
 
-Use camelCase in CRD manifests and snake_case in any YAML you hand directly to `LoadConfig`. The `yaml:` tags in `types.go` are the authoritative shape for either form.
+Use camelCase in CRD manifests; the `yaml:` tags in `types.go` are the authoritative shape for the YAML form.
 
 ## `logging` — slog Setup
 
 ```go
 import "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 
-// Static (level parsed once, string values: "TRACE", "DEBUG", "INFO", "WARN"/"WARNING", "ERROR")
-logger := logging.NewLogger("INFO")
-slog.SetDefault(logger)
-
-// Dynamic (runtime-adjustable via SetLevel)
-logger = logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
+// Dynamic (runtime-adjustable via SetLevel; level strings: "TRACE",
+// "DEBUG", "INFO", "WARN"/"WARNING", "ERROR")
+logger := logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
 slog.SetDefault(logger)
 logging.SetLevel("DEBUG")  // bumps all existing loggers
 ```

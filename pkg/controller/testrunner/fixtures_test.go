@@ -1206,7 +1206,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			"haproxy.cfg":  "# placeholder",
 			"backends.map": "host1 my-backend",
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1233,7 +1233,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			"haproxy.cfg":   "# placeholder",
 			"blocklist.txt": "192.168.1.100",
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1260,7 +1260,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			"haproxy.cfg": "# placeholder",
 			"server.pem":  "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----",
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1286,7 +1286,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg": "# placeholder",
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1306,7 +1306,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			"haproxy.cfg":  "# placeholder",
 			"backends.map": `{{ fail("intentional error") }}`,
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1328,7 +1328,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			"haproxy.cfg":   "# placeholder",
 			"blocklist.txt": `{{ fail("intentional error") }}`,
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1350,7 +1350,7 @@ func TestRenderAuxiliaryFiles(t *testing.T) {
 			"haproxy.cfg": "# placeholder",
 			"server.pem":  `{{ fail("intentional error") }}`,
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1385,7 +1385,7 @@ func TestAssertDeterministic(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg": "# Deterministic config\nfrontend test\n  bind *:80",
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{
@@ -1442,7 +1442,7 @@ func TestAssertDeterministic(t *testing.T) {
 		templates := map[string]string{
 			"haproxy.cfg": "# test",
 		}
-		engine, err := templating.New(templates, nil, nil, nil)
+		engine, err := templating.New(templates, nil)
 		require.NoError(t, err)
 
 		runner := &Runner{

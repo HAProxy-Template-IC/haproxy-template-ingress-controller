@@ -52,9 +52,7 @@ func createTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
 		},
 	}
 
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": template},
-		nil, nil, nil)
+	engine, err := templating.New(map[string]string{"haproxy.cfg": template}, nil)
 	require.NoError(t, err)
 
 	renderSvc := renderer.NewRenderService(&renderer.RenderServiceConfig{
@@ -305,10 +303,7 @@ func TestValidationResult_ErrorMessage(t *testing.T) {
 // missing and auth headers never reached the backend.
 func TestComponent_Start_AsyncPath_DeniesOnFailure(t *testing.T) {
 	bus := busevents.NewEventBus(100)
-	failingEngine, err := templating.New(
-		map[string]string{"haproxy.cfg": `{{ fail("pretend HTTP content is bad") }}`},
-		nil, nil, nil,
-	)
+	failingEngine, err := templating.New(map[string]string{"haproxy.cfg": `{{ fail("pretend HTTP content is bad") }}`}, nil)
 	require.NoError(t, err)
 
 	renderSvc := renderer.NewRenderService(&renderer.RenderServiceConfig{

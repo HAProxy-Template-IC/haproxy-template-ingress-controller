@@ -109,36 +109,6 @@ func TestParseError(t *testing.T) {
 	}
 }
 
-func TestConflictError(t *testing.T) {
-	conflictErr := &ConflictError{
-		Retries:         3,
-		ExpectedVersion: 100,
-		ActualVersion:   "102",
-	}
-
-	errMsg := conflictErr.Error()
-	assert.Contains(t, errMsg, "version conflict after 3 retries")
-	assert.Contains(t, errMsg, "expected version 100")
-	assert.Contains(t, errMsg, "server has 102")
-}
-
-func TestOperationError(t *testing.T) {
-	cause := errors.New("backend not found")
-	opErr := &OperationError{
-		OperationType: "delete",
-		Section:       "backend",
-		Resource:      "api-backend",
-		Cause:         cause,
-	}
-
-	errMsg := opErr.Error()
-	assert.Contains(t, errMsg, "delete backend 'api-backend'")
-	assert.Contains(t, errMsg, "backend not found")
-
-	unwrapped := opErr.Unwrap()
-	assert.Equal(t, cause, unwrapped)
-}
-
 func TestNewConnectionError(t *testing.T) {
 	cause := errors.New("connection refused")
 	syncErr := NewConnectionError("http://haproxy:5555", cause)
@@ -195,53 +165,6 @@ func TestNewParseError(t *testing.T) {
 			assert.Equal(t, tt.configType, parseErr.ConfigType)
 		})
 	}
-}
-
-func TestNewValidationError(t *testing.T) {
-	cause := errors.New("backend 'missing' not found")
-	syncErr := NewValidationError("invalid reference", cause)
-
-	require.NotNil(t, syncErr)
-	assert.Equal(t, "apply", syncErr.Stage)
-	assert.Contains(t, syncErr.Message, "rejected the configuration")
-	require.NotEmpty(t, syncErr.Hints)
-
-	valErr, ok := errors.AsType[*ValidationError](syncErr)
-	require.True(t, ok)
-	assert.Equal(t, "semantic", valErr.Phase)
-}
-
-func TestNewConflictError(t *testing.T) {
-	syncErr := NewConflictError(5, 100, "105")
-
-	require.NotNil(t, syncErr)
-	assert.Equal(t, "commit", syncErr.Stage)
-	assert.Contains(t, syncErr.Message, "5 retries")
-	require.NotEmpty(t, syncErr.Hints)
-
-	conflictErr, ok := errors.AsType[*ConflictError](syncErr)
-	require.True(t, ok)
-	assert.Equal(t, 5, conflictErr.Retries)
-	assert.Equal(t, int64(100), conflictErr.ExpectedVersion)
-	assert.Equal(t, "105", conflictErr.ActualVersion)
-}
-
-func TestNewOperationError(t *testing.T) {
-	cause := errors.New("server limit exceeded")
-	syncErr := NewOperationError("create", "server", "web1", cause)
-
-	require.NotNil(t, syncErr)
-	assert.Equal(t, "apply", syncErr.Stage)
-	assert.Contains(t, syncErr.Message, "create")
-	assert.Contains(t, syncErr.Message, "server")
-	assert.Contains(t, syncErr.Message, "web1")
-	require.NotEmpty(t, syncErr.Hints)
-
-	opErr, ok := errors.AsType[*OperationError](syncErr)
-	require.True(t, ok)
-	assert.Equal(t, "create", opErr.OperationType)
-	assert.Equal(t, "server", opErr.Section)
-	assert.Equal(t, "web1", opErr.Resource)
 }
 
 func TestSimplifyValidationError(t *testing.T) {
