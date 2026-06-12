@@ -198,7 +198,7 @@ defaults
 		},
 	}
 
-	engine, err := New(templates, nil, nil, postProcessorConfigs)
+	engine, err := New(templates, &Options{PostProcessors: postProcessorConfigs})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "haproxy.cfg", nil)
@@ -244,7 +244,7 @@ func TestTemplateEngine_MultiplePostProcessors(t *testing.T) {
 		},
 	}
 
-	engine, err := New(templates, nil, nil, postProcessorConfigs)
+	engine, err := New(templates, &Options{PostProcessors: postProcessorConfigs})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -274,7 +274,7 @@ func TestTemplateEngine_PostProcessorError(t *testing.T) {
 	}
 
 	// Engine creation should fail due to invalid regex
-	_, err := New(templates, nil, nil, postProcessorConfigs)
+	_, err := New(templates, &Options{PostProcessors: postProcessorConfigs})
 	require.Error(t, err)
 	// Error message from regex package
 	assert.Contains(t, err.Error(), "invalid regex pattern")
@@ -285,7 +285,7 @@ func TestTemplateEngine_NoPostProcessors(t *testing.T) {
 		"test": "  content with spaces",
 	}
 
-	engine, err := New(templates, nil, nil, nil)
+	engine, err := New(templates, nil)
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)

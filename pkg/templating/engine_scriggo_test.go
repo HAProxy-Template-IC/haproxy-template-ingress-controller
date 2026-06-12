@@ -25,14 +25,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewScriggo_Success(t *testing.T) {
+func TestNew_Success(t *testing.T) {
 	templates := map[string]string{
 		"greeting": "Hello World!",
 		"farewell": "Goodbye World!",
 	}
 	entryPoints := []string{"greeting", "farewell"}
 
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 	require.NotNil(t, engine)
 
@@ -42,24 +42,24 @@ func TestNewScriggo_Success(t *testing.T) {
 	assert.False(t, engine.HasTemplate("nonexistent"))
 }
 
-func TestNewScriggo_EmptyTemplates(t *testing.T) {
+func TestNew_EmptyTemplates(t *testing.T) {
 	templates := map[string]string{}
 	entryPoints := []string{}
 
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 	require.NotNil(t, engine)
 
 	assert.Equal(t, 0, engine.TemplateCount())
 }
 
-func TestNewScriggo_CompilationError(t *testing.T) {
+func TestNew_CompilationError(t *testing.T) {
 	templates := map[string]string{
 		"invalid": "Hello {{ name ", // Unclosed expression
 	}
 	entryPoints := []string{"invalid"}
 
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 
 	assert.Nil(t, engine)
 	require.Error(t, err)
@@ -75,7 +75,7 @@ func TestScriggoEngine_Render_StaticContent(t *testing.T) {
 	}
 
 	entryPoints := []string{"static"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "static", nil)
@@ -89,7 +89,7 @@ func TestScriggoEngine_Render_TemplateNotFound(t *testing.T) {
 	}
 
 	entryPoints := []string{"greeting"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "nonexistent", nil)
@@ -111,7 +111,7 @@ func TestScriggoEngine_TemplateNames(t *testing.T) {
 	}
 
 	entryPoints := []string{"template1", "template2", "template3"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	names := engine.TemplateNames()
@@ -128,7 +128,7 @@ func TestScriggoEngine_GetRawTemplate(t *testing.T) {
 	}
 
 	entryPoints := []string{"greeting"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	// Test existing template
@@ -151,7 +151,7 @@ func TestScriggoEngine_HasTemplate(t *testing.T) {
 	}
 
 	entryPoints := []string{"existing"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	assert.True(t, engine.HasTemplate("existing"))
@@ -164,7 +164,7 @@ func TestScriggoEngine_RenderWithProfiling(t *testing.T) {
 	}
 
 	entryPoints := []string{"greeting"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, stats, err := engine.RenderWithProfiling(context.Background(), "greeting", nil)
@@ -180,7 +180,7 @@ func TestScriggoEngine_Tracing(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	// Initially disabled
@@ -221,7 +221,7 @@ func TestScriggoEngine_Tracing_Concurrent(t *testing.T) {
 	}
 
 	entryPoints := []string{"test1", "test2"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	engine.EnableTracing()
@@ -256,11 +256,11 @@ func TestScriggoEngine_AppendTraces(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine1, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine1, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 	engine1.EnableTracing()
 
-	engine2, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine2, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 	engine2.EnableTracing()
 
@@ -286,7 +286,7 @@ func TestScriggoEngine_AppendTraces_NilEngine(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	// Should not panic
@@ -302,7 +302,7 @@ func TestScriggoEngine_FilterDebug(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	// Initially disabled
@@ -341,7 +341,7 @@ func TestScriggoEngine_PostProcessors(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, postProcessorConfigs)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, PostProcessors: postProcessorConfigs})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -363,7 +363,7 @@ func TestScriggoEngine_CustomFunctions(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, customFunctions, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, Functions: customFunctions})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -376,7 +376,7 @@ func TestNew_Scriggo(t *testing.T) {
 		"greeting": "Hello World!",
 	}
 
-	engine, err := New(templates, nil, nil, nil)
+	engine, err := New(templates, nil)
 	require.NoError(t, err)
 	require.NotNil(t, engine)
 }
@@ -441,7 +441,7 @@ func TestScriggoEngine_Render_EmptyContext(t *testing.T) {
 	}
 
 	entryPoints := []string{"static"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "static", nil)
@@ -459,7 +459,7 @@ func TestScriggoEngine_BuiltinFilters(t *testing.T) {
 	}
 
 	entryPoints := []string{"strip_test", "trimSpace_test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "strip_test", nil)
@@ -477,7 +477,7 @@ func TestScriggoEngine_B64DecodeFilter(t *testing.T) {
 	}
 
 	entryPoints := []string{"decode"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "decode", nil)
@@ -493,7 +493,7 @@ func TestScriggoEngine_TemplateCount(t *testing.T) {
 	}
 
 	entryPoints := []string{"a", "b", "c"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	assert.Equal(t, 3, engine.TemplateCount())
@@ -516,7 +516,7 @@ func TestScriggoEngine_SharedContextAccess(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	// SharedContext is auto-created by engine when not provided
@@ -587,7 +587,7 @@ Secret: {{ secret.(map[string]any)["name"] }}`,
 		"endpoints": endpointStore,
 	}
 	names := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, Declarations: typedResourcesDecl(names...)})
 	require.NoError(t, err)
 
 	templateCtx := map[string]any{
@@ -622,7 +622,7 @@ Pod count: {{ len(pods) }}`,
 	}
 
 	entryPoints := []string{"pods_test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	// Create mock store with test data
@@ -672,7 +672,7 @@ func TestScriggoEngine_DotNotationMethodCallsOnResourceStore(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 	names := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, Declarations: typedResourcesDecl(names...)})
 	require.NoError(t, err)
 
 	templateCtx := map[string]any{
@@ -732,7 +732,7 @@ count={{ len(analysisMap["backends"].([]any)) }}`,
 		"ingresses": ingressStore,
 	}
 	names := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, Declarations: typedResourcesDecl(names...)})
 	require.NoError(t, err, "Failed to compile template with ComputeIfAbsent pattern")
 
 	templateCtx := map[string]any{
@@ -790,7 +790,7 @@ Output: {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 		"ingresses": ingressStore,
 	}
 	names := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, Declarations: typedResourcesDecl(names...)})
 	if err != nil {
 		t.Logf("Compilation error: %v", err)
 	}
@@ -865,7 +865,7 @@ func TestMacroWithRenderGlobInheritContext(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 	names := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, Declarations: typedResourcesDecl(names...)})
 	require.NoError(t, err, "Failed to compile templates with macro + render_glob inherit_context")
 
 	templateCtx := map[string]any{
@@ -984,7 +984,7 @@ backend {{ BackendNameIngress(ingress, path) }}
 		"ingresses": ingressStore,
 	}
 	resourceNamesList := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(resourceNamesList...))
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, Declarations: typedResourcesDecl(resourceNamesList...)})
 	require.NoError(t, err, "Failed to compile templates")
 
 	// Generate templateSnippets list for glob_match
@@ -1084,7 +1084,7 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 		"ingresses": ingressStore,
 	}
 	resourceNamesList := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(resourceNamesList...))
+	engine, err := New(templates, &Options{EntryPoints: entryPoints, Declarations: typedResourcesDecl(resourceNamesList...)})
 	require.NoError(t, err, "Failed to compile templates")
 
 	// Generate templateSnippets list
@@ -1134,7 +1134,7 @@ func TestNestedLoopWithSharedGetPassedToFunction(t *testing.T) {
 {{ count }}`,
 	}
 
-	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main"}})
 	require.NoError(t, err)
 
 	shared := NewSharedContext()
@@ -1173,7 +1173,7 @@ func TestTripleNestedLoopWithSharedGet(t *testing.T) {
 {{ count }}`,
 	}
 
-	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main"}})
 	require.NoError(t, err)
 
 	shared := NewSharedContext()
@@ -1213,7 +1213,7 @@ Count: {{ count }}`,
 {%- end -%}`,
 	}
 
-	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main"}})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "main", nil)
@@ -1303,7 +1303,7 @@ Count: {{ count }}`,
 	}
 
 	names := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, []string{"main"}, nil, nil, nil, typedResourcesDecl(names...))
+	engine, err := New(templates, &Options{EntryPoints: []string{"main"}, Declarations: typedResourcesDecl(names...)})
 	require.NoError(t, err)
 
 	templateCtx := map[string]any{
@@ -1369,7 +1369,7 @@ func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
 	}
 
 	names := resourceNames(stores)
-	engine, err := NewScriggoWithDeclarations(templates, []string{"main"}, nil, nil, nil, typedResourcesDecl(names...))
+	engine, err := New(templates, &Options{EntryPoints: []string{"main"}, Declarations: typedResourcesDecl(names...)})
 	require.NoError(t, err)
 
 	templateCtx := map[string]any{
@@ -1489,7 +1489,7 @@ func TestNestedLoopWithFilters(t *testing.T) {
 				"test": tt.template,
 			}
 
-			engine, err := NewScriggo(templates, []string{"test"}, nil, nil, nil)
+			engine, err := New(templates, &Options{EntryPoints: []string{"test"}})
 			require.NoError(t, err)
 
 			// Create context with SharedContext for first_seen tests

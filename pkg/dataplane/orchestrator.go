@@ -440,47 +440,6 @@ func (o *orchestrator) populatePostSyncParsedConfig(ctx context.Context, result 
 	result.PostSyncParsedConfig = parsed
 }
 
-// diff generates a diff without applying any changes.
-func (o *orchestrator) diff(ctx context.Context, desiredConfig string) (*DiffResult, error) {
-	currentConfigStr, err := o.client.GetRawConfiguration(ctx)
-	if err != nil {
-		return nil, NewConnectionError(o.client.Endpoint.URL, err)
-	}
-
-	currentConfig, err := o.parser.ParseFromString(currentConfigStr)
-	if err != nil {
-		snippet := currentConfigStr
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
-		return nil, NewParseError(configTypeCurrent, snippet, err)
-	}
-
-	desiredParsed, err := o.parser.ParseFromString(desiredConfig)
-	if err != nil {
-		snippet := desiredConfig
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
-		return nil, NewParseError("desired", snippet, err)
-	}
-
-	d, err := o.comparator.Compare(currentConfig, desiredParsed)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare",
-			Message: "failed to compare configurations",
-			Cause:   err,
-		}
-	}
-
-	return &DiffResult{
-		HasChanges:        d.Summary.HasChanges(),
-		PlannedOperations: convertOperationsToPlanned(d.Operations),
-		Details:           convertDiffSummary(&d.Summary),
-	}, nil
-}
-
 // partitionByRuntimeEligibility splits ops into runtime-eligible server
 // updates (apply via X-Runtime-Actions, no reload) and everything else
 // (requires force_reload).

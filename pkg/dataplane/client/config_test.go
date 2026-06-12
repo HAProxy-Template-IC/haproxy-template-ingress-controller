@@ -254,17 +254,6 @@ func TestPushRawConfiguration(t *testing.T) {
 	}
 }
 
-func TestVersionConflictError(t *testing.T) {
-	err := &VersionConflictError{
-		ExpectedVersion: 42,
-		ActualVersion:   "45",
-	}
-
-	assert.Contains(t, err.Error(), "42")
-	assert.Contains(t, err.Error(), "45")
-	assert.Contains(t, err.Error(), "version conflict")
-}
-
 // makeReloadStatusHandler creates an HTTP handler for reload status tests.
 func makeReloadStatusHandler(reloadID string, statusCode int, responseBody string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

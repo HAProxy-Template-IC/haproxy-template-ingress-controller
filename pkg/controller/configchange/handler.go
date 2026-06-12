@@ -80,7 +80,6 @@ type ConfigChangeHandler struct {
 	logger         *slog.Logger
 	configChangeCh chan<- *coreconfig.Config
 	validators     []string
-	stopCh         chan struct{}
 
 	// State replay for leadership transitions (prevents "late subscriber problem")
 	configReplayer *leadership.StateReplayer[*events.ConfigValidatedEvent]
@@ -163,7 +162,6 @@ func NewConfigChangeHandler(
 		configChangeCh:   configChangeCh,
 		validators:       validators,
 		configReplayer:   leadership.NewStateReplayer[*events.ConfigValidatedEvent](eventBus),
-		stopCh:           make(chan struct{}),
 		debounceInterval: debounceInterval,
 		pendingConfig:    nil,
 	}
@@ -217,7 +215,7 @@ func (h *ConfigChangeHandler) EnableReinitialization() {
 
 // Start begins processing events from the EventBus.
 //
-// This method blocks until Stop() is called or the context is canceled.
+// This method blocks until the context is canceled.
 // The component is already subscribed to the EventBus (subscription happens in constructor).
 // Returns nil on graceful shutdown.
 //
@@ -231,10 +229,6 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			h.logger.Info("ConfigChangeHandler shutting down", "reason", ctx.Err())
-			h.cleanup()
-			return nil
-		case <-h.stopCh:
-			h.logger.Info("ConfigChangeHandler shutting down")
 			h.cleanup()
 			return nil
 		case <-h.debounceTimer.Chan():
@@ -251,13 +245,6 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 			}
 		}
 	}
-}
-
-// Stop gracefully stops the component.
-func (h *ConfigChangeHandler) Stop() {
-	h.debounceTimer.Stop()
-	h.pendingConfig = nil
-	close(h.stopCh)
 }
 
 // cleanup performs cleanup when the component is shutting down.

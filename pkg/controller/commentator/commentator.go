@@ -60,7 +60,6 @@ type EventCommentator struct {
 	eventChan  <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	logger     *slog.Logger
 	ringBuffer *RingBuffer
-	stopCh     chan struct{}
 }
 
 // NewEventCommentator creates a new Event Commentator.
@@ -84,19 +83,12 @@ func NewEventCommentator(eventBus *busevents.EventBus, logger *slog.Logger, buff
 		eventChan:  eventChan,
 		logger:     logger.With("component", ComponentName),
 		ringBuffer: NewRingBuffer(bufferSize),
-		stopCh:     make(chan struct{}),
 	}
-}
-
-// Name returns the unique identifier for this component.
-// Implements the lifecycle.Component interface.
-func (ec *EventCommentator) Name() string {
-	return ComponentName
 }
 
 // Start begins processing events from the EventBus.
 //
-// This method blocks until Stop() is called or the context is canceled.
+// This method blocks until the context is canceled.
 // The component is already subscribed to the EventBus (subscription happens in constructor).
 // Returns nil on graceful shutdown.
 //
@@ -111,37 +103,10 @@ func (ec *EventCommentator) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			ec.logger.Info("Event commentator shutting down", "reason", ctx.Err())
 			return nil
-		case <-ec.stopCh:
-			ec.logger.Info("Event commentator shutting down")
-			return nil
 		case event := <-ec.eventChan:
 			ec.processEvent(event)
 		}
 	}
-}
-
-// Stop gracefully stops the commentator.
-func (ec *EventCommentator) Stop() {
-	close(ec.stopCh)
-}
-
-// FindByCorrelationID returns events matching the specified correlation ID.
-// This method is used for debugging event flows through the reconciliation pipeline.
-//
-// Parameters:
-//   - correlationID: The correlation ID to search for
-//   - maxCount: Maximum number of events to return (0 = no limit)
-//
-// Returns:
-//   - Slice of events matching the correlation ID, newest first
-func (ec *EventCommentator) FindByCorrelationID(correlationID string, maxCount int) []busevents.Event {
-	return ec.ringBuffer.FindByCorrelationID(correlationID, maxCount)
-}
-
-// FindRecent returns the N most recent events, newest first.
-// This method is used for debugging recent event activity.
-func (ec *EventCommentator) FindRecent(n int) []busevents.Event {
-	return ec.ringBuffer.FindRecent(n)
 }
 
 // processEvent handles a single event: adds to buffer and logs with domain insights.

@@ -24,9 +24,7 @@ package indextracker
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"maps"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -177,53 +175,4 @@ func (t *IndexSynchronizationTracker) allResourcesSynced() bool {
 		}
 	}
 	return true
-}
-
-// IsResourceSynced returns true if the specified resource type has synced.
-func (t *IndexSynchronizationTracker) IsResourceSynced(resourceTypeName string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	return t.expectedResources[resourceTypeName]
-}
-
-// AllSynced returns true if all expected resources have synced.
-func (t *IndexSynchronizationTracker) AllSynced() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	return t.allResourcesSynced()
-}
-
-// GetResourceCount returns the number of resources loaded during initial sync.
-//
-// Returns:
-//   - count if the resource has synced
-//   - 0 and error if resource hasn't synced or is unknown
-func (t *IndexSynchronizationTracker) GetResourceCount(resourceTypeName string) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	synced, exists := t.expectedResources[resourceTypeName]
-	if !exists {
-		return 0, fmt.Errorf("unknown resource type: %s", resourceTypeName)
-	}
-
-	if !synced {
-		return 0, fmt.Errorf("resource type %s has not synced yet", resourceTypeName)
-	}
-
-	return t.resourceCounts[resourceTypeName], nil
-}
-
-// GetAllResourceCounts returns a map of all resource counts.
-//
-// Returns a copy to prevent external modification.
-func (t *IndexSynchronizationTracker) GetAllResourceCounts() map[string]int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	counts := make(map[string]int, len(t.resourceCounts))
-	maps.Copy(counts, t.resourceCounts)
-	return counts
 }

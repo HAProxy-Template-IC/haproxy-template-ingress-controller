@@ -124,7 +124,8 @@ func TestBuildEngineDeclarations_NilResult(t *testing.T) {
 
 // TestBootstrap_EndToEndThroughEngine is the keystone integration
 // after the typebootstrap shape rewrite: Bootstrap →
-// BuildEngineDeclarations → NewScriggoWithDeclarations, then a
+// BuildEngineDeclarations → templating.New (Options.Declarations),
+// then a
 // template that uses the chart-facing access pattern
 // `resources.<name>.List()` compiles. This pins that the
 // engine-declared shape and the runtime population stay in lockstep.
@@ -166,10 +167,7 @@ func TestBootstrap_EndToEndThroughEngine(t *testing.T) {
 		"main": `{%- for _, g := range resources.gateways.List() %}{{ g.Metadata.Name }}
 {% end -%}`,
 	}
-	engine, err := templating.NewScriggoWithDeclarations(
-		templates, []string{"main"}, nil, nil, nil,
-		BuildEngineDeclarations(result),
-	)
+	engine, err := templating.New(templates, &templating.Options{EntryPoints: []string{"main"}, Declarations: BuildEngineDeclarations(result)})
 	require.NoError(t, err,
 		"the engine must accept Bootstrap's declarations without further glue")
 

@@ -43,19 +43,18 @@ Dependencies: Only standard library (encoding/json, log/slog, etc.)
 Defines configuration types and provides loading functions:
 
 ```go
-// Parse a YAML string (the controller's CRD parser pre-extracts spec to YAML)
-config, err := config.LoadConfig(yamlString)
+// Apply defaults to a parsed config (mutates in place)
+config.SetDefaults(cfg)
 
 // Load credentials from Secret data
 creds, err := config.LoadCredentials(secretData)
 ```
 
-There's no `ParseConfig(configMapData)` function — the controller is CRD-driven. The `pkg/controller/conversion` package converts an `*unstructured.Unstructured` `HAProxyTemplateConfig` to the wire YAML and then calls `LoadConfig`.
+There's no YAML-loading entry point here — the controller is CRD-driven. The `pkg/controller/conversion` package converts an `*unstructured.Unstructured` `HAProxyTemplateConfig` directly into the `*Config` this package defines.
 
 **Responsibilities:**
 
 - Define `Config` struct and all nested types
-- Parse YAML configuration
 - Basic structural validation (required fields, port ranges)
 - Credentials loading and validation
 - NOT: Template validation (done in `pkg/controller/validator.TemplateValidator`)
@@ -67,12 +66,8 @@ There's no `ParseConfig(configMapData)` function — the controller is CRD-drive
 Sets up structured logging with slog. The package only exposes a handful of plain functions — there's no `Config` struct, no `Format` option, and no JSON output (everything is logfmt to stdout):
 
 ```go
-// Static logger (level set once)
-logger := logging.NewLogger("INFO")
-slog.SetDefault(logger)
-
-// Or: dynamic logger whose level can be bumped at runtime
-logger = logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
+// Dynamic logger whose level can be bumped at runtime
+logger := logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
 slog.SetDefault(logger)
 logging.SetLevel("DEBUG") // updates the package-global slog.LevelVar
 
@@ -161,31 +156,16 @@ There is no `HAProxyConfigSpec`, `MapDefinition`, `FileDefinition`, or `Dataplan
 
 ## Testing Approach
 
-### Test Parsing and Basic Validation
+### Test Defaults and Basic Validation
 
 ```go
-func TestLoadConfig_Valid(t *testing.T) {
-    configYAML := `
-watched_resources:
-  ingresses:
-    api_version: networking.k8s.io/v1
-    kind: Ingress
-    resources: ingresses
-    index_by:
-      - metadata.namespace
-      - metadata.name
+func TestSetDefaults_AppliesDataplanePort(t *testing.T) {
+    cfg := &config.Config{}
 
-haproxy_config:
-  template: |
-    global
-        daemon
-`
+    config.SetDefaults(cfg)
 
-    cfg, err := config.LoadConfig(configYAML)
-
-    require.NoError(t, err)
-    assert.Len(t, cfg.WatchedResources, 1)
-    assert.Equal(t, "ingresses", cfg.WatchedResources["ingresses"].Resources)
+    assert.Equal(t, config.DefaultDataplanePort, cfg.Dataplane.Port)
+    require.NoError(t, config.ValidateStructure(cfg))
 }
 ```
 
@@ -565,17 +545,13 @@ type Config struct {
     // ...
 }
 
-// Wrap the real LoadConfig (no separate ParseConfig exists; see the
-// "Configuration Management" section above) with a version check.
-func LoadConfig(configYAML string) (*Config, error) {
-    cfg, err := loadConfigInternal(configYAML)
-    if err != nil {
-        return nil, err
-    }
+// Add a version check after the CRD has been mapped onto *Config
+// (pkg/controller/conversion.ParseCRD).
+func checkVersion(cfg *Config) error {
     if cfg.Version != "" && cfg.Version != "v2" {
-        return nil, fmt.Errorf("unsupported config version %s, expected v2", cfg.Version)
+        return fmt.Errorf("unsupported config version %s, expected v2", cfg.Version)
     }
-    return cfg, nil
+    return nil
 }
 ```
 
@@ -628,8 +604,7 @@ kubectl auth can-i get secrets --as=system:serviceaccount:<ns>:<controller-sa>
 
 ```go
 // Debug validation
-cfg, err := config.LoadConfig(yamlString)
-if err != nil {
+if err := config.ValidateStructure(cfg); err != nil {
     slog.Error("config validation failed", "error", err)
 }
 ```

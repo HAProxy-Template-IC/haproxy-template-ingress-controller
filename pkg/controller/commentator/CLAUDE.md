@@ -35,15 +35,13 @@ EventCommentator
 
 ## Event Correlation
 
-The internal `*RingBuffer` (in `ring_buffer.go`, *not* `pkg/events/ringbuffer`) exposes five lookup methods:
+The internal `*RingBuffer` (in `ring_buffer.go`, *not* `pkg/events/ringbuffer`) exposes three lookup methods:
 
 - `FindByType(eventType)` — every entry of the given type, oldest-first.
 - `FindByTypeInWindow(eventType, window)` — entries of the given type whose timestamp falls within `window` of now.
-- `FindRecent(n)` — the last *n* entries, newest first.
-- `FindRecentByPredicate(maxCount, predicate)` — the last `maxCount` entries that satisfy the predicate, newest first.
 - `FindByCorrelationID(correlationID, maxCount)` — entries sharing a correlation ID.
 
-Only two are re-exposed on `*EventCommentator` for outside callers — `FindByCorrelationID` and `FindRecent`. The rest live on the private `ringBuffer` field; insight code inside this package uses them directly. There is no `FindLast` — use `FindByTypeInWindow` and pick the most recent entry instead.
+All of them live on the private `ringBuffer` field; insight code inside this package uses them directly. There is no `FindLast` — use `FindByTypeInWindow` and pick the most recent entry instead.
 
 ```go
 // Example: how long since the previous reconciliation started?

@@ -1033,21 +1033,18 @@ func NewEventCommentator(bus *busevents.EventBus, logger *slog.Logger, bufferSiz
 
 The event loop dispatches each event to two helpers: `determineLogLevel(event)` (in `log_levels.go`, picks Error / Warn / Info / Debug per event type) and `generateInsight(event)` (in `insights*.go`, builds the structured `slog` attribute list using the ring buffer for correlation).
 
-A typical commentary site looks like this — note that the ring buffer methods are named after their query shape (`FindByCorrelationID`, `FindByTypeInWindow`, `FindRecentByPredicate`, `FindRecent`, `FindByType`), and timestamps live on the event itself via the `timestamped` mixin (no `EventWithTimestamp` wrapper):
+A typical commentary site looks like this — note that the ring buffer methods are named after their query shape (`FindByCorrelationID`, `FindByTypeInWindow`, `FindByType`), and timestamps live on the event itself via the `timestamped` mixin (no `EventWithTimestamp` wrapper):
 
 ```go
 // Sketch — for an actual case, see pkg/controller/commentator/insights_*.go
 case *events.ReconciliationStartedEvent:
-    // What triggered us? FindRecentByPredicate scans newest-first and returns
-    // at most maxCount matches in that order, so candidates[0] is the most
-    // recent qualifying event.
-    candidates := ec.ringBuffer.FindRecentByPredicate(1, func(ev busevents.Event) bool {
-        return ev.EventType() == events.EventTypeConfigValidated ||
-               ev.EventType() == events.EventTypeResourceIndexUpdated
-    })
+    // What triggered us? FindByTypeInWindow returns matches inside the
+    // window oldest-first, so the last element is the most recent one.
+    candidates := ec.ringBuffer.FindByTypeInWindow(
+        events.EventTypeConfigValidated, time.Minute)
     var since time.Duration
     if len(candidates) > 0 {
-        since = e.Timestamp().Sub(candidates[0].Timestamp())
+        since = e.Timestamp().Sub(candidates[len(candidates)-1].Timestamp())
     }
     return "Reconciliation started", []any{
         "trigger", e.Trigger, // .Trigger on Started; .Reason is on Triggered
@@ -1062,11 +1059,9 @@ case *events.ReconciliationStartedEvent:
 | `Add(event)` | Append, evicting the oldest entry when full. |
 | `FindByType(eventType)` | All events with the given type, oldest first. |
 | `FindByTypeInWindow(eventType, window)` | Same, restricted to events newer than `now-window`. |
-| `FindRecent(n)` | The last `n` events, oldest first. |
-| `FindRecentByPredicate(maxCount, predicate)` | First `maxCount` matches when scanning newest-first. |
 | `FindByCorrelationID(id, maxCount)` | All events propagating the same `correlation_id`. |
 
-There is no `FindMostRecent`, `FindAll`, or `CountRecent`. The `EventCommentator` re-exports `FindByCorrelationID` and `FindRecent` for tests and the `/debug/events` endpoint.
+There is no `FindMostRecent`, `FindAll`, or `CountRecent`. All queries live on the private `ringBuffer` field; outside consumers use the separate `/debug/vars/events` ring buffer in `pkg/controller/debug`.
 
 **Integration**:
 

@@ -620,11 +620,7 @@ count: {{ len(items) }}`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			engine, err := NewScriggo(
-				map[string]string{"test": tt.template},
-				[]string{"test"},
-				nil, nil, nil,
-			)
+			engine, err := New(map[string]string{"test": tt.template}, &Options{EntryPoints: []string{"test"}})
 			require.NoError(t, err)
 
 			output, err := engine.Render(context.Background(), "test", nil)
@@ -654,7 +650,7 @@ func TestScriggo_FailFunction(t *testing.T) {
 			},
 		}
 
-		engine, err := NewScriggo(templates, []string{"test"}, nil, customFunctions, nil)
+		engine, err := New(templates, &Options{EntryPoints: []string{"test"}, Functions: customFunctions})
 		require.NoError(t, err)
 
 		_, err = engine.Render(context.Background(), "test", nil)
@@ -673,10 +669,11 @@ func TestScriggo_FailFunction(t *testing.T) {
 		}
 
 		customFunctions := map[string]GlobalFunc{
-			"fail": FailFunction, // Passed but replaced by scriggoFail in buildScriggoGlobals
+			// Any custom "fail" is replaced by scriggoFail in buildScriggoGlobals.
+			"fail": func(args ...any) (any, error) { return nil, fmt.Errorf("%s", args[0]) },
 		}
 
-		engine, err := NewScriggo(templates, []string{"test"}, nil, customFunctions, nil)
+		engine, err := New(templates, &Options{EntryPoints: []string{"test"}, Functions: customFunctions})
 		require.NoError(t, err)
 
 		output, err := engine.Render(context.Background(), "test", nil)
@@ -695,24 +692,18 @@ func TestScriggo_FailFunction_DirectSignature(t *testing.T) {
 
 	// Register fail as a native function with direct signature
 	// Scriggo may need functions with specific signatures
-	engine, err := NewScriggo(
-		templates,
-		[]string{"test"},
-		nil,
-		map[string]GlobalFunc{
-			"fail": func(args ...any) (any, error) {
-				if len(args) != 1 {
-					return nil, fmt.Errorf("fail() requires one argument")
-				}
-				msg, ok := args[0].(string)
-				if !ok {
-					return nil, fmt.Errorf("fail() argument must be string")
-				}
-				return nil, fmt.Errorf("%s", msg)
-			},
+	engine, err := New(templates, &Options{EntryPoints: []string{"test"}, Functions: map[string]GlobalFunc{
+		"fail": func(args ...any) (any, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("fail() requires one argument")
+			}
+			msg, ok := args[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("fail() argument must be string")
+			}
+			return nil, fmt.Errorf("%s", msg)
 		},
-		nil,
-	)
+	}})
 	require.NoError(t, err)
 
 	_, err = engine.Render(context.Background(), "test", nil)
@@ -792,7 +783,7 @@ b={{ config["b"] }}`,
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			templates := map[string]string{"test": tt.template}
-			engine, err := NewScriggo(templates, []string{"test"}, nil, nil, nil)
+			engine, err := New(templates, &Options{EntryPoints: []string{"test"}})
 			require.NoError(t, err)
 
 			output, err := engine.Render(context.Background(), "test", nil)
@@ -858,7 +849,7 @@ count={{ len(keys(config)) }}`,
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			templates := map[string]string{"test": tt.template}
-			engine, err := NewScriggo(templates, []string{"test"}, nil, nil, nil)
+			engine, err := New(templates, &Options{EntryPoints: []string{"test"}})
 			require.NoError(t, err)
 
 			output, err := engine.Render(context.Background(), "test", nil)
@@ -878,7 +869,7 @@ func TestScriggoFirstSeen_Basic(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -900,7 +891,7 @@ func TestScriggoFirstSeen_CompositeKey(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -921,7 +912,7 @@ func TestScriggoFirstSeen_EmptyKey(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -943,7 +934,7 @@ count={{ len(filtered) }}`,
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -964,7 +955,7 @@ func TestScriggoSelectAttr_EqualTest(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -986,7 +977,7 @@ func TestScriggoSelectAttr_NotEqualTest(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -1010,7 +1001,7 @@ func TestScriggoSelectAttr_InTest(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -1038,7 +1029,7 @@ func TestScriggoJoinKey_Basic(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -1055,7 +1046,7 @@ func TestScriggoJoinKey_WithVariables(t *testing.T) {
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -1077,33 +1068,6 @@ func TestScriggoJoinKey_NilValues(t *testing.T) {
 	// nil values should convert to empty string via scriggoToString
 	result := scriggoJoinKey("_", "a", nil, "b")
 	assert.Equal(t, "a__b", result)
-}
-
-func TestIsEmpty(t *testing.T) {
-	tests := []struct {
-		name     string
-		value    any
-		expected bool
-	}{
-		{"nil", nil, true},
-		{"empty string", "", true},
-		{"non-empty string", "hello", false},
-		{"zero int", 0, false},
-		{"non-zero int", 42, false},
-		{"false bool", false, true},
-		{"true bool", true, false},
-		{"empty slice", []any{}, true},
-		{"non-empty slice", []any{"a"}, false},
-		{"empty map", map[string]any{}, true},
-		{"non-empty map", map[string]any{"key": "val"}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isEmpty(tt.value)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 func TestIsValueInList(t *testing.T) {

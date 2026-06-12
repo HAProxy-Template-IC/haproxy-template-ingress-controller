@@ -23,7 +23,6 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -51,7 +50,6 @@ func TestBuilder_WithOptions(t *testing.T) {
 		"ingresses": &storetest.MockStore{},
 	}
 	haproxyPodStore := &storetest.MockStore{}
-	capabilities := &dataplane.Capabilities{SupportsWAF: true}
 
 	builder := NewBuilder(
 		cfg,
@@ -59,13 +57,11 @@ func TestBuilder_WithOptions(t *testing.T) {
 		logger,
 		WithStores(storeMap),
 		WithHAProxyPodStore(haproxyPodStore),
-		WithCapabilities(capabilities),
 	)
 
 	assert.NotNil(t, builder.stores)
 	assert.Equal(t, 1, len(builder.stores))
 	assert.NotNil(t, builder.haproxyPodStore)
-	assert.NotNil(t, builder.capabilities)
 }
 
 func TestBuilder_Build_BasicContext(t *testing.T) {
@@ -213,25 +209,6 @@ func TestBuilder_Build_WithHAProxyPodStore(t *testing.T) {
 	controller := ctx["controller"].(map[string]templating.ResourceStore)
 	require.Len(t, controller, 1)
 	assert.Contains(t, controller, "haproxy_pods")
-}
-
-func TestBuilder_Build_WithCapabilities(t *testing.T) {
-	cfg := &config.Config{}
-	pathResolver := &templating.PathResolver{}
-	logger := testutil.NewTestLogger()
-
-	capabilities := &dataplane.Capabilities{
-		SupportsWAF:   true,
-		SupportsHTTP2: true,
-	}
-
-	builder := NewBuilder(cfg, pathResolver, logger, WithCapabilities(capabilities))
-	ctx := builder.Build().Context
-
-	caps := ctx["capabilities"].(map[string]any)
-	assert.True(t, caps["supports_waf"].(bool))
-	assert.True(t, caps["supports_http2"].(bool))
-	assert.True(t, caps["is_enterprise"].(bool)) // Derived from supports_waf
 }
 
 func TestBuilder_Build_WithExtraContext(t *testing.T) {

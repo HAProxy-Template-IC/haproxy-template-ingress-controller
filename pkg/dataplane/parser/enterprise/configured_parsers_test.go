@@ -137,38 +137,3 @@ func TestConfiguredParsers_GetOrCreate(t *testing.T) {
 		assert.NotSame(t, gotA, gotB, "different keys must return different entries")
 	})
 }
-
-// getSectionMap dispatches between getCESectionMap and getEESectionMap.
-// Pin that both halves are reachable via the dispatcher and unknown
-// sections return nil.
-func TestConfiguredParsers_GetSectionMap(t *testing.T) {
-	c := NewConfiguredParsers()
-
-	t.Run("CE section returns its specific map", func(t *testing.T) {
-		assert.Same(t, &c.Frontend, &(c.Frontend), "self-reference sanity")
-		got := c.getSectionMap(SectionFrontend)
-		// Modify through the returned reference; if it's the right map,
-		// the modification must show up in c.Frontend.
-		got["http"] = nil
-		assert.Contains(t, c.Frontend, "http", "getSectionMap must return the actual CE map, not a copy")
-	})
-
-	t.Run("EE section returns its specific map", func(t *testing.T) {
-		got := c.getSectionMap(SectionWAFProfile)
-		got["main"] = nil
-		assert.Contains(t, c.WAFProfile, "main", "getSectionMap must return the actual EE map, not a copy")
-	})
-
-	t.Run("unknown section returns nil", func(t *testing.T) {
-		assert.Nil(t, c.getSectionMap(Section("not-a-section")))
-	})
-
-	t.Run("singleton sections (no map) return nil", func(t *testing.T) {
-		// Singletons are stored in dedicated fields, not in any
-		// per-section map. The dispatcher must report nil for them so
-		// callers know to use getSingletonParsers instead.
-		assert.Nil(t, c.getSectionMap(SectionGlobal))
-		assert.Nil(t, c.getSectionMap(SectionDefaults))
-		assert.Nil(t, c.getSectionMap(SectionWAFGlobal))
-	})
-}

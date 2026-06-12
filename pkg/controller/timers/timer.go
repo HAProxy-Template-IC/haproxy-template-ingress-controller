@@ -58,7 +58,7 @@ func (t *SafeTimer) Reset(d time.Duration) {
 
 // stopAndDrain stops the underlying timer if it hasn't already fired and
 // performs a non-blocking drain of t.timer.C, so a pending tick from a
-// just-expired timer can't leak into the next Reset/EnsureRunning cycle.
+// just-expired timer can't leak into the next Reset cycle.
 // Must only be called when t.timer != nil.
 func (t *SafeTimer) stopAndDrain() {
 	if !t.timer.Stop() {
@@ -69,23 +69,8 @@ func (t *SafeTimer) stopAndDrain() {
 	}
 }
 
-// EnsureRunning starts a timer with the given duration only if no timer is currently active.
-// If a timer is already running, this is a no-op.
-// This implements leading-edge debounce: only the first call starts the timer.
-func (t *SafeTimer) EnsureRunning(d time.Duration) {
-	if t.timer != nil {
-		return
-	}
-	t.timer = time.NewTimer(d)
-}
-
 // Fired should be called when the timer's channel is read in a select case.
 // It clears the internal reference so a new timer can be started.
 func (t *SafeTimer) Fired() {
 	t.timer = nil
-}
-
-// Active reports whether a timer is currently running.
-func (t *SafeTimer) Active() bool {
-	return t.timer != nil
 }

@@ -34,8 +34,8 @@ type Engine interface {
 	// RenderWithProfiling renders a template and returns profiling statistics
 	// for included templates. Useful for performance debugging.
 	//
-	// Use NewScriggoWithProfiling to enable profiling. Returns nil
-	// stats when profiling is disabled (NewScriggo).
+	// Enable profiling via Options.Profiling at construction time.
+	// Returns nil stats when profiling is disabled.
 	//
 	// Stats are aggregated by template name — multiple renders of the same
 	// template are combined into a single IncludeStats entry with count > 1.

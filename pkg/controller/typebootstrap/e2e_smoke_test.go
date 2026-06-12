@@ -33,6 +33,24 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
+// wrapSliceForTest converts []map[string]any items into a typed []*T
+// reflect.Value the same way production does (rendercontext wraps each
+// item through typegen.WrapInto).
+func wrapSliceForTest(t *testing.T, items []any, elem reflect.Type) reflect.Value {
+	t.Helper()
+	out := reflect.MakeSlice(reflect.SliceOf(reflect.PointerTo(elem)), 0, len(items))
+	for _, item := range items {
+		v, err := typegen.WrapInto(item.(map[string]any), elem)
+		require.NoError(t, err,
+			"WrapInto must accept plain unstructured items as long as keys "+
+				"match the schema-derived type's json tags")
+		ptr := reflect.New(elem)
+		ptr.Elem().Set(v)
+		out = reflect.Append(out, ptr)
+	}
+	return out
+}
+
 // TestE2E_TypedWatchedResources_FullPipeline is the keystone test
 // for the typed-watched-resources work (issue #N — typed cluster
 // shapes in Scriggo templates). It threads one synthetic Gateway
@@ -53,8 +71,8 @@ import (
 //     the engine constructor consumes — same shape every chart
 //     template will compile against.
 //
-//  4. templating.NewScriggoWithDeclarations type-checks a template
-//     that ranges the typed `gateways` global and reaches into
+//  4. templating.New (with Options.Declarations) type-checks a
+//     template that ranges the typed `gateways` global and reaches into
 //     `gw.Metadata.Namespace`. The compile-time type checking is
 //     the property that makes typo-at-build-time error reporting
 //     work: a misspelled `Namespacee` is rejected here, not at
@@ -73,8 +91,8 @@ import (
 //
 //   - Bootstrap returns errors: schemafetcher or typegen broke.
 //   - Engine construction fails: BuildEngineDeclarations no longer
-//     matches what Scriggo expects, or
-//     NewScriggoWithDeclarations type-checking changed.
+//     matches what Scriggo expects, or templating.New's
+//     declaration type-checking changed.
 //   - Render produces wrong output: WrapSlice or the engine's
 //     runtime-variable lookup broke.
 //   - Render errors out: the declared type and the wrapped value
@@ -167,19 +185,15 @@ func TestE2E_TypedWatchedResources_FullPipeline(t *testing.T) {
 	// future chart-side adoption is a copy of this template.
 	const tmpl = `{%- for _, gw := range resources.gateways.List() %}{{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }} class={{ gw.Spec.GatewayClassName }}
 {% end -%}`
-	engine, err := templating.NewScriggoWithDeclarations(
-		map[string]string{"main": tmpl},
-		[]string{"main"},
-		nil, nil, nil,
-		declarations,
-	)
+	engine, err := templating.New(map[string]string{"main": tmpl}, &templating.Options{EntryPoints: []string{"main"}, Declarations: declarations})
 	require.NoError(t, err,
 		"engine construction must succeed when the template field references "+
 			"match the declared typed global's shape")
 
 	// Phase 5 — wrap a synthetic store snapshot. Plain []any is what
-	// every stores.Store hands out via List() in production; WrapSlice
-	// converts it to []*<Generated> which Scriggo accepts at runtime.
+	// every stores.Store hands out via List() in production; wrapping
+	// each item through typegen.WrapInto (as rendercontext does)
+	// produces the []*<Generated> slice Scriggo accepts at runtime.
 	snapshot := []any{
 		map[string]any{
 			"metadata": map[string]any{"name": "edge", "namespace": "ns1"},
@@ -190,10 +204,7 @@ func TestE2E_TypedWatchedResources_FullPipeline(t *testing.T) {
 			"spec":     map[string]any{"gatewayClassName": "internal"},
 		},
 	}
-	typedSlice, err := typegen.WrapSlice(snapshot, result.Types["gateways"])
-	require.NoError(t, err,
-		"WrapSlice must accept plain unstructured items as long as keys "+
-			"match the schema-derived type's json tags")
+	typedSlice := wrapSliceForTest(t, snapshot, result.Types["gateways"])
 
 	// Phase 6 — build the runtime resources value matching the
 	// engine-declared struct shape: a per-resource store with a List
@@ -366,12 +377,7 @@ func TestE2E_TypedWatchedResources_TypeSwitchDispatch(t *testing.T) {
 		withRoute[k] = v
 	}
 
-	engine, err := templating.NewScriggoWithDeclarations(
-		map[string]string{"main": tmpl},
-		[]string{"main"},
-		nil, nil, nil,
-		withRoute,
-	)
+	engine, err := templating.New(map[string]string{"main": tmpl}, &templating.Options{EntryPoints: []string{"main"}, Declarations: withRoute})
 	require.NoError(t, err,
 		"engine construction must accept type-switch with case clauses "+
 			"using *resources.<X>.T as the case type expression")
@@ -383,17 +389,13 @@ func TestE2E_TypedWatchedResources_TypeSwitchDispatch(t *testing.T) {
 		"metadata": map[string]any{"name": "api", "namespace": "ns1"},
 		"spec":     map[string]any{"hostnames": []any{"api.example.com"}},
 	}}
-	httpSlice, err := typegen.WrapSlice(httpInput, result.Types["httproutes"])
-	require.NoError(t, err)
-	httpPtr := httpSlice.Index(0).Interface()
+	httpPtr := wrapSliceForTest(t, httpInput, result.Types["httproutes"]).Index(0).Interface()
 
 	grpcInput := []any{map[string]any{
 		"metadata": map[string]any{"name": "rpc", "namespace": "ns2"},
 		"spec":     map[string]any{"serviceName": "rpc.example.com"},
 	}}
-	grpcSlice, err := typegen.WrapSlice(grpcInput, result.Types["grpcroutes"])
-	require.NoError(t, err)
-	grpcPtr := grpcSlice.Index(0).Interface()
+	grpcPtr := wrapSliceForTest(t, grpcInput, result.Types["grpcroutes"]).Index(0).Interface()
 
 	// Resources global (typed declarations) must be populated for
 	// compilation symmetry; the actual List closures aren't reached
@@ -467,12 +469,7 @@ func TestE2E_TypedWatchedResources_TypoCaughtAtCompile(t *testing.T) {
 	// chart author would expect to hear about this from the compiler,
 	// not from a silent empty render against a live cluster.
 	const tmpl = `{%- for _, gw := range resources.gateways.List() %}{{ gw.Metadata.Namespacee }}{% end -%}`
-	_, err = templating.NewScriggoWithDeclarations(
-		map[string]string{"main": tmpl},
-		[]string{"main"},
-		nil, nil, nil,
-		typebootstrap.BuildEngineDeclarations(result),
-	)
+	_, err = templating.New(map[string]string{"main": tmpl}, &templating.Options{EntryPoints: []string{"main"}, Declarations: typebootstrap.BuildEngineDeclarations(result)})
 	require.Error(t, err,
 		"typed-global misspelling must be rejected at engine construction, "+
 			"which is the property that makes typed access worth the wiring")

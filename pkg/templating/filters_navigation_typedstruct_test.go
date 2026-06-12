@@ -57,6 +57,24 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
 )
 
+// wrapSliceForTest converts []map[string]any items into a typed
+// []*T reflect.Value the same way production does (rendercontext
+// wraps each item through typegen.WrapInto).
+func wrapSliceForTest(t *testing.T, items []any, elem reflect.Type) reflect.Value {
+	t.Helper()
+	out := reflect.MakeSlice(reflect.SliceOf(reflect.PointerTo(elem)), 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		require.True(t, ok, "test items must be map[string]any")
+		v, err := typegen.WrapInto(m, elem)
+		require.NoError(t, err, "typegen.WrapInto must succeed for the sample data")
+		ptr := reflect.New(elem)
+		ptr.Elem().Set(v)
+		out = reflect.Append(out, ptr)
+	}
+	return out
+}
+
 // buildGatewayShapeType produces a reflect.Type that mirrors the
 // minimal Gateway shape the failing chart snippet navigates. Used
 // across the subtests so each rung is testing against the same type
@@ -115,7 +133,7 @@ func buildGatewayShapeType(t *testing.T) reflect.Type {
 }
 
 // buildSampleGateways constructs two *Gateway-shape instances populated
-// with the fields the chart snippet reads. WrapSlice produces the
+// with the fields the chart snippet reads. wrapSliceForTest produces the
 // *[]*T shape the chart's typed top-level global uses.
 func buildSampleGateways(t *testing.T, gwType reflect.Type) reflect.Value {
 	t.Helper()
@@ -138,8 +156,7 @@ func buildSampleGateways(t *testing.T, gwType reflect.Type) reflect.Value {
 			},
 		},
 	}
-	wrapped, err := typegen.WrapSlice(items, gwType)
-	require.NoError(t, err, "typegen.WrapSlice must succeed for the sample data")
+	wrapped := wrapSliceForTest(t, items, gwType)
 	require.Equal(t, 2, wrapped.Len(), "wrapped slice must contain both sample gateways")
 	return wrapped
 }
@@ -333,8 +350,7 @@ func TestDigContract_TypedPointer_NestedTLSCertificateRefs(t *testing.T) {
 			},
 		},
 	}
-	wrapped, err := typegen.WrapSlice(items, gwType)
-	require.NoError(t, err, "wrap the cert-ref sample")
+	wrapped := wrapSliceForTest(t, items, gwType)
 
 	gw := wrapped.Index(0).Interface()
 

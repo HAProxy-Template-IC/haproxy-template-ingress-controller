@@ -25,8 +25,7 @@ import (
 
 // StartAll starts all registered components.
 //
-// Components are started concurrently, respecting dependency ordering.
-// Components wait for their dependencies to reach StatusRunning before starting.
+// Components are started concurrently.
 // Leader-only components are skipped unless isLeader is true.
 //
 // This method blocks until all components are running or an error occurs.
@@ -44,14 +43,7 @@ import (
 //	}
 func (r *Registry) StartAll(ctx context.Context, isLeader bool) error {
 	r.mu.Lock()
-
-	// Validate dependencies and get components to start
-	componentsToStart, err := r.prepareComponentsToStart(isLeader)
-	if err != nil {
-		r.mu.Unlock()
-		return err
-	}
-
+	componentsToStart := r.prepareComponentsToStart(isLeader)
 	r.mu.Unlock()
 
 	if len(componentsToStart) == 0 {
@@ -63,10 +55,6 @@ func (r *Registry) StartAll(ctx context.Context, isLeader bool) error {
 
 	for _, comp := range componentsToStart {
 		g.Go(func() error {
-			// Wait for dependencies to be ready
-			if err := r.waitForDependencies(gCtx, comp); err != nil {
-				return err
-			}
 			return r.startComponent(gCtx, comp)
 		})
 	}
@@ -74,11 +62,10 @@ func (r *Registry) StartAll(ctx context.Context, isLeader bool) error {
 	return g.Wait()
 }
 
-// prepareComponentsToStart validates dependencies and returns components to start.
+// prepareComponentsToStart returns the components to start.
 // Must be called with r.mu held.
-func (r *Registry) prepareComponentsToStart(isLeader bool) ([]*registeredComponent, error) {
+func (r *Registry) prepareComponentsToStart(isLeader bool) []*registeredComponent {
 	componentsToStart := make([]*registeredComponent, 0, len(r.components))
-	startSet := make(map[string]bool)
 
 	for _, comp := range r.components {
 		// Skip leader-only components if not leader, but mark them as standby
@@ -91,24 +78,17 @@ func (r *Registry) prepareComponentsToStart(isLeader bool) ([]*registeredCompone
 
 		comp.status = StatusStarting
 		componentsToStart = append(componentsToStart, comp)
-		startSet[comp.component.Name()] = true
 	}
 
-	// Validate dependencies
-	if err := r.validateDependencies(componentsToStart, startSet); err != nil {
-		return nil, err
-	}
-
-	return componentsToStart, nil
+	return componentsToStart
 }
 
 // startComponent starts a single component and updates its status.
 //
 // Design note on timing: Status is set to Running and ready channel is closed
 // after Start() has been entered. This ensures:
-//  1. Dependent components don't race ahead of their dependencies
-//  2. All-replica components subscribe in their constructor, not in Start()
-//  3. Leader-only components subscribe in Start() and implement SubscriptionReadySignaler
+//  1. All-replica components subscribe in their constructor, not in Start()
+//  2. Leader-only components subscribe in Start() and implement SubscriptionReadySignaler
 //
 // For leader-only components that implement SubscriptionReadySignaler, we wait for
 // their signal before considering them ready. This prevents a race condition where
@@ -151,12 +131,12 @@ func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent
 		}
 	} else {
 		// Yield to scheduler to give the Start() call a chance to actually begin.
-		// This reduces race conditions where dependent components start before
-		// their dependency's Start() has actually begun executing code.
+		// This reduces race conditions where callers waiting on the ready channel
+		// proceed before the component's Start() has actually begun executing code.
 		runtime.Gosched()
 	}
 
-	// Signal that this component is ready for dependents
+	// Signal that this component is ready
 	close(comp.ready)
 
 	// Wait for Start() to complete
@@ -166,15 +146,6 @@ func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent
 	if err != nil && !errors.Is(err, context.Canceled) {
 		r.updateStatus(name, StatusFailed, err)
 		r.logger.Error("Component failed", "name", name, "error", err)
-
-		// Call error handler if configured
-		r.mu.RLock()
-		onError := comp.config.onError
-		r.mu.RUnlock()
-
-		if onError != nil {
-			onError(name, err)
-		}
 
 		return fmt.Errorf("component %s failed: %w", name, err)
 	}

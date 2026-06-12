@@ -129,15 +129,11 @@ func TestRegistry_Clear_EmptiesAndPreservesUsability(t *testing.T) {
 	reg.Publish("var2", &mockVar{value: "v2"})
 	reg.Publish("nested/path", &mockVar{value: "v3"})
 
-	require.Equal(t, 3, reg.Len(), "baseline: three variables registered")
+	require.Len(t, reg.Paths(), 3, "baseline: three variables registered")
 
 	reg.Clear()
 
 	// Contract a: registry is empty after Clear.
-	assert.Equal(t, 0, reg.Len(),
-		"Clear MUST drop all variables — a regression that left stale "+
-			"entries would defeat the documented purpose of preventing "+
-			"stale references between controller iterations")
 	assert.Empty(t, reg.Paths(),
 		"Paths MUST return empty after Clear — pinning this protects the "+
 			"/debug/vars index page from showing ghost entries")
@@ -158,10 +154,10 @@ func TestRegistry_Clear_EmptiesAndPreservesUsability(t *testing.T) {
 			"Clear is to reuse the registry between iterations without "+
 			"restarting the HTTP server")
 	assert.Equal(t, "fresh", got)
-	assert.Equal(t, 1, reg.Len(),
-		"after Clear + one Publish, Len must be exactly 1; a regression "+
-			"that didn't reset the underlying map would leave a partially-"+
-			"populated state behind")
+	assert.Len(t, reg.Paths(), 1,
+		"after Clear + one Publish, exactly 1 path must be registered; a "+
+			"regression that didn't reset the underlying map would leave a "+
+			"partially-populated state behind")
 }
 
 func TestRegistry_Clear_ConcurrentWithPublishIsSafe(t *testing.T) {
@@ -194,7 +190,6 @@ func TestRegistry_Clear_ConcurrentWithPublishIsSafe(t *testing.T) {
 	// The point is no panic / no data race (caught by `go test -race` in
 	// the make test harness).
 	assert.NotPanics(t, func() {
-		_ = reg.Len()
 		_ = reg.Paths()
 	}, "registry must remain readable after concurrent Clear+Publish — "+
 		"a regression that dropped the mutex in Clear would corrupt the map")

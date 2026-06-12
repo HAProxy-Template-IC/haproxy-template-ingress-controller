@@ -43,9 +43,9 @@ func TestWhitespaceComments(t *testing.T) {
 				"snippet-a":                          tt.snippet,
 				"frontend-matchers-advanced-gateway": tt.snippet,
 			}
-			engine, err := templating.NewScriggo(templates, []string{"main"}, nil, nil, nil)
+			engine, err := templating.New(templates, &templating.Options{EntryPoints: []string{"main"}})
 			if err != nil {
-				t.Fatalf("NewScriggo error: %v", err)
+				t.Fatalf("New error: %v", err)
 			}
 
 			output, err := engine.Render(context.Background(), "main", nil)

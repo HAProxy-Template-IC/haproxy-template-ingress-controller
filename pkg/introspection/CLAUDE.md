@@ -92,7 +92,8 @@ HTTP server with graceful shutdown:
 
 ```go
 server := introspection.NewServer(":6060", registry)
-go server.Start(ctx)  // Starts HTTP server, blocks until ctx cancelled
+server.Setup()
+go server.Serve(ctx)  // Starts HTTP server, blocks until ctx cancelled
 ```
 
 Features:
@@ -121,7 +122,8 @@ registry.Publish("uptime", introspection.Func(func() (any, error) {
 
 // Start HTTP server
 server := introspection.NewServer(":6060", registry)
-go server.Start(ctx)
+server.Setup()
+go server.Serve(ctx)
 ```
 
 ### Custom Var Implementation
@@ -181,7 +183,8 @@ func runIteration(ctx context.Context) {
 
     // Start server (or reuse existing server with new registry)
     server := introspection.NewServer(":6060", registry)
-    go server.Start(ctx)
+    server.Setup()
+    go server.Serve(ctx)
 
     // ... run iteration ...
 
@@ -322,7 +325,8 @@ func TestServer_GetVar(t *testing.T) {
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
 
-    go server.Start(ctx)
+    server.Setup()
+    go server.Serve(ctx)
     time.Sleep(100 * time.Millisecond)  // Wait for server start
 
     // Test GET /debug/vars/test

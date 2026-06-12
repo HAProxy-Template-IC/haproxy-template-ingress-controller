@@ -138,53 +138,6 @@ func TestNewSingle(t *testing.T) {
 	}
 }
 
-// TestSingleWatcher_IsSynced verifies sync status tracking.
-func TestSingleWatcher_IsSynced(t *testing.T) {
-	k8sClient := createFakeClientForConfigMapListing()
-
-	cfg := types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			return nil
-		},
-	}
-
-	w, err := NewSingle(&cfg, k8sClient)
-	if err != nil {
-		t.Fatalf("creating watcher: %v", err)
-	}
-
-	// Initially not synced
-	if w.IsSynced() {
-		t.Error("watcher should not be synced initially")
-	}
-
-	// Start watcher in background
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	go func() {
-		_ = w.Start(ctx)
-	}()
-
-	// Wait for sync
-	err = w.WaitForSync(ctx)
-	if err != nil {
-		t.Fatalf("WaitForSync failed: %v", err)
-	}
-
-	// Should be synced now
-	if !w.IsSynced() {
-		t.Error("watcher should be synced after WaitForSync")
-	}
-}
-
 // TestSingleWatcher_WaitForSyncTimeout verifies timeout behavior.
 func TestSingleWatcher_WaitForSyncTimeout(t *testing.T) {
 	k8sClient := createFakeClientForSingleWatcher()
@@ -624,11 +577,6 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 		t.Fatalf("creating watcher: %v", err)
 	}
 
-	// Verify not started initially
-	if w.IsStarted() {
-		t.Error("watcher should not be started initially")
-	}
-
 	// Create a context with short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -649,11 +597,6 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 	// Wait for all Start() calls to complete
 	wg.Wait()
 
-	// Verify IsStarted is true
-	if !w.IsStarted() {
-		t.Error("expected IsStarted() to be true after Start() calls")
-	}
-
 	// All should return nil or context cancelled error
 	for i, err := range errs {
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
@@ -661,164 +604,9 @@ func TestSingleWatcher_StartIdempotency(t *testing.T) {
 		}
 	}
 
-	// Verify IsSynced is true (sync should have completed)
-	if !w.IsSynced() {
-		t.Error("expected IsSynced() to be true after Start() completes")
-	}
-}
-
-// TestSingleWatcher_LastEventTimeUpdatesOnEvent verifies that LastEventTime is updated
-// when events are received.
-func TestSingleWatcher_LastEventTimeUpdatesOnEvent(t *testing.T) {
-	fakeClient := createFakeClientForSingleWatcher()
-	cfg := validSingleWatcherConfig()
-
-	w, err := NewSingle(cfg, fakeClient)
-	if err != nil {
-		t.Fatalf("creating watcher: %v", err)
-	}
-
-	// Initially, LastEventTime should be zero
-	if !w.LastEventTime().IsZero() {
-		t.Error("expected LastEventTime() to be zero initially")
-	}
-
-	// Mark as synced to enable callbacks
-	w.synced.Store(true)
-
-	// Simulate an event
-	beforeEvent := time.Now()
-	w.handleAdd(createUnstructuredConfigMap("test-config", "default", ""))
-
-	// Verify LastEventTime was updated
-	lastEventTime := w.LastEventTime()
-	if lastEventTime.IsZero() {
-		t.Error("expected LastEventTime() to be non-zero after event")
-	}
-
-	// Verify it's within a reasonable range (allow 1 second tolerance due to Unix timestamp precision)
-	// LastEventTime stores Unix seconds, so we truncate beforeEvent to second precision
-	beforeEventTruncated := beforeEvent.Truncate(time.Second)
-	if lastEventTime.Before(beforeEventTruncated) {
-		t.Errorf("LastEventTime() %v is before %v", lastEventTime, beforeEventTruncated)
-	}
-	if lastEventTime.After(beforeEvent.Add(time.Second)) {
-		t.Errorf("LastEventTime() %v is more than 1 second after %v", lastEventTime, beforeEvent)
-	}
-}
-
-// TestSingleWatcher_LastEventTimeUpdatesOnAllEventTypes verifies that LastEventTime
-// is updated for Add, Update, and Delete events.
-func TestSingleWatcher_LastEventTimeUpdatesOnAllEventTypes(t *testing.T) {
-	fakeClient := createFakeClientForSingleWatcher()
-	cfg := validSingleWatcherConfig()
-
-	w, err := NewSingle(cfg, fakeClient)
-	if err != nil {
-		t.Fatalf("creating watcher: %v", err)
-	}
-
-	testCases := []struct {
-		name    string
-		handler func()
-	}{
-		{
-			name: "Add",
-			handler: func() {
-				w.handleAdd(createUnstructuredConfigMap("add-config", "ns-add", ""))
-			},
-		},
-		{
-			name: "Update",
-			handler: func() {
-				old := createUnstructuredConfigMap("update-config", "ns-update", "1")
-				new := createUnstructuredConfigMap("update-config", "ns-update", "2")
-				w.handleUpdate(old, new)
-			},
-		},
-		{
-			name: "Delete",
-			handler: func() {
-				w.handleDelete(createUnstructuredConfigMap("delete-config", "ns-delete", ""))
-			},
-		},
-	}
-
-	// Mark as synced
-	w.synced.Store(true)
-
-	for _, tt := range testCases {
-		t.Run(tt.name, func(t *testing.T) {
-			// Reset timestamp
-			w.lastEventTime.Store(0)
-
-			// Verify zero before event
-			if !w.LastEventTime().IsZero() {
-				t.Error("expected LastEventTime() to be zero before event")
-			}
-
-			// Trigger event
-			tt.handler()
-
-			// Verify non-zero after event
-			if w.LastEventTime().IsZero() {
-				t.Errorf("expected LastEventTime() to be non-zero after %s event", tt.name)
-			}
-		})
-	}
-}
-
-// TestSingleWatcher_LastWatchErrorInitiallyZero verifies that LastWatchError returns
-// zero time when no watch errors have occurred.
-func TestSingleWatcher_LastWatchErrorInitiallyZero(t *testing.T) {
-	fakeClient := createFakeClientForSingleWatcher()
-	cfg := validSingleWatcherConfig()
-
-	w, err := NewSingle(cfg, fakeClient)
-	if err != nil {
-		t.Fatalf("creating watcher: %v", err)
-	}
-
-	// Initially, LastWatchError should be zero
-	if !w.LastWatchError().IsZero() {
-		t.Error("expected LastWatchError() to be zero initially")
-	}
-}
-
-// TestSingleWatcher_LastWatchErrorUpdatesOnError verifies that LastWatchError is updated
-// when a watch error occurs.
-func TestSingleWatcher_LastWatchErrorUpdatesOnError(t *testing.T) {
-	fakeClient := createFakeClientForSingleWatcher()
-	cfg := validSingleWatcherConfig()
-
-	w, err := NewSingle(cfg, fakeClient)
-	if err != nil {
-		t.Fatalf("creating watcher: %v", err)
-	}
-
-	// Initially zero
-	if !w.LastWatchError().IsZero() {
-		t.Error("expected LastWatchError() to be zero initially")
-	}
-
-	// Simulate a watch error
-	beforeError := time.Now()
-	w.handleWatchError(nil, errors.New("simulated watch error"))
-
-	// Verify LastWatchError was updated
-	lastWatchError := w.LastWatchError()
-	if lastWatchError.IsZero() {
-		t.Error("expected LastWatchError() to be non-zero after error")
-	}
-
-	// Verify it's within a reasonable range (allow 1 second tolerance due to Unix timestamp precision)
-	// LastWatchError stores Unix seconds, so we truncate beforeError to second precision
-	beforeErrorTruncated := beforeError.Truncate(time.Second)
-	if lastWatchError.Before(beforeErrorTruncated) {
-		t.Errorf("LastWatchError() %v is before %v", lastWatchError, beforeErrorTruncated)
-	}
-	if lastWatchError.After(beforeError.Add(time.Second)) {
-		t.Errorf("LastWatchError() %v is more than 1 second after %v", lastWatchError, beforeError)
+	// Verify sync completed
+	if !w.synced.Load() {
+		t.Error("expected watcher to be synced after Start() completes")
 	}
 }
 
@@ -845,22 +633,6 @@ func createFakeClientForConfigMapListing() *client.Client {
 		},
 	)
 	return client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
-}
-
-// validSingleWatcherConfig returns a valid SingleWatcherConfig for testing.
-func validSingleWatcherConfig() *types.SingleWatcherConfig {
-	return &types.SingleWatcherConfig{
-		GVR: schema.GroupVersionResource{
-			Group:    "",
-			Version:  "v1",
-			Resource: "configmaps",
-		},
-		Namespace: "default",
-		Name:      "test-config",
-		OnChange: func(obj any) error {
-			return nil
-		},
-	}
 }
 
 // createUnstructuredConfigMap creates an unstructured ConfigMap for testing.
@@ -1245,7 +1017,7 @@ func TestSingleWatcher_OnSyncComplete_Optional(t *testing.T) {
 	}
 
 	// Verify watcher is synced
-	if !w.IsSynced() {
+	if !w.synced.Load() {
 		t.Error("expected watcher to be synced")
 	}
 }

@@ -46,8 +46,8 @@ func (b *RegistryBuilder) AllReplica(components ...Component) *RegistryBuilder {
 }
 
 // LeaderOnly adds components that only run on the leader instance.
-// These components are started when StartLeaderOnlyComponents() is called
-// after leadership is acquired.
+// These components are started when StartLeaderOnlyComponentsAsync() is
+// called after leadership is acquired.
 func (b *RegistryBuilder) LeaderOnly(components ...Component) *RegistryBuilder {
 	b.leaderOnly = append(b.leaderOnly, components...)
 	return b

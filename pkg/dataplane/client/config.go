@@ -323,16 +323,6 @@ func (c *DataplaneClient) postHAProxyConfiguration(ctx context.Context, config s
 	})
 }
 
-// VersionConflictError represents a 409 conflict error with version information.
-type VersionConflictError struct {
-	ExpectedVersion int64
-	ActualVersion   string
-}
-
-func (e *VersionConflictError) Error() string {
-	return fmt.Sprintf("version conflict: expected %d, got %s", e.ExpectedVersion, e.ActualVersion)
-}
-
 // ReloadStatus represents the status of a HAProxy reload operation.
 type ReloadStatus string
 

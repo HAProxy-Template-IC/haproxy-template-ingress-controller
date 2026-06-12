@@ -306,7 +306,7 @@ package templating
 func TestEngine_Render(t *testing.T) {
     engine, _ := New(map[string]string{
         "test": "Hello {{ name }}",
-    }, nil, nil, nil)
+    }, nil)
 
     output, err := engine.Render(context.Background(), "test", map[string]any{
         "name": "World",
@@ -431,12 +431,9 @@ var base64DecodeFilter templating.FilterFunc = func(in any, args ...any) (any, e
 
 // Step 2: Pass the filter map at engine construction (callers usually
 // merge built-in and CRD-provided filters here).
-engine, err := templating.New(
-    templates,
-    map[string]templating.FilterFunc{"b64decode": base64DecodeFilter}, // customFilters
-    nil,                                                                // customFunctions
-    nil,                                                                // postProcessorConfigs
-)
+engine, err := templating.New(templates, &templating.Options{
+    Filters: map[string]templating.FilterFunc{"b64decode": base64DecodeFilter},
+})
 ```
 
 ## Resources

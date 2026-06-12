@@ -180,17 +180,6 @@ func (r *Registry) Paths() []string {
 	return paths
 }
 
-// Len returns the number of registered variables.
-//
-// Example:
-//
-//	count := registry.Len()  // Returns number of published variables
-func (r *Registry) Len() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.vars)
-}
-
 // Clear removes all published variables from the registry.
 //
 // This is used between controller iterations to prevent stale references

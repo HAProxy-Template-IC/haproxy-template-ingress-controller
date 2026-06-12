@@ -51,7 +51,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Subscribe to capture ConfigPublishedEvent
@@ -156,7 +156,7 @@ func TestComponent_DeployedConfigPublishRequest(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	eventChan := eventBus.Subscribe("test-sub", 50)
@@ -214,7 +214,7 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
@@ -272,7 +272,7 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
@@ -350,7 +350,7 @@ func TestComponent_MultiplePods(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
@@ -436,7 +436,7 @@ func TestComponent_Name(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Verify name
@@ -454,7 +454,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Subscribe to capture events
@@ -548,7 +548,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
@@ -628,7 +628,7 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
@@ -669,7 +669,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
@@ -740,7 +740,7 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component
@@ -806,7 +806,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
-	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	publisher := configpublisher.NewWithListers(k8sClient, crdClient, nil, testutil.NewTestLogger())
 	component := New(publisher, eventBus, testutil.NewTestLogger())
 
 	// Start event bus and component

@@ -286,22 +286,6 @@ func (c *Component) Start(ctx context.Context) error {
 	}
 }
 
-// RegisterValidator registers a validation function for a specific resource type.
-//
-// This should be called before Start() to register all validators.
-//
-// Parameters:
-//   - gvk: Group/Version.Kind identifier (e.g., "networking.k8s.io/v1.Ingress", "v1.ConfigMap")
-//   - validatorFunc: The validation function to call for this resource type
-func (c *Component) RegisterValidator(gvk string, validatorFunc webhook.ValidationFunc) {
-	if c.server == nil {
-		c.logger.Warn("RegisterValidator called before server created, validator will be registered when server starts")
-		return
-	}
-	c.server.RegisterValidator(gvk, validatorFunc)
-	c.logger.Debug("Validator registered", "gvk", gvk)
-}
-
 // resolveKind uses RESTMapper to convert GVR (Group/Version/Resource) to Kind.
 //
 // This queries the Kubernetes API server's discovery information to get the

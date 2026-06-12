@@ -369,10 +369,7 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	// Create proposal validator with store provider that has NO stores
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
-		nil, nil, nil,
-	)
+	engine, err := templating.New(map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate}, nil)
 	require.NoError(t, err)
 
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
@@ -495,10 +492,7 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	failingEngine, err := templating.New(
-		map[string]string{"haproxy.cfg": `{{ fail("invalid config") }}`},
-		nil, nil, nil,
-	)
+	failingEngine, err := templating.New(map[string]string{"haproxy.cfg": `{{ fail("invalid config") }}`}, nil)
 	require.NoError(t, err)
 
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
@@ -559,10 +553,7 @@ func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *test
 // createMockProposalValidator creates a minimal ProposalValidator for testing.
 func createMockProposalValidator(bus *busevents.EventBus, logger *slog.Logger) *proposalvalidator.Component {
 	// Create minimal render service
-	engine, _ := templating.New(
-		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
-		nil, nil, nil,
-	)
+	engine, _ := templating.New(map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate}, nil)
 
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
 		Engine: engine,

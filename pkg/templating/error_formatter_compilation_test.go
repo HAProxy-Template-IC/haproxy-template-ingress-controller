@@ -147,14 +147,6 @@ func TestParseCompilationError(t *testing.T) {
 	})
 }
 
-func TestFormatLocationLine(t *testing.T) {
-	got := formatLocationLine(&errorLocation{Line: 12, Column: 4})
-	assert.Equal(t, "Location: Line 12, Column 4\n", got)
-}
-
-// formatLocationLineOptionalColumn must include "Column N" only when N > 0.
-// Compilation errors sometimes lack column info and showing "Column 0" would
-// be misleading.
 func TestFormatLocationLineOptionalColumn(t *testing.T) {
 	tests := []struct {
 		name string

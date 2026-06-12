@@ -224,8 +224,7 @@ func makeRenderService(t *testing.T) *renderer.RenderService {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{Template: template},
 	}
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": template}, nil, nil, nil)
+	engine, err := templating.New(map[string]string{"haproxy.cfg": template}, nil)
 	require.NoError(t, err)
 	return renderer.NewRenderService(&renderer.RenderServiceConfig{
 		Engine:       engine,
@@ -244,8 +243,7 @@ func makePipeline(t *testing.T, template string) *Pipeline {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{Template: template},
 	}
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": template}, nil, nil, nil)
+	engine, err := templating.New(map[string]string{"haproxy.cfg": template}, nil)
 	require.NoError(t, err)
 	renderSvc := renderer.NewRenderService(&renderer.RenderServiceConfig{
 		Engine:       engine,

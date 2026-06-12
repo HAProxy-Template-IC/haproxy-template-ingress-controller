@@ -3,7 +3,6 @@
 // This package defines:
 //   - StoreProvider: Interface for accessing stores by name
 //   - RealStoreProvider: Implementation that returns actual stores
-//   - CompositeStoreProvider: Implementation that overlays proposed changes on real stores
 //   - ValidationContext: Unified container for K8s and HTTP overlays
 //   - OverlayStoreProvider: Implementation that applies ValidationContext overlays
 //
@@ -234,68 +233,10 @@ func (p *RealStoreProvider) StoreNames() []string {
 	return names
 }
 
-// CompositeStoreProvider wraps a base StoreProvider with overlays.
-//
-// When GetStore is called, if an overlay exists for that store name,
-// a CompositeStore is returned that applies the overlay on top of the base store.
-// Otherwise, the base store is returned unchanged.
-//
-// This enables "what if" scenarios: render and validate with proposed changes
-// without modifying the actual stores.
-type CompositeStoreProvider struct {
-	base     StoreProvider
-	overlays map[string]*StoreOverlay
-}
-
-// NewCompositeStoreProvider creates a new CompositeStoreProvider.
-//
-// Parameters:
-//   - base: The underlying store provider
-//   - overlays: Map of store name to overlay (proposed changes)
-func NewCompositeStoreProvider(base StoreProvider, overlays map[string]*StoreOverlay) *CompositeStoreProvider {
-	if overlays == nil {
-		overlays = make(map[string]*StoreOverlay)
-	}
-	return &CompositeStoreProvider{
-		base:     base,
-		overlays: overlays,
-	}
-}
-
-// GetStore returns a store for the given name.
-//
-// If an overlay exists for this store, returns a CompositeStore that
-// applies the overlay on top of the base store.
-// Otherwise, returns the base store unchanged.
-func (p *CompositeStoreProvider) GetStore(name string) Store {
-	baseStore := p.base.GetStore(name)
-	if baseStore == nil {
-		return nil
-	}
-
-	overlay, hasOverlay := p.overlays[name]
-	if !hasOverlay {
-		return baseStore
-	}
-
-	return NewCompositeStore(baseStore, overlay)
-}
-
-// StoreNames returns the names of all available stores,
-// including stores from the base provider plus any overlay-only stores.
-func (p *CompositeStoreProvider) StoreNames() []string {
-	return mergeStoreNames(p.base.StoreNames(), p.overlays)
-}
-
-// Validate checks that all overlays reference valid stores in the base provider.
-func (p *CompositeStoreProvider) Validate() error {
-	return validateOverlayStores(p.base, p.overlays)
-}
-
 // OverlayStoreProvider applies ValidationContext overlays to a base provider.
 //
-// Unlike CompositeStoreProvider which only handles K8s overlays, this provider
-// also exposes HTTP overlay for use by the render service.
+// In addition to applying K8s overlays, this provider also exposes the
+// HTTP overlay for use by the render service.
 //
 // Usage:
 //
@@ -390,8 +331,6 @@ func (p *OverlayStoreProvider) Validate() error {
 }
 
 // mergeStoreNames deduplicates base store names with additional overlay names.
-// The overlays parameter accepts any map keyed by string (works with both
-// map[string]*StoreOverlay used by CompositeStoreProvider and OverlayStoreProvider).
 func mergeStoreNames[V any](baseNames []string, overlays map[string]V) []string {
 	nameSet := make(map[string]struct{}, len(baseNames)+len(overlays))
 	for _, name := range baseNames {

@@ -39,7 +39,6 @@ builder := rendercontext.NewBuilder(
     rendercontext.WithStores(stores),
     rendercontext.WithHAProxyPodStore(haproxyPodStore),
     rendercontext.WithHTTPFetcher(httpWrapper),
-    rendercontext.WithCapabilities(capabilities),
     rendercontext.WithCurrentConfig(currentConfig), // optional; nil on first deploy
 )
 
@@ -65,7 +64,6 @@ marked "optional"):
 | `dataplane` | `config.DataplaneConfig` | DataPlane API config block |
 | `shared` | `*templating.SharedContext` | Per-render compute-once cache (`ComputeIfAbsent` etc.) |
 | `runtimeEnvironment` | `*templating.RuntimeEnvironment` | GOMAXPROCS and related runtime info |
-| `capabilities` | `map[string]bool` (from `CapabilitiesToMap`) | HAProxy feature flags — *optional*, omitted when no capabilities passed |
 | `currentConfig` | `*parserconfig.StructuredConfig` | Live HAProxy config — *optional*, omitted when nil (first deploy) to dodge a Scriggo nil-pointer-initializer panic |
 | `http` | `templating.HTTPFetcher` | HTTP resource fetching — *optional*, omitted when no fetcher passed |
 | `extraContext` | `map[string]any` | User-defined variables from `cfg.TemplatingSettings.ExtraContext` (always set, possibly empty map). The same map's *top-level keys* are also merged into the context (`maps.Copy(renderCtx, cfg.TemplatingSettings.ExtraContext)` in `MergeExtraContextInto`), so templates can write `{{ debug.enabled }}` directly *and* `{{ extraContext | dig("debug", "enabled") }}` for the Scriggo-safe variant. |
@@ -77,7 +75,6 @@ marked "optional"):
 | `WithStores(map[string]stores.Store)` | Resource stores keyed by watched-resource name; ends up in `resources` |
 | `WithHAProxyPodStore(stores.Store)` | HAProxy pod store; ends up in `controller["haproxy_pods"]` |
 | `WithHTTPFetcher(templating.HTTPFetcher)` | Wires the `http` runtime variable so templates can call `http.Fetch(...)` |
-| `WithCapabilities(*dataplane.Capabilities)` | Drops feature flags into `capabilities` for `{% if capabilities.SupportsCrtList %}…{% end %}` |
 | `WithCurrentConfig(*parser.StructuredConfig)` | Adds `currentConfig` to the context so templates can reason about the live HAProxy config; nil on the first deployment |
 
 `extraContext` is **not** an option — `Build()` reads `cfg.TemplatingSettings.ExtraContext`

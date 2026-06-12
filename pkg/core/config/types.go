@@ -28,9 +28,9 @@ const DefaultCompressionThreshold int64 = 1048576 // 1 MiB
 // DefaultRenderTimeout is the default maximum duration for rendering a single template.
 const DefaultRenderTimeout = 30 * time.Second
 
-// Config is the root configuration structure that pkg/core/config.LoadConfig
-// produces from the YAML serialised by pkg/controller/conversion.ParseCRD
-// (which converts a HAProxyTemplateConfig CRD into this internal shape).
+// Config is the root configuration structure that
+// pkg/controller/conversion.ParseCRD produces (it converts a
+// HAProxyTemplateConfig CRD into this internal shape).
 type Config struct {
 	// PodSelector identifies HAProxy pods to configure.
 	PodSelector PodSelector `yaml:"pod_selector"`

@@ -39,14 +39,7 @@ ERROR deployment failed instance=haproxy-0 error="connection refused"
 
 ## Correlation
 
-Two helpers on `*EventCommentator`:
-
-```go
-events := c.FindByCorrelationID(correlationID, 0) // 0 = no cap
-recent := c.FindRecent(100)
-```
-
-Internally the insight functions use the ring-buffer's richer queries — `FindByTypeInWindow` and `FindByCorrelationID` — to decide what context to attach to each log line. Those methods are on the private `ringBuffer` field; consumers outside this package should stick to the two accessors above, or (more commonly) subscribe to the event bus directly and do their own correlation.
+The insight functions use the ring-buffer's queries — `FindByTypeInWindow` and `FindByCorrelationID` — to decide what context to attach to each log line. Those methods live on the private `ringBuffer` field; consumers outside this package should subscribe to the event bus directly and do their own correlation.
 
 ## Adding a Log Line for a New Event Type
 
@@ -56,7 +49,7 @@ When a new event type lands in `pkg/controller/events`:
 2. Pick a case in `determineLogLevel` (or add one) so it doesn't fall through to the default `Debug`.
 3. If the message should reference prior events, use the `FindByCorrelationID` / `FindByTypeInWindow` helpers on the ring buffer rather than scanning the slice manually.
 
-Missing a case isn't a hard error — the event is still stored and shows up in `FindRecent`/debug — but it logs at `Debug` with only the generic event fields, which is usually not what you want for a new domain event.
+Missing a case isn't a hard error — the event is still stored in the ring buffer and shows up in debug surfaces — but it logs at `Debug` with only the generic event fields, which is usually not what you want for a new domain event.
 
 ## See Also
 

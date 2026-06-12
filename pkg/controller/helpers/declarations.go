@@ -42,7 +42,7 @@ import (
 // Call this function with the Result your caller obtained from
 // typebootstrap.Bootstrap (or runTypeBootstrap in production),
 // then pass the returned map straight into
-// `templating.NewScriggoWithDeclarations` (or
+// `templating.Options.Declarations` (or
 // `helpers.NewEngineFromConfigWithOptions`'s
 // `additionalDeclarations` parameter). Don't hand-merge — every
 // site that did that previously had to be updated independently

@@ -54,98 +54,51 @@ type ScriggoEngine struct {
 // Verify ScriggoEngine implements Engine interface at compile time.
 var _ Engine = (*ScriggoEngine)(nil)
 
-// New creates a Scriggo template engine, compiling all provided templates as
-// entry points. This is the simplest constructor. For control over which
-// templates are compiled explicitly vs discovered on-demand, use NewScriggo; for
-// domain-specific type declarations (e.g. currentConfig), use
-// NewScriggoWithDeclarations.
+// Options configures a template engine. The zero value (or a nil *Options)
+// compiles every template as an entry point, with no custom filters,
+// functions, post-processors, type declarations, or profiling.
+type Options struct {
+	// EntryPoints lists template names to compile explicitly; the remaining
+	// templates are snippets, discovered and compiled automatically when
+	// referenced via render/render_glob statements with inherit_context.
+	// nil means every template is an entry point.
+	EntryPoints []string
+	// Filters are custom filters merged over the built-in set (can be nil).
+	Filters map[string]FilterFunc
+	// Functions are custom global functions merged over the built-in set
+	// (can be nil).
+	Functions map[string]GlobalFunc
+	// PostProcessors configures per-template post-processing (can be nil).
+	PostProcessors map[string][]PostProcessorConfig
+	// Declarations registers domain-specific types with Scriggo (e.g.
+	// currentConfig for slot-aware server assignment). Use this when
+	// templates need access to types from other packages (can be nil).
+	Declarations map[string]any
+	// Profiling enables Scriggo's built-in profiler, which collects timing
+	// data for function calls, macros, and includes during execution
+	// (see RenderWithProfiling). Profiling adds minimal runtime overhead.
+	Profiling bool
+}
+
+// New creates a Scriggo (Go template syntax) template engine.
 //
-// Parameters:
-//   - templates: All template content (all are compiled as entry points)
-//   - customFilters: Additional filters beyond built-in ones (can be nil)
-//   - customFunctions: Additional global functions beyond built-in ones (can be nil)
-//   - postProcessorConfigs: Post-processor configurations (can be nil)
-func New(templates map[string]string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig) (Engine, error) {
-	// Extract all template names as entry points (compile everything)
-	entryPoints := make([]string, 0, len(templates))
-	for name := range templates {
-		entryPoints = append(entryPoints, name)
+// Only opts.EntryPoints are compiled explicitly — or every template, when
+// opts is nil or opts.EntryPoints is nil — so syntax errors are caught
+// early. Templates not listed as entry points are snippets, compiled
+// automatically when referenced via render/render_glob statements with
+// inherit_context.
+func New(templates map[string]string, opts *Options) (*ScriggoEngine, error) {
+	if opts == nil {
+		opts = &Options{}
 	}
-	return NewScriggo(templates, entryPoints, customFilters, customFunctions, postProcessorConfigs)
-}
-
-// NewScriggo creates a new Scriggo (Go template syntax) template engine.
-// This engine offers better performance but requires different template syntax.
-//
-// Parameters:
-//   - templates: All template content (entry points + snippets)
-//   - entryPoints: Template names to compile explicitly (others discovered via render calls)
-//   - customFilters: Additional filters beyond built-in ones (can be nil)
-//   - customFunctions: Additional global functions beyond built-in ones (can be nil)
-//   - postProcessorConfigs: Post-processor configurations (can be nil)
-//
-// With inherit_context support: Only entryPoints are compiled explicitly. Template
-// snippets are compiled automatically when referenced via render/render_glob statements.
-//
-// For domain-specific type declarations (e.g., currentConfig), use NewScriggoWithDeclarations.
-func NewScriggo(templates map[string]string, entryPoints []string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig) (*ScriggoEngine, error) {
-	return newScriggoEngine(templates, entryPoints, customFilters, customFunctions, postProcessorConfigs, nil, false)
-}
-
-// NewScriggoWithDeclarations creates a Scriggo engine with domain-specific type declarations.
-// Use this when templates need access to types from other packages (e.g., currentConfig
-// for slot-aware server assignment).
-//
-// Parameters:
-//   - templates: All template content (entry points + snippets)
-//   - entryPoints: Template names to compile explicitly (others discovered via render calls)
-//   - customFilters: Additional filters beyond built-in ones (can be nil)
-//   - customFunctions: Additional global functions beyond built-in ones (can be nil)
-//   - postProcessorConfigs: Post-processor configurations (can be nil)
-//   - additionalDeclarations: Domain-specific type declarations for Scriggo (can be nil)
-//
-// With inherit_context support: Only entryPoints are compiled explicitly. Template
-// snippets are compiled automatically when referenced via render/render_glob statements.
-func NewScriggoWithDeclarations(templates map[string]string, entryPoints []string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig, additionalDeclarations map[string]any) (*ScriggoEngine, error) {
-	return newScriggoEngine(templates, entryPoints, customFilters, customFunctions, postProcessorConfigs, additionalDeclarations, false)
-}
-
-// NewScriggoWithProfiling creates a new Scriggo template engine with profiling enabled.
-// When profiling is enabled, Scriggo's built-in profiler collects timing data for
-// function calls, macros, and includes during execution.
-//
-// Parameters:
-//   - templates: All template content (entry points + snippets)
-//   - entryPoints: Template names to compile explicitly (others discovered via render calls)
-//   - customFilters: Additional filters beyond built-in ones (can be nil)
-//   - customFunctions: Additional global functions beyond built-in ones (can be nil)
-//   - postProcessorConfigs: Post-processor configurations (can be nil)
-//
-// Note: Profiling adds minimal runtime overhead. Use NewScriggo for production without profiling.
-//
-// With inherit_context support: Only entryPoints are compiled explicitly. Template
-// snippets are compiled automatically when referenced via render/render_glob statements.
-//
-// For domain-specific type declarations with profiling, use NewScriggoWithProfilingAndDeclarations.
-func NewScriggoWithProfiling(templates map[string]string, entryPoints []string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig) (*ScriggoEngine, error) {
-	return newScriggoEngine(templates, entryPoints, customFilters, customFunctions, postProcessorConfigs, nil, true)
-}
-
-// NewScriggoWithProfilingAndDeclarations creates a Scriggo engine with both profiling
-// and domain-specific type declarations enabled.
-//
-// Parameters:
-//   - templates: All template content (entry points + snippets)
-//   - entryPoints: Template names to compile explicitly (others discovered via render calls)
-//   - customFilters: Additional filters beyond built-in ones (can be nil)
-//   - customFunctions: Additional global functions beyond built-in ones (can be nil)
-//   - postProcessorConfigs: Post-processor configurations (can be nil)
-//   - additionalDeclarations: Domain-specific type declarations for Scriggo (can be nil)
-//
-// With inherit_context support: Only entryPoints are compiled explicitly. Template
-// snippets are compiled automatically when referenced via render/render_glob statements.
-func NewScriggoWithProfilingAndDeclarations(templates map[string]string, entryPoints []string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig, additionalDeclarations map[string]any) (*ScriggoEngine, error) {
-	return newScriggoEngine(templates, entryPoints, customFilters, customFunctions, postProcessorConfigs, additionalDeclarations, true)
+	entryPoints := opts.EntryPoints
+	if entryPoints == nil {
+		entryPoints = make([]string, 0, len(templates))
+		for name := range templates {
+			entryPoints = append(entryPoints, name)
+		}
+	}
+	return newScriggoEngine(templates, entryPoints, opts.Filters, opts.Functions, opts.PostProcessors, opts.Declarations, opts.Profiling)
 }
 
 // newScriggoEngine is the internal constructor that handles both profiling and non-profiling modes.
@@ -313,7 +266,7 @@ func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templat
 
 // RenderWithProfiling renders a template and returns profiling statistics.
 //
-// When profiling is enabled (via NewScriggoWithProfiling), this method returns
+// When profiling is enabled (via Options.Profiling), this method returns
 // aggregated include timing statistics. When profiling is disabled, returns nil
 // for the stats slice.
 func (e *ScriggoEngine) RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]any) (string, []IncludeStats, error) {

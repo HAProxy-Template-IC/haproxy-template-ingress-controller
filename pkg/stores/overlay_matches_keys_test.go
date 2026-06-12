@@ -9,7 +9,6 @@
 package stores
 
 import (
-	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,44 +23,28 @@ import (
 // happy path through Get() but leave several load-bearing branches
 // unpinned. Each branch corresponds to a distinct silent failure mode:
 //
-//  Without keyExtractor (the default constructor):
-//   * empty keys → no match (otherwise overlay additions would
+//   - empty keys → no match (otherwise overlay additions would
 //     "leak" into every unfiltered Get() call from the caller)
-//   * resource has no GetNamespace/GetName accessors → no match (a
+//   - resource has no GetNamespace/GetName accessors → no match (a
 //     resource we can't key shouldn't pretend to match anything)
-//   * 1-key (namespace) query → matches by namespace only (this is
+//   - 1-key (namespace) query → matches by namespace only (this is
 //     the semantics callers depend on for "list all in namespace")
-//   * 2-key (namespace + name) query → both must match
-//   * mismatched first key short-circuits → false (defensive)
-//
-//  With keyExtractor (multi-key indexed stores):
-//   * keyExtractor error → false (a resource we can't key shouldn't
-//     match anything — same defensive principle as the no-accessor
-//     branch above)
-//   * len(resourceKeys) < len(keys) → false (the query is asking for
-//     MORE specificity than the resource carries; a regression that
-//     wrongly accepted this would over-match overlay items)
-//   * prefix-match: providing FEWER keys than the resource has must
-//     still match if the prefix lines up. This is what enables
-//     wide-scope queries (e.g. "list all EndpointSlices for service X"
-//     when EndpointSlices are indexed by [serviceName, sliceName])
-//   * any key mismatch in the prefix → false
+//   - 2-key (namespace + name) query → both must match
+//   - mismatched first key short-circuits → false (defensive)
 //
 // A regression in any of these branches would silently corrupt
 // overlay-driven dry-run validation (which is on the webhook hot path).
 // Pin each branch with a table.
 
-// nameNamespacer is the minimal accessor matchesKeys looks for in the
-// no-keyExtractor branch. We use it directly to test the "resource has
-// no accessor" branch by passing values that don't satisfy this
-// interface.
+// nameNamespacer is the minimal accessor matchesKeys looks for. We use
+// it directly to test the "resource has no accessor" branch by passing
+// values that don't satisfy this interface.
 type nameNamespacer interface {
 	GetNamespace() string
 	GetName() string
 }
 
-// untyped is a value with NO accessors — it should never match in the
-// no-keyExtractor branch.
+// untyped is a value with NO accessors — it should never match.
 type untyped struct{ Anything string }
 
 func TestCompositeStore_MatchesKeys_NoKeyExtractor(t *testing.T) {
@@ -130,7 +113,6 @@ func TestCompositeStore_MatchesKeys_NoKeyExtractor(t *testing.T) {
 		},
 	}
 
-	// Use a CompositeStore without a keyExtractor.
 	store := NewCompositeStore(newMockStore(), NewStoreOverlay())
 
 	for _, tt := range tests {
@@ -143,109 +125,6 @@ func TestCompositeStore_MatchesKeys_NoKeyExtractor(t *testing.T) {
 			}
 
 			got := store.matchesKeys(tt.resource, tt.keys)
-			assert.Equal(t, tt.want, got, tt.why)
-		})
-	}
-}
-
-func TestCompositeStore_MatchesKeys_WithKeyExtractor(t *testing.T) {
-	// Build a key extractor that returns three keys for a typed object.
-	// We exercise prefix matching by providing fewer keys than the
-	// extractor returns.
-	threeKeyExtractor := func(resource any) ([]string, error) {
-		// Marker payload used to simulate extractor failure for one
-		// specific input.
-		if u, ok := resource.(untyped); ok && u.Anything == "fail" {
-			return nil, errors.New("extractor failed")
-		}
-		if u, ok := resource.(untyped); ok && u.Anything == "short" {
-			// Resource only carries one key — caller asking for two
-			// keys must NOT match.
-			return []string{"only-one"}, nil
-		}
-		// Default: 3-key resource.
-		return []string{"k1", "k2", "k3"}, nil
-	}
-
-	subject := untyped{Anything: "regular"}
-	failing := untyped{Anything: "fail"}
-	short := untyped{Anything: "short"}
-
-	tests := []struct {
-		name string
-		res  any
-		keys []string
-		want bool
-		why  string
-	}{
-		{
-			name: "extractor error returns false (defensive)",
-			res:  failing,
-			keys: []string{"k1"},
-			want: false,
-			why: "if the extractor errors the resource is unkeyable; same principle as the " +
-				"no-accessor branch — pretend it matches nothing",
-		},
-		{
-			name: "len(resourceKeys) < len(keys) returns false (over-specific query)",
-			res:  short,
-			keys: []string{"only-one", "extra"},
-			want: false,
-			why: "asking for MORE specificity than the resource carries can't match; a " +
-				"regression that wrongly accepted this would over-match overlay items",
-		},
-		{
-			name: "all keys present and matching → true (full match)",
-			res:  subject,
-			keys: []string{"k1", "k2", "k3"},
-			want: true,
-		},
-		{
-			name: "prefix match with fewer keys → true (wide-scope query)",
-			res:  subject,
-			keys: []string{"k1"},
-			want: true,
-			why: "this is what enables 'list all EndpointSlices for service X' when " +
-				"EndpointSlices are indexed by [serviceName, sliceName]; querying with " +
-				"only the service name must match every slice for that service",
-		},
-		{
-			name: "prefix match with TWO keys when resource has THREE → true",
-			res:  subject,
-			keys: []string{"k1", "k2"},
-			want: true,
-		},
-		{
-			name: "first-key mismatch breaks prefix → false",
-			res:  subject,
-			keys: []string{"WRONG", "k2"},
-			want: false,
-		},
-		{
-			name: "mid-prefix mismatch breaks → false",
-			res:  subject,
-			keys: []string{"k1", "WRONG"},
-			want: false,
-			why: "the loop must check EVERY provided key, not just the first; a regression " +
-				"that broke after the first match would cause overlay items keyed on a " +
-				"shared prefix to leak into unrelated queries",
-		},
-		{
-			name: "empty key list → true (every prefix-of-zero matches)",
-			res:  subject,
-			keys: nil,
-			want: true,
-			why: "with a keyExtractor the no-keys branch falls through to the prefix-loop " +
-				"with a zero-length range, which trivially matches; this is the documented " +
-				"semantic difference from the no-extractor branch (which rejects empty keys)",
-		},
-	}
-
-	store := NewCompositeStoreWithKeyExtractor(newMockStore(), NewStoreOverlay(), threeKeyExtractor)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := store.matchesKeys(tt.res, tt.keys)
 			assert.Equal(t, tt.want, got, tt.why)
 		})
 	}

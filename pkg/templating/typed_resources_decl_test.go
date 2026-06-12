@@ -83,7 +83,7 @@ func typedResourcesStructType(names []string) reflect.Type {
 }
 
 // typedResourcesDecl returns the `resources` declaration map suitable for
-// `NewScriggoWithDeclarations`. The declaration is a typed-nil pointer to the
+// `New` with Options.Declarations. The declaration is a typed-nil pointer to the
 // dynamically-built struct so Scriggo sees the shape at compile time but the
 // VALUE is provided at runtime via `Render`'s context map.
 func typedResourcesDecl(names ...string) map[string]any {

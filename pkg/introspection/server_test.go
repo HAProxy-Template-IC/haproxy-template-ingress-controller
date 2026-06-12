@@ -26,31 +26,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// startServer creates and starts an introspection server using Start(), returning the server and a cancel function.
-// It polls until the server is ready to accept connections.
-func startServer(t *testing.T, server *Server) context.CancelFunc {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-
-	go server.Start(ctx)
-
-	// Poll until server is ready
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-		resp, err := http.Get("http://" + server.Addr() + "/health")
-		if err == nil {
-			resp.Body.Close()
-			return cancel
-		}
-	}
-	t.Fatal("server did not start in time")
-	return nil
+// addrForTest returns the server's (possibly dynamically bound) listen
+// address. Production code configures the address explicitly and never
+// needs to read it back; tests bind to "localhost:0" and use this to
+// discover the chosen port. Serve() updates the address concurrently,
+// so the read goes through the same mutex.
+func (s *Server) addrForTest() string {
+	s.addrMu.RLock()
+	defer s.addrMu.RUnlock()
+	return s.addr
 }
 
-// startServerTwoPhase creates and starts an introspection server using Setup()+Serve(), returning a cancel function.
-// It polls until the server is ready to accept connections.
-func startServerTwoPhase(t *testing.T, server *Server) context.CancelFunc {
+// startServer creates and starts an introspection server using Setup()+Serve(),
+// returning a cancel function. It polls until the server is ready to accept
+// connections.
+func startServer(t *testing.T, server *Server) context.CancelFunc {
 	t.Helper()
 	server.Setup()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -61,7 +51,7 @@ func startServerTwoPhase(t *testing.T, server *Server) context.CancelFunc {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
-		resp, err := http.Get("http://" + server.Addr() + "/health")
+		resp, err := http.Get("http://" + server.addrForTest() + "/health")
 		if err == nil {
 			resp.Body.Close()
 			return cancel
@@ -76,7 +66,7 @@ func TestNewServer(t *testing.T) {
 	server := NewServer(":6060", registry)
 
 	assert.NotNil(t, server)
-	assert.Equal(t, ":6060", server.Addr())
+	assert.Equal(t, ":6060", server.addrForTest())
 }
 
 func TestServer_RegisterHandler(t *testing.T) {
@@ -104,26 +94,27 @@ func TestServer_SetHealthChecker(t *testing.T) {
 	assert.NotNil(t, server.healthChecker)
 }
 
-func TestServer_StartAndShutdown(t *testing.T) {
+func TestServer_ServeAndShutdown(t *testing.T) {
 	registry := NewRegistry()
 	registry.Publish("test", Func(func() (any, error) {
 		return "test-value", nil
 	}))
 
 	server := NewServer("localhost:0", registry)
+	server.Setup()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- server.Start(ctx)
+		errChan <- server.Serve(ctx)
 	}()
 
 	// Poll until server is ready
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
-		resp, err := http.Get("http://" + server.Addr() + "/debug/vars")
+		resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars")
 		if err == nil {
 			resp.Body.Close()
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -154,7 +145,7 @@ func TestServer_HandleIndex(t *testing.T) {
 	cancel := startServer(t, server)
 	defer cancel()
 
-	resp, err := http.Get("http://" + server.Addr() + "/debug/vars")
+	resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -179,7 +170,7 @@ func TestServer_HandleAllVars(t *testing.T) {
 	cancel := startServer(t, server)
 	defer cancel()
 
-	resp, err := http.Get("http://" + server.Addr() + "/debug/vars/all")
+	resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars/all")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -206,7 +197,7 @@ func TestServer_HandleVar(t *testing.T) {
 	defer cancel()
 
 	t.Run("get specific var", func(t *testing.T) {
-		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/config")
+		resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars/config")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -220,7 +211,7 @@ func TestServer_HandleVar(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/nonexistent")
+		resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars/nonexistent")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -228,7 +219,7 @@ func TestServer_HandleVar(t *testing.T) {
 	})
 
 	t.Run("with field query", func(t *testing.T) {
-		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/config?field={.name}")
+		resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars/config?field={.name}")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -247,7 +238,7 @@ func TestServer_HandleHealth(t *testing.T) {
 		cancel := startServer(t, server)
 		defer cancel()
 
-		resp, err := http.Get("http://" + server.Addr() + "/health")
+		resp, err := http.Get("http://" + server.addrForTest() + "/health")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -272,7 +263,7 @@ func TestServer_HandleHealth(t *testing.T) {
 		cancel := startServer(t, server)
 		defer cancel()
 
-		resp, err := http.Get("http://" + server.Addr() + "/health")
+		resp, err := http.Get("http://" + server.addrForTest() + "/health")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -297,7 +288,7 @@ func TestServer_HandleHealth(t *testing.T) {
 		cancel := startServer(t, server)
 		defer cancel()
 
-		resp, err := http.Get("http://" + server.Addr() + "/health")
+		resp, err := http.Get("http://" + server.addrForTest() + "/health")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -316,7 +307,7 @@ func TestServer_HandleHealth(t *testing.T) {
 		cancel := startServer(t, server)
 		defer cancel()
 
-		resp, err := http.Get("http://" + server.Addr() + "/healthz")
+		resp, err := http.Get("http://" + server.addrForTest() + "/healthz")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -330,7 +321,7 @@ func TestServer_HandleNotFound(t *testing.T) {
 	cancel := startServer(t, server)
 	defer cancel()
 
-	resp, err := http.Get("http://" + server.Addr() + "/nonexistent")
+	resp, err := http.Get("http://" + server.addrForTest() + "/nonexistent")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -346,12 +337,13 @@ func TestServer_PortInUse(t *testing.T) {
 	defer cancel1()
 
 	// Try to start second server on same port
-	server2 := NewServer(server1.Addr(), registry)
+	server2 := NewServer(server1.addrForTest(), registry)
+	server2.Setup()
 	ctx2 := t.Context()
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- server2.Start(ctx2)
+		errChan <- server2.Serve(ctx2)
 	}()
 
 	select {
@@ -374,7 +366,7 @@ func TestServer_HandleVarEdgeCases(t *testing.T) {
 	defer cancel()
 
 	t.Run("empty path redirects to index", func(t *testing.T) {
-		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/")
+		resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars/")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -401,15 +393,15 @@ func TestServer_TwoPhaseInitialization(t *testing.T) {
 			WriteJSON(w, map[string]string{"result": "custom-handler"})
 		})
 
-		cancel := startServerTwoPhase(t, server)
+		cancel := startServer(t, server)
 		defer cancel()
 
-		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/test")
+		resp, err := http.Get("http://" + server.addrForTest() + "/debug/vars/test")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		resp2, err := http.Get("http://" + server.Addr() + "/custom")
+		resp2, err := http.Get("http://" + server.addrForTest() + "/custom")
 		require.NoError(t, err)
 		defer resp2.Body.Close()
 		assert.Equal(t, http.StatusOK, resp2.StatusCode)
@@ -427,31 +419,5 @@ func TestServer_TwoPhaseInitialization(t *testing.T) {
 		err := server.Serve(ctx)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "Setup() must be called before Serve()")
-	})
-
-	t.Run("start calls setup implicitly", func(t *testing.T) {
-		registry := NewRegistry()
-		registry.Publish("test", Func(func() (any, error) {
-			return "implicit-setup", nil
-		}))
-
-		server := NewServer("localhost:0", registry)
-
-		server.RegisterHandler("/custom2", func(w http.ResponseWriter, r *http.Request) {
-			WriteJSON(w, map[string]string{"result": "implicit"})
-		})
-
-		cancel := startServer(t, server)
-		defer cancel()
-
-		resp, err := http.Get("http://" + server.Addr() + "/debug/vars/test")
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		resp2, err := http.Get("http://" + server.Addr() + "/custom2")
-		require.NoError(t, err)
-		defer resp2.Body.Close()
-		assert.Equal(t, http.StatusOK, resp2.StatusCode)
 	})
 }

@@ -25,7 +25,7 @@ import (
 )
 
 // The tests in this file pin the engine's contract for *dynamically
-// constructed* Go types declared via [NewScriggoWithDeclarations].
+// constructed* Go types declared via [New] with [Options.Declarations].
 // Scriggo's globals accept any [reflect.Type] — including one built
 // at runtime with [reflect.StructOf] — and the engine compiles
 // templates against the supplied field shape. The typed-watched-
@@ -58,21 +58,18 @@ func makeGatewayShape() reflect.Type {
 	})
 }
 
-// TestNewScriggoWithDeclarations_DynamicStructFieldAccess is the
+// TestNew_Declarations_DynamicStructFieldAccess is the
 // keystone proof that engine globals work with runtime-built types.
 // Without this passing, the entire typed-watched-resources pipeline
 // is dead on arrival.
-func TestNewScriggoWithDeclarations_DynamicStructFieldAccess(t *testing.T) {
+func TestNew_Declarations_DynamicStructFieldAccess(t *testing.T) {
 	gwType := makeGatewayShape()
 	gwTypeKind := reflect.PointerTo(gwType)
 
 	templates := map[string]string{
 		"main": `{{ gateway.Kind }}/{{ gateway.Metadata.Namespace }}/{{ gateway.Metadata.Name }}`,
 	}
-	engine, err := NewScriggoWithDeclarations(
-		templates, []string{"main"}, nil, nil, nil,
-		map[string]any{"gateway": reflect.Zero(gwTypeKind).Interface()},
-	)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main"}, Declarations: map[string]any{"gateway": reflect.Zero(gwTypeKind).Interface()}})
 	require.NoError(t, err)
 
 	gw := reflect.New(gwType).Elem()
@@ -94,14 +91,14 @@ func TestNewScriggoWithDeclarations_DynamicStructFieldAccess(t *testing.T) {
 	assert.Equal(t, "Gateway/ingress/public", strings.TrimRight(out, "\n"))
 }
 
-// TestNewScriggoWithDeclarations_TypoCatchAtBuildTime is the property
+// TestNew_Declarations_TypoCatchAtBuildTime is the property
 // that justifies the whole effort: a misspelled field path on a
 // typed global fails at *template compile* time (when the engine
 // is constructed), not at render time. This is what flips the
 // failure mode from "every reconcile silently renders empty
 // frontend blocks" to "the controller refuses to boot with a
 // pointer at the broken template".
-func TestNewScriggoWithDeclarations_TypoCatchAtBuildTime(t *testing.T) {
+func TestNew_Declarations_TypoCatchAtBuildTime(t *testing.T) {
 	gwType := makeGatewayShape()
 	gwTypeKind := reflect.PointerTo(gwType)
 
@@ -110,10 +107,7 @@ func TestNewScriggoWithDeclarations_TypoCatchAtBuildTime(t *testing.T) {
 	bad := map[string]string{
 		"main": `{{ gateway.Metadata.Naamespace }}`,
 	}
-	_, err := NewScriggoWithDeclarations(
-		bad, []string{"main"}, nil, nil, nil,
-		map[string]any{"gateway": reflect.Zero(gwTypeKind).Interface()},
-	)
+	_, err := New(bad, &Options{EntryPoints: []string{"main"}, Declarations: map[string]any{"gateway": reflect.Zero(gwTypeKind).Interface()}})
 	require.Error(t, err,
 		"a typoed field path on a typed global must fail at engine construction")
 
@@ -124,14 +118,11 @@ func TestNewScriggoWithDeclarations_TypoCatchAtBuildTime(t *testing.T) {
 	good := map[string]string{
 		"main": `{{ gateway.Metadata.Namespace }}`,
 	}
-	_, err = NewScriggoWithDeclarations(
-		good, []string{"main"}, nil, nil, nil,
-		map[string]any{"gateway": reflect.Zero(gwTypeKind).Interface()},
-	)
+	_, err = New(good, &Options{EntryPoints: []string{"main"}, Declarations: map[string]any{"gateway": reflect.Zero(gwTypeKind).Interface()}})
 	require.NoError(t, err, "the correct field name must compile cleanly")
 }
 
-// TestNewScriggoWithDeclarations_RangeOverDynamicSlice mirrors the
+// TestNew_Declarations_RangeOverDynamicSlice mirrors the
 // chart's everyday loop pattern:
 //
 //	{%- for _, gw := range resources.gateways.List() %}
@@ -142,7 +133,7 @@ func TestNewScriggoWithDeclarations_TypoCatchAtBuildTime(t *testing.T) {
 // produces (a slice of pointers to the generated struct type). The
 // store wrapper (Phase 5) will yield this shape; templates compile
 // against it.
-func TestNewScriggoWithDeclarations_RangeOverDynamicSlice(t *testing.T) {
+func TestNew_Declarations_RangeOverDynamicSlice(t *testing.T) {
 	gwType := reflect.StructOf([]reflect.StructField{
 		{Name: "Name", Type: reflect.TypeOf("")},
 	})
@@ -153,10 +144,7 @@ func TestNewScriggoWithDeclarations_RangeOverDynamicSlice(t *testing.T) {
 		"main": `{%- for _, g := range gateways %}{{ g.Name }}
 {% end -%}`,
 	}
-	engine, err := NewScriggoWithDeclarations(
-		templates, []string{"main"}, nil, nil, nil,
-		map[string]any{"gateways": reflect.Zero(sliceKind).Interface()},
-	)
+	engine, err := New(templates, &Options{EntryPoints: []string{"main"}, Declarations: map[string]any{"gateways": reflect.Zero(sliceKind).Interface()}})
 	require.NoError(t, err)
 
 	slice := reflect.MakeSlice(sliceType, 2, 2)
@@ -172,14 +160,14 @@ func TestNewScriggoWithDeclarations_RangeOverDynamicSlice(t *testing.T) {
 	assert.Equal(t, "a\nb\n", out)
 }
 
-// TestNewScriggoWithDeclarations_MissingFieldRejected pins the side
+// TestNew_Declarations_MissingFieldRejected pins the side
 // of the typegen/IgnoreFields contract that lives in the engine:
 // once a global's type omits a field, template references to that
 // field must fail at engine construction. typegen's tests cover
 // the stripping side; this test covers the rejection side without
 // needing the converter at all — the missing field could just as
 // well be a typo, a schema gap, or anything else.
-func TestNewScriggoWithDeclarations_MissingFieldRejected(t *testing.T) {
+func TestNew_Declarations_MissingFieldRejected(t *testing.T) {
 	// A type that DELIBERATELY omits ManagedFields, matching what
 	// typegen would produce for an operator who stripped it via
 	// HAProxyTemplateConfig.spec.watchedResourcesIgnoreFields.
@@ -194,10 +182,7 @@ func TestNewScriggoWithDeclarations_MissingFieldRejected(t *testing.T) {
 	templates := map[string]string{
 		"main": `{{ gateway.Metadata.ManagedFields }}`,
 	}
-	_, err := NewScriggoWithDeclarations(
-		templates, []string{"main"}, nil, nil, nil,
-		map[string]any{"gateway": reflect.Zero(gwTypeKind).Interface()},
-	)
+	_, err := New(templates, &Options{EntryPoints: []string{"main"}, Declarations: map[string]any{"gateway": reflect.Zero(gwTypeKind).Interface()}})
 	require.Error(t, err,
 		"reference to a field absent from the typed global must fail at "+
 			"engine construction — the operator stripped it via "+

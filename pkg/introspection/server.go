@@ -52,13 +52,7 @@ type ComponentHealth struct {
 //
 // Custom handlers can be registered using RegisterHandler() before Setup() is called.
 //
-// The server supports two initialization patterns:
-//
-// 1. Simple (combined): Use Start() which calls Setup() and Serve() internally:
-//
-//	go server.Start(ctx)
-//
-// 2. Two-phase (for early health checks): Call Setup() first, then Serve() later:
+// The server uses two-phase initialization: call Setup() first, then Serve():
 //
 //	server.RegisterHandler("/debug/events", eventsHandler)
 //	server.SetHealthChecker(checker)
@@ -97,7 +91,8 @@ type customHandler struct {
 //	registry.Publish("config", &ConfigVar{provider})
 //
 //	server := introspection.NewServer(":6060", registry)
-//	go server.Start(ctx)
+//	server.Setup()
+//	go server.Serve(ctx)
 func NewServer(addr string, registry *Registry) *Server {
 	logger := slog.Default().With("component", "introspection-server")
 	mux := http.NewServeMux()
@@ -110,12 +105,12 @@ func NewServer(addr string, registry *Registry) *Server {
 		customHandlers: []customHandler{},
 	}
 
-	// Setup will be called in Start() to include custom handlers
+	// Setup must be called separately so custom handlers can be registered first
 	return s
 }
 
 // RegisterHandler registers a custom HTTP handler for the given pattern.
-// This must be called before Setup() (or Start(), which calls Setup() internally).
+// This must be called before Setup().
 //
 // Parameters:
 //   - pattern: URL pattern (e.g., "/debug/events")
@@ -136,7 +131,7 @@ func (s *Server) RegisterHandler(pattern string, handler http.HandlerFunc) {
 }
 
 // SetHealthChecker sets a function to check component health.
-// This must be called before Start().
+// This must be called before Setup().
 //
 // The health checker function is called by the /health endpoint to get
 // the health status of all components. If not set, /health just returns "ok".
@@ -201,30 +196,6 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 func (s *Server) Setup() {
 	s.setupRoutes(s.mux)
 	s.setupDone = true
-}
-
-// Start is a convenience method that calls Setup() then Serve().
-// For more control over timing (e.g., registering handlers after server creation
-// but before routes are finalized), call Setup() and Serve() separately.
-//
-// This method should typically be run in a goroutine:
-//
-//	go server.Start(ctx)
-//
-// Example:
-//
-//	ctx, cancel := context.WithCancel(context.Background())
-//	defer cancel()
-//
-//	go server.Start(ctx)
-//
-//	// Later: cancel context to shutdown
-//	cancel()
-func (s *Server) Start(ctx context.Context) error {
-	if !s.setupDone {
-		s.Setup()
-	}
-	return s.Serve(ctx)
 }
 
 // Serve starts the HTTP server and blocks until the context is cancelled.
@@ -294,11 +265,4 @@ func (s *Server) Serve(ctx context.Context) error {
 	case err := <-serverErr:
 		return fmt.Errorf("server error: %w", err)
 	}
-}
-
-// Addr returns the address the server is configured to listen on.
-func (s *Server) Addr() string {
-	s.addrMu.RLock()
-	defer s.addrMu.RUnlock()
-	return s.addr
 }

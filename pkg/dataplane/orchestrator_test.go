@@ -162,35 +162,6 @@ func TestConvertOperationsToApplied_Empty(t *testing.T) {
 	require.Empty(t, applied)
 }
 
-func TestConvertOperationsToPlanned(t *testing.T) {
-	ops := []comparator.Operation{
-		&mockOperation{
-			opType:   sections.OperationCreate,
-			section:  "frontend",
-			priority: 5,
-			desc:     "Create frontend 'http'",
-		},
-		&mockOperation{
-			opType:   sections.OperationUpdate,
-			section:  "bind",
-			priority: 15,
-			desc:     "Update bind 'https'",
-		},
-	}
-
-	planned := convertOperationsToPlanned(ops)
-
-	require.Len(t, planned, 2)
-
-	assert.Equal(t, "create", planned[0].Type)
-	assert.Equal(t, "frontend", planned[0].Section)
-	assert.Equal(t, "http", planned[0].Resource)
-
-	assert.Equal(t, "update", planned[1].Type)
-	assert.Equal(t, "bind", planned[1].Section)
-	assert.Equal(t, "https", planned[1].Resource)
-}
-
 func TestConvertDiffSummary(t *testing.T) {
 	summary := &comparator.DiffSummary{
 		TotalCreates:      5,

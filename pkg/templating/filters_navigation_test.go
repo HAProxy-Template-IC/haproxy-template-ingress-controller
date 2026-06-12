@@ -280,45 +280,6 @@ func TestIsValueInList_Direct(t *testing.T) {
 	}
 }
 
-func TestIsEmpty_ExtendedReflection(t *testing.T) {
-	type myStruct struct{ X int }
-	var nilPtr *myStruct
-	concrete := myStruct{}
-
-	tests := []struct {
-		name string
-		in   any
-		want bool
-	}{
-		{name: "nil", in: nil, want: true},
-		{name: "empty string", in: "", want: true},
-		{name: "non-empty string", in: "x", want: false},
-		{name: "zero int is not empty", in: 0, want: false},
-		{name: "non-zero int", in: 42, want: false},
-		{name: "int64", in: int64(0), want: false},
-		{name: "float64", in: 0.0, want: false},
-		{name: "false bool is empty", in: false, want: true},
-		{name: "true bool is not empty", in: true, want: false},
-		{name: "empty []any", in: []any{}, want: true},
-		{name: "non-empty []any", in: []any{1}, want: false},
-		{name: "empty map[string]any", in: map[string]any{}, want: true},
-		{name: "non-empty map", in: map[string]any{"a": 1}, want: false},
-		{name: "empty []string via reflection", in: []string{}, want: true},
-		{name: "non-empty []string", in: []string{"a"}, want: false},
-		{name: "empty array via reflection", in: [0]int{}, want: true},
-		{name: "non-empty array", in: [2]int{1, 2}, want: false},
-		{name: "nil pointer via reflection", in: nilPtr, want: true},
-		{name: "non-nil pointer", in: &concrete, want: false},
-		{name: "struct value is not empty", in: concrete, want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isEmpty(tt.in))
-		})
-	}
-}
-
 func TestScriggoJoinKey(t *testing.T) {
 	tests := []struct {
 		name  string

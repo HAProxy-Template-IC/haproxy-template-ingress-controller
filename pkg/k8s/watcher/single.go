@@ -50,11 +50,6 @@ type SingleWatcher struct {
 	syncCh    chan struct{} // Closed when sync completes
 	stopOnce  sync.Once     // Ensures Stop() is idempotent
 	startOnce sync.Once     // Ensures Start() is idempotent
-	started   atomic.Bool   // True if Start() has been called
-
-	// Health tracking for diagnostics
-	lastEventTime  atomic.Int64 // Unix timestamp of last event received
-	lastWatchError atomic.Int64 // Unix timestamp of last watch error
 }
 
 // NewSingle creates a new single-resource watcher with the provided configuration.
@@ -160,7 +155,6 @@ func (w *SingleWatcher) createInformer() error {
 // handleWatchError is called when the watch connection drops.
 // The Reflector will automatically retry with exponential backoff after this handler returns.
 func (w *SingleWatcher) handleWatchError(_ *cache.Reflector, err error) {
-	w.lastWatchError.Store(time.Now().Unix())
 	slog.Warn("SingleWatcher watch error (Reflector will retry)",
 		"gvr", w.config.GVR.String(),
 		"namespace", w.config.Namespace,
@@ -168,10 +162,9 @@ func (w *SingleWatcher) handleWatchError(_ *cache.Reflector, err error) {
 		"error", err)
 }
 
-// recordEvent records receipt of a watch event for health monitoring and emits
-// the matching debug log. action is the lower-case event name (add/update/delete).
+// recordEvent emits the standard debug log for a received watch event.
+// action is the lower-case event name (add/update/delete).
 func (w *SingleWatcher) recordEvent(action string) {
-	w.lastEventTime.Store(time.Now().Unix())
 	slog.Debug("SingleWatcher received "+action+" event",
 		"gvr", w.config.GVR.String(),
 		"synced", w.synced.Load())
@@ -353,8 +346,6 @@ func (w *SingleWatcher) Start(ctx context.Context) error {
 
 	// Ensure initialization only happens once
 	w.startOnce.Do(func() {
-		w.started.Store(true)
-
 		// Start informer
 		go w.informer.Run(w.stopCh)
 
@@ -444,46 +435,6 @@ func (w *SingleWatcher) WaitForSync(ctx context.Context) error {
 	case <-ctx.Done():
 		return errors.New("context cancelled while waiting for sync")
 	}
-}
-
-// IsSynced returns true if initial synchronization has completed.
-//
-// This provides a non-blocking way to check if the watcher has synced.
-func (w *SingleWatcher) IsSynced() bool {
-	return w.synced.Load()
-}
-
-// IsStarted returns true if Start() has been called.
-//
-// This provides a non-blocking way to check if the watcher has been started.
-func (w *SingleWatcher) IsStarted() bool {
-	return w.started.Load()
-}
-
-// LastEventTime returns the time when the last event was received.
-// Returns zero time if no events have been received yet.
-//
-// This is useful for health checks to detect stalled watches where
-// no events are being received despite the resync period.
-func (w *SingleWatcher) LastEventTime() time.Time {
-	ts := w.lastEventTime.Load()
-	if ts == 0 {
-		return time.Time{}
-	}
-	return time.Unix(ts, 0)
-}
-
-// LastWatchError returns the time when the last watch error occurred.
-// Returns zero time if no watch errors have occurred.
-//
-// Watch errors trigger automatic retry with exponential backoff by the Reflector.
-// This method is useful for observability and debugging connection issues.
-func (w *SingleWatcher) LastWatchError() time.Time {
-	ts := w.lastWatchError.Load()
-	if ts == 0 {
-		return time.Time{}
-	}
-	return time.Unix(ts, 0)
 }
 
 // getCurrentResourceFromCache returns the current resource from the informer cache.

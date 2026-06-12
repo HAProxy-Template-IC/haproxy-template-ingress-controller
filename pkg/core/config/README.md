@@ -2,14 +2,11 @@
 
 Defines the internal `Config` / `Credentials` structs and the pure functions that load and validate them. No Kubernetes client calls, no event bus — everything here operates on already-materialised bytes or strings.
 
-Upstream in the pipeline: `pkg/controller/conversion.ParseCRD` converts a `HAProxyTemplateConfig` CRD into the `*Config` this package defines. Standalone callers (CLI `haptic-controller validate`, tests) can use `LoadConfig` directly on a YAML string.
+Upstream in the pipeline: `pkg/controller/conversion.ParseCRD` converts a `HAProxyTemplateConfig` CRD into the `*Config` this package defines.
 
 ## Public API
 
 ```go
-// YAML → Config
-func LoadConfig(configYAML string) (*Config, error)
-
 // Fill in defaults (mutates in place)
 func SetDefaults(cfg *Config)
 
@@ -22,14 +19,13 @@ func ValidateCredentials(creds *Credentials) error
 
 // Helpers
 func ParseSecretData(raw map[string]any) (map[string][]byte, error)
-func ValidateExtraContext(ctx map[string]any) error
 ```
 
 The Go fields are `PodSelector`, `Controller`, `Logging`, `Dataplane`, `TemplatingSettings`, `WatchedResources`, `WatchedResourcesIgnoreFields`, `Validators`, `TemplateSnippets`, `Maps`, `Files`, `SSLCertificates`, `K8sResources`, `CRTLists`, `HAProxyConfig`, `ValidationTests`. Three serialisation forms exist for the same struct, and they don't all agree:
 
 - **Go field names** — PascalCase (`PodSelector`).
-- **YAML keys consumed by `LoadConfig`** — snake_case at the top level (`pod_selector`, `templating_settings`, `watched_resources`, `haproxy_config`); a few nested fields use camelCase (`httpResources`, `currentConfig`, `extraContext`, `minHAProxyVersion`). `types.go`'s `yaml:` tags are authoritative.
-- **CRD JSON keys (kubectl, ParseCRD)** — camelCase, per Kubernetes convention. The controller never calls `LoadConfig` on CRD JSON; it goes through `pkg/controller/conversion.ParseCRD` which deserialises into the typed CRD first and then maps it onto `*Config` field-by-field.
+- **YAML keys (`yaml:` struct tags)** — snake_case at the top level (`pod_selector`, `templating_settings`, `watched_resources`, `haproxy_config`); a few nested fields use camelCase (`httpResources`, `currentConfig`, `extraContext`, `minHAProxyVersion`). `types.go`'s `yaml:` tags are authoritative.
+- **CRD JSON keys (kubectl, ParseCRD)** — camelCase, per Kubernetes convention. The controller goes through `pkg/controller/conversion.ParseCRD` which deserialises into the typed CRD first and then maps it onto `*Config` field-by-field.
 
 Use snake_case in YAML files; use camelCase in CRD manifests. The `types.go` source is the authoritative schema for either.
 

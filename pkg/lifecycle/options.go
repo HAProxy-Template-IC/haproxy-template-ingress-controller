@@ -19,14 +19,8 @@ type Option func(*registrationConfig)
 
 // registrationConfig holds configuration for a component registration.
 type registrationConfig struct {
-	leaderOnly   bool
-	dependencies []string
-	criticality  CriticalityLevel
-	onError      ErrorHandler
+	leaderOnly bool
 }
-
-// ErrorHandler is called when a component encounters an error.
-type ErrorHandler func(componentName string, err error)
 
 // LeaderOnly marks the component to only run when this instance is the leader.
 //
@@ -39,51 +33,5 @@ type ErrorHandler func(componentName string, err error)
 func LeaderOnly() Option {
 	return func(c *registrationConfig) {
 		c.leaderOnly = true
-	}
-}
-
-// DependsOn specifies components that must be running before this component starts.
-//
-// Dependencies are started in order, and this component won't start until
-// all dependencies are in StatusRunning state.
-//
-// Example:
-//
-//	registry.Register(deployer.New(bus), lifecycle.DependsOn("validator", "renderer"))
-func DependsOn(names ...string) Option {
-	return func(c *registrationConfig) {
-		c.dependencies = append(c.dependencies, names...)
-	}
-}
-
-// Criticality sets the importance level of the component.
-//
-// Critical components cause system-wide health check failures if they fail.
-// Degradable components allow the system to continue with reduced functionality.
-// Optional components don't affect overall system health.
-//
-// Example:
-//
-//	registry.Register(metrics.New(), lifecycle.Criticality(lifecycle.CriticalityOptional))
-func Criticality(level CriticalityLevel) Option {
-	return func(c *registrationConfig) {
-		c.criticality = level
-	}
-}
-
-// OnError sets a custom error handler for the component.
-//
-// The handler is called when the component's Start method returns an error.
-// This can be used for custom logging, alerting, or recovery logic.
-//
-// Example:
-//
-//	registry.Register(validator.New(bus), lifecycle.OnError(func(name string, err error) {
-//	    logger.Error("Component failed", "component", name, "error", err)
-//	    alerting.Send(fmt.Sprintf("Component %s failed: %v", name, err))
-//	}))
-func OnError(handler ErrorHandler) Option {
-	return func(c *registrationConfig) {
-		c.onError = handler
 	}
 }

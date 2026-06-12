@@ -140,7 +140,7 @@ backend svc
 		},
 	}
 
-	engine, err := New(templates, nil, nil, postProcessorConfigs)
+	engine, err := New(templates, &Options{PostProcessors: postProcessorConfigs})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -178,7 +178,7 @@ func TestTemplateEngine_TemplateAndRegexPostProcessors(t *testing.T) {
 		},
 	}
 
-	engine, err := New(templates, nil, nil, postProcessorConfigs)
+	engine, err := New(templates, &Options{PostProcessors: postProcessorConfigs})
 	require.NoError(t, err)
 
 	output, err := engine.Render(context.Background(), "test", nil)
@@ -208,7 +208,7 @@ func TestTemplateEngine_TemplatePostProcessorCompilationError(t *testing.T) {
 		},
 	}
 
-	_, err := New(templates, nil, nil, postProcessorConfigs)
+	_, err := New(templates, &Options{PostProcessors: postProcessorConfigs})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "template post-processor compilation failed")
 }
@@ -227,7 +227,7 @@ func TestTemplateEngine_TemplatePostProcessorMissingSource(t *testing.T) {
 		},
 	}
 
-	_, err := New(templates, nil, nil, postProcessorConfigs)
+	_, err := New(templates, &Options{PostProcessors: postProcessorConfigs})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-empty 'source' parameter")
 }

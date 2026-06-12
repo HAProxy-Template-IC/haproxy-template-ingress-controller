@@ -81,7 +81,7 @@ func benchmarkRenderSimple(b *testing.B) {
 		"simple": "Hello {{ .name }}! Welcome to {{ .location }}.",
 	}
 
-	engine, err := NewScriggo(templates, []string{"simple"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"simple"}})
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -112,7 +112,7 @@ server {{ server["name"] }} {{ server["address"] }}:{{ server["port"] }}
 {% end %}`,
 	}
 
-	engine, err := NewScriggo(templates, []string{"medium"}, nil, nil, nil)
+	engine, err := New(templates, &Options{EntryPoints: []string{"medium"}})
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -184,7 +184,7 @@ backend {{ .backend.name }}
 `,
 	}
 
-	engine, err := New(templates, nil, nil, nil)
+	engine, err := New(templates, nil)
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -279,7 +279,7 @@ func benchmarkFilterSortBy(b *testing.B) {
 `,
 	}
 
-	engine, err := New(templates, nil, nil, nil)
+	engine, err := New(templates, nil)
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -318,7 +318,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 `,
 	}
 
-	engine, err := New(templates, nil, nil, nil)
+	engine, err := New(templates, nil)
 	if err != nil {
 		b.Fatalf("creating engine: %v", err)
 	}
@@ -360,7 +360,7 @@ func benchmarkCompileSmall(b *testing.B) {
 	var engine Engine
 	var err error
 	for b.Loop() {
-		engine, err = New(templates, nil, nil, nil)
+		engine, err = New(templates, nil)
 		if err != nil {
 			b.Fatalf("creating engine: %v", err)
 		}
@@ -388,7 +388,7 @@ server {{ server.(map[string]any)["name"] }} {{ server.(map[string]any)["address
 	var engine Engine
 	var err error
 	for b.Loop() {
-		engine, err = New(templates, nil, nil, nil)
+		engine, err = New(templates, nil)
 		if err != nil {
 			b.Fatalf("creating engine: %v", err)
 		}
@@ -439,7 +439,7 @@ frontend {{ .frontend.name }}
 	var engine Engine
 	var err error
 	for b.Loop() {
-		engine, err = New(templates, nil, nil, nil)
+		engine, err = New(templates, nil)
 		if err != nil {
 			b.Fatalf("creating engine: %v", err)
 		}

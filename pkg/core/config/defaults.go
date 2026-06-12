@@ -81,9 +81,6 @@ const (
 //     and will be replaced with the default value
 //   - Debug ports may intentionally be 0 to indicate "disabled" (see cmd/controller/main.go)
 //   - After defaults are applied, production ports MUST NOT be 0 (validation will catch this)
-//
-// Most callers should use LoadConfig() instead. This function is primarily
-// useful for testing default application independently from YAML parsing.
 func SetDefaults(cfg *Config) {
 	// Leader election defaults
 	// Note: Enabled defaults to true (zero value for bool is false, so we set it explicitly)

@@ -123,13 +123,3 @@ func (c *Component) Start(ctx context.Context) error {
 	// Start pure elector (blocks)
 	return c.elector.Start(ctx)
 }
-
-// IsLeader returns true if this instance is currently the leader.
-func (c *Component) IsLeader() bool {
-	return c.elector.IsLeader()
-}
-
-// GetLeader returns the identity of the current leader.
-func (c *Component) GetLeader() string {
-	return c.elector.GetLeader()
-}

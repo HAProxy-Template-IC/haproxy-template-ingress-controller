@@ -22,14 +22,13 @@ import (
 )
 
 // prepareLeaderOnlyComponents promotes leader-only components that are
-// Pending or Standby to Starting, re-creates their ready channel, and
-// validates dependencies. Must be called without r.mu held.
-func (r *Registry) prepareLeaderOnlyComponents() ([]*registeredComponent, error) {
+// Pending or Standby to Starting and re-creates their ready channel.
+// Must be called without r.mu held.
+func (r *Registry) prepareLeaderOnlyComponents() []*registeredComponent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	componentsToStart := make([]*registeredComponent, 0)
-	startSet := make(map[string]bool)
 
 	for _, comp := range r.components {
 		// Only start leader-only components that are pending or standby
@@ -38,67 +37,16 @@ func (r *Registry) prepareLeaderOnlyComponents() ([]*registeredComponent, error)
 			// Re-create ready channel in case this is called multiple times
 			comp.ready = make(chan struct{})
 			componentsToStart = append(componentsToStart, comp)
-			startSet[comp.component.Name()] = true
 		}
 	}
 
-	// Add already running components to the start set for dependency validation
-	for _, comp := range r.components {
-		if comp.status == StatusRunning {
-			startSet[comp.component.Name()] = true
-		}
-	}
-
-	if err := r.validateDependencies(componentsToStart, startSet); err != nil {
-		return nil, err
-	}
-
-	return componentsToStart, nil
-}
-
-// StartLeaderOnlyComponents starts components marked as leader-only.
-//
-// This should be called when leadership is acquired. Returns an error
-// if any leader-only component fails to start.
-//
-// Example (illustrative — pkg/controller has no Controller struct; the
-// real call site is the OnStartedLeading callback wrapper in
-// pkg/controller/leaderelection/component.go):
-//
-//	func (h *leadershipHandler) onBecameLeader(ctx context.Context) {
-//	    if err := h.registry.StartLeaderOnlyComponents(ctx); err != nil {
-//	        log.Error("Failed to start leader components", "error", err)
-//	    }
-//	}
-func (r *Registry) StartLeaderOnlyComponents(ctx context.Context) error {
-	componentsToStart, err := r.prepareLeaderOnlyComponents()
-	if err != nil {
-		return err
-	}
-
-	if len(componentsToStart) == 0 {
-		return nil
-	}
-
-	g, gCtx := errgroup.WithContext(ctx)
-
-	for _, comp := range componentsToStart {
-		g.Go(func() error {
-			// Wait for dependencies to be ready
-			if err := r.waitForDependencies(gCtx, comp); err != nil {
-				return err
-			}
-			return r.startComponent(gCtx, comp)
-		})
-	}
-
-	return g.Wait()
+	return componentsToStart
 }
 
 // StartLeaderOnlyComponentsAsync starts leader-only components and waits for them to be
-// subscription-ready before returning. Unlike StartLeaderOnlyComponents, this method
-// returns as soon as all components have signaled they're ready to receive events,
-// rather than waiting for their Start() methods to complete.
+// subscription-ready before returning. This method returns as soon as all components
+// have signaled they're ready to receive events, rather than waiting for their
+// Start() methods to complete.
 //
 // This is designed for use with the EventBus Pause/Start pattern, where leader-only
 // components need to be subscribed before EventBus.Start() replays buffered events.
@@ -106,7 +54,7 @@ func (r *Registry) StartLeaderOnlyComponents(ctx context.Context) error {
 // Returns:
 //   - A channel that will receive an error if any component fails, or be closed if all
 //     components complete successfully. The caller should track this in an errgroup.
-//   - An error if components cannot be started (e.g., dependency validation fails)
+//   - An error if the context is cancelled while waiting for components to become ready.
 //
 // Example (illustrative — see pkg/controller/leaderelection/component.go's
 // OnStartedLeading wrapper for the real Pause/Start choreography around
@@ -127,10 +75,7 @@ func (r *Registry) StartLeaderOnlyComponents(ctx context.Context) error {
 //	    return nil
 //	}
 func (r *Registry) StartLeaderOnlyComponentsAsync(ctx context.Context) (<-chan error, error) {
-	componentsToStart, err := r.prepareLeaderOnlyComponents()
-	if err != nil {
-		return nil, err
-	}
+	componentsToStart := r.prepareLeaderOnlyComponents()
 
 	errCh := make(chan error, 1)
 
@@ -145,10 +90,6 @@ func (r *Registry) StartLeaderOnlyComponentsAsync(ctx context.Context) (<-chan e
 	// Start all components in goroutines
 	for _, comp := range componentsToStart {
 		g.Go(func() error {
-			// Wait for dependencies to be ready
-			if err := r.waitForDependencies(gCtx, comp); err != nil {
-				return err
-			}
 			return r.startComponent(gCtx, comp)
 		})
 	}

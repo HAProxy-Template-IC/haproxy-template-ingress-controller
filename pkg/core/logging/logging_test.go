@@ -10,57 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewLogger_ERROR(t *testing.T) {
-	logger := NewLogger("ERROR")
-	assert.NotNil(t, logger)
-
-	// Verify logger is configured (basic smoke test)
-	assert.IsType(t, &slog.Logger{}, logger)
-}
-
-func TestNewLogger_WARNING(t *testing.T) {
-	logger := NewLogger("WARNING")
-	assert.NotNil(t, logger)
-	assert.IsType(t, &slog.Logger{}, logger)
-}
-
-func TestNewLogger_INFO(t *testing.T) {
-	logger := NewLogger("INFO")
-	assert.NotNil(t, logger)
-	assert.IsType(t, &slog.Logger{}, logger)
-}
-
-func TestNewLogger_DEBUG(t *testing.T) {
-	logger := NewLogger("DEBUG")
-	assert.NotNil(t, logger)
-	assert.IsType(t, &slog.Logger{}, logger)
-}
-
-func TestNewLogger_CaseInsensitive(t *testing.T) {
-	testCases := []string{
-		"error", "Error", "ERROR",
-		"warning", "Warning", "WARNING",
-		"info", "Info", "INFO",
-		"debug", "Debug", "DEBUG",
-	}
-
-	for _, level := range testCases {
-		logger := NewLogger(level)
-		assert.NotNil(t, logger, "Failed for level: %s", level)
-	}
-}
-
-func TestNewLogger_InvalidLevel_DefaultsToINFO(t *testing.T) {
-	logger := NewLogger("INVALID")
-	assert.NotNil(t, logger)
-	// Default level should be INFO (we can't easily test this without capturing output)
-}
-
-func TestNewLogger_EmptyLevel_DefaultsToINFO(t *testing.T) {
-	logger := NewLogger("")
-	assert.NotNil(t, logger)
-}
-
 func TestParseLogLevel_ERROR(t *testing.T) {
 	level := ParseLogLevel("ERROR")
 	assert.Equal(t, slog.LevelError, level)

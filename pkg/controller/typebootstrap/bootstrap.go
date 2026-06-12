@@ -257,9 +257,8 @@ const (
 // where the apiserver supplies ObjectMeta validation after the
 // fact. The inlined sub-schema matches the fields chart templates
 // commonly touch (name, namespace, labels, annotations,
-// generation, creationTimestamp) — a superset of typegen.EnvelopeType
-// for backwards compatibility with any chart that already uses
-// the broader K8s ObjectMeta surface.
+// generation, creationTimestamp) — the broader K8s ObjectMeta
+// surface charts already rely on.
 //
 // Returns a shallow copy of the original schema with the metadata
 // property replaced; the original is not mutated (other watched
@@ -300,13 +299,12 @@ func injectObjectMetaIfMissing(sch *spec.Schema) *spec.Schema {
 }
 
 // syntheticObjectMetaSchema returns a spec.Schema with the
-// ObjectMeta fields chart libraries reach into. Shape kept in
-// sync with typegen.EnvelopeType but expressed as a schema so
-// it composes with the rest of the converter pipeline
+// ObjectMeta fields chart libraries reach into, expressed as a
+// schema so it composes with the rest of the converter pipeline
 // (IgnoreFields stripping, depth cap, etc.).
 //
 // Lives next to its only caller; if a future caller needs the
-// shape elsewhere, lift to pkg/k8s/typegen alongside EnvelopeType.
+// shape elsewhere, lift to pkg/k8s/typegen.
 func syntheticObjectMetaSchema() spec.Schema {
 	stringSchema := spec.Schema{SchemaProps: spec.SchemaProps{
 		Type: spec.StringOrArray{schemaTypeString},

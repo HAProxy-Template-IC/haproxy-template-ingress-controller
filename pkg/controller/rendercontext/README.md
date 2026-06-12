@@ -20,7 +20,6 @@ builder := rendercontext.NewBuilder(
     rendercontext.WithStores(storeMap),
     rendercontext.WithHAProxyPodStore(haproxyPodStore),
     rendercontext.WithHTTPFetcher(httpWrapper),
-    rendercontext.WithCapabilities(&capabilities),
     rendercontext.WithCurrentConfig(parsedCurrent),
 )
 
@@ -46,7 +45,6 @@ The context map produced by `Build()` carries the keys templates rely on:
 | `dataplane` | `config.DataplaneConfig` | from `cfg.Dataplane` |
 | `shared` | `*templating.SharedContext` | always present (per-render cache) |
 | `runtimeEnvironment` | `*templating.RuntimeEnvironment` | always present (`GOMAXPROCS` and friends) |
-| `capabilities` | `map[string]bool` | `WithCapabilities` (optional) |
 | `currentConfig` | `*parserconfig.StructuredConfig` | `WithCurrentConfig` (optional; omitted when nil to dodge a Scriggo nil-pointer-initializer panic) |
 | `http` | `templating.HTTPFetcher` | `WithHTTPFetcher` (optional) |
 | `extraContext` | `map[string]any` | `cfg.TemplatingSettings.ExtraContext` (always set, possibly empty; top-level keys are also merged into the root context via `MergeExtraContextInto`) |

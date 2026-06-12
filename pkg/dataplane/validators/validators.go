@@ -73,11 +73,6 @@ type ValidatorSet struct {
 	hashCapture             func(*models.Capture) uint64
 }
 
-// Version returns the HAProxy version string for this validator set.
-func (v *ValidatorSet) Version() string {
-	return v.version
-}
-
 // callIfSet invokes fn with m and returns its result, or the zero value of R
 // when fn is nil. Used to keep ValidatorSet's optional Validate*/Hash* methods
 // to a single line each.

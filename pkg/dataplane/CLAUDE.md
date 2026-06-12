@@ -28,8 +28,7 @@ Modify this package when:
 ```
 pkg/dataplane/
 ├── auxiliaryfiles/             # Auxiliary file management (maps, SSL, general, crt-list, SSL-CA)
-├── client/                     # Dataplane API client + transactions + multi-version dispatch
-│   └── enterprise/             # Enterprise-only operations (WAF, Bot Mgmt, ALOHA, Keepalived, ...)
+├── client/                     # Dataplane API client + multi-version dispatch
 ├── comparator/                 # Fine-grained configuration comparison
 │   └── sections/               # Per-section comparators (frontends, backends, rules, ...)
 ├── parser/                     # Config parsing using client-native
@@ -38,7 +37,7 @@ pkg/dataplane/
 ├── capabilities.go             # HAProxy version → Capabilities (CRT lists, WAF, ...)
 ├── checksum.go                 # ComputeContentChecksum (config + auxFiles → SHA-256)
 ├── config.go                   # Public Endpoint / SyncOptions / SyncResult types
-├── dataplane.go                # Public API (NewClient, Sync, DryRun, Diff)
+├── dataplane.go                # Public API (NewClient, Client.Sync, Client.SyncRuntimeFast)
 ├── errors.go                   # ParseError / ValidationError / ...
 ├── orchestrator.go             # Sync workflow coordination + result aggregation
 │   orchestrator_*.go           #   (split across auxiliary / comparison / execution /
@@ -434,38 +433,27 @@ func (c *DataplaneClient) GetNewFeature(ctx context.Context, name string) (strin
 
 ### client/ - Dataplane API Client
 
-Manages HTTP client and transaction lifecycle. The actual public surface is two layers:
+Manages the HTTP client and multi-version dispatch:
 
 ```go
-// Layer 1 — DataplaneClient (one per HAProxy endpoint)
+// DataplaneClient (one per HAProxy endpoint)
 dpClient, err := client.New(ctx, &client.Config{
     BaseURL:  "http://haproxy:5555/v3",
     Username: "admin",
     Password: "pass",
 })
 defer dpClient.Close()
-
-// Layer 2 — transactions are opened directly on the DataplaneClient. The
-// production sync path does NOT use them — it pushes the full config (see
-// orchestrator). Transactions are exercised only by the enterprise
-// integration paths.
-tx, err := dpClient.CreateTransaction(ctx, version)
-if err != nil {
-    // handle error
-}
-defer tx.Abort(ctx) // cancels on the error path; nothing under tx.ID takes effect
-// issue client calls against tx.ID here, then commit via the dataplane API.
 ```
 
-There is **no** `VersionAdapter` / `ExecuteTransaction` wrapper, and no `tx.Commit()` / `tx.Rollback()` methods — the lifecycle is `dpClient.CreateTransaction(ctx, version)` → issue ops against `tx.ID` → commit (or `tx.Abort(ctx)` to cancel). Production configuration changes don't go through a transaction at all; they're full-config pushes via `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
+There is **no** transaction API — configuration changes are full-config pushes via `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
 
 **When to modify:**
 
 - Adding new Dataplane API endpoint support → look at the dispatcher pattern below
 - Changing connection-retry behavior → `client.WithRetry` / `client.RetryConfig` in `pkg/dataplane/client/retry.go`
-- Improving error handling → `errors.go` (`VersionConflictError`, `OperationError`, etc.)
+- Improving error handling → `errors.go`
 
-**Common pitfall**: Opening a transaction for a configuration change at all. Production changes are full-config raw pushes — reach for `Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`, not `CreateTransaction` (which exists for the enterprise integration paths).
+**Common pitfall**: Issuing per-section API calls for a configuration change. Production changes are full-config raw pushes — reach for `client.Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
 
 ### parser/ - Configuration Parser
 
@@ -595,13 +583,11 @@ The `synchronizer/` sub-package no longer exists. The orchestrator applies chang
 1. **Structural changes** (server creation/deletion, frontend/backend changes, etc.): pushed via `client.PushRawConfiguration`, which triggers a HAProxy reload.
 2. **Runtime-eligible changes** (server address/port/maintenance/weight/agent-check fields): pushed via `client.PushRawConfigurationSkipReload` with X-Runtime-Actions header, which updates the live HAProxy instance without a reload.
 
-Transactions are retained only for enterprise integration tests; new production callers should use `Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
+All callers go through `client.Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
 
 **Retry logic:**
 
 The raw-push paths don't open Dataplane API transactions, so there's no 409 version-conflict retry loop. Instead the orchestrator wraps its version resolution and pushes in `client.WithRetry(ctx, client.RetryConfig{...})` with `RetryIf: client.IsConnectionError()` — transient connection failures (the master socket is briefly closed while HAProxy re-execs on reload) are retried; any other error propagates. `PushRawConfigurationSkipReload` additionally retries its runtime `set server …` actions across a concurrent reload, since those fail with a 500 / connection-refused while the `-S` stats socket is momentarily down.
-
-The transaction primitives (`CreateTransaction` / `Transaction.Abort`) still live in `pkg/dataplane/client` but are exercised only by the enterprise integration paths; new production callers go through `Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
 
 ### auxiliaryfiles/ - Auxiliary File Management
 
@@ -650,19 +636,6 @@ err := syncer.SyncPostConfig(ctx, files, endpoints)
 ### Main Entry Points
 
 All public entry points are per-endpoint — there's no built-in fan-out across endpoints in this package. Parallel deployment is the deployer's job in `pkg/controller/deployer`.
-
-```go
-// Synchronize configuration against a single endpoint (one-shot, opens a client internally)
-result, err := dataplane.Sync(ctx, endpoint, desiredConfig, auxFiles, opts)
-
-// Dry run (compare only, no changes)
-diff, err := dataplane.DryRun(ctx, endpoint, desiredConfig)
-
-// Diff against the live HAProxy config on the endpoint
-diff, err := dataplane.Diff(ctx, endpoint, desiredConfig)
-```
-
-### Client Interface
 
 ```go
 // Create a long-lived client for an endpoint
@@ -718,7 +691,7 @@ func TestSync_Integration(t *testing.T) {
     }
 
     // Requires running HAProxy with Dataplane API. Endpoint lives on
-    // pkg/dataplane (not a 'types' subpackage), and Sync takes one
+    // pkg/dataplane (not a 'types' subpackage), and a Client syncs one
     // endpoint at a time; cross-endpoint fan-out is the deployer's
     // job in pkg/controller/deployer.
     endpoint := &dataplane.Endpoint{
@@ -738,8 +711,11 @@ func TestSync_Integration(t *testing.T) {
         bind :80
     `
 
-    result, err := dataplane.Sync(t.Context(), endpoint, config, nil, nil)
+    client, err := dataplane.NewClient(t.Context(), endpoint)
+    require.NoError(t, err)
+    defer client.Close()
 
+    result, err := client.Sync(t.Context(), config, nil, nil)
     require.NoError(t, err)
     assert.True(t, result.Success)
 }
@@ -995,24 +971,10 @@ aux := &dataplane.AuxiliaryFiles{
     SSLCertificates: []auxiliaryfiles.SSLCertificate{...},
     GeneralFiles:    []auxiliaryfiles.GeneralFile{...},
 }
-result, err := dataplane.Sync(ctx, endpoint, haproxyConfig, aux, nil)
+result, err := client.Sync(ctx, haproxyConfig, aux, nil)
 ```
 
-There is no separate `client.SyncMaps` / `client.CleanupMaps` API; everything aux-related goes through `AuxiliaryFiles` + the orchestrator's three-phase workflow in `pkg/dataplane/orchestrator_*.go`. If you reach into `pkg/dataplane/auxiliaryfiles` directly, you're rebuilding what `Sync` already does.
-
-### Hand-rolling Transaction Lifecycle
-
-**Problem**: Calling `dpClient.CreateTransaction(ctx, version)` directly and trying to commit/abort manually. The Dataplane API has no rollback verb — you "abort" a transaction by issuing a `DELETE /v3/services/haproxy/transactions/<id>`, and you have to track the version-conflict retry loop yourself.
-
-```go
-// Bad — hand-rolling the transaction lifecycle; you own all the edge cases
-tx, err := dpClient.CreateTransaction(ctx, version)
-// ... operations ...
-// Now you have to: commit on success, delete on failure, retry on 409,
-// re-resolve the version on retry, …
-```
-
-**Solution**: Use `dataplane.Sync` or `client.Sync` for all production configuration changes. The controller no longer uses per-section transactions; the orchestrator pushes the full rendered config via `PushRawConfiguration` (reload path) or `PushRawConfigurationSkipReload` (runtime path for server field updates). `CreateTransaction` is retained only for enterprise integration tests.
+There is no separate `client.SyncMaps` / `client.CleanupMaps` API; everything aux-related goes through `AuxiliaryFiles` + the orchestrator's three-phase workflow in `pkg/dataplane/orchestrator_*.go`. If you reach into `pkg/dataplane/auxiliaryfiles` directly, you're rebuilding what `client.Sync` already does.
 
 ### Not Validating Before Parsing
 
@@ -1149,7 +1111,7 @@ _, err := dpClient.PushRawConfiguration(ctx, desired, version)
 
 ### Parallel Endpoint Sync
 
-`pkg/dataplane.Sync` is per-endpoint by design; cross-endpoint fan-out is the deployer's responsibility. Inside the controller, `pkg/controller/deployer.Component.deployToEndpoints` spawns one goroutine per endpoint via `sync.WaitGroup` (no across-endpoint cap — the raw-push model issues one config push per pod, so there is nothing to parallelize _within_ a single pod). For one-off scripts that need to push to multiple HAProxies in parallel with a global cap, an `errgroup` with `SetLimit(parallelism)` is the natural shape:
+`dataplane.Client` is per-endpoint by design; cross-endpoint fan-out is the deployer's responsibility. Inside the controller, `pkg/controller/deployer.Component.deployToEndpoints` spawns one goroutine per endpoint via `sync.WaitGroup` (no across-endpoint cap — the raw-push model issues one config push per pod, so there is nothing to parallelize _within_ a single pod). For one-off scripts that need to push to multiple HAProxies in parallel with a global cap, an `errgroup` with `SetLimit(parallelism)` is the natural shape:
 
 ```go
 g, gCtx := errgroup.WithContext(ctx)
@@ -1159,7 +1121,12 @@ results := make([]*dataplane.SyncResult, len(endpoints))
 for i, endpoint := range endpoints {
     i, endpoint := i, endpoint
     g.Go(func() error {
-        result, err := dataplane.Sync(gCtx, endpoint, config, auxFiles, nil)
+        cli, err := dataplane.NewClient(gCtx, endpoint)
+        if err != nil {
+            return err
+        }
+        defer cli.Close()
+        result, err := cli.Sync(gCtx, config, auxFiles, nil)
         results[i] = result
         return err
     })
@@ -1191,21 +1158,17 @@ for _, endpoint := range endpoints {
 
 ## Troubleshooting
 
-### Transaction Timeouts
+### Dataplane API Connectivity
 
 **Diagnosis:**
 
 1. Check Dataplane API health
 2. Verify network connectivity
 3. Review HAProxy logs
-4. Check for stuck transactions
 
 ```bash
 # Check Dataplane API health (the controller talks v3 only — see pkg/dataplane/client/version.go)
 curl -u admin:<password> http://haproxy-endpoint:5555/v3/info
-
-# View active transactions
-curl -u admin:<password> http://haproxy-endpoint:5555/v3/services/haproxy/transactions
 
 # HAProxy logs (run from inside the haptic namespace)
 kubectl logs -n haptic <haproxy-pod> -c haproxy

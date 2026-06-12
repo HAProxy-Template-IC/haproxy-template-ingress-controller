@@ -211,23 +211,6 @@ func TestComponent_Start_MissingKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "tls private key is empty")
 }
 
-func TestComponent_RegisterValidator_BeforeServerCreated(t *testing.T) {
-	config := &Config{
-		CertPEM: []byte("test-cert"),
-		KeyPEM:  []byte("test-key"),
-	}
-
-	component := New(testutil.NewTestLogger(), config, nil, nil)
-
-	// Server is nil at this point, should log warning but not panic
-	component.RegisterValidator("v1.ConfigMap", func(_ *webhook.ValidationContext) (bool, string, []string, error) {
-		return true, "", nil, nil
-	})
-
-	// Verify server is still nil
-	assert.Nil(t, component.server)
-}
-
 func TestComponent_resolveKind_Success(t *testing.T) {
 	config := &Config{
 		CertPEM: []byte("test-cert"),

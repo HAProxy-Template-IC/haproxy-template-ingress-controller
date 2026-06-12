@@ -16,6 +16,21 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
+// syncCRTListsViaGeneralFiles applies a CRT-list diff the same way production
+// does: CRT-lists are stored as general files (the native CRT-list API triggers
+// a reload without skip_reload support), so the diff is converted and synced
+// through the general-file storage API.
+func syncCRTListsViaGeneralFiles(ctx context.Context, c *client.DataplaneClient, diff *auxiliaryfiles.CRTListDiff) ([]string, error) {
+	if diff == nil {
+		return nil, nil
+	}
+	return auxiliaryfiles.SyncGeneralFiles(ctx, c, &auxiliaryfiles.FileDiff{
+		ToCreate: auxiliaryfiles.CRTListsToGeneralFiles(diff.ToCreate),
+		ToUpdate: auxiliaryfiles.CRTListsToGeneralFiles(diff.ToUpdate),
+		ToDelete: diff.ToDelete,
+	})
+}
+
 // skipIfCRTListNotSupported skips the test if the HAProxy version doesn't support CRT-list storage.
 // CRT-list storage requires DataPlane API v3.2+.
 func skipIfCRTListNotSupported(t *testing.T, env fixenv.Env) {
@@ -1015,7 +1030,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareCRTLists(ctx, client, desired)
 		require.NoError(t, err)
 
-		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = syncCRTListsViaGeneralFiles(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify crt-lists were created (stored as general files)
@@ -1056,7 +1071,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareCRTLists(ctx, client, desired)
 		require.NoError(t, err)
 
-		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = syncCRTListsViaGeneralFiles(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify crt-lists still exist (stored as general files)
@@ -1099,7 +1114,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		diff, err := auxiliaryfiles.CompareCRTLists(ctx, client, desired)
 		require.NoError(t, err)
 
-		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = syncCRTListsViaGeneralFiles(ctx, client, diff)
 		require.NoError(t, err)
 
 		// Verify crt-list was deleted (from general files storage)
@@ -1126,7 +1141,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		assert.Len(t, diff.ToDelete, 0, "should have 0 crt-lists to delete")
 
 		// Verify syncing again doesn't fail (idempotent)
-		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = syncCRTListsViaGeneralFiles(ctx, client, diff)
 		require.NoError(t, err, "sync should be idempotent")
 	})
 
@@ -1153,7 +1168,7 @@ func TestCRTListsCompareAndSync(t *testing.T) {
 		assert.Len(t, diff.ToDelete, 0, "should have 0 crt-lists to delete")
 
 		// Verify sync succeeds
-		_, err = auxiliaryfiles.SyncCRTLists(ctx, client, diff)
+		_, err = syncCRTListsViaGeneralFiles(ctx, client, diff)
 		require.NoError(t, err, "sync should succeed when creating new crt-list")
 
 		// Verify crt-list was actually created (in general files storage)
@@ -1339,7 +1354,7 @@ func TestAuxiliaryFilesIdempotency(t *testing.T) {
 				// Phase 1: Sync files
 				diff1, err := auxiliaryfiles.CompareCRTLists(ctx, dataplaneClient, desired)
 				require.NoError(t, err)
-				_, err = auxiliaryfiles.SyncCRTLists(ctx, dataplaneClient, diff1)
+				_, err = syncCRTListsViaGeneralFiles(ctx, dataplaneClient, diff1)
 				require.NoError(t, err)
 
 				// Phase 2: Compare again with SAME content - MUST have zero operations

@@ -32,24 +32,6 @@ const levelNameWarning = "WARNING"
 // Used by NewDynamicLogger and SetLevel.
 var globalLevel = new(slog.LevelVar)
 
-// NewLogger creates a new structured logger with the specified log level.
-// Supported levels (case-insensitive): ERROR, WARNING, INFO, DEBUG, TRACE.
-// Invalid levels default to INFO. Uses logfmt format for output.
-//
-// Note: This creates a logger with a static level. For dynamic level updates,
-// use NewDynamicLogger instead.
-func NewLogger(level string) *slog.Logger {
-	// Parse log level
-	slogLevel := ParseLogLevel(level)
-
-	// Create text handler with logfmt format
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slogLevel,
-	})
-
-	return slog.New(handler)
-}
-
 // NewDynamicLogger creates a logger with a dynamically adjustable level.
 // The level can be changed at runtime via SetLevel().
 // Supported levels (case-insensitive): ERROR, WARNING, INFO, DEBUG, TRACE.

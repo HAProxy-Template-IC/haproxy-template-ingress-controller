@@ -24,7 +24,8 @@ import (
 //
 // The two NIL-GUARD branches (1) and (2) are the defensive checks that
 // prevent a nil-pointer dereference when the Publisher was constructed
-// with `New()` (no listers) or with a partially-populated `Listers` —
+// with `NewWithListers(..., nil, ...)` (no listers) or with a partially-
+// populated `Listers` —
 // which is what the unit tests in this package use, and what the
 // pre-listers controller startup path used historically.
 //
@@ -69,7 +70,7 @@ func TestPublisher_CachedAuxFileStatus_NilGuards(t *testing.T) {
 	}
 
 	t.Run("nil listers — every sister function returns nil safely", func(t *testing.T) {
-		// Bare Publisher with no listers — what `New()` returns.
+		// Bare Publisher with no listers — what NewWithListers(..., nil, ...) returns.
 		p := &Publisher{}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {

@@ -62,14 +62,6 @@ func TestDefaultSyncOptions(t *testing.T) {
 	assert.Equal(t, 10*time.Second, opts.ReloadVerificationTimeout)
 }
 
-func TestDryRunOptions(t *testing.T) {
-	opts := DryRunOptions()
-
-	require.NotNil(t, opts)
-	assert.Equal(t, 1*time.Minute, opts.Timeout)
-	assert.False(t, opts.VerifyReload)
-}
-
 func TestDefaultAuxiliaryFiles(t *testing.T) {
 	aux := DefaultAuxiliaryFiles()
 

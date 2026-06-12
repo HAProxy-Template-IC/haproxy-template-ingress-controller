@@ -95,11 +95,6 @@ backend web-servers
 	// Display sync results
 	displaySyncResults(result)
 
-	// Example: Preview changes without applying (dry run)
-	if err := runDryRunExample(ctx, client, desiredConfig); err != nil {
-		log.Printf("Dry run failed: %v", err)
-	}
-
 	fmt.Println("\nExample completed successfully!")
 	return nil
 }
@@ -138,28 +133,6 @@ func displaySyncResults(result *dataplane.SyncResult) {
 			fmt.Printf("  %d. [%s] %s: %s\n", i+1, op.Type, op.Resource, op.Description)
 		}
 	}
-}
-
-// runDryRunExample demonstrates the dry-run functionality.
-func runDryRunExample(ctx context.Context, client *dataplane.Client, desiredConfig string) error {
-	fmt.Println("\n--- Dry Run Example ---")
-	modifiedConfig := desiredConfig + "\n    server web3 192.168.1.12:80 check inter 2s\n"
-
-	diff, err := client.DryRun(ctx, modifiedConfig)
-	if err != nil {
-		return err
-	}
-
-	if diff.HasChanges {
-		fmt.Printf("Would apply %d operations:\n", len(diff.PlannedOperations))
-		for i, op := range diff.PlannedOperations {
-			fmt.Printf("  %d. [%s] %s: %s\n", i+1, op.Type, op.Resource, op.Description)
-		}
-	} else {
-		fmt.Println("No changes needed")
-	}
-
-	return nil
 }
 
 // getEnv retrieves an environment variable with a fallback default value.

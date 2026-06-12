@@ -28,8 +28,8 @@
 //
 //   - top-level globals declared via the typed-nil pointer pattern
 //     in [BuildEngineDeclarations] / [addTypedResources];
-//   - `for _, gw := range gateways` iterating a *[]*Gateway from
-//     [typegen.WrapSlice];
+//   - `for _, gw := range gateways` iterating a *[]*Gateway built by
+//     wrapping each item through [typegen.WrapInto];
 //   - helper macro signatures (`macro X(r any) string`) receiving the
 //     typed pointer through an `any` parameter;
 //   - dig / toSlice / range chains inside the macro body and the
@@ -67,12 +67,7 @@ func renderWithTypedGlobal(t *testing.T, template string, gatewaysValue any, gwT
 	ptrSliceType := reflect.PointerTo(reflect.SliceOf(reflect.PointerTo(gwType)))
 	typedNil := reflect.New(ptrSliceType).Elem().Interface()
 
-	engine, err := NewScriggoWithDeclarations(
-		map[string]string{"test": template},
-		[]string{"test"},
-		nil, nil, nil,
-		map[string]any{"gateways": typedNil},
-	)
+	engine, err := New(map[string]string{"test": template}, &Options{EntryPoints: []string{"test"}, Declarations: map[string]any{"gateways": typedNil}})
 	require.NoError(t, err, "engine must compile the test template against the typed `gateways` global declaration")
 
 	out, err := engine.Render(context.Background(), "test", map[string]any{
@@ -100,12 +95,7 @@ func renderWithUntypedResources(t *testing.T, template string, gateways []any) s
 	}
 	names := resourceNames(stores)
 
-	engine, err := NewScriggoWithDeclarations(
-		map[string]string{"test": template},
-		[]string{"test"},
-		nil, nil, nil,
-		typedResourcesDecl(names...),
-	)
+	engine, err := New(map[string]string{"test": template}, &Options{EntryPoints: []string{"test"}, Declarations: typedResourcesDecl(names...)})
 	require.NoError(t, err, "engine must compile the test template against the typed `resources` global declaration")
 	_ = engine.HasTemplate("test")
 

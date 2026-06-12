@@ -100,9 +100,9 @@ type apiVersionPlural struct {
 // NewDirFetcher loads every YAML/JSON file in the given directory
 // (non-recursive) and returns a fetcher serving the schemas they
 // describe. An empty or non-existent directory returns an empty
-// fetcher (no error) — callers chain this with [Overlay] to fall
-// through to a builtin fetcher when the directory is missing
-// entries.
+// fetcher (no error); misses surface as [IsNotFound]-able errors so
+// callers can fall through to another fetcher when the directory is
+// missing entries.
 //
 // Errors at parse time fail loudly with the offending filename so
 // operators don't have to bisect a 50-CRD directory by hand. Files

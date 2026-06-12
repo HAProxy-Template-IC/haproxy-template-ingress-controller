@@ -33,76 +33,73 @@ import (
 // repeated calls.
 func TestGetCachedValidatorForVersion(t *testing.T) {
 	tests := []struct {
-		name        string
-		version     *Version
-		wantVersion string // ValidatorSet().Version() returns "v30" / "v31" / "v32" / "v33"
+		name     string
+		version  *Version
+		wantSlot *cachedValidatorSlot
 	}{
 		{
-			name:        "nil version falls back to v3.0 (most restrictive default)",
-			version:     nil,
-			wantVersion: "v30",
+			name:     "nil version falls back to v3.0 (most restrictive default)",
+			version:  nil,
+			wantSlot: validatorSlotV30,
 		},
 		{
-			name:        "Major 0 (zero value) falls back to v3.0",
-			version:     &Version{Major: 0, Minor: 0},
-			wantVersion: "v30",
+			name:     "Major 0 (zero value) falls back to v3.0",
+			version:  &Version{Major: 0, Minor: 0},
+			wantSlot: validatorSlotV30,
 		},
 		{
-			name:        "Major < 3 (e.g. legacy v2.x) falls back to v3.0",
-			version:     &Version{Major: 2, Minor: 8},
-			wantVersion: "v30",
+			name:     "Major < 3 (e.g. legacy v2.x) falls back to v3.0",
+			version:  &Version{Major: 2, Minor: 8},
+			wantSlot: validatorSlotV30,
 		},
 		{
-			name:        "v3.0 exact maps to v30 slot",
-			version:     &Version{Major: 3, Minor: 0},
-			wantVersion: "v30",
+			name:     "v3.0 exact maps to v30 slot",
+			version:  &Version{Major: 3, Minor: 0},
+			wantSlot: validatorSlotV30,
 		},
 		{
-			name:        "v3.1 exact maps to v31 slot",
-			version:     &Version{Major: 3, Minor: 1},
-			wantVersion: "v31",
+			name:     "v3.1 exact maps to v31 slot",
+			version:  &Version{Major: 3, Minor: 1},
+			wantSlot: validatorSlotV31,
 		},
 		{
-			name:        "v3.2 exact maps to v32 slot",
-			version:     &Version{Major: 3, Minor: 2},
-			wantVersion: "v32",
+			name:     "v3.2 exact maps to v32 slot",
+			version:  &Version{Major: 3, Minor: 2},
+			wantSlot: validatorSlotV32,
 		},
 		{
-			name:        "v3.3 exact maps to v33 slot",
-			version:     &Version{Major: 3, Minor: 3},
-			wantVersion: "v33",
+			name:     "v3.3 exact maps to v33 slot",
+			version:  &Version{Major: 3, Minor: 3},
+			wantSlot: validatorSlotV33,
 		},
 		{
-			name:        "v3.4 (newer minor than bundled) clamps to v33 (newest bundled schema)",
-			version:     &Version{Major: 3, Minor: 4},
-			wantVersion: "v33",
+			name:     "v3.4 (newer minor than bundled) clamps to v33 (newest bundled schema)",
+			version:  &Version{Major: 3, Minor: 4},
+			wantSlot: validatorSlotV33,
 		},
 		{
-			name:        "v3.99 (far-future minor) still clamps to v33",
-			version:     &Version{Major: 3, Minor: 99},
-			wantVersion: "v33",
+			name:     "v3.99 (far-future minor) still clamps to v33",
+			version:  &Version{Major: 3, Minor: 99},
+			wantSlot: validatorSlotV33,
 		},
 		{
-			name:        "Major > 3 (e.g. v4.x) clamps to v33 (no v4 slot exists)",
-			version:     &Version{Major: 4, Minor: 0},
-			wantVersion: "v33",
+			name:     "Major > 3 (e.g. v4.x) clamps to v33 (no v4 slot exists)",
+			version:  &Version{Major: 4, Minor: 0},
+			wantSlot: validatorSlotV33,
 		},
 		{
-			name:        "Major > 3 with high minor still clamps to v33",
-			version:     &Version{Major: 5, Minor: 7},
-			wantVersion: "v33",
+			name:     "Major > 3 with high minor still clamps to v33",
+			version:  &Version{Major: 5, Minor: 7},
+			wantSlot: validatorSlotV33,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := getCachedValidatorForVersion(tt.version)
-			// Use require.NotNil so a nil return halts the test
-			// instead of falling through to a nil-pointer panic on
-			// got.ValidatorSet().
 			require.NotNil(t, got, "getCachedValidatorForVersion must never return nil; nil-version callers expect a working default validator")
-			assert.Equal(t, tt.wantVersion, got.ValidatorSet().Version(),
-				"version %v must route to the %s validator slot", tt.version, tt.wantVersion)
+			assert.Same(t, tt.wantSlot.get(), got,
+				"version %v must route to the %d.%d validator slot", tt.version, tt.wantSlot.major, tt.wantSlot.minor)
 		})
 	}
 }

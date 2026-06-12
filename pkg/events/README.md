@@ -48,11 +48,9 @@ Forgetting step 3 is a common footgun: publishes succeed silently (buffered) but
 
 ## Typed Subscriptions
 
-Three filter patterns on top of the base `Subscribe`:
+Filter pattern on top of the base `Subscribe`:
 
-- **`SubscribeTypes(name, bufferSize, types...)`** — filters at the bus, only delivers events whose `EventType()` is in the list. Cheapest when you only care about a handful of types.
-- **`Subscribe[T](ctx, bus, bufferSize) <-chan T`** — generic helper that returns a typed channel for a single event type. No type assertion in the consumer loop.
-- **`SubscribeMultiple(ctx, bus, bufferSize, types...)`** — like `SubscribeTypes` but ties the subscription lifetime to a `context.Context` for automatic cleanup.
+- **`SubscribeTypes(name, bufferSize, types...)`** — filters at the bus, only delivers events whose `EventType()` is in the list. Cheapest when you only care about a handful of types. Variants: `SubscribeTypesLeaderOnly` (for components that subscribe after leader election) and `SubscribeTypesLossy` (silent drops, for observability consumers).
 
 The commentator and anything logging "everything" should use plain `Subscribe` — filtering there would just hide events.
 
