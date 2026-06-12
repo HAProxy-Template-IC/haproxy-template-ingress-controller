@@ -534,5 +534,5 @@ func TestReconciler_HandleEvent_UnknownEvent(t *testing.T) {
 
 	// Should not panic for unknown events
 	unknownEvent := events.NewReconciliationCompletedEvent(0, nil)
-	reconciler.handleEvent(unknownEvent)
+	reconciler.HandleEvent(unknownEvent)
 }

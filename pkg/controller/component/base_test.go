@@ -165,3 +165,63 @@ func TestBase_PanicHandlerInvoked(t *testing.T) {
 		t.Fatal("base failed to shut down")
 	}
 }
+
+// TestBase_FlushPending asserts that events buffered before FlushPending are
+// discarded without dispatch, while events published afterwards are
+// dispatched normally. This is the leadership-term boundary contract:
+// leader-only components flush at Start entry so a previous term's buffered
+// events cannot replay into the new term.
+func TestBase_FlushPending(t *testing.T) {
+	bus := busevents.NewEventBus(16)
+
+	h := &recordingHandler{observed: make(chan struct{})}
+	base := New(&Config{
+		EventBus:   bus,
+		Logger:     discardLogger(),
+		Name:       "flush-test",
+		BufferSize: 16,
+		Handler:    h,
+		EventTypes: []string{events.EventTypeConfigResourceChanged},
+	})
+
+	bus.Start()
+
+	// Buffer three "previous term" events before the loop runs.
+	for range 3 {
+		bus.Publish(events.NewConfigResourceChangedEvent(nil))
+	}
+	// Give the bus goroutine time to route them into the subscription buffer.
+	assert.Eventually(t, func() bool {
+		base.FlushPending()
+		return true
+	}, time.Second, 10*time.Millisecond)
+	// Drain anything routed after the first flush attempt.
+	time.Sleep(50 * time.Millisecond)
+	base.FlushPending()
+
+	ctx := t.Context()
+	done := make(chan struct{})
+	go func() {
+		_ = base.Start(ctx)
+		close(done)
+	}()
+
+	// A "current term" event must still be dispatched.
+	bus.Publish(events.NewConfigResourceChangedEvent(nil))
+
+	select {
+	case <-h.observed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("post-flush event was not dispatched")
+	}
+
+	assert.Equal(t, int32(1), h.received.Load(),
+		"only the post-flush event may reach the handler; flushed events must be discarded")
+
+	base.Stop()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("base failed to shut down")
+	}
+}

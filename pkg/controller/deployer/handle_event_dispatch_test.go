@@ -19,10 +19,10 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// handleEvent is the deployer's two-case dispatch table. The
+// HandleEvent is the deployer's two-case dispatch table. The
 // existing TestComponent_HandleEvent covers the happy paths for
 // non-deployment events (silent ignore) and DeploymentScheduledEvent
-// (routed to handleDeploymentScheduled). The DeploymentCancelRequestEvent
+// (routed to performDeployment). The DeploymentCancelRequestEvent
 // dispatch was uncovered: a regression that removed the cancel case
 // from the type switch would silently drop EVERY scheduler timeout
 // recovery — deployments stuck past the scheduler's timeout would
@@ -30,7 +30,7 @@ import (
 // but the deployer would no longer act on it).
 //
 // This file pins the cancel-event dispatch by going through
-// handleEvent (not handleDeploymentCancelRequest directly, which
+// HandleEvent (not handleDeploymentCancelRequest directly, which
 // is already tested in deployment_lifecycle_test.go). The proof of
 // dispatch is the side effect: with a fake deployment installed,
 // the cancel func MUST be invoked.
@@ -39,6 +39,7 @@ func TestComponent_HandleEvent_RoutesDeploymentCancelRequest(t *testing.T) {
 	bus := busevents.NewEventBus(10)
 	bus.Start()
 	c := createTestDeployer(bus)
+	c.ctx = context.Background()
 
 	const cid = "deployment-to-cancel"
 	cancelInvoked, _ := installFakeDeployment(c, cid)
@@ -48,7 +49,7 @@ func TestComponent_HandleEvent_RoutesDeploymentCancelRequest(t *testing.T) {
 		events.WithCorrelation(cid, ""),
 	)
 
-	c.handleEvent(context.Background(), event)
+	c.HandleEvent(event)
 
 	select {
 	case <-cancelInvoked:
@@ -56,7 +57,7 @@ func TestComponent_HandleEvent_RoutesDeploymentCancelRequest(t *testing.T) {
 		// which matched the correlation ID and invoked the active cancel func.
 	case <-time.After(time.Second):
 		require.Fail(t,
-			"DeploymentCancelRequestEvent MUST be routed by handleEvent's "+
+			"DeploymentCancelRequestEvent MUST be routed by HandleEvent's "+
 				"type switch to handleDeploymentCancelRequest. A regression "+
 				"that removed the cancel case would silently drop EVERY "+
 				"scheduler timeout recovery — stuck deployments would stay "+

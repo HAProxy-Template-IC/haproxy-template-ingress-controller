@@ -27,21 +27,21 @@ func (c *Component) handleDeploymentCancelRequest(event *events.DeploymentCancel
 
 	// Check if there's an active deployment with matching correlation ID
 	if c.activeCorrelationID == "" || c.activeCancelFunc == nil {
-		c.logger.Debug("Received cancel request but no deployment in progress",
+		c.Logger().Debug("Received cancel request but no deployment in progress",
 			"requested_correlation_id", correlationID,
 			"reason", event.Reason)
 		return
 	}
 
 	if c.activeCorrelationID != correlationID {
-		c.logger.Debug("Received cancel request but correlation ID does not match",
+		c.Logger().Debug("Received cancel request but correlation ID does not match",
 			"requested_correlation_id", correlationID,
 			"active_correlation_id", c.activeCorrelationID,
 			"reason", event.Reason)
 		return
 	}
 
-	c.logger.Info("Cancelling in-progress deployment",
+	c.Logger().Info("Cancelling in-progress deployment",
 		"correlation_id", correlationID,
 		"reason", event.Reason)
 
@@ -59,7 +59,7 @@ func (c *Component) cancelActiveDeployment(reason string) {
 		return
 	}
 
-	c.logger.Info("Cancelling active deployment",
+	c.Logger().Info("Cancelling active deployment",
 		"correlation_id", c.activeCorrelationID,
 		"reason", reason)
 

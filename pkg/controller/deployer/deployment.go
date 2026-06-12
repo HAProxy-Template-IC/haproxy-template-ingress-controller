@@ -21,51 +21,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-// handleDeploymentScheduled implements "latest wins" coalescing for deployment scheduled events.
-//
-// When multiple coalescible DeploymentScheduledEvents arrive while deployment is in progress,
-// intermediate events are superseded - only the latest pending event is processed.
-// This prevents queue backlog where deployments can't keep up with high-frequency validation.
-//
-// Non-coalescible events (e.g., from drift_prevention, validation_fallback) are always
-// processed and never skipped.
-//
-// Uses the centralized coalesce.DrainLatest utility for consistent behavior across components.
-func (c *Component) handleDeploymentScheduled(ctx context.Context, event *events.DeploymentScheduledEvent) {
-	// Process current event
-	c.performDeployment(ctx, event)
-
-	// After deployment completes, drain the event channel for any pending coalescible events.
-	// Since the event loop is single-threaded, events buffer in eventChan while performDeployment executes.
-	// We process only the latest coalescible event.
-	for {
-		latest, supersededCount := coalesce.DrainLatest[*events.DeploymentScheduledEvent](
-			c.eventChan,
-			func(e busevents.Event) { c.handleEvent(ctx, e) }, // Handle non-coalescible events
-		)
-		if latest == nil {
-			return
-		}
-
-		if supersededCount > 0 {
-			c.logger.Debug("Coalesced deployment scheduled events",
-				"superseded_count", supersededCount,
-				"processing", latest.CorrelationID())
-		}
-		c.performDeployment(ctx, latest)
-	}
-}
-
 // performDeployment executes a single deployment.
-// This method is called by handleDeploymentScheduled after coalescing logic.
+//
+// This method is called from HandleEvent for each dispatched
+// DeploymentScheduledEvent. "Latest wins" coalescing of pending coalescible
+// DeploymentScheduledEvents is provided by the embedded component.Base via
+// the CoalescesOn hook (see component.go) — after each dispatch the Base
+// drains the subscription channel and re-dispatches only the latest pending
+// coalescible event, so intermediate configs queued during a deployment are
+// superseded instead of deployed one by one.
 //
 // Defensive: drops duplicate events if a deployment is already in progress.
 func (c *Component) performDeployment(ctx context.Context, event *events.DeploymentScheduledEvent) {
@@ -78,7 +48,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 	// Defensive check: atomically set deploymentInProgress from false to true
 	// This prevents concurrent deployments if scheduler has bugs
 	if !c.deploymentInProgress.CompareAndSwap(false, true) {
-		c.logger.Error("dropping duplicate DeploymentScheduledEvent - deployment already in progress",
+		c.Logger().Error("dropping duplicate DeploymentScheduledEvent - deployment already in progress",
 			"reason", event.Reason,
 			"endpoint_count", len(event.Endpoints),
 			"correlation_id", correlationID)
@@ -108,7 +78,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		c.cancelMu.Unlock()
 	}()
 
-	c.logger.Debug("Deployment scheduled, starting execution",
+	c.Logger().Debug("Deployment scheduled, starting execution",
 		"reason", event.Reason,
 		"endpoint_count", len(event.Endpoints),
 		"config_bytes", len(event.Config),
@@ -146,14 +116,14 @@ func (c *Component) deployToEndpoints(
 	startTime := time.Now()
 
 	if len(endpoints) == 0 {
-		c.logger.Error("no valid endpoints to deploy to")
+		c.Logger().Error("no valid endpoints to deploy to")
 		// Publish completion event so downstream components know deployment didn't happen.
 		// Forward the status patches anyway so the StatusApplier can still write the
 		// "deployed" variant if appropriate (the zero-endpoint guard in StatusApplier
 		// will skip the apply, but the data is on the event for consistency).
 		// ContentChecksum stays empty — nothing was deployed, so the scheduler
 		// must not record this as a successful deploy.
-		c.eventBus.Publish(events.NewDeploymentCompletedEvent(
+		c.EventBus().Publish(events.NewDeploymentCompletedEvent(
 			&events.DeploymentResult{StatusPatches: statusPatches},
 			events.WithCorrelation(correlationID, correlationID),
 		))
@@ -173,7 +143,7 @@ func (c *Component) deployToEndpoints(
 	// signal.
 	checksum := contentChecksum
 
-	c.logger.Debug("Starting deployment",
+	c.Logger().Debug("Starting deployment",
 		"reason", reason,
 		"endpoint_count", len(endpoints),
 		"config_bytes", len(config),
@@ -181,7 +151,7 @@ func (c *Component) deployToEndpoints(
 		"correlation_id", correlationID)
 
 	// Publish DeploymentStartedEvent with correlation
-	c.eventBus.Publish(events.NewDeploymentStartedEvent(
+	c.EventBus().Publish(events.NewDeploymentStartedEvent(
 		endpoints,
 		events.WithCorrelation(correlationID, correlationID),
 	))
@@ -208,7 +178,7 @@ func (c *Component) deployToEndpoints(
 
 	totalDurationMs := time.Since(startTime).Milliseconds()
 
-	c.logger.Debug("Deployment completed",
+	c.Logger().Debug("Deployment completed",
 		"total_endpoints", len(endpoints),
 		"succeeded", state.successCount,
 		"failed", state.failureCount,
@@ -223,7 +193,7 @@ func (c *Component) deployToEndpoints(
 	// lastDeployedConfigHash cache) describe what THIS deployment carried —
 	// not what the latest in-memory render happens to hold at completion
 	// time (which an intervening reconcile may have changed).
-	c.eventBus.Publish(events.NewDeploymentCompletedEvent(
+	c.EventBus().Publish(events.NewDeploymentCompletedEvent(
 		&events.DeploymentResult{
 			Total:              len(endpoints),
 			Succeeded:          int(state.successCount),
@@ -248,7 +218,7 @@ func (c *Component) deployToEndpoints(
 	// non-drift deploy: drift checks are GET-only and carry an already-deployed
 	// (hence already-published) checksum.
 	if state.successCount > 0 && runtimeConfigName != "" && contentChecksum != "" && reason != events.TriggerReasonDriftPrevention {
-		c.eventBus.Publish(events.NewDeployedConfigPublishRequest(
+		c.EventBus().Publish(events.NewDeployedConfigPublishRequest(
 			runtimeConfigName, runtimeConfigNamespace, config, auxFiles, contentChecksum,
 		))
 	}
@@ -283,7 +253,7 @@ func (c *Component) processEndpointDeployment(
 ) {
 	// Check if context is already cancelled (e.g., timeout fired)
 	if ctx.Err() != nil {
-		c.logger.Debug("Skipping endpoint deployment - context cancelled",
+		c.Logger().Debug("Skipping endpoint deployment - context cancelled",
 			"endpoint", ep.URL,
 			"pod", ep.PodName,
 			"error", ctx.Err(),
@@ -320,7 +290,7 @@ func (c *Component) handleEndpointFailure(
 	correlationID string,
 	state *deploymentState,
 ) {
-	c.logger.Error("deployment failed for endpoint",
+	c.Logger().Error("deployment failed for endpoint",
 		"endpoint", ep.URL,
 		"pod", ep.PodName,
 		"error", err,
@@ -328,7 +298,7 @@ func (c *Component) handleEndpointFailure(
 		"correlation_id", correlationID)
 
 	// Publish InstanceDeploymentFailedEvent with correlation
-	c.eventBus.Publish(events.NewInstanceDeploymentFailedEvent(
+	c.EventBus().Publish(events.NewInstanceDeploymentFailedEvent(
 		ep,
 		err.Error(),
 		true, // retryable
@@ -340,7 +310,7 @@ func (c *Component) handleEndpointFailure(
 		syncMetadata := &events.SyncMetadata{
 			Error: err.Error(),
 		}
-		c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
+		c.EventBus().Publish(events.NewConfigAppliedToPodEvent(
 			runtimeConfigName,
 			runtimeConfigNamespace,
 			ep.PodName,
@@ -366,7 +336,7 @@ func (c *Component) handleEndpointSuccess(
 	correlationID string,
 	state *deploymentState,
 ) {
-	c.logger.Debug("Deployment succeeded for endpoint",
+	c.Logger().Debug("Deployment succeeded for endpoint",
 		"endpoint", ep.URL,
 		"pod", ep.PodName,
 		"duration_ms", durationMs,
@@ -374,7 +344,7 @@ func (c *Component) handleEndpointSuccess(
 		"correlation_id", correlationID)
 
 	// Publish InstanceDeployedEvent with correlation
-	c.eventBus.Publish(events.NewInstanceDeployedEvent(
+	c.EventBus().Publish(events.NewInstanceDeployedEvent(
 		ep,
 		durationMs,
 		syncResult.ReloadTriggered,
@@ -410,7 +380,7 @@ func (c *Component) handleEndpointSuccess(
 	// publish.
 	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
 		syncMetadata := syncResultToMetadata(syncResult)
-		c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
+		c.EventBus().Publish(events.NewConfigAppliedToPodEvent(
 			runtimeConfigName,
 			runtimeConfigNamespace,
 			ep.PodName,
@@ -507,7 +477,7 @@ func (c *Component) deployToSingleEndpoint(
 		c.versionCache.set(endpoint.URL, result.PostSyncVersion, cachedParsed, contentChecksum)
 	}
 
-	c.logger.Debug("sync completed for endpoint",
+	c.Logger().Debug("sync completed for endpoint",
 		"endpoint", endpoint.URL,
 		"pod", endpoint.PodName,
 		"applied_operations", len(result.AppliedOperations),

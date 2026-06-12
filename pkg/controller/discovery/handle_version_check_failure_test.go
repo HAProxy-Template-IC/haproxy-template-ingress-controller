@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 )
 
@@ -46,16 +47,24 @@ import (
 // for state-management testing).
 
 // newTestComponentWithoutHAProxy builds a Component instance with
-// just the fields handleVersionCheckFailure touches. This avoids the
-// New() constructor's local HAProxy version detection so the test
-// runs in environments without the haproxy binary.
+// just the fields handleVersionCheckFailure touches (plus the embedded
+// component.Base the handlers log through). This avoids the New()
+// constructor's local HAProxy version detection so the test runs in
+// environments without the haproxy binary.
 func newTestComponentWithoutHAProxy(t *testing.T) *Component {
 	t.Helper()
-	_, logger := testutil.NewTestBusAndLogger()
-	return &Component{
-		logger:         logger,
+	bus, logger := testutil.NewTestBusAndLogger()
+	c := &Component{
 		pendingRetries: make(map[string]*retryState),
 	}
+	c.Base = component.New(&component.Config{
+		EventBus:   bus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: 1,
+		Handler:    c,
+	})
+	return c
 }
 
 func TestHandleVersionCheckFailure_NewPodAddsEntryWithCountOne(t *testing.T) {

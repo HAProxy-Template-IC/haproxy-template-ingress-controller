@@ -15,12 +15,12 @@
 package controller
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
@@ -53,10 +53,9 @@ const (
 //   - DeploymentStartedEvent/CompletedEvent → updates deployment state
 //   - InstanceDeploymentFailedEvent → tracks failed endpoints
 type StateCache struct {
-	eventBus        *busevents.EventBus
+	*component.Base
+
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent
-	logger          *slog.Logger
-	eventChan       <-chan busevents.Event
 
 	// Cached state (thread-safe)
 	mu                   sync.RWMutex
@@ -115,48 +114,37 @@ var _ debug.StateProvider = (*StateCache)(nil)
 //	go stateCache.Start(ctx)  // Process events in background
 //	eventBus.Start()          // Release buffered events
 func NewStateCache(eventBus *busevents.EventBus, resourceWatcher *resourcewatcher.ResourceWatcherComponent, logger *slog.Logger) *StateCache {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes("state-cache", 100,
-		events.EventTypeConfigValidated,
-		events.EventTypeCredentialsUpdated,
-		events.EventTypeTemplateRendered,
-		events.EventTypeTemplateRenderFailed,
-		events.EventTypeReconciliationTriggered,
-		events.EventTypeValidationCompleted,
-		events.EventTypeValidationFailed,
-		events.EventTypeDeploymentStarted,
-		events.EventTypeDeploymentCompleted,
-		events.EventTypeInstanceDeploymentFailed,
-	)
-
-	return &StateCache{
-		eventBus:        eventBus,
+	sc := &StateCache{
 		resourceWatcher: resourceWatcher,
-		logger:          logger,
-		eventChan:       eventChan,
 	}
+	// Subscribe to EventBus during construction (before EventBus.Start())
+	// This ensures proper startup synchronization without timing-based sleeps.
+	// Use typed subscription to only receive events we handle (reduces buffer pressure).
+	sc.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       "state-cache",
+		BufferSize: 100,
+		Handler:    sc,
+		EventTypes: []string{
+			events.EventTypeConfigValidated,
+			events.EventTypeCredentialsUpdated,
+			events.EventTypeTemplateRendered,
+			events.EventTypeTemplateRenderFailed,
+			events.EventTypeReconciliationTriggered,
+			events.EventTypeValidationCompleted,
+			events.EventTypeValidationFailed,
+			events.EventTypeDeploymentStarted,
+			events.EventTypeDeploymentCompleted,
+			events.EventTypeInstanceDeploymentFailed,
+		},
+	})
+	return sc
 }
 
-// Start begins processing events from the EventBus.
-//
-// The component is already subscribed to the EventBus (subscription happens in NewStateCache()),
-// so this method only processes events. This method blocks until the context is cancelled.
-func (sc *StateCache) Start(ctx context.Context) error {
-	for {
-		select {
-		case event := <-sc.eventChan:
-			sc.handleEvent(event)
-
-		case <-ctx.Done():
-			return nil
-		}
-	}
-}
-
-// handleEvent processes events and updates cached state.
-func (sc *StateCache) handleEvent(event busevents.Event) {
+// HandleEvent implements component.EventHandler: it processes events and
+// updates cached state.
+func (sc *StateCache) HandleEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.ConfigValidatedEvent:
 		sc.handleConfigValidated(e)
@@ -184,7 +172,7 @@ func (sc *StateCache) handleEvent(event busevents.Event) {
 func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 	cfg, ok := e.Config.(*coreconfig.Config)
 	if !ok {
-		sc.logger.Error("type assertion failed for ConfigValidatedEvent config",
+		sc.Logger().Error("type assertion failed for ConfigValidatedEvent config",
 			"expected", "*coreconfig.Config",
 			"got", fmt.Sprintf("%T", e.Config))
 		return
@@ -202,7 +190,7 @@ func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 		logging.SetLevel(cfg.Logging.Level)
 		newLevel := logging.GetLevel()
 		if oldLevel != newLevel {
-			sc.logger.Info("Log level updated from config",
+			sc.Logger().Info("Log level updated from config",
 				"old_level", oldLevel,
 				"new_level", newLevel)
 		}
@@ -212,7 +200,7 @@ func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 func (sc *StateCache) handleCredentialsUpdated(e *events.CredentialsUpdatedEvent) {
 	creds, ok := e.Credentials.(*coreconfig.Credentials)
 	if !ok {
-		sc.logger.Error("type assertion failed for CredentialsUpdatedEvent credentials",
+		sc.Logger().Error("type assertion failed for CredentialsUpdatedEvent credentials",
 			"expected", "*coreconfig.Credentials",
 			"got", fmt.Sprintf("%T", e.Credentials))
 		return

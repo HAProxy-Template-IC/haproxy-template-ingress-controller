@@ -72,6 +72,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -134,13 +135,17 @@ type GVRResolver = statusapplier.GVRResolver
 // statusapplier.Component. State (cachedResources, checksum cache) lives
 // only on the active leader; replicas in standby just observe events.
 type Component struct {
-	eventBus        *busevents.EventBus
-	eventChan       <-chan busevents.Event
+	*component.Base
+
 	dynamicClient   dynamic.Interface
 	discoveryClient discovery.DiscoveryInterface
 	gvrResolver     GVRResolver
-	logger          *slog.Logger
 	healthTracker   *lifecycle.HealthTracker
+
+	// ctx is the event-loop context captured by Start. Handlers run only
+	// on the loop goroutine and use it for Kubernetes API calls so SSA
+	// applies and orphan deletes abort on shutdown.
+	ctx context.Context
 
 	// ownNamespace is the namespace the controller is deployed into. Used
 	// to enforce RestrictToOwnNamespace; also the safe target for the
@@ -242,27 +247,10 @@ func New(cfg *Config) *Component {
 		managedBy = DefaultManagedByValue
 	}
 
-	bus := cfg.EventBus
-	// SubscribeTypes (not Subscribe) — the bus prefilters by event type at
-	// publish, so the buffer holds ONLY the events we dispatch on. With a plain
-	// Subscribe the buffer fills within seconds during conformance setup
-	// (resource.index.updated and reconciliation.* fire at kHz) and overflows,
-	// silently dropping reconciliation.completed — the event carrying the owned
-	// resources to apply. statusapplier hit exactly that in CI and uses the same
-	// narrowed subscription; this is its sibling.
-	eventChan := bus.SubscribeTypes(ComponentName, EventBufferSize,
-		events.EventTypeReconciliationCompleted,
-		events.EventTypeBecameLeader,
-		events.EventTypeLostLeadership,
-	)
-
-	return &Component{
-		eventBus:               bus,
-		eventChan:              eventChan,
+	c := &Component{
 		dynamicClient:          cfg.DynamicClient,
 		discoveryClient:        cfg.DiscoveryClient,
 		gvrResolver:            cfg.GVRResolver,
-		logger:                 logger.With("component", ComponentName),
 		healthTracker:          lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 		ownNamespace:           cfg.OwnNamespace,
 		restrictToOwnNamespace: cfg.RestrictToOwnNamespace,
@@ -271,34 +259,49 @@ func New(cfg *Config) *Component {
 		checksumCache:          make(map[string]string),
 		lastAppliedKeys:        make(map[string]appliedKeyMeta),
 	}
+	// Typed subscription (EventTypes, not a catch-all) — the bus prefilters
+	// by event type at publish, so the buffer holds ONLY the events we
+	// dispatch on. With a catch-all subscription the buffer fills within
+	// seconds during conformance setup (resource.index.updated and
+	// reconciliation.* fire at kHz) and overflows, silently dropping
+	// reconciliation.completed — the event carrying the owned resources to
+	// apply. statusapplier hit exactly that in CI and uses the same narrowed
+	// subscription; this is its sibling.
+	c.Base = component.New(&component.Config{
+		EventBus:   cfg.EventBus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: EventBufferSize,
+		Handler:    c,
+		EventTypes: []string{
+			events.EventTypeReconciliationCompleted,
+			events.EventTypeBecameLeader,
+			events.EventTypeLostLeadership,
+		},
+	})
+	return c
 }
-
-// Name returns the component identifier (lifecycle.Component).
-func (c *Component) Name() string { return ComponentName }
 
 // HealthCheck returns nil if the component is healthy.
 func (c *Component) HealthCheck() error { return c.healthTracker.Check() }
 
-// Start runs the event loop until ctx is cancelled.
+// Start captures the loop context for handlers and runs the embedded
+// component.Base event loop until the context is cancelled.
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Debug("resource applier starting")
-	for {
-		select {
-		case event := <-c.eventChan:
-			c.healthTracker.StartProcessing()
-			c.handleEvent(ctx, event)
-			c.healthTracker.EndProcessing()
-		case <-ctx.Done():
-			c.logger.Info("resource applier shutting down", "reason", ctx.Err())
-			return nil
-		}
-	}
+	c.ctx = ctx
+	return c.Base.Start(ctx)
 }
 
-// handleEvent fans out by event type. Mirror of statusapplier.handleEvent
-// shape — different events because resource lifecycle is "rendered → deployed
-// (= apply)" rather than the four-phase status patches use.
-func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
+// HandleEvent implements component.EventHandler: it fans out by event type,
+// tracking processing time for the health check. Mirror of statusapplier's
+// HandleEvent shape — different events because resource lifecycle is
+// "rendered → deployed (= apply)" rather than the four-phase status patches
+// use.
+func (c *Component) HandleEvent(event busevents.Event) {
+	c.healthTracker.StartProcessing()
+	defer c.healthTracker.EndProcessing()
+
+	ctx := c.ctx
 	switch e := event.(type) {
 	case *events.ReconciliationCompletedEvent:
 		c.handleReconciliationCompleted(ctx, e)
@@ -352,7 +355,7 @@ func (c *Component) handleBecameLeader(ctx context.Context) {
 	c.checksumCache = make(map[string]string)
 	c.lastAppliedKeys = make(map[string]appliedKeyMeta)
 	c.mu.Unlock()
-	c.logger.Info("became leader, clearing resource checksum cache")
+	c.Logger().Info("became leader, clearing resource checksum cache")
 
 	if c.discoveryClient != nil {
 		c.recoverManagedResources(ctx)
@@ -366,7 +369,7 @@ func (c *Component) handleBecameLeader(ctx context.Context) {
 // type list.
 func (c *Component) recoverManagedResources(ctx context.Context) {
 	if c.ownNamespace == "" {
-		c.logger.Debug("skipping managed-resource recovery — OwnNamespace is empty")
+		c.Logger().Debug("skipping managed-resource recovery — OwnNamespace is empty")
 		return
 	}
 	apiResourceLists, err := c.discoveryClient.ServerPreferredNamespacedResources()
@@ -376,7 +379,7 @@ func (c *Component) recoverManagedResources(ctx context.Context) {
 	// covered by subsequent reconciliations as the controller observes
 	// applies on those types.
 	if err != nil && len(apiResourceLists) == 0 {
-		c.logger.Warn("managed-resource recovery failed: discovery returned no resources", "error", err)
+		c.Logger().Warn("managed-resource recovery failed: discovery returned no resources", "error", err)
 		return
 	}
 
@@ -398,7 +401,7 @@ func (c *Component) recoverManagedResources(ctx context.Context) {
 		}
 	}
 	if recovered > 0 || skipped > 0 {
-		c.logger.Info("managed-resource recovery complete",
+		c.Logger().Info("managed-resource recovery complete",
 			"recovered", recovered, "skipped_types", skipped)
 	}
 }
@@ -493,7 +496,7 @@ func hasOwnerRefUID(obj *unstructured.Unstructured, uid string) bool {
 func (c *Component) listSafely(ctx context.Context, gvr schema.GroupVersionResource, labelSelector string) (items *unstructuredList, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			c.logger.Debug("dynamic-client panic during managed-resource recovery, skipping",
+			c.Logger().Debug("dynamic-client panic during managed-resource recovery, skipping",
 				"gvr", gvr.String(), "panic", r)
 			items = nil
 			err = fmt.Errorf("recovered: %v", r)
@@ -527,7 +530,7 @@ func (c *Component) handleLostLeadership() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.isLeader {
-		c.logger.Info("lost leadership, pausing resource applies")
+		c.Logger().Info("lost leadership, pausing resource applies")
 	}
 	c.isLeader = false
 }
@@ -554,7 +557,7 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	deleted := c.pruneOrphans(ctx, desiredKeys)
 
 	if applied+skipped+deleted+refused > 0 {
-		c.logger.Debug("resource applier pass complete",
+		c.Logger().Debug("resource applier pass complete",
 			"applied", applied, "skipped", skipped,
 			"deleted", deleted, "refused", refused,
 			"duration_ms", time.Since(startTime).Milliseconds())
@@ -579,7 +582,7 @@ const (
 func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource, desiredKeys map[string]appliedKeyMeta) applyOutcome {
 	gvr, err := c.gvrResolver.Resolve(r.APIVersion, r.Kind)
 	if err != nil {
-		c.logger.Error("failed to resolve GVR for rendered resource",
+		c.Logger().Error("failed to resolve GVR for rendered resource",
 			"api_version", r.APIVersion, "kind", r.Kind, "error", err)
 		return applyOutcomeError
 	}
@@ -600,7 +603,7 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 	object := c.prepareForApply(r.Object, partial)
 	payload, err := json.Marshal(object)
 	if err != nil {
-		c.logger.Error("failed to marshal rendered resource",
+		c.Logger().Error("failed to marshal rendered resource",
 			"namespace", r.Namespace, "name", r.Name, "kind", r.Kind, "error", err)
 		return applyOutcomeError
 	}
@@ -624,7 +627,7 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 		},
 	)
 	if err != nil {
-		c.logger.Error("failed to apply rendered resource",
+		c.Logger().Error("failed to apply rendered resource",
 			"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(),
 			"retriable", isRetriable(err), "error", err)
 		return applyOutcomeError
@@ -659,7 +662,7 @@ func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]app
 			ctx, meta.Name, metav1.DeleteOptions{},
 		)
 		if err != nil && !apierrors.IsNotFound(err) {
-			c.logger.Error("failed to delete orphan resource",
+			c.Logger().Error("failed to delete orphan resource",
 				"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String(),
 				"error", err)
 			// Keep it in the cache so we'll try again next reconciliation.
@@ -687,7 +690,7 @@ func (c *Component) refused(r *templating.RenderedResource) bool {
 		return false
 	}
 	if r.Namespace == "" || (c.ownNamespace != "" && r.Namespace != c.ownNamespace) {
-		c.logger.Warn("refusing to apply resource outside controller namespace",
+		c.Logger().Warn("refusing to apply resource outside controller namespace",
 			"target_namespace", r.Namespace,
 			"controller_namespace", c.ownNamespace,
 			"kind", r.Kind, "name", r.Name,

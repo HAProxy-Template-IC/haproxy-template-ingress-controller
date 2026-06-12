@@ -49,8 +49,8 @@ func TestNewStateCache(t *testing.T) {
 	cache := NewStateCache(bus, nil, logger)
 
 	require.NotNil(t, cache)
-	assert.NotNil(t, cache.eventChan)
-	assert.Equal(t, bus, cache.eventBus)
+	assert.NotNil(t, cache.Base)
+	assert.Equal(t, bus, cache.EventBus())
 	assert.Nil(t, cache.resourceWatcher)
 }
 

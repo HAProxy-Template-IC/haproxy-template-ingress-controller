@@ -72,6 +72,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -125,12 +126,16 @@ type GVRResolver interface {
 //	BecameLeaderEvent → clear checksum cache; rely on Reconciler to fire a fresh reconcile
 //	LostLeadershipEvent → flip the leader flag off
 type Component struct {
-	eventBus      *busevents.EventBus
-	eventChan     <-chan busevents.Event
+	*component.Base
+
 	dynamicClient dynamic.Interface
 	gvrResolver   GVRResolver
-	logger        *slog.Logger
 	healthTracker *lifecycle.HealthTracker
+
+	// ctx is the event-loop context captured by Start. Handlers run only
+	// on the loop goroutine and use it for Kubernetes API calls so SSA
+	// patches abort on shutdown.
+	ctx context.Context
 
 	// mu protects all mutable state below.
 	mu       sync.RWMutex
@@ -166,38 +171,36 @@ func New(cfg *Config) *Component {
 		logger = slog.Default()
 	}
 
-	bus := cfg.EventBus
-	// SubscribeTypes (not Subscribe) — the bus prefilters by event type at
-	// publish, so the 50-event buffer holds ONLY events we actually dispatch
-	// on. With a plain Subscribe the buffer would fill within seconds during
-	// conformance setup (resource.index.updated and reconciliation.* fire at
-	// kHz) and overflow — silently dropping deployment.completed events along
-	// with the rest. We saw exactly that in CI: the "deployed" status patches
-	// never fired, Gateways never got Programmed=True, and conformance Test
-	// Setup timed out on every shard.
-	eventChan := bus.SubscribeTypes(ComponentName, EventBufferSize,
-		events.EventTypeTemplateRendered,
-		events.EventTypeDeploymentCompleted,
-		events.EventTypeDeploymentSkipped,
-		events.EventTypeReconciliationFailed,
-		events.EventTypeBecameLeader,
-		events.EventTypeLostLeadership,
-	)
-
-	return &Component{
-		eventBus:      bus,
-		eventChan:     eventChan,
+	c := &Component{
 		dynamicClient: cfg.DynamicClient,
 		gvrResolver:   cfg.GVRResolver,
-		logger:        logger.With("component", ComponentName),
 		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 		checksumCache: make(map[string]string),
 	}
-}
-
-// Name returns the unique identifier for this component.
-func (c *Component) Name() string {
-	return ComponentName
+	// Typed subscription (EventTypes, not a catch-all) — the bus prefilters
+	// by event type at publish, so the 50-event buffer holds ONLY events we
+	// actually dispatch on. With a catch-all subscription the buffer would
+	// fill within seconds during conformance setup (resource.index.updated
+	// and reconciliation.* fire at kHz) and overflow — silently dropping
+	// deployment.completed events along with the rest. We saw exactly that
+	// in CI: the "deployed" status patches never fired, Gateways never got
+	// Programmed=True, and conformance Test Setup timed out on every shard.
+	c.Base = component.New(&component.Config{
+		EventBus:   cfg.EventBus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: EventBufferSize,
+		Handler:    c,
+		EventTypes: []string{
+			events.EventTypeTemplateRendered,
+			events.EventTypeDeploymentCompleted,
+			events.EventTypeDeploymentSkipped,
+			events.EventTypeReconciliationFailed,
+			events.EventTypeBecameLeader,
+			events.EventTypeLostLeadership,
+		},
+	})
+	return c
 }
 
 // HealthCheck returns nil if the component is healthy.
@@ -205,28 +208,20 @@ func (c *Component) HealthCheck() error {
 	return c.healthTracker.Check()
 }
 
-// Start begins the StatusApplier event loop.
-//
-// This method blocks until the context is cancelled.
+// Start captures the loop context for handlers and runs the embedded
+// component.Base event loop until the context is cancelled.
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Debug("status applier starting")
-
-	for {
-		select {
-		case event := <-c.eventChan:
-			c.healthTracker.StartProcessing()
-			c.handleEvent(ctx, event)
-			c.healthTracker.EndProcessing()
-
-		case <-ctx.Done():
-			c.logger.Info("status applier shutting down", "reason", ctx.Err())
-			return nil
-		}
-	}
+	c.ctx = ctx
+	return c.Base.Start(ctx)
 }
 
-// handleEvent routes events to the appropriate handler.
-func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
+// HandleEvent implements component.EventHandler: it routes events to the
+// appropriate handler, tracking processing time for the health check.
+func (c *Component) HandleEvent(event busevents.Event) {
+	c.healthTracker.StartProcessing()
+	defer c.healthTracker.EndProcessing()
+
+	ctx := c.ctx
 	switch e := event.(type) {
 	case *events.TemplateRenderedEvent:
 		c.handleTemplateRendered(ctx, e)
@@ -343,7 +338,7 @@ func (c *Component) handleBecameLeader(_ context.Context) {
 	// Clear checksum cache — the previous leader may have applied different checksums.
 	c.checksumCache = make(map[string]string)
 	c.mu.Unlock()
-	c.logger.Info("became leader, clearing status checksum cache")
+	c.Logger().Info("became leader, clearing status checksum cache")
 }
 
 // leaderRLocked returns the current leader flag under a read lock.
@@ -359,7 +354,7 @@ func (c *Component) handleLostLeadership() {
 	defer c.mu.Unlock()
 
 	if c.isLeader {
-		c.logger.Info("lost leadership, pausing status patch application")
+		c.Logger().Info("lost leadership, pausing status patch application")
 	}
 
 	c.isLeader = false
@@ -381,11 +376,11 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 
 		gvr, err := c.gvrResolver.Resolve(patch.APIVersion, patch.Kind)
 		if err != nil {
-			c.logger.Error("failed to resolve GVR for status patch",
+			c.Logger().Error("failed to resolve GVR for status patch",
 				"api_version", patch.APIVersion,
 				"kind", patch.Kind,
 				"error", err)
-			c.eventBus.Publish(events.NewStatusUpdateFailedEvent(
+			c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
 				patch.Namespace, patch.Name,
 				fmt.Sprintf("%s/%s", patch.APIVersion, patch.Kind),
 				err.Error(), false,
@@ -398,7 +393,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 		// Compute checksum of the status payload.
 		payloadBytes, err := json.Marshal(statusPayload)
 		if err != nil {
-			c.logger.Error("failed to marshal status payload",
+			c.Logger().Error("failed to marshal status payload",
 				"namespace", patch.Namespace,
 				"name", patch.Name,
 				"error", err)
@@ -445,7 +440,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 
 		ssaBytes, err := json.Marshal(ssaPayload)
 		if err != nil {
-			c.logger.Error("failed to marshal SSA payload",
+			c.Logger().Error("failed to marshal SSA payload",
 				"namespace", patch.Namespace,
 				"name", patch.Name,
 				"error", err)
@@ -465,13 +460,13 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 			statusKey,
 		)
 		if err != nil {
-			c.logger.Error("failed to apply status patch",
+			c.Logger().Error("failed to apply status patch",
 				"namespace", patch.Namespace,
 				"name", patch.Name,
 				"gvr", gvrStr,
 				"phase", phaseKey,
 				"error", err)
-			c.eventBus.Publish(events.NewStatusUpdateFailedEvent(
+			c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
 				patch.Namespace, patch.Name, gvrStr,
 				err.Error(), isRetriable(err),
 			))
@@ -489,14 +484,14 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	durationMs := time.Since(startTime).Milliseconds()
 
 	if applied > 0 || skipped > 0 {
-		c.logger.Debug("status patches applied",
+		c.Logger().Debug("status patches applied",
 			"phase", phaseKey,
 			"applied", applied,
 			"skipped", skipped,
 			"duration_ms", durationMs)
 	}
 
-	c.eventBus.Publish(events.NewStatusUpdateCompletedEvent(
+	c.EventBus().Publish(events.NewStatusUpdateCompletedEvent(
 		phase, applied, skipped, durationMs,
 	))
 }

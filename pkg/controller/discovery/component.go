@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -72,12 +73,9 @@ type retryState struct {
 //  4. BecameLeaderEvent → Re-trigger discovery for new leader's DeploymentScheduler
 //  5. Discovery completes → Compare with previous endpoints → Publish HAProxyPodTerminatedEvent for removed pods → Publish HAProxyPodsDiscoveredEvent
 type Component struct {
-	discovery *Discovery
-	eventBus  *busevents.EventBus
-	logger    *slog.Logger
+	*component.Base
 
-	// Subscribed in constructor for proper startup synchronization
-	eventChan <-chan busevents.Event
+	discovery *Discovery
 
 	// State replay for leadership transitions
 	discoveredReplayer *leadership.StateReplayer[*events.HAProxyPodsDiscoveredEvent]
@@ -117,64 +115,55 @@ type Component struct {
 // is configured via ConfigValidatedEvent. This constructor only detects the
 // local HAProxy version for future compatibility checking.
 func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) {
-	componentLogger := logger.With("component", ComponentName)
-
-	// Detect local HAProxy version at startup (fatal if fails)
+	// Detect local HAProxy version at startup (fatal if fails). Happens
+	// before the Base subscribes so a failed constructor doesn't leak a
+	// subscription.
 	localVersion, err := dataplane.DetectLocalVersion()
 	if err != nil {
 		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
 	}
 
-	componentLogger.Debug("detected local HAProxy version",
-		"version", localVersion.Full,
-		"major", localVersion.Major,
-		"minor", localVersion.Minor)
-
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
-		events.EventTypeConfigValidated,
-		events.EventTypeCredentialsUpdated,
-		events.EventTypeResourceIndexUpdated,
-		events.EventTypeResourceSyncComplete,
-		events.EventTypeBecameLeader,
-	)
-
-	return &Component{
-		eventBus:           eventBus,
-		logger:             componentLogger,
-		eventChan:          eventChan,
+	c := &Component{
 		discoveredReplayer: leadership.NewStateReplayer[*events.HAProxyPodsDiscoveredEvent](eventBus),
 		lastEndpoints:      make(map[string]string),
 		localVersion:       localVersion,
 		admittedPods:       make(map[string]*dataplane.Endpoint),
 		pendingRetries:     make(map[string]*retryState),
-	}, nil
+	}
+	// The Base subscribes to the EventBus during construction (before
+	// EventBus.Start()). This ensures proper startup synchronization without
+	// timing-based sleeps. Typed subscription (EventTypes, not a catch-all)
+	// so we only receive events we handle (reduces buffer pressure).
+	c.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: EventBufferSize,
+		Handler:    c,
+		EventTypes: []string{
+			events.EventTypeConfigValidated,
+			events.EventTypeCredentialsUpdated,
+			events.EventTypeResourceIndexUpdated,
+			events.EventTypeResourceSyncComplete,
+			events.EventTypeBecameLeader,
+		},
+	})
+
+	c.Logger().Debug("detected local HAProxy version",
+		"version", localVersion.Full,
+		"major", localVersion.Major,
+		"minor", localVersion.Minor)
+
+	return c, nil
 }
 
-// Name returns the unique identifier for this component.
-// Implements the lifecycle.Component interface.
-func (c *Component) Name() string {
-	return ComponentName
-}
-
-// Start begins the Discovery component's event processing loop.
-//
-// This method:
-//   - Maintains state from config and credential updates
-//   - Triggers discovery when HAProxy pods change (via ResourceSyncCompleteEvent)
-//   - Publishes discovered endpoints
-//   - Runs until context is cancelled
-//
-// Returns an error if the event loop fails.
+// Start runs the embedded component.Base event loop until the context is
+// cancelled.
 //
 // Note: Event subscription occurs in the constructor (New()) to ensure proper
 // startup synchronization. ResourceSyncCompleteEvent is buffered until EventBus.Start()
 // is called, so no events are missed.
 func (c *Component) Start(ctx context.Context) error {
-	c.logger.Debug("discovery starting")
-
 	// Stop any pending version-probe retry timer on shutdown so a queued
 	// AfterFunc can't fire after this (per-iteration) component's context is
 	// cancelled — which would publish discovery events onto the torn-down
@@ -182,16 +171,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// maxRetryInterval. Mirrors drift_monitor's stopDriftTimer teardown.
 	defer c.stopRetryTimer()
 
-	for {
-		select {
-		case event := <-c.eventChan:
-			c.handleEvent(event)
-
-		case <-ctx.Done():
-			c.logger.Info("Discovery shutting down", "reason", ctx.Err())
-			return ctx.Err()
-		}
-	}
+	return c.Base.Start(ctx)
 }
 
 // stopRetryTimer stops any pending version-probe retry timer. Safe to call when
@@ -206,8 +186,9 @@ func (c *Component) stopRetryTimer() {
 	}
 }
 
-// handleEvent processes incoming events and triggers discovery as needed.
-func (c *Component) handleEvent(event any) {
+// HandleEvent implements component.EventHandler: it processes incoming
+// events and triggers discovery as needed.
+func (c *Component) HandleEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.ConfigValidatedEvent:
 		c.handleConfigValidated(e)

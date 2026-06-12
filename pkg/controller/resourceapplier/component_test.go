@@ -178,7 +178,7 @@ func TestNew(t *testing.T) {
 	comp, _, _ := newTestComp(t, true)
 	require.NotNil(t, comp)
 	assert.Equal(t, ComponentName, comp.Name())
-	assert.NotNil(t, comp.eventChan)
+	assert.NotNil(t, comp.Base, "must embed the component.Base event loop")
 	assert.False(t, comp.isLeader)
 	assert.Equal(t, DefaultManagedByValue, comp.managedByValue)
 }

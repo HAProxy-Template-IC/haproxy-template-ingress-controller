@@ -122,7 +122,7 @@ func TestNew(t *testing.T) {
 
 	require.NotNil(t, comp)
 	assert.Equal(t, ComponentName, comp.Name())
-	assert.NotNil(t, comp.eventChan)
+	assert.NotNil(t, comp.Base, "must embed the component.Base event loop")
 	assert.NotNil(t, comp.checksumCache)
 	assert.False(t, comp.isLeader)
 }
@@ -945,16 +945,16 @@ func TestHandleEvent_RoutesCorrectly(t *testing.T) {
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
 
 	bus.Start()
-	ctx := context.Background()
+	comp.ctx = context.Background()
 
 	// Verify each event type is routed without panics
-	comp.handleEvent(ctx, events.NewTemplateRenderedEvent(
+	comp.HandleEvent(events.NewTemplateRenderedEvent(
 		"config", nil, nil, nil, 0, 50, "test", "hash", false,
 	))
-	comp.handleEvent(ctx, events.NewDeploymentCompletedEvent(&events.DeploymentResult{Total: 1, Succeeded: 1}))
-	comp.handleEvent(ctx, events.NewReconciliationFailedEvent("err", "deploy", nil))
-	comp.handleEvent(ctx, events.NewBecameLeaderEvent("identity"))
-	comp.handleEvent(ctx, events.NewLostLeadershipEvent("identity", "reason"))
+	comp.HandleEvent(events.NewDeploymentCompletedEvent(&events.DeploymentResult{Total: 1, Succeeded: 1}))
+	comp.HandleEvent(events.NewReconciliationFailedEvent("err", "deploy", nil))
+	comp.HandleEvent(events.NewBecameLeaderEvent("identity"))
+	comp.HandleEvent(events.NewLostLeadershipEvent("identity", "reason"))
 }
 
 func TestApplyVariant_DoesNotCacheOnFailure(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
@@ -50,16 +51,22 @@ import (
 // Discovery, and asserting initialDiscoveryDone stays false.
 
 // minimalComponentForGuardTest builds a Component populated only
-// with the fields tryInitialDiscovery's guards inspect. The
-// discovery field is left nil; every test below verifies the
-// function returns BEFORE reaching triggerDiscovery (which would
-// nil-deref discovery).
+// with the fields tryInitialDiscovery's guards inspect (plus the
+// embedded component.Base the guards log through). The discovery
+// field is left nil; every test below verifies the function returns
+// BEFORE reaching triggerDiscovery (which would nil-deref discovery).
 func minimalComponentForGuardTest(t *testing.T) *Component {
 	t.Helper()
-	_, logger := testutil.NewTestBusAndLogger()
-	return &Component{
-		logger: logger,
-	}
+	bus, logger := testutil.NewTestBusAndLogger()
+	c := &Component{}
+	c.Base = component.New(&component.Config{
+		EventBus:   bus,
+		Logger:     logger,
+		Name:       ComponentName,
+		BufferSize: 1,
+		Handler:    c,
+	})
+	return c
 }
 
 // fakePodStoreForGuard is the tiniest types.Store implementation

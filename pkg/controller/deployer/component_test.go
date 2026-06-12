@@ -212,13 +212,12 @@ func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
 func TestComponent_HandleEvent(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	deployer := createTestDeployer(bus)
-
-	ctx := context.Background()
+	deployer.ctx = context.Background()
 
 	t.Run("ignores non-deployment events", func(t *testing.T) {
 		// Should not panic or error when receiving non-DeploymentScheduledEvent
 		otherEvent := events.NewReconciliationCompletedEvent(0, nil)
-		deployer.handleEvent(ctx, otherEvent)
+		deployer.HandleEvent(otherEvent)
 	})
 
 	t.Run("handles DeploymentScheduledEvent", func(t *testing.T) {
@@ -235,7 +234,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 			true, // coalescible
 		)
 		// Should not panic when receiving valid event with no endpoints
-		deployer.handleEvent(ctx, event)
+		deployer.HandleEvent(event)
 	})
 }
 
@@ -261,7 +260,7 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 	)
 
 	// Process first event - should set flag
-	deployer.handleDeploymentScheduled(ctx, event)
+	deployer.performDeployment(ctx, event)
 
 	// Flag should be cleared after deployToEndpoints completes (even with no endpoints)
 	assert.False(t, deployer.deploymentInProgress.Load())
@@ -299,7 +298,7 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 	)
 
 	// This should be rejected (flag was already set)
-	deployer.handleDeploymentScheduled(ctx, event)
+	deployer.performDeployment(ctx, event)
 
 	// Flag should still be true (not modified)
 	assert.True(t, deployer.deploymentInProgress.Load())
