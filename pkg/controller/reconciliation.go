@@ -15,7 +15,6 @@
 package controller
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -49,28 +48,28 @@ import (
 	informers "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
-	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// reconciliationComponents holds all reconciliation-related components.
-type reconciliationComponents struct {
-	reconciler          *reconciler.Reconciler
-	coordinator         *reconciler.Coordinator // Orchestrates render-validate pipeline
-	discovery           *discovery.Component
+// reconciliationWiring carries the few construction outputs later startup
+// stages consume; the components themselves live on through the lifecycle
+// registry and their event-bus subscriptions — everything not referenced
+// again after construction is deliberately NOT carried here.
+//
+// Consumers:
+//   - deployer/deploymentScheduler/configPublisher: read by
+//     startLeaderOnlyComponents to build leaderOnlyComponents.
+//   - httpStore/capabilities/engineWiring/gvrMapper: read by
+//     createDryRunValidator when the webhook validators are wired up.
+type reconciliationWiring struct {
 	deployer            *deployer.Component
 	deploymentScheduler *deployer.DeploymentScheduler
-	driftMonitor        *deployer.DriftPreventionMonitor
 	configPublisher     *ctrlconfigpublisher.Component
-	statusUpdater       *configchange.StatusUpdater  // Updates CRD status with validation results
-	statusApplier       *statusapplier.Component     // Applies template-driven status patches via SSA
-	resourceApplier     *resourceapplier.Component   // Applies template-declared owned resources via SSA
-	httpStore           *httpstore.Component         // HTTP resource fetcher for dynamic content
-	proposalValidator   *proposalvalidator.Component // Validates HTTP content and webhook proposals
-	capabilities        dataplane.Capabilities       // HAProxy/DataPlane API capabilities
+	httpStore           *httpstore.Component   // HTTP resource fetcher for dynamic content
+	capabilities        dataplane.Capabilities // HAProxy/DataPlane API capabilities
 
 	// engineWiring carries the type-bootstrap output shared between
-	// the reconciliation engine (this struct's coordinator path) and
+	// the reconciliation engine (the coordinator path constructed here) and
 	// the dry-run validator engine constructed later in iteration
 	// startup. Both engines need the SAME typed-global declarations
 	// so chart templates compile identically against either render
@@ -85,31 +84,28 @@ type reconciliationComponents struct {
 	// startup). Sharing one deferred mapper avoids duplicate discovery caches
 	// and keeps GVR resolution resource-agnostic (RULE #1).
 	gvrMapper meta.RESTMapper
-
-	// storeProvider is the base store provider (built from the resource
-	// watcher's live stores) shared by the coordinator/proposal-validator here
-	// and the dry-run validator constructed later in iteration startup.
-	storeProvider stores.StoreProvider
 }
 
-// createReconciliationComponents creates all reconciliation components and registers them with the lifecycle registry.
+// createReconciliationComponents creates all reconciliation components and
+// registers them with the lifecycle registry (setup.Registry). It returns
+// only the slim reconciliationWiring — every component not referenced again
+// after construction lives on through the registry and its event-bus
+// subscriptions.
 func createReconciliationComponents(
-	ctx context.Context,
+	setup *componentSetup,
 	cfg *coreconfig.Config,
 	crd *v1alpha1.HAProxyTemplateConfig,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
 	storeProvider stores.StoreProvider,
-	bus *busevents.EventBus,
-	registry *lifecycle.Registry,
 	logger *slog.Logger,
-) (*reconciliationComponents, error) {
+) (*reconciliationWiring, error) {
 	// Create Reconciler. It fires immediately on every resource/HTTP event;
 	// there is no reconciler-level refractory. Batching is per-watcher
 	// (debounceInterval), reload throttling is the deployer's
 	// minDeploymentInterval (which the runtime-eligible fast path bypasses).
-	reconcilerComponent := reconciler.New(bus, logger)
+	reconcilerComponent := reconciler.New(setup.Bus, logger)
 
 	// Detect local HAProxy version and compute capabilities
 	localVersion, err := dataplane.DetectLocalVersion()
@@ -135,9 +131,9 @@ func createReconciliationComponents(
 	// Eviction maxAge is 2x drift prevention interval to catch stale URLs
 	driftInterval := cfg.Dataplane.GetDriftPreventionInterval()
 	httpStoreEvictionMaxAge := 2 * driftInterval
-	httpStoreComponent := httpstore.New(bus, logger, httpStoreEvictionMaxAge)
+	httpStoreComponent := httpstore.New(setup.Bus, logger, httpStoreEvictionMaxAge)
 
-	wiring, err := buildEngineWiring(ctx, cfg, k8sClient, logger)
+	wiring, err := buildEngineWiring(setup.IterCtx, cfg, k8sClient, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +178,7 @@ func createReconciliationComponents(
 
 	// Coordinator: leader-side render + validate + deploy. Uses fast pipeline.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
-		EventBus:      bus,
+		EventBus:      setup.Bus,
 		Pipeline:      fastPipeline,
 		StoreProvider: storeProvider,
 		Logger:        logger,
@@ -191,14 +187,14 @@ func createReconciliationComponents(
 	// ProposalValidator: admission webhook + HTTP-store content promotion.
 	// Uses strict pipeline so invalid input never reaches the leader.
 	proposalValidatorComponent := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:          bus,
+		EventBus:          setup.Bus,
 		Pipeline:          strictPipeline,
 		BaseStoreProvider: storeProvider,
 		Logger:            logger,
 	})
 
 	// Create Deployer with the configured per-sync Dataplane options.
-	deployerComponent := deployer.New(bus, logger, deployer.SyncOptions{
+	deployerComponent := deployer.New(setup.Bus, logger, deployer.SyncOptions{
 		ReloadVerificationTimeout: cfg.Dataplane.GetReloadVerificationTimeout(),
 		Timeout:                   cfg.Dataplane.GetSyncTimeout(),
 	})
@@ -206,16 +202,16 @@ func createReconciliationComponents(
 	// Create DeploymentScheduler with rate limiting and timeout
 	minDeploymentInterval := cfg.Dataplane.GetMinDeploymentInterval()
 	deploymentTimeout := cfg.Dataplane.GetDeploymentTimeout()
-	deploymentSchedulerComponent := deployer.NewDeploymentScheduler(bus, logger, minDeploymentInterval, deploymentTimeout)
+	deploymentSchedulerComponent := deployer.NewDeploymentScheduler(setup.Bus, logger, minDeploymentInterval, deploymentTimeout)
 
 	// Create DriftPreventionMonitor
 	driftPreventionInterval := cfg.Dataplane.GetDriftPreventionInterval()
-	driftMonitorComponent := deployer.NewDriftPreventionMonitor(bus, logger, driftPreventionInterval)
+	driftMonitorComponent := deployer.NewDriftPreventionMonitor(setup.Bus, logger, driftPreventionInterval)
 
 	// Create Discovery component and set pod store
 	// This detects the local HAProxy version (fatal if fails - controller cannot start
 	// without knowing its local version for compatibility checking)
-	discoveryComponent, err := discovery.New(bus, logger)
+	discoveryComponent, err := discovery.New(setup.Bus, logger)
 	if err != nil {
 		return nil, fmt.Errorf("creating discovery component: %w", err)
 	}
@@ -237,13 +233,13 @@ func createReconciliationComponents(
 	if err != nil {
 		return nil, err
 	}
-	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, bus, logger,
+	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, setup.Bus, logger,
 		ctrlconfigpublisher.WithPublishInterval(cfg.Dataplane.GetConfigPublishInterval()),
 	)
 
 	// Create Status Updater (updates HAProxyTemplateConfig CRD status with validation results)
 	// This allows users to see validation errors via `kubectl describe haproxytemplateconfig`
-	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, bus, logger)
+	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, setup.Bus, logger)
 
 	// Build a RESTMapper from the cluster's discovery so the status/resource
 	// appliers resolve apiVersion+kind → GroupVersionResource from authoritative
@@ -256,20 +252,20 @@ func createReconciliationComponents(
 	// Create StatusApplier (applies template-driven status patches to Kubernetes resources via SSA)
 	// All-replica: subscribes in constructor to cache patches from renders; only the leader applies.
 	statusApplierComponent := statusapplier.New(&statusapplier.Config{
-		EventBus:      bus,
+		EventBus:      setup.Bus,
 		DynamicClient: k8sClient.DynamicClient(),
 		GVRResolver:   statusapplier.NewRestMapperResolver(gvrMapper),
 		Logger:        logger,
 	})
 
-	resourceApplierComponent := newResourceApplier(crd, k8sClient, gvrMapper, bus, logger)
+	resourceApplierComponent := newResourceApplier(crd, k8sClient, gvrMapper, setup.Bus, logger)
 
 	// Register components with the lifecycle registry using builder pattern
 	// Coordinator is leader-only because it performs rendering (state changes).
 	// DriftMonitor is leader-only to avoid multi-replica race conditions.
 	// StatusUpdater is leader-only to avoid API conflicts from concurrent updates.
 	// ProposalValidator is all-replica because HTTPStore depends on it for HTTP content validation.
-	registry.Build().
+	setup.Registry.Build().
 		AllReplica(
 			reconcilerComponent,
 			discoveryComponent,
@@ -288,23 +284,14 @@ func createReconciliationComponents(
 		).
 		Done()
 
-	return &reconciliationComponents{
-		reconciler:          reconcilerComponent,
-		coordinator:         coordinatorComponent,
-		discovery:           discoveryComponent,
+	return &reconciliationWiring{
 		deployer:            deployerComponent,
 		deploymentScheduler: deploymentSchedulerComponent,
-		driftMonitor:        driftMonitorComponent,
 		configPublisher:     configPublisherComponent,
-		statusUpdater:       statusUpdaterComponent,
-		statusApplier:       statusApplierComponent,
-		resourceApplier:     resourceApplierComponent,
 		httpStore:           httpStoreComponent,
-		proposalValidator:   proposalValidatorComponent,
 		capabilities:        capabilities,
 		engineWiring:        wiring,
 		gvrMapper:           gvrMapper,
-		storeProvider:       storeProvider,
 	}, nil
 }
 

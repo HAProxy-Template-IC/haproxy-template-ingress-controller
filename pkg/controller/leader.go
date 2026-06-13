@@ -28,7 +28,6 @@ import (
 	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	k8sleaderelection "gitlab.com/haproxy-haptic/haptic/pkg/k8s/leaderelection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -73,7 +72,7 @@ func startReconciliationComponents(
 // components are ready to receive replayed events.
 func startLeaderOnlyComponents(
 	parentCtx context.Context,
-	components *reconciliationComponents,
+	wiring *reconciliationWiring,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
 	parentCancel context.CancelFunc,
@@ -117,9 +116,9 @@ func startLeaderOnlyComponents(
 		"components", "Coordinator, DriftMonitor, Deployer, DeploymentScheduler, ConfigPublisher, StatusUpdater")
 
 	return &leaderOnlyComponents{
-		deployer:            components.deployer,
-		deploymentScheduler: components.deploymentScheduler,
-		configPublisher:     components.configPublisher,
+		deployer:            wiring.deployer,
+		deploymentScheduler: wiring.deploymentScheduler,
+		configPublisher:     wiring.configPublisher,
 		ctx:                 leaderCtx,
 		cancel:              leaderCancel,
 	}
@@ -144,13 +143,13 @@ func stopLeaderOnlyComponents(components *leaderOnlyComponents, logger *slog.Log
 // Extracting these to a struct makes the dependencies explicit rather than
 // relying on closure scope, improving code clarity and testability.
 type leaderCallbackDeps struct {
-	iterCtx         context.Context
-	reconComponents *reconciliationComponents
-	registry        *lifecycle.Registry
-	logger          *slog.Logger
-	cancel          context.CancelFunc
-	podName         string
-	errGroup        *errgroup.Group
+	iterCtx  context.Context
+	wiring   *reconciliationWiring
+	registry *lifecycle.Registry
+	logger   *slog.Logger
+	cancel   context.CancelFunc
+	podName  string
+	errGroup *errgroup.Group
 }
 
 // leaderCallbackState holds mutable state shared across leader callbacks.
@@ -172,7 +171,7 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 			defer state.mu.Unlock()
 			state.components = startLeaderOnlyComponents(
 				deps.iterCtx,
-				deps.reconComponents,
+				deps.wiring,
 				deps.registry,
 				deps.logger,
 				deps.cancel,
@@ -202,15 +201,11 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 // Returns leader callback state for lifecycle management. The state contains a mutex-protected
 // pointer to the leader-only components, which is nil until leadership is acquired.
 func setupLeaderElection(
-	iterCtx context.Context,
+	setup *componentSetup,
 	cfg *coreconfig.Config,
 	k8sClient *client.Client,
-	reconComponents *reconciliationComponents,
-	registry *lifecycle.Registry,
-	eventBus *busevents.EventBus,
+	wiring *reconciliationWiring,
 	logger *slog.Logger,
-	cancel context.CancelFunc,
-	g *errgroup.Group,
 ) *leaderCallbackState {
 	if cfg.Controller.LeaderElection.Enabled {
 		// Read pod identity from environment
@@ -245,17 +240,17 @@ func setupLeaderElection(
 
 		// Create callbacks with explicit dependencies
 		callbacks, state := makeLeaderCallbacks(leaderCallbackDeps{
-			iterCtx:         iterCtx,
-			reconComponents: reconComponents,
-			registry:        registry,
-			logger:          logger,
-			cancel:          cancel,
-			podName:         podName,
-			errGroup:        g,
+			iterCtx:  setup.IterCtx,
+			wiring:   wiring,
+			registry: setup.Registry,
+			logger:   logger,
+			cancel:   setup.Cancel,
+			podName:  podName,
+			errGroup: setup.ErrGroup,
 		})
 
 		// Create leader election component (event adapter)
-		elector, err := leaderelectionctrl.New(leConfig, k8sClient.Clientset(), eventBus, callbacks, logger)
+		elector, err := leaderelectionctrl.New(leConfig, k8sClient.Clientset(), setup.Bus, callbacks, logger)
 		if err != nil {
 			logger.Error("Failed to create leader elector", "error", err)
 			return state
@@ -263,8 +258,8 @@ func setupLeaderElection(
 
 		// Start leader election loop in errgroup for graceful shutdown
 		// This ensures the elector can release the lease on context cancellation
-		g.Go(func() error {
-			if err := elector.Start(iterCtx); err != nil {
+		setup.ErrGroup.Go(func() error {
+			if err := elector.Start(setup.IterCtx); err != nil {
 				logger.Error("leader election failed", "error", err)
 				return err
 			}
@@ -279,11 +274,11 @@ func setupLeaderElection(
 	// Use the same Pause/Start pattern as leaderelection/component.go to ensure
 	// leader-only components subscribe before any buffered events are replayed.
 	logger.Info("Leader election disabled, starting all components")
-	eventBus.Pause()
-	eventBus.Publish(events.NewBecameLeaderEvent("standalone"))
+	setup.Bus.Pause()
+	setup.Bus.Publish(events.NewBecameLeaderEvent("standalone"))
 	state := &leaderCallbackState{
-		components: startLeaderOnlyComponents(iterCtx, reconComponents, registry, logger, cancel, g),
+		components: startLeaderOnlyComponents(setup.IterCtx, wiring, setup.Registry, logger, setup.Cancel, setup.ErrGroup),
 	}
-	eventBus.Start()
+	setup.Bus.Start()
 	return state
 }
