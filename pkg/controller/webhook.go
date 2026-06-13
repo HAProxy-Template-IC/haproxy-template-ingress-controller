@@ -30,7 +30,6 @@ import (
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
-	ctrlhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
@@ -39,10 +38,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -136,11 +133,6 @@ func setupWebhook(
 // The DryRunValidator itself is a synchronous library called via
 // ValidateDirect; it does not subscribe to anything.
 //
-// The iterCtx argument is used solely to clean up the per-iteration scratch
-// directory (`os.MkdirTemp(...)`) when the iteration ends — without that hook,
-// each CRD/credentials/cert rotation that triggers a fresh iteration would leak
-// another `haptic-webhook-validation-*` directory into the pod's /tmp.
-//
 // Returns (nil, nil, error) if engine creation or shared-dependency
 // construction fails.
 //
@@ -161,11 +153,8 @@ func createDryRunValidator(
 	cfg *coreconfig.Config,
 	bus *busevents.EventBus,
 	storeProvider stores.StoreProvider,
-	capabilities dataplane.Capabilities,
-	httpStoreComponent *ctrlhttpstore.Component,
+	wiring *reconciliationWiring,
 	pluggableValidator *pluggablevalidator.Manager,
-	engineWiring typedRendererWiring,
-	gvrMapper meta.RESTMapper,
 	k8sClient *client.Client,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
@@ -177,14 +166,14 @@ func createDryRunValidator(
 	// Note: DryRunValidator does NOT use currentConfig at runtime - it validates hypothetical future state.
 	// However, the templates still need the type declaration to compile successfully.
 	//
-	// engineWiring.Declarations carries the typed-resource globals
+	// wiring.engineWiring.Declarations carries the typed-resource globals
 	// from typebootstrap (and the currentConfig declaration). It's
 	// the SAME wiring the reconciliation engine was built with, so
 	// chart templates compile identically against either render
 	// path. Without this, admission would reject every resource the
 	// moment a chart template references a typed global — exactly
 	// the failure mode Phase 11.5 CI surfaced.
-	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, engineWiring.Declarations, helpers.EngineOptions{})
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, wiring.engineWiring.Declarations, helpers.EngineOptions{})
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
 	}
@@ -208,8 +197,8 @@ func createDryRunValidator(
 		Engine:             engine,
 		Config:             cfg,
 		Logger:             logger,
-		Capabilities:       capabilities,
-		HTTPStoreComponent: httpStoreComponent,
+		Capabilities:       wiring.capabilities,
+		HTTPStoreComponent: wiring.httpStore,
 		// TypedResourceTypes mirrors the reconciliation RenderService
 		// so dry-run renders bind the same typed `resources` global as
 		// production. Without it, the engine compile succeeds (the
@@ -217,7 +206,7 @@ func createDryRunValidator(
 		// would fall back to the untyped map shape and chart code that
 		// reaches typed access (`resources.<name>.List()` etc.) would
 		// compile-fail under the typed engine declaration.
-		TypedResourceTypes: engineWiring.TypedResourceTypes,
+		TypedResourceTypes: wiring.engineWiring.TypedResourceTypes,
 	})
 
 	// Create ValidationService (pure service for validation)
@@ -244,13 +233,13 @@ func createDryRunValidator(
 		Logger:             logger,
 		StrictValidator:    validationService,
 		StoreProvider:      storeProvider,
-		Capabilities:       capabilities,
-		HTTPStoreComponent: httpStoreComponent,
-		Declarations:       engineWiring.Declarations,
-		TypedResourceTypes: engineWiring.TypedResourceTypes,
+		Capabilities:       wiring.capabilities,
+		HTTPStoreComponent: wiring.httpStore,
+		Declarations:       wiring.engineWiring.Declarations,
+		TypedResourceTypes: wiring.engineWiring.TypedResourceTypes,
 		// Bootstrap schemas from the PROSPECTIVE config at admission, mirroring
 		// the daemon load gate, so both gates build the engine from the same
-		// type set (engineWiring above is the startup-fixed fallback). The
+		// type set (wiring.engineWiring above is the startup-fixed fallback). The
 		// load-gate's TypeBootstrapper and the webhook's SchemaBootstrapper
 		// share an underlying signature, so the closure converts directly.
 		Bootstrap: webhook.SchemaBootstrapper(newIterationTypeBootstrapper(k8sClient, logger)),
@@ -265,7 +254,7 @@ func createDryRunValidator(
 		return nil, configValidator.ValidateDirect, nil
 	}
 
-	dryrun := buildDryRunValidator(bus, renderService, validationService, storeProvider, pluggableValidator, gvrMapper, logger)
+	dryrun := buildDryRunValidator(bus, renderService, validationService, storeProvider, pluggableValidator, wiring.gvrMapper, logger)
 	return dryrun, configValidator.ValidateDirect, nil
 }
 
@@ -325,9 +314,9 @@ func buildDryRunValidator(
 // All components are started after initial resource synchronization to ensure we
 // have a complete view of the cluster state before beginning reconciliation cycles.
 //
-// Returns the reconciliation components for use in leader election callbacks.
+// Returns the reconciliation wiring for use in leader election callbacks.
 func setupReconciliation(
-	iterCtx context.Context,
+	setup *componentSetup,
 	cfg *coreconfig.Config,
 	crd *v1alpha1.HAProxyTemplateConfig,
 	creds *coreconfig.Credentials,
@@ -335,14 +324,10 @@ func setupReconciliation(
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
 	storeProvider stores.StoreProvider,
-	bus *busevents.EventBus,
-	registry *lifecycle.Registry,
 	logger *slog.Logger,
-	cancel context.CancelFunc,
-	errGroup *errgroup.Group,
-) (*reconciliationComponents, error) {
+) (*reconciliationWiring, error) {
 	// Create all components
-	components, err := createReconciliationComponents(iterCtx, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, storeProvider, bus, registry, logger)
+	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, storeProvider, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -350,17 +335,17 @@ func setupReconciliation(
 	// Start all-replica components in background
 	// Leader-only components (Deployer, DeploymentScheduler, ConfigPublisher) are NOT started here
 	// Note: Components already subscribed during construction, so they're ready to receive events
-	startReconciliationComponents(iterCtx, registry, logger, cancel, errGroup)
+	startReconciliationComponents(setup.IterCtx, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
 
 	// Publish initial config and credentials events
 	// These events are buffered by EventBus until Start() is called in the main controller loop
 	// This ensures reconciliation components (especially Discovery) receive the initial state
 	// even though they were created after the initial CRD/Secret watcher events
 	// Note: We pass the actual CRD (not nil) so ConfigPublisher can cache it for creating HAProxyCfg resources
-	bus.Publish(events.NewConfigValidatedEvent(cfg, crd, "initial", "initial"))
+	setup.Bus.Publish(events.NewConfigValidatedEvent(cfg, crd, "initial", "initial"))
 	logger.Debug("Published initial ConfigValidatedEvent (buffered until EventBus.Start())")
 
-	bus.Publish(events.NewCredentialsUpdatedEvent(creds, "initial"))
+	setup.Bus.Publish(events.NewCredentialsUpdatedEvent(creds, "initial"))
 	logger.Debug("Published initial CredentialsUpdatedEvent (buffered until EventBus.Start())")
 
 	// Trigger initial reconciliation to bootstrap the pipeline
@@ -368,9 +353,9 @@ func setupReconciliation(
 	// A new correlation ID is generated to trace this initial reconciliation cycle
 	// Initial sync is NOT coalescible - it must be processed to establish initial state
 	initialReconciliation := events.NewReconciliationTriggeredEvent("initial_sync_complete", false, events.WithNewCorrelation())
-	bus.Publish(initialReconciliation)
+	setup.Bus.Publish(initialReconciliation)
 	logger.Debug("Published initial reconciliation trigger (buffered until EventBus.Start())",
 		"correlation_id", initialReconciliation.CorrelationID())
 
-	return components, nil
+	return wiring, nil
 }

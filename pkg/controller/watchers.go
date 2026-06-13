@@ -15,7 +15,6 @@
 package controller
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 
@@ -29,7 +28,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -40,13 +38,10 @@ import (
 //
 // Returns the ResourceWatcherComponent and an error if watcher creation or synchronization fails.
 func setupResourceWatchers(
-	iterCtx context.Context,
+	setup *componentSetup,
 	cfg *coreconfig.Config,
 	k8sClient *client.Client,
-	bus *busevents.EventBus,
 	logger *slog.Logger,
-	cancel context.CancelFunc,
-	errGroup *errgroup.Group,
 ) (*resourcewatcher.ResourceWatcherComponent, error) {
 	// Extract resource type names for IndexSynchronizationTracker
 	// Include haproxy-pods which is auto-injected by ResourceWatcherComponent
@@ -58,21 +53,21 @@ func setupResourceWatchers(
 	resourceNames = append(resourceNames, names.HAProxyPodsResourceType)
 
 	// Create ResourceWatcherComponent
-	resourceWatcher, err := resourcewatcher.New(cfg, k8sClient, bus, logger)
+	resourceWatcher, err := resourcewatcher.New(cfg, k8sClient, setup.Bus, logger)
 	if err != nil {
 		return nil, fmt.Errorf("creating resource watcher: %w", err)
 	}
 
 	// Create IndexSynchronizationTracker
-	indexTracker := indextracker.New(bus, logger, resourceNames)
+	indexTracker := indextracker.New(setup.Bus, logger, resourceNames)
 
 	// Start resource watcher and index tracker (tracked by errgroup for graceful shutdown)
-	startInErrGroup(errGroup, iterCtx, logger, cancel, "resource watcher", resourceWatcher.Start)
-	startInErrGroup(errGroup, iterCtx, logger, cancel, "index tracker", indexTracker.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "resource watcher", resourceWatcher.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "index tracker", indexTracker.Start)
 
 	// Wait for all resource indices to sync
 	logger.Debug("Waiting for resource indices to sync")
-	if err := resourceWatcher.WaitForAllSync(iterCtx); err != nil {
+	if err := resourceWatcher.WaitForAllSync(setup.IterCtx); err != nil {
 		return nil, fmt.Errorf("resource watcher sync failed: %w", err)
 	}
 	logger.Debug("all resource indices synced")
@@ -85,16 +80,13 @@ func setupResourceWatchers(
 //
 // Returns an error if watcher creation or synchronization fails.
 func setupConfigWatchers(
-	iterCtx context.Context,
+	setup *componentSetup,
 	k8sClient *client.Client,
 	crdName string,
 	secretName string,
 	crdGVR schema.GroupVersionResource,
 	secretGVR schema.GroupVersionResource,
-	bus *busevents.EventBus,
 	logger *slog.Logger,
-	cancel context.CancelFunc,
-	errGroup *errgroup.Group,
 ) error {
 	// Create watcher for HAProxyTemplateConfig CRD
 	crdWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
@@ -102,7 +94,7 @@ func setupConfigWatchers(
 		Namespace: k8sClient.Namespace(),
 		Name:      crdName,
 		OnChange: func(obj any) error {
-			bus.Publish(events.NewConfigResourceChangedEvent(obj))
+			setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
 			return nil
 		},
 		// OnSyncComplete delivers the current state after initial sync.
@@ -114,7 +106,7 @@ func setupConfigWatchers(
 				return nil
 			}
 			logger.Debug("CRD watcher sync complete, publishing current state")
-			bus.Publish(events.NewConfigResourceChangedEvent(obj))
+			setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
 			return nil
 		},
 	}, k8sClient)
@@ -127,7 +119,7 @@ func setupConfigWatchers(
 		Namespace: k8sClient.Namespace(),
 		Name:      secretName,
 		OnChange: func(obj any) error {
-			bus.Publish(events.NewSecretResourceChangedEvent(obj))
+			setup.Bus.Publish(events.NewSecretResourceChangedEvent(obj))
 			return nil
 		},
 		// OnSyncComplete delivers the current state after initial sync.
@@ -139,7 +131,7 @@ func setupConfigWatchers(
 				return nil
 			}
 			logger.Debug("Secret watcher sync complete, publishing current state")
-			bus.Publish(events.NewSecretResourceChangedEvent(obj))
+			setup.Bus.Publish(events.NewSecretResourceChangedEvent(obj))
 			return nil
 		},
 	}, k8sClient)
@@ -148,13 +140,13 @@ func setupConfigWatchers(
 	}
 
 	// Start watchers (tracked by errgroup for graceful shutdown)
-	startInErrGroup(errGroup, iterCtx, logger, cancel, "HAProxyTemplateConfig watcher", crdWatcher.Start)
-	startInErrGroup(errGroup, iterCtx, logger, cancel, "Secret watcher", secretWatcher.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "HAProxyTemplateConfig watcher", crdWatcher.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "Secret watcher", secretWatcher.Start)
 
 	logger.Debug("Watchers started, waiting for initial sync")
 
 	// Wait for watchers to complete initial sync in parallel
-	watcherGroup, watcherCtx := errgroup.WithContext(iterCtx)
+	watcherGroup, watcherCtx := errgroup.WithContext(setup.IterCtx)
 
 	watcherGroup.Go(func() error {
 		if err := crdWatcher.WaitForSync(watcherCtx); err != nil {
@@ -196,13 +188,11 @@ func setupConfigWatchers(
 // The async watcher only updates the store - it does NOT trigger reconciliation.
 // HAProxyCfg changes are passive state used only when rendering for other reasons.
 func setupCurrentConfigStore(
-	iterCtx context.Context,
+	setup *componentSetup,
 	k8sClient *client.Client,
 	crdName string,
 	haproxyCfgGVR schema.GroupVersionResource,
 	logger *slog.Logger,
-	cancel context.CancelFunc,
-	errGroup *errgroup.Group,
 ) (*currentconfigstore.Store, error) {
 	// Create CurrentConfigStore to cache parsed HAProxy config
 	store, err := currentconfigstore.New(logger)
@@ -213,7 +203,7 @@ func setupCurrentConfigStore(
 	// Sync fetch existing HAProxyCfg (if any)
 	// This is critical for slot preservation on controller restart
 	haproxyCfgName := configpublisher.GenerateRuntimeConfigName(crdName)
-	haproxyCfgResource, err := k8sClient.GetResource(iterCtx, haproxyCfgGVR, haproxyCfgName)
+	haproxyCfgResource, err := k8sClient.GetResource(setup.IterCtx, haproxyCfgGVR, haproxyCfgName)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("fetching HAProxyCfg: %w", err)
@@ -247,7 +237,7 @@ func setupCurrentConfigStore(
 	}
 
 	// Start HAProxyCfg watcher (tracked by errgroup for graceful shutdown)
-	startInErrGroup(errGroup, iterCtx, logger, cancel, "HAProxyCfg watcher", haproxyCfgWatcher.Start)
+	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "HAProxyCfg watcher", haproxyCfgWatcher.Start)
 	logger.Debug("HAProxyCfg watcher started for current config updates")
 
 	return store, nil

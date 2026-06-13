@@ -26,6 +26,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 // buildAndRegisterPluggableValidatorManager constructs the validator
@@ -152,7 +153,7 @@ func runIteration(
 	finalizeConfigLoad(state, setup, crd.GetResourceVersion(), bundle.CredentialsVersion)
 
 	// 3. Setup resource watchers
-	resourceWatcher, err := setupResourceWatchers(setup.IterCtx, cfg, k8sClient, setup.Bus, logger, setup.Cancel, setup.ErrGroup)
+	resourceWatcher, err := setupResourceWatchers(setup, cfg, k8sClient, logger)
 	if err != nil {
 		return err
 	}
@@ -163,14 +164,14 @@ func runIteration(
 
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(
-		setup.IterCtx, k8sClient, crdName, secretName,
-		crdGVR, secretGVR, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
+		setup, k8sClient, crdName, secretName,
+		crdGVR, secretGVR, logger,
 	); err != nil {
 		return err
 	}
 
 	// 4.5. Setup CurrentConfigStore for slot-aware server assignment
-	currentConfigStore, err := setupCurrentConfigStore(setup.IterCtx, k8sClient, crdName, haproxyCfgGVR, logger, setup.Cancel, setup.ErrGroup)
+	currentConfigStore, err := setupCurrentConfigStore(setup, k8sClient, crdName, haproxyCfgGVR, logger)
 	if err != nil {
 		return err
 	}
@@ -182,7 +183,7 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, storeProvider, setup.Bus, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
+	wiring, err := setupReconciliation(setup, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, storeProvider, logger)
 	if err != nil {
 		return err
 	}
@@ -207,7 +208,7 @@ func runIteration(
 	// validation can dispatch the rendered file set to validator sidecars
 	// (e.g. SPOA hub --validate-socket) after the standard pipeline
 	// passes. A nil Manager is the no-validators-configured case.
-	dryrunValidator, configValidator, err := maybeCreateWebhookValidators(setup, cfg, reconComponents, pluggableMgr, k8sClient, logger)
+	dryrunValidator, configValidator, err := maybeCreateWebhookValidators(setup, cfg, storeProvider, wiring, pluggableMgr, k8sClient, logger)
 	if err != nil {
 		return err
 	}
@@ -220,9 +221,7 @@ func runIteration(
 
 	// 7. Setup leader election
 	logger.Info("Stage 6: Initializing leader election")
-	leaderState := setupLeaderElection(
-		setup.IterCtx, cfg, k8sClient, reconComponents, setup.Registry, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
-	)
+	leaderState := setupLeaderElection(setup, cfg, k8sClient, wiring, logger)
 
 	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
 	maybeSetupWebhook(cfg, webhookCertDir, setup, k8sClient, dryrunValidator, configValidator, logger)
@@ -319,7 +318,8 @@ func handleConfigurationChange(
 func maybeCreateWebhookValidators(
 	setup *componentSetup,
 	cfg *coreconfig.Config,
-	reconComponents *reconciliationComponents,
+	storeProvider stores.StoreProvider,
+	wiring *reconciliationWiring,
 	pluggableMgr *pluggablevalidator.Manager,
 	k8sClient *client.Client,
 	logger *slog.Logger,
@@ -334,7 +334,7 @@ func maybeCreateWebhookValidators(
 	// tuple is nil when no watched-resource rules exist; the ConfigValidator
 	// is always present so HAProxyTemplateConfig admissions land on a real
 	// handler instead of the pure server's fail-open path.
-	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, reconComponents.storeProvider, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, reconComponents.gvrMapper, k8sClient, logger)
+	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, k8sClient, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating webhook validators: %w", err)
 	}
