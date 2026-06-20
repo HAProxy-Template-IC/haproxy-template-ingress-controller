@@ -57,7 +57,7 @@ func TestHandlePodTerminated_SkipsWhenNoTemplateConfig(t *testing.T) {
 
 	evt := events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haptic")
 
-	require.NotPanics(t, func() { c.handlePodTerminated(evt) },
+	require.NotPanics(t, func() { c.handlePodTerminated(t.Context(), evt) },
 		"handlePodTerminated MUST NOT touch the publisher when no "+
 			"templateConfig is cached — pod terminations can arrive during "+
 			"controller restart BEFORE the first ConfigValidatedEvent "+
@@ -78,7 +78,7 @@ func TestHandlePodTerminated_SkipsWhenNamespaceIsEmpty(t *testing.T) {
 
 	evt := events.NewHAProxyPodTerminatedEvent("haproxy-pod-1", "haptic")
 
-	require.NotPanics(t, func() { c.handlePodTerminated(evt) },
+	require.NotPanics(t, func() { c.handlePodTerminated(t.Context(), evt) },
 		"empty templateConfig.Namespace MUST early-return — the namespace "+
 			"is passed into the PodCleanupRequest, which scopes the "+
 			"status-cleanup to a specific runtime config namespace. A "+
