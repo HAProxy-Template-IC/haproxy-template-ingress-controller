@@ -696,8 +696,8 @@ func TestServer_Start_ContextCancellation(t *testing.T) {
 		done <- server.Start(ctx)
 	}()
 
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait until the server is actually listening, rather than a fixed sleep.
+	<-server.Listening()
 
 	// Cancel context to trigger shutdown
 	cancel()
@@ -737,8 +737,8 @@ func TestServer_Start_Integration(t *testing.T) {
 		done <- server.Start(ctx)
 	}()
 
-	// Give server time to start
-	time.Sleep(200 * time.Millisecond)
+	// Wait until the server is actually listening, rather than a fixed sleep.
+	<-server.Listening()
 
 	// Create TLS client that trusts our self-signed cert
 	certPool := x509.NewCertPool()

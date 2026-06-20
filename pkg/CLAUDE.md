@@ -20,6 +20,7 @@ Development context for working with packages in this directory.
 - Generic engine utilities on the dig / typed-struct interface.
 - Schema-driven type generation that operates uniformly on any input schema.
 - Map/`any`-shaped runtime context, including the `shared.Get(...).(map[string]any)` cast cost in chart code. This is the price of generality — accept it.
+- **The controller's own operational identity.** Kind-specific Go for the inputs HAPTIC needs to run *itself* is fine and is NOT a RULE #1 violation: the credentials Secret (`secretGVR`, `SecretResourceChangedEvent`, `.data` parsing in `credentialsloader`), the auto-injected `haproxy-pods` self-watch (`names.HAProxyPodsResourceType` and its store separation / discovery filtering), and HAPTIC's own input/output CRDs. These are fixed bootstrap inputs, not resources an operator watches as template inputs. See the "operational-identity exception" in root `CLAUDE.md`. Do not generalise them into config-derived indirection.
 
 **Sweep rule.** Touch one resource-coupled helper in a package, sweep them all. The rule is per-package, not per-helper. See `pkg/templating/CLAUDE.md` for the in-engine version.
 
