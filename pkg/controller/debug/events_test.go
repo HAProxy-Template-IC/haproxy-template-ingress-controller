@@ -93,14 +93,10 @@ func TestEventBuffer_StartAndCapture(t *testing.T) {
 
 	ctx := t.Context()
 
-	// Start the buffer first (it subscribes during Start)
-	go buffer.Start(ctx)
-
-	// Small delay to ensure subscription is active
-	time.Sleep(10 * time.Millisecond)
-
-	// Start the bus
+	// EventBuffer subscribes in NewEventBuffer (the constructor), so start the
+	// bus first; no events are missed.
 	bus.Start()
+	go buffer.Start(ctx)
 
 	// Publish test events
 	bus.Publish(&testEvent{name: "event.one"})
@@ -131,9 +127,8 @@ func TestEventBuffer_GetLast(t *testing.T) {
 
 	ctx := t.Context()
 
-	go buffer.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	bus.Start()
+	go buffer.Start(ctx)
 
 	// Publish 5 events
 	for range 5 {
@@ -157,9 +152,8 @@ func TestEventBuffer_Len(t *testing.T) {
 
 	ctx := t.Context()
 
-	go buffer.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	bus.Start()
+	go buffer.Start(ctx)
 
 	// Initially empty (before our test events)
 	initialLen := buffer.Len()
@@ -181,9 +175,8 @@ func TestEventBuffer_FindByCorrelationID(t *testing.T) {
 
 	ctx := t.Context()
 
-	go buffer.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	bus.Start()
+	go buffer.Start(ctx)
 
 	// Publish events with different correlation IDs
 	bus.Publish(&correlatedTestEvent{name: "correlated.event", correlationID: "abc-123"})
@@ -264,9 +257,8 @@ func TestEventBuffer_RingBufferOverflow(t *testing.T) {
 
 	ctx := t.Context()
 
-	go buffer.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	bus.Start()
+	go buffer.Start(ctx)
 
 	// Publish more events than buffer can hold
 	for range 10 {
@@ -290,8 +282,6 @@ func TestEventBuffer_ContextCancellation(t *testing.T) {
 		done <- buffer.Start(ctx)
 	}()
 
-	time.Sleep(10 * time.Millisecond)
-
 	// Cancel context
 	cancel()
 
@@ -310,9 +300,8 @@ func TestEventsVar_Get(t *testing.T) {
 
 	ctx := t.Context()
 
-	go buffer.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	bus.Start()
+	go buffer.Start(ctx)
 
 	// Publish some events
 	for range 5 {
@@ -341,9 +330,8 @@ func TestEventsVar_Get_WithLimit(t *testing.T) {
 
 	ctx := t.Context()
 
-	go buffer.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	bus.Start()
+	go buffer.Start(ctx)
 
 	// Publish 20 events
 	for range 20 {

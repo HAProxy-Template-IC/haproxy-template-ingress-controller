@@ -27,6 +27,14 @@ Architecture documentation: `docs/controller/docs/development/design.md`
 - Typed access to *any* watched resource via `pkg/k8s/typegen`, because typegen consumes the schema at runtime; it knows nothing about which resources will be there until the controller starts.
 - Resource shape stored as `map[string]any` plus the cost of `.(map[string]any)` casts in chart code — this is the price of generality, accept it rather than carving Go-side exceptions for the bundled chart's specific resources.
 
+**Scope — what RULE #1 does NOT govern (the operational-identity exception).** The rule is about the resources an operator *watches as template inputs* — the routing/application objects whose shape the chart consumes (Ingress, Gateway, HTTPRoute, a custom CRD, …). It does **not** govern the controller's own operational identity: the fixed inputs HAPTIC needs to bootstrap and run *itself*. Concrete, kind-specific Go for these is correct — **not** a violation, and must not be "fixed" into config-derived indirection:
+
+- **HAPTIC's credentials source.** The Dataplane API credentials Secret — its hardcoded GVR, a `SecretResourceChangedEvent`, parsing its `.data` — is the controller's own config input, not something the chart templates over. Hardcoding "Secret" here is fine.
+- **The HAProxy fleet HAPTIC manages.** The auto-injected `haproxy-pods` self-watch — its store key, the store separation, discovery filtering — is the controller observing the pods it deploys to. Operational plumbing, not a user-watched routing resource.
+- **HAPTIC's own CRDs.** The `HAProxyTemplateConfig` input CRD and the output CRDs (`HAProxyCfg`, `HAProxyMapFile`, …) are HAPTIC's own API surface; typed clients and kind-specific code for them are expected.
+
+The test for the exception: *could an operator plausibly swap this resource out as part of describing their routing?* If yes (a routing/application object the templates consume), it must stay generic. If it's a fixed input HAPTIC needs to function at all (its credentials, the fleet it manages, its own CRDs), concrete Go is allowed — generalising it only adds config knobs and indirection for zero real portability gain. Do not file these as RULE #1 violations.
+
 **Sweep rule.** If you touch one resource-coupled helper anywhere in `pkg/`, sweep ALL helpers in that package and remove every other one too. The rule is per-package, not per-helper. See `pkg/templating/CLAUDE.md` for the in-engine version.
 
 **Corollary on the chart side.** Resource-specific behaviour lives in resource-specific libraries (`ingress.yaml`, `gateway/*.yaml`, `haproxytech.yaml`, etc.), never in `base.yaml`. Vendor annotation libraries (`haproxy-ingress/`, `nginx-ingress/`, etc.) follow the same pattern. See `charts/CLAUDE.md` for the chart-side version.

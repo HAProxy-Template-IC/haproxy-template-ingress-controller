@@ -48,9 +48,8 @@ func TestComponent_ConfigInvalidEvent_IncrementsRejectedCounter(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// A config rejected by the validationtests validator.
 	eventBus.Publish(events.NewConfigInvalidEvent("v1", nil, map[string][]string{
@@ -77,14 +76,9 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start component processing (subscribes immediately)
-	go component.Start(ctx)
-
-	// Brief pause to ensure subscription is registered
-	time.Sleep(10 * time.Millisecond)
-
-	// Start event bus
+	// Bus first; the component subscribed in New(), so no events are missed.
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Publish reconciliation completed event
 	eventBus.Publish(events.NewReconciliationCompletedEvent(1500, nil))
@@ -118,9 +112,8 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Publish deployment completed event
 	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
@@ -175,9 +168,8 @@ func TestComponent_ValidationEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Publish validation completed event
 	eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
@@ -208,9 +200,8 @@ func TestComponent_ResourceEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// First, publish IndexSynchronizedEvent to initialize counts
 	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
@@ -287,9 +278,8 @@ func TestComponent_HAProxyPodRejected(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Two rejections with the same reason → counter at 2 for that label.
 	eventBus.Publish(events.NewHAProxyPodRejectedEvent("haproxy-a", "version_mismatch_older"))
@@ -320,9 +310,8 @@ func TestComponent_AllEventTypes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Publish various event types
 	eventBus.Publish(events.NewReconciliationCompletedEvent(1000, nil))
@@ -365,12 +354,10 @@ func TestComponent_GracefulShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	errChan := make(chan error, 1)
+	eventBus.Start()
 	go func() {
 		errChan <- component.Start(ctx)
 	}()
-
-	time.Sleep(10 * time.Millisecond)
-	eventBus.Start()
 
 	// Publish some events
 	eventBus.Publish(events.NewReconciliationCompletedEvent(500, nil))
@@ -403,9 +390,8 @@ func TestComponent_HighEventVolume(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Publish many events rapidly
 	for i := range 100 {
@@ -449,9 +435,8 @@ func TestComponent_LeaderElectionEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Initially not leader
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionIsLeader))
@@ -495,9 +480,8 @@ func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Publish LostLeadershipEvent without ever becoming leader
 	// This tests the edge case where becameLeaderAt is zero
@@ -525,9 +509,8 @@ func TestComponent_TickerUpdatesEventSubscribers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// The component itself creates at least one typed subscription, so SubscriberCount() > 0.
 	// Wait for the ticker to fire (TickerPollInterval) and update the gauge.
@@ -547,9 +530,8 @@ func TestComponent_QueueWaitRecorded(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	correlationID := "test-correlation-123"
 
@@ -597,9 +579,8 @@ func TestComponent_InitialSyncSkipped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
 	eventBus.Start()
+	go component.Start(ctx)
 
 	// Initialize counts first
 	eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
