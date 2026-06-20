@@ -269,7 +269,7 @@ Not all dependencies require event-driven coordination. The codebase distinguish
 **Utility Components** (can be called directly):
 
 - Infrastructure/cross-cutting concerns
-- Examples: EventBus, StoreManager, Metrics, RestMapper
+- Examples: EventBus, StoreProvider, Metrics, RestMapper
 - Provide services used by multiple components
 - No domain-specific business logic
 - Can be injected and called directly without events
@@ -278,9 +278,11 @@ Not all dependencies require event-driven coordination. The codebase distinguish
 
 ```go
 // Good - direct utility component calls (illustrative pseudocode)
-func (c *SomeComponent) handleRequest(namespace, name string, obj any, op resourcestore.Operation) {
-    // StoreManager is a utility component - direct call is acceptable
-    overlayStores, err := c.storeManager.CreateOverlayMap(resourceType, namespace, name, obj, op)
+func (c *SomeComponent) handleAdmission(resourceType string, obj runtime.Object) {
+    // StoreProvider is a utility component - building a dry-run overlay is a direct call
+    overlay := stores.NewStoreOverlayForCreate(obj)
+    provider := stores.NewOverlayStoreProvider(c.baseProvider,
+        stores.NewValidationContext(map[string]*stores.StoreOverlay{resourceType: overlay}))
 
     // Metrics is a utility component - direct call
     if c.metrics != nil {
@@ -308,7 +310,7 @@ Does the call involve domain business logic?
 │
 └─ NO → Is it infrastructure/utility?
     ├─ YES → Direct call is acceptable
-    │   └─ Examples: EventBus.Publish(), StoreManager.Get(), Metrics.Record()
+    │   └─ Examples: EventBus.Publish(), StoreProvider.GetStore(), Metrics.Record()
     │
     └─ MAYBE → Review with team
         └─ Ask: "Could this become reusable business logic?"
@@ -319,7 +321,7 @@ Does the call involve domain business logic?
 Current utility components that can be called directly:
 
 - **EventBus** (`pkg/events`): Event infrastructure
-- **StoreManager** (`pkg/controller/resourcestore`): Resource storage utilities
+- **StoreProvider** (`pkg/stores`): Resource store provider + dry-run overlay (`OverlayStoreProvider`, `StoreOverlay`); the watcher-side store lives in `pkg/k8s/store`
 - **Metrics** (`pkg/controller/metrics`): Prometheus metrics recording
 - **RestMapper** (`k8s.io/apimachinery/pkg/api/meta`): Kubernetes API mapping
 - **Logger** (`log/slog`): Structured logging
@@ -437,6 +439,10 @@ func TestRendererComponent(t *testing.T) {
     // Start component (method is Start, matching the lifecycle.Component contract)
     go renderer.Start(ctx)
 
+    // NOTE: RendererComponent / RenderCompletedEvent / RenderFailedEvent are
+    // illustrative placeholders. In production, rendering is synchronous
+    // (renderer.RenderService, ADR-0001) and its real result event is
+    // *events.TemplateRenderedEvent — there is no RenderCompletedEvent type.
     // Trigger reconciliation
     bus.Publish(ReconciliationTriggeredEvent{Context: testContext})
 
@@ -594,7 +600,7 @@ func main() {
     for _, comp := range components {
         comp := comp  // Capture loop variable
         g.Go(func() error {
-            return comp.Run(gCtx)
+            return comp.Start(gCtx)
         })
     }
 

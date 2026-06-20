@@ -44,23 +44,25 @@ var keysArgType = reflect.SliceOf(anyType)
 // itself a struct holding the chart-facing access surface:
 //
 //	resources struct {
-//	    Gateways *gatewayStore `json:"gateways"`
-//	    HTTPRoutes *httpRouteStore `json:"httproutes"`
+//	    Widgets *widgetStore `json:"widgets"`
+//	    FooBars *fooBarStore `json:"foobars"`
 //	    ...
 //	}
 //
-//	gatewayStore struct {
-//	    List      func() []*Gateway
-//	    Fetch     func(keys ...any) []*Gateway
-//	    GetSingle func(keys ...any) *Gateway
+//	widgetStore struct {
+//	    List      func() []*Widget
+//	    Fetch     func(keys ...any) []*Widget
+//	    GetSingle func(keys ...any) *Widget
 //	}
 //
 // Chart templates reach the typed-iteration path via
-// `resources.gateways.List()` and the indexed-lookup paths via
-// `resources.gateways.GetSingle(ns, name)` /
-// `resources.gateways.Fetch(...)`. The return values are typed
-// `*Gateway` / `[]*Gateway`, so Scriggo's type-checker validates
-// field access (`gw.Metadata.Namespace`) at engine boot.
+// `resources.widgets.List()` and the indexed-lookup paths via
+// `resources.widgets.GetSingle(ns, name)` /
+// `resources.widgets.Fetch(...)`. The return values are typed
+// `*Widget` / `[]*Widget`, so Scriggo's type-checker validates
+// field access (`w.Metadata.Namespace`) at engine boot. (Names here are
+// generic placeholders — the field set is whatever the operator watches,
+// never a fixed list of well-known kinds.)
 //
 // Resources whose schema didn't resolve (entry in [Result.Errors])
 // still get an inner store struct, with the same field names, but

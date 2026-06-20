@@ -407,11 +407,6 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		GOMAXPROCS: runtime.GOMAXPROCS(0),
 	}
 
-	// Add extra context from config if provided
-	if s.config.TemplatingSettings.ExtraContext != nil {
-		renderContext["extraContext"] = s.config.TemplatingSettings.ExtraContext
-	}
-
 	// Add HTTP fetcher if available
 	// Detection of validation mode is automatic based on provider type:
 	// - If provider is OverlayStoreProvider with HTTP overlay: validation mode
@@ -427,6 +422,14 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		httpFetcher := httpstore.NewHTTPStoreWrapper(ctx, s.httpStoreComponent, s.logger, httpOverlay)
 		renderContext["http"] = httpFetcher
 	}
+
+	// Merge extraContext last, mirroring rendercontext.Builder: this always
+	// populates the "extraContext" key (empty map when unset, so templates can
+	// safely chain `extraContext | dig(...) | fallback(...)`) AND promotes the
+	// user's top-level keys (e.g. `{{ debug.enabled }}`). Hand-rolling only the
+	// nil-check here previously diverged from the validate/testrunner path,
+	// letting a template pass `controller validate` yet misbehave in production.
+	rendercontext.MergeExtraContextInto(renderContext, s.config)
 
 	return renderContext, fileRegistry, statusPatchCollector, renderedResourceCollector
 }

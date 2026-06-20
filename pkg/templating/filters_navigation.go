@@ -15,7 +15,7 @@
 package templating
 
 import (
-	"fmt"
+	"errors"
 	"maps"
 	"reflect"
 	"slices"
@@ -31,9 +31,10 @@ type renderContextKey struct{}
 // RenderContextContextKey is exported for use in engine_scriggo.go.
 var RenderContextContextKey = renderContextKey{}
 
-// getSharedContext retrieves the SharedContext from the template context.
-// Returns nil if not found or not properly configured.
-func getSharedContext(env native.Env) *SharedContext {
+// getRenderContextValue retrieves a *T stored under key in the render-context
+// map. Returns nil if the env, the render-context map, or the typed entry is
+// absent. getSharedContext / getStatusPatchCollector are thin wrappers over it.
+func getRenderContextValue[T any](env native.Env, key string) *T {
 	ctx := env.Context()
 	if ctx == nil {
 		return nil
@@ -42,11 +43,14 @@ func getSharedContext(env native.Env) *SharedContext {
 	if !ok {
 		return nil
 	}
-	shared, ok := renderCtx["shared"].(*SharedContext)
-	if !ok {
-		return nil
-	}
-	return shared
+	v, _ := renderCtx[key].(*T)
+	return v
+}
+
+// getSharedContext retrieves the SharedContext from the template context.
+// Returns nil if not found or not properly configured.
+func getSharedContext(env native.Env) *SharedContext {
+	return getRenderContextValue[SharedContext](env, "shared")
 }
 
 // scriggoFail stops template execution with an error message using
@@ -60,7 +64,7 @@ func getSharedContext(env native.Env) *SharedContext {
 //	{{ fail("Service not found") }}
 //	{% if !service %}{{ fail("Service is required") }}{% end %}
 func scriggoFail(env native.Env, msg string) string {
-	env.Stop(fmt.Errorf("%s", msg))
+	env.Stop(errors.New(msg))
 	return "" // Never reached - env.Stop() halts execution
 }
 

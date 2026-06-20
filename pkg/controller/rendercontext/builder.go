@@ -61,6 +61,7 @@ type Builder struct {
 	httpFetcher        templating.HTTPFetcher
 	currentConfig      *parserconfig.StructuredConfig
 	typedResourceTypes map[string]reflect.Type
+	capabilities       dataplane.Capabilities
 }
 
 // Option configures a Builder.
@@ -97,6 +98,20 @@ func WithHTTPFetcher(fetcher templating.HTTPFetcher) Option {
 func WithCurrentConfig(cfg *parserconfig.StructuredConfig) Option {
 	return func(b *Builder) {
 		b.currentConfig = cfg
+	}
+}
+
+// WithCapabilities sets the HAProxy version capabilities exposed to templates
+// under the top-level "capabilities" key. The production renderer always
+// injects this key, so validation and benchmark contexts must too — otherwise
+// a template branching on `capabilities.supports_crt_list` (and similar)
+// behaves differently between `controller validate` and production, defeating
+// the purpose of pre-flight validation. When unset, Build() still populates
+// "capabilities" with an all-false map (zero-value Capabilities), matching a
+// no-capability HAProxy rather than omitting the key.
+func WithCapabilities(caps dataplane.Capabilities) Option {
+	return func(b *Builder) {
+		b.capabilities = caps
 	}
 }
 
@@ -172,6 +187,7 @@ type BuildResult struct {
 //	  "renderedResourceCollector": RenderedResourceCollector,
 //	  "pathResolver": PathResolver,
 //	  "dataplane": Config.Dataplane,
+//	  "capabilities": map[string]any (HAProxy version capabilities),
 //	  "currentConfig": *StructuredConfig (nil on first deployment),
 //	  "shared": map[string]any,
 //	  "runtimeEnvironment": RuntimeEnvironment,
@@ -232,6 +248,7 @@ func (b *Builder) Build() *BuildResult {
 		"renderedResourceCollector": renderedResourceCollector,
 		"pathResolver":              b.pathResolver,
 		"dataplane":                 b.config.Dataplane,
+		"capabilities":              CapabilitiesToMap(&b.capabilities),
 		"shared":                    templating.NewSharedContext(),
 		"runtimeEnvironment": &templating.RuntimeEnvironment{
 			GOMAXPROCS: runtime.GOMAXPROCS(0),

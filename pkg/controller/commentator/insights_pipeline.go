@@ -137,8 +137,8 @@ func (ec *EventCommentator) templateInsight(event busevents.Event, attrs []any) 
 func (ec *EventCommentator) deploymentInsight(event busevents.Event, attrs []any) (insight string, args []any) {
 	switch e := event.(type) {
 	case *events.DeploymentStartedEvent:
-		return fmt.Sprintf("Deployment started to %d HAProxy instances", len(e.Endpoints)),
-			append(attrs, "instance_count", len(e.Endpoints))
+		return fmt.Sprintf("Deployment started to %d HAProxy instances", e.EndpointCount),
+			append(attrs, "instance_count", e.EndpointCount)
 
 	case *events.InstanceDeployedEvent:
 		reloadInfo := ""

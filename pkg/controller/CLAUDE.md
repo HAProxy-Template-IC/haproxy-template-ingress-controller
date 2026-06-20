@@ -42,7 +42,19 @@ pkg/controller/
 │   ├── reconciler.go    # Triggers reconciliation immediately (no debounce)
 │   ├── coordinator.go   # Orchestrates pipeline execution
 │   └── *_test.go        # Tests
+├── renderer/             # Synchronous RenderService (stores → HAProxy config; ADR-0001)
 ├── resourcewatcher/      # Resource watcher lifecycle management
+├── deployer/             # Deployment scheduler + drift monitor (leader-only)
+├── configpublisher/      # Publishes rendered config/aux files as CRDs (leader-only)
+├── resourceapplier/      # Server-Side Apply of template-emitted k8sResources
+├── statusapplier/        # Applies template-driven status patches (leader-only)
+├── discovery/            # HAProxy pod discovery
+├── webhook/              # Admission webhook wiring
+├── dryrunvalidator/      # Synchronous admission dry-run validation
+├── proposalvalidator/    # Render + validate a proposed config/overlay
+├── httpstore/            # Event adapter over the pure HTTP store
+├── metrics/              # Prometheus metrics event adapter
+├── debug/                # /debug/vars state + event buffer
 ├── validator/            # Config validation responders (scatter-gather participants)
 │   ├── base.go          # Shared BaseValidator that subscribes to ConfigValidationRequest
 │   ├── basic.go         # Structural validation
@@ -51,6 +63,10 @@ pkg/controller/
 └── controller.go         # Main controller with staged startup
 
 ```
+
+This tree is a representative subset; `pkg/controller` has ~40 sub-packages. Run
+`ls pkg/controller` (or see `docs/controller/docs/development/design/package-structure.md`)
+for the full layout.
 
 ## Key Design Pattern: Event Adapters
 
@@ -498,7 +514,7 @@ Key non-obvious points:
 // Illustrative — using the examplerenderer skeleton from above.
 func TestExampleRenderer(t *testing.T) {
     bus := busevents.NewEventBus(100)
-    engine, _ := templating.New(testTemplates, nil, nil, nil)
+    engine, _ := templating.New(testTemplates, nil)
     component := examplerenderer.New(bus, engine)
 
     // Subscribe to output events BEFORE starting the bus
@@ -722,16 +738,27 @@ type CacheWarmingCompletedEvent struct { Count int }
 package cache
 
 type CacheWarmerComponent struct {
-    cache    *cache.Cache
-    eventBus *events.EventBus
+    cache     *cache.Cache
+    eventBus  *events.EventBus
+    eventChan <-chan events.Event // subscribed in New(), before bus.Start()
+}
+
+// NewCacheWarmerComponent subscribes during construction. Every component MUST
+// subscribe before EventBus.Start() flushes the pre-start buffer — subscribing
+// in Start() would miss events buffered before the goroutine runs (see the
+// "Subscribe in constructors, not in Start()" rule above).
+func NewCacheWarmerComponent(c *cache.Cache, bus *events.EventBus) *CacheWarmerComponent {
+    return &CacheWarmerComponent{
+        cache:     c,
+        eventBus:  bus,
+        eventChan: bus.Subscribe("cache-warmer", 50),
+    }
 }
 
 func (c *CacheWarmerComponent) Start(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe("cache-warmer", 50)
-
     for {
         select {
-        case event := <-eventChan:
+        case event := <-c.eventChan:
             if _, ok := event.(CacheWarmingTriggeredEvent); ok {
                 keys := c.extractKeys()
                 err := c.cache.Warm(keys)

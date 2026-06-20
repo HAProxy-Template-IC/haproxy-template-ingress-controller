@@ -289,6 +289,10 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 		events.EventTypeConfigPublished,
 		events.EventTypeLostLeadership,
 	)
+	// Unsubscribe on loop exit: without this, every leadership re-acquisition on
+	// the same instance would stack another subscription whose orphaned channel
+	// fills up and logs critical drops forever (mirrors Coordinator).
+	defer s.eventBus.UnsubscribeTyped(s.eventChan)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	s.MarkReady()

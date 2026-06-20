@@ -66,7 +66,7 @@ func getStatus(t *testing.T, crdClient *crdclientfake.Clientset) v1alpha1.HAProx
 func TestNewStatusUpdater(t *testing.T) {
 	u, _ := newStatusUpdaterFixture(t)
 	require.NotNil(t, u)
-	assert.NotNil(t, u.eventChan)
+	assert.NotNil(t, u.Base)
 	assert.Equal(t, StatusUpdaterComponentName, u.Name())
 }
 
@@ -218,7 +218,7 @@ func TestStatusUpdater_HandleHAProxyValidationFailed_GetError(t *testing.T) {
 func TestStatusUpdater_Integration(t *testing.T) {
 	htc := newHTC()
 	u, crd := newStatusUpdaterFixture(t, htc)
-	u.eventBus.Start()
+	u.EventBus().Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -229,20 +229,20 @@ func TestStatusUpdater_Integration(t *testing.T) {
 		close(done)
 	}()
 
-	u.eventBus.Publish(events.NewConfigValidatedEvent(nil, htc, "v1", ""))
+	u.EventBus().Publish(events.NewConfigValidatedEvent(nil, htc, "v1", ""))
 
 	require.Eventually(t, func() bool {
 		return getStatus(t, crd).ValidationStatus == "Valid"
 	}, 2*time.Second, 10*time.Millisecond)
 
-	u.eventBus.Publish(events.NewConfigInvalidEvent("v2", htc, map[string][]string{"basic": {"err"}}))
+	u.EventBus().Publish(events.NewConfigInvalidEvent("v2", htc, map[string][]string{"basic": {"err"}}))
 
 	require.Eventually(t, func() bool {
 		s := getStatus(t, crd)
 		return s.ValidationStatus == "Invalid" && len(s.ValidationErrors) == 1
 	}, 2*time.Second, 10*time.Millisecond)
 
-	u.eventBus.Publish(events.NewValidationFailedEvent([]string{"haproxy: bad"}, 5, ""))
+	u.EventBus().Publish(events.NewValidationFailedEvent([]string{"haproxy: bad"}, 5, ""))
 
 	require.Eventually(t, func() bool {
 		s := getStatus(t, crd)
@@ -257,10 +257,18 @@ func TestStatusUpdater_Integration(t *testing.T) {
 	}
 }
 
+// TestStatusUpdater_DoubleStop verifies Stop is idempotent (sync.Once via
+// component.Base): a second call must not panic on an already-closed channel.
+func TestStatusUpdater_DoubleStop(t *testing.T) {
+	u, _ := newStatusUpdaterFixture(t, newHTC())
+	u.Stop()
+	assert.NotPanics(t, u.Stop)
+}
+
 // TestStatusUpdater_StopViaContext verifies context cancellation shuts down Start().
 func TestStatusUpdater_StopViaContext(t *testing.T) {
 	u, _ := newStatusUpdaterFixture(t, newHTC())
-	u.eventBus.Start()
+	u.EventBus().Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

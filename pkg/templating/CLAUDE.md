@@ -1417,6 +1417,4 @@ Engines must:
 - API documentation: `pkg/templating/README.md`
 - Scriggo documentation: <https://scriggo.com/templates>
 - Scriggo fork: `gitlab.com/haproxy-haptic/scriggo` (fork with `{% include %}` statement)
-- Scriggo upstream documentation: <https://scriggo.com/templates>
-- Jinja2 template documentation: <https://jinja.palletsprojects.com/>
 - HAProxy template examples: `/examples/`

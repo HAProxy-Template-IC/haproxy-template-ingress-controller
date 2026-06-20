@@ -242,10 +242,6 @@ linters:
         linters:
           - gosec
         text: "G118"
-      - path: pkg/dataplane/client/adapter\.go
-        linters:
-          - gosec
-        text: "G118"
 
       # G108: pprof intentionally exposed on debug port for production debugging
       - path: pkg/introspection/server\.go
@@ -327,9 +323,6 @@ linters:
 
       # Exclude godot false positives for correctly formatted comments
       # These comments all end with periods but godot incorrectly flags them
-      - path: pkg/controller/resourcestore/overlay.go
-        linters:
-          - godot
       - path: pkg/controller/dryrunvalidator/component.go
         linters:
           - godot

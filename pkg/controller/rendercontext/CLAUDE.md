@@ -25,7 +25,7 @@ call sites use `NewBuilder` directly:
 | `pkg/controller/testrunner/rendering.go` | Validation tests |
 | `cmd/controller/benchmark_render.go` | Performance benchmarks |
 
-The production renderer (`pkg/controller/renderer/service.go`) builds its context directly via its own `buildRenderingContext` method. The dry-run validator delegates to `proposalvalidator` → pipeline → renderer and therefore also does not call `NewBuilder` directly.
+The production renderer (`pkg/controller/renderer/service.go`) builds its context directly via its own `buildRenderingContext` method. It is kept consistent with `Builder` by sharing the same helpers — `BuildResourcesValue` for `resources`, `CapabilitiesToMap` for `capabilities`, and `MergeExtraContextInto` for `extraContext` (always-set + top-level key promotion). When you add or change a context key, update **both** paths (or move the logic into a shared helper both call) so a template can't pass `controller validate` yet behave differently in production. The dry-run validator delegates to `proposalvalidator` → pipeline → renderer and therefore also does not call `NewBuilder` directly.
 
 ## Usage
 
@@ -62,6 +62,7 @@ marked "optional"):
 | `statusPatchCollector` | `*templating.StatusPatchCollector` | Captures status mutations from `filters_status.go` |
 | `pathResolver` | `*templating.PathResolver` | File path resolution (relative vs absolute) |
 | `dataplane` | `config.DataplaneConfig` | DataPlane API config block |
+| `capabilities` | `map[string]any` | HAProxy version capabilities (`supports_crt_list`, `supports_waf`, …) from `CapabilitiesToMap`. Always populated (all-false map when no `WithCapabilities` option is passed) so validation and production expose the identical key. |
 | `shared` | `*templating.SharedContext` | Per-render compute-once cache (`ComputeIfAbsent` etc.) |
 | `runtimeEnvironment` | `*templating.RuntimeEnvironment` | GOMAXPROCS and related runtime info |
 | `currentConfig` | `*parserconfig.StructuredConfig` | Live HAProxy config — *optional*, omitted when nil (first deploy) to dodge a Scriggo nil-pointer-initializer panic |
@@ -76,6 +77,7 @@ marked "optional"):
 | `WithHAProxyPodStore(stores.Store)` | HAProxy pod store; ends up in `controller["haproxy_pods"]` |
 | `WithHTTPFetcher(templating.HTTPFetcher)` | Wires the `http` runtime variable so templates can call `http.Fetch(...)` |
 | `WithCurrentConfig(*parser.StructuredConfig)` | Adds `currentConfig` to the context so templates can reason about the live HAProxy config; nil on the first deployment |
+| `WithCapabilities(dataplane.Capabilities)` | Sets the HAProxy version capabilities exposed under `capabilities`. The testrunner passes the detected local capabilities so `controller validate` matches production; omit it and `Build()` still populates an all-false map |
 
 `extraContext` is **not** an option — `Build()` reads `cfg.TemplatingSettings.ExtraContext`
 directly and always populates the `extraContext` key (with an empty map if the

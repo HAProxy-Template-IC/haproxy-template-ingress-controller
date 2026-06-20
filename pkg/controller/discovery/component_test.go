@@ -16,8 +16,6 @@ package discovery
 
 import (
 	"context"
-	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
@@ -34,34 +32,18 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
-// createTestComponent creates a new Component for testing, skipping if haproxy is not available.
+// createTestComponent creates a new Component for testing. TestMain installs a
+// fake HAProxy executor, so New always succeeds without a real haproxy binary.
 func createTestComponent(t *testing.T, bus *busevents.EventBus) *Component {
 	t.Helper()
 
 	_, logger := testutil.NewTestBusAndLogger()
 	component, err := New(bus, logger)
-	if err != nil {
-		// Check if it's because haproxy is not found
-		if strings.Contains(err.Error(), "haproxy binary not found") ||
-			strings.Contains(err.Error(), "detecting local HAProxy version") {
-			t.Skipf("skipping test: haproxy not available: %v", err)
-		}
-		t.Fatalf("unexpected error creating discovery component: %v", err)
-	}
+	require.NoError(t, err)
 	return component
 }
 
-// skipIfNoHAProxy skips the test if haproxy binary is not available.
-func skipIfNoHAProxy(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("haproxy"); err != nil {
-		t.Skip("skipping test: haproxy binary not found in PATH")
-	}
-}
-
 func TestComponent_ConfigValidatedEvent(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -111,8 +93,6 @@ func TestComponent_ConfigValidatedEvent(t *testing.T) {
 }
 
 func TestComponent_CredentialsUpdatedEvent(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -161,8 +141,6 @@ func TestComponent_CredentialsUpdatedEvent(t *testing.T) {
 }
 
 func TestComponent_ResourceIndexUpdatedEvent(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -218,8 +196,6 @@ func TestComponent_ResourceIndexUpdatedEvent(t *testing.T) {
 }
 
 func TestComponent_ResourceIndexUpdatedEvent_InitialSync_Skipped(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -271,8 +247,6 @@ func TestComponent_ResourceIndexUpdatedEvent_InitialSync_Skipped(t *testing.T) {
 }
 
 func TestComponent_ResourceIndexUpdatedEvent_WrongResourceType_Ignored(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -324,8 +298,6 @@ func TestComponent_ResourceIndexUpdatedEvent_WrongResourceType_Ignored(t *testin
 }
 
 func TestComponent_ResourceSyncCompleteEvent(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -373,8 +345,6 @@ func TestComponent_ResourceSyncCompleteEvent(t *testing.T) {
 }
 
 func TestComponent_ResourceSyncCompleteEvent_WrongResourceType_Ignored(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -467,7 +437,6 @@ func TestComponent_MissingPrerequisites(t *testing.T) {
 // testMissingPrerequisite is a helper that tests discovery with missing prerequisites.
 func testMissingPrerequisite(t *testing.T, hasConfig, hasCredentials, hasPodStore, shouldDiscover bool) {
 	t.Helper()
-	skipIfNoHAProxy(t)
 
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
@@ -563,8 +532,6 @@ func createTestPodStore(t *testing.T, podIPs []string) types.Store {
 }
 
 func TestComponent_Name(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -572,8 +539,6 @@ func TestComponent_Name(t *testing.T) {
 }
 
 func TestComponent_BecameLeaderEvent(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -629,8 +594,6 @@ func TestComponent_BecameLeaderEvent(t *testing.T) {
 }
 
 func TestComponent_BecameLeaderEvent_MissingPrerequisites(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -663,8 +626,6 @@ func TestComponent_BecameLeaderEvent_MissingPrerequisites(t *testing.T) {
 // This functionality is covered by integration tests.
 
 func TestComponent_InvalidConfigType(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -703,8 +664,6 @@ func TestComponent_InvalidConfigType(t *testing.T) {
 }
 
 func TestComponent_InvalidCredentialsType(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -743,8 +702,6 @@ func TestComponent_InvalidCredentialsType(t *testing.T) {
 }
 
 func TestComponent_PerformInitialDiscovery_NoPodsInStore(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, _ := testutil.NewTestBusAndLogger()
 	component := createTestComponent(t, bus)
 
@@ -859,8 +816,6 @@ func addPodToStoreWithPort(t *testing.T, podStore types.Store, name, namespace, 
 }
 
 func TestComponent_CleanupRemovedPods(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, logger := testutil.NewTestBusAndLogger()
 	component, err := New(bus, logger)
 	require.NoError(t, err)
@@ -907,8 +862,6 @@ func TestComponent_CleanupRemovedPods(t *testing.T) {
 }
 
 func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, logger := testutil.NewTestBusAndLogger()
 	component, err := New(bus, logger)
 	require.NoError(t, err)
@@ -940,8 +893,6 @@ func TestComponent_HandleRetryTimer_NoPendingPods(t *testing.T) {
 }
 
 func TestComponent_HandleRetryTimer_MissingRequirements(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, logger := testutil.NewTestBusAndLogger()
 	component, err := New(bus, logger)
 	require.NoError(t, err)
@@ -976,8 +927,6 @@ func TestComponent_HandleRetryTimer_MissingRequirements(t *testing.T) {
 }
 
 func TestComponent_ScheduleRetryTimerLocked_NoPendingRetries(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, logger := testutil.NewTestBusAndLogger()
 	component, err := New(bus, logger)
 	require.NoError(t, err)
@@ -999,8 +948,6 @@ func TestComponent_ScheduleRetryTimerLocked_NoPendingRetries(t *testing.T) {
 }
 
 func TestComponent_ScheduleRetryTimerLocked_WithPendingRetries(t *testing.T) {
-	skipIfNoHAProxy(t)
-
 	bus, logger := testutil.NewTestBusAndLogger()
 	component, err := New(bus, logger)
 	require.NoError(t, err)

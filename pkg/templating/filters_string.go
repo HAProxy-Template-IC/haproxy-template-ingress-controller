@@ -37,7 +37,7 @@ import (
 //	strip(123) => "123"
 func scriggoStrip(s any) string {
 	str := scriggoToString(s)
-	return Strip(str)
+	return strip(str)
 }
 
 // scriggoTrim is an alias for scriggoStrip for compatibility.
@@ -61,7 +61,7 @@ func scriggoB64Decode(s any) (string, error) {
 }
 
 // scriggoDebug outputs the structure of a variable as formatted JSON comments.
-// Uses shared Debug implementation from filters.go.
+// Uses the shared debug implementation from filters.go.
 //
 // Example:
 //
@@ -73,7 +73,7 @@ func scriggoDebug(value any, label ...string) string {
 	if len(label) > 0 {
 		labelStr = label[0]
 	}
-	return Debug(value, labelStr)
+	return debug(value, labelStr)
 }
 
 // scriggoStringsContains checks if a value contains a substring.
@@ -111,17 +111,10 @@ func scriggoStringsTrim(s any) string {
 	return strings.TrimSpace(str)
 }
 
-// scriggoTrimSpace trims whitespace from a value.
-// The input is converted to string using lenient type conversion.
-// This is an alias for strings_trim with a shorter name.
-//
-// Usage in Scriggo templates:
-//
-//	{% var trimmed = trimSpace(value) %}
-func scriggoTrimSpace(s any) string {
-	str := scriggoToString(s)
-	return strings.TrimSpace(str)
-}
+// scriggoTrimSpace trims whitespace from a value. Alias for scriggoStringsTrim
+// (registered under the shorter "trimSpace" filter name in filter_names.go),
+// mirroring the scriggoTrim = scriggoStrip alias above.
+var scriggoTrimSpace = scriggoStringsTrim
 
 // scriggoStringsLower converts a value to lowercase.
 // The input is converted to string using lenient type conversion.

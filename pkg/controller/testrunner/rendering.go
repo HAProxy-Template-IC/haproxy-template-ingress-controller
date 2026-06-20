@@ -253,6 +253,7 @@ func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validat
 		rendercontext.WithHTTPFetcher(httpStore),
 		rendercontext.WithCurrentConfig(currentConfig),
 		rendercontext.WithTypedResources(r.typedResourceTypes),
+		rendercontext.WithCapabilities(r.capabilities),
 	)
 
 	return builder.Build().Context

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/events/ringbuffer"
@@ -88,9 +89,12 @@ func (eb *EventBuffer) Start(ctx context.Context) error {
 	for {
 		select {
 		case event := <-eb.eventChan:
-			// Convert to debug Event
-			debugEvent := eb.convertEvent(event)
-			eb.buffer.Add(debugEvent)
+			// Recover per-event so a panic while converting a malformed event
+			// can't tear down the debug goroutine. EventBuffer keeps no logger
+			// of its own, so SafeDispatch falls back to slog.Default().
+			component.SafeDispatch(nil, ComponentName, event, func() {
+				eb.buffer.Add(eb.convertEvent(event))
+			})
 
 		case <-ctx.Done():
 			return nil

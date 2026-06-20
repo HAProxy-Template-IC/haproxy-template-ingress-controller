@@ -234,6 +234,26 @@ func (b *Base) dispatch(event busevents.Event) {
 	b.handler.HandleEvent(event)
 }
 
+// SafeDispatch invokes handle, recovering and logging any panic so a single
+// bad event cannot tear down a component's event loop. Components that embed
+// Base get this protection automatically via (*Base).dispatch; components that
+// cannot embed Base — because they use a lossy subscription or add extra
+// ticker/timer arms to their select — call this directly around their per-event
+// handling instead, getting the same recover-and-keep-alive guarantee.
+func SafeDispatch(logger *slog.Logger, name string, event busevents.Event, handle func()) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error(name+" panicked during event handling",
+				"panic", r,
+				"event_type", fmt.Sprintf("%T", event))
+		}
+	}()
+	handle()
+}
+
 // FlushPending discards every event currently buffered on the subscription
 // channel without dispatching it. Leader-only components that embed Base —
 // and are therefore subscribed for the whole process lifetime, not per

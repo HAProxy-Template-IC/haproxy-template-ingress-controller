@@ -26,29 +26,21 @@ import (
 
 // getStatusPatchCollector retrieves the StatusPatchCollector from the template render context.
 func getStatusPatchCollector(env native.Env) *StatusPatchCollector {
-	ctx := env.Context()
-	if ctx == nil {
-		return nil
-	}
-	renderCtx, ok := ctx.Value(RenderContextContextKey).(map[string]any)
-	if !ok {
-		return nil
-	}
-	collector, ok := renderCtx["statusPatchCollector"].(*StatusPatchCollector)
-	if !ok {
-		return nil
-	}
-	return collector
+	return getRenderContextValue[StatusPatchCollector](env, "statusPatchCollector")
 }
 
 // scriggoStatusPatch registers a status patch during template rendering.
+// The function is resource-agnostic: apiVersion/kind/namespace/name and the
+// variant payload are all supplied by the template, so it works identically for
+// any watched resource or CRD.
 //
-// Usage in Scriggo templates:
+// Usage in Scriggo templates (apiVersion/kind are placeholders — substitute
+// whatever resource the chart is patching):
 //
-//	{% statusPatch("default", "my-ingress", "networking.k8s.io/v1", "Ingress",
+//	{% statusPatch("default", "my-object", "example.com/v1", "Widget",
 //	    map[string]any{
 //	        "deployed": map[string]any{
-//	            "loadBalancer": map[string]any{"ingress": addresses},
+//	            "conditions": conditions,
 //	        },
 //	    }) %}
 func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string, variants map[string]any) string {

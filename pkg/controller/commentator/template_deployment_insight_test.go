@@ -252,11 +252,7 @@ func TestDeploymentInsight_InstanceDeploymentFailedEvent_RetryableFragmentCondit
 
 func TestDeploymentInsight_DeploymentStartedEvent_CountsEndpoints(t *testing.T) {
 	ec := emptyECommentator()
-	evt := ctlevents.NewDeploymentStartedEvent([]dataplane.Endpoint{
-		{URL: "http://1.2.3.4:5555"},
-		{URL: "http://5.6.7.8:5555"},
-		{URL: "http://9.10.11.12:5555"},
-	})
+	evt := ctlevents.NewDeploymentStartedEvent(3)
 
 	insight, attrs := ec.deploymentInsight(evt, nil)
 

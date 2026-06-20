@@ -66,6 +66,10 @@ func (e *HTTPResourceAcceptedEvent) EventType() string { return EventTypeHTTPRes
 
 // HTTPResourceRejectedEvent is published when pending HTTP content fails validation.
 // The old accepted content remains in use.
+//
+// Observability-only: there is no business-logic subscriber by design. The
+// httpstore component already WARN-logs the rejection, and the commentator
+// surfaces the event; nothing needs to react functionally.
 type HTTPResourceRejectedEvent struct {
 	URL             string // The URL whose content was rejected
 	ContentChecksum string // SHA256 checksum of rejected content

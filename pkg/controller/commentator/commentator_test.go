@@ -339,7 +339,7 @@ func TestEventCommentator_GenerateInsight_DeploymentEvents(t *testing.T) {
 			{URL: "http://pod2:5555"},
 			{URL: "http://pod3:5555"},
 		}
-		event := events.NewDeploymentStartedEvent(endpoints)
+		event := events.NewDeploymentStartedEvent(len(endpoints))
 
 		insight, attrs := ec.generateInsight(event)
 

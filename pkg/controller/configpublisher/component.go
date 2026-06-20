@@ -255,6 +255,10 @@ func (c *Component) Start(ctx context.Context) error {
 		events.EventTypeHAProxyPodsDiscovered,
 		events.EventTypeLostLeadership,
 	)
+	// Unsubscribe on loop exit: without this, every leadership re-acquisition on
+	// the same instance would stack another subscription whose orphaned channel
+	// fills up and logs critical drops forever (mirrors Coordinator).
+	defer c.eventBus.UnsubscribeTyped(c.eventChan)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	c.MarkReady()

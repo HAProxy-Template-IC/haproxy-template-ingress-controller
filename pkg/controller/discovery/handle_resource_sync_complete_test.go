@@ -21,10 +21,9 @@ import (
 // handleResourceSyncComplete sets the initialSyncComplete flag
 // (which gates initial discovery) and trips tryInitialDiscovery.
 // The function has THREE branches; the existing component_test.go
-// covers the happy path via integration tests gated behind
-// skipIfNoHAProxy. The state-management contracts can be pinned at
-// the unit level so they're verified in CI without the haproxy
-// binary:
+// covers the happy path using the fake HAProxy executor installed
+// in TestMain. The state-management contracts are additionally
+// pinned at the pure unit level here:
 //
 //  1. Wrong resource type → no-op. ResourceSyncCompleteEvent fires
 //     for EVERY watched resource type during startup; without this

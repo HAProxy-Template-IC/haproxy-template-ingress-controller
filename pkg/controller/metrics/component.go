@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
@@ -104,7 +105,12 @@ func (c *Component) Start(ctx context.Context) error {
 	for {
 		select {
 		case event := <-c.eventChan:
-			c.handleEvent(event)
+			// Recover per-event so a panic in a metric handler can't tear down
+			// the goroutine (this component can't embed component.Base — it adds
+			// a ticker arm). It keeps no logger, so SafeDispatch uses the default.
+			component.SafeDispatch(nil, ComponentName, event, func() {
+				c.handleEvent(event)
+			})
 		case <-ticker.C:
 			// Update observability drops from EventBus (not exposed via callback)
 			c.metrics.SetObservabilityDrops(c.eventBus.DroppedEventsObservability())

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
@@ -55,11 +56,14 @@ const (
 // - Config validation (Stage 1): Template syntax, JSONPath expressions, etc.
 // - HAProxy validation (Stage 4): Rendered config syntax check with haproxy -c.
 type StatusUpdater struct {
+	*component.Base
+
 	crdClient versioned.Interface
-	eventBus  *busevents.EventBus
-	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger    *slog.Logger
-	stopCh    chan struct{}
+
+	// ctx is the event-loop context captured by Start. Handlers run only on the
+	// loop goroutine and use it for Kubernetes API calls so status writes abort
+	// on shutdown.
+	ctx context.Context
 
 	// Cached config reference for HAProxy validation events
 	// (ValidationFailedEvent doesn't include the HAProxyTemplateConfig reference)
@@ -82,63 +86,49 @@ func NewStatusUpdater(
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 ) *StatusUpdater {
-	// Subscribe to only the event types we handle during construction (before EventBus.Start())
-	// This ensures proper startup synchronization and reduces buffer pressure
-	eventChan := eventBus.SubscribeTypes(StatusUpdaterComponentName, StatusUpdaterEventBufferSize,
-		events.EventTypeConfigValidated,
-		events.EventTypeConfigInvalid,
-		events.EventTypeValidationFailed,
-	)
+	u := &StatusUpdater{crdClient: crdClient}
 
-	return &StatusUpdater{
-		crdClient: crdClient,
-		eventBus:  eventBus,
-		eventChan: eventChan,
-		logger:    logger.With("component", StatusUpdaterComponentName),
-		stopCh:    make(chan struct{}),
-	}
+	// Subscribe to only the event types we handle during construction (before
+	// EventBus.Start()) for proper startup synchronization and reduced buffer
+	// pressure. component.Base supplies the subscribe + dispatch loop with
+	// panic recovery and a sync.Once-guarded Stop, so this component no longer
+	// hand-rolls a stopCh or its own select loop.
+	u.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       StatusUpdaterComponentName,
+		BufferSize: StatusUpdaterEventBufferSize,
+		Handler:    u,
+		EventTypes: []string{
+			events.EventTypeConfigValidated,
+			events.EventTypeConfigInvalid,
+			events.EventTypeValidationFailed,
+		},
+	})
+
+	return u
 }
 
-// Name returns the component name for lifecycle management.
-func (u *StatusUpdater) Name() string {
-	return StatusUpdaterComponentName
-}
-
-// Start begins processing validation events from the EventBus.
-//
-// This method blocks until Stop() is called or the context is canceled.
+// Start captures the loop context for handlers and runs the embedded
+// component.Base event loop until the context is cancelled or Stop is called.
 // Returns nil on graceful shutdown.
-//
-// Example:
-//
-//	go updater.Start(ctx)
 func (u *StatusUpdater) Start(ctx context.Context) error {
-	u.logger.Debug("status updater starting")
-
-	for {
-		select {
-		case <-ctx.Done():
-			u.logger.Info("StatusUpdater shutting down", "reason", ctx.Err())
-			return nil
-		case <-u.stopCh:
-			u.logger.Info("StatusUpdater shutting down")
-			return nil
-		case event := <-u.eventChan:
-			switch e := event.(type) {
-			case *events.ConfigValidatedEvent:
-				u.handleConfigValidated(ctx, e)
-			case *events.ConfigInvalidEvent:
-				u.handleConfigInvalid(ctx, e)
-			case *events.ValidationFailedEvent:
-				u.handleHAProxyValidationFailed(ctx, e)
-			}
-		}
-	}
+	u.ctx = ctx
+	return u.Base.Start(ctx)
 }
 
-// Stop gracefully stops the component.
-func (u *StatusUpdater) Stop() {
-	close(u.stopCh)
+// HandleEvent implements component.EventHandler, routing each validation event
+// to the matching status-update handler using the loop context captured by
+// Start.
+func (u *StatusUpdater) HandleEvent(event busevents.Event) {
+	switch e := event.(type) {
+	case *events.ConfigValidatedEvent:
+		u.handleConfigValidated(u.ctx, e)
+	case *events.ConfigInvalidEvent:
+		u.handleConfigInvalid(u.ctx, e)
+	case *events.ValidationFailedEvent:
+		u.handleHAProxyValidationFailed(u.ctx, e)
+	}
 }
 
 // handleConfigValidated updates CRD status to reflect successful validation.
@@ -151,7 +141,7 @@ func (u *StatusUpdater) handleConfigValidated(ctx context.Context, event *events
 	// Extract the HAProxyTemplateConfig from the event
 	htc, ok := event.TemplateConfig.(*v1alpha1.HAProxyTemplateConfig)
 	if !ok {
-		u.logger.Debug("ConfigValidatedEvent does not contain HAProxyTemplateConfig, skipping status update",
+		u.Logger().Debug("ConfigValidatedEvent does not contain HAProxyTemplateConfig, skipping status update",
 			"type", fmt.Sprintf("%T", event.TemplateConfig))
 		return
 	}
@@ -175,7 +165,7 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 	// Extract the HAProxyTemplateConfig from the event
 	htc, ok := event.TemplateConfig.(*v1alpha1.HAProxyTemplateConfig)
 	if !ok {
-		u.logger.Debug("ConfigInvalidEvent does not contain HAProxyTemplateConfig, skipping status update",
+		u.Logger().Debug("ConfigInvalidEvent does not contain HAProxyTemplateConfig, skipping status update",
 			"type", fmt.Sprintf("%T", event.TemplateConfig))
 		return
 	}
@@ -212,7 +202,7 @@ func (u *StatusUpdater) handleHAProxyValidationFailed(ctx context.Context, event
 	u.mu.RUnlock()
 
 	if configName == "" || configNamespace == "" {
-		u.logger.Debug("No cached config reference, skipping HAProxy validation status update")
+		u.Logger().Debug("No cached config reference, skipping HAProxy validation status update")
 		return
 	}
 
@@ -253,7 +243,7 @@ func (u *StatusUpdater) applyStatus(
 		HAProxyTemplateConfigs(namespace).
 		Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		u.logger.Warn("Failed to get HAProxyTemplateConfig for status update",
+		u.Logger().Warn("Failed to get HAProxyTemplateConfig for status update",
 			"namespace", namespace,
 			"name", name,
 			"error", err)
@@ -265,13 +255,13 @@ func (u *StatusUpdater) applyStatus(
 	if _, err := u.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyTemplateConfigs(current.Namespace).
 		UpdateStatus(ctx, current, metav1.UpdateOptions{}); err != nil {
-		u.logger.Warn("Failed to update HAProxyTemplateConfig status",
+		u.Logger().Warn("Failed to update HAProxyTemplateConfig status",
 			"namespace", current.Namespace,
 			"name", current.Name,
 			"error", err)
 		return
 	}
 
-	u.logger.Debug(successMsg,
+	u.Logger().Debug(successMsg,
 		append(logFields, "namespace", current.Namespace, "name", current.Name)...)
 }
