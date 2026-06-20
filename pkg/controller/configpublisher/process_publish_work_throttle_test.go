@@ -96,7 +96,7 @@ func TestProcessPublishWork_BuffersWhenWithinRefractoryAndNoPendingPublish(t *te
 	c := throttleComponent(10*time.Second, true)
 	work := throttleWork(c, "corr-buffered", "fresh-checksum")
 
-	c.processPublishWork(work)
+	c.processPublishWork(t.Context(), work)
 
 	c.pendingMu.Lock()
 	pending := c.pendingPublish
@@ -147,7 +147,7 @@ func TestProcessPublishWork_BuffersWhenWithinRefractoryAndDiscardsOldPending(t *
 	require.Contains(t, c.renderedConfigs, "corr-old-pending",
 		"sanity: old work's cache must be present before supersede")
 
-	c.processPublishWork(newWork)
+	c.processPublishWork(t.Context(), newWork)
 
 	c.pendingMu.Lock()
 	pending := c.pendingPublish
@@ -201,6 +201,7 @@ func TestProcessPublishWork_NoDeadlockWithLostLeadership(t *testing.T) {
 	}
 
 	const iters = 2000
+	ctx := t.Context()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -209,7 +210,7 @@ func TestProcessPublishWork_NoDeadlockWithLostLeadership(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
-				c.processPublishWork(mkWork(fmt.Sprintf("c-%d", i)))
+				c.processPublishWork(ctx, mkWork(fmt.Sprintf("c-%d", i)))
 			}
 		}()
 		go func() {

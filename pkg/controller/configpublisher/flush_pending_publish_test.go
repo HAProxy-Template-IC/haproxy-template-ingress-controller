@@ -62,7 +62,7 @@ func TestFlushPendingPublish_NilPendingIsNoOp(t *testing.T) {
 	// doesn't touch shared state on the no-op path.
 	c.renderedConfigs["unrelated"] = &renderedConfigEntry{config: "untouched"}
 
-	require.NotPanics(t, func() { c.flushPendingPublish() },
+	require.NotPanics(t, func() { c.flushPendingPublish(t.Context()) },
 		"nil pendingPublish must NOT panic — without this guard the "+
 			"function would nil-deref reading work.entry / work.correlationID "+
 			"when the throttle timer fires after the buffer was drained "+
@@ -108,7 +108,7 @@ func TestFlushPendingPublish_DedupHitSkipsAndDropsCache(t *testing.T) {
 	c.lastPublishedChecksum = dupChecksum
 	c.mu.Unlock()
 
-	require.NotPanics(t, func() { c.flushPendingPublish() },
+	require.NotPanics(t, func() { c.flushPendingPublish(t.Context()) },
 		"dedup-skip path MUST NOT call executePublish — c.publisher is "+
 			"nil here, so reaching executePublish would crash. The whole "+
 			"point of the second skipIfAlreadyPublished check is that "+

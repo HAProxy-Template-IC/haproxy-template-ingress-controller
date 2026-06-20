@@ -306,7 +306,7 @@ func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEve
 }
 
 // handlePodTerminated cleans up pod references when a pod is terminated.
-func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent) {
+func (c *Component) handlePodTerminated(ctx context.Context, event *events.HAProxyPodTerminatedEvent) {
 	// Get the namespace from cached templateConfig (namespace-scoped operations).
 	c.mu.RLock()
 	hasConfig := c.hasTemplateConfig
@@ -336,7 +336,7 @@ func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent)
 	}
 
 	// Call pure publisher (non-blocking - log errors but don't fail)
-	ctx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPITimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPITimeout)
 	defer cancel()
 
 	if err := c.publisher.CleanupPodReferences(ctx, &cleanupReq); err != nil {
@@ -360,7 +360,7 @@ func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent)
 // This cleans up stale entries from pods that terminated while the controller was
 // restarting (or before the controller started). It is called whenever HAProxy pods
 // are discovered, including on startup and when pods change.
-func (c *Component) handlePodsDiscovered(event *events.HAProxyPodsDiscoveredEvent) {
+func (c *Component) handlePodsDiscovered(ctx context.Context, event *events.HAProxyPodsDiscoveredEvent) {
 	// Get the namespace from cached templateConfig (namespace-scoped operations).
 	c.mu.RLock()
 	hasConfig := c.hasTemplateConfig
@@ -383,8 +383,8 @@ func (c *Component) handlePodsDiscovered(event *events.HAProxyPodsDiscoveredEven
 		podNames = append(podNames, ep.PodName)
 	}
 
-	// Create timeout context (same pattern as handlePodTerminated)
-	ctx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPILongTimeout)
+	// Create timeout context derived from the lifecycle ctx (same pattern as handlePodTerminated)
+	ctx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
 	defer cancel()
 
 	// Reconcile status against running pods (namespace-scoped)

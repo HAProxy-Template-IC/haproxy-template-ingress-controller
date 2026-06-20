@@ -64,7 +64,7 @@ func TestHandlePodsDiscovered_SkipsWhenNoTemplateConfig(t *testing.T) {
 		1,
 	)
 
-	require.NotPanics(t, func() { c.handlePodsDiscovered(evt) },
+	require.NotPanics(t, func() { c.handlePodsDiscovered(t.Context(), evt) },
 		"handlePodsDiscovered MUST NOT touch the publisher when no "+
 			"templateConfig is cached — pod discovery often arrives during "+
 			"startup BEFORE the first ConfigValidatedEvent populates the "+
@@ -92,7 +92,7 @@ func TestHandlePodsDiscovered_SkipsWhenNamespaceIsEmpty(t *testing.T) {
 		1,
 	)
 
-	require.NotPanics(t, func() { c.handlePodsDiscovered(evt) },
+	require.NotPanics(t, func() { c.handlePodsDiscovered(t.Context(), evt) },
 		"empty templateConfig.Namespace MUST early-return — the namespace "+
 			"is passed to publisher.ReconcileDeployedToPods, which uses it "+
 			"to scope its status-cleanup queries. A regression that allowed "+

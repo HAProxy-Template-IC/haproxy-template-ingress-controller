@@ -64,21 +64,23 @@ func (c *Component) publishWorker(ctx context.Context) {
 	for {
 		select {
 		case work := <-c.publishWork:
-			c.processPublishWork(work)
+			c.processPublishWork(ctx, work)
 		case work := <-c.deployedPublishWork:
-			c.processPublishWork(work)
+			c.processPublishWork(ctx, work)
 		case <-c.publishThrottle.FiredCh():
-			c.flushPendingPublish()
+			c.flushPendingPublish(ctx)
 		case <-ctx.Done():
-			// Flush any buffered publish before shutdown
-			c.flushPendingPublish()
+			// Flush any buffered publish before shutdown. The lifecycle ctx is
+			// already cancelled, so detach from its cancellation (WithoutCancel)
+			// so the final write isn't instantly aborted.
+			c.flushPendingPublish(context.WithoutCancel(ctx))
 			return
 		}
 	}
 }
 
 // processPublishWork decides whether to publish immediately or buffer for throttle.
-func (c *Component) processPublishWork(work *publishWorkItem) {
+func (c *Component) processPublishWork(ctx context.Context, work *publishWorkItem) {
 	c.logger.Debug("processing publish work",
 		"config_name", work.templateConfig.Name,
 		"config_namespace", work.templateConfig.Namespace,
@@ -131,11 +133,11 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 	}
 
 	// Gate open — publish immediately
-	c.executePublish(work)
+	c.executePublish(ctx, work)
 }
 
 // flushPendingPublish publishes the buffered work item (if any) when the throttle timer expires.
-func (c *Component) flushPendingPublish() {
+func (c *Component) flushPendingPublish(ctx context.Context) {
 	c.pendingMu.Lock()
 	deployWork := c.pendingDeployedPublish
 	c.pendingDeployedPublish = nil
@@ -160,7 +162,7 @@ func (c *Component) flushPendingPublish() {
 			"correlation_id", w.correlationID,
 			"deploy_driven", w.deployDriven,
 		)
-		c.executePublish(w)
+		c.executePublish(ctx, w)
 	}
 }
 
@@ -191,11 +193,11 @@ func (c *Component) skipIfAlreadyPublished(work *publishWorkItem, msg string) bo
 }
 
 // executePublish performs the actual K8S API call to publish the config CRD.
-func (c *Component) executePublish(work *publishWorkItem) {
+func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 	request := c.buildPublishRequest(work.templateConfig, work.entry)
 
 	// Call pure publisher with timeout context
-	publishCtx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPILongTimeout)
+	publishCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
 	defer cancel()
 
 	result, err := c.publisher.PublishConfig(publishCtx, request)
@@ -239,7 +241,7 @@ func (c *Component) validationFailedWorker(ctx context.Context) {
 	for {
 		select {
 		case work := <-c.validationFailedWork:
-			c.processValidationFailedWork(work)
+			c.processValidationFailedWork(ctx, work)
 		case <-ctx.Done():
 			return
 		}
@@ -247,7 +249,7 @@ func (c *Component) validationFailedWorker(ctx context.Context) {
 }
 
 // processValidationFailedWork performs the actual invalid config publishing.
-func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) {
+func (c *Component) processValidationFailedWork(ctx context.Context, work *validationFailedWorkItem) {
 	c.logger.Debug("processing validation failed work",
 		"config_name", work.templateConfig.Name,
 		"config_namespace", work.templateConfig.Namespace,
@@ -270,7 +272,7 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 	request.ValidationError = validationError
 
 	// Call pure publisher with timeout context
-	publishCtx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPILongTimeout)
+	publishCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
 	defer cancel()
 
 	result, err := c.publisher.PublishConfig(publishCtx, request)
@@ -308,21 +310,23 @@ func (c *Component) statusWorker(ctx context.Context) {
 	for {
 		select {
 		case <-c.statusWorkTrigger:
-			c.handleStatusTrigger()
+			c.handleStatusTrigger(ctx)
 		case <-c.statusThrottle.FiredCh():
-			c.processAllPendingStatusWork()
+			c.processAllPendingStatusWork(ctx)
 		case <-ctx.Done():
-			// Flush any pending status updates before shutdown
-			c.processAllPendingStatusWork()
+			// Flush any pending status updates before shutdown. The lifecycle
+			// ctx is already cancelled, so detach from its cancellation
+			// (WithoutCancel) so the final writes aren't instantly aborted.
+			c.processAllPendingStatusWork(context.WithoutCancel(ctx))
 			return
 		}
 	}
 }
 
 // handleStatusTrigger decides whether to process status updates immediately or defer.
-func (c *Component) handleStatusTrigger() {
+func (c *Component) handleStatusTrigger(ctx context.Context) {
 	if c.statusThrottle.Available() {
-		c.processAllPendingStatusWork()
+		c.processAllPendingStatusWork(ctx)
 		return
 	}
 	// Inside refractory — wake up at the end. Pending updates already
@@ -353,7 +357,7 @@ func (c *Component) handleStatusTrigger() {
 //     moment the apply starts. The overwrite-by-pod-key semantics in
 //     handleConfigAppliedToPod guarantee that whatever the map holds is
 //     the most recent event seen for that pod up to the pop.
-func (c *Component) processAllPendingStatusWork() {
+func (c *Component) processAllPendingStatusWork(ctx context.Context) {
 	c.statusWorkPendingMu.Lock()
 	if len(c.statusWorkPending) == 0 {
 		c.statusWorkPendingMu.Unlock()
@@ -388,7 +392,7 @@ func (c *Component) processAllPendingStatusWork() {
 				// defensive rather than expected.
 				return
 			}
-			c.processStatusWork(work)
+			c.processStatusWork(ctx, work)
 		}(podKey)
 	}
 	wg.Wait()
@@ -398,7 +402,7 @@ func (c *Component) processAllPendingStatusWork() {
 }
 
 // processStatusWork performs the actual pod status update.
-func (c *Component) processStatusWork(work *statusWorkItem) {
+func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem) {
 	event := work.event
 
 	c.logger.Debug("processing status update for pod",
@@ -422,7 +426,7 @@ func (c *Component) processStatusWork(work *statusWorkItem) {
 	}
 
 	// Call pure publisher with timeout context
-	updateCtx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPITimeout)
+	updateCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPITimeout)
 	defer cancel()
 
 	if err := c.publisher.UpdateDeploymentStatus(updateCtx, &update); err != nil {

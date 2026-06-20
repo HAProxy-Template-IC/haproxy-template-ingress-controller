@@ -275,7 +275,7 @@ func (c *Component) Start(ctx context.Context) error {
 	for {
 		select {
 		case event := <-c.eventChan:
-			c.handleEvent(event)
+			c.handleEvent(ctx, event)
 
 		case <-ctx.Done():
 			c.logger.Info("Config publisher shutting down", "reason", ctx.Err())
@@ -284,8 +284,10 @@ func (c *Component) Start(ctx context.Context) error {
 	}
 }
 
-// handleEvent processes events from the event bus.
-func (c *Component) handleEvent(event busevents.Event) {
+// handleEvent processes events from the event bus. ctx is the component's
+// lifecycle context, forwarded to handlers that issue Kubernetes API calls so
+// those calls are cancelled on shutdown.
+func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 	switch e := event.(type) {
 	case *events.ConfigValidatedEvent:
 		c.handleConfigValidated(e)
@@ -306,10 +308,10 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.handleDeployedConfigPublishRequest(e)
 
 	case *events.HAProxyPodTerminatedEvent:
-		c.handlePodTerminated(e)
+		c.handlePodTerminated(ctx, e)
 
 	case *events.HAProxyPodsDiscoveredEvent:
-		c.handlePodsDiscovered(e)
+		c.handlePodsDiscovered(ctx, e)
 
 	case *events.LostLeadershipEvent:
 		c.handleLostLeadership(e)

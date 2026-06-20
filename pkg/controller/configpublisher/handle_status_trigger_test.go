@@ -77,7 +77,7 @@ func TestHandleStatusTrigger_NoThrottleProcessesImmediately(t *testing.T) {
 	// path that exits cleanly — no panic.
 	c := statusTriggerComponent(0, false)
 
-	require.NotPanics(t, func() { c.handleStatusTrigger() },
+	require.NotPanics(t, func() { c.handleStatusTrigger(t.Context()) },
 		"publishInterval=0 must take the immediate-process branch — "+
 			"a regression that always entered the refractory branch would "+
 			"defer status updates indefinitely (no timer would ever start "+
@@ -92,7 +92,7 @@ func TestHandleStatusTrigger_OutsideRefractoryProcessesImmediately(t *testing.T)
 	// self-contained.
 	c := statusTriggerComponent(10*time.Second, false)
 
-	require.NotPanics(t, func() { c.handleStatusTrigger() },
+	require.NotPanics(t, func() { c.handleStatusTrigger(t.Context()) },
 		"outside refractory MUST process immediately (leading-edge throttle) "+
 			"— without this branch every first status write after idle would "+
 			"wait one full refractory period before publishing, defeating "+
@@ -119,7 +119,7 @@ func TestHandleStatusTrigger_InsideRefractoryDefersToTimer(t *testing.T) {
 	c.statusWorkPending[podKey] = sentinel
 	c.statusWorkPendingMu.Unlock()
 
-	require.NotPanics(t, func() { c.handleStatusTrigger() },
+	require.NotPanics(t, func() { c.handleStatusTrigger(t.Context()) },
 		"inside-refractory MUST take the timer-schedule branch — a "+
 			"regression that called processAllPendingStatusWork directly "+
 			"would crash on the nil publisher reachable from processStatusWork")
