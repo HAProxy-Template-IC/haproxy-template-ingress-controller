@@ -169,11 +169,11 @@ func (pr *PathResolver) GetPath(args ...any) (any, error) {
 	return fullPath, nil
 }
 
-func Strip(s string) string {
+func strip(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// Debug formats a value as JSON-formatted HAProxy comments.
+// debug formats a value as JSON-formatted HAProxy comments.
 //
 // This is the shared core implementation used by the Scriggo engine.
 // Useful for debugging template data during development.
@@ -189,7 +189,7 @@ func Strip(s string) string {
 //
 // Returns:
 //   - Formatted string with JSON data as HAProxy comments
-func Debug(value any, label string) string {
+func debug(value any, label string) string {
 	// Marshal to JSON with indentation
 	data, err := json.MarshalIndent(value, "# ", "  ")
 	if err != nil {

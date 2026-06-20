@@ -283,7 +283,7 @@ func (sc *StateCache) handleDeploymentStarted(e *events.DeploymentStartedEvent) 
 
 	sc.deploymentStatus = statusPending
 	sc.deploymentTime = e.Timestamp()
-	sc.endpointsTotal = len(e.Endpoints)
+	sc.endpointsTotal = e.EndpointCount
 	sc.endpointsSucceeded = 0
 	sc.endpointsFailed = 0
 	sc.failedEndpoints = nil

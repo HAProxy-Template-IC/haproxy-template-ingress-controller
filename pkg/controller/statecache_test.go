@@ -365,7 +365,7 @@ func TestStateCache_HandleDeploymentStarted(t *testing.T) {
 	}
 
 	// Publish deployment started event
-	bus.Publish(events.NewDeploymentStartedEvent(endpoints))
+	bus.Publish(events.NewDeploymentStartedEvent(len(endpoints)))
 
 	// Allow time for event processing
 	time.Sleep(50 * time.Millisecond)
@@ -479,7 +479,7 @@ func TestStateCache_HandleInstanceDeploymentFailed(t *testing.T) {
 	endpoint := &testEndpoint{url: "http://haproxy1:5555"}
 
 	// Start deployment first (sets deploymentStatus to "pending")
-	bus.Publish(events.NewDeploymentStartedEvent(endpoints))
+	bus.Publish(events.NewDeploymentStartedEvent(len(endpoints)))
 	time.Sleep(50 * time.Millisecond)
 
 	// Publish instance deployment failed event

@@ -152,7 +152,7 @@ func (c *Component) deployToEndpoints(
 
 	// Publish DeploymentStartedEvent with correlation
 	c.EventBus().Publish(events.NewDeploymentStartedEvent(
-		endpoints,
+		len(endpoints),
 		events.WithCorrelation(correlationID, correlationID),
 	))
 

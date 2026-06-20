@@ -237,8 +237,14 @@ func TestElector_Start_ContextCancellation(t *testing.T) {
 		errChan <- elector.Start(ctx)
 	}()
 
-	// Give it time to start
-	time.Sleep(500 * time.Millisecond)
+	// Wait until the elector has actually started leading (it writes the
+	// Lease) before cancelling, so we exercise the cancel-while-leading path.
+	// With a fake client, election completes in milliseconds.
+	require.Eventually(t, func() bool {
+		l, err := clientset.CoordinationV1().Leases("default").Get(
+			context.Background(), "cancel-test-lease", metav1.GetOptions{})
+		return err == nil && l.Spec.HolderIdentity != nil
+	}, 3*time.Second, 20*time.Millisecond)
 
 	// Cancel context
 	cancel()
@@ -359,16 +365,20 @@ func TestElector_Callbacks_NilCallbacksHandledGracefully(t *testing.T) {
 		errChan <- elector.Start(ctx)
 	}()
 
-	// Wait for leader election
-	time.Sleep(4 * time.Second)
-
-	// Should become leader without panicking — observe via the Lease
-	// resource the elector writes (no callbacks were provided).
-	lease, err := clientset.CoordinationV1().Leases("default").Get(
-		context.Background(), "nil-callback-lease", metav1.GetOptions{})
-	require.NoError(t, err)
-	require.NotNil(t, lease.Spec.HolderIdentity)
-	assert.Equal(t, "test-pod-nil", *lease.Spec.HolderIdentity)
+	// Should become leader without panicking — observe via the Lease resource
+	// the elector writes (no callbacks were provided to signal on). With a fake
+	// client, election completes in milliseconds, so poll rather than sleep.
+	var holder string
+	require.Eventually(t, func() bool {
+		l, err := clientset.CoordinationV1().Leases("default").Get(
+			context.Background(), "nil-callback-lease", metav1.GetOptions{})
+		if err != nil || l.Spec.HolderIdentity == nil {
+			return false
+		}
+		holder = *l.Spec.HolderIdentity
+		return true
+	}, 3*time.Second, 20*time.Millisecond)
+	assert.Equal(t, "test-pod-nil", holder)
 }
 
 func TestNew_AllConfigFieldsUsed(t *testing.T) {

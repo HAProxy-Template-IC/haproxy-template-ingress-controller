@@ -133,6 +133,10 @@ func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeLostLeadership,
 	)
+	// Unsubscribe on loop exit: without this, every leadership re-acquisition on
+	// the same instance would stack another subscription whose orphaned channel
+	// fills up and logs critical drops forever (mirrors Coordinator).
+	defer m.eventBus.UnsubscribeTyped(m.eventChan)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	m.MarkReady()

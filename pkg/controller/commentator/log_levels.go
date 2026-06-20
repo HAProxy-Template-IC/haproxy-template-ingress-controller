@@ -85,8 +85,8 @@ func (ec *EventCommentator) appendCorrelation(event busevents.Event, attrs []any
 //	queue_wait = processing_start - previous_event.timestamp
 func (ec *EventCommentator) computeReconciliationSummary(
 	deploymentEvent *events.DeploymentCompletedEvent,
-) ReconciliationSummary {
-	summary := ReconciliationSummary{
+) reconciliationSummary {
+	summary := reconciliationSummary{
 		Instances:  fmt.Sprintf("%d/%d", deploymentEvent.Succeeded, deploymentEvent.Total),
 		Reloads:    deploymentEvent.ReloadsTriggered,
 		Operations: deploymentEvent.TotalAPIOperations,

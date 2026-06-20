@@ -450,37 +450,21 @@ func TestValidationEvents(t *testing.T) {
 
 func TestDeploymentEvents(t *testing.T) {
 	t.Run("DeploymentStartedEvent", func(t *testing.T) {
-		endpoints := []dataplane.Endpoint{
-			{URL: "http://endpoint1:5555"},
-			{URL: "http://endpoint2:5555"},
-		}
-		event := NewDeploymentStartedEvent(endpoints)
+		event := NewDeploymentStartedEvent(2)
 		require.NotNil(t, event)
-		assert.Len(t, event.Endpoints, 2)
-		assert.Equal(t, "http://endpoint1:5555", event.Endpoints[0].URL)
+		assert.Equal(t, 2, event.EndpointCount)
 		assert.Equal(t, EventTypeDeploymentStarted, event.EventType())
 		assert.False(t, event.Timestamp().IsZero())
 	})
 
-	t.Run("DeploymentStartedEvent_DefensiveCopy", func(t *testing.T) {
-		endpoints := []dataplane.Endpoint{{URL: "http://endpoint1:5555"}}
-		event := NewDeploymentStartedEvent(endpoints)
-
-		// Modify original
-		endpoints[0] = dataplane.Endpoint{URL: "http://modified:5555"}
-
-		// Event should have original value
-		assert.Equal(t, "http://endpoint1:5555", event.Endpoints[0].URL)
-	})
-
 	t.Run("DeploymentStartedEvent_EmptyEndpoints", func(t *testing.T) {
-		event := NewDeploymentStartedEvent(nil)
+		event := NewDeploymentStartedEvent(0)
 		require.NotNil(t, event)
-		assert.Nil(t, event.Endpoints)
+		assert.Zero(t, event.EndpointCount)
 	})
 
 	t.Run("DeploymentStartedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewDeploymentStartedEvent(nil, WithCorrelation("corr-123", "cause-456"))
+		event := NewDeploymentStartedEvent(0, WithCorrelation("corr-123", "cause-456"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
 		assert.Equal(t, "cause-456", event.CausationID())
@@ -849,7 +833,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", nil, true)},
 		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
 		// Deployment events
-		{"DeploymentStarted", NewDeploymentStartedEvent(nil)},
+		{"DeploymentStarted", NewDeploymentStartedEvent(0)},
 		{"InstanceDeployed", NewInstanceDeployedEvent(nil, 0, false)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
 		{"DeploymentCompleted", NewDeploymentCompletedEvent(&DeploymentResult{})},

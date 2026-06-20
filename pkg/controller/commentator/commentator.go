@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -17,9 +18,9 @@ const (
 	maxErrorPreviewLength = 80
 )
 
-// ReconciliationSummary contains aggregated metrics from a complete reconciliation cycle.
+// reconciliationSummary contains aggregated metrics from a complete reconciliation cycle.
 // It is computed by correlating events with the same correlation ID.
-type ReconciliationSummary struct {
+type reconciliationSummary struct {
 	// Trigger is the reason that initiated the reconciliation.
 	Trigger string
 
@@ -104,7 +105,12 @@ func (ec *EventCommentator) Start(ctx context.Context) error {
 			ec.logger.Info("Event commentator shutting down", "reason", ctx.Err())
 			return nil
 		case event := <-ec.eventChan:
-			ec.processEvent(event)
+			// Recover per-event so a panic in domain insight logging can't tear
+			// down the observability goroutine (commentator can't embed
+			// component.Base because it uses a lossy subscription).
+			component.SafeDispatch(ec.logger, ComponentName, event, func() {
+				ec.processEvent(event)
+			})
 		}
 	}
 }

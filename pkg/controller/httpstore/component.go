@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -134,7 +135,12 @@ func (c *Component) Start(ctx context.Context) error {
 	for {
 		select {
 		case event := <-c.eventChan:
-			c.handleEvent(event)
+			// Recover per-event so a panic in validation-event handling can't
+			// tear down the goroutine (this component can't embed component.Base
+			// — it adds an eviction-ticker arm).
+			component.SafeDispatch(c.logger, ComponentName, event, func() {
+				c.handleEvent(event)
+			})
 
 		case <-evictionChan:
 			evictedURLs := c.store.EvictUnused()

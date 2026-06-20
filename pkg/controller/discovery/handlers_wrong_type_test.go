@@ -32,10 +32,9 @@ import (
 //      inside the DataPlane API client)
 //
 // The existing component_test.go covers these via a real EventBus
-// + skipIfNoHAProxy gate; that test never runs in CI environments
-// without the haproxy binary, leaving this critical guard
-// effectively unverified. This file exercises the same guard at
-// the unit level so CI catches regressions even without haproxy.
+// and the fake HAProxy executor installed in TestMain. This file
+// additionally exercises the same guard at the pure unit level so
+// the contract is pinned independently of the fake.
 
 func TestHandleConfigValidated_WrongTypeLeavesStateUntouched(t *testing.T) {
 	c := newTestComponentWithoutHAProxy(t)

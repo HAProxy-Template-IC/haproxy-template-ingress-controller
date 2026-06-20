@@ -28,7 +28,11 @@ import (
 //
 // This event propagates the correlation ID from DeploymentScheduledEvent.
 type DeploymentStartedEvent struct {
-	Endpoints []dataplane.Endpoint
+	// EndpointCount is the number of HAProxy instances this deploy targets.
+	// Only the count is carried: subscribers (statecache, commentator) never
+	// read more than len(), and carrying the full slice forced a defensive
+	// deep-copy of every endpoint's address and credentials on each publish.
+	EndpointCount int
 	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -36,17 +40,16 @@ type DeploymentStartedEvent struct {
 }
 
 // NewDeploymentStartedEvent creates a new DeploymentStartedEvent.
-// Performs defensive copy of the endpoints slice.
 //
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentStartedEvent(endpoints,
+//	event := events.NewDeploymentStartedEvent(len(endpoints),
 //	    events.PropagateCorrelation(scheduledEvent))
-func NewDeploymentStartedEvent(endpoints []dataplane.Endpoint, opts ...CorrelationOption) *DeploymentStartedEvent {
+func NewDeploymentStartedEvent(endpointCount int, opts ...CorrelationOption) *DeploymentStartedEvent {
 	return &DeploymentStartedEvent{
-		Endpoints:   copySlice(endpoints),
-		timestamped: newTimestamped(),
-		Correlation: newCorrelation(opts...),
+		EndpointCount: endpointCount,
+		timestamped:   newTimestamped(),
+		Correlation:   newCorrelation(opts...),
 	}
 }
 
@@ -55,6 +58,9 @@ func (e *DeploymentStartedEvent) EventType() string { return EventTypeDeployment
 // InstanceDeployedEvent is published when deployment to a single HAProxy instance succeeds.
 //
 // This event propagates the correlation ID from DeploymentStartedEvent.
+//
+// Observability-only: consumed by the commentator's deploymentInsight for
+// per-instance logging; no business-logic subscriber reacts to it.
 type InstanceDeployedEvent struct {
 	Endpoint       any // The HAProxy endpoint that was deployed to
 	DurationMs     int64

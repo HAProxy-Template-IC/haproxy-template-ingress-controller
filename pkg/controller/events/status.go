@@ -43,6 +43,9 @@ const (
 // StatusUpdateCompletedEvent is published when status patch application completes.
 //
 // This event propagates the correlation ID from the triggering reconciliation event.
+//
+// Observability-only: consumed by the commentator's statusInsight; no
+// business-logic subscriber reacts to it.
 type StatusUpdateCompletedEvent struct {
 	// Phase identifies which pipeline phase triggered this status update.
 	Phase StatusPatchPhase
@@ -85,6 +88,9 @@ func (e *StatusUpdateCompletedEvent) EventType() string { return EventTypeStatus
 // StatusUpdateFailedEvent is published when a status patch application fails for a resource.
 //
 // This event propagates the correlation ID from the triggering reconciliation event.
+//
+// Observability-only: consumed by the commentator's statusInsight; no
+// business-logic subscriber reacts to it.
 type StatusUpdateFailedEvent struct {
 	// Namespace is the namespace of the target Kubernetes resource.
 	Namespace string

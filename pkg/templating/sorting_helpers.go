@@ -87,15 +87,13 @@ func navigateJSONPath(item any, path string) any {
 
 // getField retrieves a field from a map or struct.
 //
-// Field-name resolution mirrors [scriggoDig] / [digStructField] so
-// JSONPath expressions like "$.match.method" walk a typed struct's
-// JSON tags (typegen-produced `json:"match"`, `json:"method"`) instead
-// of using the segment as a literal Go field name (`Match`, `Method` —
-// would never match the lowercase JSONPath segment via FieldByName).
-// Without this, sort_by criteria over typed resources silently extract
-// nil and every route ends up with equal sort keys — the route-
-// precedence regression that surfaced as gateway-conformance
-// HTTPRouteHeaderMatching / QueryParamMatching / RewriteHost failures.
+// Field-name resolution mirrors [scriggoDig] / [digStructField] so a
+// JSONPath expression like "$.a.b" walks a typed struct's JSON tags
+// (typegen-produced `json:"a"`, `json:"b"`) instead of using the segment
+// as a literal Go field name (`A`, `B` — would never match the lowercase
+// JSONPath segment via FieldByName). Without this, sort_by criteria over
+// any typed resource silently extract nil and every item ends up with
+// equal sort keys, collapsing precedence between items.
 func getField(item any, fieldName string) any {
 	if item == nil {
 		return nil
@@ -131,14 +129,11 @@ func getField(item any, fieldName string) any {
 				// tagged `json:"…,omitempty"` whose value equals the
 				// type's zero value is treated as absent. Without
 				// this, the sort_by `:exists` modifier sees every
-				// optional field as present (the field always
-				// exists in the Go type even when the resource
-				// didn't set it), and precedence between method-
-				// having rules and catch-all rules collapses —
-				// observed as the e2e TestHTTPRoutePrecedence/
-				// plain_GET_routes_to_v2 failure: plain-GET hit a
-				// catch-all rule that should have lost to a
-				// GET-only rule on $.match.method:exists:desc.
+				// optional field as present (the field always exists
+				// on the Go type even when the resource didn't set
+				// it), so `:exists`-keyed precedence between items
+				// that set the field and items that leave it unset
+				// collapses.
 				if isStructFieldOmitempty(t, idx) && field.IsZero() {
 					return nil
 				}

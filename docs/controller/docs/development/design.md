@@ -68,7 +68,7 @@ The Go code must be agnostic to every Kubernetes resource an operator may watch.
 Invalid configurations are rejected before reaching production. The validation phase catches syntax errors, semantic issues, and configuration conflicts. If validation fails, the current production configuration remains unchanged.
 
 **Performance Through Indexing**
-Resource indexing using JSONPath expressions enables O(1) lookups in templates. Debouncing prevents rapid successive template renders during bulk resource changes. Rate limiting prevents deployment conflicts.
+Resource indexing using JSONPath expressions enables O(1) lookups in templates. Debouncing at the per-watcher level coalesces rapid resource changes into a single `ResourceIndexUpdatedEvent` before the reconciler fires; the reconciler itself triggers immediately with no added latency. Rate limiting (the deployer's `minDeploymentInterval`) prevents deployment conflicts.
 
 **Observable Event Flow**
 All component interactions flow through the EventBus. The Event Commentator subscribes to all events and produces structured logs with contextual insights. Metrics track reconciliation cycles, validation results, and deployment success rates.

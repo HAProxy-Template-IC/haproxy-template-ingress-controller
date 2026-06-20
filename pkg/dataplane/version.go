@@ -74,12 +74,12 @@ func parseVersionParts(version string) (major, minor, patch int, err error) {
 
 	// Parse major
 	if _, err := fmt.Sscanf(parts[0], "%d", &major); err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid major version: %s", parts[0])
+		return 0, 0, 0, fmt.Errorf("invalid major version %q: %w", parts[0], err)
 	}
 
 	// Parse minor
 	if _, err := fmt.Sscanf(parts[1], "%d", &minor); err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid minor version: %s", parts[1])
+		return 0, 0, 0, fmt.Errorf("invalid minor version %q: %w", parts[1], err)
 	}
 
 	// Parse patch (optional, best-effort)
