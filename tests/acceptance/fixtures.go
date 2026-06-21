@@ -481,22 +481,6 @@ func (b *HAProxyTemplateConfigBuilder) WithCompressionThreshold(threshold int64)
 	return b
 }
 
-// WithFastTestTimings toggles the fast-timings preset.
-//
-// When enabled (the builder default), Build() collapses every event-to-deploy
-// throttle to ~100ms, raises driftPreventionInterval to 10m so it never fires
-// mid-test, and sets the per-watcher debounce on the single declared
-// WatchedResource to 100ms. The chart-side production defaults (5s refractory
-// + 2s minDeploymentInterval + 30s configPublishInterval + 60s
-// driftPreventionInterval) are designed for steady-state load on real
-// clusters and add a few seconds of latency per test that nobody benefits
-// from in CI. Pass false on tests that exercise drift prevention or any
-// timing-window regression.
-func (b *HAProxyTemplateConfigBuilder) WithFastTestTimings(enabled bool) *HAProxyTemplateConfigBuilder {
-	b.fastTimings = enabled
-	return b
-}
-
 // Build creates the HAProxyTemplateConfig resource.
 func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateConfig {
 	enabled := b.leaderElection

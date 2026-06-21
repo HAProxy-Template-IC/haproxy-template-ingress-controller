@@ -16,8 +16,9 @@ package typegen
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -429,11 +430,7 @@ func (c *Converter) convertObject(schema *spec.Schema, path string, depth int) (
 	// by position when building struct identity; deterministic order
 	// keeps cache lookups behaving sanely if a future refactor wants
 	// to dedup identical schemas.
-	names := make([]string, 0, len(schema.Properties))
-	for name := range schema.Properties {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(schema.Properties))
 
 	fields, degraded, err := c.collectObjectFields(schema, names, path, depth)
 	if err != nil {

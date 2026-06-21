@@ -17,6 +17,8 @@ package conversion
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -130,9 +132,9 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 
 	// Convert maps
-	maps := make(map[string]config.MapFile)
+	mapFiles := make(map[string]config.MapFile)
 	for name, crdMap := range spec.Maps {
-		maps[name] = config.MapFile{
+		mapFiles[name] = config.MapFile{
 			Template:       crdMap.Template,
 			PostProcessing: convertPostProcessors(crdMap.PostProcessing),
 		}
@@ -203,7 +205,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		WatchedResources:             watchedResources,
 		Validators:                   convertValidators(spec.Validators),
 		TemplateSnippets:             templateSnippets,
-		Maps:                         maps,
+		Maps:                         mapFiles,
 		Files:                        files,
 		SSLCertificates:              sslCertificates,
 		K8sResources:                 k8sResources,
@@ -248,13 +250,7 @@ func convertValidators(crdValidators []v1alpha1.ValidatorConfig) []config.Valida
 func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[string]config.ValidationTest, error) {
 	validationTests := make(map[string]config.ValidationTest, len(crdTests))
 
-	// Get sorted keys to ensure deterministic ordering
-	testNames := make([]string, 0, len(crdTests))
-	for testName := range crdTests {
-		testNames = append(testNames, testName)
-	}
-
-	for _, testName := range testNames {
+	for _, testName := range slices.Collect(maps.Keys(crdTests)) {
 		crdTest := crdTests[testName]
 		testConfig := config.ValidationTest{
 			Description:       crdTest.Description,

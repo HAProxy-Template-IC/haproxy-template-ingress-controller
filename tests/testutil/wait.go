@@ -114,61 +114,6 @@ func WaitForCondition(ctx context.Context, cfg WaitConfig, condition func(contex
 	}
 }
 
-// WaitForConditionWithProgress is like WaitForCondition but calls a progress
-// callback on each retry attempt. This is useful for logging progress during
-// long waits.
-func WaitForConditionWithProgress(
-	ctx context.Context,
-	cfg WaitConfig,
-	condition func(context.Context) (bool, error),
-	onProgress func(attempt int, elapsed time.Duration, lastErr error),
-) error {
-	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
-
-	interval := cfg.InitialInterval
-	var lastErr error
-	attempt := 0
-	start := time.Now()
-
-	// Check immediately before first wait
-	attempt++
-	done, err := condition(ctx)
-	if done {
-		return nil
-	}
-	if err != nil {
-		lastErr = err
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return fmt.Errorf("timeout waiting for condition after %d attempts (last error: %w)", attempt, lastErr)
-			}
-			return fmt.Errorf("timeout waiting for condition after %d attempts: %w", attempt, ctx.Err())
-
-		case <-time.After(interval):
-			attempt++
-			done, err := condition(ctx)
-			if done {
-				return nil
-			}
-			if err != nil {
-				lastErr = err
-			}
-
-			if onProgress != nil {
-				onProgress(attempt, time.Since(start), lastErr)
-			}
-
-			// Exponential backoff
-			interval = min(time.Duration(float64(interval)*cfg.Multiplier), cfg.MaxInterval)
-		}
-	}
-}
-
 // WaitForConditionWithDescription is like WaitForCondition but includes a description
 // in error messages for better debugging. This is the recommended function for most use cases.
 func WaitForConditionWithDescription(

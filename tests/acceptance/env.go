@@ -588,38 +588,6 @@ func DumpPodLogs(ctx context.Context, t *testing.T, clientset kubernetes.Interfa
 	t.Logf("=== End of pod logs ===")
 }
 
-// WaitForWebhookConfiguration waits for a ValidatingWebhookConfiguration to exist in the cluster.
-// This is useful when testing webhook functionality - the controller creates the configuration
-// dynamically, so tests must wait for it to appear before attempting webhook validation.
-//
-// IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
-// under parallel test execution.
-func WaitForWebhookConfiguration(ctx context.Context, clientset kubernetes.Interface, name string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for ValidatingWebhookConfiguration %s", name)
-
-		case <-ticker.C:
-			_, err := clientset.AdmissionregistrationV1().
-				ValidatingWebhookConfigurations().
-				Get(ctx, name, metav1.GetOptions{})
-
-			if err == nil {
-				// Found the webhook configuration
-				return nil
-			}
-			// Keep waiting if not found yet
-		}
-	}
-}
-
 // GetAllControllerPods returns all controller pods in the namespace.
 func GetAllControllerPods(ctx context.Context, client klient.Client, namespace string) ([]corev1.Pod, error) {
 	var podList corev1.PodList

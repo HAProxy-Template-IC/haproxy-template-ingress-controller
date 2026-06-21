@@ -368,12 +368,7 @@ func isStructFieldOmitempty(t reflect.Type, idx int) bool {
 	if tag == "" {
 		return false
 	}
-	for _, opt := range strings.Split(tag, ",")[1:] {
-		if opt == "omitempty" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(tag, ",")[1:], "omitempty")
 }
 
 // jsonNameCache caches per-type JSON-name → field-index maps. Without

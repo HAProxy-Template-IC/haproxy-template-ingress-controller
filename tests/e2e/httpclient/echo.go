@@ -27,8 +27,7 @@ import (
 // incoming request as JSON; tests assert against structured fields rather
 // than substring-matching the response body.
 //
-// Only fields the test suite asserts against are mapped; unmapped fields are
-// preserved in Raw for ad-hoc lookups.
+// Only fields the test suite asserts against are mapped.
 type EchoBody struct {
 	// Host is the value of the Host header echo-server saw.
 	Host string `json:"host"`
@@ -51,10 +50,6 @@ type EchoBody struct {
 	// echo-server (no ENVIRONMENT) from echo-server-v2 (ENVIRONMENT=v2)
 	// for weighted-routing tests.
 	Environment string `json:"-"`
-
-	// Raw is the unmarshalled JSON body, preserved for tests that need
-	// fields beyond the typed ones above.
-	Raw map[string]any `json:"-"`
 }
 
 // parseEchoBody unmarshals an echo-server response. Returns nil if the body
@@ -85,7 +80,6 @@ func parseEchoBody(body []byte) *EchoBody {
 	}
 
 	echo := &EchoBody{
-		Raw:     raw,
 		Headers: map[string]string{},
 	}
 

@@ -3,6 +3,7 @@ package validator
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"time"
 
@@ -71,11 +72,7 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	// Validate IndexBy expressions for each watched resource
 	// Note: Empty expression validation is handled by indexer.ValidateJSONPath()
 	// Sort keys for deterministic error ordering
-	resourceNames := make([]string, 0, len(cfg.WatchedResources))
-	for resourceName := range cfg.WatchedResources {
-		resourceNames = append(resourceNames, resourceName)
-	}
-	slices.Sort(resourceNames)
+	resourceNames := slices.Sorted(maps.Keys(cfg.WatchedResources))
 	for _, resourceName := range resourceNames {
 		resource := cfg.WatchedResources[resourceName]
 		for i, expr := range resource.IndexBy {
