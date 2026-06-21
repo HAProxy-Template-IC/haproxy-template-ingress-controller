@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
 // getHAPEEMajorMinor extracts the major.minor version from HAPROXY_VERSION env var.
@@ -54,15 +53,4 @@ func LoadTestConfig(t *testing.T, relativePath string) string {
 	result = strings.ReplaceAll(result, "${HAPEE_MAJOR_MINOR}", getHAPEEMajorMinor())
 
 	return result
-}
-
-// ParseTestConfig loads and parses a test configuration file.
-func ParseTestConfig(t *testing.T, p *parser.Parser, relativePath string) *parser.StructuredConfig {
-	t.Helper()
-
-	configStr := LoadTestConfig(t, relativePath)
-	cfg, err := p.ParseFromString(configStr)
-	require.NoError(t, err, "failed to parse config from: %s", relativePath)
-
-	return cfg
 }

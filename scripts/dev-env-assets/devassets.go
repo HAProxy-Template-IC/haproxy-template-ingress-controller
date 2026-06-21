@@ -65,14 +65,6 @@ var HAProxyDemoBackendYAML []byte
 //go:embed haproxy-test-backend.yaml
 var HAProxyTestBackendYAML []byte
 
-// DevValuesYAML is the helm values file consumed by the interactive
-// dev loop (scripts/start-dev-env.sh). Single-operator manual
-// ingress-apply workflow — fast feedback is the priority. Uses
-// the tight 10/10/50ms timing preset for snappy reconcile.
-//
-//go:embed dev-values.yaml
-var DevValuesYAML []byte
-
 // E2EValuesYAML is the helm values file consumed by the automated
 // e2e suite (tests/e2e) as the default profile. Distinct from
 // DevValuesYAML because the parallel-test workload (30+ tests
@@ -112,12 +104,3 @@ var MetricsServerYAML []byte
 //
 //go:embed conformance-values.yaml
 var ConformanceValuesYAML []byte
-
-// KindConfigYAML is the kind cluster configuration with the
-// extraPortMappings the chart's NodePort services expect (30080 HTTP,
-// 30443 HTTPS, 30404 stats). The cluster `name:` field is overridden at
-// runtime by the kind provider's Create call, so the same config works
-// for both the dev cluster (haptic-dev) and the e2e cluster (haptic-e2e).
-//
-//go:embed kind-config.yaml
-var KindConfigYAML []byte

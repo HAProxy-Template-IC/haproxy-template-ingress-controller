@@ -22,11 +22,8 @@
 package eventimmutability
 
 import (
-	"fmt"
 	"go/ast"
 	"go/types"
-	"os"
-	"slices"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -71,12 +68,6 @@ func run(pass *analysis.Pass) (any, error) {
 	var currentRecvType types.Type
 	currentParams := make(map[*types.Var]bool)
 
-	// Track discovered event types and analysis statistics
-	eventTypes := make(map[string]bool)
-	filesAnalyzed := make(map[string]bool)
-	eventParametersChecked := 0
-	violationsFound := 0
-
 	// Use WithStack to get parent information
 	nodeFilter := []ast.Node{
 		(*ast.FuncDecl)(nil),
@@ -114,23 +105,6 @@ func run(pass *analysis.Pass) (any, error) {
 						if obj := pass.TypesInfo.ObjectOf(name); obj != nil {
 							if varObj, ok := obj.(*types.Var); ok {
 								currentParams[varObj] = true
-
-								// Track if this is an event type parameter
-								paramType := varObj.Type()
-								if ptr, ok := paramType.(*types.Pointer); ok {
-									paramType = ptr.Elem()
-								}
-								if named, ok := paramType.(*types.Named); ok {
-									if obj := named.Obj(); obj != nil && obj.Pkg() != nil {
-										if isEventPackage(obj.Pkg().Path()) {
-											eventTypes[obj.Name()] = true
-											eventParametersChecked++
-											// Track file being analyzed
-											pos := pass.Fset.Position(node.Pos())
-											filesAnalyzed[pos.Filename] = true
-										}
-									}
-								}
 							}
 						}
 					}
@@ -210,7 +184,6 @@ func run(pass *analysis.Pass) (any, error) {
 				}
 
 				// Report the violation
-				violationsFound++
 				pass.Reportf(node.Pos(),
 					"event field mutation detected: event struct fields must not be modified after creation (type: %s, field: %s)",
 					named.Obj().Name(),
@@ -221,27 +194,6 @@ func run(pass *analysis.Pass) (any, error) {
 
 		return true
 	})
-
-	// Print diagnostic summary to stderr (only if we found event parameters to check)
-	if eventParametersChecked > 0 {
-		// Sort event types for consistent output
-		eventTypeList := make([]string, 0, len(eventTypes))
-		for eventType := range eventTypes {
-			eventTypeList = append(eventTypeList, eventType)
-		}
-		slices.Sort(eventTypeList)
-
-		fmt.Fprintf(os.Stderr, "Event immutability check [%s]:\n", pass.Pkg.Path())
-		fmt.Fprintf(os.Stderr, "  Event types: %s\n", strings.Join(eventTypeList, ", "))
-		fmt.Fprintf(os.Stderr, "  Files analyzed: %d\n", len(filesAnalyzed))
-		fmt.Fprintf(os.Stderr, "  Parameters checked: %d\n", eventParametersChecked)
-
-		if violationsFound > 0 {
-			fmt.Fprintf(os.Stderr, "  ✗ Found %d violation(s)\n", violationsFound)
-		} else {
-			fmt.Fprintf(os.Stderr, "  ✓ No violations detected\n")
-		}
-	}
 
 	return nil, nil
 }

@@ -17,6 +17,8 @@ package configpublisher
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
@@ -363,10 +365,7 @@ func (c *Component) processAllPendingStatusWork(ctx context.Context) {
 		c.statusWorkPendingMu.Unlock()
 		return
 	}
-	podKeys := make([]string, 0, len(c.statusWorkPending))
-	for podKey := range c.statusWorkPending {
-		podKeys = append(podKeys, podKey)
-	}
+	podKeys := slices.Collect(maps.Keys(c.statusWorkPending))
 	c.statusWorkPendingMu.Unlock()
 
 	c.logger.Debug("processing coalesced status updates",

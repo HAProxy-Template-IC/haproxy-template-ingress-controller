@@ -60,11 +60,6 @@ type Client struct {
 	// the docker hostname's IPv4 address; locally it's 127.0.0.1.
 	nodeIP string
 
-	// httpPort/httpsPort default to 30080/30443 but are overridable for
-	// alternative chart layouts.
-	httpPort  int
-	httpsPort int
-
 	// waitCfg is the retry/backoff policy applied to Expect* sinks.
 	waitCfg testutil.WaitConfig
 
@@ -138,9 +133,7 @@ func New(t *testing.T) *Client {
 	t.Logf("httpclient: NodePort host = %s", nodeIP)
 
 	return &Client{
-		nodeIP:    nodeIP,
-		httpPort:  defaultHTTPPort,
-		httpsPort: defaultHTTPSPort,
+		nodeIP: nodeIP,
 		waitCfg: testutil.WaitConfig{
 			InitialInterval: 100 * time.Millisecond,
 			MaxInterval:     2 * time.Second,
@@ -150,9 +143,7 @@ func New(t *testing.T) *Client {
 			// pod readiness is gated separately (waitForServiceEndpointReady,
 			// before any probe runs), so this budget bounds ONLY haptic's own
 			// reaction. A probe that needs >15s is a convergence regression to
-			// surface, not a tail to absorb behind a generous ceiling. Tests
-			// probing a deliberately transient condition (e.g. rate-limit
-			// windows) opt into a longer budget via WithRetryBudget.
+			// surface, not a tail to absorb behind a generous ceiling.
 			Timeout:    15 * time.Second,
 			Multiplier: 2.0,
 		},
@@ -160,34 +151,6 @@ func New(t *testing.T) *Client {
 		onPollTimeout: defaultPollTimeoutSnapshot,
 	}
 }
-
-// WithHTTPPort overrides the default HTTP NodePort.
-func (c *Client) WithHTTPPort(port int) *Client { c.httpPort = port; return c }
-
-// WithHTTPSPort overrides the default HTTPS NodePort. The shared transport
-// is rebuilt so the SNI-rewriting DialContext targets the new port.
-func (c *Client) WithHTTPSPort(port int) *Client {
-	c.httpsPort = port
-	c.transport = newSharedTransport(c.nodeIP, port)
-	return c
-}
-
-// WithRetryBudget overrides the default total wait budget. Useful for tests
-// that intentionally probe a transient condition (e.g. rate-limit windows).
-func (c *Client) WithRetryBudget(budget time.Duration) *Client {
-	c.waitCfg.Timeout = budget
-	return c
-}
-
-// NodeIP returns the resolved NodePort IP. Exposed for tests that need to
-// build raw connections (e.g., proxy-protocol probes).
-func (c *Client) NodeIP() string { return c.nodeIP }
-
-// HTTPPort returns the HTTP NodePort.
-func (c *Client) HTTPPort() int { return c.httpPort }
-
-// HTTPSPort returns the HTTPS NodePort.
-func (c *Client) HTTPSPort() int { return c.httpsPort }
 
 // CloseIdleConnections drops the shared transport's pooled keepalive
 // connections so the next request dials a fresh one. Useful when polling for a

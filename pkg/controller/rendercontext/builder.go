@@ -454,11 +454,7 @@ func BuildResourcesValue(
 	if len(seen) == 0 {
 		return reflect.New(reflect.StructOf(nil)).Interface()
 	}
-	resourceNames := make([]string, 0, len(seen))
-	for name := range seen {
-		resourceNames = append(resourceNames, name)
-	}
-	slices.Sort(resourceNames)
+	resourceNames := slices.Sorted(maps.Keys(seen))
 
 	fields := make([]reflect.StructField, 0, len(resourceNames))
 	values := make([]reflect.Value, 0, len(resourceNames))

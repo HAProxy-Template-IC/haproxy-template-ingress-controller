@@ -16,6 +16,7 @@ package schemafetcher
 
 import (
 	"context"
+	"maps"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -41,11 +42,7 @@ type MapFetcher struct {
 // schemas. The map is copied so subsequent mutations of the caller's
 // map don't affect lookups.
 func NewMapFetcher(seed map[schema.GroupVersionKind]*spec.Schema) *MapFetcher {
-	f := &MapFetcher{schemas: make(map[schema.GroupVersionKind]*spec.Schema, len(seed))}
-	for k, v := range seed {
-		f.schemas[k] = v
-	}
-	return f
+	return &MapFetcher{schemas: maps.Clone(seed)}
 }
 
 // Add registers a schema for the supplied GVK, overwriting any

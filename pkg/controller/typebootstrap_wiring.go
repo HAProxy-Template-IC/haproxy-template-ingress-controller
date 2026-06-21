@@ -18,8 +18,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"reflect"
-	"sort"
+	"slices"
 	"time"
 
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
@@ -210,12 +211,7 @@ func typedResourceNames(result *typebootstrap.Result) []string {
 	if result == nil {
 		return nil
 	}
-	names := make([]string, 0, len(result.Types))
-	for name := range result.Types {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(result.Types))
 }
 
 // buildBootstrapResources translates HAProxyTemplateConfig.spec.

@@ -16,8 +16,9 @@ package typebootstrap
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
-	"sort"
+	"slices"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
 )
@@ -115,11 +116,7 @@ func BuildEngineDeclarations(result *Result, extraResourceNames ...string) map[s
 	if len(seen) == 0 {
 		return map[string]any{}
 	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(seen))
 
 	fields := make([]reflect.StructField, 0, len(names))
 	for _, name := range names {

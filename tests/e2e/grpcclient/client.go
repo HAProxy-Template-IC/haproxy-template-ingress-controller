@@ -65,20 +65,6 @@ func New(t *testing.T) *Client {
 	return &Client{t: t, httpsPort: DefaultHTTPSNodePort, nodeIP: ip}
 }
 
-// WithCA replaces the trust store with the supplied PEM bundle. Use
-// when the test cert chains up to a known CA the test suite generated.
-// Without this (the default), the dialer uses InsecureSkipVerify=true,
-// which mirrors httpclient.New's default and is appropriate for routing
-// tests where chain validation isn't the assertion.
-func (c *Client) WithCA(pem []byte) *Client {
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		c.t.Fatalf("grpcclient: AppendCertsFromPEM failed (bad PEM bundle)")
-	}
-	c.caBundle = pool
-	return c
-}
-
 // Dial opens a TLS-protected gRPC connection to the kind NodePort whose
 // TLS handshake carries `host` as both SNI and HTTP/2 :authority. The
 // caller owns the *grpc.ClientConn and is responsible for Close().

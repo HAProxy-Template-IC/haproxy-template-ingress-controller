@@ -60,13 +60,9 @@ type SimpleIngressTest struct {
 
 	// TLSSecretName, if set, populates Ingress.spec.tls[] with the
 	// named Secret. The test fixture creates the secret in the
-	// per-test namespace before the Ingress.
+	// per-test namespace before the Ingress. The auto-generated TLS
+	// Secret covers the test's Host.
 	TLSSecretName string
-
-	// TLSHosts are the DNS names the auto-generated TLS Secret
-	// covers. Defaults to []string{Host}. Only used when
-	// TLSSecretName is set.
-	TLSHosts []string
 
 	// PreSetup runs before the Ingress is created. Use it to deploy
 	// fixtures the Ingress depends on — auth Secrets, ConfigMaps,
@@ -131,11 +127,7 @@ func RunSimpleIngressTest(t *testing.T, sit SimpleIngressTest) {
 				TLSSecretName:  sit.TLSSecretName,
 			}
 			if sit.TLSSecretName != "" {
-				hosts := sit.TLSHosts
-				if len(hosts) == 0 {
-					hosts = []string{sit.Host}
-				}
-				NewTLSSecret(ctx, t, client, ns, sit.TLSSecretName, hosts)
+				NewTLSSecret(ctx, t, client, ns, sit.TLSSecretName, []string{sit.Host})
 			}
 			NewIngress(ctx, t, client, ns, spec)
 			return ctx

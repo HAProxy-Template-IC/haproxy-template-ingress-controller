@@ -58,6 +58,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -512,12 +514,7 @@ type unstructuredList = unstructured.UnstructuredList
 // Mirrors what k8s.io/apimachinery does internally; kept private here
 // to avoid a wider import surface.
 func verbsContain(verbs metav1.Verbs, target string) bool {
-	for _, v := range verbs {
-		if v == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(verbs, target)
 }
 
 // handleLostLeadership clears the leader flag and pauses applies. The
@@ -645,10 +642,7 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]appliedKeyMeta) int {
 	c.mu.Lock()
 	prior := c.lastAppliedKeys
-	stillApplied := make(map[string]appliedKeyMeta, len(desiredKeys))
-	for k, v := range desiredKeys {
-		stillApplied[k] = v
-	}
+	stillApplied := maps.Clone(desiredKeys)
 	c.mu.Unlock()
 
 	deleted := 0
@@ -739,11 +733,7 @@ func (c *Component) prepareForApply(object map[string]any, partial bool) map[str
 	if metadata == nil {
 		metadata = map[string]any{}
 	} else {
-		copied := make(map[string]any, len(metadata))
-		for k, v := range metadata {
-			copied[k] = v
-		}
-		metadata = copied
+		metadata = maps.Clone(metadata)
 	}
 
 	if annotations, _ := metadata["annotations"].(map[string]any); annotations != nil {

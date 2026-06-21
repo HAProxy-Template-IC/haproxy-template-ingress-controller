@@ -17,7 +17,6 @@
 package httpclient
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -43,7 +42,6 @@ type Request struct {
 	path   string
 
 	method  string
-	body    []byte
 	headers http.Header
 
 	basicAuth *basicAuth
@@ -118,12 +116,6 @@ func (r *Request) WithHeader(name, value string) *Request {
 	return r
 }
 
-// WithBody sets the request body.
-func (r *Request) WithBody(body []byte) *Request {
-	r.body = body
-	return r
-}
-
 // WithBasicAuth attaches HTTP Basic credentials.
 func (r *Request) WithBasicAuth(user, password string) *Request {
 	r.basicAuth = &basicAuth{user, password}
@@ -151,11 +143,7 @@ func (r *Request) WithClientCert(certPEM, keyPEM, caPEM []byte) *Request {
 // to inspect Response directly (e.g., counting backend hits across requests).
 func (r *Request) Do(ctx context.Context) (*Response, error) {
 	url := r.url()
-	var bodyReader io.Reader
-	if len(r.body) > 0 {
-		bodyReader = bytes.NewReader(r.body)
-	}
-	req, err := http.NewRequestWithContext(ctx, r.method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, r.method, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("new request: %w", err)
 	}
@@ -171,7 +159,7 @@ func (r *Request) Do(ctx context.Context) (*Response, error) {
 
 	transport := r.client.transport
 	if r.mtls != nil {
-		t, err := transportForClientCert(r.client.nodeIP, r.client.httpsPort, r.mtls.cert, r.mtls.ca)
+		t, err := transportForClientCert(r.client.nodeIP, defaultHTTPSPort, r.mtls.cert, r.mtls.ca)
 		if err != nil {
 			return nil, fmt.Errorf("build mTLS transport: %w", err)
 		}
@@ -214,7 +202,7 @@ func (r *Request) url() string {
 	case "https":
 		return "https://" + r.host + r.path
 	default:
-		return "http://" + r.client.nodeIP + ":" + strconv.Itoa(r.client.httpPort) + r.path
+		return "http://" + r.client.nodeIP + ":" + strconv.Itoa(defaultHTTPPort) + r.path
 	}
 }
 
@@ -246,20 +234,6 @@ func (r *Request) ExpectStatus(t *testing.T, code int) *Response {
 	})
 	if err != nil {
 		t.Fatalf("ExpectStatus(%d): %v", code, err)
-	}
-	return resp
-}
-
-// ExpectBodyContains asserts the response body contains substr, retrying
-// under the client's wait budget. Status is not checked — pair with
-// ExpectStatus if the test needs both.
-func (r *Request) ExpectBodyContains(t *testing.T, substr string) *Response {
-	t.Helper()
-	resp, err := r.poll(t, fmt.Sprintf("%s %s body contains %q", r.method, r.url(), substr), func(resp *Response) bool {
-		return strings.Contains(string(resp.Body), substr)
-	})
-	if err != nil {
-		t.Fatalf("ExpectBodyContains(%q): %v", substr, err)
 	}
 	return resp
 }

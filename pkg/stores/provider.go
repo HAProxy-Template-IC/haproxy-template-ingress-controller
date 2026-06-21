@@ -12,6 +12,8 @@ package stores
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 )
 
 // ContentOverlay is a marker interface for overlay types.
@@ -208,11 +210,7 @@ func NewRealStoreProvider(stores map[string]Store) *RealStoreProvider {
 func (p *RealStoreProvider) GetStore(name string) Store { return p.stores[name] }
 
 func (p *RealStoreProvider) StoreNames() []string {
-	names := make([]string, 0, len(p.stores))
-	for name := range p.stores {
-		names = append(names, name)
-	}
-	return names
+	return slices.Collect(maps.Keys(p.stores))
 }
 
 // OverlayStoreProvider applies ValidationContext overlays to a base provider.
@@ -313,11 +311,7 @@ func mergeStoreNames[V any](baseNames []string, overlays map[string]V) []string 
 	for name := range overlays {
 		nameSet[name] = struct{}{}
 	}
-	names := make([]string, 0, len(nameSet))
-	for name := range nameSet {
-		names = append(names, name)
-	}
-	return names
+	return slices.Collect(maps.Keys(nameSet))
 }
 
 // validateOverlayStores checks that all overlay keys reference stores that exist
