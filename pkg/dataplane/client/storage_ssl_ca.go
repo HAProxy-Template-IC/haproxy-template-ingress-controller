@@ -10,6 +10,15 @@ import (
 	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
+// requireSSLCaFiles is the capability guard for SSL CA file storage operations,
+// which are only available in HAProxy DataPlane API v3.2+.
+func requireSSLCaFiles(caps Capabilities) error {
+	if !caps.SupportsSslCaFiles {
+		return ErrSSLCaFilesRequireV32
+	}
+	return nil
+}
+
 // GetAllSSLCaFiles retrieves all SSL CA file names from the runtime storage.
 // Note: This returns only CA file names, not the file contents.
 // Use GetSSLCaFileContent to retrieve the actual file contents.
@@ -19,12 +28,7 @@ func (c *DataplaneClient) GetAllSSLCaFiles(ctx context.Context) ([]string, error
 		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetAllCaFiles(ctx) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetAllCaFiles(ctx) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetAllCaFiles(ctx) },
-	}, func(caps Capabilities) error {
-		if !caps.SupportsSslCaFiles {
-			return ErrSSLCaFilesRequireV32
-		}
-		return nil
-	})
+	}, requireSSLCaFiles)
 
 	if err != nil {
 		return nil, fmt.Errorf("getting all SSL CA files: %w", err)
@@ -41,12 +45,7 @@ func (c *DataplaneClient) GetSSLCaFileContent(ctx context.Context, name string) 
 		V33:   func(c *v33.Client) (*http.Response, error) { return c.GetCaFile(ctx, name) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.GetCaFile(ctx, name) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.GetCaFile(ctx, name) },
-	}, func(caps Capabilities) error {
-		if !caps.SupportsSslCaFiles {
-			return ErrSSLCaFilesRequireV32
-		}
-		return nil
-	})
+	}, requireSSLCaFiles)
 
 	if err != nil {
 		return "", fmt.Errorf("getting SSL CA file '%s': %w", name, err)
@@ -60,10 +59,6 @@ func (c *DataplaneClient) GetSSLCaFileContent(ctx context.Context, name string) 
 // Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content string) (string, error) {
-	if !c.clientset.Capabilities().SupportsSslCaFiles {
-		return "", fmt.Errorf("SSL CA file storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
-	}
-
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
 		return "", fmt.Errorf("building payload for SSL CA file '%s': %w", name, err)
@@ -79,12 +74,7 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
 			return c.CreateCaFileWithBody(ctx, contentType, body)
 		},
-	}, func(caps Capabilities) error {
-		if !caps.SupportsSslCaFiles {
-			return ErrSSLCaFilesRequireV32
-		}
-		return nil
-	})
+	}, requireSSLCaFiles)
 
 	if err != nil {
 		return "", fmt.Errorf("creating SSL CA file '%s': %w", name, err)
@@ -98,10 +88,6 @@ func (c *DataplaneClient) CreateSSLCaFile(ctx context.Context, name, content str
 // Returns the reload ID if a reload was triggered (empty string if not) and any error.
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content string) (string, error) {
-	if !c.clientset.Capabilities().SupportsSslCaFiles {
-		return "", fmt.Errorf("SSL CA file storage is not supported by DataPlane API version %s (requires v3.2+)", c.clientset.DetectedVersion())
-	}
-
 	body, contentType, err := buildMultipartFilePayload(name, content)
 	if err != nil {
 		return "", fmt.Errorf("building payload for SSL CA file '%s': %w", name, err)
@@ -117,12 +103,7 @@ func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content str
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
 			return c.SetCaFileWithBody(ctx, name, contentType, body)
 		},
-	}, func(caps Capabilities) error {
-		if !caps.SupportsSslCaFiles {
-			return ErrSSLCaFilesRequireV32
-		}
-		return nil
-	})
+	}, requireSSLCaFiles)
 
 	if err != nil {
 		return "", fmt.Errorf("updating SSL CA file '%s': %w", name, err)
@@ -139,12 +120,7 @@ func (c *DataplaneClient) DeleteSSLCaFile(ctx context.Context, name string) erro
 		V33:   func(c *v33.Client) (*http.Response, error) { return c.DeleteCaFile(ctx, name) },
 		V32:   func(c *v32.Client) (*http.Response, error) { return c.DeleteCaFile(ctx, name) },
 		V32EE: func(c *v32ee.Client) (*http.Response, error) { return c.DeleteCaFile(ctx, name) },
-	}, func(caps Capabilities) error {
-		if !caps.SupportsSslCaFiles {
-			return ErrSSLCaFilesRequireV32
-		}
-		return nil
-	})
+	}, requireSSLCaFiles)
 
 	if err != nil {
 		return fmt.Errorf("deleting SSL CA file '%s': %w", name, err)

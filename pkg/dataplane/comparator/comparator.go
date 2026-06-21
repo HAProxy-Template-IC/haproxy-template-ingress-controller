@@ -14,6 +14,22 @@ const (
 	parentTypeDefaults = "defaults"
 )
 
+// indexChildFactory is the (parentName, model, index) -> Operation shape shared
+// by Create/Delete/Update on every IndexChildCRUD builder.
+type indexChildFactory[T any] func(parentName string, model T, index int) Operation
+
+// pickOps selects the create/remove/update factories for an indexed child
+// section based on its parent type. Frontends use feOps; every other parent
+// (backend or defaults) uses elseOps. This collapses the repeated
+// "default to one builder, swap to the frontend builder if parentType is
+// frontend" idiom at the section-comparison call sites.
+func pickOps[T any](parentType string, feOps, elseOps sections.IndexChildCRUD[T]) (create, remove, update indexChildFactory[T]) {
+	if parentType == parentTypeFrontend {
+		return feOps.Create, feOps.Delete, feOps.Update
+	}
+	return elseOps.Create, elseOps.Delete, elseOps.Update
+}
+
 // Comparator performs fine-grained comparison between HAProxy configurations.
 //
 // It generates the minimal set of operations needed to transform a current

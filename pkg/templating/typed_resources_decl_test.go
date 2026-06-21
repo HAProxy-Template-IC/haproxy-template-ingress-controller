@@ -46,7 +46,7 @@ import (
 //	    GetSingle func(keys ...any) any
 //	}
 //
-// Mirrors `pkg/controller/typebootstrap.buildPerResourceStoreType(nil)`.
+// Mirrors `pkg/controller/typebootstrap.BuildPerResourceStoreType(nil)`.
 // Built once and reused across calls so reflect.StructOf compares equal.
 var typedResourceFieldType = reflect.StructOf([]reflect.StructField{
 	{Name: "T", Type: reflect.TypeOf((*any)(nil)).Elem()},

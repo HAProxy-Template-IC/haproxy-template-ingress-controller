@@ -10,10 +10,7 @@ import (
 // QUIC initial rules are compared by position since they don't have unique identifiers.
 // QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 func (c *Comparator) compareQUICInitialRules(parentType, parentName string, currentRules, desiredRules models.QUICInitialRules) []Operation {
-	create, remove, update := sections.QuicInitialRuleDefaultsOps.Create, sections.QuicInitialRuleDefaultsOps.Delete, sections.QuicInitialRuleDefaultsOps.Update
-	if parentType == parentTypeFrontend {
-		create, remove, update = sections.QuicInitialRuleFrontendOps.Create, sections.QuicInitialRuleFrontendOps.Delete, sections.QuicInitialRuleFrontendOps.Update
-	}
+	create, remove, update := pickOps(parentType, sections.QuicInitialRuleFrontendOps, sections.QuicInitialRuleDefaultsOps)
 	return compareIndexedItems(
 		currentRules, desiredRules,
 		func(a, b *models.QUICInitialRule) bool { return a.Equal(*b) },

@@ -21,6 +21,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
 func TestNewMetrics(t *testing.T) {
@@ -410,29 +412,14 @@ func TestMetrics_RecordEventDrop(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(reconcilerConfig))
 }
 
-func TestMetrics_UpdateParserCacheStats(t *testing.T) {
+func TestMetrics_ParserCacheStatsReportLiveCounters(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
 
-	// Initial state should be 0
-	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ParserCacheHits))
-	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ParserCacheMisses))
-
-	// First update with cumulative stats
-	metrics.UpdateParserCacheStats(10, 5)
-
-	assert.Equal(t, 10.0, testutil.ToFloat64(metrics.ParserCacheHits))
-	assert.Equal(t, 5.0, testutil.ToFloat64(metrics.ParserCacheMisses))
-
-	// Second update should add the delta
-	metrics.UpdateParserCacheStats(15, 7)
-
-	assert.Equal(t, 15.0, testutil.ToFloat64(metrics.ParserCacheHits))
-	assert.Equal(t, 7.0, testutil.ToFloat64(metrics.ParserCacheMisses))
-
-	// Update with same values should not change counters
-	metrics.UpdateParserCacheStats(15, 7)
-
-	assert.Equal(t, 15.0, testutil.ToFloat64(metrics.ParserCacheHits))
-	assert.Equal(t, 7.0, testutil.ToFloat64(metrics.ParserCacheMisses))
+	// The parser-cache metrics are CounterFuncs wired straight to the
+	// parser package's cumulative counters, so on every scrape they must
+	// report exactly what parser.CacheStats() currently returns.
+	hits, misses := parser.CacheStats()
+	assert.Equal(t, float64(hits), testutil.ToFloat64(metrics.ParserCacheHits))
+	assert.Equal(t, float64(misses), testutil.ToFloat64(metrics.ParserCacheMisses))
 }

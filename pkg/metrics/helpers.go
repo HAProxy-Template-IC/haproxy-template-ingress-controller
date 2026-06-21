@@ -48,6 +48,26 @@ func NewCounter(registry prometheus.Registerer, name, help string) prometheus.Co
 	})
 }
 
+// NewCounterFunc creates and registers a counter whose value is reported by
+// fn on every scrape.
+//
+// Use this for cumulative values that are already tracked elsewhere (e.g. an
+// atomic counter in another package) so the metric mirrors that source
+// directly instead of being mutated via Add(). fn must return a monotonically
+// non-decreasing value to preserve counter semantics (rate() etc.).
+//
+// Parameters:
+//   - registry: The Prometheus registry to register with
+//   - name: Metric name (e.g., "cache_hits_total")
+//   - help: Human-readable description of the metric
+//   - fn: Returns the current cumulative value on each scrape
+func NewCounterFunc(registry prometheus.Registerer, name, help string, fn func() float64) prometheus.CounterFunc {
+	return promauto.With(registry).NewCounterFunc(prometheus.CounterOpts{
+		Name: name,
+		Help: help,
+	}, fn)
+}
+
 // NewHistogramWithBuckets creates and registers a histogram with custom buckets.
 //
 // Use this when default buckets don't match your use case. For duration metrics,

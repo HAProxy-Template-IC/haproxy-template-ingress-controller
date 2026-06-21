@@ -21,7 +21,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -112,11 +111,10 @@ func (c *Component) Start(ctx context.Context) error {
 				c.handleEvent(event)
 			})
 		case <-ticker.C:
-			// Update observability drops from EventBus (not exposed via callback)
+			// Update observability drops from EventBus (not exposed via callback).
+			// Parser cache stats are reported via CounterFuncs at scrape time,
+			// so they don't need polling here.
 			c.metrics.SetObservabilityDrops(c.eventBus.DroppedEventsObservability())
-			// Update parser cache stats
-			hits, misses := parser.CacheStats()
-			c.metrics.UpdateParserCacheStats(hits, misses)
 			// Update subscriber count
 			c.metrics.SetEventSubscribers(c.eventBus.SubscriberCount())
 		case <-ctx.Done():

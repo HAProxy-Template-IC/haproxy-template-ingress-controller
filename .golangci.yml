@@ -164,11 +164,6 @@ linters:
       - ^charts/ # Helm charts directory
       - ^pkg/generated/ # Generated code (DataPlane API clients, K8s clientsets)
     rules:
-      # Exclude generated code
-      - path: codegen/.*\.gen\.go$
-        linters:
-          - all
-
       # Exclude zz_generated files (if any in future)
       - path: zz_generated\..*\.go$
         linters:
@@ -203,11 +198,6 @@ linters:
       # Allow dot imports in test files (for gomega/ginkgo if used)
       - path: _test\.go$
         text: "should not use dot imports"
-
-      # Allow long lines in generated files
-      - path: codegen/
-        linters:
-          - lll
 
       # Ignore certain patterns
       - text: "G304: Potential file inclusion via variable"

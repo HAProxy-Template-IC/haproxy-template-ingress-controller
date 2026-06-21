@@ -129,7 +129,7 @@ func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
 	// Use Critical buffer: fast timer-reset operations
-	m.eventChan = m.eventBus.SubscribeTypesLeaderOnly(DriftMonitorComponentName, buffers.Critical(),
+	m.eventChan = m.eventBus.SubscribeTypesLeaderOnly(DriftMonitorComponentName, buffers.Critical,
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeLostLeadership,
 	)

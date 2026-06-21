@@ -48,6 +48,7 @@ import (
 	informers "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -259,29 +260,29 @@ func createReconciliationComponents(
 
 	resourceApplierComponent := newResourceApplier(crd, k8sClient, gvrMapper, setup.Bus, logger)
 
-	// Register components with the lifecycle registry using builder pattern
+	// Register components with the lifecycle registry.
 	// Coordinator is leader-only because it performs rendering (state changes).
 	// DriftMonitor is leader-only to avoid multi-replica race conditions.
 	// StatusUpdater is leader-only to avoid API conflicts from concurrent updates.
 	// ProposalValidator is all-replica because HTTPStore depends on it for HTTP content validation.
-	setup.Registry.Build().
-		AllReplica(
+	registerLifecycleComponents(setup.Registry,
+		[]lifecycle.Component{
 			reconcilerComponent,
 			discoveryComponent,
 			httpStoreComponent,
 			proposalValidatorComponent,
 			statusApplierComponent,
 			resourceApplierComponent,
-		).
-		LeaderOnly(
+		},
+		[]lifecycle.Component{
 			coordinatorComponent,
 			driftMonitorComponent,
 			deployerComponent,
 			deploymentSchedulerComponent,
 			configPublisherComponent,
 			statusUpdaterComponent,
-		).
-		Done()
+		},
+	)
 
 	return &reconciliationWiring{
 		deployer:            deployerComponent,
@@ -292,6 +293,17 @@ func createReconciliationComponents(
 		engineWiring:        wiring,
 		gvrMapper:           gvrMapper,
 	}, nil
+}
+
+// registerLifecycleComponents registers the all-replica components first, then
+// the leader-only ones (started later, after leadership is acquired).
+func registerLifecycleComponents(reg *lifecycle.Registry, allReplica, leaderOnly []lifecycle.Component) {
+	for _, c := range allReplica {
+		reg.Register(c, false)
+	}
+	for _, c := range leaderOnly {
+		reg.Register(c, true)
+	}
 }
 
 // buildValidationPipelines builds two render+validate pipelines sharing the

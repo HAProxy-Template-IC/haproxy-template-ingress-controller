@@ -10,10 +10,7 @@ import (
 // compareLogTargets compares log target configurations within a frontend or backend.
 // Log targets are compared by position since they don't have unique identifiers.
 func (c *Comparator) compareLogTargets(parentType, parentName string, currentLogs, desiredLogs models.LogTargets) []Operation {
-	create, remove, update := sections.LogTargetBackendOps.Create, sections.LogTargetBackendOps.Delete, sections.LogTargetBackendOps.Update
-	if parentType == parentTypeFrontend {
-		create, remove, update = sections.LogTargetFrontendOps.Create, sections.LogTargetFrontendOps.Delete, sections.LogTargetFrontendOps.Update
-	}
+	create, remove, update := pickOps(parentType, sections.LogTargetFrontendOps, sections.LogTargetBackendOps)
 	return compareIndexedItems(
 		currentLogs, desiredLogs,
 		func(a, b *models.LogTarget) bool { return a.Equal(*b) },

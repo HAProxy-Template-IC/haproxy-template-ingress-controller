@@ -32,7 +32,7 @@ func (r *Registry) prepareLeaderOnlyComponents() []*registeredComponent {
 
 	for _, comp := range r.components {
 		// Only start leader-only components that are pending or standby
-		if comp.config.leaderOnly && (comp.status == StatusPending || comp.status == StatusStandby) {
+		if comp.leaderOnly && (comp.status == StatusPending || comp.status == StatusStandby) {
 			comp.status = StatusStarting
 			// Re-create ready channel in case this is called multiple times
 			comp.ready = make(chan struct{})

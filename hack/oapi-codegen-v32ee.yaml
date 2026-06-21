@@ -16,6 +16,53 @@ generate:
   # truth for the validator generator and for regeneration.
   embedded-spec: false
 output-options:
+  # HAPTIC calls the same storage/CA-file/reload/config-push slice as the
+  # community configs. This EE version is special: the comparator and EE parser
+  # ALSO consume a handful of structured model types as Go types (not via any
+  # API call) -- BotmgmtProfile, WafProfile, Captcha, WafGlobal, UdpLbBase, and
+  # Balance/BalanceAlgorithm. oapi-codegen prunes any schema not reachable from
+  # an included operation, so the section-GET ops below are whitelisted purely
+  # to retain those model closures: getBackend pulls Backend -> Balance, and the
+  # four EE section GETs pull their respective profiles. Together they keep the
+  # 76 reachable schemas the code needs while still pruning the other ~220.
+  include-operation-ids:
+    - createCaFile
+    - createStorageGeneralFile
+    - createStorageMapFile
+    - createStorageSSLCertificate
+    - createStorageSSLCrtListFile
+    - deleteCaFile
+    - deleteStorageGeneralFile
+    - deleteStorageMap
+    - deleteStorageSSLCertificate
+    - deleteStorageSSLCrtListFile
+    - getAllCaFiles
+    - getAllStorageGeneralFiles
+    - getAllStorageMapFiles
+    - getAllStorageSSLCertificates
+    - getAllStorageSSLCrtListFiles
+    - getCaFile
+    - getConfigurationVersion
+    - getHAProxyConfiguration
+    - getOneStorageGeneralFile
+    - getOneStorageMap
+    - getOneStorageSSLCertificate
+    - getOneStorageSSLCrtListFile
+    - getReload
+    - postHAProxyConfiguration
+    - replaceStorageGeneralFile
+    - replaceStorageMapFile
+    - replaceStorageSSLCertificate
+    - replaceStorageSSLCrtListFile
+    - setCaFile
+    # Section GETs included only to retain the model types the comparator/parser
+    # use as Go types (their closures are kept by pruning, the ops are unused).
+    - getBackend          # -> Backend -> Balance / BalanceAlgorithm
+    - getBotmgmtProfile   # -> BotmgmtProfile (+ Track / TrackDefaults)
+    - getCaptcha          # -> Captcha (+ CookieSecure / CookieSamesite)
+    - getUDPlb            # -> UdpLbBase
+    - getWafGlobal        # -> WafGlobal
+    - getWafProfile       # -> WafProfile (+ Analyze)
   # HAPTIC only uses the raw *Client (-> *http.Response, hand-decoded); the typed
   # "ClientWithResponses" half (ParseXxxResponse, WithBaseURL, per-op Response
   # structs) is ~39% of the generated file and has zero consumers. Suppress it by

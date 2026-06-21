@@ -36,7 +36,7 @@ func (r *Registry) Status() map[string]ComponentInfo {
 		info := ComponentInfo{
 			Name:       comp.component.Name(),
 			Status:     comp.status,
-			LeaderOnly: comp.config.leaderOnly,
+			LeaderOnly: comp.leaderOnly,
 		}
 
 		if comp.lastError != nil {

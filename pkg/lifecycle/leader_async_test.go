@@ -108,7 +108,7 @@ func TestStartLeaderOnlyComponentsAsync_EmptySetReturnsClosedChannel(t *testing.
 	// No leader-only components registered → returned errCh MUST be
 	// already-closed so callers ranging over it don't block forever.
 	registry := NewRegistry()
-	registry.Register(newMockComponent("all-replica"))
+	registry.Register(newMockComponent("all-replica"), false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -142,10 +142,10 @@ func TestStartLeaderOnlyComponentsAsync_WaitsForSubscriptionReady(t *testing.T) 
 	// EventBus.Start() afterward without leader-only components missing
 	// events that would otherwise be in the pre-Start buffer.
 	registry := NewRegistry()
-	registry.Register(newMockComponent("all-replica"))
+	registry.Register(newMockComponent("all-replica"), false)
 
 	leader := newSignalingMock()
-	registry.Register(leader, LeaderOnly())
+	registry.Register(leader, true)
 
 	// Start all-replica components first (not as leader yet).
 	ctx, cancel := context.WithCancel(context.Background())
@@ -202,7 +202,7 @@ func TestStartLeaderOnlyComponentsAsync_PropagatesNonCanceledStartError(t *testi
 	leader := newSignalingMock()
 	leader.subAutoSignal = true                  // signal ready immediately
 	leader.startErr = errors.New("startup boom") // then fail
-	registry.Register(leader, LeaderOnly())
+	registry.Register(leader, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -238,7 +238,7 @@ func TestStartLeaderOnlyComponentsAsync_CanceledContextDoesNotPropagateAsError(t
 
 	leader := newSignalingMock()
 	leader.subAutoSignal = true
-	registry.Register(leader, LeaderOnly())
+	registry.Register(leader, true)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -274,13 +274,13 @@ func TestStartLeaderOnlyComponentsAsync_PromotesStandbyToStarting(t *testing.T) 
 	registry := NewRegistry()
 	leader := newSignalingMock()
 	leader.subAutoSignal = true
-	registry.Register(leader, LeaderOnly())
+	registry.Register(leader, true)
 
 	// Manually put the component into Standby (simulates the state
 	// after StartAll(ctx, isLeader=false) without actually running).
 	registry.mu.Lock()
 	for _, comp := range registry.components {
-		if comp.config.leaderOnly {
+		if comp.leaderOnly {
 			comp.status = StatusStandby
 		}
 	}

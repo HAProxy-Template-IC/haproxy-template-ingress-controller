@@ -15,15 +15,13 @@ import "gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 
 registry := lifecycle.NewRegistry().WithLogger(logger)
 
-// Idiomatic registration uses the fluent Build() API — that's what the
-// production controller (pkg/controller/reconciliation.go) does:
-registry.Build().
-    AllReplica(reconcilerComponent, discoveryComponent, httpStoreComponent, ...).
-    LeaderOnly(coordinatorComponent, deployerComponent, schedulerComponent, ...).
-    Done()
-
-// Register(...) directly is the lower-level alternative:
-registry.Register(schedulerComponent, lifecycle.LeaderOnly())
+// Register all-replica components (leaderOnly=false), then leader-only ones
+// (leaderOnly=true) — that's what the production controller
+// (pkg/controller/reconciliation.go) does:
+registry.Register(reconcilerComponent, false)
+registry.Register(discoveryComponent, false)
+registry.Register(coordinatorComponent, true)
+registry.Register(deployerComponent, true)
 
 // Boot
 if err := registry.StartAll(ctx, isLeader); err != nil { /* ... */ }
@@ -43,11 +41,9 @@ for name, info := range registry.Status() {
 }
 ```
 
-## Registration Options
+## Registration
 
-| Option | Effect |
-|--------|--------|
-| `LeaderOnly()` | Component is only started inside `StartLeaderOnlyComponentsAsync`, not in `StartAll` |
+`Register(c Component, leaderOnly bool)` — pass `leaderOnly=true` for components that should only start inside `StartLeaderOnlyComponentsAsync` (after leadership is acquired), not in `StartAll`.
 
 `StartLeaderOnlyComponentsAsync` returns once all leader-only components are subscription-ready and hands back an error channel so the caller can track failures asynchronously — this is what makes the EventBus Pause/Start replay pattern safe.
 

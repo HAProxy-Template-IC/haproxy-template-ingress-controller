@@ -21,9 +21,9 @@
 //
 //	registry := lifecycle.NewRegistry()
 //
-//	// Register components with options
-//	registry.Register(reconciler.New(bus, logger))
-//	registry.Register(deployer.New(bus, logger), lifecycle.LeaderOnly())
+//	// Register components (leaderOnly=true runs only on the elected leader)
+//	registry.Register(reconciler.New(bus, logger), false)
+//	registry.Register(deployer.New(bus, logger), true)
 //
 //	// Start all components
 //	err := registry.StartAll(ctx)
