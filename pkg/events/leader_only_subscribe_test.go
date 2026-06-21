@@ -25,11 +25,11 @@ import (
 //
 //  1. Subscribe / SubscribeTypes called AFTER Start() — must emit a WARN
 //     log so a late-subscription bug is visible.
-//  2. SubscribeLeaderOnly / SubscribeTypesLeaderOnly called after Start()
-//     — must NOT emit the WARN, because leader-only components are
-//     intentionally late (they only run after winning leader election).
-//     A regression that flipped this would flood operator logs every
-//     time leadership transitions happen (~every pod restart).
+//  2. SubscribeTypesLeaderOnly called after Start() — must NOT emit the
+//     WARN, because leader-only components are intentionally late (they
+//     only run after winning leader election). A regression that flipped
+//     this would flood operator logs every time leadership transitions
+//     happen (~every pod restart).
 //  3. SubscribeLossy called after Start() — also must emit the WARN.
 //     Lossy semantics are about drop behaviour during overload, NOT
 //     about being a leader-only late subscriber. Confusing the two
@@ -78,8 +78,10 @@ func (s syncWriter) Write(b []byte) (int, error) {
 }
 
 func TestSubscribe_AfterStart_WarnsButLeaderOnlyDoesNot(t *testing.T) {
-	// Pin the universal-subscription warning fork. Subscribe must warn,
-	// SubscribeLeaderOnly must not, regardless of buffer size or name.
+	// Pin the universal-subscription warning fork. Both Subscribe and
+	// SubscribeLossy must warn after Start() — neither is a leader-only
+	// late subscriber. (The only leader-only variant is the typed
+	// SubscribeTypesLeaderOnly, exercised in the typed-path test below.)
 	tests := []struct {
 		name       string
 		subscribe  func(b *EventBus) <-chan Event
@@ -93,13 +95,6 @@ func TestSubscribe_AfterStart_WarnsButLeaderOnlyDoesNot(t *testing.T) {
 			},
 			wantWarn:   true,
 			wantSubstr: "Subscription after EventBus.Start()",
-		},
-		{
-			name: "SubscribeLeaderOnly after Start → silent (NO warn)",
-			subscribe: func(b *EventBus) <-chan Event {
-				return b.SubscribeLeaderOnly("test-leader", 10)
-			},
-			wantWarn: false,
 		},
 		{
 			name: "SubscribeLossy after Start → WARN (lossy is NOT leader-only)",
@@ -170,14 +165,6 @@ func TestSubscribeTypes_AfterStart_WarnsButLeaderOnlyDoesNot(t *testing.T) {
 			},
 			wantWarn: false,
 		},
-		{
-			name: "SubscribeTypesLossy after Start → WARN",
-			subscribe: func(b *EventBus) <-chan Event {
-				return b.SubscribeTypesLossy("typed-lossy", 10, "x.y")
-			},
-			wantWarn:   true,
-			wantSubstr: "Typed subscription after EventBus.Start()",
-		},
 	}
 
 	for _, tt := range tests {
@@ -222,11 +209,9 @@ func TestSubscribe_BeforeStart_NeverWarns(t *testing.T) {
 		subscribe func(b *EventBus) <-chan Event
 	}{
 		{"Subscribe", func(b *EventBus) <-chan Event { return b.Subscribe("a", 10) }},
-		{"SubscribeLeaderOnly", func(b *EventBus) <-chan Event { return b.SubscribeLeaderOnly("a", 10) }},
 		{"SubscribeLossy", func(b *EventBus) <-chan Event { return b.SubscribeLossy("a", 10) }},
 		{"SubscribeTypes", func(b *EventBus) <-chan Event { return b.SubscribeTypes("a", 10, "x") }},
 		{"SubscribeTypesLeaderOnly", func(b *EventBus) <-chan Event { return b.SubscribeTypesLeaderOnly("a", 10, "x") }},
-		{"SubscribeTypesLossy", func(b *EventBus) <-chan Event { return b.SubscribeTypesLossy("a", 10, "x") }},
 	}
 
 	for _, tt := range tests {

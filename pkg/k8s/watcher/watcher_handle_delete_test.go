@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/tools/cache"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
@@ -43,19 +44,10 @@ import (
 //     store/debouncer wiring; the unwrap behaviour is the
 //     load-bearing part.)
 
-// stubMatcher implements the package-private fieldSelector
-// interface for tests. Returning false models "this resource is
-// not in our filter set so we shouldn't try to delete it".
-type stubMatcher struct {
-	matches bool
-}
-
-func (s *stubMatcher) Matches(_ any) (bool, error) { return s.matches, nil }
-
 // minimalWatcher constructs a *Watcher with only the fields the
 // tested early-return branches reach. indexer/store/debouncer are
 // intentionally nil — the tests verify those are NOT touched.
-func minimalWatcher(logger *slog.Logger, matcher fieldSelector) *Watcher {
+func minimalWatcher(logger *slog.Logger, matcher *indexer.FieldSelectorMatcher) *Watcher {
 	return &Watcher{
 		logger:               logger,
 		fieldSelectorMatcher: matcher,
@@ -106,7 +98,13 @@ func TestWatcher_HandleDelete_FieldSelectorMismatchSkipsProcessDelete(t *testing
 	// surface "key not found" warnings on every irrelevant delete
 	// (which can be many in a busy cluster — every Service delete
 	// in a namespace we don't watch, for example).
-	w := minimalWatcher(slog.Default(), &stubMatcher{matches: false})
+	//
+	// The test resource has no spec.ingressClassName, so this matcher
+	// rejects it (missing field → non-match), modelling "this resource
+	// is not in our filter set".
+	matcher, err := indexer.NewFieldSelectorMatcher("spec.ingressClassName=haproxy")
+	require.NoError(t, err)
+	w := minimalWatcher(slog.Default(), matcher)
 	resource := newWatcherDeleteResource("filtered-out-svc")
 
 	require.NotPanics(t, func() {

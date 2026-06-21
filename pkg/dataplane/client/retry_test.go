@@ -58,7 +58,6 @@ func TestWithRetry_RetriesOnMatchingError(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
 		RetryIf:     retryOnSentinel(),
-		Backoff:     BackoffNone,
 	}
 
 	attempts := 0
@@ -79,7 +78,6 @@ func TestWithRetry_ExhaustsMaxAttempts(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
 		RetryIf:     retryOnSentinel(),
-		Backoff:     BackoffNone,
 	}
 
 	attempts := 0
@@ -113,27 +111,6 @@ func TestWithRetry_ContextCancellation(t *testing.T) {
 	assert.Equal(t, "", result)
 	assert.Equal(t, 0, attempts, "should not execute when context is cancelled")
 	assert.ErrorIs(t, err, context.Canceled)
-}
-
-func TestWithRetry_BackoffLinear(t *testing.T) {
-	config := RetryConfig{
-		MaxAttempts: 3,
-		RetryIf:     retryOnSentinel(),
-		Backoff:     BackoffLinear,
-		BaseDelay:   50 * time.Millisecond,
-	}
-
-	start := time.Now()
-	attempts := 0
-	_, _ = WithRetry(context.Background(), config, func(attempt int) (string, error) {
-		attempts++
-		return "", errRetriable
-	})
-	elapsed := time.Since(start)
-
-	assert.Equal(t, 3, attempts)
-	// Should have 2 delays of 50ms each (between attempts 1-2 and 2-3)
-	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond, "should apply linear backoff")
 }
 
 func TestWithRetry_BackoffExponential(t *testing.T) {
@@ -195,23 +172,21 @@ func TestCalculateBackoff(t *testing.T) {
 	baseDelay := 100 * time.Millisecond
 
 	tests := []struct {
+		name     string
 		strategy BackoffStrategy
 		attempt  int
 		expected time.Duration
 	}{
-		{BackoffNone, 1, 0},
-		{BackoffNone, 2, 0},
-		{BackoffLinear, 1, 100 * time.Millisecond},
-		{BackoffLinear, 2, 100 * time.Millisecond},
-		{BackoffLinear, 3, 100 * time.Millisecond},
-		{BackoffExponential, 1, 100 * time.Millisecond},
-		{BackoffExponential, 2, 200 * time.Millisecond},
-		{BackoffExponential, 3, 400 * time.Millisecond},
-		{BackoffExponential, 4, 800 * time.Millisecond},
+		{"zero-value means no delay", "", 1, 0},
+		{"zero-value means no delay (attempt 2)", "", 2, 0},
+		{"exponential attempt 1", BackoffExponential, 1, 100 * time.Millisecond},
+		{"exponential attempt 2", BackoffExponential, 2, 200 * time.Millisecond},
+		{"exponential attempt 3", BackoffExponential, 3, 400 * time.Millisecond},
+		{"exponential attempt 4", BackoffExponential, 4, 800 * time.Millisecond},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.strategy), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			actual := calculateBackoff(tt.strategy, baseDelay, tt.attempt)
 			assert.Equal(t, tt.expected, actual)
 		})
@@ -309,7 +284,6 @@ func TestWithRetry_RetriesOnConnectionError(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
 		RetryIf:     IsConnectionError(),
-		Backoff:     BackoffNone,
 	}
 
 	attempts := 0
@@ -335,7 +309,6 @@ func TestWithRetry_NoRetryOnNonConnectionError(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
 		RetryIf:     IsConnectionError(),
-		Backoff:     BackoffNone,
 	}
 
 	attempts := 0

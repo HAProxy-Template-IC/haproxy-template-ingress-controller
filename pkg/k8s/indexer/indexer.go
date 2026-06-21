@@ -169,15 +169,6 @@ func (idx *Indexer) NumKeys() int {
 	return len(idx.evaluators)
 }
 
-// IndexExpressions returns the JSONPath expressions used for key extraction.
-func (idx *Indexer) IndexExpressions() []string {
-	exprs := make([]string, len(idx.evaluators))
-	for i, eval := range idx.evaluators {
-		exprs[i] = eval.Expression()
-	}
-	return exprs
-}
-
 // IndexError represents an error during index key extraction.
 type IndexError struct {
 	Expression string

@@ -22,7 +22,7 @@ import (
 )
 
 // TestParseVersion_Patch pins patch extraction, including the best-effort cases
-// (absent or non-numeric patch -> 0) that the runtime-addr gate relies on.
+// (absent or non-numeric patch -> 0).
 func TestParseVersion_Patch(t *testing.T) {
 	tests := []struct {
 		in                  string
@@ -43,28 +43,6 @@ func TestParseVersion_Patch(t *testing.T) {
 		assert.Equal(t, tt.patch, v.Patch, "patch: %s", tt.in)
 		assert.Equal(t, tt.in, v.Full, "full retained: %s", tt.in)
 	}
-}
-
-// TestVersion_AtLeast_RuntimeServerAddrBoundary pins the exact v3.3.2 gate that
-// decides whether the deployer's runtime bypass may use the runtime server
-// endpoint (which only applies address from dataplaneapi v3.3.2+).
-func TestVersion_AtLeast_RuntimeServerAddrBoundary(t *testing.T) {
-	atLeast332 := func(s string) bool {
-		v, err := ParseVersion(s)
-		require.NoError(t, err)
-		return v.AtLeast(3, 3, 2)
-	}
-	// Below the boundary — must NOT use the runtime endpoint.
-	assert.False(t, atLeast332("v3.0.21"), "3.0.21 < 3.3.2")
-	assert.False(t, atLeast332("v3.1.14"), "3.1.14 < 3.3.2")
-	assert.False(t, atLeast332("v3.2.13"), "3.2.13 < 3.3.2")
-	assert.False(t, atLeast332("v3.3.0"), "3.3.0 < 3.3.2")
-	assert.False(t, atLeast332("v3.3.1"), "3.3.1 < 3.3.2")
-	// At or above the boundary — runtime endpoint applies address.
-	assert.True(t, atLeast332("v3.3.2"), "3.3.2 == 3.3.2")
-	assert.True(t, atLeast332("v3.3.5"), "3.3.5 > 3.3.2")
-	assert.True(t, atLeast332("v3.4.0"), "3.4.0 > 3.3.2")
-	assert.True(t, atLeast332("v4.0.0"), "4.0.0 > 3.3.2")
 }
 
 // TestVersion_Compare pins that Compare is major.minor-ONLY (patch ignored).

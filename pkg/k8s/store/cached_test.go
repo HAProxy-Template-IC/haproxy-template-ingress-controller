@@ -390,8 +390,8 @@ func TestCachedStore_DeleteWithNonUniqueKeys(t *testing.T) {
 	}
 
 	// Verify cache was cleared
-	if store.CacheSize() != 0 {
-		t.Errorf("expected cache size 0 after delete, got %d", store.CacheSize())
+	if got := cacheLen(store); got != 0 {
+		t.Errorf("expected cache size 0 after delete, got %d", got)
 	}
 
 	results, err := store.Get("nginx")
@@ -508,21 +508,23 @@ func TestCachedStore_CacheTTL(t *testing.T) {
 	}
 
 	// Verify cached
-	if store.CacheSize() != 1 {
-		t.Errorf("expected cache size 1, got %d", store.CacheSize())
+	if got := cacheLen(store); got != 1 {
+		t.Errorf("expected cache size 1, got %d", got)
 	}
 
 	// Wait for TTL expiration
 	time.Sleep(150 * time.Millisecond)
 
-	// Evict expired entries
-	evicted := store.EvictExpired()
-	if evicted != 1 {
-		t.Errorf("expected 1 evicted entry, got %d", evicted)
+	// The entry is still present in the LRU but its TTL has elapsed: the
+	// read path (fetchResourceByRef) treats a past expiresAt as a miss.
+	store.mu.RLock()
+	entry, ok := store.cache.Peek("default/test-cm")
+	store.mu.RUnlock()
+	if !ok {
+		t.Fatal("expected entry to still be present in the LRU before a read")
 	}
-
-	if store.CacheSize() != 0 {
-		t.Errorf("expected cache size 0 after eviction, got %d", store.CacheSize())
+	if !time.Now().After(entry.expiresAt) {
+		t.Errorf("expected entry to be expired after waiting past TTL, expiresAt=%v", entry.expiresAt)
 	}
 }
 
@@ -580,8 +582,8 @@ func TestCachedStore_Clear(t *testing.T) {
 		t.Errorf("expected size 0 after clear, got %d", store.Size())
 	}
 
-	if store.CacheSize() != 0 {
-		t.Errorf("expected cache size 0 after clear, got %d", store.CacheSize())
+	if got := cacheLen(store); got != 0 {
+		t.Errorf("expected cache size 0 after clear, got %d", got)
 	}
 }
 
@@ -733,12 +735,16 @@ func TestCachedStore_TTLReset(t *testing.T) {
 	// Now wait for the new TTL to expire
 	time.Sleep(cacheTTL + 50*time.Millisecond)
 
-	// Evict expired entries
-	evicted := store.EvictExpired()
-
-	// Should have evicted the resource
-	if evicted != 1 {
-		t.Errorf("expected 1 evicted entry, got %d", evicted)
+	// The entry is now past its (reset) TTL: the read path treats a past
+	// expiresAt as a miss and re-fetches.
+	store.mu.RLock()
+	entry, ok = store.cache.Peek("default/test-cm")
+	store.mu.RUnlock()
+	if !ok {
+		t.Fatal("expected entry to still be present in the LRU before a read")
+	}
+	if !time.Now().After(entry.expiresAt) {
+		t.Errorf("expected entry to be expired after waiting past the reset TTL, expiresAt=%v", entry.expiresAt)
 	}
 }
 
@@ -981,8 +987,8 @@ func TestCachedStore_CacheMissLogging(t *testing.T) {
 	}
 
 	// Resource should now be cached
-	if store.CacheSize() != 1 {
-		t.Errorf("expected cache size 1 after fetch, got %d", store.CacheSize())
+	if got := cacheLen(store); got != 1 {
+		t.Errorf("expected cache size 1 after fetch, got %d", got)
 	}
 }
 
@@ -1036,7 +1042,7 @@ func TestCachedStore_LRUEviction(t *testing.T) {
 	}
 
 	// But cache should only hold 3 entries (LRU evicted the first)
-	if store.CacheSize() != 3 {
-		t.Errorf("expected cache size 3 (LRU limit), got %d", store.CacheSize())
+	if got := cacheLen(store); got != 3 {
+		t.Errorf("expected cache size 3 (LRU limit), got %d", got)
 	}
 }

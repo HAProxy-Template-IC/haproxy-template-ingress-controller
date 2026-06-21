@@ -55,40 +55,17 @@ func subscriptionCallerInfo(skip int) (file string, line int) {
 // dropped events. A bufferSize of 100 is recommended for most use cases.
 //
 // The returned channel is read-only and will never be closed.
-// To stop receiving events, the subscriber should call Unsubscribe()
-// to remove the subscription and prevent memory leaks.
 //
 // IMPORTANT: For all-replica components, call this method BEFORE EventBus.Start()
 // to ensure buffered events are received. Subscribing after Start() will trigger
 // a warning as it may indicate a bug. For leader-only components that intentionally
-// subscribe late (after leader election), use SubscribeLeaderOnly() instead.
+// subscribe late (after leader election), use SubscribeTypesLeaderOnly() instead.
 //
 // Parameters:
 //   - name: Subscriber name for debugging (e.g., "commentator", "reconciler")
 //   - bufferSize: Size of the channel buffer
 func (b *EventBus) Subscribe(name string, bufferSize int) <-chan Event {
 	return b.subscribeInternal(name, bufferSize, false, false)
-}
-
-// SubscribeLeaderOnly creates a subscription for leader-only components.
-//
-// This method is identical to Subscribe() but does not log a warning when
-// called after EventBus.Start(). Use this for components that only run on the
-// leader replica and are intentionally started after leader election.
-//
-// Leader-only components rely on the state replay mechanism: all-replica components
-// re-publish their cached state when BecameLeaderEvent is received, ensuring
-// leader-only components don't miss critical state even though they subscribe late.
-//
-// The returned channel is read-only and will never be closed.
-// To stop receiving events, the subscriber should call Unsubscribe()
-// to remove the subscription and prevent memory leaks.
-//
-// Parameters:
-//   - name: Subscriber name for debugging (e.g., "deployer", "scheduler")
-//   - bufferSize: Size of the channel buffer
-func (b *EventBus) SubscribeLeaderOnly(name string, bufferSize int) <-chan Event {
-	return b.subscribeInternal(name, bufferSize, true, false)
 }
 
 // SubscribeLossy creates a subscription that silently drops events when buffer is full.
@@ -103,8 +80,6 @@ func (b *EventBus) SubscribeLeaderOnly(name string, bufferSize int) <-chan Event
 // still allowing monitoring via metrics.
 //
 // The returned channel is read-only and will never be closed.
-// To stop receiving events, the subscriber should call Unsubscribe()
-// to remove the subscription and prevent memory leaks.
 //
 // Parameters:
 //   - name: Subscriber name for debugging (e.g., "commentator")
@@ -139,7 +114,7 @@ func (b *EventBus) subscribeInternal(name string, bufferSize int, suppressLateWa
 		slog.Warn("Subscription after EventBus.Start() may miss buffered events",
 			"caller", caller,
 			"line", line,
-			"hint", "use SubscribeLeaderOnly() for leader-only components")
+			"hint", "use SubscribeTypesLeaderOnly() for leader-only components")
 	}
 
 	b.mu.Lock()
@@ -153,30 +128,6 @@ func (b *EventBus) subscribeInternal(name string, bufferSize int, suppressLateWa
 		lossy:      lossy,
 	})
 	return ch
-}
-
-// Unsubscribe removes a subscription from the event bus.
-//
-// This method should be called when a subscriber no longer needs to receive
-// events, to prevent memory leaks. After calling Unsubscribe, the channel
-// will no longer receive events.
-//
-// Note: The channel is not closed by this method. The subscriber is responsible
-// for draining any remaining events from the channel if needed.
-//
-// This method is safe to call multiple times for the same channel.
-func (b *EventBus) Unsubscribe(ch <-chan Event) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	for i, sub := range b.subscribers {
-		if sub.ch == ch {
-			// Remove subscriber by replacing with last element and truncating
-			b.subscribers[i] = b.subscribers[len(b.subscribers)-1]
-			b.subscribers = b.subscribers[:len(b.subscribers)-1]
-			return
-		}
-	}
 }
 
 // UnsubscribeTyped removes a typed subscription from the event bus.

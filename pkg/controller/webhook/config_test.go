@@ -126,7 +126,12 @@ func TestExtractWebhookRules(t *testing.T) {
 	}
 }
 
-func TestParseAPIVersion(t *testing.T) {
+// TestExtractWebhookRules_APIVersionParsing pins how a watched resource's
+// api_version string maps onto a rule's APIGroups/APIVersions. The split is
+// delegated to schema.ParseGroupVersion; this verifies the core "v1"
+// (empty-group) form and the "group/version" form land in the right rule
+// fields.
+func TestExtractWebhookRules_APIVersionParsing(t *testing.T) {
 	tests := []struct {
 		name            string
 		apiVersion      string
@@ -161,10 +166,21 @@ func TestParseAPIVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			group, version := parseAPIVersion(tt.apiVersion)
+			cfg := &config.Config{
+				WatchedResources: map[string]config.WatchedResource{
+					"resource": {
+						APIVersion:              tt.apiVersion,
+						Resources:               "resources",
+						EnableValidationWebhook: true,
+					},
+				},
+			}
 
-			assert.Equal(t, tt.expectedGroup, group)
-			assert.Equal(t, tt.expectedVersion, version)
+			rules := ExtractWebhookRules(cfg)
+
+			assert.Len(t, rules, 1)
+			assert.Equal(t, []string{tt.expectedGroup}, rules[0].APIGroups)
+			assert.Equal(t, []string{tt.expectedVersion}, rules[0].APIVersions)
 		})
 	}
 }

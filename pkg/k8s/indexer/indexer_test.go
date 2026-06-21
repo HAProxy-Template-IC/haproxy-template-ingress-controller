@@ -201,27 +201,6 @@ func TestNumKeys(t *testing.T) {
 	}
 }
 
-// TestIndexExpressions verifies the IndexExpressions method.
-func TestIndexExpressions(t *testing.T) {
-	indexBy := []string{"metadata.namespace", "metadata.name", "metadata.labels['app']"}
-
-	idx, err := New(Config{IndexBy: indexBy})
-	if err != nil {
-		t.Fatalf("creating indexer: %v", err)
-	}
-
-	exprs := idx.IndexExpressions()
-	if len(exprs) != len(indexBy) {
-		t.Fatalf("expected %d expressions, got %d", len(indexBy), len(exprs))
-	}
-
-	for i, expected := range indexBy {
-		if exprs[i] != expected {
-			t.Errorf("expression %d: expected %q, got %q", i, expected, exprs[i])
-		}
-	}
-}
-
 // TestIndexError verifies IndexError error handling.
 func TestIndexError(t *testing.T) {
 	baseErr := &JSONPathError{

@@ -13,7 +13,7 @@ import (
 // --- sslStorageOps.Create ---
 
 func TestSSLStorageOps_Create_Success(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		create: func(_ context.Context, id, content string) (string, error) {
 			assert.Equal(t, "ca-bundle.pem", id)
 			assert.Equal(t, "pem-data", content)
@@ -28,7 +28,7 @@ func TestSSLStorageOps_Create_Success(t *testing.T) {
 
 func TestSSLStorageOps_Create_PathNormalization(t *testing.T) {
 	var receivedID string
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		create: func(_ context.Context, id, _ string) (string, error) {
 			receivedID = id
 			return "", nil
@@ -42,7 +42,7 @@ func TestSSLStorageOps_Create_PathNormalization(t *testing.T) {
 
 func TestSSLStorageOps_Create_AlreadyExists_FallsBackToUpdate(t *testing.T) {
 	var updateCalled bool
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		create: func(_ context.Context, _, _ string) (string, error) {
 			return "", errors.New("file already exists")
 		},
@@ -61,7 +61,7 @@ func TestSSLStorageOps_Create_AlreadyExists_FallsBackToUpdate(t *testing.T) {
 }
 
 func TestSSLStorageOps_Create_500_FileExistsOnRetry(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		create: func(_ context.Context, _, _ string) (string, error) {
 			return "", errors.New("unexpected status code 500")
 		},
@@ -76,7 +76,7 @@ func TestSSLStorageOps_Create_500_FileExistsOnRetry(t *testing.T) {
 }
 
 func TestSSLStorageOps_Create_500_FileNotFound(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		create: func(_ context.Context, _, _ string) (string, error) {
 			return "", errors.New("unexpected status code 500")
 		},
@@ -94,7 +94,7 @@ func TestSSLStorageOps_Create_ContextCancelled_DuringRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		create: func(_ context.Context, _, _ string) (string, error) {
 			return "", errors.New("unexpected status code 500")
 		},
@@ -110,7 +110,7 @@ func TestSSLStorageOps_Create_ContextCancelled_DuringRetry(t *testing.T) {
 }
 
 func TestSSLStorageOps_Create_NonRetryableError(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		create: func(_ context.Context, _, _ string) (string, error) {
 			return "", errors.New("permission denied")
 		},
@@ -124,7 +124,7 @@ func TestSSLStorageOps_Create_NonRetryableError(t *testing.T) {
 // --- sslStorageOps.Update ---
 
 func TestSSLStorageOps_Update_Success(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		update: func(_ context.Context, id, content string) (string, error) {
 			assert.Equal(t, "ca-bundle.pem", id)
 			assert.Equal(t, "new-data", content)
@@ -139,7 +139,7 @@ func TestSSLStorageOps_Update_Success(t *testing.T) {
 
 func TestSSLStorageOps_Update_PathNormalization(t *testing.T) {
 	var receivedID string
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		update: func(_ context.Context, id, _ string) (string, error) {
 			receivedID = id
 			return "", nil
@@ -152,7 +152,7 @@ func TestSSLStorageOps_Update_PathNormalization(t *testing.T) {
 }
 
 func TestSSLStorageOps_Update_500_FileExistsOnRetry(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		update: func(_ context.Context, _, _ string) (string, error) {
 			return "", errors.New("unexpected status code 500")
 		},
@@ -167,7 +167,7 @@ func TestSSLStorageOps_Update_500_FileExistsOnRetry(t *testing.T) {
 }
 
 func TestSSLStorageOps_Update_500_FileNotFound(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		update: func(_ context.Context, _, _ string) (string, error) {
 			return "", errors.New("unexpected status code 500")
 		},
@@ -185,7 +185,7 @@ func TestSSLStorageOps_Update_500_FileNotFound(t *testing.T) {
 
 func TestSSLStorageOps_Delete_Success(t *testing.T) {
 	var receivedID string
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		delete: func(_ context.Context, id string) error {
 			receivedID = id
 			return nil
@@ -198,7 +198,7 @@ func TestSSLStorageOps_Delete_Success(t *testing.T) {
 }
 
 func TestSSLStorageOps_Delete_Error(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		delete: func(_ context.Context, _ string) error {
 			return errors.New("delete failed")
 		},
@@ -212,7 +212,7 @@ func TestSSLStorageOps_Delete_Error(t *testing.T) {
 // --- sslStorageOps.GetAll / GetContent ---
 
 func TestSSLStorageOps_GetAll(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		getAll: func(_ context.Context) ([]string, error) {
 			return []string{"a.pem", "b.pem"}, nil
 		},
@@ -224,7 +224,7 @@ func TestSSLStorageOps_GetAll(t *testing.T) {
 }
 
 func TestSSLStorageOps_GetContent(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		getContent: func(_ context.Context, id string) (string, error) {
 			if id == "a.pem" {
 				return "cert-data", nil
@@ -241,7 +241,7 @@ func TestSSLStorageOps_GetContent(t *testing.T) {
 // --- verifyExistsWithRetry ---
 
 func TestVerifyExistsWithRetry_FoundFirstAttempt(t *testing.T) {
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		getAll: func(_ context.Context) ([]string, error) {
 			return []string{"ca-bundle.pem"}, nil
 		},
@@ -253,7 +253,7 @@ func TestVerifyExistsWithRetry_FoundFirstAttempt(t *testing.T) {
 
 func TestVerifyExistsWithRetry_NeverFound(t *testing.T) {
 	callCount := 0
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		getAll: func(_ context.Context) ([]string, error) {
 			callCount++
 			return []string{"other.pem"}, nil
@@ -270,7 +270,7 @@ func TestVerifyExistsWithRetry_ContextCancelled(t *testing.T) {
 	cancel()
 
 	callCount := 0
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		getAll: func(_ context.Context) ([]string, error) {
 			callCount++
 			return []string{}, nil
@@ -285,7 +285,7 @@ func TestVerifyExistsWithRetry_ContextCancelled(t *testing.T) {
 
 func TestVerifyExistsWithRetry_GetAllErrors_ContinuesRetrying(t *testing.T) {
 	callCount := 0
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		getAll: func(_ context.Context) ([]string, error) {
 			callCount++
 			if callCount < 3 {
@@ -309,7 +309,7 @@ func TestCompareSSLStorageFiles_UnsupportedCapability(t *testing.T) {
 		detectedVersion: func() string { return "v3.0.4" },
 	}
 
-	diff, err := compareSSLStorageFiles[SSLCaFile](
+	diff, err := compareSSLStorageFiles(
 		context.Background(),
 		[]SSLCaFile{{Path: "ca.pem", Content: "data"}},
 		nil, // ops not needed — capability check short-circuits
@@ -326,7 +326,7 @@ func TestCompareSSLStorageFiles_UnsupportedCapability(t *testing.T) {
 
 func TestCompareSSLStorageFiles_PathNormalizationAndRestoration(t *testing.T) {
 	// Mock ops that returns no current files — all desired files should be created
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		getAll: func(_ context.Context) ([]string, error) {
 			return []string{}, nil
 		},
@@ -342,7 +342,7 @@ func TestCompareSSLStorageFiles_PathNormalizationAndRestoration(t *testing.T) {
 		{Path: "/etc/haproxy/ssl/ca/trusted.pem", Content: "ca-data"},
 	}
 
-	diff, err := compareSSLStorageFiles[SSLCaFile](
+	diff, err := compareSSLStorageFiles(
 		context.Background(),
 		desired,
 		ops,
@@ -369,7 +369,7 @@ func TestSyncSSLStorageFiles_NilDiff(t *testing.T) {
 		isSupported: func() bool { return true },
 	}
 
-	reloadIDs, err := syncSSLStorageFiles[SSLCaFile](context.Background(), nil, nil, cfg)
+	reloadIDs, err := syncSSLStorageFiles(context.Background(), nil, nil, cfg)
 	require.NoError(t, err)
 	assert.Nil(t, reloadIDs)
 }
@@ -385,7 +385,7 @@ func TestSyncSSLStorageFiles_UnsupportedCapability(t *testing.T) {
 		ToCreate: []SSLCaFile{{Path: "ca.pem", Content: "data"}},
 	}
 
-	reloadIDs, err := syncSSLStorageFiles[SSLCaFile](context.Background(), diff, nil, cfg)
+	reloadIDs, err := syncSSLStorageFiles(context.Background(), diff, nil, cfg)
 	require.NoError(t, err)
 	assert.Nil(t, reloadIDs)
 }
@@ -395,7 +395,7 @@ func TestSyncSSLStorageFiles_DelegatesToSync(t *testing.T) {
 		mu         sync.Mutex
 		createdIDs []string
 	)
-	ops := &sslStorageOps[SSLCaFile]{
+	ops := &sslStorageOps{
 		create: func(_ context.Context, id, _ string) (string, error) {
 			// Sync runs creates concurrently within a phase; guard the recorder.
 			mu.Lock()
@@ -424,7 +424,7 @@ func TestSyncSSLStorageFiles_DelegatesToSync(t *testing.T) {
 		},
 	}
 
-	reloadIDs, err := syncSSLStorageFiles[SSLCaFile](context.Background(), diff, ops, cfg)
+	reloadIDs, err := syncSSLStorageFiles(context.Background(), diff, ops, cfg)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a.pem", "b.pem"}, createdIDs)
 	assert.ElementsMatch(t, []string{"reload-a.pem", "reload-b.pem"}, reloadIDs)
@@ -443,7 +443,7 @@ func TestSyncSSLStorageFiles_EmptyDiff(t *testing.T) {
 		ToDelete: []string{},
 	}
 
-	reloadIDs, err := syncSSLStorageFiles[SSLCaFile](context.Background(), diff, nil, cfg)
+	reloadIDs, err := syncSSLStorageFiles(context.Background(), diff, nil, cfg)
 	require.NoError(t, err)
 	assert.Empty(t, reloadIDs)
 }

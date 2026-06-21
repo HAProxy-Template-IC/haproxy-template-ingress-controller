@@ -138,29 +138,3 @@ func (t *HealthTracker) checkStall(label string, since time.Time, timeout time.D
 	return fmt.Errorf("%s stalled: %s %v (timeout: %v)",
 		t.componentName, label, duration.Round(time.Second), timeout)
 }
-
-// IsProcessing returns true if the component is currently processing an event.
-// Useful for debugging and metrics.
-func (t *HealthTracker) IsProcessing() bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return !t.processingStart.IsZero()
-}
-
-// ProcessingDuration returns how long the current processing has been running.
-// Returns 0 if not currently processing.
-func (t *HealthTracker) ProcessingDuration() time.Duration {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if t.processingStart.IsZero() {
-		return 0
-	}
-	return time.Since(t.processingStart)
-}
-
-// TimeSinceActivity returns time since last recorded activity.
-func (t *HealthTracker) TimeSinceActivity() time.Duration {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return time.Since(t.lastActivity)
-}

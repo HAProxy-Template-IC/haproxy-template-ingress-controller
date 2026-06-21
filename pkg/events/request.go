@@ -40,11 +40,6 @@ type RequestOptions struct {
 	// ExpectedResponders lists the names of components expected to respond.
 	// If empty, the request will wait indefinitely for responses.
 	ExpectedResponders []string
-
-	// MinResponses is the minimum number of responses required.
-	// If zero, all ExpectedResponders must respond.
-	// Set to a lower value to implement graceful degradation.
-	MinResponses int
 }
 
 // RequestResult contains the aggregated results from a scatter-gather request.
@@ -76,18 +71,13 @@ func executeRequest(ctx context.Context, bus *EventBus, request Request, opts Re
 		opts.Timeout = 10 * time.Second
 	}
 
-	minResponses := opts.MinResponses
-	if minResponses == 0 {
-		minResponses = len(opts.ExpectedResponders)
-	}
-
 	// Validate options
 	if len(opts.ExpectedResponders) == 0 {
 		return nil, errors.New("expected responders cannot be empty")
 	}
-	if minResponses > len(opts.ExpectedResponders) {
-		return nil, fmt.Errorf("min responses (%d) cannot exceed expected responders (%d)", minResponses, len(opts.ExpectedResponders))
-	}
+
+	// All expected responders must reply for the request to complete.
+	minResponses := len(opts.ExpectedResponders)
 
 	// Create response collector
 	collector := &responseCollector{

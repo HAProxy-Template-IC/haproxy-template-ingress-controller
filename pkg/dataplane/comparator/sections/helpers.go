@@ -17,15 +17,6 @@ func DescribeTopLevel(op OperationType, section, name string) func() string {
 	}
 }
 
-// DescribeIndexChild returns a description function for indexed child operations.
-func DescribeIndexChild(op OperationType, childType string, index int, parentType, parentName string) func() string {
-	verb := opVerb(op)
-	preposition := opPreposition(op)
-	return func() string {
-		return fmt.Sprintf("%s %s at index %d %s %s '%s'", verb, childType, index, preposition, parentType, parentName)
-	}
-}
-
 // DescribeNamedChild returns a description function for named child operations.
 // Also used for container children (user, mailer entry, etc.) where the parent
 // is a container section like userlist or mailers — the formatted output is

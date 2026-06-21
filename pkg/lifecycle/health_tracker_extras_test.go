@@ -164,28 +164,3 @@ func TestHealthTracker_Combined_ProcessingStallSurfacesWhenActivityFresh(t *test
 		"with a stalled processing session the error must specifically "+
 			"identify processing as the stall type, not activity")
 }
-
-func TestHealthTracker_TimeSinceActivity(t *testing.T) {
-	// TimeSinceActivity is part of the public API surface (used by
-	// metrics and debug endpoints) but isn't exercised in the existing
-	// tests. Pin that it tracks lastActivity correctly.
-	tracker := NewActivityTracker("svc", 10*time.Second)
-
-	// Fresh tracker → ~0
-	initial := tracker.TimeSinceActivity()
-	assert.Less(t, initial, 100*time.Millisecond,
-		"fresh tracker must report ~0 time since activity (constructor "+
-			"sets lastActivity = time.Now())")
-
-	// Sleep, then check it grew
-	time.Sleep(15 * time.Millisecond)
-	grown := tracker.TimeSinceActivity()
-	assert.GreaterOrEqual(t, grown, 15*time.Millisecond,
-		"TimeSinceActivity must reflect actual elapsed time")
-
-	// RecordActivity resets it
-	tracker.RecordActivity()
-	reset := tracker.TimeSinceActivity()
-	assert.Less(t, reset, 100*time.Millisecond,
-		"RecordActivity must update lastActivity so TimeSinceActivity drops")
-}

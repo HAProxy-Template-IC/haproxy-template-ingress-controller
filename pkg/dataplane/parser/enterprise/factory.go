@@ -9,8 +9,8 @@ import (
 	eeparsers "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/enterprise/parsers"
 )
 
-// DefaultFactory implements ParserFactory using client-native parsers.
-// It creates parser collections for both CE and EE sections.
+// DefaultFactory creates parser collections for both CE and EE sections
+// using client-native parsers.
 type DefaultFactory struct{}
 
 // NewDefaultFactory creates a new DefaultFactory.
@@ -386,6 +386,3 @@ func (f *DefaultFactory) CreateDynamicUpdateParsers() *parser.Parsers {
 		&extra.UnProcessed{},
 	)
 }
-
-// Ensure DefaultFactory implements ParserFactory.
-var _ ParserFactory = (*DefaultFactory)(nil)

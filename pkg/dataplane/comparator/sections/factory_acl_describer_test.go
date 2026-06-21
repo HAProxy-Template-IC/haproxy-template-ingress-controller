@@ -81,9 +81,9 @@ func TestDescribeACLOp(t *testing.T) {
 }
 
 // describeQUICInitialRule is the analogous describer-factory for
-// quic_initial_rule sections. Unlike the ACL describer, it intentionally
-// uses DescribeIndexChild (not DescribeTypedChild), because QUIC initial
-// rules don't carry a model identifier — only the index matters.
+// quic_initial_rule sections. QUIC initial rules don't carry a model
+// identifier, so it passes an empty identifier to DescribeTypedChild and
+// relies on the "at index N" fallback — only the index matters.
 func TestDescribeQUICInitialRule(t *testing.T) {
 	tests := []struct {
 		name       string

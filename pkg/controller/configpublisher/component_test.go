@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -83,7 +82,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 
 	// Step 2: Publish TemplateRenderedEvent to cache rendered config
 	// Generate a correlation ID to link TemplateRenderedEvent and ValidationCompletedEvent
-	correlationID := uuid.New().String()
+	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n\ndefaults\n  mode http\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
@@ -486,7 +485,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 
 	// Step 2: Publish TemplateRenderedEvent to cache rendered config
 	// Generate a correlation ID to link TemplateRenderedEvent and ValidationCompletedEvent
-	correlationID := uuid.New().String()
+	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
@@ -577,7 +576,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 
 	// Step 2: Publish TemplateRenderedEvent to cache rendered config
 	// Generate a correlation ID to link TemplateRenderedEvent and ValidationFailedEvent
-	correlationID := uuid.New().String()
+	correlationID := t.Name()
 	testHAProxyConfig := "global\n  daemon\n  maxconn invalid\n"
 	eventBus.Publish(events.NewTemplateRenderedEvent(
 		testHAProxyConfig,
@@ -640,7 +639,7 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 
 	// Publish ValidationFailedEvent without any prior cached state
 	// Even with a correlation ID, there's no matching TemplateRenderedEvent
-	correlationID := uuid.New().String()
+	correlationID := t.Name()
 	eventBus.Publish(events.NewValidationFailedEvent(
 		[]string{"some error"},
 		100,

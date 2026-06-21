@@ -61,10 +61,6 @@ func GenerateRuntimeConfigName(templateConfigName string) string {
 	return templateConfigName + "-haproxycfg"
 }
 
-func (p *Publisher) generateRuntimeConfigName(templateConfigName string) string {
-	return GenerateRuntimeConfigName(templateConfigName)
-}
-
 // sanitizeResourceName strips a file extension from source and applies the
 // supplied character replacements (each pair is old, new), then prepends prefix.
 // The result is a Kubernetes-safe resource name segment.

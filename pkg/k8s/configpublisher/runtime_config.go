@@ -28,7 +28,7 @@ import (
 
 // createOrUpdateRuntimeConfig creates or updates the HAProxyCfg resource.
 func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *PublishRequest) (*haproxyv1alpha1.HAProxyCfg, error) {
-	name := p.generateRuntimeConfigName(req.TemplateConfigName) + req.NameSuffix
+	name := GenerateRuntimeConfigName(req.TemplateConfigName) + req.NameSuffix
 	runtimeConfig := p.buildRuntimeConfig(name, req)
 
 	var result *haproxyv1alpha1.HAProxyCfg

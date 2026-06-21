@@ -186,7 +186,7 @@ func TestCachedStore_GetRefreshesTTLOnHit(t *testing.T) {
 
 	// Add caches the resource immediately.
 	require.NoError(t, store.Add(resource, []string{"default", "hot-secret"}))
-	require.Equal(t, 1, store.CacheSize(),
+	require.Equal(t, 1, cacheLen(store),
 		"baseline: Add must populate the cache")
 
 	// Tick repeatedly at < TTL intervals. After the test span (which is
@@ -201,18 +201,24 @@ func TestCachedStore_GetRefreshesTTLOnHit(t *testing.T) {
 
 	// Even though wall-clock time exceeded the original TTL, the entry
 	// must still be present because the Get path refreshes TTL on hit.
-	assert.Equal(t, 1, store.CacheSize(),
+	assert.Equal(t, 1, cacheLen(store),
 		"hot resources (accessed more often than CacheTTL) MUST remain "+
 			"in cache; a regression that didn't refresh TTL on hit would "+
 			"force every Get to re-fetch from the API on TTL boundaries, "+
 			"producing exactly the API-pressure spikes the cache exists "+
 			"to prevent")
 
-	// Cross-check: an EvictExpired call must NOT remove the entry,
-	// because the most recent Get refreshed expiresAt to the future.
-	evicted := store.EvictExpired()
-	assert.Equal(t, 0, evicted,
-		"after a hot Get loop, EvictExpired must find no expired entries — "+
+	// Cross-check: the cached entry's expiresAt must be in the future,
+	// because the most recent Get refreshed it. The production read path
+	// (fetchResourceByRef) treats a future expiresAt as a cache hit, so a
+	// regression that didn't refresh expiresAt during Get would have left
+	// it in the past and forced an API re-fetch.
+	store.mu.RLock()
+	entry, ok := store.cache.Peek("default/hot-secret")
+	store.mu.RUnlock()
+	require.True(t, ok, "the hot entry must still be present in the cache")
+	assert.True(t, time.Now().Before(entry.expiresAt),
+		"after a hot Get loop, the entry's expiresAt must be in the future — "+
 			"a regression that didn't refresh expiresAt during Get would "+
 			"see the entry as expired even though it was just accessed")
 }

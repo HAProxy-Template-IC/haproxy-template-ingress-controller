@@ -22,13 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// cacheLen counts entries across all shards (test-only observability).
+// cacheLen reports the number of entries in the cache (test-only observability).
 func cacheLen(c *Cache) int {
-	total := 0
-	for i := range c.shards {
-		total += c.shards[i].Len()
-	}
-	return total
+	return c.lru.Len()
 }
 
 func TestCache_GetAdd(t *testing.T) {
@@ -55,24 +51,20 @@ func TestCache_GetAdd(t *testing.T) {
 func TestCache_LRUEviction(t *testing.T) {
 	cache := NewCache()
 
-	// All entries go to shard 0 (hash % 64 == 0)
-	// Fill shard beyond capacity
-	for i := range ShardSize + 10 {
-		hash := uint64(i * NumShards) // All map to shard 0
-		cache.Add(hash, nil)
+	// Fill the cache beyond capacity.
+	for i := range CacheSize + 10 {
+		cache.Add(uint64(i), nil)
 	}
 
-	// Shard 0 should be capped at ShardSize
-	shard := cache.getShard(0)
-	assert.Equal(t, ShardSize, shard.Len())
+	// The cache should be capped at CacheSize.
+	assert.Equal(t, CacheSize, cacheLen(cache))
 
-	// Early entries should be evicted
+	// Early entries should be evicted.
 	_, ok := cache.Get(0)
 	assert.False(t, ok, "earliest entry should be evicted")
 
-	// Recent entries should still exist
-	recentHash := uint64(ShardSize * NumShards)
-	_, ok = cache.Get(recentHash)
+	// Recent entries should still exist.
+	_, ok = cache.Get(uint64(CacheSize + 9))
 	assert.True(t, ok, "recent entry should exist")
 }
 

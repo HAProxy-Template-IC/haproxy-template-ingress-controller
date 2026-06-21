@@ -53,12 +53,70 @@ func RegisterVariables(
 	provider StateProvider,
 	eventBuffer *EventBuffer,
 ) {
-	// Core state variables
-	registry.Publish("config", &ConfigVar{provider: provider})
-	registry.Publish("credentials", &CredentialsVar{provider: provider})
-	registry.Publish("rendered", &RenderedVar{provider: provider})
-	registry.Publish("auxfiles", &AuxFilesVar{provider: provider})
-	registry.Publish("resources", &ResourcesVar{provider: provider})
+	// Core state variables. Each is a Func closure capturing the provider;
+	// the response shapes match the documented /debug/vars/<name> contracts.
+
+	// config: current controller configuration + CRD resource version.
+	registry.Publish("config", introspection.Func(func() (any, error) {
+		cfg, version, err := provider.GetConfig()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			keyConfig:  cfg,
+			keyVersion: version,
+			"updated":  time.Now(),
+		}, nil
+	}))
+
+	// credentials: metadata only — never exposes actual credential values.
+	registry.Publish("credentials", introspection.Func(func() (any, error) {
+		creds, version, err := provider.GetCredentials()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			keyVersion:            version,
+			"updated":             time.Now(),
+			"has_dataplane_creds": creds != nil && creds.DataplaneUsername != "" && creds.DataplanePassword != "",
+		}, nil
+	}))
+
+	// rendered: most recently rendered HAProxy config + size.
+	registry.Publish("rendered", introspection.Func(func() (any, error) {
+		rendered, timestamp, err := provider.GetRenderedConfig()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			keyConfig:    rendered,
+			keyTimestamp: timestamp,
+			"size":       len(rendered),
+		}, nil
+	}))
+
+	// auxfiles: auxiliary files from the last deployment + per-type counts.
+	registry.Publish("auxfiles", introspection.Func(func() (any, error) {
+		auxFiles, timestamp, err := provider.GetAuxiliaryFiles()
+		if err != nil {
+			return nil, err
+		}
+		summary := map[string]int{
+			"ssl_count":     len(auxFiles.SSLCertificates),
+			"map_count":     len(auxFiles.MapFiles),
+			"general_count": len(auxFiles.GeneralFiles),
+		}
+		return map[string]any{
+			"files":      auxFiles,
+			keyTimestamp: timestamp,
+			"summary":    summary,
+		}, nil
+	}))
+
+	// resources: resource counts by type.
+	registry.Publish("resources", introspection.Func(func() (any, error) {
+		return provider.GetResourceCounts()
+	}))
 
 	// Events
 	registry.Publish(keyEvents, &EventsVar{
@@ -66,16 +124,48 @@ func RegisterVariables(
 		defaultLimit: 100,
 	})
 
-	// Full state dump (use carefully!)
-	registry.Publish("state", &FullStateVar{
-		provider:    provider,
-		eventBuffer: eventBuffer,
-	})
+	// Full state dump (use carefully! Large response). Best effort — does not
+	// fail if some parts are unavailable.
+	registry.Publish("state", introspection.Func(func() (any, error) {
+		cfg, cfgVer, _ := provider.GetConfig()
+		rendered, renderedTime, _ := provider.GetRenderedConfig()
+		auxFiles, auxTime, _ := provider.GetAuxiliaryFiles()
+		resources, _ := provider.GetResourceCounts()
+
+		recentEvents := []Event{}
+		if eventBuffer != nil {
+			recentEvents = eventBuffer.GetLast(100)
+		}
+
+		return map[string]any{
+			keyConfig: map[string]any{
+				keyConfig:  cfg,
+				keyVersion: cfgVer,
+			},
+			"rendered": map[string]any{
+				keyConfig:    rendered,
+				keyTimestamp: renderedTime,
+			},
+			"auxfiles": map[string]any{
+				"files":      auxFiles,
+				keyTimestamp: auxTime,
+			},
+			"resources":     resources,
+			"recent_events": recentEvents,
+			"snapshot_time": time.Now(),
+		}, nil
+	}))
 
 	// Pipeline status (for testing and debugging)
-	registry.Publish("pipeline", &PipelineVar{provider: provider})
-	registry.Publish("validated", &ValidatedVar{provider: provider})
-	registry.Publish("errors", &ErrorsVar{provider: provider})
+	registry.Publish("pipeline", introspection.Func(func() (any, error) {
+		return provider.GetPipelineStatus()
+	}))
+	registry.Publish("validated", introspection.Func(func() (any, error) {
+		return provider.GetValidatedConfig()
+	}))
+	registry.Publish("errors", introspection.Func(func() (any, error) {
+		return provider.GetErrors()
+	}))
 
 	// Uptime (computed on-demand)
 	startTime := time.Now()

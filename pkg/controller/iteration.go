@@ -26,7 +26,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 // buildAndRegisterPluggableValidatorManager constructs the validator
@@ -208,9 +207,18 @@ func runIteration(
 	// validation can dispatch the rendered file set to validator sidecars
 	// (e.g. SPOA hub --validate-socket) after the standard pipeline
 	// passes. A nil Manager is the no-validators-configured case.
-	dryrunValidator, configValidator, err := maybeCreateWebhookValidators(setup, cfg, storeProvider, wiring, pluggableMgr, k8sClient, logger)
+	// The webhook server runs whenever the chart mounted a TLS cert directory
+	// (the maybeSetupWebhook caller gates on `webhookCertDir != ""`).
+	// Construction is NOT gated on whether any watched resource enables
+	// validation: the HAProxyTemplateConfig admission webhook is independent of
+	// watched resources, and the chart may have provisioned a cert +
+	// ValidatingWebhookConfiguration solely for HAProxyTemplateConfig admission.
+	// The DryRunValidator is nil when no watched-resource rules exist; the
+	// ConfigValidator is always present so HAProxyTemplateConfig admissions land
+	// on a real handler instead of the pure server's fail-open path.
+	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, k8sClient, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating webhook validators: %w", err)
 	}
 
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
@@ -306,39 +314,6 @@ func handleConfigurationChange(
 	setup.RunCleanups()
 
 	logger.Info("Reinitialization triggered - starting new iteration")
-}
-
-// maybeCreateWebhookValidators constructs the DryRunValidator (watched-
-// resource admission) and ConfigValidator (HAProxyTemplateConfig admission)
-// when webhook validation is enabled. Both are nil if webhook is disabled
-// in the CRD; the DryRunValidator may also be nil if no watched resources
-// have `enableValidationWebhook: true` even though the webhook is enabled.
-// Extracted from runIteration to keep that function under the function-
-// length lint cap.
-func maybeCreateWebhookValidators(
-	setup *componentSetup,
-	cfg *coreconfig.Config,
-	storeProvider stores.StoreProvider,
-	wiring *reconciliationWiring,
-	pluggableMgr *pluggablevalidator.Manager,
-	k8sClient *client.Client,
-	logger *slog.Logger,
-) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
-	// The webhook server runs whenever the chart mounted a TLS cert
-	// directory (the maybeSetupWebhook caller gates on `webhookCertDir != ""`).
-	// Construction is NOT gated on whether any watched resource enables
-	// validation: the HAProxyTemplateConfig admission webhook is independent
-	// of watched resources, and the chart may have provisioned a cert +
-	// ValidatingWebhookConfiguration solely for HAProxyTemplateConfig admission.
-	// The DryRunValidator inside the returned
-	// tuple is nil when no watched-resource rules exist; the ConfigValidator
-	// is always present so HAProxyTemplateConfig admissions land on a real
-	// handler instead of the pure server's fail-open path.
-	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, k8sClient, logger)
-	if err != nil {
-		return nil, nil, fmt.Errorf("creating webhook validators: %w", err)
-	}
-	return dryrunValidator, configValidator, nil
 }
 
 // maybeSetupWebhook sets up the webhook server when the chart has mounted a

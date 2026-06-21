@@ -43,8 +43,8 @@ import (
 // subscriptions (SubscribeTypes) that filter events at the bus level for efficiency.
 //
 // Lossy Subscriptions:
-// For observability components where occasional drops are acceptable, use SubscribeLossy()
-// or SubscribeTypesLossy(). These subscriptions silently drop events without triggering
+// For observability components where occasional drops are acceptable, use SubscribeLossy().
+// These subscriptions silently drop events without triggering
 // the onDrop callback, and drops are counted separately in DroppedEventsObservability().
 //
 // Event Drop Monitoring:
@@ -338,8 +338,8 @@ func (b *EventBus) Request(ctx context.Context, request Request, opts RequestOpt
 // from CRITICAL (non-lossy) subscriber buffers. The callback receives the
 // event type string.
 //
-// This callback is NOT called for lossy subscribers (created via SubscribeLossy()
-// or SubscribeTypesLossy()). Lossy drops are expected and silently counted
+// This callback is NOT called for lossy subscribers (created via SubscribeLossy()).
+// Lossy drops are expected and silently counted
 // in DroppedEventsObservability().
 //
 // This callback pattern keeps the EventBus domain-agnostic while allowing

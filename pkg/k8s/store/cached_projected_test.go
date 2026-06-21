@@ -52,8 +52,8 @@ func TestCachedStore_ProjectedMode(t *testing.T) {
 	if store.Size() != 1 {
 		t.Errorf("expected ref size 1, got %d", store.Size())
 	}
-	if store.CacheSize() != 0 {
-		t.Errorf("projected Add must not cache the body; CacheSize = %d, want 0", store.CacheSize())
+	if got := cacheLen(store); got != 0 {
+		t.Errorf("projected Add must not cache the body; cache len = %d, want 0", got)
 	}
 
 	// A read fetches the FULL body live and caches it.
@@ -64,17 +64,27 @@ func TestCachedStore_ProjectedMode(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if store.CacheSize() != 1 {
-		t.Errorf("expected full body cached after Get; CacheSize = %d, want 1", store.CacheSize())
+	if got := cacheLen(store); got != 1 {
+		t.Errorf("expected full body cached after Get; cache len = %d, want 1", got)
 	}
 
 	// Update must INVALIDATE the stale cached body so the next read re-fetches.
 	if err := store.Update(resource, []string{"default", "test-cm"}); err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
-	if store.CacheSize() != 0 {
-		t.Errorf("projected Update must invalidate the cached body; CacheSize = %d, want 0", store.CacheSize())
+	if got := cacheLen(store); got != 0 {
+		t.Errorf("projected Update must invalidate the cached body; cache len = %d, want 0", got)
 	}
+}
+
+// cacheLen returns the number of entries currently in the store's LRU value
+// cache. It reads s.cache under the store lock, mirroring how production code
+// inspects the cache. Replaces the former exported CacheSize() accessor, which
+// had no production callers.
+func cacheLen(s *CachedStore) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cache.Len()
 }
 
 // Default (non-projected) mode keeps the existing behavior: Add caches the body.
@@ -99,7 +109,7 @@ func TestCachedStore_NonProjectedStillCachesOnAdd(t *testing.T) {
 	if err := store.Add(resource, []string{"default", "test-cm"}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
-	if store.CacheSize() != 1 {
-		t.Errorf("non-projected Add should cache the body; CacheSize = %d, want 1", store.CacheSize())
+	if got := cacheLen(store); got != 1 {
+		t.Errorf("non-projected Add should cache the body; cache len = %d, want 1", got)
 	}
 }

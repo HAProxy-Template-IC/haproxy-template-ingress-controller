@@ -92,6 +92,19 @@ func (e *JSONPathEvaluator) Expression() string {
 	return e.expression
 }
 
+// derefForFilter follows pointers and interfaces until reaching a concrete value.
+// Returns ok=false if a nil pointer/interface is encountered along the way, in
+// which case callers typically treat the field as "already absent".
+func derefForFilter(rv reflect.Value) (reflect.Value, bool) {
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
+		if rv.IsNil() {
+			return reflect.Value{}, false
+		}
+		rv = rv.Elem()
+	}
+	return rv, true
+}
+
 // reflectValueToString converts a reflect.Value to a string representation.
 func reflectValueToString(v reflect.Value) string {
 	// Handle invalid values

@@ -446,32 +446,5 @@ func (s *CachedStore) Size() int {
 	return count
 }
 
-// CacheSize returns the number of cached resources.
-func (s *CachedStore) CacheSize() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.cache.Len()
-}
-
-// EvictExpired removes expired cache entries.
-func (s *CachedStore) EvictExpired() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	evicted := 0
-
-	// Use Keys + Peek to avoid promoting entries about to be evicted
-	for _, key := range s.cache.Keys() {
-		entry, ok := s.cache.Peek(key)
-		if ok && now.After(entry.expiresAt) {
-			s.cache.Remove(key)
-			evicted++
-		}
-	}
-
-	return evicted
-}
-
 // Ensure CachedStore implements types.Store interface.
 var _ types.Store = (*CachedStore)(nil)

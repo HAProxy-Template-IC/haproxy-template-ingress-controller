@@ -41,7 +41,7 @@ var parserMutex sync.Mutex
 // 2. Custom EE reader for EE-specific sections (waf-global, waf-profile, captcha, etc.)
 // 3. Custom EE reader for EE directives within CE sections (filter waf, http-request waf-evaluate, etc.)
 type Parser struct {
-	factory  ParserFactory
+	factory  *DefaultFactory
 	ceParser clientparser.Parser
 }
 

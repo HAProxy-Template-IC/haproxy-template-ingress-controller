@@ -13,8 +13,8 @@ import (
 
 const sslCAFileType = "SSL CA file"
 
-// sslStorageOps provides a generic FileOperations implementation for SSL storage files.
-type sslStorageOps[T FileItem] struct {
+// sslStorageOps provides a FileOperations implementation for SSL CA storage files.
+type sslStorageOps struct {
 	getAll     func(ctx context.Context) ([]string, error)
 	getContent func(ctx context.Context, id string) (string, error)
 	create     func(ctx context.Context, id, content string) (string, error)
@@ -22,15 +22,15 @@ type sslStorageOps[T FileItem] struct {
 	delete     func(ctx context.Context, id string) error
 }
 
-func (o *sslStorageOps[T]) GetAll(ctx context.Context) ([]string, error) {
+func (o *sslStorageOps) GetAll(ctx context.Context) ([]string, error) {
 	return o.getAll(ctx)
 }
 
-func (o *sslStorageOps[T]) GetContent(ctx context.Context, id string) (string, error) {
+func (o *sslStorageOps) GetContent(ctx context.Context, id string) (string, error) {
 	return o.getContent(ctx, id)
 }
 
-func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) (string, error) {
+func (o *sslStorageOps) Create(ctx context.Context, id, content string) (string, error) {
 	// Normalize to filename only - DataPlane API expects just the filename,
 	// not a path with directory components like "ssl/filename.pem".
 	// path.Base (not filepath.Base): ids are slash-separated HAProxy target
@@ -49,7 +49,7 @@ func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) (stri
 	return reloadID, err
 }
 
-func (o *sslStorageOps[T]) Update(ctx context.Context, id, content string) (string, error) {
+func (o *sslStorageOps) Update(ctx context.Context, id, content string) (string, error) {
 	// Normalize to filename only - DataPlane API expects just the filename.
 	name := path.Base(id)
 	reloadID, err := o.update(ctx, name, content)
@@ -66,7 +66,7 @@ func (o *sslStorageOps[T]) Update(ctx context.Context, id, content string) (stri
 //
 // We only check existence, not content, because the API returns
 // metadata/fingerprint instead of raw certificate content.
-func (o *sslStorageOps[T]) recoverFrom500(ctx context.Context, err error, name, action string) bool {
+func (o *sslStorageOps) recoverFrom500(ctx context.Context, err error, name, action string) bool {
 	if err == nil || !strings.Contains(err.Error(), "500") {
 		return false
 	}
@@ -84,7 +84,7 @@ func (o *sslStorageOps[T]) recoverFrom500(ctx context.Context, err error, name, 
 // so we retry a few times to allow the operation to complete.
 // We only check existence, not content, because the API returns metadata/
 // fingerprint format instead of raw certificate content.
-func (o *sslStorageOps[T]) verifyExistsWithRetry(ctx context.Context, name string) bool {
+func (o *sslStorageOps) verifyExistsWithRetry(ctx context.Context, name string) bool {
 	const maxRetries = 3
 	const retryDelay = 500 * time.Millisecond
 
@@ -117,45 +117,45 @@ func (o *sslStorageOps[T]) verifyExistsWithRetry(ctx context.Context, name strin
 	return false
 }
 
-func (o *sslStorageOps[T]) Delete(ctx context.Context, id string) error {
+func (o *sslStorageOps) Delete(ctx context.Context, id string) error {
 	// Normalize to filename only - DataPlane API expects just the filename.
 	name := path.Base(id)
 	return o.delete(ctx, name)
 }
 
-// sslStorageConfig holds configuration for SSL storage file comparison/sync operations.
+// sslStorageConfig holds configuration for SSL CA file comparison/sync operations.
 type sslStorageConfig struct {
-	fileType        string // "SSL CA file" or "SSL CRL file" for logging
+	fileType        string // "SSL CA file" for logging
 	isSupported     func() bool
 	detectedVersion func() string
 }
 
-// compareSSLStorageFiles is a generic helper for comparing SSL storage files (CA, CRL).
+// compareSSLStorageFiles compares SSL CA storage files.
 // It handles capability checking, path normalization, and diff restoration.
-func compareSSLStorageFiles[T FileItem](
+func compareSSLStorageFiles(
 	ctx context.Context,
-	desired []T,
-	ops FileOperations[T],
+	desired []SSLCaFile,
+	ops FileOperations[SSLCaFile],
 	config sslStorageConfig,
-	normalize func(T) T,
-	newFile func(id, content string) T,
-	getPath func(T) string,
-) (*FileDiffGeneric[T], error) {
+	normalize func(SSLCaFile) SSLCaFile,
+	newFile func(id, content string) SSLCaFile,
+	getPath func(SSLCaFile) string,
+) (*SSLCaFileDiff, error) {
 	// Check if storage is supported
 	if !config.isSupported() {
 		slog.Debug(config.fileType+" storage not supported, skipping comparison",
 			"haproxy_version", config.detectedVersion())
-		return &FileDiffGeneric[T]{}, nil
+		return &SSLCaFileDiff{}, nil
 	}
 
 	// Normalize desired files to use filenames for identifiers
-	normalizedDesired := make([]T, len(desired))
+	normalizedDesired := make([]SSLCaFile, len(desired))
 	for i, file := range desired {
 		normalizedDesired[i] = normalize(file)
 	}
 
 	// Use generic Compare function
-	genericDiff, err := Compare[T](ctx, ops, normalizedDesired, newFile)
+	genericDiff, err := Compare(ctx, ops, normalizedDesired, newFile)
 	if err != nil {
 		return nil, err
 	}
@@ -163,25 +163,25 @@ func compareSSLStorageFiles[T FileItem](
 	// Build map of original desired files keyed by basename so the normalised
 	// entries returned from the generic diff can be re-keyed back to the
 	// originals (which carry the full caller-supplied paths).
-	desiredMap := make(map[string]T)
+	desiredMap := make(map[string]SSLCaFile)
 	for _, file := range desired {
 		desiredMap[path.Base(getPath(file))] = file
 	}
 
-	return &FileDiffGeneric[T]{
+	return &SSLCaFileDiff{
 		ToCreate: restoreOriginals(genericDiff.ToCreate, desiredMap, getPath),
 		ToUpdate: restoreOriginals(genericDiff.ToUpdate, desiredMap, getPath),
 		ToDelete: genericDiff.ToDelete,
 	}, nil
 }
 
-// syncSSLStorageFiles is a generic helper for syncing SSL storage files (CA, CRL).
+// syncSSLStorageFiles syncs SSL CA storage files.
 // It handles capability checking and delegates to the generic Sync function.
 // Returns reload IDs from create/update operations that triggered reloads.
-func syncSSLStorageFiles[T FileItem](
+func syncSSLStorageFiles(
 	ctx context.Context,
-	diff *FileDiffGeneric[T],
-	ops FileOperations[T],
+	diff *SSLCaFileDiff,
+	ops FileOperations[SSLCaFile],
 	config sslStorageConfig,
 ) ([]string, error) {
 	if diff == nil {
@@ -200,12 +200,12 @@ func syncSSLStorageFiles[T FileItem](
 		return nil, nil
 	}
 
-	return Sync[T](ctx, ops, diff)
+	return Sync(ctx, ops, diff)
 }
 
 // newSSLCaOps creates a FileOperations adapter for SSL CA files.
-func newSSLCaOps(c *client.DataplaneClient) *sslStorageOps[SSLCaFile] {
-	return &sslStorageOps[SSLCaFile]{
+func newSSLCaOps(c *client.DataplaneClient) *sslStorageOps {
+	return &sslStorageOps{
 		getAll:     c.GetAllSSLCaFiles,
 		getContent: c.GetSSLCaFileContent,
 		create:     c.CreateSSLCaFile,

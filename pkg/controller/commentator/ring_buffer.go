@@ -6,6 +6,7 @@
 package commentator
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -158,8 +159,9 @@ func (rb *RingBuffer) FindByType(eventType string) []busevents.Event {
 		return nil
 	}
 
-	// Reverse to get newest first
-	reverseEvents(result)
+	// Reverse to get newest first. result is a fresh copy from findInIndex,
+	// so the in-place reversal does not touch the buffer's backing array.
+	slices.Reverse(result)
 
 	return result
 }
@@ -238,8 +240,9 @@ func (rb *RingBuffer) FindByCorrelationID(correlationID string, maxCount int) []
 		result = result[len(result)-maxCount:]
 	}
 
-	// Reverse to get newest first
-	reverseEvents(result)
+	// Reverse to get newest first. result is a fresh copy from findInIndex,
+	// so the in-place reversal does not touch the buffer's backing array.
+	slices.Reverse(result)
 
 	return result
 }
@@ -283,11 +286,4 @@ func (rb *RingBuffer) findInIndex(idx map[string][]int, key string, predicate fu
 		idx[key] = validIndices
 	}
 	return result
-}
-
-// reverseEvents reverses a slice of events in place.
-func reverseEvents(evts []busevents.Event) {
-	for i, j := 0, len(evts)-1; i < j; i, j = i+1, j-1 {
-		evts[i], evts[j] = evts[j], evts[i]
-	}
 }

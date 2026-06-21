@@ -30,8 +30,8 @@ import (
 //  3. EventType is the canonical proposal-request constant
 //     (subscribers route on it).
 //
-// Pin all three so a refactor that swapped uuid.New for a counter,
-// dropped the maps.Copy, or changed the event-type string fails
+// Pin all three so a refactor that swapped the random ID generator for a
+// counter, dropped the maps.Copy, or changed the event-type string fails
 // loudly.
 func TestNewProposalValidationRequestedEvent(t *testing.T) {
 	t.Run("generates unique RequestID per call", func(t *testing.T) {

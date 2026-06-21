@@ -26,10 +26,12 @@ import (
 // scriggoTracingConfig holds template tracing configuration for Scriggo.
 type scriggoTracingConfig struct {
 	enabled bool
-	// debugFilters is read by filter implementations (e.g. the sort_by
-	// comparator in sorting.go) via IsFilterDebugEnabled() to decide
-	// whether to log per-comparison details through slog. The flag is
-	// flipped at runtime by EnableFilterDebug / DisableFilterDebug.
+	// debugFilters records the filter-debug flag toggled at runtime by
+	// EnableFilterDebug / DisableFilterDebug and surfaced through
+	// IsFilterDebugEnabled (part of the Engine interface and the
+	// `validate --debug-filters` CLI flag). No filter currently consumes
+	// it directly; the Scriggo sort_by comparator does not log per
+	// comparison.
 	debugFilters bool
 	mu           sync.RWMutex
 	traces       []string

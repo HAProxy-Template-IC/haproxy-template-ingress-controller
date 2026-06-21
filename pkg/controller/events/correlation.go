@@ -14,7 +14,20 @@
 
 package events
 
-import "github.com/google/uuid"
+import (
+	"crypto/rand"
+	"encoding/hex"
+)
+
+// randomID returns a 32-character random hex string. It is used purely to
+// generate unique event/correlation/causation IDs; the value carries no
+// structure or semantics beyond uniqueness. crypto/rand.Read never returns
+// an error (it panics internally on failure), so the result is always valid.
+func randomID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 // CorrelatedEvent is an interface for events that support correlation tracking.
 //
@@ -117,12 +130,12 @@ func WithNewCorrelation() CorrelationOption {
 // ensuring events are fully initialized in their struct literals.
 func newCorrelation(opts ...CorrelationOption) Correlation {
 	c := Correlation{
-		eventID: uuid.New().String(),
+		eventID: randomID(),
 	}
 
 	for _, opt := range opts {
 		if opt.newChain {
-			c.correlationID = uuid.New().String()
+			c.correlationID = randomID()
 		}
 		if opt.correlationID != "" {
 			c.correlationID = opt.correlationID

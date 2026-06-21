@@ -88,7 +88,7 @@ type Version struct {
 // Compare orders two versions by major, then minor. Patch is INTENTIONALLY
 // ignored: Compare is used for series compatibility — e.g. discovery matching a
 // dataplaneapi version ("v3.3.5") against a HAProxy version ("3.3.10"), which
-// share major.minor but never patch. Use AtLeast for patch-level gates.
+// share major.minor but never patch.
 // Returns -1 if v < other, 0 if same series, 1 if v > other.
 func (v *Version) Compare(other *Version) int {
 	switch {
@@ -104,19 +104,6 @@ func (v *Version) Compare(other *Version) int {
 		return 1
 	default:
 		return 0
-	}
-}
-
-// AtLeast reports whether v is at least major.minor.patch. Unlike Compare, this
-// IS patch-aware — it backs the dataplaneapi v3.3.2+ runtime-server-addr gate.
-func (v *Version) AtLeast(major, minor, patch int) bool {
-	switch {
-	case v.Major != major:
-		return v.Major > major
-	case v.Minor != minor:
-		return v.Minor > minor
-	default:
-		return v.Patch >= patch
 	}
 }
 
