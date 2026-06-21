@@ -5,6 +5,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 const (
@@ -117,6 +118,70 @@ func compareNamedMaps[V any](
 			operations = append(operations, update(desiredItem))
 		}
 	}
+	return operations
+}
+
+// compareContainerSection compares a "container" config section: a named parent
+// section that owns a flat map of named child entries (mailers→mailer entries,
+// peers→peer entries, resolvers→nameservers). It mirrors the add/delete/modify
+// walk of compareNamedSections but additionally syncs each parent's child
+// entries, so the three container comparators don't each hand-roll the walk.
+//
+// Type parameters:
+//   - P: parent section model (e.g. models.MailersSection)
+//   - C: child entry model (e.g. models.MailerEntry)
+//
+// Parameters:
+//   - currentParents, desiredParents: parent section slices
+//   - currentChildIndex, desiredChildIndex: per-config child index keyed
+//     parentName → childName → *C (e.g. cfg.MailerEntryIndex)
+//   - getName: parent name accessor
+//   - equalWithoutChildren: parent equality with the child slice excluded
+//   - createParent/deleteParent/updateParent: parent op factories
+//   - compareChildren: child-entry comparator for one parent (wraps compareNamedMaps)
+func compareContainerSection[P, C any](
+	currentParents, desiredParents []*P,
+	currentChildIndex, desiredChildIndex map[string]map[string]*C,
+	getName func(*P) string,
+	equalWithoutChildren func(*P, *P) bool,
+	createParent func(*P) Operation,
+	deleteParent func(*P) Operation,
+	updateParent func(*P) Operation,
+	compareChildren func(parentName string, current, desired map[string]*C) []Operation,
+) []Operation {
+	operations := make([]Operation, 0, len(desiredParents))
+	currentMap := parserconfig.BuildPointerIndex(currentParents, getName)
+	desiredMap := parserconfig.BuildPointerIndex(desiredParents, getName)
+
+	// Added parents: create the parent section, then all its child entries.
+	for name, parent := range desiredMap {
+		if _, exists := currentMap[name]; exists {
+			continue
+		}
+		operations = append(operations, createParent(parent))
+		operations = append(operations, compareChildren(name, nil, desiredChildIndex[name])...)
+	}
+
+	// Deleted parents.
+	for name, parent := range currentMap {
+		if _, exists := desiredMap[name]; !exists {
+			operations = append(operations, deleteParent(parent))
+		}
+	}
+
+	// Modified parents: sync child entries, then compare the parent attributes
+	// (excluding the children, which were just synced).
+	for name, desiredParent := range desiredMap {
+		currentParent, exists := currentMap[name]
+		if !exists {
+			continue
+		}
+		operations = append(operations, compareChildren(name, currentChildIndex[name], desiredChildIndex[name])...)
+		if !equalWithoutChildren(currentParent, desiredParent) {
+			operations = append(operations, updateParent(desiredParent))
+		}
+	}
+
 	return operations
 }
 

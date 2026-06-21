@@ -5,55 +5,21 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // compareResolvers compares resolver sections between current and desired configurations.
 // Uses pointer indexes for zero-copy iteration over nameservers.
 func (c *Comparator) compareResolvers(current, desired *parser.StructuredConfig) []Operation {
-	operations := make([]Operation, 0, len(desired.Resolvers))
-
-	getName := func(r *models.Resolver) string { return r.Name }
-	currentMap := parserconfig.BuildPointerIndex(current.Resolvers, getName)
-	desiredMap := parserconfig.BuildPointerIndex(desired.Resolvers, getName)
-
-	// Find added resolver sections
-	for name, resolver := range desiredMap {
-		if _, exists := currentMap[name]; exists {
-			continue
-		}
-
-		operations = append(operations, sections.NewResolverCreate(resolver))
-
-		// Also create nameserver entries for this new resolver section using pointer index
-		desiredNameservers := desired.NameserverIndex[name]
-		nameserverOps := c.compareNameserversWithIndex(name, nil, desiredNameservers)
-		operations = append(operations, nameserverOps...)
-	}
-
-	// Find deleted resolver sections
-	for name, resolver := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewResolverDelete(resolver))
-		}
-	}
-
-	// Find modified resolver sections
-	for name, desiredResolver := range desiredMap {
-		currentResolver, exists := currentMap[name]
-		if !exists {
-			continue
-		}
-		// Compare nameserver entries within this resolver section using pointer indexes
-		operations = append(operations, c.compareNameserversWithIndex(name, current.NameserverIndex[name], desired.NameserverIndex[name])...)
-
-		// Compare resolver section attributes (excluding nameserver entries which we already compared)
-		if !resolversEqualWithoutNameservers(currentResolver, desiredResolver) {
-			operations = append(operations, sections.NewResolverUpdate(desiredResolver))
-		}
-	}
-
-	return operations
+	return compareContainerSection(
+		current.Resolvers, desired.Resolvers,
+		current.NameserverIndex, desired.NameserverIndex,
+		func(r *models.Resolver) string { return r.Name },
+		resolversEqualWithoutNameservers,
+		sections.NewResolverCreate,
+		sections.NewResolverDelete,
+		sections.NewResolverUpdate,
+		c.compareNameserversWithIndex,
+	)
 }
 
 // resolversEqualWithoutNameservers checks if two resolver sections are equal, excluding nameserver entries.
