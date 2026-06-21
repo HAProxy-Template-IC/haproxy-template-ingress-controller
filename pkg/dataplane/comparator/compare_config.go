@@ -5,7 +5,6 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // compareHTTPErrors compares http-errors sections between current and desired configurations.
@@ -24,49 +23,16 @@ func (c *Comparator) compareHTTPErrors(current, desired *parser.StructuredConfig
 // compareMailers compares mailers sections between current and desired configurations.
 // Uses pointer indexes for zero-copy iteration over mailer entries.
 func (c *Comparator) compareMailers(current, desired *parser.StructuredConfig) []Operation {
-	operations := make([]Operation, 0, len(desired.Mailers))
-
-	getName := func(m *models.MailersSection) string { return m.Name }
-	currentMap := parserconfig.BuildPointerIndex(current.Mailers, getName)
-	desiredMap := parserconfig.BuildPointerIndex(desired.Mailers, getName)
-
-	// Find added mailers sections
-	for name, mailers := range desiredMap {
-		if _, exists := currentMap[name]; exists {
-			continue
-		}
-
-		operations = append(operations, sections.NewMailersSectionCreate(mailers))
-
-		// Also create mailer entries for this new mailers section using pointer index
-		desiredEntries := desired.MailerEntryIndex[name]
-		mailerEntryOps := c.compareMailerEntriesWithIndex(name, nil, desiredEntries)
-		operations = append(operations, mailerEntryOps...)
-	}
-
-	// Find deleted mailers sections
-	for name, mailers := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewMailersSectionDelete(mailers))
-		}
-	}
-
-	// Find modified mailers sections
-	for name, desiredMailers := range desiredMap {
-		currentMailers, exists := currentMap[name]
-		if !exists {
-			continue
-		}
-		// Compare mailer entries within this mailers section using pointer indexes
-		operations = append(operations, c.compareMailerEntriesWithIndex(name, current.MailerEntryIndex[name], desired.MailerEntryIndex[name])...)
-
-		// Compare mailers section attributes (excluding mailer entries which we already compared)
-		if !mailersEqualWithoutMailerEntries(currentMailers, desiredMailers) {
-			operations = append(operations, sections.NewMailersSectionUpdate(desiredMailers))
-		}
-	}
-
-	return operations
+	return compareContainerSection(
+		current.Mailers, desired.Mailers,
+		current.MailerEntryIndex, desired.MailerEntryIndex,
+		func(m *models.MailersSection) string { return m.Name },
+		mailersEqualWithoutMailerEntries,
+		sections.NewMailersSectionCreate,
+		sections.NewMailersSectionDelete,
+		sections.NewMailersSectionUpdate,
+		c.compareMailerEntriesWithIndex,
+	)
 }
 
 // mailersEqualWithoutMailerEntries checks if two mailers sections are equal, excluding mailer entries.
@@ -98,49 +64,16 @@ func (c *Comparator) compareMailerEntriesWithIndex(mailersSection string, curren
 // comparePeers compares peer sections between current and desired configurations.
 // Uses pointer indexes for zero-copy iteration over peer entries.
 func (c *Comparator) comparePeers(current, desired *parser.StructuredConfig) []Operation {
-	operations := make([]Operation, 0, len(desired.Peers))
-
-	getName := func(p *models.PeerSection) string { return p.Name }
-	currentMap := parserconfig.BuildPointerIndex(current.Peers, getName)
-	desiredMap := parserconfig.BuildPointerIndex(desired.Peers, getName)
-
-	// Find added peer sections
-	for name, peer := range desiredMap {
-		if _, exists := currentMap[name]; exists {
-			continue
-		}
-
-		operations = append(operations, sections.NewPeerSectionCreate(peer))
-
-		// Also create peer entries for this new peers section using pointer index
-		desiredEntries := desired.PeerEntryIndex[name]
-		peerEntryOps := c.comparePeerEntriesWithIndex(name, nil, desiredEntries)
-		operations = append(operations, peerEntryOps...)
-	}
-
-	// Find deleted peer sections
-	for name, peer := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewPeerSectionDelete(peer))
-		}
-	}
-
-	// Find modified peer sections
-	for name, desiredPeer := range desiredMap {
-		currentPeer, exists := currentMap[name]
-		if !exists {
-			continue
-		}
-		// Compare peer entries within this peers section using pointer indexes
-		operations = append(operations, c.comparePeerEntriesWithIndex(name, current.PeerEntryIndex[name], desired.PeerEntryIndex[name])...)
-
-		// Compare peers section attributes (excluding peer entries which we already compared)
-		if !peersEqualWithoutPeerEntries(currentPeer, desiredPeer) {
-			operations = append(operations, sections.NewPeerSectionUpdate(desiredPeer))
-		}
-	}
-
-	return operations
+	return compareContainerSection(
+		current.Peers, desired.Peers,
+		current.PeerEntryIndex, desired.PeerEntryIndex,
+		func(p *models.PeerSection) string { return p.Name },
+		peersEqualWithoutPeerEntries,
+		sections.NewPeerSectionCreate,
+		sections.NewPeerSectionDelete,
+		sections.NewPeerSectionUpdate,
+		c.comparePeerEntriesWithIndex,
+	)
 }
 
 // peersEqualWithoutPeerEntries checks if two peer sections are equal, excluding peer entries.
