@@ -127,7 +127,7 @@ func BuildEngineDeclarations(result *Result, extraResourceNames ...string) map[s
 		if result != nil {
 			elemType = result.Types[name]
 		}
-		innerType := buildPerResourceStoreType(elemType)
+		innerType := BuildPerResourceStoreType(elemType)
 		fields = append(fields, reflect.StructField{
 			Name: typegen.GoFieldName(name),
 			Type: reflect.PointerTo(innerType),
@@ -141,7 +141,7 @@ func BuildEngineDeclarations(result *Result, extraResourceNames ...string) map[s
 	//
 	//	{% macro Foo(g *resources.gateways.T) string %} ... {% end %}
 	//
-	// The `T` field on each store struct (see buildPerResourceStoreType)
+	// The `T` field on each store struct (see BuildPerResourceStoreType)
 	// carries the resource's generated value type. Scriggo lifts the
 	// field's static type when the selector appears in a type-expression
 	// position. This keeps the type namespace localised under
@@ -164,10 +164,6 @@ func BuildEngineDeclarations(result *Result, extraResourceNames ...string) map[s
 // `[]any` — used for watched resources whose schema bootstrap
 // failed.
 func BuildPerResourceStoreType(elemType reflect.Type) reflect.Type {
-	return buildPerResourceStoreType(elemType)
-}
-
-func buildPerResourceStoreType(elemType reflect.Type) reflect.Type {
 	var (
 		listReturn      reflect.Type
 		fetchReturn     reflect.Type

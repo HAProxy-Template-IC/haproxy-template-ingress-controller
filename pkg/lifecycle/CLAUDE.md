@@ -25,8 +25,7 @@ Pure infrastructure package providing component lifecycle management. Components
 ```
 Registry
     │
-    ├── Register(component, opts...)
-    │       └── LeaderOnly()
+    ├── Register(component, leaderOnly)
     │
     ├── StartAll(ctx, isLeader) error
     │       └── Starts all registered components
@@ -78,14 +77,12 @@ type SubscriptionReadySignaler interface {
 }
 ```
 
-## Registration Options
+## Registration
 
-### LeaderOnly
-
-Component only runs when instance is leader:
+Pass `leaderOnly=true` for components that only run on the elected leader:
 
 ```go
-registry.Register(deployer, lifecycle.LeaderOnly())
+registry.Register(deployer, true)
 ```
 
 ## Usage Pattern
@@ -94,15 +91,12 @@ registry.Register(deployer, lifecycle.LeaderOnly())
 // Create registry
 registry := lifecycle.NewRegistry()
 
-// Idiomatic registration uses the fluent Build() API — that's what the
+// Register all-replica components, then leader-only ones — that's what the
 // production controller wires up in pkg/controller/reconciliation.go.
-registry.Build().
-    AllReplica(reconcilerComponent, rendererComponent, coordinatorComponent).
-    LeaderOnly(deployerComponent, schedulerComponent).
-    Done()
-
-// Register(...) directly is the lower-level alternative:
-registry.Register(schedulerComponent, lifecycle.LeaderOnly())
+registry.Register(reconcilerComponent, false)
+registry.Register(rendererComponent, false)
+registry.Register(deployerComponent, true)
+registry.Register(schedulerComponent, true)
 
 // Start all-replica components (followers stop here)
 if err := registry.StartAll(ctx, isLeader); err != nil {
@@ -168,7 +162,7 @@ func TestComponentLifecycle(t *testing.T) {
     registry := lifecycle.NewRegistry()
 
     comp := &mockComponent{name: "test"}
-    registry.Register(comp)
+    registry.Register(comp, false)
 
     ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
     defer cancel()

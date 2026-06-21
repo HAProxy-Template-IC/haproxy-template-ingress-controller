@@ -131,8 +131,8 @@ func TestRegistry_Register(t *testing.T) {
 	comp1 := &mockComponent{name: "comp1"}
 	comp2 := &mockComponent{name: "comp2"}
 
-	registry.Register(comp1)
-	registry.Register(comp2, LeaderOnly())
+	registry.Register(comp1, false)
+	registry.Register(comp2, true)
 
 	assert.Equal(t, 2, registry.Count())
 
@@ -150,8 +150,8 @@ func TestRegistry_StartAll(t *testing.T) {
 	comp1 := newMockComponent("comp1")
 	comp2 := newMockComponent("comp2")
 
-	registry.Register(comp1)
-	registry.Register(comp2)
+	registry.Register(comp1, false)
+	registry.Register(comp2, false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -186,8 +186,8 @@ func TestRegistry_StartAll_LeaderOnlySkipped(t *testing.T) {
 	comp1 := newMockComponent("comp1")
 	comp2 := newMockComponent("leader-comp")
 
-	registry.Register(comp1)
-	registry.Register(comp2, LeaderOnly())
+	registry.Register(comp1, false)
+	registry.Register(comp2, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -215,8 +215,8 @@ func TestRegistry_StartAll_LeaderOnlyStarted(t *testing.T) {
 	comp1 := newMockComponent("comp1")
 	comp2 := newMockComponent("leader-comp")
 
-	registry.Register(comp1)
-	registry.Register(comp2, LeaderOnly())
+	registry.Register(comp1, false)
+	registry.Register(comp2, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -245,7 +245,7 @@ func TestRegistry_StartAll_ComponentError(t *testing.T) {
 	expectedErr := errors.New("start failed")
 	comp1 := &mockComponent{name: "failing-comp", startErr: expectedErr}
 
-	registry.Register(comp1)
+	registry.Register(comp1, false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -264,7 +264,7 @@ func TestRegistry_Status(t *testing.T) {
 	registry := NewRegistry()
 
 	comp := &mockComponent{name: "test-comp"}
-	registry.Register(comp, LeaderOnly())
+	registry.Register(comp, true)
 
 	status := registry.Status()
 
@@ -285,7 +285,7 @@ func TestRegistry_Status_WithHealthCheck(t *testing.T) {
 		mockComponent: mockComponent{name: "healthy-comp", startedChan: make(chan struct{})},
 		healthy:       true,
 	}
-	registry.Register(comp)
+	registry.Register(comp, false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -322,7 +322,7 @@ func TestRegistry_Options(t *testing.T) {
 		registry := NewRegistry()
 		comp := &mockComponent{name: "comp"}
 
-		registry.Register(comp, LeaderOnly())
+		registry.Register(comp, true)
 
 		status := registry.Status()
 		assert.True(t, status["comp"].LeaderOnly)
@@ -333,7 +333,7 @@ func TestRegistry_StatusRunning(t *testing.T) {
 	t.Run("component reaches running status", func(t *testing.T) {
 		registry := NewRegistry()
 		comp := newMockComponent("test-comp")
-		registry.Register(comp)
+		registry.Register(comp, false)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
@@ -361,7 +361,7 @@ func TestRegistry_StatusRunning(t *testing.T) {
 	t.Run("failed component has failed status", func(t *testing.T) {
 		registry := NewRegistry()
 		comp := &mockComponent{name: "failing-comp", startErr: errors.New("failed")}
-		registry.Register(comp)
+		registry.Register(comp, false)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
@@ -411,7 +411,7 @@ func TestRegistry_Status_SkipsHealthCheckForStandbyComponents(t *testing.T) {
 		mockComponent: mockComponent{name: "leader-comp"},
 		healthy:       false, // Would return error if called
 	}
-	registry.Register(comp, LeaderOnly())
+	registry.Register(comp, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -447,7 +447,7 @@ func TestRegistry_Status_CallsHealthCheckForRunningComponents(t *testing.T) {
 		mockComponent: mockComponent{name: "running-comp", startedChan: make(chan struct{})},
 		healthy:       true,
 	}
-	registry.Register(comp)
+	registry.Register(comp, false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -487,7 +487,7 @@ func TestRegistry_Status_SkipsHealthCheckForPendingComponents(t *testing.T) {
 		mockComponent: mockComponent{name: "pending-comp"},
 		healthy:       false,
 	}
-	registry.Register(comp)
+	registry.Register(comp, false)
 
 	// Don't start - component stays in Pending status
 
@@ -500,40 +500,4 @@ func TestRegistry_Status_SkipsHealthCheckForPendingComponents(t *testing.T) {
 
 	// info.Healthy should be nil (not set)
 	assert.Nil(t, status["pending-comp"].Healthy, "Healthy should be nil for Pending components")
-}
-
-func TestRegistry_Build(t *testing.T) {
-	registry := NewRegistry()
-
-	allReplica1 := &mockComponent{name: "all-replica-1"}
-	allReplica2 := &mockComponent{name: "all-replica-2"}
-	leaderOnly1 := &mockComponent{name: "leader-only-1"}
-	leaderOnly2 := &mockComponent{name: "leader-only-2"}
-
-	count := registry.Build().
-		AllReplica(allReplica1, allReplica2).
-		LeaderOnly(leaderOnly1, leaderOnly2).
-		Done()
-
-	assert.Equal(t, 4, count, "Expected 4 components to be registered")
-	assert.Equal(t, 4, registry.Count(), "Registry count should be 4")
-
-	// Verify all-replica components are registered without leader-only flag
-	status := registry.Status()
-	info1, ok := status["all-replica-1"]
-	require.True(t, ok, "all-replica-1 should be registered")
-	assert.False(t, info1.LeaderOnly, "all-replica-1 should not be leader-only")
-
-	info2, ok := status["all-replica-2"]
-	require.True(t, ok, "all-replica-2 should be registered")
-	assert.False(t, info2.LeaderOnly, "all-replica-2 should not be leader-only")
-
-	// Verify leader-only components are registered with leader-only flag
-	info3, ok := status["leader-only-1"]
-	require.True(t, ok, "leader-only-1 should be registered")
-	assert.True(t, info3.LeaderOnly, "leader-only-1 should be leader-only")
-
-	info4, ok := status["leader-only-2"]
-	require.True(t, ok, "leader-only-2 should be registered")
-	assert.True(t, info4.LeaderOnly, "leader-only-2 should be leader-only")
 }

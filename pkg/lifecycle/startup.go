@@ -69,7 +69,7 @@ func (r *Registry) prepareComponentsToStart(isLeader bool) []*registeredComponen
 
 	for _, comp := range r.components {
 		// Skip leader-only components if not leader, but mark them as standby
-		if comp.config.leaderOnly && !isLeader {
+		if comp.leaderOnly && !isLeader {
 			comp.status = StatusStandby
 			r.logger.Debug("Setting leader-only component to standby (not leader)",
 				"name", comp.component.Name())

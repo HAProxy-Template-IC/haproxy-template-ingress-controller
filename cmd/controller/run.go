@@ -15,6 +15,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -127,15 +128,10 @@ func runController(_ *cobra.Command, _ []string) error {
 	logger := logging.NewDynamicLogger(logLevelEnv)
 	slog.SetDefault(logger)
 
-	// GOGC: use environment variable if set, otherwise rely on Go's default GC tuning.
-	// Go 1.26's Green Tea GC reduces per-cycle overhead by 10–40%, making manual GOGC
-	// tuning unnecessary. automemlimit's GOMEMLIMIT provides the OOM safety net.
-	gogc := os.Getenv("GOGC")
-	if gogc == "" {
-		gogc = "default"
-	}
-
-	// Log detected resource limits for observability
+	// Log detected resource limits for observability.
+	// GOGC: report the env override if set, otherwise "default" (Go 1.26's Green Tea
+	// GC reduces per-cycle overhead, making manual GOGC tuning unnecessary;
+	// automemlimit's GOMEMLIMIT provides the OOM safety net).
 	gomaxprocs := runtime.GOMAXPROCS(0)
 	gomemlimit := "unlimited"
 	if limit := debug.SetMemoryLimit(-1); limit != math.MaxInt64 {
@@ -152,7 +148,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		"log_level", logging.GetLevel(),
 		"gomaxprocs", gomaxprocs,
 		"gomemlimit", gomemlimit,
-		"gogc", gogc)
+		"gogc", cmp.Or(os.Getenv("GOGC"), "default"))
 
 	// Configure build info for metrics.
 	// HAPROXY_MINOR is set by the haproxytech/haproxy-debian base image and contains

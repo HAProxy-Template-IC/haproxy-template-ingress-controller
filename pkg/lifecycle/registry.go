@@ -30,11 +30,11 @@ import (
 
 // registeredComponent holds a component and its registration configuration.
 type registeredComponent struct {
-	component Component
-	config    registrationConfig
-	status    Status
-	lastError error
-	ready     chan struct{} // Closed when component reaches StatusRunning
+	component  Component
+	leaderOnly bool
+	status     Status
+	lastError  error
+	ready      chan struct{} // Closed when component reaches StatusRunning
 }
 
 // Registry manages component lifecycles.
@@ -48,8 +48,8 @@ type registeredComponent struct {
 // Example:
 //
 //	registry := lifecycle.NewRegistry()
-//	registry.Register(reconciler.New(bus, logger))
-//	registry.Register(deployer.New(bus, logger), lifecycle.LeaderOnly())
+//	registry.Register(reconciler.New(bus, logger), false)
+//	registry.Register(deployer.New(bus, logger), true)
 //
 //	// StartAll requires isLeader so leader-only components can be skipped
 //	// on follower replicas (they're started later via
@@ -77,27 +77,23 @@ func (r *Registry) WithLogger(logger *slog.Logger) *Registry {
 	return r
 }
 
-// Register adds a component to the registry with optional configuration.
+// Register adds a component to the registry. Pass leaderOnly=true for
+// components that may only run on the elected leader.
 //
 // Example:
 //
-//	registry.Register(reconciler.New(bus, logger))
-//	registry.Register(deployer.New(bus, logger), lifecycle.LeaderOnly())
-func (r *Registry) Register(c Component, opts ...Option) {
+//	registry.Register(reconciler.New(bus, logger), false)
+//	registry.Register(deployer.New(bus, logger), true)
+func (r *Registry) Register(c Component, leaderOnly bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	config := registrationConfig{}
-	for _, opt := range opts {
-		opt(&config)
-	}
-
 	// Allocate separately to avoid pointer invalidation when slice grows
 	comp := &registeredComponent{
-		component: c,
-		config:    config,
-		status:    StatusPending,
-		ready:     make(chan struct{}),
+		component:  c,
+		leaderOnly: leaderOnly,
+		status:     StatusPending,
+		ready:      make(chan struct{}),
 	}
 
 	r.components = append(r.components, comp)
@@ -105,7 +101,7 @@ func (r *Registry) Register(c Component, opts ...Option) {
 
 	r.logger.Debug("Component registered",
 		"name", c.Name(),
-		"leader_only", config.leaderOnly)
+		"leader_only", leaderOnly)
 }
 
 // Count returns the number of registered components.

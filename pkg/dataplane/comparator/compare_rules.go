@@ -31,10 +31,7 @@ import (
 // positional diffing. ACLs already have a content-Equal method on
 // `*models.ACL` so the pattern slots in unchanged.
 func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, desiredACLs models.Acls, _ *DiffSummary) []Operation {
-	create, remove, update := sections.ACLBackendOps.Create, sections.ACLBackendOps.Delete, sections.ACLBackendOps.Update
-	if parentType == parentTypeFrontend {
-		create, remove, update = sections.ACLFrontendOps.Create, sections.ACLFrontendOps.Delete, sections.ACLFrontendOps.Update
-	}
+	create, remove, update := pickOps(parentType, sections.ACLFrontendOps, sections.ACLBackendOps)
 	return compareEditedItems(
 		currentACLs, desiredACLs,
 		func(a, b *models.ACL) bool { return a.Equal(*b) },
@@ -126,10 +123,7 @@ func compareEditedItems[T any](
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations
 // instead of cascading UPDATEs caused by index shifts.
 func (c *Comparator) compareHTTPRequestRules(parentType, parentName string, currentRules, desiredRules models.HTTPRequestRules) []Operation {
-	create, remove, update := sections.HTTPRequestRuleBackendOps.Create, sections.HTTPRequestRuleBackendOps.Delete, sections.HTTPRequestRuleBackendOps.Update
-	if parentType == parentTypeFrontend {
-		create, remove, update = sections.HTTPRequestRuleFrontendOps.Create, sections.HTTPRequestRuleFrontendOps.Delete, sections.HTTPRequestRuleFrontendOps.Update
-	}
+	create, remove, update := pickOps(parentType, sections.HTTPRequestRuleFrontendOps, sections.HTTPRequestRuleBackendOps)
 	return compareEditedItems(
 		currentRules, desiredRules,
 		func(a, b *models.HTTPRequestRule) bool { return a.Equal(*b) },
@@ -142,10 +136,7 @@ func (c *Comparator) compareHTTPRequestRules(parentType, parentName string, curr
 // compareHTTPResponseRules compares HTTP response rule configurations within a frontend or backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareHTTPResponseRules(parentType, parentName string, currentRules, desiredRules models.HTTPResponseRules) []Operation {
-	create, remove, update := sections.HTTPResponseRuleBackendOps.Create, sections.HTTPResponseRuleBackendOps.Delete, sections.HTTPResponseRuleBackendOps.Update
-	if parentType == parentTypeFrontend {
-		create, remove, update = sections.HTTPResponseRuleFrontendOps.Create, sections.HTTPResponseRuleFrontendOps.Delete, sections.HTTPResponseRuleFrontendOps.Update
-	}
+	create, remove, update := pickOps(parentType, sections.HTTPResponseRuleFrontendOps, sections.HTTPResponseRuleBackendOps)
 	return compareEditedItems(
 		currentRules, desiredRules,
 		func(a, b *models.HTTPResponseRule) bool { return a.Equal(*b) },
@@ -158,10 +149,7 @@ func (c *Comparator) compareHTTPResponseRules(parentType, parentName string, cur
 // compareTCPRequestRules compares TCP request rule configurations within a frontend or backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareTCPRequestRules(parentType, parentName string, currentRules, desiredRules models.TCPRequestRules) []Operation {
-	create, remove, update := sections.TCPRequestRuleBackendOps.Create, sections.TCPRequestRuleBackendOps.Delete, sections.TCPRequestRuleBackendOps.Update
-	if parentType == parentTypeFrontend {
-		create, remove, update = sections.TCPRequestRuleFrontendOps.Create, sections.TCPRequestRuleFrontendOps.Delete, sections.TCPRequestRuleFrontendOps.Update
-	}
+	create, remove, update := pickOps(parentType, sections.TCPRequestRuleFrontendOps, sections.TCPRequestRuleBackendOps)
 	return compareEditedItems(
 		currentRules, desiredRules,
 		func(a, b *models.TCPRequestRule) bool { return a.Equal(*b) },

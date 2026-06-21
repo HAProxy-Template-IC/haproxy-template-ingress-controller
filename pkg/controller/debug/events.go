@@ -68,7 +68,7 @@ func NewEventBuffer(size int, eventBus *busevents.EventBus) *EventBuffer {
 	// happens before EventBus.Start() is called.
 	// Use SubscribeLossy because event buffer is an observability component where
 	// occasional event drops are acceptable and should not trigger WARN logs.
-	eventChan := eventBus.SubscribeLossy(ComponentName, buffers.Observability())
+	eventChan := eventBus.SubscribeLossy(ComponentName, buffers.Observability)
 
 	return &EventBuffer{
 		buffer:    ringbuffer.New[Event](size),

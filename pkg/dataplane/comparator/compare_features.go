@@ -9,10 +9,7 @@ import (
 // compareFilters compares filter configurations within a frontend or backend.
 // Filters are compared by position since they don't have unique identifiers.
 func (c *Comparator) compareFilters(parentType, parentName string, currentFilters, desiredFilters models.Filters) []Operation {
-	create, remove, update := sections.FilterBackendOps.Create, sections.FilterBackendOps.Delete, sections.FilterBackendOps.Update
-	if parentType == parentTypeFrontend {
-		create, remove, update = sections.FilterFrontendOps.Create, sections.FilterFrontendOps.Delete, sections.FilterFrontendOps.Update
-	}
+	create, remove, update := pickOps(parentType, sections.FilterFrontendOps, sections.FilterBackendOps)
 	return compareIndexedItems(
 		currentFilters, desiredFilters,
 		func(a, b *models.Filter) bool { return a.Equal(*b) },
