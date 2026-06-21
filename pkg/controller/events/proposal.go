@@ -17,8 +17,6 @@ package events
 import (
 	"maps"
 
-	"github.com/google/uuid"
-
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -87,7 +85,7 @@ func NewProposalValidationRequestedEvent(overlays map[string]*stores.StoreOverla
 	maps.Copy(overlaysCopy, overlays)
 
 	return &ProposalValidationRequestedEvent{
-		ID:            uuid.New().String(),
+		ID:            randomID(),
 		Overlays:      overlaysCopy,
 		HTTPOverlay:   httpOverlay,
 		Source:        source,

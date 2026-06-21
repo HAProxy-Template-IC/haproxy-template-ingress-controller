@@ -15,13 +15,17 @@
 package sections
 
 import (
+	"fmt"
+
 	"github.com/haproxytech/client-native/v6/models"
 )
 
-// describeQUICInitialRule wraps DescribeIndexChild for the quic-initial-rule section.
+// describeQUICInitialRule builds the description for the quic-initial-rule
+// section. QUIC initial rules carry no model identifier, so the empty
+// identifier makes DescribeTypedChild fall back to the "at index N" label.
 func describeQUICInitialRule(parentType string) func(OperationType, *models.QUICInitialRule, string, int) func() string {
 	return func(op OperationType, _ *models.QUICInitialRule, parentName string, index int) func() string {
-		return DescribeIndexChild(op, "quic-initial-rule", index, parentType, parentName)
+		return DescribeTypedChild(op, "quic-initial-rule", "", fmt.Sprintf("at index %d", index), parentType, parentName)
 	}
 }
 

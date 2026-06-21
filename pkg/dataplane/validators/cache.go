@@ -18,43 +18,32 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
-const (
-	// NumShards is the number of cache shards for reduced lock contention.
-	NumShards = 64
-	// ShardSize is the maximum entries per shard (64 * 1024 = 65536 total).
-	ShardSize = 1024
-)
+// CacheSize is the maximum number of entries the validation cache holds.
+const CacheSize = 65536
 
-// Cache provides a sharded LRU cache for validation results.
+// Cache provides an LRU cache for validation results.
 // It uses content-based hashing to achieve high cache hit rates for
 // template-driven configurations that produce repetitive models.
 //
-// Thread-safe: hashicorp/golang-lru is internally synchronized.
+// Thread-safe: hashicorp/golang-lru is internally synchronized, so a single
+// cache needs no extra locking or sharding.
 type Cache struct {
-	shards [NumShards]*lru.Cache[uint64, error]
+	lru *lru.Cache[uint64, error]
 }
 
-// NewCache creates a new validation cache with sharded LRU caches.
+// NewCache creates a new validation cache.
 func NewCache() *Cache {
-	c := &Cache{}
-	for i := range c.shards {
-		// Ignore error - lru.New only fails with size <= 0
-		c.shards[i], _ = lru.New[uint64, error](ShardSize)
-	}
-	return c
-}
-
-// getShard returns the appropriate shard for a hash value.
-func (c *Cache) getShard(hash uint64) *lru.Cache[uint64, error] {
-	return c.shards[hash%NumShards]
+	// Ignore error - lru.New only fails with size <= 0.
+	c, _ := lru.New[uint64, error](CacheSize)
+	return &Cache{lru: c}
 }
 
 // Get retrieves a cached validation result.
 func (c *Cache) Get(hash uint64) (error, bool) {
-	return c.getShard(hash).Get(hash)
+	return c.lru.Get(hash)
 }
 
 // Add stores a validation result in the cache.
 func (c *Cache) Add(hash uint64, result error) {
-	c.getShard(hash).Add(hash, result)
+	c.lru.Add(hash, result)
 }

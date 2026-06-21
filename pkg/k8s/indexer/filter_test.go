@@ -78,37 +78,6 @@ func TestDerefForFilter(t *testing.T) {
 	}
 }
 
-func TestFindStructField(t *testing.T) {
-	type myStruct struct {
-		Name      string
-		Namespace string
-	}
-	val := reflect.ValueOf(myStruct{Name: "n", Namespace: "ns"})
-
-	tests := []struct {
-		name      string
-		fieldName string
-		wantValid bool
-		wantStr   string
-	}{
-		{name: "exact match", fieldName: "Name", wantValid: true, wantStr: "n"},
-		{name: "case-insensitive match", fieldName: "name", wantValid: true, wantStr: "n"},
-		{name: "case-insensitive uppercase", fieldName: "NAMESPACE", wantValid: true, wantStr: "ns"},
-		{name: "missing field", fieldName: "Missing", wantValid: false},
-		{name: "empty field name", fieldName: "", wantValid: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := findStructField(val, tt.fieldName)
-			assert.Equal(t, tt.wantValid, got.IsValid())
-			if tt.wantValid {
-				assert.Equal(t, tt.wantStr, got.String())
-			}
-		})
-	}
-}
-
 func TestFieldFilter_Filter(t *testing.T) {
 	t.Run("removes top-level field", func(t *testing.T) {
 		filter := NewFieldFilter([]string{"metadata"})

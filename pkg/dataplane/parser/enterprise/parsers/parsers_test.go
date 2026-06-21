@@ -279,24 +279,3 @@ func TestHTTPRequests_ResultAll(t *testing.T) {
 	assert.Contains(t, results[0].Data, "if is_api")
 	assert.Equal(t, "WAF check", results[0].Comment)
 }
-
-func TestGlobalEE_GetDirectivesByType(t *testing.T) {
-	p := NewGlobalEE()
-
-	// Add multiple directives
-	_, _ = p.Parse("maxmind-load db1.mmdb", []string{"maxmind-load", "db1.mmdb"}, "")
-	_, _ = p.Parse("maxmind-load db2.mmdb", []string{"maxmind-load", "db2.mmdb"}, "")
-	_, _ = p.Parse("waf-load rules.conf", []string{"waf-load", "rules.conf"}, "")
-
-	// Get maxmind-load directives
-	maxmindDirs := p.GetDirectivesByType("maxmind-load")
-	assert.Len(t, maxmindDirs, 2)
-
-	// Get waf-load directives
-	wafDirs := p.GetDirectivesByType("waf-load")
-	assert.Len(t, wafDirs, 1)
-
-	// Get non-existent type
-	emptyDirs := p.GetDirectivesByType("non-existent")
-	assert.Empty(t, emptyDirs)
-}

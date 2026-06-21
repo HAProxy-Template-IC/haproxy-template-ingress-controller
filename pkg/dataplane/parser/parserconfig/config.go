@@ -22,13 +22,6 @@ const (
 	ActionBotMgmtEvaluate = "botmgmt-evaluate"
 )
 
-// EE global directive type constants.
-const (
-	DirectiveMaxmindLoad      = "maxmind-load"
-	DirectiveMaxmindCacheSize = "maxmind-cache-size"
-	DirectiveWAFLoad          = "waf-load"
-)
-
 // Common keyword constants.
 const (
 	KeywordProfile  = "profile"

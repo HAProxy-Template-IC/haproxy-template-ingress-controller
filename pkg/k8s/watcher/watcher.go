@@ -37,7 +37,7 @@ type Watcher struct {
 	config               types.WatcherConfig
 	client               *client.Client
 	indexer              *indexer.Indexer
-	fieldSelectorMatcher fieldSelector // nil if no field selector configured
+	fieldSelectorMatcher *indexer.FieldSelectorMatcher // nil if no field selector configured
 	store                types.Store
 	debouncer            *Debouncer
 	informer             cache.SharedIndexInformer
@@ -47,15 +47,6 @@ type Watcher struct {
 	syncMu               sync.RWMutex
 	initialCount         int // Number of resources loaded during initial sync
 	logger               *slog.Logger
-}
-
-// fieldSelector is the minimal interface the watcher needs from a
-// field-selector matcher. Defined at the use site so tests can inject
-// stubs that exercise branches not reachable via the production
-// *indexer.FieldSelectorMatcher (notably the error-return path that
-// the production matcher never takes today).
-type fieldSelector interface {
-	Matches(resource any) (bool, error)
 }
 
 // New creates a new resource watcher with the provided configuration.
@@ -107,15 +98,9 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 		return nil, fmt.Errorf("creating indexer: %w", err)
 	}
 
-	// Create field selector matcher if configured.
-	// IMPORTANT: keep the concrete *FieldSelectorMatcher local until we
-	// assign the Watcher field. If we declared it as the fieldSelector
-	// interface here and left it as a typed-nil pointer when the
-	// selector is empty, the interface tuple would be non-nil
-	// (type=*FieldSelectorMatcher, value=nil) and the watcher's
-	// `if w.fieldSelectorMatcher == nil` check would silently flip to
-	// false, rejecting every resource. The conditional assign below
-	// keeps the interface field a true nil when no matcher is built.
+	// Create field selector matcher if configured. The field is a concrete
+	// *indexer.FieldSelectorMatcher, so a nil pointer compares equal to nil
+	// in matchesFieldSelector's gate — no typed-nil interface pitfall.
 	var fieldSelectorMatcher *indexer.FieldSelectorMatcher
 	if cfg.FieldSelector != "" {
 		fieldSelectorMatcher, err = indexer.NewFieldSelectorMatcher(cfg.FieldSelector)
@@ -166,22 +151,16 @@ func New(cfg types.WatcherConfig, k8sClient *client.Client, logger *slog.Logger)
 	debouncer := NewDebouncer(cfg.DebounceInterval, cfg.OnChange, resourceStore, suppressDuringSync)
 
 	w := &Watcher{
-		config:       cfg,
-		client:       k8sClient,
-		indexer:      idx,
-		store:        resourceStore,
-		debouncer:    debouncer,
-		stopCh:       make(chan struct{}),
-		synced:       false,
-		initialCount: 0,
-		logger:       logger,
-	}
-	// Only assign the matcher when one was actually built. Assigning a
-	// typed-nil pointer to the interface field would create a non-nil
-	// interface tuple — see the "IMPORTANT" note above the matcher
-	// construction.
-	if fieldSelectorMatcher != nil {
-		w.fieldSelectorMatcher = fieldSelectorMatcher
+		config:               cfg,
+		client:               k8sClient,
+		indexer:              idx,
+		fieldSelectorMatcher: fieldSelectorMatcher,
+		store:                resourceStore,
+		debouncer:            debouncer,
+		stopCh:               make(chan struct{}),
+		synced:               false,
+		initialCount:         0,
+		logger:               logger,
 	}
 
 	// Create informer

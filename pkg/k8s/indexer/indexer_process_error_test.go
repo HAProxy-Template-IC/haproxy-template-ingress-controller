@@ -24,51 +24,47 @@ import (
 //
 // Two contracts pinned:
 //
-//  1. FilterFields error → Process returns it verbatim, NO ExtractKeys
-//     attempt, NO conversion. A regression that continued past a
-//     filter error would index an inconsistently-mutated resource
-//     (some patterns removed, some left in) — a corruption that
-//     wouldn't show up until comparator drift later.
+//  1. ExtractKeys error → Process returns it verbatim, NO conversion.
+//     A regression that continued past a key-extraction error would
+//     index a resource under empty/garbage keys and break later lookups.
 //
 //  2. Filter runs BEFORE key extraction. Critical because filtering
 //     can remove fields ExtractKeys would otherwise read; a regression
 //     that swapped the order would produce different keys than the
 //     post-filter steady state and break later lookups.
 
-func TestIndexer_Process_FilterErrorIsPropagated(t *testing.T) {
-	// Build an indexer that tries to delete metadata.foo.
-	// We construct the resource with metadata as an INT (not a map
-	// or struct), so navigating to metadata succeeds but trying to
-	// delete the "foo" field from an int triggers the
-	// "deleting field from int" error in deleteField.
+func TestIndexer_Process_ExtractKeysErrorIsPropagated(t *testing.T) {
+	// Build an indexer that extracts metadata.namespace. The resource
+	// below has no metadata.namespace, so ExtractKeys fails with a
+	// JSONPath "no results found" error, which Process must surface.
 	idx, err := New(Config{
 		IndexBy:      []string{"metadata.namespace"},
-		IgnoreFields: []string{"metadata.foo"},
+		IgnoreFields: []string{"metadata.managedFields"},
 	})
 	require.NoError(t, err, "indexer construction must succeed for valid config")
 
-	// Resource where "metadata" is an int — this makes the filter's
-	// final deleteField call fail.
+	// Resource lacking the indexed field — ExtractKeys cannot resolve it.
 	resource := map[string]any{
-		"metadata": 42,
+		"metadata": map[string]any{
+			"name": "orphan",
+		},
 	}
 
 	result, processErr := idx.Process(resource)
 
 	require.Error(t, processErr,
-		"filter errors during Process MUST surface to the caller — "+
-			"a regression that swallowed them would index a "+
-			"partially-mutated resource and silently corrupt the store")
+		"key-extraction errors during Process MUST surface to the caller — "+
+			"a regression that swallowed them would index a resource under "+
+			"empty/garbage keys and silently break later lookups")
 	assert.Nil(t, result,
-		"on filter error the result must be nil; a non-nil result "+
-			"with a partial mutation would be the worst-case silent "+
-			"corruption mode")
+		"on extraction error the result must be nil; a non-nil result "+
+			"would be the worst-case silent corruption mode")
 
-	// The error must include the failing pattern so operators can
-	// triage which IgnoreFields entry caused the failure.
-	assert.Contains(t, processErr.Error(), "metadata.foo",
-		"FilterError must name the failing pattern so operators see "+
-			"which IgnoreFields entry is misconfigured")
+	// The error must include the failing expression so operators can
+	// triage which IndexBy entry could not be resolved.
+	assert.Contains(t, processErr.Error(), "metadata.namespace",
+		"IndexError must name the failing expression so operators see "+
+			"which IndexBy entry could not be extracted")
 }
 
 func TestIndexer_Process_FiltersBeforeExtractingKeys(t *testing.T) {

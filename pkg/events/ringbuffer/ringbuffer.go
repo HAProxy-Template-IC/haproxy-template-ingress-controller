@@ -169,34 +169,3 @@ func (rb *RingBuffer[T]) Len() int {
 	defer rb.mu.RUnlock()
 	return rb.count
 }
-
-// Cap returns the maximum capacity of the buffer.
-//
-// This is the size specified when creating the buffer with New().
-// This operation is thread-safe.
-//
-// Example:
-//
-//	capacity := buffer.Cap()  // Returns the buffer's maximum size
-func (rb *RingBuffer[T]) Cap() int {
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
-	return rb.size
-}
-
-// Clear removes all items from the buffer, resetting it to empty state.
-//
-// This operation is thread-safe.
-//
-// Example:
-//
-//	buffer.Clear()  // Buffer is now empty
-func (rb *RingBuffer[T]) Clear() {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
-
-	rb.head = 0
-	rb.count = 0
-	// Note: We don't clear items array to avoid allocation,
-	// old items will be overwritten when new items are added
-}

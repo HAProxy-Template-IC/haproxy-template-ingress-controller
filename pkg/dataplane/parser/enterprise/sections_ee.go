@@ -5,19 +5,18 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/enterprise/parsers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
-	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
 )
 
 // extractEEStandaloneSections extracts EE standalone sections (udp-lb, waf-global, etc.).
 func (p *Parser) extractEEStandaloneSections(parsed *ConfiguredParsers, conf *StructuredConfig) {
 	// Extract WAF Global
 	if parsed.WAFGlobal != nil {
-		conf.WAFGlobal = p.extractWAFGlobal(parsed.WAFGlobal)
+		conf.WAFGlobal = extractWAFGlobalFields(parsed.WAFGlobal)
 	}
 
 	// Extract WAF Profiles
 	for name, wafParsers := range parsed.WAFProfile {
-		profile := p.extractWAFProfile(name, wafParsers)
+		profile := extractWAFProfileFields(name, wafParsers)
 		if profile != nil {
 			conf.WAFProfiles = append(conf.WAFProfiles, profile)
 		}
@@ -25,7 +24,7 @@ func (p *Parser) extractEEStandaloneSections(parsed *ConfiguredParsers, conf *St
 
 	// Extract BotMgmt Profiles
 	for name, botParsers := range parsed.BotMgmtProfile {
-		profile := p.extractBotMgmtProfile(name, botParsers)
+		profile := extractBotMgmtProfileFields(name, botParsers)
 		if profile != nil {
 			conf.BotMgmtProfiles = append(conf.BotMgmtProfiles, profile)
 		}
@@ -33,7 +32,7 @@ func (p *Parser) extractEEStandaloneSections(parsed *ConfiguredParsers, conf *St
 
 	// Extract Captchas
 	for name, captchaParsers := range parsed.Captcha {
-		captcha := p.extractCaptcha(name, captchaParsers)
+		captcha := extractCaptchaFields(name, captchaParsers)
 		if captcha != nil {
 			conf.Captchas = append(conf.Captchas, captcha)
 		}
@@ -41,36 +40,11 @@ func (p *Parser) extractEEStandaloneSections(parsed *ConfiguredParsers, conf *St
 
 	// Extract UDP LBs
 	for name, udpParsers := range parsed.UDPLB {
-		udplb := p.extractUDPLB(name, udpParsers)
+		udplb := extractUDPLBFields(name, udpParsers)
 		if udplb != nil {
 			conf.UDPLBs = append(conf.UDPLBs, udplb)
 		}
 	}
-}
-
-// extractWAFGlobal extracts the waf-global section.
-func (p *Parser) extractWAFGlobal(wafParsers *clientparser.Parsers) *v32ee.WafGlobal {
-	return extractWAFGlobalFields(wafParsers)
-}
-
-// extractWAFProfile extracts a waf-profile section.
-func (p *Parser) extractWAFProfile(name string, wafParsers *clientparser.Parsers) *v32ee.WafProfile {
-	return extractWAFProfileFields(name, wafParsers)
-}
-
-// extractBotMgmtProfile extracts a botmgmt-profile section.
-func (p *Parser) extractBotMgmtProfile(name string, botParsers *clientparser.Parsers) *v32ee.BotmgmtProfile {
-	return extractBotMgmtProfileFields(name, botParsers)
-}
-
-// extractCaptcha extracts a captcha section.
-func (p *Parser) extractCaptcha(name string, captchaParsers *clientparser.Parsers) *v32ee.Captcha {
-	return extractCaptchaFields(name, captchaParsers)
-}
-
-// extractUDPLB extracts a udp-lb section.
-func (p *Parser) extractUDPLB(name string, udpParsers *clientparser.Parsers) *v32ee.UdpLbBase {
-	return extractUDPLBFields(name, udpParsers)
 }
 
 // extractEEDirectivesFromCESections extracts EE-specific directives from CE sections.
@@ -119,8 +93,10 @@ func (p *Parser) extractEEGlobalData(globalParsers *clientparser.Parsers) *parse
 		return nil
 	}
 
+	// parsers.EEGlobalDirective is a type alias for parserconfig.EEGlobalDirective,
+	// so the slices are identical and no conversion is needed.
 	return &parserconfig.EEGlobalData{
-		Directives: convertEEGlobalDirectives(directives),
+		Directives: directives,
 	}
 }
 
@@ -180,11 +156,4 @@ func (p *Parser) extractEEBackendData(beParsers *clientparser.Parsers) *EEBacken
 	}
 
 	return data
-}
-
-// convertEEGlobalDirectives converts parser directives to parserconfig directives.
-// Since both are type aliases to parserconfig.EEGlobalDirective, this is a direct return.
-func convertEEGlobalDirectives(directives []*parsers.EEGlobalDirective) []*parserconfig.EEGlobalDirective {
-	// Both types are aliases to parserconfig.EEGlobalDirective, so they're identical
-	return directives
 }

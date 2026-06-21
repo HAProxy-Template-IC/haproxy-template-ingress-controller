@@ -15,9 +15,8 @@
 package webhook
 
 import (
-	"strings"
-
 	admissionv1 "k8s.io/api/admissionregistration/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
@@ -42,15 +41,18 @@ func ExtractWebhookRules(cfg *config.Config) []webhook.WebhookRule {
 			continue
 		}
 
-		// Parse API version into group and version
-		apiGroup, apiVersion := parseAPIVersion(resource.APIVersion)
+		// Parse API version into group and version. ParseGroupVersion handles
+		// both the core "v1" form (empty group) and "group/version"; a
+		// malformed value yields an empty GroupVersion, which still produces a
+		// (harmlessly empty) rule rather than panicking.
+		gv, _ := schema.ParseGroupVersion(resource.APIVersion)
 
 		// Create webhook rule
 		// Use resource.Resources which is the plural form (e.g., "ingresses", "services")
 		// Kind is not needed here - the webhook server gets it from AdmissionRequest at runtime
 		rule := webhook.WebhookRule{
-			APIGroups:   []string{apiGroup},
-			APIVersions: []string{apiVersion},
+			APIGroups:   []string{gv.Group},
+			APIVersions: []string{gv.Version},
 			Resources:   []string{resource.Resources},
 
 			// Default to CREATE and UPDATE operations
@@ -64,22 +66,4 @@ func ExtractWebhookRules(cfg *config.Config) []webhook.WebhookRule {
 	}
 
 	return rules
-}
-
-// parseAPIVersion splits an API version string into group and version.
-//
-// Examples:
-//   - "v1" → ("", "v1")                          # Core API group
-//   - "networking.k8s.io/v1" → ("networking.k8s.io", "v1")
-//   - "apps/v1" → ("apps", "v1")
-func parseAPIVersion(apiVersion string) (group, version string) {
-	parts := strings.Split(apiVersion, "/")
-
-	if len(parts) == 1 {
-		// Core API group (e.g., "v1")
-		return "", parts[0]
-	}
-
-	// Named API group (e.g., "networking.k8s.io/v1")
-	return parts[0], parts[1]
 }

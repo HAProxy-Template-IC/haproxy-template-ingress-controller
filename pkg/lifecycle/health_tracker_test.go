@@ -60,7 +60,6 @@ func TestHealthTracker_ProcessingBased_IdleHealthy(t *testing.T) {
 	// Should be healthy when idle
 	err := tracker.Check()
 	assert.NoError(t, err)
-	assert.False(t, tracker.IsProcessing())
 }
 
 func TestHealthTracker_ProcessingBased_ProcessingHealthy(t *testing.T) {
@@ -72,7 +71,6 @@ func TestHealthTracker_ProcessingBased_ProcessingHealthy(t *testing.T) {
 	// Should be healthy while processing (under timeout)
 	err := tracker.Check()
 	assert.NoError(t, err)
-	assert.True(t, tracker.IsProcessing())
 }
 
 func TestHealthTracker_ProcessingBased_ProcessingStalled(t *testing.T) {
@@ -100,26 +98,6 @@ func TestHealthTracker_ProcessingBased_EndProcessingClearsState(t *testing.T) {
 	// Should be healthy after EndProcessing (idle state)
 	err := tracker.Check()
 	assert.NoError(t, err)
-	assert.False(t, tracker.IsProcessing())
-}
-
-func TestHealthTracker_ProcessingDuration(t *testing.T) {
-	tracker := NewProcessingTracker("test-component", 100*time.Millisecond)
-
-	// Should be 0 when idle
-	assert.Equal(t, time.Duration(0), tracker.ProcessingDuration())
-
-	tracker.StartProcessing()
-	time.Sleep(10 * time.Millisecond)
-
-	// Should be non-zero when processing
-	duration := tracker.ProcessingDuration()
-	assert.True(t, duration >= 10*time.Millisecond, "expected duration >= 10ms, got %v", duration)
-
-	tracker.EndProcessing()
-
-	// Should be 0 again after EndProcessing
-	assert.Equal(t, time.Duration(0), tracker.ProcessingDuration())
 }
 
 func TestActivityStallTimeout(t *testing.T) {

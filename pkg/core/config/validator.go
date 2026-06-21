@@ -20,10 +20,9 @@ func ValidateStructure(cfg *Config) error {
 		return fmt.Errorf("pod_selector: %w", err)
 	}
 
-	// Validate Controller config
-	if err := validateControllerConfig(&cfg.Controller); err != nil {
-		return fmt.Errorf("controller: %w", err)
-	}
+	// Controller config (currently only LeaderElection, which has its own
+	// defaults and is validated at runtime when its durations are parsed) needs
+	// no structural validation here.
 
 	// Validate Logging config
 	if err := validateLoggingConfig(&cfg.Logging); err != nil {
@@ -63,13 +62,6 @@ func validatePodSelector(ps *PodSelector) error {
 		}
 	}
 
-	return nil
-}
-
-// validateControllerConfig validates the controller configuration.
-func validateControllerConfig(_ *ControllerConfig) error {
-	// Currently only contains LeaderElection which has its own defaults.
-	// Validation of LeaderElection is handled at runtime when parsing durations.
 	return nil
 }
 

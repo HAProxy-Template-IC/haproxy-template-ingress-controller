@@ -468,7 +468,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 				"error", err)
 			c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
 				patch.Namespace, patch.Name, gvrStr,
-				err.Error(), isRetriable(err),
+				err.Error(), IsRetriable(err),
 			))
 			continue
 		}
@@ -496,9 +496,10 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	))
 }
 
-// isRetriable returns true if the error is likely transient and the operation
-// should be retried on the next reconciliation cycle.
-func isRetriable(err error) bool {
+// IsRetriable returns true if the error is likely transient and the operation
+// should be retried on the next reconciliation cycle. It is exported so the
+// resourceapplier shares this single retry policy rather than duplicating it.
+func IsRetriable(err error) bool {
 	// Kubernetes API server transient errors
 	if apierrors.IsTimeout(err) ||
 		apierrors.IsServerTimeout(err) ||

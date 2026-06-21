@@ -25,6 +25,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 )
 
 // mockStateProvider implements StateProvider for testing.
@@ -87,6 +88,16 @@ func (m *mockStateProvider) GetErrors() (*ErrorSummary, error) {
 	return m.errorSummary, m.errorSummaryErr
 }
 
+// newRegistry registers all debug variables for the given provider and returns
+// the registry. The debug variables are registered as introspection.Func
+// closures (see RegisterVariables); exercising them through the registry tests
+// the same code path the HTTP server uses.
+func newRegistry(provider StateProvider) *introspection.Registry {
+	registry := introspection.NewRegistry()
+	RegisterVariables(registry, provider, nil)
+	return registry
+}
+
 func TestConfigVar_Get_Success(t *testing.T) {
 	testConfig := &config.Config{
 		WatchedResources: map[string]config.WatchedResource{
@@ -94,14 +105,12 @@ func TestConfigVar_Get_Success(t *testing.T) {
 		},
 	}
 
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		config:        testConfig,
 		configVersion: "v123",
-	}
+	})
 
-	configVar := &ConfigVar{provider: provider}
-
-	result, err := configVar.Get()
+	result, err := registry.Get("config")
 
 	require.NoError(t, err)
 	data, ok := result.(map[string]any)
@@ -113,13 +122,11 @@ func TestConfigVar_Get_Success(t *testing.T) {
 }
 
 func TestConfigVar_Get_Error(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		configErr: errors.New("config not loaded yet"),
-	}
+	})
 
-	configVar := &ConfigVar{provider: provider}
-
-	result, err := configVar.Get()
+	result, err := registry.Get("config")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -127,17 +134,15 @@ func TestConfigVar_Get_Error(t *testing.T) {
 }
 
 func TestCredentialsVar_Get_Success(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		credentials: &config.Credentials{
 			DataplaneUsername: "admin",
 			DataplanePassword: "secret123",
 		},
 		credentialsVer: "v456",
-	}
+	})
 
-	credVar := &CredentialsVar{provider: provider}
-
-	result, err := credVar.Get()
+	result, err := registry.Get("credentials")
 
 	require.NoError(t, err)
 	data, ok := result.(map[string]any)
@@ -152,14 +157,12 @@ func TestCredentialsVar_Get_Success(t *testing.T) {
 }
 
 func TestCredentialsVar_Get_NoCredentials(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		credentials:    &config.Credentials{},
 		credentialsVer: "v456",
-	}
+	})
 
-	credVar := &CredentialsVar{provider: provider}
-
-	result, err := credVar.Get()
+	result, err := registry.Get("credentials")
 
 	require.NoError(t, err)
 	data := result.(map[string]any)
@@ -167,13 +170,11 @@ func TestCredentialsVar_Get_NoCredentials(t *testing.T) {
 }
 
 func TestCredentialsVar_Get_Error(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		credentialsErr: errors.New("credentials not loaded"),
-	}
+	})
 
-	credVar := &CredentialsVar{provider: provider}
-
-	result, err := credVar.Get()
+	result, err := registry.Get("credentials")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -183,14 +184,12 @@ func TestRenderedVar_Get_Success(t *testing.T) {
 	testConfig := "global\n  maxconn 2000\n"
 	testTime := time.Now()
 
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		renderedConfig: testConfig,
 		renderedTime:   testTime,
-	}
+	})
 
-	renderedVar := &RenderedVar{provider: provider}
-
-	result, err := renderedVar.Get()
+	result, err := registry.Get("rendered")
 
 	require.NoError(t, err)
 	data := result.(map[string]any)
@@ -201,13 +200,11 @@ func TestRenderedVar_Get_Success(t *testing.T) {
 }
 
 func TestRenderedVar_Get_Error(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		renderedErr: errors.New("no config rendered yet"),
-	}
+	})
 
-	renderedVar := &RenderedVar{provider: provider}
-
-	result, err := renderedVar.Get()
+	result, err := registry.Get("rendered")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -227,14 +224,12 @@ func TestAuxFilesVar_Get_Success(t *testing.T) {
 	}
 	testTime := time.Now()
 
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		auxFiles:     testAuxFiles,
 		auxFilesTime: testTime,
-	}
+	})
 
-	auxVar := &AuxFilesVar{provider: provider}
-
-	result, err := auxVar.Get()
+	result, err := registry.Get("auxfiles")
 
 	require.NoError(t, err)
 	data := result.(map[string]any)
@@ -249,30 +244,26 @@ func TestAuxFilesVar_Get_Success(t *testing.T) {
 }
 
 func TestAuxFilesVar_Get_Error(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		auxFilesErr: errors.New("no aux files"),
-	}
+	})
 
-	auxVar := &AuxFilesVar{provider: provider}
-
-	result, err := auxVar.Get()
+	result, err := registry.Get("auxfiles")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
 }
 
 func TestResourcesVar_Get_Success(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		resourceCounts: map[string]int{
 			"ingresses":    5,
 			"services":     12,
 			"haproxy-pods": 2,
 		},
-	}
+	})
 
-	resourcesVar := &ResourcesVar{provider: provider}
-
-	result, err := resourcesVar.Get()
+	result, err := registry.Get("resources")
 
 	require.NoError(t, err)
 	counts := result.(map[string]int)
@@ -283,13 +274,11 @@ func TestResourcesVar_Get_Success(t *testing.T) {
 }
 
 func TestResourcesVar_Get_Error(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		resourceCountErr: errors.New("resource watcher not ready"),
-	}
+	})
 
-	resourcesVar := &ResourcesVar{provider: provider}
-
-	result, err := resourcesVar.Get()
+	result, err := registry.Get("resources")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -315,13 +304,11 @@ func TestPipelineVar_Get_Success(t *testing.T) {
 		},
 	}
 
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		pipelineStatus: testStatus,
-	}
+	})
 
-	pipelineVar := &PipelineVar{provider: provider}
-
-	result, err := pipelineVar.Get()
+	result, err := registry.Get("pipeline")
 
 	require.NoError(t, err)
 	status := result.(*PipelineStatus)
@@ -331,13 +318,11 @@ func TestPipelineVar_Get_Success(t *testing.T) {
 }
 
 func TestPipelineVar_Get_Error(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		pipelineErr: errors.New("no pipeline run yet"),
-	}
+	})
 
-	pipelineVar := &PipelineVar{provider: provider}
-
-	result, err := pipelineVar.Get()
+	result, err := registry.Get("pipeline")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -351,13 +336,11 @@ func TestValidatedVar_Get_Success(t *testing.T) {
 		ValidationDurationMs: 150,
 	}
 
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		validatedConfig: testValidated,
-	}
+	})
 
-	validatedVar := &ValidatedVar{provider: provider}
-
-	result, err := validatedVar.Get()
+	result, err := registry.Get("validated")
 
 	require.NoError(t, err)
 	info := result.(*ValidatedConfigInfo)
@@ -367,13 +350,11 @@ func TestValidatedVar_Get_Success(t *testing.T) {
 }
 
 func TestValidatedVar_Get_Error(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		validatedErr: errors.New("no config validated yet"),
-	}
+	})
 
-	validatedVar := &ValidatedVar{provider: provider}
-
-	result, err := validatedVar.Get()
+	result, err := registry.Get("validated")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -388,13 +369,11 @@ func TestErrorsVar_Get_Success(t *testing.T) {
 		LastErrorTimestamp: time.Now(),
 	}
 
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		errorSummary: testErrors,
-	}
+	})
 
-	errorsVar := &ErrorsVar{provider: provider}
-
-	result, err := errorsVar.Get()
+	result, err := registry.Get("errors")
 
 	require.NoError(t, err)
 	summary := result.(*ErrorSummary)
@@ -404,13 +383,11 @@ func TestErrorsVar_Get_Success(t *testing.T) {
 }
 
 func TestErrorsVar_Get_Error(t *testing.T) {
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		errorSummaryErr: errors.New("internal error"),
-	}
+	})
 
-	errorsVar := &ErrorsVar{provider: provider}
-
-	result, err := errorsVar.Get()
+	result, err := registry.Get("errors")
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -421,7 +398,7 @@ func TestFullStateVar_Get_Success(t *testing.T) {
 	testRendered := "global\n"
 	testAuxFiles := &dataplane.AuxiliaryFiles{}
 
-	provider := &mockStateProvider{
+	registry := newRegistry(&mockStateProvider{
 		config:         testConfig,
 		configVersion:  "v1",
 		renderedConfig: testRendered,
@@ -429,14 +406,9 @@ func TestFullStateVar_Get_Success(t *testing.T) {
 		auxFiles:       testAuxFiles,
 		auxFilesTime:   time.Now(),
 		resourceCounts: map[string]int{"services": 5},
-	}
+	})
 
-	fullStateVar := &FullStateVar{
-		provider:    provider,
-		eventBuffer: nil,
-	}
-
-	result, err := fullStateVar.Get()
+	result, err := registry.Get("state")
 
 	require.NoError(t, err)
 	data := result.(map[string]any)
@@ -450,20 +422,15 @@ func TestFullStateVar_Get_Success(t *testing.T) {
 }
 
 func TestFullStateVar_Get_PartialState(t *testing.T) {
-	// Test that FullStateVar doesn't fail even if some state is unavailable
-	provider := &mockStateProvider{
+	// Test that the state var doesn't fail even if some state is unavailable.
+	registry := newRegistry(&mockStateProvider{
 		configErr:        errors.New("not loaded"),
 		renderedErr:      errors.New("not rendered"),
 		auxFilesErr:      errors.New("not available"),
 		resourceCountErr: errors.New("not ready"),
-	}
+	})
 
-	fullStateVar := &FullStateVar{
-		provider:    provider,
-		eventBuffer: nil,
-	}
-
-	result, err := fullStateVar.Get()
+	result, err := registry.Get("state")
 
 	// Should succeed even with errors - best effort approach
 	require.NoError(t, err)

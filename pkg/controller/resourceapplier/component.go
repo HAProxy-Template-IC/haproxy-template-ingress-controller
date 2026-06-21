@@ -56,10 +56,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"strings"
 	"sync"
 	"time"
@@ -629,7 +627,7 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 	if err != nil {
 		c.Logger().Error("failed to apply rendered resource",
 			"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(),
-			"retriable", isRetriable(err), "error", err)
+			"retriable", statusapplier.IsRetriable(err), "error", err)
 		return applyOutcomeError
 	}
 
@@ -794,29 +792,4 @@ func (c *Component) prepareForApply(object map[string]any, partial bool) map[str
 
 	out["metadata"] = metadata
 	return out
-}
-
-// isRetriable mirrors statusapplier.isRetriable. Kept private here so the
-// applier doesn't drift from the status one if either is updated.
-func isRetriable(err error) bool {
-	if apierrors.IsTimeout(err) ||
-		apierrors.IsServerTimeout(err) ||
-		apierrors.IsServiceUnavailable(err) ||
-		apierrors.IsTooManyRequests(err) ||
-		apierrors.IsInternalError(err) {
-		return true
-	}
-	if netErr, ok := errors.AsType[net.Error](err); ok {
-		return netErr.Timeout()
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	if apierrors.IsNotFound(err) ||
-		apierrors.IsForbidden(err) ||
-		apierrors.IsInvalid(err) ||
-		apierrors.IsMethodNotSupported(err) {
-		return false
-	}
-	return true
 }

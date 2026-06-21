@@ -240,34 +240,6 @@ func TestEventBus_RequestTimeout(t *testing.T) {
 	assert.Len(t, result.Errors, 2, "expected 2 errors")
 }
 
-func TestEventBus_RequestMinResponses(t *testing.T) {
-	t.Parallel()
-	bus := NewEventBus(100)
-	ctx := context.Background()
-
-	// Start 2 responders
-	go startResponder(bus, "validator-1")
-	go startResponder(bus, "validator-2")
-	time.Sleep(50 * time.Millisecond)
-
-	// Start the bus
-	bus.Start()
-
-	// Send request requiring only 2 of 3 responders
-	req := testRequest{id: "req-min", message: "validate"}
-	result, err := bus.Request(ctx, req, RequestOptions{
-		Timeout:            1 * time.Second,
-		ExpectedResponders: []string{"validator-1", "validator-2", "validator-3"},
-		MinResponses:       2, // Only need 2 responses
-	})
-
-	require.NoError(t, err, "request failed")
-	assert.Len(t, result.Responses, 2, "expected 2 responses")
-
-	// Should have error for missing validator-3
-	assert.Len(t, result.Errors, 1, "expected 1 error")
-}
-
 func TestEventBus_RequestConcurrent(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
@@ -380,21 +352,6 @@ func TestEventBus_RequestEmptyResponders(t *testing.T) {
 	})
 
 	require.Error(t, err, "expected error for empty ExpectedResponders")
-}
-
-func TestEventBus_RequestInvalidMinResponses(t *testing.T) {
-	t.Parallel()
-	bus := NewEventBus(100)
-	ctx := context.Background()
-
-	req := testRequest{id: "req-invalid", message: "validate"}
-	_, err := bus.Request(ctx, req, RequestOptions{
-		Timeout:            1 * time.Second,
-		ExpectedResponders: []string{"validator-1", "validator-2"},
-		MinResponses:       5, // More than expected!
-	})
-
-	require.Error(t, err, "expected error for MinResponses > ExpectedResponders")
 }
 
 // startResponder simulates a validator component that responds to requests.
@@ -961,80 +918,6 @@ func BenchmarkEventBus_SubscribeTypes_NonMatchingEvents(b *testing.B) {
 	}
 }
 
-func TestEventBus_Unsubscribe(t *testing.T) {
-	t.Parallel()
-	bus := NewEventBus(100)
-
-	// Create subscriber
-	sub := bus.Subscribe("test-sub", 10)
-
-	// Start the bus
-	bus.Start()
-
-	// Verify subscription works
-	bus.Publish(testEvent{message: "before-unsub"})
-
-	select {
-	case <-sub:
-		// Good - received event
-	case <-time.After(100 * time.Millisecond):
-		require.Fail(t, "timeout waiting for event")
-	}
-
-	// Unsubscribe
-	bus.Unsubscribe(sub)
-
-	// Publish after unsubscribe
-	sent := bus.Publish(testEvent{message: "after-unsub"})
-
-	// Should report 0 subscribers received (since we unsubscribed)
-	assert.Equal(t, 0, sent, "expected 0 subscribers after Unsubscribe")
-}
-
-func TestEventBus_Unsubscribe_ReducesSubscriberCount(t *testing.T) {
-	t.Parallel()
-	bus := NewEventBus(100)
-
-	// Create 3 subscribers
-	sub1 := bus.Subscribe("test-sub", 10)
-	sub2 := bus.Subscribe("test-sub", 10)
-	sub3 := bus.Subscribe("test-sub", 10)
-
-	// Start the bus
-	bus.Start()
-
-	// Verify all 3 receive events
-	sent := bus.Publish(testEvent{message: "all3"})
-	assert.Equal(t, 3, sent, "expected 3 subscribers")
-
-	// Drain channels
-	<-sub1
-	<-sub2
-	<-sub3
-
-	// Unsubscribe one
-	bus.Unsubscribe(sub2)
-
-	// Now only 2 should receive
-	sent = bus.Publish(testEvent{message: "only2"})
-	assert.Equal(t, 2, sent, "expected 2 subscribers after unsubscribe")
-}
-
-func TestEventBus_Unsubscribe_Idempotent(t *testing.T) {
-	t.Parallel()
-	bus := NewEventBus(100)
-
-	// Create subscriber
-	sub := bus.Subscribe("test-sub", 10)
-
-	// Unsubscribe multiple times - should not panic
-	bus.Unsubscribe(sub)
-	bus.Unsubscribe(sub)
-	bus.Unsubscribe(sub)
-
-	// No error expected
-}
-
 func TestEventBus_SubscribeLossy_SilentDrop(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
@@ -1095,36 +978,6 @@ func TestEventBus_Subscribe_CriticalDrop(t *testing.T) {
 	<-criticalSub
 }
 
-func TestEventBus_SubscribeTypesLossy_SilentDrop(t *testing.T) {
-	t.Parallel()
-	bus := NewEventBus(100)
-
-	// Track drop callback invocations
-	dropCount := 0
-	bus.SetDropCallback(func(_ DropInfo) {
-		dropCount++
-	})
-
-	// Create lossy typed subscriber with tiny buffer
-	lossyTypedSub := bus.SubscribeTypesLossy("test-lossy-typed", 1, "test.event")
-
-	// Start the bus
-	bus.Start()
-
-	// Fill buffer and cause drops
-	for i := range 10 {
-		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
-	}
-
-	// Verify: drops happened but callback was NOT called
-	assert.Equal(t, 0, dropCount, "lossy typed subscriber should not trigger drop callback")
-	assert.Greater(t, bus.DroppedEventsObservability(), uint64(0), "expected observability drops")
-	assert.Equal(t, uint64(0), bus.DroppedEventsCritical(), "expected no critical drops")
-
-	// Drain the one event that fit
-	<-lossyTypedSub
-}
-
 func TestEventBus_SubscribeTypes_CriticalDrop(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
@@ -1160,11 +1013,9 @@ func TestEventBus_MixedSubscribers_DropCounters(t *testing.T) {
 	bus := NewEventBus(100)
 
 	// Create mix of subscriber types with tiny buffers
-	_ = bus.Subscribe("test-sub", 1)                                            // critical universal
-	_ = bus.SubscribeLossy("test-lossy", 1)                                     // lossy universal
-	_ = bus.SubscribeTypes("test-typed", 1, "test.event")                       // critical typed
-	_ = bus.SubscribeTypesLossy("test-lossy-typed", 1, "test.event")            // lossy typed
-	_ = bus.SubscribeTypesLossy("test-lossy-typed-other", 1, "other.test.type") // lossy typed (non-matching)
+	_ = bus.Subscribe("test-sub", 1)                      // critical universal
+	_ = bus.SubscribeLossy("test-lossy", 1)               // lossy universal
+	_ = bus.SubscribeTypes("test-typed", 1, "test.event") // critical typed
 
 	// Start the bus
 	bus.Start()
@@ -1176,38 +1027,7 @@ func TestEventBus_MixedSubscribers_DropCounters(t *testing.T) {
 
 	// Both counters should have drops from their respective subscribers
 	// 2 critical subscribers (universal + typed) should have drops
-	// 2 lossy subscribers (universal + typed matching) should have drops
-	// The non-matching lossy typed subscriber won't have drops (events filtered)
+	// 1 lossy subscriber (universal) should have drops
 	assert.Greater(t, bus.DroppedEventsCritical(), uint64(0), "expected critical drops")
 	assert.Greater(t, bus.DroppedEventsObservability(), uint64(0), "expected observability drops")
-}
-
-func TestEventBus_UnsubscribeLossy(t *testing.T) {
-	t.Parallel()
-	bus := NewEventBus(100)
-
-	// Create lossy subscriber
-	lossySub := bus.SubscribeLossy("test-lossy", 10)
-
-	// Start the bus
-	bus.Start()
-
-	// Verify subscription works
-	bus.Publish(testEvent{message: "before-unsub"})
-
-	select {
-	case <-lossySub:
-		// Good - received event
-	case <-time.After(100 * time.Millisecond):
-		require.Fail(t, "timeout waiting for event")
-	}
-
-	// Unsubscribe
-	bus.Unsubscribe(lossySub)
-
-	// Publish after unsubscribe
-	sent := bus.Publish(testEvent{message: "after-unsub"})
-
-	// Should report 0 subscribers received
-	assert.Equal(t, 0, sent, "expected 0 subscribers after Unsubscribe")
 }

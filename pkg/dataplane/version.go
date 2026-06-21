@@ -9,7 +9,7 @@ import (
 )
 
 // Version is the project-wide HAProxy / DataPlane API version type. It is an
-// alias of client.Version (Major.Minor.Patch with Compare/AtLeast), kept under
+// alias of client.Version (Major.Minor.Patch with Compare), kept under
 // the dataplane.Version name so existing callers (discovery, validation,
 // testrunner, …) compile unchanged.
 type Version = client.Version

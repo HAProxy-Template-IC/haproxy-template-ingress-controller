@@ -20,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// isRetriable is the per-error policy that decides whether a failed
+// IsRetriable is the per-error policy that decides whether a failed
 // status patch will be retried on the next reconciliation cycle vs
 // declared permanent. The classification has FIVE meaningful branches
 // and one default. Misclassifying any of them has on-call consequences:
@@ -126,8 +126,8 @@ func TestIsRetriable_DispatchTable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isRetriable(tt.err),
-				"isRetriable misclassification has on-call consequences: "+
+			assert.Equal(t, tt.want, IsRetriable(tt.err),
+				"IsRetriable misclassification has on-call consequences: "+
 					"permanent-as-transient pages on-call repeatedly; "+
 					"transient-as-permanent silently drops updates during "+
 					"API blips")
@@ -136,7 +136,7 @@ func TestIsRetriable_DispatchTable(t *testing.T) {
 }
 
 // timeoutNetErr satisfies net.Error and reports Timeout()=true so
-// isRetriable's `errors.AsType[net.Error](err)` branch matches and the
+// IsRetriable's `errors.AsType[net.Error](err)` branch matches and the
 // subsequent `netErr.Timeout()` check returns true.
 type timeoutNetErr struct{}
 

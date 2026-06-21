@@ -51,7 +51,6 @@ func scriggoSortBy(items []any, criteria []string) ([]any, error) {
 	sortable := &sortableItems{
 		items:    result,
 		criteria: criteria,
-		debugger: nil, // Filter debug not yet supported in Scriggo
 	}
 
 	// Precompute sort keys and sort

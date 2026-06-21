@@ -93,27 +93,6 @@ func (b *EventBus) SubscribeTypesLeaderOnly(name string, bufferSize int, eventTy
 	return b.subscribeTypesInternal(name, bufferSize, eventTypes, true, false)
 }
 
-// SubscribeTypesLossy creates a typed subscription that silently drops events when full.
-//
-// Use this for observability components that filter by event type but where occasional
-// drops are acceptable. Drops from lossy subscribers:
-//   - Are counted in DroppedEventsObservability() (for metrics)
-//   - Do NOT trigger the onDrop callback (no WARN logs)
-//
-// Parameters:
-//   - name: Subscriber name for debugging (e.g., "metrics", "debug-events")
-//   - bufferSize: Size of the output channel buffer
-//   - eventTypes: Event type strings to filter for (from Event.EventType())
-//
-// Returns a channel that receives only events matching the specified types.
-// The channel is read-only and will never be closed.
-//
-// To stop receiving events and prevent memory leaks, call UnsubscribeTyped()
-// with the returned channel.
-func (b *EventBus) SubscribeTypesLossy(name string, bufferSize int, eventTypes ...string) <-chan Event {
-	return b.subscribeTypesInternal(name, bufferSize, eventTypes, false, true)
-}
-
 // subscribeTypesInternal creates a typed subscription with event type filtering.
 //
 // Parameters:

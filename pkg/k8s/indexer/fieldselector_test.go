@@ -4,7 +4,11 @@ import (
 	"testing"
 )
 
-// TestNewFieldSelectorMatcher_ValidExpressions verifies parsing of valid expressions.
+// TestNewFieldSelectorMatcher_ValidExpressions verifies parsing of valid
+// expressions. Parsing correctness (field path + expected value split,
+// whitespace trimming, split-on-first-'=') is observed end-to-end through
+// Matches against a resource whose field holds wantValue, plus the
+// Expression() round-trip.
 func TestNewFieldSelectorMatcher_ValidExpressions(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -57,19 +61,44 @@ func TestNewFieldSelectorMatcher_ValidExpressions(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if matcher.FieldPath() != tt.wantFieldPath {
-				t.Errorf("FieldPath() = %q, want %q", matcher.FieldPath(), tt.wantFieldPath)
-			}
-
-			if matcher.ExpectedValue() != tt.wantValue {
-				t.Errorf("ExpectedValue() = %q, want %q", matcher.ExpectedValue(), tt.wantValue)
-			}
-
+			// Expression() must round-trip the original input verbatim.
 			if matcher.Expression() != tt.expression {
 				t.Errorf("Expression() = %q, want %q", matcher.Expression(), tt.expression)
 			}
+
+			// Build a resource whose wantFieldPath holds wantValue; a
+			// correctly parsed matcher must accept it. This exercises both
+			// the parsed field path and expected value.
+			resource := resourceWithField(tt.wantFieldPath, tt.wantValue)
+			matches, err := matcher.Matches(resource)
+			if err != nil {
+				t.Fatalf("Matches returned unexpected error: %v", err)
+			}
+			if !matches {
+				t.Errorf("expected matcher %q to accept resource %v with %q=%q",
+					tt.expression, resource, tt.wantFieldPath, tt.wantValue)
+			}
 		})
 	}
+}
+
+// resourceWithField builds a nested map[string]any resource where the JSONPath
+// fieldPath resolves to value. Supports dotted segments and bracketed map keys
+// (e.g. metadata.labels['app']).
+func resourceWithField(fieldPath, value string) map[string]any {
+	segments := parseJSONPathPattern(fieldPath)
+	root := map[string]any{}
+	cur := root
+	for i, seg := range segments {
+		if i == len(segments)-1 {
+			cur[seg] = value
+			break
+		}
+		next := map[string]any{}
+		cur[seg] = next
+		cur = next
+	}
+	return root
 }
 
 // TestNewFieldSelectorMatcher_InvalidExpressions verifies error handling for invalid expressions.

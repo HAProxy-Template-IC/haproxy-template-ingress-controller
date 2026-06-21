@@ -19,13 +19,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNew(t *testing.T) {
 	rb := New[int](10)
 	assert.Equal(t, 0, rb.Len())
-	assert.Equal(t, 10, rb.Cap())
 }
 
 func TestAdd(t *testing.T) {
@@ -114,26 +112,6 @@ func TestGetAll(t *testing.T) {
 	rb.Add("g") // Overwrites "b"
 	rb.Add("h") // Overwrites "c"
 	assert.Equal(t, []string{"d", "e", "f", "g", "h"}, rb.GetAll())
-}
-
-func TestClear(t *testing.T) {
-	rb := New[int](5)
-
-	// Add items
-	rb.Add(1)
-	rb.Add(2)
-	rb.Add(3)
-	require.Equal(t, 3, rb.Len())
-
-	// Clear
-	rb.Clear()
-	assert.Equal(t, 0, rb.Len())
-	assert.Equal(t, []int{}, rb.GetAll())
-
-	// Can add again after clear
-	rb.Add(10)
-	assert.Equal(t, 1, rb.Len())
-	assert.Equal(t, []int{10}, rb.GetAll())
 }
 
 func TestThreadSafety(t *testing.T) {

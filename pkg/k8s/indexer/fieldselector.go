@@ -89,13 +89,3 @@ func (m *FieldSelectorMatcher) tryEvaluate(resource any) (string, bool) {
 func (m *FieldSelectorMatcher) Expression() string {
 	return m.expression
 }
-
-// ExpectedValue returns the expected value portion of the expression.
-func (m *FieldSelectorMatcher) ExpectedValue() string {
-	return m.expectedValue
-}
-
-// FieldPath returns the field path portion of the expression.
-func (m *FieldSelectorMatcher) FieldPath() string {
-	return m.evaluator.Expression()
-}

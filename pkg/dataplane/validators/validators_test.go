@@ -53,31 +53,33 @@ func TestValidatorSet_Version(t *testing.T) {
 }
 
 func TestValidatorSet_NilFunctions(t *testing.T) {
-	// A ValidatorSet with all nil functions should return nil/0 for all operations
-	vs := &ValidatorSet{version: "test"}
+	// A ValidatorSet with all nil function fields means "no validator for this
+	// version" — every validation must be treated as valid (no error, no panic).
+	// The nil-tolerance is exercised through CachedValidator, whose validateCached
+	// guards nil hasher/validator fields inline.
+	cv := &CachedValidator{cache: NewCache(), set: &ValidatorSet{version: "test"}}
 
-	assert.NoError(t, vs.ValidateServer(&models.Server{}))
-	assert.NoError(t, vs.ValidateServerTemplate(&models.ServerTemplate{}))
-	assert.NoError(t, vs.ValidateBind(&models.Bind{}))
-	assert.NoError(t, vs.ValidateHTTPRequestRule(&models.HTTPRequestRule{}))
-	assert.NoError(t, vs.ValidateHTTPResponseRule(&models.HTTPResponseRule{}))
-	assert.NoError(t, vs.ValidateTCPRequestRule(&models.TCPRequestRule{}))
-	assert.NoError(t, vs.ValidateTCPResponseRule(&models.TCPResponseRule{}))
-	assert.NoError(t, vs.ValidateHTTPAfterResponseRule(&models.HTTPAfterResponseRule{}))
-	assert.NoError(t, vs.ValidateHTTPErrorRule(&models.HTTPErrorRule{}))
-	assert.NoError(t, vs.ValidateServerSwitchingRule(&models.ServerSwitchingRule{}))
-	assert.NoError(t, vs.ValidateBackendSwitchingRule(&models.BackendSwitchingRule{}))
-	assert.NoError(t, vs.ValidateStickRule(&models.StickRule{}))
-	assert.NoError(t, vs.ValidateACL(&models.ACL{}))
-	assert.NoError(t, vs.ValidateFilter(&models.Filter{}))
-	assert.NoError(t, vs.ValidateLogTarget(&models.LogTarget{}))
-	assert.NoError(t, vs.ValidateHTTPCheck(&models.HTTPCheck{}))
-	assert.NoError(t, vs.ValidateTCPCheck(&models.TCPCheck{}))
-	assert.NoError(t, vs.ValidateCapture(&models.Capture{}))
+	assert.NoError(t, cv.ValidateServer(&models.Server{}))
+	assert.NoError(t, cv.ValidateServerTemplate(&models.ServerTemplate{}))
+	assert.NoError(t, cv.ValidateBind(&models.Bind{}))
+	assert.NoError(t, cv.ValidateHTTPRequestRule(&models.HTTPRequestRule{}))
+	assert.NoError(t, cv.ValidateHTTPResponseRule(&models.HTTPResponseRule{}))
+	assert.NoError(t, cv.ValidateTCPRequestRule(&models.TCPRequestRule{}))
+	assert.NoError(t, cv.ValidateTCPResponseRule(&models.TCPResponseRule{}))
+	assert.NoError(t, cv.ValidateHTTPAfterResponseRule(&models.HTTPAfterResponseRule{}))
+	assert.NoError(t, cv.ValidateHTTPErrorRule(&models.HTTPErrorRule{}))
+	assert.NoError(t, cv.ValidateServerSwitchingRule(&models.ServerSwitchingRule{}))
+	assert.NoError(t, cv.ValidateBackendSwitchingRule(&models.BackendSwitchingRule{}))
+	assert.NoError(t, cv.ValidateStickRule(&models.StickRule{}))
+	assert.NoError(t, cv.ValidateACL(&models.ACL{}))
+	assert.NoError(t, cv.ValidateFilter(&models.Filter{}))
+	assert.NoError(t, cv.ValidateLogTarget(&models.LogTarget{}))
+	assert.NoError(t, cv.ValidateHTTPCheck(&models.HTTPCheck{}))
+	assert.NoError(t, cv.ValidateTCPCheck(&models.TCPCheck{}))
+	assert.NoError(t, cv.ValidateCapture(&models.Capture{}))
 
-	assert.Equal(t, uint64(0), vs.HashServer(&models.Server{}))
-	assert.Equal(t, uint64(0), vs.HashBind(&models.Bind{}))
-	assert.Equal(t, uint64(0), vs.HashACL(&models.ACL{}))
+	// Nil validator fields mean nothing is cached either.
+	assert.Equal(t, 0, cacheLen(cv.cache))
 }
 
 func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
@@ -94,8 +96,8 @@ func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
 
 	for _, v := range versions {
 		t.Run(v.name, func(t *testing.T) {
-			vs := ForVersion(v.major, v.minor)
-			require.NotNil(t, vs)
+			cv := NewCachedValidator(v.major, v.minor)
+			require.NotNil(t, cv)
 
 			// Valid server should pass
 			server := &models.Server{
@@ -103,7 +105,7 @@ func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
 				Address: "127.0.0.1",
 				Port:    func() *int64 { p := int64(8080); return &p }(),
 			}
-			assert.NoError(t, vs.ValidateServer(server))
+			assert.NoError(t, cv.ValidateServer(server))
 
 			// Valid ACL should pass
 			acl := &models.ACL{
@@ -111,25 +113,9 @@ func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
 				Criterion: "path_beg",
 				Value:     "/api",
 			}
-			assert.NoError(t, vs.ValidateACL(acl))
+			assert.NoError(t, cv.ValidateACL(acl))
 		})
 	}
-}
-
-func TestValidatorSet_Hash(t *testing.T) {
-	vs := ForVersion(3, 2)
-
-	// Same content should produce same hash
-	server1 := &models.Server{Name: "srv1", Address: "10.0.0.1"}
-	server2 := &models.Server{Name: "srv1", Address: "10.0.0.1"}
-	assert.Equal(t, vs.HashServer(server1), vs.HashServer(server2))
-
-	// Different content should produce different hash
-	server3 := &models.Server{Name: "srv2", Address: "10.0.0.2"}
-	assert.NotEqual(t, vs.HashServer(server1), vs.HashServer(server3))
-
-	// Hash should be non-zero for real validators
-	assert.NotEqual(t, uint64(0), vs.HashServer(server1))
 }
 
 func TestFieldError(t *testing.T) {

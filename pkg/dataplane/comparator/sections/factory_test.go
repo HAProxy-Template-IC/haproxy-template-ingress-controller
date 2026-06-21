@@ -2095,12 +2095,6 @@ func TestNameExtractors(t *testing.T) {
 	})
 }
 
-func TestDescribeIndexChild(t *testing.T) {
-	descFn := DescribeIndexChild(OperationCreate, "acl", 5, "frontend", "http")
-	desc := descFn()
-	assert.Contains(t, desc, "Create acl at index 5 in frontend 'http'")
-}
-
 func TestOpVerb(t *testing.T) {
 	tests := []struct {
 		opType OperationType

@@ -12,7 +12,7 @@ import (
 // The reader implements a state machine that tracks the current section
 // and routes directives to the appropriate parser collection.
 type Reader struct {
-	factory ParserFactory
+	factory *DefaultFactory
 	parsers *ConfiguredParsers
 
 	// preComments holds comments accumulated before a directive
@@ -20,7 +20,7 @@ type Reader struct {
 }
 
 // NewReader creates a new configuration reader.
-func NewReader(factory ParserFactory) *Reader {
+func NewReader(factory *DefaultFactory) *Reader {
 	return &Reader{
 		factory: factory,
 		parsers: NewConfiguredParsers(),

@@ -156,118 +156,99 @@ func NewConfiguredParsers() *ConfiguredParsers {
 	}
 }
 
+// singletonSlot binds a singleton section to its cached field and its
+// constructor. slot returns the address of the cache field so the lazy
+// assignment writes back into the struct.
+type singletonSlot struct {
+	slot   func(*ConfiguredParsers) **parser.Parsers
+	create func(*DefaultFactory) *parser.Parsers
+}
+
+// singletonFactories maps each singleton section to its cache slot and
+// constructor. Replaces the per-section switch in getSingletonParsers.
+var singletonFactories = map[Section]singletonSlot{
+	SectionGlobal: {
+		slot:   func(c *ConfiguredParsers) **parser.Parsers { return &c.Global },
+		create: (*DefaultFactory).CreateGlobalParsers,
+	},
+	SectionDefaults: {
+		slot:   func(c *ConfiguredParsers) **parser.Parsers { return &c.Defaults },
+		create: (*DefaultFactory).CreateDefaultsParsers,
+	},
+	SectionComments: {
+		slot:   func(c *ConfiguredParsers) **parser.Parsers { return &c.Comments },
+		create: (*DefaultFactory).CreateCommentsParsers,
+	},
+	SectionWAFGlobal: {
+		slot:   func(c *ConfiguredParsers) **parser.Parsers { return &c.WAFGlobal },
+		create: (*DefaultFactory).CreateWAFGlobalParsers,
+	},
+}
+
+// namedSlot binds a named section to its per-name map and its constructor.
+type namedSlot struct {
+	sectionMap func(*ConfiguredParsers) map[string]*parser.Parsers
+	create     func(*DefaultFactory) *parser.Parsers
+}
+
+// namedFactories maps each named section (CE and EE) to its per-name cache
+// map and constructor. Replaces the per-section switches in
+// getCENamedSectionFactory / getEENamedSectionFactory.
+var namedFactories = map[Section]namedSlot{
+	// CE named sections
+	SectionFrontend:   {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Frontend }, (*DefaultFactory).CreateFrontendParsers},
+	SectionBackend:    {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Backend }, (*DefaultFactory).CreateBackendParsers},
+	SectionListen:     {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Listen }, (*DefaultFactory).CreateListenParsers},
+	SectionResolvers:  {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Resolvers }, (*DefaultFactory).CreateResolversParsers},
+	SectionPeers:      {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Peers }, (*DefaultFactory).CreatePeersParsers},
+	SectionMailers:    {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Mailers }, (*DefaultFactory).CreateMailersParsers},
+	SectionCache:      {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Cache }, (*DefaultFactory).CreateCacheParsers},
+	SectionProgram:    {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Program }, (*DefaultFactory).CreateProgramParsers},
+	SectionHTTPErrors: {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.HTTPErrors }, (*DefaultFactory).CreateHTTPErrorsParsers},
+	SectionRing:       {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Ring }, (*DefaultFactory).CreateRingParsers},
+	SectionLogForward: {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.LogForward }, (*DefaultFactory).CreateLogForwardParsers},
+	SectionFCGIApp:    {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.FCGIApp }, (*DefaultFactory).CreateFCGIAppParsers},
+	SectionCrtStore:   {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.CrtStore }, (*DefaultFactory).CreateCrtStoreParsers},
+	SectionTraces:     {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Traces }, (*DefaultFactory).CreateTracesParsers},
+	SectionLogProfile: {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.LogProfile }, (*DefaultFactory).CreateLogProfileParsers},
+	SectionACME:       {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.ACME }, (*DefaultFactory).CreateACMEParsers},
+	SectionUserlist:   {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Userlist }, (*DefaultFactory).CreateUserlistParsers},
+
+	// EE named sections
+	SectionWAFProfile:     {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.WAFProfile }, (*DefaultFactory).CreateWAFProfileParsers},
+	SectionBotMgmtProfile: {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.BotMgmtProfile }, (*DefaultFactory).CreateBotMgmtProfileParsers},
+	SectionCaptcha:        {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Captcha }, (*DefaultFactory).CreateCaptchaParsers},
+	SectionUDPLB:          {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.UDPLB }, (*DefaultFactory).CreateUDPLBParsers},
+	SectionDynamicUpdate:  {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.DynamicUpdate }, (*DefaultFactory).CreateDynamicUpdateParsers},
+}
+
 // getSingletonParsers returns parsers for singleton sections (global, defaults, etc.).
-func (c *ConfiguredParsers) getSingletonParsers(section Section, factory ParserFactory) *parser.Parsers {
-	switch section {
-	case SectionGlobal:
-		if c.Global == nil {
-			c.Global = factory.CreateGlobalParsers()
-		}
-		return c.Global
-	case SectionDefaults:
-		if c.Defaults == nil {
-			c.Defaults = factory.CreateDefaultsParsers()
-		}
-		return c.Defaults
-	case SectionComments:
-		if c.Comments == nil {
-			c.Comments = factory.CreateCommentsParsers()
-		}
-		return c.Comments
-	case SectionWAFGlobal:
-		if c.WAFGlobal == nil {
-			c.WAFGlobal = factory.CreateWAFGlobalParsers()
-		}
-		return c.WAFGlobal
-	default:
+func (c *ConfiguredParsers) getSingletonParsers(section Section, factory *DefaultFactory) *parser.Parsers {
+	s, ok := singletonFactories[section]
+	if !ok {
 		return nil
 	}
-}
-
-// getCENamedSectionFactory returns the factory function and map for a CE named section.
-func (c *ConfiguredParsers) getCENamedSectionFactory(section Section, factory ParserFactory) (sectionMap map[string]*parser.Parsers, createFunc func() *parser.Parsers) {
-	switch section {
-	case SectionFrontend:
-		return c.Frontend, factory.CreateFrontendParsers
-	case SectionBackend:
-		return c.Backend, factory.CreateBackendParsers
-	case SectionListen:
-		return c.Listen, factory.CreateListenParsers
-	case SectionResolvers:
-		return c.Resolvers, factory.CreateResolversParsers
-	case SectionPeers:
-		return c.Peers, factory.CreatePeersParsers
-	case SectionMailers:
-		return c.Mailers, factory.CreateMailersParsers
-	case SectionCache:
-		return c.Cache, factory.CreateCacheParsers
-	case SectionProgram:
-		return c.Program, factory.CreateProgramParsers
-	case SectionHTTPErrors:
-		return c.HTTPErrors, factory.CreateHTTPErrorsParsers
-	case SectionRing:
-		return c.Ring, factory.CreateRingParsers
-	case SectionLogForward:
-		return c.LogForward, factory.CreateLogForwardParsers
-	case SectionFCGIApp:
-		return c.FCGIApp, factory.CreateFCGIAppParsers
-	case SectionCrtStore:
-		return c.CrtStore, factory.CreateCrtStoreParsers
-	case SectionTraces:
-		return c.Traces, factory.CreateTracesParsers
-	case SectionLogProfile:
-		return c.LogProfile, factory.CreateLogProfileParsers
-	case SectionACME:
-		return c.ACME, factory.CreateACMEParsers
-	case SectionUserlist:
-		return c.Userlist, factory.CreateUserlistParsers
-	default:
-		return nil, nil
+	slot := s.slot(c)
+	if *slot == nil {
+		*slot = s.create(factory)
 	}
-}
-
-// getEENamedSectionFactory returns the factory function and map for an EE named section.
-func (c *ConfiguredParsers) getEENamedSectionFactory(section Section, factory ParserFactory) (sectionMap map[string]*parser.Parsers, createFunc func() *parser.Parsers) {
-	switch section {
-	case SectionWAFProfile:
-		return c.WAFProfile, factory.CreateWAFProfileParsers
-	case SectionBotMgmtProfile:
-		return c.BotMgmtProfile, factory.CreateBotMgmtProfileParsers
-	case SectionCaptcha:
-		return c.Captcha, factory.CreateCaptchaParsers
-	case SectionUDPLB:
-		return c.UDPLB, factory.CreateUDPLBParsers
-	case SectionDynamicUpdate:
-		return c.DynamicUpdate, factory.CreateDynamicUpdateParsers
-	default:
-		return nil, nil
-	}
-}
-
-// getNamedSectionFactory returns the factory function and map for a named section.
-func (c *ConfiguredParsers) getNamedSectionFactory(section Section, factory ParserFactory) (sectionMap map[string]*parser.Parsers, createFunc func() *parser.Parsers) {
-	// Try CE sections first (more common)
-	if m, f := c.getCENamedSectionFactory(section, factory); m != nil {
-		return m, f
-	}
-	// Try EE sections
-	return c.getEENamedSectionFactory(section, factory)
+	return *slot
 }
 
 // GetSectionParsers returns the parser collection for a section.
 // For named sections, creates a new collection if it doesn't exist.
-func (c *ConfiguredParsers) GetSectionParsers(section Section, name string, factory ParserFactory) *parser.Parsers {
+func (c *ConfiguredParsers) GetSectionParsers(section Section, name string, factory *DefaultFactory) *parser.Parsers {
 	// Try singleton sections first
 	if IsSingletonSection(section) || section == SectionComments {
 		return c.getSingletonParsers(section, factory)
 	}
 
 	// Handle named sections
-	m, createFunc := c.getNamedSectionFactory(section, factory)
-	if m == nil || createFunc == nil {
+	s, ok := namedFactories[section]
+	if !ok {
 		return nil
 	}
-	return c.getOrCreate(m, name, createFunc)
+	return c.getOrCreate(s.sectionMap(c), name, func() *parser.Parsers { return s.create(factory) })
 }
 
 // getOrCreate returns an existing parser collection or creates a new one.
@@ -285,42 +266,4 @@ func (c *ConfiguredParsers) SetState(section Section, name string, parsers *pars
 	c.State = section
 	c.SectionName = name
 	c.Active = parsers
-}
-
-// ParserFactory is an interface for creating parser collections.
-// This allows dependency injection of the actual parser creation logic.
-type ParserFactory interface {
-	// CE singleton sections
-	CreateGlobalParsers() *parser.Parsers
-	CreateDefaultsParsers() *parser.Parsers
-	CreateCommentsParsers() *parser.Parsers
-
-	// CE named sections
-	CreateFrontendParsers() *parser.Parsers
-	CreateBackendParsers() *parser.Parsers
-	CreateListenParsers() *parser.Parsers
-	CreateResolversParsers() *parser.Parsers
-	CreatePeersParsers() *parser.Parsers
-	CreateMailersParsers() *parser.Parsers
-	CreateCacheParsers() *parser.Parsers
-	CreateProgramParsers() *parser.Parsers
-	CreateHTTPErrorsParsers() *parser.Parsers
-	CreateRingParsers() *parser.Parsers
-	CreateLogForwardParsers() *parser.Parsers
-	CreateFCGIAppParsers() *parser.Parsers
-	CreateCrtStoreParsers() *parser.Parsers
-	CreateTracesParsers() *parser.Parsers
-	CreateLogProfileParsers() *parser.Parsers
-	CreateACMEParsers() *parser.Parsers
-	CreateUserlistParsers() *parser.Parsers
-
-	// EE singleton sections
-	CreateWAFGlobalParsers() *parser.Parsers
-
-	// EE named sections
-	CreateWAFProfileParsers() *parser.Parsers
-	CreateBotMgmtProfileParsers() *parser.Parsers
-	CreateCaptchaParsers() *parser.Parsers
-	CreateUDPLBParsers() *parser.Parsers
-	CreateDynamicUpdateParsers() *parser.Parsers
 }

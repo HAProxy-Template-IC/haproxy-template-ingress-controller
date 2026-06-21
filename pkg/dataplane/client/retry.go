@@ -18,11 +18,9 @@ type RetryCondition func(err error) bool
 type BackoffStrategy string
 
 const (
-	// BackoffNone applies no delay between retries.
-	BackoffNone BackoffStrategy = "none"
-	// BackoffLinear applies a fixed delay between retries.
-	BackoffLinear BackoffStrategy = "linear"
 	// BackoffExponential applies exponentially increasing delays between retries.
+	// It is the only strategy production uses; any other value (including the
+	// zero value) means no delay.
 	BackoffExponential BackoffStrategy = "exponential"
 )
 
@@ -37,12 +35,10 @@ type RetryConfig struct {
 	RetryIf RetryCondition
 
 	// Backoff strategy for delays between retries.
-	// Default: BackoffNone
+	// Default: zero value (no delay between retries).
 	Backoff BackoffStrategy
 
-	// BaseDelay is the base delay for backoff strategies.
-	// - For BackoffLinear: the fixed delay between retries
-	// - For BackoffExponential: the initial delay (doubles each retry)
+	// BaseDelay is the initial delay for BackoffExponential (doubles each retry).
 	// Default: 100ms
 	BaseDelay time.Duration
 
@@ -268,21 +264,17 @@ func WithRetry[T any](ctx context.Context, config RetryConfig, fn func(attempt i
 	return zero, lastErr
 }
 
-// calculateBackoff calculates the delay before the next retry attempt.
+// calculateBackoff calculates the delay before the next retry attempt. Only
+// BackoffExponential delays; any other strategy (including the zero value)
+// retries immediately.
 func calculateBackoff(strategy BackoffStrategy, baseDelay time.Duration, attempt int) time.Duration {
-	switch strategy {
-	case BackoffNone:
-		return 0
-	case BackoffLinear:
-		return baseDelay
-	case BackoffExponential:
-		// Exponential: baseDelay * 2^(attempt-1)
-		// attempt 1 -> baseDelay
-		// attempt 2 -> baseDelay * 2
-		// attempt 3 -> baseDelay * 4
-		multiplier := 1 << (attempt - 1)
-		return baseDelay * time.Duration(multiplier)
-	default:
+	if strategy != BackoffExponential {
 		return 0
 	}
+	// Exponential: baseDelay * 2^(attempt-1)
+	// attempt 1 -> baseDelay
+	// attempt 2 -> baseDelay * 2
+	// attempt 3 -> baseDelay * 4
+	multiplier := 1 << (attempt - 1)
+	return baseDelay * time.Duration(multiplier)
 }

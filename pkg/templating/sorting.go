@@ -14,18 +14,7 @@
 
 package templating
 
-import (
-	"fmt"
-	"log/slog"
-	"strings"
-)
-
-// SortDebugger provides debug logging capability for sort operations.
-// This interface decouples sorting logic from engine-specific tracing implementations.
-type SortDebugger interface {
-	// IsFilterDebugEnabled returns true if filter debug logging is enabled.
-	IsFilterDebugEnabled() bool
-}
+import "strings"
 
 // sortableItems provides efficient multi-criteria sorting with pre-computed keys.
 // This optimization evaluates each criterion expression once per item (O(n))
@@ -36,9 +25,8 @@ type SortDebugger interface {
 type sortableItems struct {
 	items      []any
 	criteria   []string
-	debugger   SortDebugger // For filter debug logging (can be nil)
-	cachedKeys [][]sortKey  // Pre-computed sort keys: cachedKeys[itemIndex][criterionIndex]
-	descending []bool       // Per-criterion descending flag
+	cachedKeys [][]sortKey // Pre-computed sort keys: cachedKeys[itemIndex][criterionIndex]
+	descending []bool      // Per-criterion descending flag
 }
 
 // sortKey holds a pre-computed value for sorting with its type preserved.
@@ -111,7 +99,7 @@ func (s *sortableItems) Len() int {
 
 func (s *sortableItems) Less(i, j int) bool {
 	for ci := range s.criteria {
-		cmp := s.comparePrecomputedKeys(s.cachedKeys[i][ci], s.cachedKeys[j][ci], s.criteria[ci])
+		cmp := s.comparePrecomputedKeys(s.cachedKeys[i][ci], s.cachedKeys[j][ci])
 		if cmp != 0 {
 			if s.descending[ci] {
 				return cmp > 0
@@ -128,22 +116,6 @@ func (s *sortableItems) Swap(i, j int) {
 }
 
 // comparePrecomputedKeys compares two pre-computed sort keys.
-func (s *sortableItems) comparePrecomputedKeys(a, b sortKey, criterion string) int {
-	// Handle debug logging if enabled
-	debugEnabled := s.debugger != nil && s.debugger.IsFilterDebugEnabled()
-
-	if debugEnabled {
-		result := compareValues(a.value, b.value)
-		slog.Info("SORT comparison",
-			"criterion", criterion,
-			"val_a", a.value,
-			"val_a_type", fmt.Sprintf("%T", a.value),
-			"val_b", b.value,
-			"val_b_type", fmt.Sprintf("%T", b.value),
-			"result", result,
-		)
-		return result
-	}
-
+func (s *sortableItems) comparePrecomputedKeys(a, b sortKey) int {
 	return compareValues(a.value, b.value)
 }

@@ -65,13 +65,3 @@ func printVersion() {
 	fmt.Printf("  Go version:  %s\n", runtime.Version())
 	fmt.Printf("  OS/Arch:     %s/%s\n", runtime.GOOS, runtime.GOARCH)
 }
-
-// getVersion returns the version string.
-func getVersion() string {
-	return version
-}
-
-// getSourceHash returns the source hash string.
-func getSourceHash() string {
-	return sourceHash
-}

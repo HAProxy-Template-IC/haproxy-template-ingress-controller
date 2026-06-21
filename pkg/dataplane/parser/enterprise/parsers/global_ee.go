@@ -176,14 +176,3 @@ func (p *GlobalEE) ResultAll() ([]common.ReturnResultLine, []string, error) {
 func (p *GlobalEE) GetDirectives() []*EEGlobalDirective {
 	return p.directives
 }
-
-// GetDirectivesByType returns directives of a specific type.
-func (p *GlobalEE) GetDirectivesByType(directiveType string) []*EEGlobalDirective {
-	var result []*EEGlobalDirective
-	for _, d := range p.directives {
-		if d.Type == directiveType {
-			result = append(result, d)
-		}
-	}
-	return result
-}
