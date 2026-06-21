@@ -31,36 +31,6 @@ func serverSwitchingRuleIdentifier(rule *models.ServerSwitchingRule) string { re
 
 // CRUD builders for backend and server switching rules.
 var (
-	backendSwitchingRuleFrontendOps = NewIndexChildCRUD[*models.BackendSwitchingRule]("backend_switching_rule", "backend switching rule", "frontend", backendSwitchingRuleIdentifier)
-	serverSwitchingRuleBackendOps   = NewIndexChildCRUD[*models.ServerSwitchingRule]("server_switching_rule", "server switching rule", "backend", serverSwitchingRuleIdentifier)
+	BackendSwitchingRuleFrontendOps = NewIndexChildCRUD[*models.BackendSwitchingRule]("backend_switching_rule", "backend switching rule", "frontend", backendSwitchingRuleIdentifier)
+	ServerSwitchingRuleBackendOps   = NewIndexChildCRUD[*models.ServerSwitchingRule]("server_switching_rule", "server switching rule", "backend", serverSwitchingRuleIdentifier)
 )
-
-// NewBackendSwitchingRuleFrontendCreate creates an operation to create a backend switching rule.
-func NewBackendSwitchingRuleFrontendCreate(frontendName string, rule *models.BackendSwitchingRule, index int) Operation {
-	return backendSwitchingRuleFrontendOps.Create(frontendName, rule, index)
-}
-
-// NewBackendSwitchingRuleFrontendUpdate creates an operation to update a backend switching rule.
-func NewBackendSwitchingRuleFrontendUpdate(frontendName string, rule *models.BackendSwitchingRule, index int) Operation {
-	return backendSwitchingRuleFrontendOps.Update(frontendName, rule, index)
-}
-
-// NewBackendSwitchingRuleFrontendDelete creates an operation to delete a backend switching rule.
-func NewBackendSwitchingRuleFrontendDelete(frontendName string, rule *models.BackendSwitchingRule, index int) Operation {
-	return backendSwitchingRuleFrontendOps.Delete(frontendName, rule, index)
-}
-
-// NewServerSwitchingRuleBackendCreate creates an operation to create a server switching rule in a backend.
-func NewServerSwitchingRuleBackendCreate(backendName string, rule *models.ServerSwitchingRule, index int) Operation {
-	return serverSwitchingRuleBackendOps.Create(backendName, rule, index)
-}
-
-// NewServerSwitchingRuleBackendUpdate creates an operation to update a server switching rule in a backend.
-func NewServerSwitchingRuleBackendUpdate(backendName string, rule *models.ServerSwitchingRule, index int) Operation {
-	return serverSwitchingRuleBackendOps.Update(backendName, rule, index)
-}
-
-// NewServerSwitchingRuleBackendDelete creates an operation to delete a server switching rule from a backend.
-func NewServerSwitchingRuleBackendDelete(backendName string, rule *models.ServerSwitchingRule, index int) Operation {
-	return serverSwitchingRuleBackendOps.Delete(backendName, rule, index)
-}

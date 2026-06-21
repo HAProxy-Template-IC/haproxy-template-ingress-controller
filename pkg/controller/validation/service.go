@@ -208,7 +208,8 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 	}
 }
 
-// Validate validates HAProxy configuration.
+// ValidateWithChecksum validates HAProxy configuration using a pre-computed content checksum.
+// This avoids redundant hashing when the caller (e.g., Pipeline) has already computed the checksum.
 //
 // This method:
 // 1. Parses and validates the ORIGINAL config (syntax + schema) - this produces the ParsedConfig
@@ -228,16 +229,10 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 //   - ctx: Context for cancellation
 //   - config: The rendered HAProxy configuration content
 //   - auxFiles: Auxiliary files (maps, certificates, general files)
+//   - checksum: Pre-computed content checksum (see dataplane.ComputeContentChecksum)
 //
 // Returns:
 //   - ValidationResult with success/failure status, timing, and ParsedConfig with production paths
-func (s *ValidationService) Validate(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles) *ValidationResult {
-	checksum := dataplane.ComputeContentChecksum(config, auxFiles)
-	return s.ValidateWithChecksum(ctx, config, auxFiles, checksum)
-}
-
-// ValidateWithChecksum validates HAProxy configuration using a pre-computed content checksum.
-// This avoids redundant hashing when the caller (e.g., Pipeline) has already computed the checksum.
 func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles, checksum string) *ValidationResult {
 	startTime := time.Now()
 

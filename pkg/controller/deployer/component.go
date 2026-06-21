@@ -86,32 +86,23 @@ type Component struct {
 	deploymentDone      chan struct{}      // Signals when deployment goroutine completes
 }
 
-// SyncOptions bundles the per-sync Dataplane tunables that the deployer applies
-// to every dataplane.SyncOptions it builds.
-type SyncOptions struct {
-	// ReloadVerificationTimeout bounds how long the sync waits for HAProxy to
-	// report a graceful reload as completed.
-	ReloadVerificationTimeout time.Duration
-
-	// Timeout is the overall per-endpoint sync timeout (parse + diff + apply +
-	// optional reload-verify).
-	Timeout time.Duration
-}
-
 // New creates a new Deployer component.
 //
 // Parameters:
 //   - eventBus: The EventBus for subscribing to events and publishing results
 //   - logger: Structured logger for component logging
-//   - opts: Per-sync Dataplane tunables that the deployer applies to every sync
+//   - reloadVerificationTimeout: bounds how long each sync waits for HAProxy to
+//     report a graceful reload as completed
+//   - syncTimeout: overall per-endpoint sync timeout (parse + diff + apply +
+//     optional reload-verify)
 //
 // Returns:
 //   - A new Component instance ready to be started
-func New(eventBus *busevents.EventBus, logger *slog.Logger, opts SyncOptions) *Component {
+func New(eventBus *busevents.EventBus, logger *slog.Logger, reloadVerificationTimeout, syncTimeout time.Duration) *Component {
 	c := &Component{
 		ReadySignal:               component.NewReadySignal(),
-		reloadVerificationTimeout: opts.ReloadVerificationTimeout,
-		syncTimeout:               opts.Timeout,
+		reloadVerificationTimeout: reloadVerificationTimeout,
+		syncTimeout:               syncTimeout,
 		versionCache:              newConfigVersionCache(),
 		healthTracker:             lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}

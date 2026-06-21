@@ -20,22 +20,22 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewBotMgmtProfileCreate",
-			factory:          NewBotMgmtProfileCreate,
+			name:             "BotMgmtProfileOps.Create",
+			factory:          BotMgmtProfileOps.Create,
 			wantType:         OperationCreate,
 			wantSection:      "botmgmt-profile",
 			wantDescContains: "Create botmgmt-profile 'bot-profile-1'",
 		},
 		{
-			name:             "NewBotMgmtProfileUpdate",
-			factory:          NewBotMgmtProfileUpdate,
+			name:             "BotMgmtProfileOps.Update",
+			factory:          BotMgmtProfileOps.Update,
 			wantType:         OperationUpdate,
 			wantSection:      "botmgmt-profile",
 			wantDescContains: "Update botmgmt-profile 'bot-profile-1'",
 		},
 		{
-			name:             "NewBotMgmtProfileDelete",
-			factory:          NewBotMgmtProfileDelete,
+			name:             "BotMgmtProfileOps.Delete",
+			factory:          BotMgmtProfileOps.Delete,
 			wantType:         OperationDelete,
 			wantSection:      "botmgmt-profile",
 			wantDescContains: "Delete botmgmt-profile 'bot-profile-1'",
@@ -62,22 +62,22 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewCaptchaCreate",
-			factory:          NewCaptchaCreate,
+			name:             "CaptchaOps.Create",
+			factory:          CaptchaOps.Create,
 			wantType:         OperationCreate,
 			wantSection:      "captcha",
 			wantDescContains: "Create captcha 'recaptcha-v3'",
 		},
 		{
-			name:             "NewCaptchaUpdate",
-			factory:          NewCaptchaUpdate,
+			name:             "CaptchaOps.Update",
+			factory:          CaptchaOps.Update,
 			wantType:         OperationUpdate,
 			wantSection:      "captcha",
 			wantDescContains: "Update captcha 'recaptcha-v3'",
 		},
 		{
-			name:             "NewCaptchaDelete",
-			factory:          NewCaptchaDelete,
+			name:             "CaptchaOps.Delete",
+			factory:          CaptchaOps.Delete,
 			wantType:         OperationDelete,
 			wantSection:      "captcha",
 			wantDescContains: "Delete captcha 'recaptcha-v3'",
@@ -104,22 +104,22 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewWAFProfileCreate",
-			factory:          NewWAFProfileCreate,
+			name:             "WafProfileOps.Create",
+			factory:          WafProfileOps.Create,
 			wantType:         OperationCreate,
 			wantSection:      "waf-profile",
 			wantDescContains: "Create waf-profile 'waf-default'",
 		},
 		{
-			name:             "NewWAFProfileUpdate",
-			factory:          NewWAFProfileUpdate,
+			name:             "WafProfileOps.Update",
+			factory:          WafProfileOps.Update,
 			wantType:         OperationUpdate,
 			wantSection:      "waf-profile",
 			wantDescContains: "Update waf-profile 'waf-default'",
 		},
 		{
-			name:             "NewWAFProfileDelete",
-			factory:          NewWAFProfileDelete,
+			name:             "WafProfileOps.Delete",
+			factory:          WafProfileOps.Delete,
 			wantType:         OperationDelete,
 			wantSection:      "waf-profile",
 			wantDescContains: "Delete waf-profile 'waf-default'",
@@ -178,19 +178,19 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 }
 
 func TestEENameExtractors(t *testing.T) {
-	t.Run("BotMgmtProfileName", func(t *testing.T) {
+	t.Run("botMgmtProfileName", func(t *testing.T) {
 		profile := &v32ee.BotmgmtProfile{Name: "bot-profile-1"}
-		assert.Equal(t, "bot-profile-1", BotMgmtProfileName(profile))
+		assert.Equal(t, "bot-profile-1", botMgmtProfileName(profile))
 	})
 
-	t.Run("CaptchaEEName", func(t *testing.T) {
+	t.Run("captchaEEName", func(t *testing.T) {
 		captcha := &v32ee.Captcha{Name: "recaptcha"}
-		assert.Equal(t, "recaptcha", CaptchaEEName(captcha))
+		assert.Equal(t, "recaptcha", captchaEEName(captcha))
 	})
 
-	t.Run("WAFProfileName", func(t *testing.T) {
+	t.Run("wafProfileName", func(t *testing.T) {
 		profile := &v32ee.WafProfile{Name: "waf-default"}
-		assert.Equal(t, "waf-default", WAFProfileName(profile))
+		assert.Equal(t, "waf-default", wafProfileName(profile))
 	})
 }
 
@@ -223,7 +223,7 @@ func TestDescribeSingleton(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			describeFn := DescribeSingleton(tt.opType, tt.section)
+			describeFn := describeSingleton(tt.opType, tt.section)
 			assert.Equal(t, tt.expected, describeFn())
 		})
 	}

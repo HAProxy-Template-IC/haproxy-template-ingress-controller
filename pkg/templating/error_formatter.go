@@ -55,14 +55,12 @@ func FormatCompilationError(err error, templateName, templateContent string) str
 		templateContent,
 		err,
 		parseCompilationError(err.Error()),
-		formatLocationLineOptionalColumn,
 	)
 }
 
 // formatParsedError builds the header / location / problem / template
 // context / hints layout used by FormatCompilationError.
-// formatLocation lets callers customise how a non-nil location renders.
-func formatParsedError(header, templateContent string, originalErr error, parsed parsedError, formatLocation func(*errorLocation) string) string {
+func formatParsedError(header, templateContent string, originalErr error, parsed parsedError) string {
 	var builder strings.Builder
 
 	fmt.Fprintf(&builder, "%s\n", header)
@@ -70,7 +68,7 @@ func formatParsedError(header, templateContent string, originalErr error, parsed
 	builder.WriteString("\n")
 
 	if parsed.Location != nil {
-		builder.WriteString(formatLocation(parsed.Location))
+		builder.WriteString(formatLocationLineOptionalColumn(parsed.Location))
 	}
 
 	if parsed.Problem != "" {

@@ -58,12 +58,49 @@ func DrainLatest[T busevents.Event](
 	eventChan <-chan busevents.Event,
 	handleOther func(busevents.Event),
 ) (latest T, supersededCount int) {
-	hasLatest := false
+	winner, superseded := drainLatest(eventChan, handleOther, func(event busevents.Event) bool {
+		_, matchesType := event.(T)
+		return matchesType
+	})
+	if winner == nil {
+		return latest, superseded // zero value of T, 0
+	}
+	return winner.(T), superseded
+}
+
+// DrainLatestByType is the runtime-typed sibling of DrainLatest. Instead of a
+// compile-time type parameter it matches events whose EventType() equals
+// eventType, returning the latest coalescible match as a busevents.Event (nil
+// when none was found). All other events are passed to handleOther. Components
+// that select on a dynamic event-type string (e.g. component.Base's coalescing
+// loop, which reads the type from a CoalescingHandler) use this; consumers with
+// a static type use the generic DrainLatest.
+func DrainLatestByType(
+	eventChan <-chan busevents.Event,
+	eventType string,
+	handleOther func(busevents.Event),
+) (latest busevents.Event, supersededCount int) {
+	return drainLatest(eventChan, handleOther, func(event busevents.Event) bool {
+		return event.EventType() == eventType
+	})
+}
+
+// drainLatest is the shared "latest coalescible wins" drain loop behind
+// DrainLatest and DrainLatestByType. It non-blockingly pulls events off
+// eventChan; an event is a candidate when match(event) is true AND it is a
+// coalescible CoalescibleEvent. Candidates supersede earlier candidates;
+// every non-candidate (wrong match or not coalescible) is passed to
+// handleOther as it arrives. Returns the latest candidate (nil when none) and
+// the count of superseded earlier candidates.
+func drainLatest(
+	eventChan <-chan busevents.Event,
+	handleOther func(busevents.Event),
+	match func(busevents.Event) bool,
+) (latest busevents.Event, supersededCount int) {
 	for {
 		select {
 		case event := <-eventChan:
-			typed, matchesType := event.(T)
-			if !matchesType {
+			if !match(event) {
 				handleOther(event)
 				continue
 			}
@@ -71,17 +108,16 @@ func DrainLatest[T busevents.Event](
 			// Check if event implements CoalescibleEvent and is coalescible
 			coalescible, ok := event.(busevents.CoalescibleEvent)
 			if !ok || !coalescible.Coalescible() {
-				// Type matches but not coalescible - must process
+				// Matches but not coalescible - must process
 				handleOther(event)
 				continue
 			}
 
 			// Coalescible - supersede previous
-			if hasLatest {
+			if latest != nil {
 				supersededCount++
 			}
-			latest = typed
-			hasLatest = true
+			latest = event
 		default:
 			// No more events in channel
 			return latest, supersededCount

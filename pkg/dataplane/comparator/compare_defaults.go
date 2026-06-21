@@ -28,9 +28,9 @@ func (c *Comparator) compareDefaults(current, desired *parser.StructuredConfig, 
 		desired.Defaults,
 		func(d *models.Defaults) string { return d.Name },
 		func(a, b *models.Defaults) bool { return a.Equal(*b) },
-		sections.NewDefaultsCreate,
-		sections.NewDefaultsDelete,
-		sections.NewDefaultsUpdate,
+		sections.DefaultsOps.Create,
+		sections.DefaultsOps.Delete,
+		sections.DefaultsOps.Update,
 	)
 	if len(ops) > 0 {
 		summary.DefaultsChanged = true

@@ -17,7 +17,7 @@ import (
 )
 
 // backendSwitchingRuleIdentifier and serverSwitchingRuleIdentifier
-// feed DescribeTypedChild — the helper that decides whether to render
+// feed describeTypedChild — the helper that decides whether to render
 // a parenthesized identifier "(api)" or fall back to "at index N".
 //
 // The two helpers have a NON-OBVIOUS asymmetry that has no direct test

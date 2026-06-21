@@ -250,7 +250,6 @@ Exposed when the validating admission webhook is enabled (`webhook.enabled=true`
 | `haptic_webhook_requests_total` | Counter | `gvk`, `result` | Total admission requests by GroupVersionKind and result |
 | `haptic_webhook_request_duration_seconds` | Histogram | — | Time spent processing webhook requests |
 | `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes (allowed / rejected / error) per GVK |
-| `haptic_webhook_cert_rotations_total` | Counter | — | Number of times the webhook serving cert was reloaded |
 
 **Key queries:**
 

@@ -43,7 +43,7 @@ import (
 //   - Describe(): includes the parent name we passed in (proof the
 //                 parent flows into the closure for that branch)
 //
-// Why DescribeNamedChild? It's the public output that embeds the parent
+// Why the named-child describe? It's the public output that embeds the parent
 // name verbatim ("Update nameserver 'dns1' in resolvers section 'mydns'"),
 // so a parent-name regression is observable through the existing public
 // Operation interface — no need to reach into private fields.

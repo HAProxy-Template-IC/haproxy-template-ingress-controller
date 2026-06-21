@@ -9,9 +9,9 @@ import (
 // compareFilters compares filter configurations within a frontend or backend.
 // Filters are compared by position since they don't have unique identifiers.
 func (c *Comparator) compareFilters(parentType, parentName string, currentFilters, desiredFilters models.Filters) []Operation {
-	create, remove, update := sections.NewFilterBackendCreate, sections.NewFilterBackendDelete, sections.NewFilterBackendUpdate
+	create, remove, update := sections.FilterBackendOps.Create, sections.FilterBackendOps.Delete, sections.FilterBackendOps.Update
 	if parentType == parentTypeFrontend {
-		create, remove, update = sections.NewFilterFrontendCreate, sections.NewFilterFrontendDelete, sections.NewFilterFrontendUpdate
+		create, remove, update = sections.FilterFrontendOps.Create, sections.FilterFrontendOps.Delete, sections.FilterFrontendOps.Update
 	}
 	return compareIndexedItems(
 		currentFilters, desiredFilters,
@@ -85,13 +85,13 @@ func (c *Comparator) compareHTTPChecks(backendName string, currentChecks, desire
 		currentChecks, desiredChecks,
 		func(a, b *models.HTTPCheck) bool { return a.Equal(*b) },
 		func(check *models.HTTPCheck, i int) Operation {
-			return sections.NewHTTPCheckBackendCreate(backendName, check, i)
+			return sections.HTTPCheckBackendOps.Create(backendName, check, i)
 		},
 		func(check *models.HTTPCheck, i int) Operation {
-			return sections.NewHTTPCheckBackendDelete(backendName, check, i)
+			return sections.HTTPCheckBackendOps.Delete(backendName, check, i)
 		},
 		func(check *models.HTTPCheck, i int) Operation {
-			return sections.NewHTTPCheckBackendUpdate(backendName, check, i)
+			return sections.HTTPCheckBackendOps.Update(backendName, check, i)
 		},
 	)
 }
@@ -103,13 +103,13 @@ func (c *Comparator) compareTCPChecks(backendName string, currentChecks, desired
 		currentChecks, desiredChecks,
 		func(a, b *models.TCPCheck) bool { return a.Equal(*b) },
 		func(check *models.TCPCheck, i int) Operation {
-			return sections.NewTCPCheckBackendCreate(backendName, check, i)
+			return sections.TCPCheckBackendOps.Create(backendName, check, i)
 		},
 		func(check *models.TCPCheck, i int) Operation {
-			return sections.NewTCPCheckBackendDelete(backendName, check, i)
+			return sections.TCPCheckBackendOps.Delete(backendName, check, i)
 		},
 		func(check *models.TCPCheck, i int) Operation {
-			return sections.NewTCPCheckBackendUpdate(backendName, check, i)
+			return sections.TCPCheckBackendOps.Update(backendName, check, i)
 		},
 	)
 }

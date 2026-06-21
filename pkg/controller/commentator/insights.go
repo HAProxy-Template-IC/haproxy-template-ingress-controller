@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -38,9 +37,14 @@ const (
 // generateInsight creates a contextual message and structured attributes for the event.
 //
 // This applies domain knowledge and uses the ring buffer for event correlation.
-// Per-domain handlers live in insights_config.go (config + validation),
-// insights_pipeline.go (resource, reconciliation, template, deployment, pod)
-// and insights_platform.go (webhook, leader, status).
+// Each per-domain handler already switches on the concrete event types it owns
+// and returns an empty insight for everything else, so there is no need for an
+// outer type-group switch to pre-route events — that just duplicated the type
+// list. We hand the event to each handler in turn; the first one that claims it
+// (returns a non-empty insight) wins. Per-domain handlers live in
+// insights_config.go (config + validation), insights_pipeline.go (resource,
+// reconciliation, template, deployment, pod) and insights_platform.go (leader,
+// status).
 func (ec *EventCommentator) generateInsight(event busevents.Event) (insight string, args []any) {
 	eventType := event.EventType()
 	attrs := []any{
@@ -48,50 +52,23 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		"timestamp", event.Timestamp(),
 	}
 
-	switch event.(type) {
-	// Configuration Events
-	case *events.ConfigParsedEvent, *events.ConfigValidationRequest, *events.ConfigValidationResponse,
-		*events.ConfigValidatedEvent, *events.ConfigInvalidEvent:
-		return ec.configInsight(event, attrs)
-
-	// Resource Events
-	case *events.ResourceIndexUpdatedEvent, *events.ResourceSyncCompleteEvent,
-		*events.IndexSynchronizedEvent:
-		return ec.resourceInsight(event, attrs)
-
-	// Reconciliation Events
-	case *events.ReconciliationTriggeredEvent, *events.ReconciliationStartedEvent,
-		*events.ReconciliationCompletedEvent, *events.ReconciliationFailedEvent:
-		return ec.reconciliationInsight(event, attrs)
-
-	// Template Events
-	case *events.TemplateRenderedEvent, *events.TemplateRenderFailedEvent:
-		return ec.templateInsight(event, attrs)
-
-	// Validation Events
-	case *events.ValidationCompletedEvent, *events.ValidationFailedEvent:
-		return ec.validationInsight(event, attrs)
-
-	// Deployment Events
-	case *events.DeploymentStartedEvent, *events.InstanceDeployedEvent,
-		*events.InstanceDeploymentFailedEvent, *events.DeploymentCompletedEvent:
-		return ec.deploymentInsight(event, attrs)
-
-	// HAProxy Pod Events
-	case *events.HAProxyPodsDiscoveredEvent, *events.HAProxyPodTerminatedEvent, *events.HAProxyPodRejectedEvent:
-		return ec.podInsight(event, attrs)
-
-	// Leader Election Events
-	case *events.LeaderElectionStartedEvent, *events.BecameLeaderEvent,
-		*events.LostLeadershipEvent, *events.NewLeaderObservedEvent:
-		return ec.leaderInsight(event, attrs)
-
-	// Status Update Events
-	case *events.StatusUpdateCompletedEvent, *events.StatusUpdateFailedEvent:
-		return ec.statusInsight(event, attrs)
-
-	default:
-		// Fallback for unknown event types
-		return fmt.Sprintf("Event: %s", eventType), attrs
+	handlers := []func(busevents.Event, []any) (string, []any){
+		ec.configInsight,
+		ec.resourceInsight,
+		ec.reconciliationInsight,
+		ec.templateInsight,
+		ec.validationInsight,
+		ec.deploymentInsight,
+		ec.podInsight,
+		ec.leaderInsight,
+		ec.statusInsight,
 	}
+	for _, handler := range handlers {
+		if insight, args = handler(event, attrs); insight != "" {
+			return insight, args
+		}
+	}
+
+	// Fallback for unknown event types
+	return fmt.Sprintf("Event: %s", eventType), attrs
 }

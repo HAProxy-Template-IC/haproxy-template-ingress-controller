@@ -6,7 +6,6 @@
 package commentator
 
 import (
-	"slices"
 	"sync"
 	"time"
 
@@ -14,22 +13,20 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// Typical capacity: 1000 events (configurable).
+// RingBuffer is a fixed-capacity circular buffer of recent events used by the
+// commentator for cross-event correlation. Typical capacity: 1000 events.
+//
+// The Find* queries run a linear scan over the buffer. They're called at most a
+// handful of times per reconciliation-log-line against a buffer capped at ~1000
+// entries, so the scan cost is negligible and not worth maintaining secondary
+// type/correlation indices (which also have to be cleaned up on wraparound).
+// Old events fall out of every query automatically as the buffer overwrites
+// their slots — there is no separate index to leak.
 type RingBuffer struct {
 	events   []busevents.Event // Circular buffer (time-ordered)
 	head     int               // Next write position
 	size     int               // Current number of events
 	capacity int               // Maximum capacity
-
-	// typeIndex maps event types to indices in the events array.
-	// Uses lazy cleanup during reads to remove stale indices.
-	typeIndex map[string][]int
-
-	// correlationIndex maps correlation IDs to indices in the events array.
-	// Unlike typeIndex, correlation IDs are unique per reconciliation cycle,
-	// so we must actively clean up when events are overwritten to prevent
-	// memory growth.
-	correlationIndex map[string][]int
 
 	mu sync.RWMutex
 }
@@ -43,47 +40,22 @@ type RingBuffer struct {
 //   - *RingBuffer ready for use
 func NewRingBuffer(capacity int) *RingBuffer {
 	return &RingBuffer{
-		events:           make([]busevents.Event, capacity),
-		head:             0,
-		size:             0,
-		capacity:         capacity,
-		typeIndex:        make(map[string][]int),
-		correlationIndex: make(map[string][]int),
+		events:   make([]busevents.Event, capacity),
+		capacity: capacity,
 	}
 }
 
 // Add appends an event to the buffer.
 //
 // If the buffer is full, the oldest event is overwritten (circular behavior).
-// The type index and correlation index are updated to include the new event.
-// Old correlation index entries are actively cleaned up when events are
-// overwritten to prevent memory growth.
 //
-// This operation is O(1) amortized.
+// This operation is O(1).
 func (rb *RingBuffer) Add(event busevents.Event) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	// Clean up old correlation index entry before overwriting
-	// This is critical because correlation IDs are unique per reconciliation
-	// cycle and would otherwise accumulate indefinitely
-	if rb.size == rb.capacity {
-		rb.cleanupOldEventCorrelation(rb.head)
-	}
-
-	// Write event at head position
+	// Write event at head position (overwriting the oldest when full)
 	rb.events[rb.head] = event
-
-	// Update type index
-	eventType := event.EventType()
-	rb.typeIndex[eventType] = append(rb.typeIndex[eventType], rb.head)
-
-	// Update correlation index for events that have correlation IDs
-	if correlated, ok := event.(events.CorrelatedEvent); ok {
-		if corrID := correlated.CorrelationID(); corrID != "" {
-			rb.correlationIndex[corrID] = append(rb.correlationIndex[corrID], rb.head)
-		}
-	}
 
 	// Advance head (circular)
 	rb.head = (rb.head + 1) % rb.capacity
@@ -94,53 +66,14 @@ func (rb *RingBuffer) Add(event busevents.Event) {
 	}
 }
 
-// cleanupOldEventCorrelation removes the correlation index entry for the event
-// being overwritten. This prevents memory growth from accumulating stale
-// correlation ID entries.
-//
-// Must be called with rb.mu held.
-func (rb *RingBuffer) cleanupOldEventCorrelation(idx int) {
-	oldEvent := rb.events[idx]
-	if oldEvent == nil {
-		return
-	}
-
-	correlated, ok := oldEvent.(events.CorrelatedEvent)
-	if !ok {
-		return
-	}
-
-	corrID := correlated.CorrelationID()
-	if corrID == "" {
-		return
-	}
-
-	indices := rb.correlationIndex[corrID]
-	if len(indices) == 0 {
-		return
-	}
-
-	// Remove this index from the slice
-	newIndices := make([]int, 0, len(indices)-1)
-	for _, i := range indices {
-		if i != idx {
-			newIndices = append(newIndices, i)
-		}
-	}
-
-	if len(newIndices) == 0 {
-		// No more events with this correlation ID, remove the map entry entirely
-		delete(rb.correlationIndex, corrID)
-	} else {
-		rb.correlationIndex[corrID] = newIndices
-	}
+// Capacity returns the maximum capacity of the buffer.
+func (rb *RingBuffer) Capacity() int {
+	return rb.capacity
 }
 
 // FindByType returns all events of the specified type, newest first.
 //
 // The returned slice is a copy - modifications won't affect the buffer.
-//
-// Complexity: O(k) where k = number of events of that type (typically small)
 //
 // Example:
 //
@@ -149,21 +82,12 @@ func (rb *RingBuffer) cleanupOldEventCorrelation(idx int) {
 //	    // Process events (newest first)
 //	}
 func (rb *RingBuffer) FindByType(eventType string) []busevents.Event {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
 
-	result := rb.findInIndex(rb.typeIndex, eventType, func(event busevents.Event) bool {
-		return event != nil && event.EventType() == eventType
+	return rb.scanNewestFirst(func(event busevents.Event) bool {
+		return event.EventType() == eventType
 	})
-	if len(result) == 0 {
-		return nil
-	}
-
-	// Reverse to get newest first. result is a fresh copy from findInIndex,
-	// so the in-place reversal does not touch the buffer's backing array.
-	slices.Reverse(result)
-
-	return result
 }
 
 // FindByTypeInWindow returns events of the specified type within the time window, newest first.
@@ -180,26 +104,14 @@ func (rb *RingBuffer) FindByType(eventType string) []busevents.Event {
 //	// Find all config validations in the last 5 minutes
 //	events := rb.FindByTypeInWindow("config.validated", 5*time.Minute)
 func (rb *RingBuffer) FindByTypeInWindow(eventType string, window time.Duration) []busevents.Event {
-	allEvents := rb.FindByType(eventType)
-	if len(allEvents) == 0 {
-		return nil
-	}
-
 	cutoff := time.Now().Add(-window)
-	var result []busevents.Event
 
-	for _, evt := range allEvents {
-		if evt.Timestamp().After(cutoff) {
-			result = append(result, evt)
-		}
-	}
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
 
-	return result
-}
-
-// Capacity returns the maximum capacity of the buffer.
-func (rb *RingBuffer) Capacity() int {
-	return rb.capacity
+	return rb.scanNewestFirst(func(event busevents.Event) bool {
+		return event.EventType() == eventType && event.Timestamp().After(cutoff)
+	})
 }
 
 // FindByCorrelationID returns events with the specified correlation ID, newest first.
@@ -211,8 +123,6 @@ func (rb *RingBuffer) Capacity() int {
 // Returns:
 //   - Slice of events matching the correlation ID, newest first
 //
-// Complexity: O(k) where k = number of events with that correlation ID (typically 10-15 for a reconciliation cycle)
-//
 // Example:
 //
 //	// Find all events in a reconciliation cycle
@@ -222,68 +132,37 @@ func (rb *RingBuffer) FindByCorrelationID(correlationID string, maxCount int) []
 		return nil
 	}
 
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
 
-	result := rb.findInIndex(rb.correlationIndex, correlationID, func(event busevents.Event) bool {
-		if correlated, ok := event.(events.CorrelatedEvent); ok {
-			return correlated.CorrelationID() == correlationID
-		}
-		return false
+	result := rb.scanNewestFirst(func(event busevents.Event) bool {
+		correlated, ok := event.(events.CorrelatedEvent)
+		return ok && correlated.CorrelationID() == correlationID
 	})
-	if len(result) == 0 {
-		return nil
-	}
 
-	// Apply maxCount limit (keep most recent, which are at the end before reversal)
+	// Keep the most recent maxCount events (result is already newest-first).
 	if maxCount > 0 && len(result) > maxCount {
-		result = result[len(result)-maxCount:]
+		result = result[:maxCount]
 	}
-
-	// Reverse to get newest first. result is a fresh copy from findInIndex,
-	// so the in-place reversal does not touch the buffer's backing array.
-	slices.Reverse(result)
 
 	return result
 }
 
-// filterValidIndices filters a slice of indices, keeping only those where the
-// event at that index satisfies the predicate.
+// scanNewestFirst walks the buffer from the most-recently-written slot back to
+// the oldest, returning the events that satisfy predicate in newest-first
+// order. Returns nil (not an empty slice) when nothing matches, matching the
+// previous index-based implementation's contract.
 //
-// Returns both the matching events and the valid indices for index cleanup.
-// Must be called with rb.mu held.
-func (rb *RingBuffer) filterValidIndices(indices []int, predicate func(busevents.Event) bool) (result []busevents.Event, validIndices []int) {
-	result = make([]busevents.Event, 0, len(indices))
-	validIndices = make([]int, 0, len(indices))
-
-	for _, idx := range indices {
+// Must be called with rb.mu held (read lock is sufficient).
+func (rb *RingBuffer) scanNewestFirst(predicate func(busevents.Event) bool) []busevents.Event {
+	var result []busevents.Event
+	// head points one past the newest entry; walk backwards from there.
+	for i := 0; i < rb.size; i++ {
+		idx := (rb.head - 1 - i + rb.capacity) % rb.capacity
 		event := rb.events[idx]
-		if predicate(event) {
+		if event != nil && predicate(event) {
 			result = append(result, event)
-			validIndices = append(validIndices, idx)
 		}
-	}
-
-	return result, validIndices
-}
-
-// findInIndex looks up indices in idx[key], filters them by predicate, and
-// performs the lazy-cleanup write-back: if no entries survive the predicate it
-// deletes idx[key]; otherwise it stores the surviving subset back. Returns the
-// matching events in original (oldest-first) order so callers can apply
-// further trimming (maxCount) before reversing for the public API.
-//
-// Must be called with rb.mu held — the index is mutated.
-func (rb *RingBuffer) findInIndex(idx map[string][]int, key string, predicate func(busevents.Event) bool) []busevents.Event {
-	indices := idx[key]
-	if len(indices) == 0 {
-		return nil
-	}
-	result, validIndices := rb.filterValidIndices(indices, predicate)
-	if len(validIndices) == 0 {
-		delete(idx, key)
-	} else {
-		idx[key] = validIndices
 	}
 	return result
 }

@@ -30,7 +30,6 @@ import (
 	"log/slog"
 	"maps"
 	"strings"
-	"sync"
 
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,9 +56,6 @@ type ResourceWatcherComponent struct {
 	eventBus  *busevents.EventBus
 	k8sClient *client.Client
 	logger    *slog.Logger
-
-	syncMu sync.RWMutex
-	synced map[string]bool // resourceTypeName -> synced
 }
 
 // New creates a new ResourceWatcherComponent.
@@ -98,7 +94,6 @@ func New(
 		eventBus:  eventBus,
 		k8sClient: k8sClient,
 		logger:    logger,
-		synced:    make(map[string]bool),
 	}
 
 	// Auto-inject HAProxy pods watcher based on PodSelector
@@ -130,8 +125,8 @@ func New(
 			return nil, fmt.Errorf("invalid resource %q: %w", resourceTypeName, err)
 		}
 
-		// Merge global and per-resource ignore fields
-		ignoreFields := mergeIgnoreFields(cfg.WatchedResourcesIgnoreFields, nil)
+		// Deduplicate the global ignore-field list once per watcher.
+		ignoreFields := dedupIgnoreFields(cfg.WatchedResourcesIgnoreFields)
 
 		// Convert label selector map to metav1.LabelSelector
 		var labelSelector *metav1.LabelSelector
@@ -171,10 +166,6 @@ func New(
 
 			// OnSyncComplete publishes ResourceSyncCompleteEvent
 			OnSyncComplete: func(store types.Store, initialCount int) {
-				rwc.syncMu.Lock()
-				rwc.synced[resourceTypeName] = true
-				rwc.syncMu.Unlock()
-
 				eventBus.Publish(events.NewResourceSyncCompleteEvent(
 					resourceTypeName,
 					initialCount,
@@ -293,28 +284,6 @@ func (r *ResourceWatcherComponent) GetAllStores() map[string]types.Store {
 	return stores
 }
 
-// IsSynced returns true if the specified resource type has completed initial sync.
-func (r *ResourceWatcherComponent) IsSynced(resourceTypeName string) bool {
-	r.syncMu.RLock()
-	defer r.syncMu.RUnlock()
-
-	return r.synced[resourceTypeName]
-}
-
-// AllSynced returns true if all resource types have completed initial sync.
-func (r *ResourceWatcherComponent) AllSynced() bool {
-	r.syncMu.RLock()
-	defer r.syncMu.RUnlock()
-
-	for resourceTypeName := range r.watchers {
-		if !r.synced[resourceTypeName] {
-			return false
-		}
-	}
-
-	return true
-}
-
 // determineStoreType returns the appropriate store type based on the configuration.
 // Supported values:
 //   - "on-demand": Uses CachedStore for memory-efficient storage with API-backed retrieval
@@ -372,29 +341,16 @@ func parseAPIVersion(apiVersion string) (group, version string) {
 	return parts[0], parts[1]
 }
 
-// mergeIgnoreFields combines global and per-resource ignore field lists.
-//
-// Deduplicates entries and returns a new slice.
-// If perResource is nil, returns a copy of global.
-func mergeIgnoreFields(global, perResource []string) []string {
-	seen := make(map[string]bool)
-	result := make([]string, 0, len(global)+len(perResource))
-
-	// Add global fields
-	for _, field := range global {
+// dedupIgnoreFields returns a new slice containing the entries of fields with
+// duplicates removed, preserving first-occurrence order.
+func dedupIgnoreFields(fields []string) []string {
+	seen := make(map[string]bool, len(fields))
+	result := make([]string, 0, len(fields))
+	for _, field := range fields {
 		if !seen[field] {
 			result = append(result, field)
 			seen[field] = true
 		}
 	}
-
-	// Add per-resource fields
-	for _, field := range perResource {
-		if !seen[field] {
-			result = append(result, field)
-			seen[field] = true
-		}
-	}
-
 	return result
 }

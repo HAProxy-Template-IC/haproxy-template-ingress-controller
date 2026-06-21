@@ -38,7 +38,7 @@ func TestOpPreposition(t *testing.T) {
 	}
 }
 
-// DescribeTopLevel formats single-section operations like
+// describeTopLevel formats single-section operations like
 // "Create backend 'api'" or "Delete frontend 'http'". Pin the format
 // for every op type so log scrapers stay stable.
 func TestDescribeTopLevel(t *testing.T) {
@@ -55,12 +55,12 @@ func TestDescribeTopLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, DescribeTopLevel(tt.op, "backend", "api")())
+			assert.Equal(t, tt.want, describeTopLevel(tt.op, "backend", "api")())
 		})
 	}
 }
 
-// DescribeACL is a thin wrapper that includes the ACL name and uses the
+// describeACL is a thin wrapper that includes the ACL name and uses the
 // preposition to differentiate adds (in frontend) from removes (from
 // frontend). Pin both branches.
 func TestDescribeACL(t *testing.T) {
@@ -76,13 +76,13 @@ func TestDescribeACL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := DescribeACL(tt.op, "is_api", "frontend", "http")()
+			got := describeACL(tt.op, "is_api", "frontend", "http")()
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-// DescribeNamedChild is shared by named-child and container-child operations.
+// describeNamedChild is shared by named-child and container-child operations.
 // Pin the exact format and the per-op preposition so a future refactor can't
 // silently change the user-facing string.
 func TestDescribeNamedChild(t *testing.T) {
@@ -98,13 +98,13 @@ func TestDescribeNamedChild(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := DescribeNamedChild(tt.op, "bind", "lb1", "frontend", "http")()
+			got := describeNamedChild(tt.op, "bind", "lb1", "frontend", "http")()
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-// DescribeTypedChild prefers a parenthesized identifier when present, else
+// describeTypedChild prefers a parenthesized identifier when present, else
 // falls back to the supplied label. Pin both branches and the preposition
 // flip on delete.
 func TestDescribeTypedChild(t *testing.T) {
@@ -147,7 +147,7 @@ func TestDescribeTypedChild(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := DescribeTypedChild(tt.op, "http-rule", tt.identifier, tt.fallback, "backend", "api")()
+			got := describeTypedChild(tt.op, "http-rule", tt.identifier, tt.fallback, "backend", "api")()
 			assert.Equal(t, tt.want, got)
 		})
 	}

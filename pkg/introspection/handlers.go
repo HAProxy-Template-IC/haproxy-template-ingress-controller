@@ -79,7 +79,6 @@ func (s *Server) handleVar(w http.ResponseWriter, r *http.Request) {
 	// Extract variable path from URL
 	// URL format: /debug/vars/{path}
 	path := strings.TrimPrefix(r.URL.Path, "/debug/vars/")
-	path = strings.TrimPrefix(path, "vars/") // Also support /debug/vars/vars/{path}
 
 	// Handle special cases
 	if path == "" || path == "/" {

@@ -51,8 +51,7 @@ backend servers
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			compressed, err := Compress(tt.data)
-			require.NoError(t, err)
+			compressed := Compress(tt.data)
 
 			decompressed, err := Decompress(compressed)
 			require.NoError(t, err)
@@ -70,8 +69,7 @@ func TestCompressionRatio(t *testing.T) {
     server SRV_2 10.0.0.2:8080 check weight 100
 `, 500)
 
-	compressed, err := Compress(largeConfig)
-	require.NoError(t, err)
+	compressed := Compress(largeConfig)
 
 	originalSize := len(largeConfig)
 	compressedSize := len(compressed)

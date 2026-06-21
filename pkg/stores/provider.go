@@ -113,24 +113,6 @@ func (c *ValidationContext) IsEmpty() bool {
 	return !hasK8sOverlays && !hasHTTPOverlay
 }
 
-// HasK8sOverlays returns true if any K8s overlays are present.
-func (c *ValidationContext) HasK8sOverlays() bool {
-	if c == nil {
-		return false
-	}
-	for _, overlay := range c.K8sOverlays {
-		if overlay != nil && !overlay.IsEmpty() {
-			return true
-		}
-	}
-	return false
-}
-
-// HasHTTPOverlay returns true if an HTTP overlay is present.
-func (c *ValidationContext) HasHTTPOverlay() bool {
-	return c != nil && c.HTTPOverlay != nil && !c.HTTPOverlay.IsEmpty()
-}
-
 // Store defines the interface for storing and retrieving indexed resources.
 //
 // This interface mirrors pkg/k8s/Store but is defined here to maintain
@@ -312,14 +294,6 @@ func (p *OverlayStoreProvider) GetHTTPOverlay() HTTPContentOverlay {
 		return nil
 	}
 	return p.context.HTTPOverlay
-}
-
-// IsValidationMode returns true if this provider has a non-empty ValidationContext.
-//
-// This can be used by components to detect whether they're rendering for
-// validation (with proposed changes) vs production (with actual state).
-func (p *OverlayStoreProvider) IsValidationMode() bool {
-	return p.context != nil && !p.context.IsEmpty()
 }
 
 // Validate checks that all K8s overlays reference valid stores in the base provider.

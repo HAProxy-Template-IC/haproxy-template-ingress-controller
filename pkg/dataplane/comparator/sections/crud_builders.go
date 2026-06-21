@@ -24,19 +24,19 @@ func NewTopLevelCRUD[T any](section, displayName string, nameFn func(T) string) 
 		Create: func(model T) Operation {
 			return newOp(
 				OperationCreate, section,
-				DescribeTopLevel(OperationCreate, displayName, nameFn(model)),
+				describeTopLevel(OperationCreate, displayName, nameFn(model)),
 			)
 		},
 		Update: func(model T) Operation {
 			return newOp(
 				OperationUpdate, section,
-				DescribeTopLevel(OperationUpdate, displayName, nameFn(model)),
+				describeTopLevel(OperationUpdate, displayName, nameFn(model)),
 			)
 		},
 		Delete: func(model T) Operation {
 			return newOp(
 				OperationDelete, section,
-				DescribeTopLevel(OperationDelete, displayName, nameFn(model)),
+				describeTopLevel(OperationDelete, displayName, nameFn(model)),
 			)
 		},
 	}
@@ -56,19 +56,19 @@ func NewContainerChildCRUD[T any](section, displayName, containerType string, na
 		Create: func(containerName string, model T) Operation {
 			return newOp(
 				OperationCreate, section,
-				DescribeNamedChild(OperationCreate, displayName, nameFn(model), containerType, containerName),
+				describeNamedChild(OperationCreate, displayName, nameFn(model), containerType, containerName),
 			)
 		},
 		Update: func(containerName string, model T) Operation {
 			return newOp(
 				OperationUpdate, section,
-				DescribeNamedChild(OperationUpdate, displayName, nameFn(model), containerType, containerName),
+				describeNamedChild(OperationUpdate, displayName, nameFn(model), containerType, containerName),
 			)
 		},
 		Delete: func(containerName string, model T) Operation {
 			return newOp(
 				OperationDelete, section,
-				DescribeNamedChild(OperationDelete, displayName, nameFn(model), containerType, containerName),
+				describeNamedChild(OperationDelete, displayName, nameFn(model), containerType, containerName),
 			)
 		},
 	}
@@ -87,7 +87,7 @@ func NewIndexChildCRUD[T any](section, displayName, parentType string, identifie
 	return NewIndexChildCRUDWithDescriber[T](
 		section,
 		func(opType OperationType, model T, parentName string, index int) func() string {
-			return DescribeTypedChild(opType, displayName, identifierFn(model),
+			return describeTypedChild(opType, displayName, identifierFn(model),
 				fmt.Sprintf("at index %d", index), parentType, parentName)
 		},
 	)
@@ -123,7 +123,7 @@ type NameChildCRUD[T any] struct {
 // NewNameChildCRUD creates a CRUD builder for a name-based child resource.
 func NewNameChildCRUD[T any](section, displayType, parentType string, descNameFn func(model T, childName string) string) NameChildCRUD[T] {
 	describe := func(opType OperationType, model T, parentName, childName string) func() string {
-		return DescribeNamedChild(opType, displayType, descNameFn(model, childName), parentType, parentName)
+		return describeNamedChild(opType, displayType, descNameFn(model, childName), parentType, parentName)
 	}
 	return NameChildCRUD[T]{
 		Create: func(parentName, childName string, model T) Operation {

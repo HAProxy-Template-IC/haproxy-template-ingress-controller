@@ -28,6 +28,14 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
 )
 
+// validate computes the content checksum and runs ValidateWithChecksum, the
+// convenience shape the tests exercise. Production callers (the pipeline)
+// always have the checksum precomputed and call ValidateWithChecksum directly.
+func validate(s *ValidationService, ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles) *ValidationResult {
+	checksum := dataplane.ComputeContentChecksum(config, auxFiles)
+	return s.ValidateWithChecksum(ctx, config, auxFiles, checksum)
+}
+
 func TestNewValidationService(t *testing.T) {
 	svc := NewValidationService(&ValidationServiceConfig{
 		Logger:            slog.Default(),
@@ -70,7 +78,7 @@ backend http_back
     server srv1 127.0.0.1:80
 `
 
-	result := svc.Validate(context.Background(), config, nil)
+	result := validate(svc, context.Background(), config, nil)
 
 	require.NotNil(t, result)
 	assert.True(t, result.Valid, "expected valid config, got error: %v", result.Error)
@@ -97,7 +105,7 @@ defaults
     invalid_directive foo
 `
 
-	result := svc.Validate(context.Background(), config, nil)
+	result := validate(svc, context.Background(), config, nil)
 
 	require.NotNil(t, result)
 	assert.False(t, result.Valid)
@@ -139,7 +147,7 @@ backend http_back
 		},
 	}
 
-	result := svc.Validate(context.Background(), config, auxFiles)
+	result := validate(svc, context.Background(), config, auxFiles)
 
 	require.NotNil(t, result)
 	assert.True(t, result.Valid, "expected valid config with map file, got error: %v", result.Error)
@@ -177,7 +185,7 @@ backend http_back
 `
 
 	// No auxiliary files provided
-	result := svc.Validate(context.Background(), config, nil)
+	result := validate(svc, context.Background(), config, nil)
 
 	require.NotNil(t, result)
 	assert.False(t, result.Valid)
@@ -222,7 +230,7 @@ backend http_back
 		},
 	}
 
-	result := svc.Validate(context.Background(), config, auxFiles)
+	result := validate(svc, context.Background(), config, auxFiles)
 
 	require.NotNil(t, result)
 	assert.True(t, result.Valid, "expected valid config with error file, got error: %v", result.Error)
@@ -254,7 +262,7 @@ backend http_back
 
 	// Run validation multiple times to ensure temp dirs are cleaned up
 	for i := range 3 {
-		result := svc.Validate(context.Background(), config, nil)
+		result := validate(svc, context.Background(), config, nil)
 		require.NotNil(t, result)
 		assert.True(t, result.Valid, "iteration %d: expected valid config, got error: %v", i, result.Error)
 	}
@@ -292,7 +300,7 @@ backend http_back
 
 	for range concurrency {
 		go func() {
-			result := svc.Validate(context.Background(), config, nil)
+			result := validate(svc, context.Background(), config, nil)
 			results <- result
 		}()
 	}
@@ -330,12 +338,12 @@ func TestValidationService_CacheHit(t *testing.T) {
 	})
 
 	// First call: full validation (populates cache)
-	result1 := svc.Validate(context.Background(), validConfig, nil)
+	result1 := validate(svc, context.Background(), validConfig, nil)
 	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
 	require.NotNil(t, result1.ParsedConfig)
 
 	// Second call: same content -> cache hit (should be significantly faster)
-	result2 := svc.Validate(context.Background(), validConfig, nil)
+	result2 := validate(svc, context.Background(), validConfig, nil)
 	require.True(t, result2.Valid)
 	require.NotNil(t, result2.ParsedConfig)
 
@@ -351,7 +359,7 @@ func TestValidationService_CacheMiss_ConfigChange(t *testing.T) {
 	})
 
 	// First call with config A
-	result1 := svc.Validate(context.Background(), validConfig, nil)
+	result1 := validate(svc, context.Background(), validConfig, nil)
 	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
 
 	// Record cached checksum after first call
@@ -377,7 +385,7 @@ frontend http_front
 backend http_back
     server srv1 127.0.0.1:80
 `
-	result2 := svc.Validate(context.Background(), differentConfig, nil)
+	result2 := validate(svc, context.Background(), differentConfig, nil)
 	require.True(t, result2.Valid, "second call should succeed: %v", result2.Error)
 
 	svc.cacheMu.RLock()
@@ -406,7 +414,7 @@ func TestValidationService_CacheMiss_AuxFileChange(t *testing.T) {
 	}
 
 	// First call with auxFiles1
-	result1 := svc.Validate(context.Background(), validConfig, auxFiles1)
+	result1 := validate(svc, context.Background(), validConfig, auxFiles1)
 	require.True(t, result1.Valid, "first call should succeed: %v", result1.Error)
 
 	// Record cached checksum after first call
@@ -416,7 +424,7 @@ func TestValidationService_CacheMiss_AuxFileChange(t *testing.T) {
 	require.NotEmpty(t, checksumAfterFirst)
 
 	// Second call with different aux files -> cache miss -> new checksum
-	result2 := svc.Validate(context.Background(), validConfig, auxFiles2)
+	result2 := validate(svc, context.Background(), validConfig, auxFiles2)
 	require.True(t, result2.Valid, "second call should succeed: %v", result2.Error)
 
 	svc.cacheMu.RLock()
@@ -445,11 +453,11 @@ defaults
 `
 
 	// First call: fails
-	result1 := svc.Validate(context.Background(), invalidConfig, nil)
+	result1 := validate(svc, context.Background(), invalidConfig, nil)
 	require.False(t, result1.Valid)
 
 	// Second call with same invalid config: should NOT be cached, runs full validation again
-	result2 := svc.Validate(context.Background(), invalidConfig, nil)
+	result2 := validate(svc, context.Background(), invalidConfig, nil)
 	require.False(t, result2.Valid)
 	assert.NotNil(t, result2.Error)
 
@@ -466,7 +474,7 @@ func TestValidationService_CacheConcurrentAccess(t *testing.T) {
 	})
 
 	// Populate cache
-	result := svc.Validate(context.Background(), validConfig, nil)
+	result := validate(svc, context.Background(), validConfig, nil)
 	require.True(t, result.Valid, "initial validation should succeed: %v", result.Error)
 
 	// Concurrent cache hits
@@ -477,7 +485,7 @@ func TestValidationService_CacheConcurrentAccess(t *testing.T) {
 	for range concurrency {
 		go func() {
 			defer wg.Done()
-			r := svc.Validate(context.Background(), validConfig, nil)
+			r := validate(svc, context.Background(), validConfig, nil)
 			assert.True(t, r.Valid)
 			assert.NotNil(t, r.ParsedConfig)
 		}()
@@ -522,7 +530,7 @@ backend http_back
     server srv1 127.0.0.1:80
 `
 
-	result := svc.Validate(context.Background(), config, nil)
+	result := validate(svc, context.Background(), config, nil)
 
 	require.NotNil(t, result)
 	require.True(t, result.Valid, "expected valid config, got error: %v", result.Error)

@@ -15,8 +15,8 @@ func (c *Comparator) compareAcmeProviders(current, desired *parser.StructuredCon
 		desired.AcmeProviders,
 		func(ap *models.AcmeProvider) string { return ap.Name },
 		func(a1, a2 *models.AcmeProvider) bool { return a1.Equal(*a2) },
-		sections.NewAcmeProviderCreate,
-		sections.NewAcmeProviderDelete,
-		sections.NewAcmeProviderUpdate,
+		sections.AcmeProviderOps.Create,
+		sections.AcmeProviderOps.Delete,
+		sections.AcmeProviderOps.Update,
 	)
 }

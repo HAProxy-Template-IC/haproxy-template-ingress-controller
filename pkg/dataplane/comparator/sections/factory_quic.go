@@ -22,46 +22,16 @@ import (
 
 // describeQUICInitialRule builds the description for the quic-initial-rule
 // section. QUIC initial rules carry no model identifier, so the empty
-// identifier makes DescribeTypedChild fall back to the "at index N" label.
+// identifier makes describeTypedChild fall back to the "at index N" label.
 func describeQUICInitialRule(parentType string) func(OperationType, *models.QUICInitialRule, string, int) func() string {
 	return func(op OperationType, _ *models.QUICInitialRule, parentName string, index int) func() string {
-		return DescribeTypedChild(op, "quic-initial-rule", "", fmt.Sprintf("at index %d", index), parentType, parentName)
+		return describeTypedChild(op, "quic-initial-rule", "", fmt.Sprintf("at index %d", index), parentType, parentName)
 	}
 }
 
 // CRUD builders for QUIC initial rules in frontends and defaults sections.
 // QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 var (
-	quicInitialRuleFrontendOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule]("quic_initial_rule", describeQUICInitialRule("frontend"))
-	quicInitialRuleDefaultsOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule]("quic_initial_rule", describeQUICInitialRule("defaults"))
+	QuicInitialRuleFrontendOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule]("quic_initial_rule", describeQUICInitialRule("frontend"))
+	QuicInitialRuleDefaultsOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule]("quic_initial_rule", describeQUICInitialRule("defaults"))
 )
-
-// NewQUICInitialRuleFrontendCreate creates an operation to create a QUIC initial rule in a frontend.
-func NewQUICInitialRuleFrontendCreate(frontendName string, rule *models.QUICInitialRule, index int) Operation {
-	return quicInitialRuleFrontendOps.Create(frontendName, rule, index)
-}
-
-// NewQUICInitialRuleFrontendUpdate creates an operation to update a QUIC initial rule in a frontend.
-func NewQUICInitialRuleFrontendUpdate(frontendName string, rule *models.QUICInitialRule, index int) Operation {
-	return quicInitialRuleFrontendOps.Update(frontendName, rule, index)
-}
-
-// NewQUICInitialRuleFrontendDelete creates an operation to delete a QUIC initial rule from a frontend.
-func NewQUICInitialRuleFrontendDelete(frontendName string, rule *models.QUICInitialRule, index int) Operation {
-	return quicInitialRuleFrontendOps.Delete(frontendName, rule, index)
-}
-
-// NewQUICInitialRuleDefaultsCreate creates an operation to create a QUIC initial rule in defaults.
-func NewQUICInitialRuleDefaultsCreate(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
-	return quicInitialRuleDefaultsOps.Create(defaultsName, rule, index)
-}
-
-// NewQUICInitialRuleDefaultsUpdate creates an operation to update a QUIC initial rule in defaults.
-func NewQUICInitialRuleDefaultsUpdate(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
-	return quicInitialRuleDefaultsOps.Update(defaultsName, rule, index)
-}
-
-// NewQUICInitialRuleDefaultsDelete creates an operation to delete a QUIC initial rule from defaults.
-func NewQUICInitialRuleDefaultsDelete(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
-	return quicInitialRuleDefaultsOps.Delete(defaultsName, rule, index)
-}

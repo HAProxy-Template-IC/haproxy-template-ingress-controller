@@ -134,87 +134,81 @@ func (c *Client) Validate(ctx context.Context, req *Request) (*Response, error) 
 	callCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
-	conn, fresh, err := c.acquire(callCtx)
-	if err != nil {
-		return ProtocolError(fmt.Sprintf(
-			"validator %q: connect %s: %v", c.Name, c.SocketPath, err,
-		)), nil
+	// Two attempts max: the first on a connection from acquire (which may be
+	// reused or freshly dialed), the second always on a forced-fresh dial. A
+	// reused connection that fails on encode/decode may simply have been
+	// idle-closed by the validator between our last use and now, so it earns
+	// one retry; a fresh connection that fails is the real failure mode and is
+	// surfaced directly. Connect/set-deadline failures never retry.
+	resp, retry := c.attempt(callCtx, req, deadline, 0)
+	if retry {
+		resp, _ = c.attempt(callCtx, req, deadline, 1)
 	}
-
-	if err := conn.SetDeadline(deadline); err != nil {
-		c.discard(conn)
-		return ProtocolError(fmt.Sprintf(
-			"validator %q: set deadline: %v", c.Name, err,
-		)), nil
-	}
-
-	if _, err := EncodeRequest(conn, req); err != nil {
-		// On a fresh connection a write error is most likely a
-		// real socket failure. On a reused connection it could be
-		// the server having idle-closed underneath us; retry once
-		// with a fresh dial.
-		c.discard(conn)
-		if !fresh {
-			return c.retryOnce(callCtx, req), nil
-		}
-		return ProtocolError(fmt.Sprintf(
-			"validator %q: encode request: %v", c.Name, err,
-		)), nil
-	}
-
-	resp, err := DecodeResponse(conn)
-	if err != nil {
-		c.discard(conn)
-		if !fresh {
-			return c.retryOnce(callCtx, req), nil
-		}
-		return ProtocolError(fmt.Sprintf(
-			"validator %q: decode response: %v", c.Name, err,
-		)), nil
-	}
-
-	c.release(conn)
 	return resp, nil
 }
 
-// retryOnce retries Validate exactly once with a forced-fresh
-// connection. Used when the first attempt failed on a reused
-// connection (which may have been idle-closed by the validator
-// between our last use and now). A single retry is enough — if the
-// fresh connection also fails, the validator is genuinely broken.
-//
-// Always returns a non-nil Response: transport-level failures are
-// surfaced as ProtocolError responses for symmetry with Validate.
-func (c *Client) retryOnce(ctx context.Context, req *Request) *Response {
-	deadline, _ := ctx.Deadline()
-
-	conn, _, err := c.dialFresh(ctx)
+// attempt performs one acquire/send/receive round-trip. On success it returns
+// the validator's Response and retry=false. On transport failure it returns a
+// ProtocolError Response to surface, and retry=true only when a *reused*
+// connection (attempt 0, !fresh) failed on encode/decode — the idle-close
+// signal that earns a single fresh-dial retry. Connect/set-deadline failures
+// never retry.
+func (c *Client) attempt(callCtx context.Context, req *Request, deadline time.Time, n int) (result *Response, retry bool) {
+	var (
+		conn  net.Conn
+		fresh bool
+		err   error
+	)
+	if n == 0 {
+		conn, fresh, err = c.acquire(callCtx)
+	} else {
+		conn, fresh, err = c.dialFresh(callCtx)
+	}
 	if err != nil {
 		return ProtocolError(fmt.Sprintf(
-			"validator %q: connect %s (retry): %v", c.Name, c.SocketPath, err,
-		))
+			"validator %q: connect %s%s: %v", c.Name, c.SocketPath, retrySuffix(n), err,
+		)), false
 	}
+
 	if err := conn.SetDeadline(deadline); err != nil {
 		c.discard(conn)
 		return ProtocolError(fmt.Sprintf(
-			"validator %q: set deadline (retry): %v", c.Name, err,
-		))
+			"validator %q: set deadline%s: %v", c.Name, retrySuffix(n), err,
+		)), false
 	}
+
+	// A reused connection (first attempt, not freshly dialed) may have been
+	// idle-closed; its encode/decode failure earns one retry.
+	canRetry := n == 0 && !fresh
+
 	if _, err := EncodeRequest(conn, req); err != nil {
 		c.discard(conn)
 		return ProtocolError(fmt.Sprintf(
-			"validator %q: encode request (retry): %v", c.Name, err,
-		))
+			"validator %q: encode request%s: %v", c.Name, retrySuffix(n), err,
+		)), canRetry
 	}
+
 	resp, err := DecodeResponse(conn)
 	if err != nil {
 		c.discard(conn)
 		return ProtocolError(fmt.Sprintf(
-			"validator %q: decode response (retry): %v", c.Name, err,
-		))
+			"validator %q: decode response%s: %v", c.Name, retrySuffix(n), err,
+		)), canRetry
 	}
+
 	c.release(conn)
-	return resp
+	return resp, false
+}
+
+// retrySuffix returns " (retry)" for retry attempts (attempt > 0) and the
+// empty string for the first attempt, so transport-error diagnostics carry
+// the same "(retry)" marker the two-phase send/receive used before being
+// collapsed into one loop.
+func retrySuffix(attempt int) string {
+	if attempt > 0 {
+		return " (retry)"
+	}
+	return ""
 }
 
 // acquire returns a pooled connection (reusing a free one if any,
@@ -309,9 +303,10 @@ func (c *Client) armCancelWatcher(ctx context.Context) func() {
 }
 
 // dialFresh always opens a new connection, bypassing the pool's
-// reuse logic. Used by retryOnce. Counts toward inFlight so the
-// pool's MaxConnections cap is honored even during retries. Blocks
-// on cond.Wait when at cap, just like acquire — no busy polling.
+// reuse logic. Used by Validate's retry attempt. Counts toward
+// inFlight so the pool's MaxConnections cap is honored even during
+// retries. Blocks on cond.Wait when at cap, just like acquire — no
+// busy polling.
 func (c *Client) dialFresh(ctx context.Context) (net.Conn, bool, error) {
 	stop := c.armCancelWatcher(ctx)
 	defer stop()

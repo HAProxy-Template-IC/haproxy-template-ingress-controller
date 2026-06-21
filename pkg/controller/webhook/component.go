@@ -142,7 +142,7 @@ type Config struct {
 
 	// Rules defines which resources the webhook validates.
 	// Used for registering validators by GVK.
-	Rules []webhook.WebhookRule
+	Rules []WebhookRule
 
 	// DryRunValidator performs dry-run validation of resources.
 	// If nil, validation is skipped (fail-open).

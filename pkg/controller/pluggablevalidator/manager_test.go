@@ -335,20 +335,6 @@ func TestManager_ValidateAll_AggregatesWarningAndError(t *testing.T) {
 	}
 }
 
-func TestManager_FilesFor(t *testing.T) {
-	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "coraza", SocketPath: "/x", Files: []string{"/etc/x/*.toml", "/etc/y/*.toml"}},
-		{Name: "otel", SocketPath: "/y", Files: tomlGlob()},
-	})
-	files := mgr.FilesFor("coraza")
-	if len(files) != 2 {
-		t.Fatalf("FilesFor(coraza) = %v, want 2 entries", files)
-	}
-	if got := mgr.FilesFor("ghost"); got != nil {
-		t.Fatalf("FilesFor(unknown) = %v, want nil", got)
-	}
-}
-
 func TestManager_Names_PreservesOrder(t *testing.T) {
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
 		{Name: "first", SocketPath: "/a", Files: tomlGlob()},

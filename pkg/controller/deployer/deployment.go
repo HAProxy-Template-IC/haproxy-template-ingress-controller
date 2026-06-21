@@ -472,7 +472,21 @@ func (c *Component) deployToSingleEndpoint(
 	}
 
 	// Update version cache with post-sync state (including content checksum).
-	cachedParsed := pickCachedParsedConfig(result, parsedConfig)
+	// Prefer result.PostSyncParsedConfig (the pod's ACTUAL post-sync state,
+	// fetched and parsed by the orchestrator) over parsedConfig (the caller's
+	// desired intent). The two diverge when the dataplane API applies
+	// incremental patches against pods with different starting baselines — e.g.
+	// a rolling HAProxy Deployment where one pod is synced twice and another
+	// once. Both end up "logically desired" but byte-different on disk; caching
+	// the input desired would hide that drift from every subsequent reconcile
+	// and the divergent pod would never be re-synced. The orchestrator only
+	// populates PostSyncParsedConfig when ops were applied AND the post-sync
+	// fetch+parse succeeded; otherwise desired is equivalent to the live state
+	// (the no-changes path already verified pod==desired).
+	cachedParsed := result.PostSyncParsedConfig
+	if cachedParsed == nil {
+		cachedParsed = parsedConfig
+	}
 	if result.PostSyncVersion > 0 && cachedParsed != nil {
 		c.versionCache.set(endpoint.URL, result.PostSyncVersion, cachedParsed, contentChecksum)
 	}

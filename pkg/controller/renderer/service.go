@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"path"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -86,10 +85,6 @@ type RenderService struct {
 
 	// capabilities defines which features are available for the local HAProxy version.
 	capabilities dataplane.Capabilities
-
-	// capabilitiesMap is the pre-computed map representation of capabilities.
-	// Cached at construction time to avoid creating the same map on every render.
-	capabilitiesMap map[string]any
 
 	// Optional dependencies for building render context
 	haproxyPodStore    stores.Store
@@ -183,10 +178,6 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		GeneralDir: generalDir,
 	}
 
-	// Pre-compute capabilities map to avoid creating it on every render.
-	// Capabilities never change during controller lifetime.
-	capabilitiesMap := rendercontext.CapabilitiesToMap(&cfg.Capabilities)
-
 	return &RenderService{
 		engine:             cfg.Engine,
 		config:             cfg.Config,
@@ -194,7 +185,6 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		logger:             cfg.Logger,
 		renderTimeout:      cfg.Config.TemplatingSettings.GetRenderTimeout(),
 		capabilities:       cfg.Capabilities,
-		capabilitiesMap:    capabilitiesMap,
 		haproxyPodStore:    cfg.HAProxyPodStore,
 		httpStoreComponent: cfg.HTTPStoreComponent,
 		currentConfigStore: cfg.CurrentConfigStore,
@@ -288,150 +278,59 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 }
 
 // buildRenderingContext constructs the template rendering context from stores.
+//
+// This goes through the shared rendercontext.Builder — the exact same path
+// testrunner and the render benchmark use — so a template can't pass
+// `controller validate` yet behave differently in production. The only
+// production-specific plumbing is reading the live stores off the
+// StoreProvider, resolving the current deployed config, and wiring the HTTP
+// fetcher (whose overlay depends on the provider type); everything else is the
+// Builder's responsibility.
 func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]any, *rendercontext.FileRegistry, *templating.StatusPatchCollector, *templating.RenderedResourceCollector) {
-	renderContext := make(map[string]any)
-
-	// Add path resolver for file path resolution in templates
-	renderContext["pathResolver"] = s.pathResolver
-
-	// Build the resources runtime value. Production must produce a
-	// value whose struct type matches what typebootstrap.BuildEngineDeclarations
-	// declared at engine-construction time — drift here trips Scriggo's
-	// "variable initializer 'resources' must have type assignable to …"
-	// panic at the FIRST template run, killing reconciliation outright.
-	// rendercontext.BuildResourcesValue is the single source of truth for
-	// the shape, shared with testrunner so production and validate go
-	// through the same construction path. Each StoreWrapper inside picks
-	// up the IndexBy the watcher used to build the underlying store so
-	// per-render snapshot indices align with the live store state
-	// (without IndexBy, Fetch / GetSingle fall back to a live store read
-	// that can observe a state diverging from List() — the root cause of
-	// the conformance-suite flakes tracked in issue #45 (parallel
-	// resource creation racing the chart's per-render reads)).
+	// Snapshot the live stores off the provider. The haproxy-pods store is
+	// separated out by the Builder (WithHAProxyPodStore) into
+	// controller.haproxy_pods; the rest land in `resources`.
 	storesByName := make(map[string]stores.Store, len(provider.StoreNames()))
 	for _, name := range provider.StoreNames() {
 		if store := provider.GetStore(name); store != nil {
 			storesByName[name] = store
 		}
 	}
-	// watchedNames mirrors the keys typebootstrap.BuildEngineDeclarations
-	// iterated (via helpers.BuildAdditionalDeclarations: result.Types ∪
-	// result.Errors ∪ extras-from-WatchedResources). Including the full
-	// watched-resource set keeps the runtime resources struct's field
-	// list byte-identical to the engine declaration's, even for
-	// resources without a local store or generated type — Scriggo
-	// requires the runtime variable's type to match the declared type
-	// exactly, mismatches panic with
-	// "must have type assignable to struct {...}".
-	watchedNames := make([]string, 0, len(s.config.WatchedResources))
-	for name := range s.config.WatchedResources {
-		watchedNames = append(watchedNames, name)
+	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(storesByName)
+	if haproxyPodStore == nil {
+		// Production injects the haproxy-pods store directly (it may not be
+		// registered with the provider under names.HAProxyPodsResourceType).
+		haproxyPodStore = s.haproxyPodStore
 	}
-	renderContext["resources"] = rendercontext.BuildResourcesValue(
-		storesByName,
-		s.typedResourceTypes,
-		watchedNames,
-		func(name string) []string {
-			if wr, ok := s.config.WatchedResources[name]; ok {
-				return wr.IndexBy
-			}
-			return nil
-		},
-		func(name string) bool {
-			if wr, ok := s.config.WatchedResources[name]; ok {
-				return wr.Store == "on-demand"
-			}
-			return false
-		},
-		s.logger,
-	)
 
-	// Add controller context with typed ResourceStore map. The
-	// haproxy-pods watcher is auto-injected by ResourceWatcherComponent
-	// with a fixed IndexBy of ["metadata.namespace", "metadata.name"]
-	// (see pkg/controller/resourcewatcher/watcher.go) — mirror that
-	// here so the wrapper's snapshot index agrees with the underlying
-	// store, same reason as the resources loop above.
-	controller := make(map[string]templating.ResourceStore)
-	if s.haproxyPodStore != nil {
-		controller["haproxy_pods"] = &rendercontext.StoreWrapper{
-			Store:        s.haproxyPodStore,
-			ResourceType: names.HAProxyPodsResourceType,
-			Logger:       s.logger,
-			IndexBy:      []string{"metadata.namespace", "metadata.name"},
-		}
+	opts := []rendercontext.Option{
+		rendercontext.WithStores(resourceStores),
+		rendercontext.WithHAProxyPodStore(haproxyPodStore),
+		rendercontext.WithCapabilities(s.capabilities),
+		rendercontext.WithTypedResources(s.typedResourceTypes),
 	}
-	renderContext["controller"] = controller
 
-	// Add capabilities at top level (not inside controller)
-	// Use pre-computed map to avoid creating it on every render
-	renderContext["capabilities"] = s.capabilitiesMap
-
-	// Add dataplane config at top level
-	renderContext["dataplane"] = s.config.Dataplane
-
-	// Add current config if available (for slot preservation)
-	// Note: Must check for nil value - Scriggo panics with nil pointer initializers
+	// Add current config if available (for slot preservation). Passing a nil
+	// *StructuredConfig is fine — the Builder omits the key (Scriggo panics on
+	// nil pointer initializers).
 	if s.currentConfigStore != nil {
-		currentConfig := s.currentConfigStore.Get()
-		if currentConfig != nil {
-			renderContext["currentConfig"] = currentConfig
-		}
+		opts = append(opts, rendercontext.WithCurrentConfig(s.currentConfigStore.Get()))
 	}
 
-	// Create file registry for dynamic file registration
-	fileRegistry := rendercontext.NewFileRegistry(s.pathResolver)
-	renderContext["fileRegistry"] = fileRegistry
-
-	// Create status patch collector for template-driven status updates
-	statusPatchCollector := templating.NewStatusPatchCollector()
-	renderContext["statusPatchCollector"] = statusPatchCollector
-
-	// Create rendered resource collector for template-driven owned-resource
-	// reconciliation. Same shape as statusPatchCollector but for whole
-	// resources instead of status-only updates. Resource-agnostic by design
-	// (the controller never names a specific resource kind in code — it
-	// applies whatever the template emits via SSA).
-	renderedResourceCollector := templating.NewRenderedResourceCollector()
-	renderContext["renderedResourceCollector"] = renderedResourceCollector
-
-	// Create shared cache for cross-template data sharing
-	renderContext["shared"] = templating.NewSharedContext()
-
-	// Add template snippets list (sorted)
-	templateSnippets := rendercontext.SortSnippetNames(s.config.TemplateSnippets)
-	renderContext["templateSnippets"] = templateSnippets
-
-	// Add runtime environment
-	renderContext["runtimeEnvironment"] = &templating.RuntimeEnvironment{
-		GOMAXPROCS: runtime.GOMAXPROCS(0),
-	}
-
-	// Add HTTP fetcher if available
-	// Detection of validation mode is automatic based on provider type:
-	// - If provider is OverlayStoreProvider with HTTP overlay: validation mode
-	// - Otherwise: production mode (accepted content only)
+	// Wire the HTTP fetcher. Validation mode is detected automatically from the
+	// provider type: an OverlayStoreProvider carries the HTTP overlay (pending
+	// content), production providers don't (accepted content only).
 	if s.httpStoreComponent != nil {
 		var httpOverlay stores.HTTPContentOverlay
-
-		// Check if provider is OverlayStoreProvider and extract HTTP overlay
 		if overlayProvider, ok := provider.(*stores.OverlayStoreProvider); ok {
 			httpOverlay = overlayProvider.GetHTTPOverlay()
 		}
-
 		httpFetcher := httpstore.NewHTTPStoreWrapper(ctx, s.httpStoreComponent, s.logger, httpOverlay)
-		renderContext["http"] = httpFetcher
+		opts = append(opts, rendercontext.WithHTTPFetcher(httpFetcher))
 	}
 
-	// Merge extraContext last, mirroring rendercontext.Builder: this always
-	// populates the "extraContext" key (empty map when unset, so templates can
-	// safely chain `extraContext | dig(...) | fallback(...)`) AND promotes the
-	// user's top-level keys (e.g. `{{ debug.enabled }}`). Hand-rolling only the
-	// nil-check here previously diverged from the validate/testrunner path,
-	// letting a template pass `controller validate` yet misbehave in production.
-	rendercontext.MergeExtraContextInto(renderContext, s.config)
-
-	return renderContext, fileRegistry, statusPatchCollector, renderedResourceCollector
+	res := rendercontext.NewBuilder(s.config, s.pathResolver, s.logger, opts...).Build()
+	return res.Context, res.FileRegistry, res.StatusPatchCollector, res.RenderedResourceCollector
 }
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.

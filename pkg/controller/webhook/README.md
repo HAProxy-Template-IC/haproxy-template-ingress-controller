@@ -38,7 +38,7 @@ if err := comp.Start(ctx); err != nil {
 | `Path` | URL path that handles `POST /…` AdmissionReview calls (default `/validate`) |
 | `CertDir` | Directory holding the mounted cert Secret (`tls.crt`/`tls.key`). In production the controller sets this to the mount path. The pure server resolves the cert per handshake and hot-reloads it on rotation — a cert-manager renewal is served without a restart. |
 | `CertPEM` / `KeyPEM` | Fixed PEM-encoded TLS material, used only when `CertDir` is unset (e.g. unit tests). Empty values with no `CertDir` cause `Start` to return an error. |
-| `Rules` | `[]pkg/webhook.WebhookRule`, one per kind to register. Built from the CRD via `webhook.ExtractWebhookRules(cfg *config.Config)`. |
+| `Rules` | `[]WebhookRule`, one per kind to register. Built from the CRD via `ExtractWebhookRules(cfg *config.Config)`. |
 | `DryRunValidator` | Interface with a single method: `ValidateDirect(ctx, gvk, namespace, name, object, operation) (allowed bool, reason string, warnings []string)`. Satisfied by `pkg/controller/dryrunvalidator.Component`. Warnings flow through to `AdmissionResponse.Warnings` on both allow and deny paths (e.g. soft diagnostics from pluggable validator sidecars). If `nil`, the component fails open (accepts everything) — useful only in tests. |
 
 `restMapper` is used to resolve `(APIGroup, APIVersion, Resource)` → `Kind` when wiring rules into `"group/version.Kind"` registration keys that the underlying `pkg/webhook.Server` expects. A live `meta.RESTMapper` from the controller's cluster connection is required.

@@ -3,7 +3,7 @@
 Three components that together get validated configurations onto HAProxy pods:
 
 - **`DeploymentScheduler`** — decides *when* to deploy. Keeps the last validated config + last discovered endpoints, rate-limits to `minDeploymentInterval`, and queues at most one pending deployment ("latest wins"). Also times out deployments that take longer than `deploymentTimeout` so a dropped `DeploymentCompletedEvent` can't wedge the pipeline forever.
-- **`Component`** (the deployer itself) — stateless executor. Consumes `DeploymentScheduledEvent` and deploys to every discovered HAProxy endpoint in parallel using `pkg/dataplane.Client`. Its `SyncOptions` (`ReloadVerificationTimeout`, `Timeout`) are passed through to each `pkg/dataplane` sync.
+- **`Component`** (the deployer itself) — stateless executor. Consumes `DeploymentScheduledEvent` and deploys to every discovered HAProxy endpoint in parallel using `pkg/dataplane.Client`. Its per-sync timeouts (`reloadVerificationTimeout`, `syncTimeout`, passed to `New`) are forwarded to each `pkg/dataplane` sync.
 - **`DriftPreventionMonitor`** — fires a synthetic `DriftPreventionTriggeredEvent` every `driftPreventionInterval` when nothing has deployed recently, so an out-of-band change applied directly via the Dataplane API gets overwritten by the controller's last-known-good config.
 
 All three are leader-only — only the replica holding the `Lease` deploys, observers on other replicas stay idle.
@@ -24,10 +24,10 @@ scheduler := deployer.NewDeploymentScheduler(
     2*time.Second,   // minDeploymentInterval
     30*time.Second,  // deploymentTimeout
 )
-exec := deployer.New(bus, logger, deployer.SyncOptions{
-    ReloadVerificationTimeout: 10 * time.Second,
-    Timeout:                   2 * time.Minute,
-})
+exec := deployer.New(bus, logger,
+    10*time.Second, // reloadVerificationTimeout
+    2*time.Minute,  // syncTimeout
+)
 monitor := deployer.NewDriftPreventionMonitor(bus, logger, 60*time.Second)
 
 go scheduler.Start(ctx)

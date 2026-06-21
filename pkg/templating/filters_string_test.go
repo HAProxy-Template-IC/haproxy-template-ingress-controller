@@ -121,6 +121,13 @@ func TestScriggoTitle(t *testing.T) {
 		{name: "mixed case", in: "hELlO wORlD", want: "Hello World"},
 		{name: "single word", in: "ingress", want: "Ingress"},
 		{name: "empty string", in: "", want: ""},
+		// Word-boundary semantics from x/text Unicode segmentation: an internal
+		// apostrophe and a digit run stay inside the word (they are NOT word
+		// boundaries), so the rune after them is not re-capitalised.
+		{name: "internal apostrophe", in: "don't", want: "Don't"},
+		{name: "internal digits", in: "abc2def", want: "Abc2def"},
+		// Hyphen IS a word boundary.
+		{name: "hyphenated", in: "config-maps", want: "Config-Maps"},
 	}
 
 	for _, tt := range tests {

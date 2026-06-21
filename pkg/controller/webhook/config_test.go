@@ -21,7 +21,6 @@ import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	webhooklib "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
 func TestExtractWebhookRules(t *testing.T) {
@@ -29,7 +28,7 @@ func TestExtractWebhookRules(t *testing.T) {
 		name          string
 		config        *config.Config
 		expectedRules int
-		checkFirst    func(*testing.T, []webhooklib.WebhookRule)
+		checkFirst    func(*testing.T, []WebhookRule)
 	}{
 		{
 			name: "no webhook enabled",
@@ -56,7 +55,7 @@ func TestExtractWebhookRules(t *testing.T) {
 				},
 			},
 			expectedRules: 1,
-			checkFirst: func(t *testing.T, rules []webhooklib.WebhookRule) {
+			checkFirst: func(t *testing.T, rules []WebhookRule) {
 				t.Helper()
 				assert.Equal(t, []string{"networking.k8s.io"}, rules[0].APIGroups)
 				assert.Equal(t, []string{"v1"}, rules[0].APIVersions)
@@ -80,7 +79,7 @@ func TestExtractWebhookRules(t *testing.T) {
 				},
 			},
 			expectedRules: 1,
-			checkFirst: func(t *testing.T, rules []webhooklib.WebhookRule) {
+			checkFirst: func(t *testing.T, rules []WebhookRule) {
 				t.Helper()
 				assert.Equal(t, []string{""}, rules[0].APIGroups)
 				assert.Equal(t, []string{"v1"}, rules[0].APIVersions)

@@ -19,8 +19,6 @@ import (
 	"fmt"
 )
 
-const indentNormalizationPattern = "^[ ]+"
-
 // PostProcessor processes rendered template output before it is returned.
 // Post-processors enable generic transformations like normalization, formatting,
 // or cleanup that apply to the final rendered content.
@@ -78,11 +76,6 @@ func NewPostProcessor(config PostProcessorConfig) (PostProcessor, error) {
 		replace, ok := config.Params["replace"]
 		if !ok {
 			return nil, errors.New("regex_replace processor requires 'replace' parameter")
-		}
-
-		// Fast-path: indentation normalization without regex overhead
-		if pattern == indentNormalizationPattern {
-			return &IndentNormalizerProcessor{indent: replace}, nil
 		}
 
 		return NewRegexReplaceProcessor(pattern, replace)

@@ -13,59 +13,17 @@ import (
 
 // Top-level CRUD builders for Enterprise Edition sections.
 var (
-	botMgmtProfileOps = NewTopLevelCRUD("botmgmt-profile", "botmgmt-profile", BotMgmtProfileName)
-	captchaOps        = NewTopLevelCRUD("captcha", "captcha", CaptchaEEName)
-	wafProfileOps     = NewTopLevelCRUD("waf-profile", "waf-profile", WAFProfileName)
+	BotMgmtProfileOps = NewTopLevelCRUD("botmgmt-profile", "botmgmt-profile", botMgmtProfileName)
+	CaptchaOps        = NewTopLevelCRUD("captcha", "captcha", captchaEEName)
+	WafProfileOps     = NewTopLevelCRUD("waf-profile", "waf-profile", wafProfileName)
 )
-
-// NewBotMgmtProfileCreate creates an operation to create a bot management profile.
-// Bot management profiles are only available in HAProxy Enterprise Edition.
-func NewBotMgmtProfileCreate(profile *v32ee.BotmgmtProfile) Operation {
-	return botMgmtProfileOps.Create(profile)
-}
-
-// NewBotMgmtProfileUpdate creates an operation to update a bot management profile.
-func NewBotMgmtProfileUpdate(profile *v32ee.BotmgmtProfile) Operation {
-	return botMgmtProfileOps.Update(profile)
-}
-
-// NewBotMgmtProfileDelete creates an operation to delete a bot management profile.
-func NewBotMgmtProfileDelete(profile *v32ee.BotmgmtProfile) Operation {
-	return botMgmtProfileOps.Delete(profile)
-}
-
-// NewCaptchaCreate creates an operation to create a captcha section.
-// Captcha is only available in HAProxy Enterprise Edition.
-func NewCaptchaCreate(captcha *v32ee.Captcha) Operation { return captchaOps.Create(captcha) }
-
-// NewCaptchaUpdate creates an operation to update a captcha section.
-func NewCaptchaUpdate(captcha *v32ee.Captcha) Operation { return captchaOps.Update(captcha) }
-
-// NewCaptchaDelete creates an operation to delete a captcha section.
-func NewCaptchaDelete(captcha *v32ee.Captcha) Operation { return captchaOps.Delete(captcha) }
-
-// NewWAFProfileCreate creates an operation to create a WAF profile.
-// WAF profiles are only available in HAProxy Enterprise Edition v3.2+.
-func NewWAFProfileCreate(profile *v32ee.WafProfile) Operation {
-	return wafProfileOps.Create(profile)
-}
-
-// NewWAFProfileUpdate creates an operation to update a WAF profile.
-func NewWAFProfileUpdate(profile *v32ee.WafProfile) Operation {
-	return wafProfileOps.Update(profile)
-}
-
-// NewWAFProfileDelete creates an operation to delete a WAF profile.
-func NewWAFProfileDelete(profile *v32ee.WafProfile) Operation {
-	return wafProfileOps.Delete(profile)
-}
 
 // NewWAFGlobalCreate creates an operation to create the WAF global configuration.
 // WAF global is a singleton section (only one per configuration).
 func NewWAFGlobalCreate(_ *v32ee.WafGlobal) Operation {
 	return newOp(
 		OperationCreate, "waf-global",
-		DescribeSingleton(OperationCreate, "waf-global"),
+		describeSingleton(OperationCreate, "waf-global"),
 	)
 }
 
@@ -73,7 +31,7 @@ func NewWAFGlobalCreate(_ *v32ee.WafGlobal) Operation {
 func NewWAFGlobalUpdate(_ *v32ee.WafGlobal) Operation {
 	return newOp(
 		OperationUpdate, "waf-global",
-		DescribeSingleton(OperationUpdate, "waf-global"),
+		describeSingleton(OperationUpdate, "waf-global"),
 	)
 }
 
@@ -81,28 +39,28 @@ func NewWAFGlobalUpdate(_ *v32ee.WafGlobal) Operation {
 func NewWAFGlobalDelete(_ *v32ee.WafGlobal) Operation {
 	return newOp(
 		OperationDelete, "waf-global",
-		DescribeSingleton(OperationDelete, "waf-global"),
+		describeSingleton(OperationDelete, "waf-global"),
 	)
 }
 
-// BotMgmtProfileName extracts the name from a BotmgmtProfile model.
-func BotMgmtProfileName(p *v32ee.BotmgmtProfile) string {
+// botMgmtProfileName extracts the name from a BotmgmtProfile model.
+func botMgmtProfileName(p *v32ee.BotmgmtProfile) string {
 	return p.Name
 }
 
-// CaptchaEEName extracts the name from a Captcha model.
-// Named CaptchaEEName to avoid conflict with CaptchaName in helpers.go.
-func CaptchaEEName(c *v32ee.Captcha) string {
+// captchaEEName extracts the name from a Captcha model.
+// Named captchaEEName to avoid conflict with CaptchaName in helpers.go.
+func captchaEEName(c *v32ee.Captcha) string {
 	return c.Name
 }
 
-// WAFProfileName extracts the name from a WafProfile model.
-func WAFProfileName(p *v32ee.WafProfile) string {
+// wafProfileName extracts the name from a WafProfile model.
+func wafProfileName(p *v32ee.WafProfile) string {
 	return p.Name
 }
 
-// DescribeSingleton returns a description function for singleton operations.
-func DescribeSingleton(op OperationType, section string) func() string {
+// describeSingleton returns a description function for singleton operations.
+func describeSingleton(op OperationType, section string) func() string {
 	verb := opVerb(op)
 	return func() string {
 		return verb + " " + section + " configuration"
