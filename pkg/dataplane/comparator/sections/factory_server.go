@@ -94,7 +94,6 @@ func ServerIneligibleFields(current, desired *models.Server) []string {
 	}
 	for key, desVal := range desiredMap {
 		if _, exists := currentMap[key]; !exists {
-			// key only in desired — it's a new field
 			if !bytes.Equal(desVal, json.RawMessage("null")) {
 				if _, ok := serverRuntimeSupportedJSONFields[key]; !ok {
 					ineligible = append(ineligible, key)
@@ -105,9 +104,9 @@ func ServerIneligibleFields(current, desired *models.Server) []string {
 	return ineligible
 }
 
-// serverTemplateOps groups create/update/delete factories for server-template
+// ServerTemplateOps groups create/update/delete factories for server-template
 // operations under a backend.
-var serverTemplateOps = NewNameChildCRUD[*models.ServerTemplate](
+var ServerTemplateOps = NewNameChildCRUD[*models.ServerTemplate](
 	"server_template", "server template", "backend",
 	func(_ *models.ServerTemplate, childName string) string { return childName },
 )
@@ -116,7 +115,7 @@ var serverTemplateOps = NewNameChildCRUD[*models.ServerTemplate](
 func NewServerCreate(backendName string, server *models.Server) Operation {
 	return newOp(
 		OperationCreate, "server",
-		DescribeNamedChild(OperationCreate, "server", server.Name, "backend", backendName),
+		describeNamedChild(OperationCreate, "server", server.Name, "backend", backendName),
 	)
 }
 
@@ -153,7 +152,7 @@ func (op *ServerUpdateOp) Type() OperationType { return OperationUpdate }
 func (op *ServerUpdateOp) Section() string     { return "server" }
 
 func (op *ServerUpdateOp) Describe() string {
-	return DescribeNamedChild(OperationUpdate, "server", op.server.Name, "backend", op.backendName)()
+	return describeNamedChild(OperationUpdate, "server", op.server.Name, "backend", op.backendName)()
 }
 
 // BackendName returns the name of the backend containing this server.
@@ -173,21 +172,6 @@ func (op *ServerUpdateOp) Server() *models.Server { return op.server }
 func NewServerDelete(backendName string, server *models.Server) Operation {
 	return newOp(
 		OperationDelete, "server",
-		DescribeNamedChild(OperationDelete, "server", server.Name, "backend", backendName),
+		describeNamedChild(OperationDelete, "server", server.Name, "backend", backendName),
 	)
-}
-
-// NewServerTemplateCreate creates an operation to create a server template in a backend.
-func NewServerTemplateCreate(backendName string, serverTemplate *models.ServerTemplate) Operation {
-	return serverTemplateOps.Create(backendName, serverTemplate.Prefix, serverTemplate)
-}
-
-// NewServerTemplateUpdate creates an operation to update a server template in a backend.
-func NewServerTemplateUpdate(backendName string, serverTemplate *models.ServerTemplate) Operation {
-	return serverTemplateOps.Update(backendName, serverTemplate.Prefix, serverTemplate)
-}
-
-// NewServerTemplateDelete creates an operation to delete a server template from a backend.
-func NewServerTemplateDelete(backendName string, serverTemplate *models.ServerTemplate) Operation {
-	return serverTemplateOps.Delete(backendName, serverTemplate.Prefix, serverTemplate)
 }

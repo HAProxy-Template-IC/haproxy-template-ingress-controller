@@ -16,8 +16,8 @@ import (
 )
 
 // describeACLOp is a higher-order describer-factory used by
-// NewIndexChildCRUDWithDescriber for the aclFrontendOps / aclBackendOps
-// CRUD builders. It wraps DescribeACL into the
+// NewIndexChildCRUDWithDescriber for the ACLFrontendOps / ACLBackendOps
+// CRUD builders. It wraps describeACL into the
 // (op, model, parentName, index) shape the describer slot expects.
 //
 // The two captured pieces — the parentType bound at factory time, and
@@ -50,7 +50,7 @@ func TestDescribeACLOp(t *testing.T) {
 			want:       "Update ACL 'is_admin' in backend 'api'",
 		},
 		{
-			name:       "delete uses 'from' preposition (DescribeACL contract)",
+			name:       "delete uses 'from' preposition (describeACL contract)",
 			parentType: "frontend",
 			op:         OperationDelete,
 			acl:        &models.ACL{ACLName: "is_api"},
@@ -82,7 +82,7 @@ func TestDescribeACLOp(t *testing.T) {
 
 // describeQUICInitialRule is the analogous describer-factory for
 // quic_initial_rule sections. QUIC initial rules don't carry a model
-// identifier, so it passes an empty identifier to DescribeTypedChild and
+// identifier, so it passes an empty identifier to describeTypedChild and
 // relies on the "at index N" fallback — only the index matters.
 func TestDescribeQUICInitialRule(t *testing.T) {
 	tests := []struct {

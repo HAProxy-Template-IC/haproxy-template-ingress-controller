@@ -19,8 +19,30 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
+
+// WebhookRule specifies which resources a webhook should intercept.
+type WebhookRule struct {
+	// APIGroups that this rule matches.
+	// Example: ["networking.k8s.io"]
+	APIGroups []string
+
+	// APIVersions that this rule matches.
+	// Example: ["v1"]
+	APIVersions []string
+
+	// Resources that this rule matches (plural, lowercase).
+	// Example: ["ingresses"]
+	Resources []string
+
+	// Operations that this rule matches.
+	// Default: ["CREATE", "UPDATE"]
+	Operations []admissionv1.OperationType
+
+	// Scope restricts the rule to cluster or namespace-scoped resources.
+	// Default: "*" (all scopes)
+	Scope *admissionv1.ScopeType
+}
 
 // ExtractWebhookRules extracts webhook rules from controller configuration.
 //
@@ -33,8 +55,8 @@ import (
 // Returns:
 //   - Slice of webhook rules for resources that have validation enabled
 //   - Empty slice if no resources have webhook validation enabled
-func ExtractWebhookRules(cfg *config.Config) []webhook.WebhookRule {
-	rules := make([]webhook.WebhookRule, 0, len(cfg.WatchedResources))
+func ExtractWebhookRules(cfg *config.Config) []WebhookRule {
+	rules := make([]WebhookRule, 0, len(cfg.WatchedResources))
 
 	for _, resource := range cfg.WatchedResources {
 		if !resource.EnableValidationWebhook {
@@ -50,7 +72,7 @@ func ExtractWebhookRules(cfg *config.Config) []webhook.WebhookRule {
 		// Create webhook rule
 		// Use resource.Resources which is the plural form (e.g., "ingresses", "services")
 		// Kind is not needed here - the webhook server gets it from AdmissionRequest at runtime
-		rule := webhook.WebhookRule{
+		rule := WebhookRule{
 			APIGroups:   []string{gv.Group},
 			APIVersions: []string{gv.Version},
 			Resources:   []string{resource.Resources},

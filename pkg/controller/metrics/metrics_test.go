@@ -326,18 +326,6 @@ func TestMetrics_RecordWebhookValidation(t *testing.T) {
 	assert.Equal(t, 3.0, testutil.ToFloat64(validation))
 }
 
-func TestMetrics_RecordWebhookCertRotation(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-
-	metrics.RecordWebhookCertRotation()
-	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.WebhookCertRotations))
-
-	metrics.RecordWebhookCertRotation()
-	metrics.RecordWebhookCertRotation()
-	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.WebhookCertRotations))
-}
-
 func TestMetrics_SetIsLeader(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)

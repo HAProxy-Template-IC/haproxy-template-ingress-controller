@@ -16,6 +16,43 @@ generate:
   # truth for the validator generator and for regeneration.
   embedded-spec: false
 output-options:
+  # HAPTIC calls only a small storage/CA-file/reload/config-push slice of the
+  # DataPlane API. Whitelisting those operation IDs makes oapi-codegen prune
+  # every other operation AND every schema not transitively reachable from them.
+  # This EE version's structured models are NOT referenced by hand-written code
+  # (only v32ee's BotmgmtProfile/Waf*/Captcha/UdpLb/Balance are -- which is why
+  # v32ee is intentionally left unfiltered). Pruning here is loss-free. The
+  # on-disk spec.json stays the full source of truth for the validator generator.
+  include-operation-ids:
+    - createCaFile
+    - createStorageGeneralFile
+    - createStorageMapFile
+    - createStorageSSLCertificate
+    - createStorageSSLCrtListFile
+    - deleteCaFile
+    - deleteStorageGeneralFile
+    - deleteStorageMap
+    - deleteStorageSSLCertificate
+    - deleteStorageSSLCrtListFile
+    - getAllCaFiles
+    - getAllStorageGeneralFiles
+    - getAllStorageMapFiles
+    - getAllStorageSSLCertificates
+    - getAllStorageSSLCrtListFiles
+    - getCaFile
+    - getConfigurationVersion
+    - getHAProxyConfiguration
+    - getOneStorageGeneralFile
+    - getOneStorageMap
+    - getOneStorageSSLCertificate
+    - getOneStorageSSLCrtListFile
+    - getReload
+    - postHAProxyConfiguration
+    - replaceStorageGeneralFile
+    - replaceStorageMapFile
+    - replaceStorageSSLCertificate
+    - replaceStorageSSLCrtListFile
+    - setCaFile
   # HAPTIC only uses the raw *Client (-> *http.Response, hand-decoded); the typed
   # "ClientWithResponses" half (ParseXxxResponse, WithBaseURL, per-op Response
   # structs) is ~39% of the generated file and has zero consumers. Suppress it by

@@ -110,8 +110,8 @@ func TestFindDeletedUserlists_TableDriven(t *testing.T) {
 }
 
 // extractDeletedNames pulls userlist names out of the Describe()
-// strings emitted by NewUserlistDelete. The format is documented
-// by sections.DescribeTopLevel as: "<Verb> <Section> '<Name>'".
+// strings emitted by sections.UserlistOps.Delete. The top-level
+// describe format is: "<Verb> <Section> '<Name>'".
 // We match the single-quoted name. Keeps the test independent of
 // the concrete delete-op struct type (which is generic and
 // unexported through the factory API).
@@ -132,7 +132,7 @@ func extractDeletedNames(t *testing.T, ops []sections.Operation) []string {
 			}
 		}
 		require.True(t, first >= 0 && last > first,
-			"Describe output %q must contain a single-quoted name (DescribeTopLevel format)", desc)
+			"Describe output %q must contain a single-quoted name (top-level describe format)", desc)
 		names = append(names, desc[first+1:last])
 	}
 	return names

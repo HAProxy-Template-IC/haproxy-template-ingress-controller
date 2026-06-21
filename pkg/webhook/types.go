@@ -58,7 +58,6 @@ package webhook
 import (
 	"time"
 
-	admissionv1 "k8s.io/api/admissionregistration/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -181,27 +180,4 @@ type ServerConfig struct {
 	// WriteTimeout is the maximum duration before timing out writes of the response.
 	// Default: 10s
 	WriteTimeout time.Duration
-}
-
-// WebhookRule specifies which resources a webhook should intercept.
-type WebhookRule struct {
-	// APIGroups that this rule matches.
-	// Example: ["networking.k8s.io"]
-	APIGroups []string
-
-	// APIVersions that this rule matches.
-	// Example: ["v1"]
-	APIVersions []string
-
-	// Resources that this rule matches (plural, lowercase).
-	// Example: ["ingresses"]
-	Resources []string
-
-	// Operations that this rule matches.
-	// Default: ["CREATE", "UPDATE"]
-	Operations []admissionv1.OperationType
-
-	// Scope restricts the rule to cluster or namespace-scoped resources.
-	// Default: "*" (all scopes)
-	Scope *admissionv1.ScopeType
 }

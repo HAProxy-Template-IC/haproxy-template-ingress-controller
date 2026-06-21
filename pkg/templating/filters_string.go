@@ -281,8 +281,11 @@ func shouldIndentLine(lineIndex int, line string, indentFirst, indentBlank bool)
 	return true
 }
 
-// scriggoTitle converts a value to title case.
-// The input is converted to string using lenient type conversion.
+// scriggoTitle converts a value to title case using Unicode word
+// segmentation (golang.org/x/text/cases). This keeps internal mid-word
+// runes such as apostrophes ("don't" -> "Don't") and digit runs
+// ("abc2def" -> "Abc2def") inside the word, matching the long-standing
+// behaviour. The input is converted to string using lenient type conversion.
 //
 // Usage in Scriggo templates:
 //

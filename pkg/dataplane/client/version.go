@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -126,15 +127,28 @@ func ParseVersion(version string) (*Version, error) {
 	}
 
 	v := &Version{Full: version}
-	if _, err := fmt.Sscanf(segments[0], "%d", &v.Major); err != nil {
+	major, err := strconv.Atoi(segments[0])
+	if err != nil {
 		return nil, fmt.Errorf("parsing major version: %w", err)
 	}
-	if _, err := fmt.Sscanf(segments[1], "%d", &v.Minor); err != nil {
+	minor, err := strconv.Atoi(segments[1])
+	if err != nil {
 		return nil, fmt.Errorf("parsing minor version: %w", err)
 	}
+	v.Major = major
+	v.Minor = minor
+
 	// Patch is optional and best-effort: a non-numeric segment leaves it 0.
+	// A trailing build suffix ("2-dev") is stripped so the numeric prefix is
+	// still extracted, matching the previous fmt.Sscanf("%d") behaviour.
 	if len(segments) >= 3 {
-		_, _ = fmt.Sscanf(segments[2], "%d", &v.Patch)
+		patchSeg := segments[2]
+		if idx := strings.Index(patchSeg, "-"); idx >= 0 {
+			patchSeg = patchSeg[:idx]
+		}
+		if patch, perr := strconv.Atoi(patchSeg); perr == nil {
+			v.Patch = patch
+		}
 	}
 
 	return v, nil

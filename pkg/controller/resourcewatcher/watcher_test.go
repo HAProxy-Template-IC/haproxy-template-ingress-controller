@@ -3,7 +3,6 @@ package resourcewatcher
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"testing"
 	"time"
 
@@ -143,48 +142,32 @@ func TestParseAPIVersion(t *testing.T) {
 	}
 }
 
-func TestMergeIgnoreFields(t *testing.T) {
+func TestDedupIgnoreFields(t *testing.T) {
 	tests := []struct {
-		name        string
-		global      []string
-		perResource []string
-		want        []string
+		name   string
+		fields []string
+		want   []string
 	}{
 		{
-			name:        "only global",
-			global:      []string{"metadata.managedFields", "metadata.annotations"},
-			perResource: nil,
-			want:        []string{"metadata.managedFields", "metadata.annotations"},
+			name:   "no duplicates preserves order",
+			fields: []string{"metadata.managedFields", "metadata.annotations"},
+			want:   []string{"metadata.managedFields", "metadata.annotations"},
 		},
 		{
-			name:        "only per-resource",
-			global:      nil,
-			perResource: []string{"spec.template"},
-			want:        []string{"spec.template"},
+			name:   "deduplicate keeps first occurrence",
+			fields: []string{"metadata.managedFields", "metadata.annotations", "metadata.managedFields", "spec.template"},
+			want:   []string{"metadata.managedFields", "metadata.annotations", "spec.template"},
 		},
 		{
-			name:        "merge without duplicates",
-			global:      []string{"metadata.managedFields"},
-			perResource: []string{"spec.template"},
-			want:        []string{"metadata.managedFields", "spec.template"},
-		},
-		{
-			name:        "deduplicate",
-			global:      []string{"metadata.managedFields", "metadata.annotations"},
-			perResource: []string{"metadata.managedFields", "spec.template"},
-			want:        []string{"metadata.managedFields", "metadata.annotations", "spec.template"},
-		},
-		{
-			name:        "both empty",
-			global:      []string{},
-			perResource: []string{},
-			want:        []string{},
+			name:   "empty",
+			fields: []string{},
+			want:   []string{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mergeIgnoreFields(tt.global, tt.perResource)
+			got := dedupIgnoreFields(tt.fields)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -259,7 +242,6 @@ func createTestComponent() *ResourceWatcherComponent {
 		eventBus:  busevents.NewEventBus(10),
 		k8sClient: nil,
 		logger:    slog.Default(),
-		synced:    make(map[string]bool),
 	}
 }
 
@@ -307,95 +289,6 @@ func TestGetAllStores_UnitTest(t *testing.T) {
 		// Original should be unchanged
 		assert.NotNil(t, rwc.stores["services"])
 	})
-}
-
-func TestIsSynced_UnitTest(t *testing.T) {
-	rwc := createTestComponent()
-
-	t.Run("initially not synced", func(t *testing.T) {
-		assert.False(t, rwc.IsSynced("services"))
-		assert.False(t, rwc.IsSynced("ingresses"))
-	})
-
-	t.Run("synced after marking", func(t *testing.T) {
-		rwc.syncMu.Lock()
-		rwc.synced["services"] = true
-		rwc.syncMu.Unlock()
-
-		assert.True(t, rwc.IsSynced("services"))
-		assert.False(t, rwc.IsSynced("ingresses"))
-	})
-
-	t.Run("non-existent resource returns false", func(t *testing.T) {
-		assert.False(t, rwc.IsSynced("pods"))
-	})
-}
-
-func TestAllSynced_UnitTest(t *testing.T) {
-	rwc := createTestComponent()
-
-	t.Run("initially not all synced", func(t *testing.T) {
-		assert.False(t, rwc.AllSynced())
-	})
-
-	t.Run("partially synced returns false", func(t *testing.T) {
-		rwc.syncMu.Lock()
-		rwc.synced["services"] = true
-		rwc.syncMu.Unlock()
-
-		assert.False(t, rwc.AllSynced())
-	})
-
-	t.Run("all synced returns true", func(t *testing.T) {
-		rwc.syncMu.Lock()
-		rwc.synced["services"] = true
-		rwc.synced["ingresses"] = true
-		rwc.syncMu.Unlock()
-
-		assert.True(t, rwc.AllSynced())
-	})
-}
-
-func TestAllSynced_EmptyWatchers(t *testing.T) {
-	rwc := &ResourceWatcherComponent{
-		watchers: map[string]*watcher.Watcher{},
-		stores:   map[string]types.Store{},
-		synced:   make(map[string]bool),
-		syncMu:   sync.RWMutex{},
-	}
-
-	// With no watchers, AllSynced should return true (vacuously true)
-	assert.True(t, rwc.AllSynced())
-}
-
-func TestAllSynced_ConcurrentAccess(t *testing.T) {
-	rwc := createTestComponent()
-
-	// Test concurrent reads and writes
-	done := make(chan bool)
-
-	// Writer goroutine
-	go func() {
-		for i := range 100 {
-			rwc.syncMu.Lock()
-			rwc.synced["services"] = i%2 == 0
-			rwc.syncMu.Unlock()
-		}
-		done <- true
-	}()
-
-	// Reader goroutine
-	go func() {
-		for range 100 {
-			_ = rwc.AllSynced()
-			_ = rwc.IsSynced("services")
-		}
-		done <- true
-	}()
-
-	// Wait for both to complete
-	<-done
-	<-done
 }
 
 func TestDetermineNamespace(t *testing.T) {
@@ -447,7 +340,6 @@ func TestStart_EmptyWatchers(t *testing.T) {
 	rwc := &ResourceWatcherComponent{
 		watchers: map[string]*watcher.Watcher{},
 		stores:   map[string]types.Store{},
-		synced:   make(map[string]bool),
 		logger:   slog.Default(),
 	}
 
@@ -473,7 +365,6 @@ func TestWaitForAllSync_EmptyWatchers(t *testing.T) {
 	rwc := &ResourceWatcherComponent{
 		watchers: map[string]*watcher.Watcher{},
 		stores:   map[string]types.Store{},
-		synced:   make(map[string]bool),
 		logger:   slog.Default(),
 	}
 
@@ -490,7 +381,6 @@ func TestWaitForAllSync_ContextCancelled(t *testing.T) {
 	rwc := &ResourceWatcherComponent{
 		watchers: map[string]*watcher.Watcher{},
 		stores:   map[string]types.Store{},
-		synced:   make(map[string]bool),
 		logger:   slog.Default(),
 	}
 
@@ -656,59 +546,6 @@ func TestGetAllStores(t *testing.T) {
 	// Verify it returns a copy (modifying return value doesn't affect internal state)
 	stores["services"] = nil
 	assert.NotNil(t, rwc.stores["services"])
-}
-
-func TestSyncTracking(t *testing.T) {
-	cfg := &coreconfig.Config{
-		WatchedResources: map[string]coreconfig.WatchedResource{
-			"services": {
-				APIVersion: "v1",
-				Resources:  "services",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-			"pods": {
-				APIVersion: "v1",
-				Resources:  "pods",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-		},
-	}
-	bus := busevents.NewEventBus(10)
-	logger := slog.Default()
-
-	rwc, err := New(cfg, newFakeClient(), bus, logger)
-	require.NoError(t, err)
-
-	// New() also auto-injects a haproxy-pods watcher driven by PodSelector.
-	// AllSynced() returns true only when *every* watcher is synced, so this
-	// test has to flip the haproxy-pods flag too.
-	const haproxyPodsKey = "haproxy-pods"
-
-	// Initially nothing is synced.
-	assert.False(t, rwc.IsSynced("services"))
-	assert.False(t, rwc.IsSynced("pods"))
-	assert.False(t, rwc.IsSynced(haproxyPodsKey))
-	assert.False(t, rwc.AllSynced())
-
-	// Simulate OnSyncComplete callback for services.
-	rwc.syncMu.Lock()
-	rwc.synced["services"] = true
-	rwc.syncMu.Unlock()
-
-	assert.True(t, rwc.IsSynced("services"))
-	assert.False(t, rwc.IsSynced("pods"))
-	assert.False(t, rwc.AllSynced())
-
-	// Simulate OnSyncComplete callback for pods + haproxy-pods.
-	rwc.syncMu.Lock()
-	rwc.synced["pods"] = true
-	rwc.synced[haproxyPodsKey] = true
-	rwc.syncMu.Unlock()
-
-	assert.True(t, rwc.IsSynced("services"))
-	assert.True(t, rwc.IsSynced("pods"))
-	assert.True(t, rwc.IsSynced(haproxyPodsKey))
-	assert.True(t, rwc.AllSynced())
 }
 
 // Event-publishing coverage (ResourceIndexUpdatedEvent / ResourceSyncCompleteEvent

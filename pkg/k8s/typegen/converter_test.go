@@ -388,7 +388,7 @@ func TestGoFieldName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
-			assert.Equal(t, tt.want, goFieldName(tt.in))
+			assert.Equal(t, tt.want, GoFieldName(tt.in))
 		})
 	}
 }
@@ -464,7 +464,7 @@ func TestConverter_AllOfWithSingleRef(t *testing.T) {
 
 // TestConverter_GoFieldNameCollisionDegradesToAny pins the
 // fail-open path for the case where two JSON property names
-// collapse to the same Go field identifier under goFieldName's
+// collapse to the same Go field identifier under GoFieldName's
 // capitalise-and-sanitise rule. reflect.StructOf would panic on
 // the duplicate; the converter detects the collision and returns
 // `any` for the whole object so callers can still render via

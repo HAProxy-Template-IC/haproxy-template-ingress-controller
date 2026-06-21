@@ -64,22 +64,22 @@ func TestBackendFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewBackendCreate",
-			factory:          NewBackendCreate,
+			name:             "BackendOps.Create",
+			factory:          BackendOps.Create,
 			wantType:         OperationCreate,
 			wantSection:      "backend",
 			wantDescContains: "Create backend 'api-backend'",
 		},
 		{
-			name:             "NewBackendUpdate",
-			factory:          NewBackendUpdate,
+			name:             "BackendOps.Update",
+			factory:          BackendOps.Update,
 			wantType:         OperationUpdate,
 			wantSection:      "backend",
 			wantDescContains: "Update backend 'api-backend'",
 		},
 		{
-			name:             "NewBackendDelete",
-			factory:          NewBackendDelete,
+			name:             "BackendOps.Delete",
+			factory:          BackendOps.Delete,
 			wantType:         OperationDelete,
 			wantSection:      "backend",
 			wantDescContains: "Delete backend 'api-backend'",
@@ -106,22 +106,22 @@ func TestFrontendFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewFrontendCreate",
-			factory:          NewFrontendCreate,
+			name:             "FrontendOps.Create",
+			factory:          FrontendOps.Create,
 			wantType:         OperationCreate,
 			wantSection:      "frontend",
 			wantDescContains: "Create frontend 'http-frontend'",
 		},
 		{
-			name:             "NewFrontendUpdate",
-			factory:          NewFrontendUpdate,
+			name:             "FrontendOps.Update",
+			factory:          FrontendOps.Update,
 			wantType:         OperationUpdate,
 			wantSection:      "frontend",
 			wantDescContains: "Update frontend 'http-frontend'",
 		},
 		{
-			name:             "NewFrontendDelete",
-			factory:          NewFrontendDelete,
+			name:             "FrontendOps.Delete",
+			factory:          FrontendOps.Delete,
 			wantType:         OperationDelete,
 			wantSection:      "frontend",
 			wantDescContains: "Delete frontend 'http-frontend'",
@@ -148,22 +148,22 @@ func TestDefaultsFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewDefaultsCreate",
-			factory:          NewDefaultsCreate,
+			name:             "DefaultsOps.Create",
+			factory:          DefaultsOps.Create,
 			wantType:         OperationCreate,
 			wantSection:      "defaults",
 			wantDescContains: "Create defaults section 'http-defaults'",
 		},
 		{
-			name:             "NewDefaultsUpdate",
-			factory:          NewDefaultsUpdate,
+			name:             "DefaultsOps.Update",
+			factory:          DefaultsOps.Update,
 			wantType:         OperationUpdate,
 			wantSection:      "defaults",
 			wantDescContains: "Update defaults section 'http-defaults'",
 		},
 		{
-			name:             "NewDefaultsDelete",
-			factory:          NewDefaultsDelete,
+			name:             "DefaultsOps.Delete",
+			factory:          DefaultsOps.Delete,
 			wantType:         OperationDelete,
 			wantSection:      "defaults",
 			wantDescContains: "Delete defaults section 'http-defaults'",
@@ -199,20 +199,20 @@ func TestACLFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewACLFrontendCreate",
-				factory:          NewACLFrontendCreate,
+				name:             "ACLFrontendOps.Create",
+				factory:          ACLFrontendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create ACL 'is_api' in frontend 'http'",
 			},
 			{
-				name:             "NewACLFrontendUpdate",
-				factory:          NewACLFrontendUpdate,
+				name:             "ACLFrontendOps.Update",
+				factory:          ACLFrontendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update ACL 'is_api' in frontend 'http'",
 			},
 			{
-				name:             "NewACLFrontendDelete",
-				factory:          NewACLFrontendDelete,
+				name:             "ACLFrontendOps.Delete",
+				factory:          ACLFrontendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete ACL 'is_api' from frontend 'http'",
 			},
@@ -237,20 +237,20 @@ func TestACLFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewACLBackendCreate",
-				factory:          NewACLBackendCreate,
+				name:             "ACLBackendOps.Create",
+				factory:          ACLBackendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create ACL 'is_api' in backend 'api'",
 			},
 			{
-				name:             "NewACLBackendUpdate",
-				factory:          NewACLBackendUpdate,
+				name:             "ACLBackendOps.Update",
+				factory:          ACLBackendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update ACL 'is_api' in backend 'api'",
 			},
 			{
-				name:             "NewACLBackendDelete",
-				factory:          NewACLBackendDelete,
+				name:             "ACLBackendOps.Delete",
+				factory:          ACLBackendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete ACL 'is_api' from backend 'api'",
 			},
@@ -315,20 +315,20 @@ func TestBindFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewBindFrontendCreate",
-			factory:          NewBindFrontendCreate,
+			name:             "BindFrontendOps.Create",
+			factory:          BindFrontendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create bind 'http-bind' in frontend 'http'",
 		},
 		{
-			name:             "NewBindFrontendUpdate",
-			factory:          NewBindFrontendUpdate,
+			name:             "BindFrontendOps.Update",
+			factory:          BindFrontendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update bind 'http-bind' in frontend 'http'",
 		},
 		{
-			name:             "NewBindFrontendDelete",
-			factory:          NewBindFrontendDelete,
+			name:             "BindFrontendOps.Delete",
+			factory:          BindFrontendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete bind 'http-bind' from frontend 'http'",
 		},
@@ -353,20 +353,20 @@ func TestHTTPRequestRuleFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewHTTPRequestRuleFrontendCreate",
-				factory:          NewHTTPRequestRuleFrontendCreate,
+				name:             "HTTPRequestRuleFrontendOps.Create",
+				factory:          HTTPRequestRuleFrontendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create HTTP request rule at index 5 in frontend 'http'",
 			},
 			{
-				name:             "NewHTTPRequestRuleFrontendUpdate",
-				factory:          NewHTTPRequestRuleFrontendUpdate,
+				name:             "HTTPRequestRuleFrontendOps.Update",
+				factory:          HTTPRequestRuleFrontendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update HTTP request rule at index 5 in frontend 'http'",
 			},
 			{
-				name:             "NewHTTPRequestRuleFrontendDelete",
-				factory:          NewHTTPRequestRuleFrontendDelete,
+				name:             "HTTPRequestRuleFrontendOps.Delete",
+				factory:          HTTPRequestRuleFrontendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete HTTP request rule at index 5 from frontend 'http'",
 			},
@@ -391,20 +391,20 @@ func TestHTTPRequestRuleFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewHTTPRequestRuleBackendCreate",
-				factory:          NewHTTPRequestRuleBackendCreate,
+				name:             "HTTPRequestRuleBackendOps.Create",
+				factory:          HTTPRequestRuleBackendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create HTTP request rule at index 3 in backend 'api'",
 			},
 			{
-				name:             "NewHTTPRequestRuleBackendUpdate",
-				factory:          NewHTTPRequestRuleBackendUpdate,
+				name:             "HTTPRequestRuleBackendOps.Update",
+				factory:          HTTPRequestRuleBackendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update HTTP request rule at index 3 in backend 'api'",
 			},
 			{
-				name:             "NewHTTPRequestRuleBackendDelete",
-				factory:          NewHTTPRequestRuleBackendDelete,
+				name:             "HTTPRequestRuleBackendOps.Delete",
+				factory:          HTTPRequestRuleBackendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete HTTP request rule at index 3 from backend 'api'",
 			},
@@ -432,20 +432,20 @@ func TestBackendSwitchingRuleFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewBackendSwitchingRuleFrontendCreate",
-			factory:          NewBackendSwitchingRuleFrontendCreate,
+			name:             "BackendSwitchingRuleFrontendOps.Create",
+			factory:          BackendSwitchingRuleFrontendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create backend switching rule at index 0 in frontend 'http'",
 		},
 		{
-			name:             "NewBackendSwitchingRuleFrontendUpdate",
-			factory:          NewBackendSwitchingRuleFrontendUpdate,
+			name:             "BackendSwitchingRuleFrontendOps.Update",
+			factory:          BackendSwitchingRuleFrontendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update backend switching rule at index 0 in frontend 'http'",
 		},
 		{
-			name:             "NewBackendSwitchingRuleFrontendDelete",
-			factory:          NewBackendSwitchingRuleFrontendDelete,
+			name:             "BackendSwitchingRuleFrontendOps.Delete",
+			factory:          BackendSwitchingRuleFrontendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete backend switching rule at index 0 from frontend 'http'",
 		},
@@ -472,20 +472,20 @@ func TestUserFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewUserCreate",
-			factory:          NewUserCreate,
+			name:             "UserOps.Create",
+			factory:          UserOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create user 'admin' in userlist 'admins'",
 		},
 		{
-			name:             "NewUserUpdate",
-			factory:          NewUserUpdate,
+			name:             "UserOps.Update",
+			factory:          UserOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update user 'admin' in userlist 'admins'",
 		},
 		{
-			name:             "NewUserDelete",
-			factory:          NewUserDelete,
+			name:             "UserOps.Delete",
+			factory:          UserOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete user 'admin' from userlist 'admins'",
 		},
@@ -513,20 +513,20 @@ func TestCacheFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewCacheCreate",
-			factory:          NewCacheCreate,
+			name:             "CacheOps.Create",
+			factory:          CacheOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create cache 'my-cache'",
 		},
 		{
-			name:             "NewCacheUpdate",
-			factory:          NewCacheUpdate,
+			name:             "CacheOps.Update",
+			factory:          CacheOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update cache 'my-cache'",
 		},
 		{
-			name:             "NewCacheDelete",
-			factory:          NewCacheDelete,
+			name:             "CacheOps.Delete",
+			factory:          CacheOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete cache 'my-cache'",
 		},
@@ -554,20 +554,20 @@ func TestResolverFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewResolverCreate",
-			factory:          NewResolverCreate,
+			name:             "ResolverOps.Create",
+			factory:          ResolverOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create resolver 'dns-resolver'",
 		},
 		{
-			name:             "NewResolverUpdate",
-			factory:          NewResolverUpdate,
+			name:             "ResolverOps.Update",
+			factory:          ResolverOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update resolver 'dns-resolver'",
 		},
 		{
-			name:             "NewResolverDelete",
-			factory:          NewResolverDelete,
+			name:             "ResolverOps.Delete",
+			factory:          ResolverOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete resolver 'dns-resolver'",
 		},
@@ -594,20 +594,20 @@ func TestNameserverFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewNameserverCreate",
-			factory:          NewNameserverCreate,
+			name:             "NameserverOps.Create",
+			factory:          NameserverOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create nameserver 'ns1' in resolvers section 'dns'",
 		},
 		{
-			name:             "NewNameserverUpdate",
-			factory:          NewNameserverUpdate,
+			name:             "NameserverOps.Update",
+			factory:          NameserverOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update nameserver 'ns1' in resolvers section 'dns'",
 		},
 		{
-			name:             "NewNameserverDelete",
-			factory:          NewNameserverDelete,
+			name:             "NameserverOps.Delete",
+			factory:          NameserverOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete nameserver 'ns1' from resolvers section 'dns'",
 		},
@@ -635,20 +635,20 @@ func TestHTTPResponseRuleFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewHTTPResponseRuleFrontendCreate",
-				factory:          NewHTTPResponseRuleFrontendCreate,
+				name:             "HTTPResponseRuleFrontendOps.Create",
+				factory:          HTTPResponseRuleFrontendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create HTTP response rule",
 			},
 			{
-				name:             "NewHTTPResponseRuleFrontendUpdate",
-				factory:          NewHTTPResponseRuleFrontendUpdate,
+				name:             "HTTPResponseRuleFrontendOps.Update",
+				factory:          HTTPResponseRuleFrontendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update HTTP response rule",
 			},
 			{
-				name:             "NewHTTPResponseRuleFrontendDelete",
-				factory:          NewHTTPResponseRuleFrontendDelete,
+				name:             "HTTPResponseRuleFrontendOps.Delete",
+				factory:          HTTPResponseRuleFrontendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete HTTP response rule",
 			},
@@ -673,20 +673,20 @@ func TestHTTPResponseRuleFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewHTTPResponseRuleBackendCreate",
-				factory:          NewHTTPResponseRuleBackendCreate,
+				name:             "HTTPResponseRuleBackendOps.Create",
+				factory:          HTTPResponseRuleBackendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create HTTP response rule",
 			},
 			{
-				name:             "NewHTTPResponseRuleBackendUpdate",
-				factory:          NewHTTPResponseRuleBackendUpdate,
+				name:             "HTTPResponseRuleBackendOps.Update",
+				factory:          HTTPResponseRuleBackendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update HTTP response rule",
 			},
 			{
-				name:             "NewHTTPResponseRuleBackendDelete",
-				factory:          NewHTTPResponseRuleBackendDelete,
+				name:             "HTTPResponseRuleBackendOps.Delete",
+				factory:          HTTPResponseRuleBackendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete HTTP response rule",
 			},
@@ -715,20 +715,20 @@ func TestFilterFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewFilterFrontendCreate",
-				factory:          NewFilterFrontendCreate,
+				name:             "FilterFrontendOps.Create",
+				factory:          FilterFrontendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create filter",
 			},
 			{
-				name:             "NewFilterFrontendUpdate",
-				factory:          NewFilterFrontendUpdate,
+				name:             "FilterFrontendOps.Update",
+				factory:          FilterFrontendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update filter",
 			},
 			{
-				name:             "NewFilterFrontendDelete",
-				factory:          NewFilterFrontendDelete,
+				name:             "FilterFrontendOps.Delete",
+				factory:          FilterFrontendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete filter",
 			},
@@ -753,20 +753,20 @@ func TestFilterFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewFilterBackendCreate",
-				factory:          NewFilterBackendCreate,
+				name:             "FilterBackendOps.Create",
+				factory:          FilterBackendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create filter",
 			},
 			{
-				name:             "NewFilterBackendUpdate",
-				factory:          NewFilterBackendUpdate,
+				name:             "FilterBackendOps.Update",
+				factory:          FilterBackendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update filter",
 			},
 			{
-				name:             "NewFilterBackendDelete",
-				factory:          NewFilterBackendDelete,
+				name:             "FilterBackendOps.Delete",
+				factory:          FilterBackendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete filter",
 			},
@@ -795,20 +795,20 @@ func TestLogTargetFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewLogTargetFrontendCreate",
-				factory:          NewLogTargetFrontendCreate,
+				name:             "LogTargetFrontendOps.Create",
+				factory:          LogTargetFrontendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create log target",
 			},
 			{
-				name:             "NewLogTargetFrontendUpdate",
-				factory:          NewLogTargetFrontendUpdate,
+				name:             "LogTargetFrontendOps.Update",
+				factory:          LogTargetFrontendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update log target",
 			},
 			{
-				name:             "NewLogTargetFrontendDelete",
-				factory:          NewLogTargetFrontendDelete,
+				name:             "LogTargetFrontendOps.Delete",
+				factory:          LogTargetFrontendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete log target",
 			},
@@ -833,20 +833,20 @@ func TestLogTargetFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewLogTargetBackendCreate",
-				factory:          NewLogTargetBackendCreate,
+				name:             "LogTargetBackendOps.Create",
+				factory:          LogTargetBackendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create log target",
 			},
 			{
-				name:             "NewLogTargetBackendUpdate",
-				factory:          NewLogTargetBackendUpdate,
+				name:             "LogTargetBackendOps.Update",
+				factory:          LogTargetBackendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update log target",
 			},
 			{
-				name:             "NewLogTargetBackendDelete",
-				factory:          NewLogTargetBackendDelete,
+				name:             "LogTargetBackendOps.Delete",
+				factory:          LogTargetBackendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete log target",
 			},
@@ -870,25 +870,25 @@ func TestServerTemplateFactoryFunctions(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		factory          func(string, *models.ServerTemplate) Operation
+		factory          func(string, string, *models.ServerTemplate) Operation
 		wantType         OperationType
 		wantDescContains string
 	}{
 		{
-			name:             "NewServerTemplateCreate",
-			factory:          NewServerTemplateCreate,
+			name:             "ServerTemplateOps.Create",
+			factory:          ServerTemplateOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create server template 'web'",
 		},
 		{
-			name:             "NewServerTemplateUpdate",
-			factory:          NewServerTemplateUpdate,
+			name:             "ServerTemplateOps.Update",
+			factory:          ServerTemplateOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update server template 'web'",
 		},
 		{
-			name:             "NewServerTemplateDelete",
-			factory:          NewServerTemplateDelete,
+			name:             "ServerTemplateOps.Delete",
+			factory:          ServerTemplateOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete server template 'web'",
 		},
@@ -896,7 +896,7 @@ func TestServerTemplateFactoryFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			op := tt.factory("api", serverTemplate)
+			op := tt.factory("api", serverTemplate.Prefix, serverTemplate)
 
 			assert.Equal(t, tt.wantType, op.Type())
 			assert.Equal(t, "server_template", op.Section())
@@ -915,20 +915,20 @@ func TestMailerEntryFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewMailerEntryCreate",
-			factory:          NewMailerEntryCreate,
+			name:             "MailerEntryOps.Create",
+			factory:          MailerEntryOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create mailer entry 'smtp1'",
 		},
 		{
-			name:             "NewMailerEntryUpdate",
-			factory:          NewMailerEntryUpdate,
+			name:             "MailerEntryOps.Update",
+			factory:          MailerEntryOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update mailer entry 'smtp1'",
 		},
 		{
-			name:             "NewMailerEntryDelete",
-			factory:          NewMailerEntryDelete,
+			name:             "MailerEntryOps.Delete",
+			factory:          MailerEntryOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete mailer entry 'smtp1'",
 		},
@@ -955,20 +955,20 @@ func TestPeerEntryFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewPeerEntryCreate",
-			factory:          NewPeerEntryCreate,
+			name:             "PeerEntryOps.Create",
+			factory:          PeerEntryOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create peer entry 'peer1'",
 		},
 		{
-			name:             "NewPeerEntryUpdate",
-			factory:          NewPeerEntryUpdate,
+			name:             "PeerEntryOps.Update",
+			factory:          PeerEntryOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update peer entry 'peer1'",
 		},
 		{
-			name:             "NewPeerEntryDelete",
-			factory:          NewPeerEntryDelete,
+			name:             "PeerEntryOps.Delete",
+			factory:          PeerEntryOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete peer entry 'peer1'",
 		},
@@ -995,20 +995,20 @@ func TestHTTPErrorsSectionFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewHTTPErrorsSectionCreate",
-			factory:          NewHTTPErrorsSectionCreate,
+			name:             "HTTPErrorsOps.Create",
+			factory:          HTTPErrorsOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create http-errors section 'custom-errors'",
 		},
 		{
-			name:             "NewHTTPErrorsSectionUpdate",
-			factory:          NewHTTPErrorsSectionUpdate,
+			name:             "HTTPErrorsOps.Update",
+			factory:          HTTPErrorsOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update http-errors section 'custom-errors'",
 		},
 		{
-			name:             "NewHTTPErrorsSectionDelete",
-			factory:          NewHTTPErrorsSectionDelete,
+			name:             "HTTPErrorsOps.Delete",
+			factory:          HTTPErrorsOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete http-errors section 'custom-errors'",
 		},
@@ -1037,20 +1037,20 @@ func TestLogForwardFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewLogForwardCreate",
-			factory:          NewLogForwardCreate,
+			name:             "LogForwardOps.Create",
+			factory:          LogForwardOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create log-forward 'syslogs'",
 		},
 		{
-			name:             "NewLogForwardUpdate",
-			factory:          NewLogForwardUpdate,
+			name:             "LogForwardOps.Update",
+			factory:          LogForwardOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update log-forward 'syslogs'",
 		},
 		{
-			name:             "NewLogForwardDelete",
-			factory:          NewLogForwardDelete,
+			name:             "LogForwardOps.Delete",
+			factory:          LogForwardOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete log-forward 'syslogs'",
 		},
@@ -1079,20 +1079,20 @@ func TestMailersSectionFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewMailersSectionCreate",
-			factory:          NewMailersSectionCreate,
+			name:             "MailersOps.Create",
+			factory:          MailersOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create mailers 'mailers1'",
 		},
 		{
-			name:             "NewMailersSectionUpdate",
-			factory:          NewMailersSectionUpdate,
+			name:             "MailersOps.Update",
+			factory:          MailersOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update mailers 'mailers1'",
 		},
 		{
-			name:             "NewMailersSectionDelete",
-			factory:          NewMailersSectionDelete,
+			name:             "MailersOps.Delete",
+			factory:          MailersOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete mailers 'mailers1'",
 		},
@@ -1121,20 +1121,20 @@ func TestPeerSectionFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewPeerSectionCreate",
-			factory:          NewPeerSectionCreate,
+			name:             "PeerSectionOps.Create",
+			factory:          PeerSectionOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create peer section 'mypeers'",
 		},
 		{
-			name:             "NewPeerSectionUpdate",
-			factory:          NewPeerSectionUpdate,
+			name:             "PeerSectionOps.Update",
+			factory:          PeerSectionOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update peer section 'mypeers'",
 		},
 		{
-			name:             "NewPeerSectionDelete",
-			factory:          NewPeerSectionDelete,
+			name:             "PeerSectionOps.Delete",
+			factory:          PeerSectionOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete peer section 'mypeers'",
 		},
@@ -1161,20 +1161,20 @@ func TestProgramFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewProgramCreate",
-			factory:          NewProgramCreate,
+			name:             "ProgramOps.Create",
+			factory:          ProgramOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create program 'myprogram'",
 		},
 		{
-			name:             "NewProgramUpdate",
-			factory:          NewProgramUpdate,
+			name:             "ProgramOps.Update",
+			factory:          ProgramOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update program 'myprogram'",
 		},
 		{
-			name:             "NewProgramDelete",
-			factory:          NewProgramDelete,
+			name:             "ProgramOps.Delete",
+			factory:          ProgramOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete program 'myprogram'",
 		},
@@ -1203,20 +1203,20 @@ func TestRingFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewRingCreate",
-			factory:          NewRingCreate,
+			name:             "RingOps.Create",
+			factory:          RingOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create ring 'myring'",
 		},
 		{
-			name:             "NewRingUpdate",
-			factory:          NewRingUpdate,
+			name:             "RingOps.Update",
+			factory:          RingOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update ring 'myring'",
 		},
 		{
-			name:             "NewRingDelete",
-			factory:          NewRingDelete,
+			name:             "RingOps.Delete",
+			factory:          RingOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete ring 'myring'",
 		},
@@ -1243,20 +1243,20 @@ func TestCrtStoreFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewCrtStoreCreate",
-			factory:          NewCrtStoreCreate,
+			name:             "CrtStoreOps.Create",
+			factory:          CrtStoreOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create crt-store 'my-certs'",
 		},
 		{
-			name:             "NewCrtStoreUpdate",
-			factory:          NewCrtStoreUpdate,
+			name:             "CrtStoreOps.Update",
+			factory:          CrtStoreOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update crt-store 'my-certs'",
 		},
 		{
-			name:             "NewCrtStoreDelete",
-			factory:          NewCrtStoreDelete,
+			name:             "CrtStoreOps.Delete",
+			factory:          CrtStoreOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete crt-store 'my-certs'",
 		},
@@ -1285,14 +1285,14 @@ func TestUserlistFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewUserlistCreate",
-			factory:          NewUserlistCreate,
+			name:             "UserlistOps.Create",
+			factory:          UserlistOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create userlist 'admins'",
 		},
 		{
-			name:             "NewUserlistDelete",
-			factory:          NewUserlistDelete,
+			name:             "UserlistOps.Delete",
+			factory:          UserlistOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete userlist 'admins'",
 		},
@@ -1321,20 +1321,20 @@ func TestFCGIAppFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewFCGIAppCreate",
-			factory:          NewFCGIAppCreate,
+			name:             "FcgiAppOps.Create",
+			factory:          FcgiAppOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create fcgi-app 'php-fpm'",
 		},
 		{
-			name:             "NewFCGIAppUpdate",
-			factory:          NewFCGIAppUpdate,
+			name:             "FcgiAppOps.Update",
+			factory:          FcgiAppOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update fcgi-app 'php-fpm'",
 		},
 		{
-			name:             "NewFCGIAppDelete",
-			factory:          NewFCGIAppDelete,
+			name:             "FcgiAppOps.Delete",
+			factory:          FcgiAppOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete fcgi-app 'php-fpm'",
 		},
@@ -1362,20 +1362,20 @@ func TestTCPRequestRuleFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewTCPRequestRuleFrontendCreate",
-				factory:          NewTCPRequestRuleFrontendCreate,
+				name:             "TCPRequestRuleFrontendOps.Create",
+				factory:          TCPRequestRuleFrontendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create TCP request rule",
 			},
 			{
-				name:             "NewTCPRequestRuleFrontendUpdate",
-				factory:          NewTCPRequestRuleFrontendUpdate,
+				name:             "TCPRequestRuleFrontendOps.Update",
+				factory:          TCPRequestRuleFrontendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update TCP request rule",
 			},
 			{
-				name:             "NewTCPRequestRuleFrontendDelete",
-				factory:          NewTCPRequestRuleFrontendDelete,
+				name:             "TCPRequestRuleFrontendOps.Delete",
+				factory:          TCPRequestRuleFrontendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete TCP request rule",
 			},
@@ -1400,20 +1400,20 @@ func TestTCPRequestRuleFactoryFunctions(t *testing.T) {
 			wantDescContains string
 		}{
 			{
-				name:             "NewTCPRequestRuleBackendCreate",
-				factory:          NewTCPRequestRuleBackendCreate,
+				name:             "TCPRequestRuleBackendOps.Create",
+				factory:          TCPRequestRuleBackendOps.Create,
 				wantType:         OperationCreate,
 				wantDescContains: "Create TCP request rule",
 			},
 			{
-				name:             "NewTCPRequestRuleBackendUpdate",
-				factory:          NewTCPRequestRuleBackendUpdate,
+				name:             "TCPRequestRuleBackendOps.Update",
+				factory:          TCPRequestRuleBackendOps.Update,
 				wantType:         OperationUpdate,
 				wantDescContains: "Update TCP request rule",
 			},
 			{
-				name:             "NewTCPRequestRuleBackendDelete",
-				factory:          NewTCPRequestRuleBackendDelete,
+				name:             "TCPRequestRuleBackendOps.Delete",
+				factory:          TCPRequestRuleBackendOps.Delete,
 				wantType:         OperationDelete,
 				wantDescContains: "Delete TCP request rule",
 			},
@@ -1441,20 +1441,20 @@ func TestTCPResponseRuleFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewTCPResponseRuleBackendCreate",
-			factory:          NewTCPResponseRuleBackendCreate,
+			name:             "TCPResponseRuleBackendOps.Create",
+			factory:          TCPResponseRuleBackendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create TCP response rule",
 		},
 		{
-			name:             "NewTCPResponseRuleBackendUpdate",
-			factory:          NewTCPResponseRuleBackendUpdate,
+			name:             "TCPResponseRuleBackendOps.Update",
+			factory:          TCPResponseRuleBackendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update TCP response rule",
 		},
 		{
-			name:             "NewTCPResponseRuleBackendDelete",
-			factory:          NewTCPResponseRuleBackendDelete,
+			name:             "TCPResponseRuleBackendOps.Delete",
+			factory:          TCPResponseRuleBackendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete TCP response rule",
 		},
@@ -1481,20 +1481,20 @@ func TestStickRuleFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewStickRuleBackendCreate",
-			factory:          NewStickRuleBackendCreate,
+			name:             "StickRuleBackendOps.Create",
+			factory:          StickRuleBackendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create stick rule",
 		},
 		{
-			name:             "NewStickRuleBackendUpdate",
-			factory:          NewStickRuleBackendUpdate,
+			name:             "StickRuleBackendOps.Update",
+			factory:          StickRuleBackendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update stick rule",
 		},
 		{
-			name:             "NewStickRuleBackendDelete",
-			factory:          NewStickRuleBackendDelete,
+			name:             "StickRuleBackendOps.Delete",
+			factory:          StickRuleBackendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete stick rule",
 		},
@@ -1521,20 +1521,20 @@ func TestHTTPAfterResponseRuleFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewHTTPAfterResponseRuleBackendCreate",
-			factory:          NewHTTPAfterResponseRuleBackendCreate,
+			name:             "HTTPAfterResponseRuleBackendOps.Create",
+			factory:          HTTPAfterResponseRuleBackendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create HTTP after response rule",
 		},
 		{
-			name:             "NewHTTPAfterResponseRuleBackendUpdate",
-			factory:          NewHTTPAfterResponseRuleBackendUpdate,
+			name:             "HTTPAfterResponseRuleBackendOps.Update",
+			factory:          HTTPAfterResponseRuleBackendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update HTTP after response rule",
 		},
 		{
-			name:             "NewHTTPAfterResponseRuleBackendDelete",
-			factory:          NewHTTPAfterResponseRuleBackendDelete,
+			name:             "HTTPAfterResponseRuleBackendOps.Delete",
+			factory:          HTTPAfterResponseRuleBackendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete HTTP after response rule",
 		},
@@ -1561,20 +1561,20 @@ func TestServerSwitchingRuleFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewServerSwitchingRuleBackendCreate",
-			factory:          NewServerSwitchingRuleBackendCreate,
+			name:             "ServerSwitchingRuleBackendOps.Create",
+			factory:          ServerSwitchingRuleBackendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create server switching rule",
 		},
 		{
-			name:             "NewServerSwitchingRuleBackendUpdate",
-			factory:          NewServerSwitchingRuleBackendUpdate,
+			name:             "ServerSwitchingRuleBackendOps.Update",
+			factory:          ServerSwitchingRuleBackendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update server switching rule",
 		},
 		{
-			name:             "NewServerSwitchingRuleBackendDelete",
-			factory:          NewServerSwitchingRuleBackendDelete,
+			name:             "ServerSwitchingRuleBackendOps.Delete",
+			factory:          ServerSwitchingRuleBackendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete server switching rule",
 		},
@@ -1601,20 +1601,20 @@ func TestHTTPCheckFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewHTTPCheckBackendCreate",
-			factory:          NewHTTPCheckBackendCreate,
+			name:             "HTTPCheckBackendOps.Create",
+			factory:          HTTPCheckBackendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create HTTP check",
 		},
 		{
-			name:             "NewHTTPCheckBackendUpdate",
-			factory:          NewHTTPCheckBackendUpdate,
+			name:             "HTTPCheckBackendOps.Update",
+			factory:          HTTPCheckBackendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update HTTP check",
 		},
 		{
-			name:             "NewHTTPCheckBackendDelete",
-			factory:          NewHTTPCheckBackendDelete,
+			name:             "HTTPCheckBackendOps.Delete",
+			factory:          HTTPCheckBackendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete HTTP check",
 		},
@@ -1641,20 +1641,20 @@ func TestTCPCheckFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewTCPCheckBackendCreate",
-			factory:          NewTCPCheckBackendCreate,
+			name:             "TCPCheckBackendOps.Create",
+			factory:          TCPCheckBackendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create TCP check",
 		},
 		{
-			name:             "NewTCPCheckBackendUpdate",
-			factory:          NewTCPCheckBackendUpdate,
+			name:             "TCPCheckBackendOps.Update",
+			factory:          TCPCheckBackendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update TCP check",
 		},
 		{
-			name:             "NewTCPCheckBackendDelete",
-			factory:          NewTCPCheckBackendDelete,
+			name:             "TCPCheckBackendOps.Delete",
+			factory:          TCPCheckBackendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete TCP check",
 		},
@@ -1681,20 +1681,20 @@ func TestCaptureFactoryFunctions(t *testing.T) {
 		wantDescContains string
 	}{
 		{
-			name:             "NewCaptureFrontendCreate",
-			factory:          NewCaptureFrontendCreate,
+			name:             "CaptureFrontendOps.Create",
+			factory:          CaptureFrontendOps.Create,
 			wantType:         OperationCreate,
 			wantDescContains: "Create capture",
 		},
 		{
-			name:             "NewCaptureFrontendUpdate",
-			factory:          NewCaptureFrontendUpdate,
+			name:             "CaptureFrontendOps.Update",
+			factory:          CaptureFrontendOps.Update,
 			wantType:         OperationUpdate,
 			wantDescContains: "Update capture",
 		},
 		{
-			name:             "NewCaptureFrontendDelete",
-			factory:          NewCaptureFrontendDelete,
+			name:             "CaptureFrontendOps.Delete",
+			factory:          CaptureFrontendOps.Delete,
 			wantType:         OperationDelete,
 			wantDescContains: "Delete capture",
 		},
@@ -1762,7 +1762,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				got := DescribeNamedChild(tt.opType, "bind", bindIdentifier(tt.bind), "frontend", tt.frontendName)()
+				got := describeNamedChild(tt.opType, "bind", bindIdentifier(tt.bind), "frontend", tt.frontendName)()
 				for _, want := range tt.wantContains {
 					assert.Contains(t, got, want)
 				}
@@ -1773,7 +1773,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_logTarget", func(t *testing.T) {
 		logTarget := &models.LogTarget{Address: "127.0.0.1", Facility: "local0"}
 
-		desc := DescribeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), "at index 0", "frontend", "http")()
+		desc := describeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), "at index 0", "frontend", "http")()
 		assert.Contains(t, desc, "Create log target")
 		assert.Contains(t, desc, "frontend 'http'")
 	})
@@ -1781,7 +1781,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_filter", func(t *testing.T) {
 		filter := &models.Filter{Type: "trace"}
 
-		desc := DescribeTypedChild(OperationUpdate, "filter", filterIdentifier(filter), "at index 0", "backend", "api")()
+		desc := describeTypedChild(OperationUpdate, "filter", filterIdentifier(filter), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Update filter")
 		assert.Contains(t, desc, "trace")
 		assert.Contains(t, desc, "backend 'api'")
@@ -1790,7 +1790,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_capture", func(t *testing.T) {
 		capture := &models.Capture{Type: "request"}
 
-		desc := DescribeTypedChild(OperationDelete, "capture", captureIdentifier(capture), "at index 0", "frontend", "http")()
+		desc := describeTypedChild(OperationDelete, "capture", captureIdentifier(capture), "at index 0", "frontend", "http")()
 		assert.Contains(t, desc, "Delete capture")
 		assert.Contains(t, desc, "request")
 		assert.Contains(t, desc, "frontend 'http'")
@@ -1799,7 +1799,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_tcpRequestRule", func(t *testing.T) {
 		rule := &models.TCPRequestRule{Type: "inspect-delay"}
 
-		desc := DescribeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), "at index 0", "frontend", "tcp")()
+		desc := describeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), "at index 0", "frontend", "tcp")()
 		assert.Contains(t, desc, "Create TCP request rule")
 		assert.Contains(t, desc, "inspect-delay")
 		assert.Contains(t, desc, "frontend 'tcp'")
@@ -1808,7 +1808,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_tcpResponseRule", func(t *testing.T) {
 		rule := &models.TCPResponseRule{Type: "content"}
 
-		desc := DescribeTypedChild(OperationUpdate, "TCP response rule", tcpResponseRuleIdentifier(rule), "at index 0", "backend", "api")()
+		desc := describeTypedChild(OperationUpdate, "TCP response rule", tcpResponseRuleIdentifier(rule), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Update TCP response rule")
 		assert.Contains(t, desc, "content")
 		assert.Contains(t, desc, "backend 'api'")
@@ -1817,7 +1817,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_httpCheck", func(t *testing.T) {
 		check := &models.HTTPCheck{Type: "send"}
 
-		desc := DescribeTypedChild(OperationDelete, "HTTP check", httpCheckIdentifier(check), "at index 0", "backend", "api")()
+		desc := describeTypedChild(OperationDelete, "HTTP check", httpCheckIdentifier(check), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Delete HTTP check")
 		assert.Contains(t, desc, "send")
 		assert.Contains(t, desc, "backend 'api'")
@@ -1826,7 +1826,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_tcpCheck", func(t *testing.T) {
 		check := &models.TCPCheck{Action: "connect"}
 
-		desc := DescribeTypedChild(OperationCreate, "TCP check", tcpCheckIdentifier(check), "at index 0", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "TCP check", tcpCheckIdentifier(check), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Create TCP check")
 		assert.Contains(t, desc, "connect")
 		assert.Contains(t, desc, "backend 'api'")
@@ -1835,7 +1835,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_stickRule", func(t *testing.T) {
 		rule := &models.StickRule{Type: "store-request"}
 
-		desc := DescribeTypedChild(OperationUpdate, "stick rule", stickRuleIdentifier(rule), "at index 0", "backend", "api")()
+		desc := describeTypedChild(OperationUpdate, "stick rule", stickRuleIdentifier(rule), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Update stick rule")
 		assert.Contains(t, desc, "store-request")
 		assert.Contains(t, desc, "backend 'api'")
@@ -1844,7 +1844,7 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_serverSwitchingRule", func(t *testing.T) {
 		rule := &models.ServerSwitchingRule{TargetServer: "srv1"}
 
-		desc := DescribeTypedChild(OperationDelete, "server switching rule", serverSwitchingRuleIdentifier(rule), "at index 0", "backend", "api")()
+		desc := describeTypedChild(OperationDelete, "server switching rule", serverSwitchingRuleIdentifier(rule), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Delete server switching rule")
 		assert.Contains(t, desc, "srv1")
 		assert.Contains(t, desc, "backend 'api'")
@@ -1853,13 +1853,13 @@ func TestDescribeHelperFunctions(t *testing.T) {
 	t.Run("DescribeTypedChild_httpAfterResponseRule", func(t *testing.T) {
 		rule := &models.HTTPAfterResponseRule{Type: "set-header"}
 
-		desc := DescribeTypedChild(OperationCreate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), "at index 0", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), "at index 0", "backend", "api")()
 		assert.Contains(t, desc, "Create HTTP after response rule")
 		assert.Contains(t, desc, "set-header")
 		assert.Contains(t, desc, "backend 'api'")
 	})
 
-	// Test DescribeTypedChild with all operation types
+	// Test describeTypedChild with all operation types
 	t.Run("DescribeTypedChild_httpRequestRule_all_ops", func(t *testing.T) {
 		rule := &models.HTTPRequestRule{Type: "add-header"}
 
@@ -1874,20 +1874,20 @@ func TestDescribeHelperFunctions(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			desc := DescribeTypedChild(tt.opType, "HTTP request rule", httpRequestRuleIdentifier(rule), "at index 0", "frontend", "http")()
+			desc := describeTypedChild(tt.opType, "HTTP request rule", httpRequestRuleIdentifier(rule), "at index 0", "frontend", "http")()
 			assert.Contains(t, desc, tt.wantContains)
 			assert.Contains(t, desc, "add-header")
 		}
 	})
 
-	// Test DescribeTypedChild with empty identifier - uses fallback
+	// Test describeTypedChild with empty identifier - uses fallback
 	t.Run("DescribeTypedChild_httpRequestRule_empty_type", func(t *testing.T) {
 		rule := &models.HTTPRequestRule{}
-		desc := DescribeTypedChild(OperationCreate, "HTTP request rule", httpRequestRuleIdentifier(rule), "at index 5", "frontend", "http")()
+		desc := describeTypedChild(OperationCreate, "HTTP request rule", httpRequestRuleIdentifier(rule), "at index 5", "frontend", "http")()
 		assert.Contains(t, desc, "at index 5")
 	})
 
-	// Test DescribeTypedChild for HTTP response rule
+	// Test describeTypedChild for HTTP response rule
 	t.Run("DescribeTypedChild_httpResponseRule_all_ops", func(t *testing.T) {
 		rule := &models.HTTPResponseRule{Type: "set-header"}
 
@@ -1902,12 +1902,12 @@ func TestDescribeHelperFunctions(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			desc := DescribeTypedChild(tt.opType, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "backend", "api")()
+			desc := describeTypedChild(tt.opType, "HTTP response rule", httpResponseRuleIdentifier(rule), "", "backend", "api")()
 			assert.Contains(t, desc, tt.wantContains)
 		}
 	})
 
-	// Test DescribeTypedChild for backend switching rule
+	// Test describeTypedChild for backend switching rule
 	t.Run("DescribeTypedChild_backendSwitchingRule_all_ops", func(t *testing.T) {
 		rule := &models.BackendSwitchingRule{Name: "api_backend"}
 
@@ -1922,176 +1922,176 @@ func TestDescribeHelperFunctions(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			desc := DescribeTypedChild(tt.opType, "backend switching rule", backendSwitchingRuleIdentifier(rule), "at index 0", "frontend", "http")()
+			desc := describeTypedChild(tt.opType, "backend switching rule", backendSwitchingRuleIdentifier(rule), "at index 0", "frontend", "http")()
 			assert.Contains(t, desc, tt.wantContains)
 			assert.Contains(t, desc, "api_backend")
 		}
 	})
 
-	// Test DescribeTypedChild with empty identifier - uses index fallback
+	// Test describeTypedChild with empty identifier - uses index fallback
 	t.Run("DescribeTypedChild_backendSwitchingRule_empty_name", func(t *testing.T) {
 		rule := &models.BackendSwitchingRule{}
-		desc := DescribeTypedChild(OperationCreate, "backend switching rule", backendSwitchingRuleIdentifier(rule), "at index 3", "frontend", "http")()
+		desc := describeTypedChild(OperationCreate, "backend switching rule", backendSwitchingRuleIdentifier(rule), "at index 3", "frontend", "http")()
 		assert.Contains(t, desc, "at index 3")
 	})
 
 	// Test empty identifier branches - fallback to index
 	t.Run("DescribeTypedChild_logTarget_empty", func(t *testing.T) {
 		logTarget := &models.LogTarget{}
-		desc := DescribeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), "at index 5", "frontend", "http")()
+		desc := describeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), "at index 5", "frontend", "http")()
 		assert.Contains(t, desc, "at index 5")
 	})
 
 	t.Run("DescribeTypedChild_filter_empty", func(t *testing.T) {
 		filter := &models.Filter{}
-		desc := DescribeTypedChild(OperationCreate, "filter", filterIdentifier(filter), "at index 3", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "filter", filterIdentifier(filter), "at index 3", "backend", "api")()
 		assert.Contains(t, desc, "at index 3")
 	})
 
 	t.Run("DescribeTypedChild_capture_empty", func(t *testing.T) {
 		capture := &models.Capture{}
-		desc := DescribeTypedChild(OperationCreate, "capture", captureIdentifier(capture), "at index 2", "frontend", "http")()
+		desc := describeTypedChild(OperationCreate, "capture", captureIdentifier(capture), "at index 2", "frontend", "http")()
 		assert.Contains(t, desc, "at index 2")
 	})
 
 	t.Run("DescribeTypedChild_tcpRequestRule_empty", func(t *testing.T) {
 		rule := &models.TCPRequestRule{}
-		desc := DescribeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), "at index 4", "frontend", "tcp")()
+		desc := describeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), "at index 4", "frontend", "tcp")()
 		assert.Contains(t, desc, "at index 4")
 	})
 
 	t.Run("DescribeTypedChild_tcpResponseRule_empty", func(t *testing.T) {
 		rule := &models.TCPResponseRule{}
-		desc := DescribeTypedChild(OperationCreate, "TCP response rule", tcpResponseRuleIdentifier(rule), "at index 1", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "TCP response rule", tcpResponseRuleIdentifier(rule), "at index 1", "backend", "api")()
 		assert.Contains(t, desc, "at index 1")
 	})
 
 	t.Run("DescribeTypedChild_httpCheck_empty", func(t *testing.T) {
 		check := &models.HTTPCheck{}
-		desc := DescribeTypedChild(OperationCreate, "HTTP check", httpCheckIdentifier(check), "at index 6", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "HTTP check", httpCheckIdentifier(check), "at index 6", "backend", "api")()
 		assert.Contains(t, desc, "at index 6")
 	})
 
 	t.Run("DescribeTypedChild_tcpCheck_empty", func(t *testing.T) {
 		check := &models.TCPCheck{}
-		desc := DescribeTypedChild(OperationCreate, "TCP check", tcpCheckIdentifier(check), "at index 7", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "TCP check", tcpCheckIdentifier(check), "at index 7", "backend", "api")()
 		assert.Contains(t, desc, "at index 7")
 	})
 
 	t.Run("DescribeTypedChild_stickRule_empty", func(t *testing.T) {
 		rule := &models.StickRule{}
-		desc := DescribeTypedChild(OperationCreate, "stick rule", stickRuleIdentifier(rule), "at index 8", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "stick rule", stickRuleIdentifier(rule), "at index 8", "backend", "api")()
 		assert.Contains(t, desc, "at index 8")
 	})
 
 	t.Run("DescribeTypedChild_serverSwitchingRule_empty", func(t *testing.T) {
 		rule := &models.ServerSwitchingRule{}
-		desc := DescribeTypedChild(OperationCreate, "server switching rule", serverSwitchingRuleIdentifier(rule), "at index 9", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "server switching rule", serverSwitchingRuleIdentifier(rule), "at index 9", "backend", "api")()
 		assert.Contains(t, desc, "at index 9")
 	})
 
 	t.Run("DescribeTypedChild_httpAfterResponseRule_empty", func(t *testing.T) {
 		rule := &models.HTTPAfterResponseRule{}
-		desc := DescribeTypedChild(OperationCreate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), "at index 10", "backend", "api")()
+		desc := describeTypedChild(OperationCreate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), "at index 10", "backend", "api")()
 		assert.Contains(t, desc, "at index 10")
 	})
 
-	// Test DescribeNamedChild for bind with unknown operation type
+	// Test describeNamedChild for bind with unknown operation type
 	t.Run("bindIdentifier_unknown_op", func(t *testing.T) {
 		ptrInt64 := func(i int64) *int64 { return &i }
 		bind := &models.Bind{
 			Address: "*",
 			Port:    ptrInt64(80),
 		}
-		desc := DescribeNamedChild(OperationType(99), "bind", bindIdentifier(bind), "frontend", "http")()
+		desc := describeNamedChild(OperationType(99), "bind", bindIdentifier(bind), "frontend", "http")()
 		assert.Contains(t, desc, "Process bind")
 	})
 }
 
 func TestNameExtractors(t *testing.T) {
-	t.Run("BackendName", func(t *testing.T) {
+	t.Run("backendNameFn", func(t *testing.T) {
 		b := &models.Backend{BackendBase: models.BackendBase{Name: "my-backend"}}
-		assert.Equal(t, "my-backend", BackendName(b))
+		assert.Equal(t, "my-backend", backendNameFn(b))
 	})
 
-	t.Run("FrontendName", func(t *testing.T) {
+	t.Run("frontendNameFn", func(t *testing.T) {
 		f := &models.Frontend{FrontendBase: models.FrontendBase{Name: "my-frontend"}}
-		assert.Equal(t, "my-frontend", FrontendName(f))
+		assert.Equal(t, "my-frontend", frontendNameFn(f))
 	})
 
-	t.Run("DefaultsName", func(t *testing.T) {
+	t.Run("defaultsNameFn", func(t *testing.T) {
 		d := &models.Defaults{DefaultsBase: models.DefaultsBase{Name: "my-defaults"}}
-		assert.Equal(t, "my-defaults", DefaultsName(d))
+		assert.Equal(t, "my-defaults", defaultsNameFn(d))
 	})
 
-	t.Run("HTTPErrorsSectionName", func(t *testing.T) {
+	t.Run("httpErrorsSectionName", func(t *testing.T) {
 		h := &models.HTTPErrorsSection{Name: "errors"}
-		assert.Equal(t, "errors", HTTPErrorsSectionName(h))
+		assert.Equal(t, "errors", httpErrorsSectionName(h))
 	})
 
-	t.Run("LogForwardName", func(t *testing.T) {
+	t.Run("logForwardName", func(t *testing.T) {
 		l := &models.LogForward{LogForwardBase: models.LogForwardBase{Name: "logs"}}
-		assert.Equal(t, "logs", LogForwardName(l))
+		assert.Equal(t, "logs", logForwardName(l))
 	})
 
-	t.Run("MailersSectionName", func(t *testing.T) {
+	t.Run("mailersSectionName", func(t *testing.T) {
 		m := &models.MailersSection{MailersSectionBase: models.MailersSectionBase{Name: "mailers"}}
-		assert.Equal(t, "mailers", MailersSectionName(m))
+		assert.Equal(t, "mailers", mailersSectionName(m))
 	})
 
-	t.Run("PeerSectionName", func(t *testing.T) {
+	t.Run("peerSectionName", func(t *testing.T) {
 		p := &models.PeerSection{PeerSectionBase: models.PeerSectionBase{Name: "peers"}}
-		assert.Equal(t, "peers", PeerSectionName(p))
+		assert.Equal(t, "peers", peerSectionName(p))
 	})
 
-	t.Run("ProgramName", func(t *testing.T) {
+	t.Run("programNameFn", func(t *testing.T) {
 		p := &models.Program{Name: "prog"}
-		assert.Equal(t, "prog", ProgramName(p))
+		assert.Equal(t, "prog", programNameFn(p))
 	})
 
-	t.Run("ResolverName", func(t *testing.T) {
+	t.Run("resolverNameFn", func(t *testing.T) {
 		r := &models.Resolver{ResolverBase: models.ResolverBase{Name: "resolver"}}
-		assert.Equal(t, "resolver", ResolverName(r))
+		assert.Equal(t, "resolver", resolverNameFn(r))
 	})
 
-	t.Run("RingName", func(t *testing.T) {
+	t.Run("ringNameFn", func(t *testing.T) {
 		r := &models.Ring{RingBase: models.RingBase{Name: "ring"}}
-		assert.Equal(t, "ring", RingName(r))
+		assert.Equal(t, "ring", ringNameFn(r))
 	})
 
-	t.Run("CrtStoreName", func(t *testing.T) {
+	t.Run("crtStoreName", func(t *testing.T) {
 		c := &models.CrtStore{CrtStoreBase: models.CrtStoreBase{Name: "store"}}
-		assert.Equal(t, "store", CrtStoreName(c))
+		assert.Equal(t, "store", crtStoreName(c))
 	})
 
-	t.Run("UserlistName", func(t *testing.T) {
+	t.Run("userlistName", func(t *testing.T) {
 		u := &models.Userlist{UserlistBase: models.UserlistBase{Name: "users"}}
-		assert.Equal(t, "users", UserlistName(u))
+		assert.Equal(t, "users", userlistName(u))
 	})
 
-	t.Run("FCGIAppName", func(t *testing.T) {
+	t.Run("fcgiAppName", func(t *testing.T) {
 		f := &models.FCGIApp{FCGIAppBase: models.FCGIAppBase{Name: "fcgi"}}
-		assert.Equal(t, "fcgi", FCGIAppName(f))
+		assert.Equal(t, "fcgi", fcgiAppName(f))
 	})
 
-	t.Run("UserName", func(t *testing.T) {
+	t.Run("userNameFn", func(t *testing.T) {
 		u := &models.User{Username: "admin"}
-		assert.Equal(t, "admin", UserName(u))
+		assert.Equal(t, "admin", userNameFn(u))
 	})
 
-	t.Run("MailerEntryName", func(t *testing.T) {
+	t.Run("mailerEntryName", func(t *testing.T) {
 		m := &models.MailerEntry{Name: "smtp"}
-		assert.Equal(t, "smtp", MailerEntryName(m))
+		assert.Equal(t, "smtp", mailerEntryName(m))
 	})
 
-	t.Run("PeerEntryName", func(t *testing.T) {
+	t.Run("peerEntryName", func(t *testing.T) {
 		p := &models.PeerEntry{Name: "peer1"}
-		assert.Equal(t, "peer1", PeerEntryName(p))
+		assert.Equal(t, "peer1", peerEntryName(p))
 	})
 
-	t.Run("NameserverName", func(t *testing.T) {
+	t.Run("nameserverNameFn", func(t *testing.T) {
 		n := &models.Nameserver{Name: "dns1"}
-		assert.Equal(t, "dns1", NameserverName(n))
+		assert.Equal(t, "dns1", nameserverNameFn(n))
 	})
 }
 

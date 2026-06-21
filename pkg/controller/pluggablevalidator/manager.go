@@ -141,18 +141,6 @@ func (m *Manager) Names() []string {
 	return out
 }
 
-// FilesFor returns the glob list configured for the given
-// validator, or nil if the validator is unknown. For tests and
-// debug introspection.
-func (m *Manager) FilesFor(name string) []string {
-	for _, c := range m.configs {
-		if c.Name == name {
-			return append([]string(nil), c.Files...)
-		}
-	}
-	return nil
-}
-
 // ValidationOutcome bundles the warnings + errors collected across
 // all (file, validator) round-trips for one ValidateAll call. The
 // caller maps these to the admission webhook's response shape:

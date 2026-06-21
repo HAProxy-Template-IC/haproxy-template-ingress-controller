@@ -31,9 +31,9 @@ import (
 // positional diffing. ACLs already have a content-Equal method on
 // `*models.ACL` so the pattern slots in unchanged.
 func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, desiredACLs models.Acls, _ *DiffSummary) []Operation {
-	create, remove, update := sections.NewACLBackendCreate, sections.NewACLBackendDelete, sections.NewACLBackendUpdate
+	create, remove, update := sections.ACLBackendOps.Create, sections.ACLBackendOps.Delete, sections.ACLBackendOps.Update
 	if parentType == parentTypeFrontend {
-		create, remove, update = sections.NewACLFrontendCreate, sections.NewACLFrontendDelete, sections.NewACLFrontendUpdate
+		create, remove, update = sections.ACLFrontendOps.Create, sections.ACLFrontendOps.Delete, sections.ACLFrontendOps.Update
 	}
 	return compareEditedItems(
 		currentACLs, desiredACLs,
@@ -126,9 +126,9 @@ func compareEditedItems[T any](
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations
 // instead of cascading UPDATEs caused by index shifts.
 func (c *Comparator) compareHTTPRequestRules(parentType, parentName string, currentRules, desiredRules models.HTTPRequestRules) []Operation {
-	create, remove, update := sections.NewHTTPRequestRuleBackendCreate, sections.NewHTTPRequestRuleBackendDelete, sections.NewHTTPRequestRuleBackendUpdate
+	create, remove, update := sections.HTTPRequestRuleBackendOps.Create, sections.HTTPRequestRuleBackendOps.Delete, sections.HTTPRequestRuleBackendOps.Update
 	if parentType == parentTypeFrontend {
-		create, remove, update = sections.NewHTTPRequestRuleFrontendCreate, sections.NewHTTPRequestRuleFrontendDelete, sections.NewHTTPRequestRuleFrontendUpdate
+		create, remove, update = sections.HTTPRequestRuleFrontendOps.Create, sections.HTTPRequestRuleFrontendOps.Delete, sections.HTTPRequestRuleFrontendOps.Update
 	}
 	return compareEditedItems(
 		currentRules, desiredRules,
@@ -142,9 +142,9 @@ func (c *Comparator) compareHTTPRequestRules(parentType, parentName string, curr
 // compareHTTPResponseRules compares HTTP response rule configurations within a frontend or backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareHTTPResponseRules(parentType, parentName string, currentRules, desiredRules models.HTTPResponseRules) []Operation {
-	create, remove, update := sections.NewHTTPResponseRuleBackendCreate, sections.NewHTTPResponseRuleBackendDelete, sections.NewHTTPResponseRuleBackendUpdate
+	create, remove, update := sections.HTTPResponseRuleBackendOps.Create, sections.HTTPResponseRuleBackendOps.Delete, sections.HTTPResponseRuleBackendOps.Update
 	if parentType == parentTypeFrontend {
-		create, remove, update = sections.NewHTTPResponseRuleFrontendCreate, sections.NewHTTPResponseRuleFrontendDelete, sections.NewHTTPResponseRuleFrontendUpdate
+		create, remove, update = sections.HTTPResponseRuleFrontendOps.Create, sections.HTTPResponseRuleFrontendOps.Delete, sections.HTTPResponseRuleFrontendOps.Update
 	}
 	return compareEditedItems(
 		currentRules, desiredRules,
@@ -158,9 +158,9 @@ func (c *Comparator) compareHTTPResponseRules(parentType, parentName string, cur
 // compareTCPRequestRules compares TCP request rule configurations within a frontend or backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareTCPRequestRules(parentType, parentName string, currentRules, desiredRules models.TCPRequestRules) []Operation {
-	create, remove, update := sections.NewTCPRequestRuleBackendCreate, sections.NewTCPRequestRuleBackendDelete, sections.NewTCPRequestRuleBackendUpdate
+	create, remove, update := sections.TCPRequestRuleBackendOps.Create, sections.TCPRequestRuleBackendOps.Delete, sections.TCPRequestRuleBackendOps.Update
 	if parentType == parentTypeFrontend {
-		create, remove, update = sections.NewTCPRequestRuleFrontendCreate, sections.NewTCPRequestRuleFrontendDelete, sections.NewTCPRequestRuleFrontendUpdate
+		create, remove, update = sections.TCPRequestRuleFrontendOps.Create, sections.TCPRequestRuleFrontendOps.Delete, sections.TCPRequestRuleFrontendOps.Update
 	}
 	return compareEditedItems(
 		currentRules, desiredRules,
@@ -178,13 +178,13 @@ func (c *Comparator) compareTCPResponseRules(parentName string, currentRules, de
 		currentRules, desiredRules,
 		func(a, b *models.TCPResponseRule) bool { return a.Equal(*b) },
 		func(r *models.TCPResponseRule, i int) Operation {
-			return sections.NewTCPResponseRuleBackendCreate(parentName, r, i)
+			return sections.TCPResponseRuleBackendOps.Create(parentName, r, i)
 		},
 		func(r *models.TCPResponseRule, i int) Operation {
-			return sections.NewTCPResponseRuleBackendDelete(parentName, r, i)
+			return sections.TCPResponseRuleBackendOps.Delete(parentName, r, i)
 		},
 		func(r *models.TCPResponseRule, i int) Operation {
-			return sections.NewTCPResponseRuleBackendUpdate(parentName, r, i)
+			return sections.TCPResponseRuleBackendOps.Update(parentName, r, i)
 		},
 	)
 }
@@ -196,13 +196,13 @@ func (c *Comparator) compareStickRules(backendName string, currentRules, desired
 		currentRules, desiredRules,
 		func(a, b *models.StickRule) bool { return a.Equal(*b) },
 		func(r *models.StickRule, i int) Operation {
-			return sections.NewStickRuleBackendCreate(backendName, r, i)
+			return sections.StickRuleBackendOps.Create(backendName, r, i)
 		},
 		func(r *models.StickRule, i int) Operation {
-			return sections.NewStickRuleBackendDelete(backendName, r, i)
+			return sections.StickRuleBackendOps.Delete(backendName, r, i)
 		},
 		func(r *models.StickRule, i int) Operation {
-			return sections.NewStickRuleBackendUpdate(backendName, r, i)
+			return sections.StickRuleBackendOps.Update(backendName, r, i)
 		},
 	)
 }
@@ -214,13 +214,13 @@ func (c *Comparator) compareHTTPAfterResponseRules(backendName string, currentRu
 		currentRules, desiredRules,
 		func(a, b *models.HTTPAfterResponseRule) bool { return a.Equal(*b) },
 		func(r *models.HTTPAfterResponseRule, i int) Operation {
-			return sections.NewHTTPAfterResponseRuleBackendCreate(backendName, r, i)
+			return sections.HTTPAfterResponseRuleBackendOps.Create(backendName, r, i)
 		},
 		func(r *models.HTTPAfterResponseRule, i int) Operation {
-			return sections.NewHTTPAfterResponseRuleBackendDelete(backendName, r, i)
+			return sections.HTTPAfterResponseRuleBackendOps.Delete(backendName, r, i)
 		},
 		func(r *models.HTTPAfterResponseRule, i int) Operation {
-			return sections.NewHTTPAfterResponseRuleBackendUpdate(backendName, r, i)
+			return sections.HTTPAfterResponseRuleBackendOps.Update(backendName, r, i)
 		},
 	)
 }
@@ -239,13 +239,13 @@ func (c *Comparator) compareFrontendHTTPAfterResponseRules(frontendName string, 
 		currentRules, desiredRules,
 		func(a, b *models.HTTPAfterResponseRule) bool { return a.Equal(*b) },
 		func(r *models.HTTPAfterResponseRule, i int) Operation {
-			return sections.NewHTTPAfterResponseRuleFrontendCreate(frontendName, r, i)
+			return sections.HTTPAfterResponseRuleFrontendOps.Create(frontendName, r, i)
 		},
 		func(r *models.HTTPAfterResponseRule, i int) Operation {
-			return sections.NewHTTPAfterResponseRuleFrontendDelete(frontendName, r, i)
+			return sections.HTTPAfterResponseRuleFrontendOps.Delete(frontendName, r, i)
 		},
 		func(r *models.HTTPAfterResponseRule, i int) Operation {
-			return sections.NewHTTPAfterResponseRuleFrontendUpdate(frontendName, r, i)
+			return sections.HTTPAfterResponseRuleFrontendOps.Update(frontendName, r, i)
 		},
 	)
 }
@@ -257,13 +257,13 @@ func (c *Comparator) compareBackendSwitchingRules(frontendName string, currentRu
 		currentRules, desiredRules,
 		func(a, b *models.BackendSwitchingRule) bool { return a.Equal(*b) },
 		func(r *models.BackendSwitchingRule, i int) Operation {
-			return sections.NewBackendSwitchingRuleFrontendCreate(frontendName, r, i)
+			return sections.BackendSwitchingRuleFrontendOps.Create(frontendName, r, i)
 		},
 		func(r *models.BackendSwitchingRule, i int) Operation {
-			return sections.NewBackendSwitchingRuleFrontendDelete(frontendName, r, i)
+			return sections.BackendSwitchingRuleFrontendOps.Delete(frontendName, r, i)
 		},
 		func(r *models.BackendSwitchingRule, i int) Operation {
-			return sections.NewBackendSwitchingRuleFrontendUpdate(frontendName, r, i)
+			return sections.BackendSwitchingRuleFrontendOps.Update(frontendName, r, i)
 		},
 	)
 }
@@ -275,13 +275,13 @@ func (c *Comparator) compareServerSwitchingRules(backendName string, currentRule
 		currentRules, desiredRules,
 		func(a, b *models.ServerSwitchingRule) bool { return a.Equal(*b) },
 		func(r *models.ServerSwitchingRule, i int) Operation {
-			return sections.NewServerSwitchingRuleBackendCreate(backendName, r, i)
+			return sections.ServerSwitchingRuleBackendOps.Create(backendName, r, i)
 		},
 		func(r *models.ServerSwitchingRule, i int) Operation {
-			return sections.NewServerSwitchingRuleBackendDelete(backendName, r, i)
+			return sections.ServerSwitchingRuleBackendOps.Delete(backendName, r, i)
 		},
 		func(r *models.ServerSwitchingRule, i int) Operation {
-			return sections.NewServerSwitchingRuleBackendUpdate(backendName, r, i)
+			return sections.ServerSwitchingRuleBackendOps.Update(backendName, r, i)
 		},
 	)
 }

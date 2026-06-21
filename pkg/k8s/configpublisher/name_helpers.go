@@ -115,15 +115,7 @@ func (p *Publisher) compressIfNeeded(content string, threshold int64, resourceTy
 		return compressResult{content: content, compressed: false}
 	}
 
-	compressedContent, err := compression.Compress(content)
-	if err != nil {
-		p.logger.Warn("compression failed, storing uncompressed",
-			"resource_type", resourceType,
-			"error", err,
-			"size_bytes", len(content),
-		)
-		return compressResult{content: content, compressed: false}
-	}
+	compressedContent := compression.Compress(content)
 
 	// Only use compression if it actually reduces size
 	if len(compressedContent) >= len(content) {

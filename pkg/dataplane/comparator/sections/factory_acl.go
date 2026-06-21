@@ -18,45 +18,15 @@ import (
 	"github.com/haproxytech/client-native/v6/models"
 )
 
-// describeACLOp wraps DescribeACL into the IndexChildCRUDWithDescriber describer shape.
+// describeACLOp wraps describeACL into the IndexChildCRUDWithDescriber describer shape.
 func describeACLOp(parentType string) func(OperationType, *models.ACL, string, int) func() string {
 	return func(op OperationType, acl *models.ACL, parentName string, _ int) func() string {
-		return DescribeACL(op, acl.ACLName, parentType, parentName)
+		return describeACL(op, acl.ACLName, parentType, parentName)
 	}
 }
 
 // CRUD builders for ACLs in frontends and backends.
 var (
-	aclFrontendOps = NewIndexChildCRUDWithDescriber[*models.ACL]("acl", describeACLOp("frontend"))
-	aclBackendOps  = NewIndexChildCRUDWithDescriber[*models.ACL]("acl", describeACLOp("backend"))
+	ACLFrontendOps = NewIndexChildCRUDWithDescriber[*models.ACL]("acl", describeACLOp("frontend"))
+	ACLBackendOps  = NewIndexChildCRUDWithDescriber[*models.ACL]("acl", describeACLOp("backend"))
 )
-
-// NewACLFrontendCreate creates an operation to create an ACL in a frontend.
-func NewACLFrontendCreate(frontendName string, acl *models.ACL, index int) Operation {
-	return aclFrontendOps.Create(frontendName, acl, index)
-}
-
-// NewACLFrontendUpdate creates an operation to update an ACL in a frontend.
-func NewACLFrontendUpdate(frontendName string, acl *models.ACL, index int) Operation {
-	return aclFrontendOps.Update(frontendName, acl, index)
-}
-
-// NewACLFrontendDelete creates an operation to delete an ACL from a frontend.
-func NewACLFrontendDelete(frontendName string, acl *models.ACL, index int) Operation {
-	return aclFrontendOps.Delete(frontendName, acl, index)
-}
-
-// NewACLBackendCreate creates an operation to create an ACL in a backend.
-func NewACLBackendCreate(backendName string, acl *models.ACL, index int) Operation {
-	return aclBackendOps.Create(backendName, acl, index)
-}
-
-// NewACLBackendUpdate creates an operation to update an ACL in a backend.
-func NewACLBackendUpdate(backendName string, acl *models.ACL, index int) Operation {
-	return aclBackendOps.Update(backendName, acl, index)
-}
-
-// NewACLBackendDelete creates an operation to delete an ACL from a backend.
-func NewACLBackendDelete(backendName string, acl *models.ACL, index int) Operation {
-	return aclBackendOps.Delete(backendName, acl, index)
-}

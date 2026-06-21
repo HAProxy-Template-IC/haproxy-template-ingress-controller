@@ -15,9 +15,9 @@ func (c *Comparator) compareResolvers(current, desired *parser.StructuredConfig)
 		current.NameserverIndex, desired.NameserverIndex,
 		func(r *models.Resolver) string { return r.Name },
 		resolversEqualWithoutNameservers,
-		sections.NewResolverCreate,
-		sections.NewResolverDelete,
-		sections.NewResolverUpdate,
+		sections.ResolverOps.Create,
+		sections.ResolverOps.Delete,
+		sections.ResolverOps.Update,
 		c.compareNameserversWithIndex,
 	)
 }
@@ -42,8 +42,8 @@ func (c *Comparator) compareNameserversWithIndex(resolverSection string, current
 	return compareNamedMaps(
 		currentNameservers, desiredNameservers,
 		func(a, b *models.Nameserver) bool { return a.Equal(*b) },
-		func(n *models.Nameserver) Operation { return sections.NewNameserverCreate(resolverSection, n) },
-		func(n *models.Nameserver) Operation { return sections.NewNameserverDelete(resolverSection, n) },
-		func(n *models.Nameserver) Operation { return sections.NewNameserverUpdate(resolverSection, n) },
+		func(n *models.Nameserver) Operation { return sections.NameserverOps.Create(resolverSection, n) },
+		func(n *models.Nameserver) Operation { return sections.NameserverOps.Delete(resolverSection, n) },
+		func(n *models.Nameserver) Operation { return sections.NameserverOps.Update(resolverSection, n) },
 	)
 }

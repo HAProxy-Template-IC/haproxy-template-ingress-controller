@@ -38,68 +38,8 @@ func httpResponseRuleIdentifier(rule *models.HTTPResponseRule) string {
 
 // CRUD builders for HTTP request and response rules.
 var (
-	httpRequestRuleFrontendOps  = NewIndexChildCRUD[*models.HTTPRequestRule]("http_request_rule", "HTTP request rule", "frontend", httpRequestRuleIdentifier)
-	httpRequestRuleBackendOps   = NewIndexChildCRUD[*models.HTTPRequestRule]("http_request_rule", "HTTP request rule", "backend", httpRequestRuleIdentifier)
-	httpResponseRuleFrontendOps = NewIndexChildCRUD[*models.HTTPResponseRule]("http_response_rule", "HTTP response rule", "frontend", httpResponseRuleIdentifier)
-	httpResponseRuleBackendOps  = NewIndexChildCRUD[*models.HTTPResponseRule]("http_response_rule", "HTTP response rule", "backend", httpResponseRuleIdentifier)
+	HTTPRequestRuleFrontendOps  = NewIndexChildCRUD[*models.HTTPRequestRule]("http_request_rule", "HTTP request rule", "frontend", httpRequestRuleIdentifier)
+	HTTPRequestRuleBackendOps   = NewIndexChildCRUD[*models.HTTPRequestRule]("http_request_rule", "HTTP request rule", "backend", httpRequestRuleIdentifier)
+	HTTPResponseRuleFrontendOps = NewIndexChildCRUD[*models.HTTPResponseRule]("http_response_rule", "HTTP response rule", "frontend", httpResponseRuleIdentifier)
+	HTTPResponseRuleBackendOps  = NewIndexChildCRUD[*models.HTTPResponseRule]("http_response_rule", "HTTP response rule", "backend", httpResponseRuleIdentifier)
 )
-
-// NewHTTPRequestRuleFrontendCreate creates an operation to create an HTTP request rule in a frontend.
-func NewHTTPRequestRuleFrontendCreate(frontendName string, rule *models.HTTPRequestRule, index int) Operation {
-	return httpRequestRuleFrontendOps.Create(frontendName, rule, index)
-}
-
-// NewHTTPRequestRuleFrontendUpdate creates an operation to update an HTTP request rule in a frontend.
-func NewHTTPRequestRuleFrontendUpdate(frontendName string, rule *models.HTTPRequestRule, index int) Operation {
-	return httpRequestRuleFrontendOps.Update(frontendName, rule, index)
-}
-
-// NewHTTPRequestRuleFrontendDelete creates an operation to delete an HTTP request rule from a frontend.
-func NewHTTPRequestRuleFrontendDelete(frontendName string, rule *models.HTTPRequestRule, index int) Operation {
-	return httpRequestRuleFrontendOps.Delete(frontendName, rule, index)
-}
-
-// NewHTTPRequestRuleBackendCreate creates an operation to create an HTTP request rule in a backend.
-func NewHTTPRequestRuleBackendCreate(backendName string, rule *models.HTTPRequestRule, index int) Operation {
-	return httpRequestRuleBackendOps.Create(backendName, rule, index)
-}
-
-// NewHTTPRequestRuleBackendUpdate creates an operation to update an HTTP request rule in a backend.
-func NewHTTPRequestRuleBackendUpdate(backendName string, rule *models.HTTPRequestRule, index int) Operation {
-	return httpRequestRuleBackendOps.Update(backendName, rule, index)
-}
-
-// NewHTTPRequestRuleBackendDelete creates an operation to delete an HTTP request rule from a backend.
-func NewHTTPRequestRuleBackendDelete(backendName string, rule *models.HTTPRequestRule, index int) Operation {
-	return httpRequestRuleBackendOps.Delete(backendName, rule, index)
-}
-
-// NewHTTPResponseRuleFrontendCreate creates an operation to create an HTTP response rule in a frontend.
-func NewHTTPResponseRuleFrontendCreate(frontendName string, rule *models.HTTPResponseRule, index int) Operation {
-	return httpResponseRuleFrontendOps.Create(frontendName, rule, index)
-}
-
-// NewHTTPResponseRuleFrontendUpdate creates an operation to update an HTTP response rule in a frontend.
-func NewHTTPResponseRuleFrontendUpdate(frontendName string, rule *models.HTTPResponseRule, index int) Operation {
-	return httpResponseRuleFrontendOps.Update(frontendName, rule, index)
-}
-
-// NewHTTPResponseRuleFrontendDelete creates an operation to delete an HTTP response rule from a frontend.
-func NewHTTPResponseRuleFrontendDelete(frontendName string, rule *models.HTTPResponseRule, index int) Operation {
-	return httpResponseRuleFrontendOps.Delete(frontendName, rule, index)
-}
-
-// NewHTTPResponseRuleBackendCreate creates an operation to create an HTTP response rule in a backend.
-func NewHTTPResponseRuleBackendCreate(backendName string, rule *models.HTTPResponseRule, index int) Operation {
-	return httpResponseRuleBackendOps.Create(backendName, rule, index)
-}
-
-// NewHTTPResponseRuleBackendUpdate creates an operation to update an HTTP response rule in a backend.
-func NewHTTPResponseRuleBackendUpdate(backendName string, rule *models.HTTPResponseRule, index int) Operation {
-	return httpResponseRuleBackendOps.Update(backendName, rule, index)
-}
-
-// NewHTTPResponseRuleBackendDelete creates an operation to delete an HTTP response rule from a backend.
-func NewHTTPResponseRuleBackendDelete(backendName string, rule *models.HTTPResponseRule, index int) Operation {
-	return httpResponseRuleBackendOps.Delete(backendName, rule, index)
-}

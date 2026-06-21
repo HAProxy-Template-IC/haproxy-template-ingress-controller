@@ -37,12 +37,12 @@ func (c *Comparator) findAddedUserlistsWithIndexes(desired, current map[string]*
 	var operations []Operation
 	for name, userlist := range desired {
 		if _, exists := current[name]; !exists {
-			operations = append(operations, sections.NewUserlistCreate(userlist))
+			operations = append(operations, sections.UserlistOps.Create(userlist))
 			// Explicitly create each user (Dataplane API may not persist users from request body)
 			// Use pointer index for zero-copy iteration
 			if users, ok := userIndex[name]; ok {
 				for _, user := range users {
-					operations = append(operations, sections.NewUserCreate(name, user))
+					operations = append(operations, sections.UserOps.Create(name, user))
 				}
 			}
 		}
@@ -55,7 +55,7 @@ func findDeletedUserlists(current, desired map[string]*models.Userlist) []Operat
 	var operations []Operation
 	for name, userlist := range current {
 		if _, exists := desired[name]; !exists {
-			operations = append(operations, sections.NewUserlistDelete(userlist))
+			operations = append(operations, sections.UserlistOps.Delete(userlist))
 		}
 	}
 	return operations
@@ -74,8 +74,8 @@ func (c *Comparator) findModifiedUserlistsWithIndexes(current, desired map[strin
 		if userlistMetadataChangedWithIndexes(name, currentGroupIndex, desiredGroupIndex) {
 			// Recreate entire userlist if metadata changed
 			operations = append(operations,
-				sections.NewUserlistDelete(currentUserlist),
-				sections.NewUserlistCreate(desiredUserlist))
+				sections.UserlistOps.Delete(currentUserlist),
+				sections.UserlistOps.Create(desiredUserlist))
 		} else {
 			// Compare users for fine-grained operations using pointer indexes
 			userOps := c.compareUserlistUsersWithIndex(name, currentUserIndex, desiredUserIndex)
@@ -200,9 +200,9 @@ func (c *Comparator) compareUserlistUsersWithIndex(userlistName string, currentU
 	return compareNamedMaps(
 		currentUserIndex[userlistName], desiredUserIndex[userlistName],
 		func(a, b *models.User) bool { return userEqual(*a, *b) },
-		func(u *models.User) Operation { return sections.NewUserCreate(userlistName, u) },
-		func(u *models.User) Operation { return sections.NewUserDelete(userlistName, u) },
-		func(u *models.User) Operation { return sections.NewUserUpdate(userlistName, u) },
+		func(u *models.User) Operation { return sections.UserOps.Create(userlistName, u) },
+		func(u *models.User) Operation { return sections.UserOps.Delete(userlistName, u) },
+		func(u *models.User) Operation { return sections.UserOps.Update(userlistName, u) },
 	)
 }
 
@@ -213,8 +213,8 @@ func (c *Comparator) compareCrtStores(current, desired *parser.StructuredConfig)
 		desired.CrtStores,
 		func(s *models.CrtStore) string { return s.Name },
 		func(a, b *models.CrtStore) bool { return a.Equal(*b) },
-		sections.NewCrtStoreCreate,
-		sections.NewCrtStoreDelete,
-		sections.NewCrtStoreUpdate,
+		sections.CrtStoreOps.Create,
+		sections.CrtStoreOps.Delete,
+		sections.CrtStoreOps.Update,
 	)
 }

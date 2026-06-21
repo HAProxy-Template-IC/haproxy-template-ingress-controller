@@ -58,7 +58,7 @@ component := webhook.New(logger, &webhook.Config{
     Port:            9443,
     Path:            "/validate",
     CertDir:         "/etc/webhook/certs", // mounted cert Secret; server reads + hot-reloads tls.crt/tls.key
-    Rules:           rules,               // []webhook.WebhookRule -- per-GVK list
+    Rules:           rules,               // []WebhookRule -- per-GVK list
     DryRunValidator: dryRunComponent,     // implements ValidateDirect
 }, restMapper, metricsRecorder)
 ```

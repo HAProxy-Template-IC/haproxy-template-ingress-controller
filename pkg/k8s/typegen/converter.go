@@ -463,7 +463,7 @@ func (c *Converter) convertObject(schema *spec.Schema, path string, depth int) (
 // the resulting reflect.StructField slice. The `degraded` return
 // signals that the caller should treat the object as `any` because
 // reflect.StructOf would reject the field set (currently only
-// goFieldName collisions; see the inline note).
+// GoFieldName collisions; see the inline note).
 //
 // Extracted from convertObject to keep that function under the
 // cognitive-complexity budget — the per-property body has too many
@@ -486,7 +486,7 @@ func (c *Converter) collectObjectFields(schema *spec.Schema, names []string, pat
 		requiredSet[r] = struct{}{}
 	}
 	// seenGoNames detects collisions where multiple JSON property
-	// names produce the same Go identifier under goFieldName's
+	// names produce the same Go identifier under GoFieldName's
 	// capitalise-and-sanitise rule (e.g. "my-field" and "my_field"
 	// both become "My_field"; "name" and "Name" both become
 	// "Name"). Without this check, reflect.StructOf would panic
@@ -505,7 +505,7 @@ func (c *Converter) collectObjectFields(schema *spec.Schema, names []string, pat
 		if err != nil {
 			return nil, false, fmt.Errorf("property %q: %w", name, err)
 		}
-		goName := goFieldName(name)
+		goName := GoFieldName(name)
 		if _, dup := seenGoNames[goName]; dup {
 			// Hostile / unusual schema (a CRD defining both
 			// "name" and "Name", or using hyphens / underscores
@@ -661,7 +661,7 @@ func needsTristatePointer(t reflect.Type) bool {
 	return false
 }
 
-// goFieldName lifts a JSON property name into an exported Go identifier
+// GoFieldName lifts a JSON property name into an exported Go identifier
 // suitable for [reflect.StructField.Name]. The transformation is the
 // minimum needed for Scriggo's compile-time field lookup to find the
 // field by its capitalised name:
@@ -682,14 +682,10 @@ func needsTristatePointer(t reflect.Type) bool {
 // internalise; the win is no acronym dictionary to maintain. So:
 // `apiVersion` → `ApiVersion`, `tlsConfig` → `TlsConfig`. Templates
 // write `gw.ApiVersion`.
-func goFieldName(name string) string {
-	return GoFieldName(name)
-}
-
-// GoFieldName is the exported form of goFieldName for callers outside
-// this package (e.g. pkg/controller/typebootstrap, which needs the
-// same identifier rule to compose the `resources` struct's Go field
-// names from watched-resource keys).
+//
+// It is exported because callers outside this package (e.g.
+// pkg/controller/typebootstrap) need the same identifier rule to compose
+// the `resources` struct's Go field names from watched-resource keys.
 func GoFieldName(name string) string {
 	if name == "" {
 		return "_"

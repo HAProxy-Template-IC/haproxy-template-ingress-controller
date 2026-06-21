@@ -104,47 +104,6 @@ func TestValidationContext_IsEmpty(t *testing.T) {
 	}
 }
 
-func TestValidationContext_HasK8sOverlays(t *testing.T) {
-	createOverlay := NewStoreOverlayForDelete("default", "x")
-
-	tests := []struct {
-		name string
-		ctx  *ValidationContext
-		want bool
-	}{
-		{name: "nil context", ctx: nil, want: false},
-		{name: "no overlays", ctx: NewValidationContext(nil), want: false},
-		{name: "empty overlays", ctx: NewValidationContext(map[string]*StoreOverlay{"x": NewStoreOverlay()}), want: false},
-		{name: "non-empty overlay", ctx: NewValidationContext(map[string]*StoreOverlay{"x": createOverlay}), want: true},
-		{name: "nil overlay entry", ctx: NewValidationContext(map[string]*StoreOverlay{"x": nil}), want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.ctx.HasK8sOverlays())
-		})
-	}
-}
-
-func TestValidationContext_HasHTTPOverlay(t *testing.T) {
-	tests := []struct {
-		name string
-		ctx  *ValidationContext
-		want bool
-	}{
-		{name: "nil context", ctx: nil, want: false},
-		{name: "no http overlay", ctx: NewValidationContext(nil), want: false},
-		{name: "empty http overlay", ctx: NewValidationContext(nil).WithHTTPOverlay(&fakeHTTPOverlay{empty: true}), want: false},
-		{name: "non-empty http overlay", ctx: NewValidationContext(nil).WithHTTPOverlay(&fakeHTTPOverlay{empty: false}), want: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.ctx.HasHTTPOverlay())
-		})
-	}
-}
-
 func TestOverlayStoreProvider_GetStore(t *testing.T) {
 	base := NewRealStoreProvider(map[string]Store{
 		"ingress":  &fakeStore{},
@@ -234,29 +193,6 @@ func TestOverlayStoreProvider_GetHTTPOverlay(t *testing.T) {
 		p := NewOverlayStoreProvider(base, ctx)
 		assert.Equal(t, httpOv, p.GetHTTPOverlay())
 	})
-}
-
-func TestOverlayStoreProvider_IsValidationMode(t *testing.T) {
-	base := NewRealStoreProvider(map[string]Store{"x": &fakeStore{}})
-	createOverlay := NewStoreOverlayForDelete("ns", "x")
-
-	tests := []struct {
-		name string
-		ctx  *ValidationContext
-		want bool
-	}{
-		{name: "nil context not validation mode", ctx: nil, want: false},
-		{name: "empty context not validation mode", ctx: NewValidationContext(nil), want: false},
-		{name: "K8s overlay triggers validation mode", ctx: NewValidationContext(map[string]*StoreOverlay{"x": createOverlay}), want: true},
-		{name: "http overlay triggers validation mode", ctx: NewValidationContext(nil).WithHTTPOverlay(&fakeHTTPOverlay{empty: false}), want: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p := NewOverlayStoreProvider(base, tt.ctx)
-			assert.Equal(t, tt.want, p.IsValidationMode())
-		})
-	}
 }
 
 func TestOverlayStoreProvider_Validate(t *testing.T) {

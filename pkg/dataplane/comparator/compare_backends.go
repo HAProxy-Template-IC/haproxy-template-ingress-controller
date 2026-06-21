@@ -27,7 +27,7 @@ func (c *Comparator) compareBackends(current, desired *parser.StructuredConfig, 
 	// Find deleted backends
 	for name, backend := range currentBackends {
 		if _, exists := desiredBackends[name]; !exists {
-			operations = append(operations, sections.NewBackendDelete(backend))
+			operations = append(operations, sections.BackendOps.Delete(backend))
 			summary.BackendsDeleted = append(summary.BackendsDeleted, name)
 		}
 	}
@@ -49,7 +49,7 @@ func (c *Comparator) compareAddedBackendsWithIndexes(desiredBackends, currentBac
 		if _, exists := currentBackends[name]; exists {
 			continue
 		}
-		operations = append(operations, sections.NewBackendCreate(backend))
+		operations = append(operations, sections.BackendOps.Create(backend))
 		summary.BackendsAdded = append(summary.BackendsAdded, name)
 
 		// Create operations for all nested elements in the new backend using pointer indexes
@@ -164,7 +164,7 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 
 		// Compare backend attributes (excluding servers, ACLs, and rules which we already compared)
 		if diffFields := backendBaseDiffFields(currentBackend, desiredBackend); len(diffFields) > 0 {
-			operations = append(operations, sections.NewBackendUpdate(desiredBackend))
+			operations = append(operations, sections.BackendOps.Update(desiredBackend))
 			backendModified = true
 			summary.BackendDiffFields[name] = diffFields
 		}
@@ -204,9 +204,15 @@ func (c *Comparator) compareServerTemplatesWithIndex(backendName string, current
 	return compareNamedMaps(
 		currentTemplates, desiredTemplates,
 		func(a, b *models.ServerTemplate) bool { return a.Equal(*b) },
-		func(t *models.ServerTemplate) Operation { return sections.NewServerTemplateCreate(backendName, t) },
-		func(t *models.ServerTemplate) Operation { return sections.NewServerTemplateDelete(backendName, t) },
-		func(t *models.ServerTemplate) Operation { return sections.NewServerTemplateUpdate(backendName, t) },
+		func(t *models.ServerTemplate) Operation {
+			return sections.ServerTemplateOps.Create(backendName, t.Prefix, t)
+		},
+		func(t *models.ServerTemplate) Operation {
+			return sections.ServerTemplateOps.Delete(backendName, t.Prefix, t)
+		},
+		func(t *models.ServerTemplate) Operation {
+			return sections.ServerTemplateOps.Update(backendName, t.Prefix, t)
+		},
 	)
 }
 

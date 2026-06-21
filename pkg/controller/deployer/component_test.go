@@ -31,10 +31,10 @@ import (
 // Test helper to create a test deployer component.
 func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	logger := testutil.NewTestLogger()
-	// Zero-value SyncOptions is intentional: every per-sync knob falls back to
+	// Zero timeouts are intentional: every per-sync knob falls back to
 	// dataplane.DefaultSyncOptions() in deployToSingleEndpoint (timeouts applied
 	// only via the > 0 guards). This is the contract the deployer gives test code.
-	return New(eventBus, logger, SyncOptions{})
+	return New(eventBus, logger, 0, 0)
 }
 
 func TestHandleDeploymentScheduled(t *testing.T) {

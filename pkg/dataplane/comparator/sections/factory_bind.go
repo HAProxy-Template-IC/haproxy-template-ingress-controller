@@ -41,22 +41,7 @@ func bindIdentifier(bind *models.Bind) string {
 }
 
 // CRUD builder for binds in a frontend.
-var bindFrontendOps = NewNameChildCRUD[*models.Bind](
+var BindFrontendOps = NewNameChildCRUD[*models.Bind](
 	"bind", "bind", "frontend",
 	func(bind *models.Bind, _ string) string { return bindIdentifier(bind) },
 )
-
-// NewBindFrontendCreate creates an operation to create a bind in a frontend.
-func NewBindFrontendCreate(frontendName, bindName string, bind *models.Bind) Operation {
-	return bindFrontendOps.Create(frontendName, bindName, bind)
-}
-
-// NewBindFrontendUpdate creates an operation to update a bind in a frontend.
-func NewBindFrontendUpdate(frontendName, bindName string, bind *models.Bind) Operation {
-	return bindFrontendOps.Update(frontendName, bindName, bind)
-}
-
-// NewBindFrontendDelete creates an operation to delete a bind from a frontend.
-func NewBindFrontendDelete(frontendName, bindName string, bind *models.Bind) Operation {
-	return bindFrontendOps.Delete(frontendName, bindName, bind)
-}

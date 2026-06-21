@@ -10,9 +10,9 @@ import (
 // compareLogTargets compares log target configurations within a frontend or backend.
 // Log targets are compared by position since they don't have unique identifiers.
 func (c *Comparator) compareLogTargets(parentType, parentName string, currentLogs, desiredLogs models.LogTargets) []Operation {
-	create, remove, update := sections.NewLogTargetBackendCreate, sections.NewLogTargetBackendDelete, sections.NewLogTargetBackendUpdate
+	create, remove, update := sections.LogTargetBackendOps.Create, sections.LogTargetBackendOps.Delete, sections.LogTargetBackendOps.Update
 	if parentType == parentTypeFrontend {
-		create, remove, update = sections.NewLogTargetFrontendCreate, sections.NewLogTargetFrontendDelete, sections.NewLogTargetFrontendUpdate
+		create, remove, update = sections.LogTargetFrontendOps.Create, sections.LogTargetFrontendOps.Delete, sections.LogTargetFrontendOps.Update
 	}
 	return compareIndexedItems(
 		currentLogs, desiredLogs,
@@ -30,9 +30,9 @@ func (c *Comparator) compareLogForwards(current, desired *parser.StructuredConfi
 		desired.LogForwards,
 		func(lf *models.LogForward) string { return lf.Name },
 		func(l1, l2 *models.LogForward) bool { return l1.Equal(*l2) },
-		sections.NewLogForwardCreate,
-		sections.NewLogForwardDelete,
-		sections.NewLogForwardUpdate,
+		sections.LogForwardOps.Create,
+		sections.LogForwardOps.Delete,
+		sections.LogForwardOps.Update,
 	)
 }
 
@@ -44,9 +44,9 @@ func (c *Comparator) compareLogProfiles(current, desired *parser.StructuredConfi
 		desired.LogProfiles,
 		func(lp *models.LogProfile) string { return lp.Name },
 		func(l1, l2 *models.LogProfile) bool { return l1.Equal(*l2) },
-		sections.NewLogProfileCreate,
-		sections.NewLogProfileDelete,
-		sections.NewLogProfileUpdate,
+		sections.LogProfileOps.Create,
+		sections.LogProfileOps.Delete,
+		sections.LogProfileOps.Update,
 	)
 }
 

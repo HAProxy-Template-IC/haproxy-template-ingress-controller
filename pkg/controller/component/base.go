@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -157,7 +158,7 @@ func (b *Base) drainCoalesced() {
 		return
 	}
 	for {
-		latest, superseded := drainLatestByType(b.eventChan, eventType, b.dispatch)
+		latest, superseded := coalesce.DrainLatestByType(b.eventChan, eventType, b.dispatch)
 		if latest == nil {
 			return
 		}
@@ -167,37 +168,6 @@ func (b *Base) drainCoalesced() {
 				"superseded_count", superseded)
 		}
 		b.dispatch(latest)
-	}
-}
-
-// drainLatestByType performs a non-blocking drain of eventChan, returning
-// the latest event whose EventType() matches eventType *and* whose
-// CoalescibleEvent.Coalescible() returns true. All other events are passed
-// to dispatch as they arrive.
-func drainLatestByType(
-	eventChan <-chan busevents.Event,
-	eventType string,
-	dispatch func(busevents.Event),
-) (latest busevents.Event, supersededCount int) {
-	for {
-		select {
-		case event := <-eventChan:
-			if event.EventType() != eventType {
-				dispatch(event)
-				continue
-			}
-			coalescible, ok := event.(busevents.CoalescibleEvent)
-			if !ok || !coalescible.Coalescible() {
-				dispatch(event)
-				continue
-			}
-			if latest != nil {
-				supersededCount++
-			}
-			latest = event
-		default:
-			return latest, supersededCount
-		}
 	}
 }
 

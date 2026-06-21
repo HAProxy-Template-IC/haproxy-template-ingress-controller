@@ -16,12 +16,12 @@ import (
 )
 
 // httpRequestRuleIdentifier and httpResponseRuleIdentifier feed
-// DescribeTypedChild — the helper that decides whether to render a
+// describeTypedChild — the helper that decides whether to render a
 // parenthesized identifier "(redirect)" or fall back to "at index N".
 //
 // The two helpers intentionally differ in their nil/empty handling:
 //   - httpRequestRuleIdentifier returns "" for nil OR empty type, which
-//     causes DescribeTypedChild to fall back to the "at index N" label.
+//     causes describeTypedChild to fall back to the "at index N" label.
 //   - httpResponseRuleIdentifier returns unknownIdentifier ("<unknown>")
 //     for nil OR empty type, because HTTP response rules always have a
 //     type in practice — an empty type is itself a signal worth

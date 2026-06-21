@@ -180,22 +180,10 @@ func New(cfg *PipelineConfig) *Pipeline {
 //   - PipelineResult containing rendered config and validation status
 //   - Error if rendering or validation fails
 func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (*PipelineResult, error) {
-	startTime := time.Now()
-
-	// Phase 1: Render configuration
-	renderResult, err := p.renderer.Render(ctx, provider)
+	result, validationResult, err := p.execute(ctx, provider)
 	if err != nil {
-		return nil, &PipelineError{
-			Phase: PhaseRender,
-			Cause: err,
-		}
+		return nil, err
 	}
-
-	// Compute content checksum once — propagated to all downstream consumers
-	contentChecksum := dataplane.ComputeContentChecksum(renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
-
-	// Phase 2: Validate configuration (pass pre-computed checksum to avoid rehashing)
-	validationResult := p.validator.ValidateWithChecksum(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles, contentChecksum)
 	if !validationResult.Valid {
 		return nil, &PipelineError{
 			Phase:           PhaseValidation,
@@ -203,19 +191,7 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (
 			Cause:           validationResult.Error,
 		}
 	}
-
-	return &PipelineResult{
-		HAProxyConfig:      renderResult.HAProxyConfig,
-		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
-		StatusPatches:      renderResult.StatusPatches,
-		RenderedResources:  renderResult.RenderedResources,
-		AuxFileCount:       renderResult.AuxFileCount,
-		ContentChecksum:    contentChecksum,
-		RenderDurationMs:   renderResult.DurationMs,
-		ValidateDurationMs: validationResult.DurationMs,
-		TotalDurationMs:    time.Since(startTime).Milliseconds(),
-		ParsedConfig:       validationResult.ParsedConfig,
-	}, nil
+	return result, nil
 }
 
 // ExecuteWithResult runs the pipeline and returns validation result even on failure.
@@ -234,6 +210,16 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (
 //   - ValidationResult with validation details (nil if render failed)
 //   - Error if rendering fails (validation failures return non-nil ValidationResult)
 func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreProvider) (*PipelineResult, *validation.ValidationResult, error) {
+	return p.execute(ctx, provider)
+}
+
+// execute is the shared render-validate body behind Execute and
+// ExecuteWithResult. It always renders, then validates, and returns the
+// assembled result alongside the raw validation result so callers can decide
+// how to treat a validation failure (Execute turns it into a PipelineError;
+// ExecuteWithResult hands the details back). A render failure short-circuits
+// with a PipelineError and nil results.
+func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider) (*PipelineResult, *validation.ValidationResult, error) {
 	startTime := time.Now()
 
 	// Phase 1: Render configuration
@@ -245,16 +231,17 @@ func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreP
 		}
 	}
 
-	// Compute content checksum once
+	// Compute content checksum once — propagated to all downstream consumers
 	contentChecksum := dataplane.ComputeContentChecksum(renderResult.HAProxyConfig, renderResult.AuxiliaryFiles)
 
-	// Phase 2: Validate configuration (pass pre-computed checksum)
+	// Phase 2: Validate configuration (pass pre-computed checksum to avoid rehashing)
 	validationResult := p.validator.ValidateWithChecksum(ctx, renderResult.HAProxyConfig, renderResult.AuxiliaryFiles, contentChecksum)
 
 	result := &PipelineResult{
 		HAProxyConfig:      renderResult.HAProxyConfig,
 		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
 		StatusPatches:      renderResult.StatusPatches,
+		RenderedResources:  renderResult.RenderedResources,
 		AuxFileCount:       renderResult.AuxFileCount,
 		ContentChecksum:    contentChecksum,
 		RenderDurationMs:   renderResult.DurationMs,

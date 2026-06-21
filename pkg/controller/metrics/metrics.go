@@ -69,7 +69,6 @@ type Metrics struct {
 	WebhookRequestsTotal   *prometheus.CounterVec
 	WebhookRequestDuration prometheus.Histogram
 	WebhookValidationTotal *prometheus.CounterVec
-	WebhookCertRotations   prometheus.Counter
 
 	// Leader election metrics
 	LeaderElectionIsLeader            prometheus.Gauge
@@ -255,11 +254,6 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"Total number of webhook validation results",
 			[]string{"gvk", "result"},
 		),
-		WebhookCertRotations: pkgmetrics.NewCounter(
-			registry,
-			"haptic_webhook_cert_rotations_total",
-			"Total number of webhook certificate rotations",
-		),
 
 		// Leader election metrics
 		LeaderElectionIsLeader: pkgmetrics.NewGauge(
@@ -408,11 +402,6 @@ func (m *Metrics) RecordWebhookRequest(gvk, result string, durationSeconds float
 //   - result: The validation result ("allowed", "denied", or "error")
 func (m *Metrics) RecordWebhookValidation(gvk, result string) {
 	m.WebhookValidationTotal.WithLabelValues(gvk, result).Inc()
-}
-
-// RecordWebhookCertRotation records a webhook certificate rotation.
-func (m *Metrics) RecordWebhookCertRotation() {
-	m.WebhookCertRotations.Inc()
 }
 
 // RecordHAProxyPodRejected increments the rejection counter for a stable

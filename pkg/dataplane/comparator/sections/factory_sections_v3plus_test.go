@@ -31,9 +31,9 @@ func TestLogProfileFactoryFunctions(t *testing.T) {
 		wantType         OperationType
 		wantDescContains string
 	}{
-		{name: "NewLogProfileCreate", factory: NewLogProfileCreate, wantType: OperationCreate, wantDescContains: "Create log-profile 'audit'"},
-		{name: "NewLogProfileUpdate", factory: NewLogProfileUpdate, wantType: OperationUpdate, wantDescContains: "Update log-profile 'audit'"},
-		{name: "NewLogProfileDelete", factory: NewLogProfileDelete, wantType: OperationDelete, wantDescContains: "Delete log-profile 'audit'"},
+		{name: "LogProfileOps.Create", factory: LogProfileOps.Create, wantType: OperationCreate, wantDescContains: "Create log-profile 'audit'"},
+		{name: "LogProfileOps.Update", factory: LogProfileOps.Update, wantType: OperationUpdate, wantDescContains: "Update log-profile 'audit'"},
+		{name: "LogProfileOps.Delete", factory: LogProfileOps.Delete, wantType: OperationDelete, wantDescContains: "Delete log-profile 'audit'"},
 	}
 
 	for _, tt := range tests {
@@ -54,9 +54,9 @@ func TestAcmeProviderFactoryFunctions(t *testing.T) {
 		wantType         OperationType
 		wantDescContains string
 	}{
-		{name: "NewAcmeProviderCreate", factory: NewAcmeProviderCreate, wantType: OperationCreate, wantDescContains: "Create acme-provider 'letsencrypt'"},
-		{name: "NewAcmeProviderUpdate", factory: NewAcmeProviderUpdate, wantType: OperationUpdate, wantDescContains: "Update acme-provider 'letsencrypt'"},
-		{name: "NewAcmeProviderDelete", factory: NewAcmeProviderDelete, wantType: OperationDelete, wantDescContains: "Delete acme-provider 'letsencrypt'"},
+		{name: "AcmeProviderOps.Create", factory: AcmeProviderOps.Create, wantType: OperationCreate, wantDescContains: "Create acme-provider 'letsencrypt'"},
+		{name: "AcmeProviderOps.Update", factory: AcmeProviderOps.Update, wantType: OperationUpdate, wantDescContains: "Update acme-provider 'letsencrypt'"},
+		{name: "AcmeProviderOps.Delete", factory: AcmeProviderOps.Delete, wantType: OperationDelete, wantDescContains: "Delete acme-provider 'letsencrypt'"},
 	}
 
 	for _, tt := range tests {

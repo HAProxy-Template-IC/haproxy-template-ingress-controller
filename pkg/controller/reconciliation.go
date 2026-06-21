@@ -194,10 +194,9 @@ func createReconciliationComponents(
 	})
 
 	// Create Deployer with the configured per-sync Dataplane options.
-	deployerComponent := deployer.New(setup.Bus, logger, deployer.SyncOptions{
-		ReloadVerificationTimeout: cfg.Dataplane.GetReloadVerificationTimeout(),
-		Timeout:                   cfg.Dataplane.GetSyncTimeout(),
-	})
+	deployerComponent := deployer.New(setup.Bus, logger,
+		cfg.Dataplane.GetReloadVerificationTimeout(),
+		cfg.Dataplane.GetSyncTimeout())
 
 	// Create DeploymentScheduler with rate limiting and timeout
 	minDeploymentInterval := cfg.Dataplane.GetMinDeploymentInterval()

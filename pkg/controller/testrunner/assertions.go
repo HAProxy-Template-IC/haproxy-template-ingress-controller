@@ -17,8 +17,7 @@ package testrunner
 import (
 	"context"
 	"fmt"
-
-	"github.com/pmezard/go-difflib/difflib"
+	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -99,23 +98,53 @@ func (r *Runner) assertDeterministic(
 	return result
 }
 
-// generateUnifiedDiff generates a unified diff between two strings.
+// generateUnifiedDiff generates a line-by-line diff between two strings.
+// Identical lines are prefixed with a space, removed lines with "-", and
+// added lines with "+", under "--- fromName" / "+++ toName" headers. It is
+// not a minimal-edit (LCS) diff — it compares lines positionally, which is
+// sufficient for the deterministic-render check, where the two inputs are
+// the same template rendered twice and any divergence is a bug to surface.
 func generateUnifiedDiff(fromName, toName, from, to string) string {
-	diff := difflib.UnifiedDiff{
-		A:        difflib.SplitLines(from),
-		B:        difflib.SplitLines(to),
-		FromFile: fromName,
-		ToFile:   toName,
-		Context:  3,
-	}
-	text, err := difflib.GetUnifiedDiffString(diff)
-	if err != nil {
-		return fmt.Sprintf("(failed to generate diff: %v)", err)
-	}
-	if text == "" {
+	if from == to {
 		return "(no visible diff - whitespace or newline difference)"
 	}
-	return text
+
+	fromLines := strings.Split(from, "\n")
+	toLines := strings.Split(to, "\n")
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "--- %s\n", fromName)
+	fmt.Fprintf(&b, "+++ %s\n", toName)
+
+	maxLen := len(fromLines)
+	if len(toLines) > maxLen {
+		maxLen = len(toLines)
+	}
+	for i := 0; i < maxLen; i++ {
+		var fromLine, toLine string
+		hasFrom := i < len(fromLines)
+		hasTo := i < len(toLines)
+		if hasFrom {
+			fromLine = fromLines[i]
+		}
+		if hasTo {
+			toLine = toLines[i]
+		}
+
+		switch {
+		case hasFrom && hasTo && fromLine == toLine:
+			fmt.Fprintf(&b, " %s\n", fromLine)
+		default:
+			if hasFrom {
+				fmt.Fprintf(&b, "-%s\n", fromLine)
+			}
+			if hasTo {
+				fmt.Fprintf(&b, "+%s\n", toLine)
+			}
+		}
+	}
+
+	return b.String()
 }
 
 // compareAuxiliaryFiles compares two sets of auxiliary files and returns a diff description if they differ.

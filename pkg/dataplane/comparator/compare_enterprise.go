@@ -45,9 +45,9 @@ func (c *Comparator) compareBotMgmtProfiles(current, desired *parser.StructuredC
 		desired.BotMgmtProfiles,
 		func(p *v32ee.BotmgmtProfile) string { return p.Name },
 		eeModelEqual[v32ee.BotmgmtProfile],
-		sections.NewBotMgmtProfileCreate,
-		sections.NewBotMgmtProfileDelete,
-		sections.NewBotMgmtProfileUpdate,
+		sections.BotMgmtProfileOps.Create,
+		sections.BotMgmtProfileOps.Delete,
+		sections.BotMgmtProfileOps.Update,
 	)
 }
 
@@ -59,9 +59,9 @@ func (c *Comparator) compareCaptchas(current, desired *parser.StructuredConfig) 
 		desired.Captchas,
 		func(cap *v32ee.Captcha) string { return cap.Name },
 		eeModelEqual[v32ee.Captcha],
-		sections.NewCaptchaCreate,
-		sections.NewCaptchaDelete,
-		sections.NewCaptchaUpdate,
+		sections.CaptchaOps.Create,
+		sections.CaptchaOps.Delete,
+		sections.CaptchaOps.Update,
 	)
 }
 
@@ -73,9 +73,9 @@ func (c *Comparator) compareWAFProfiles(current, desired *parser.StructuredConfi
 		desired.WAFProfiles,
 		func(p *v32ee.WafProfile) string { return p.Name },
 		eeModelEqual[v32ee.WafProfile],
-		sections.NewWAFProfileCreate,
-		sections.NewWAFProfileDelete,
-		sections.NewWAFProfileUpdate,
+		sections.WafProfileOps.Create,
+		sections.WafProfileOps.Delete,
+		sections.WafProfileOps.Update,
 	)
 }
 

@@ -14,9 +14,9 @@ func (c *Comparator) compareHTTPErrors(current, desired *parser.StructuredConfig
 		desired.HTTPErrors,
 		func(s *models.HTTPErrorsSection) string { return s.Name },
 		func(a, b *models.HTTPErrorsSection) bool { return a.Equal(*b) },
-		sections.NewHTTPErrorsSectionCreate,
-		sections.NewHTTPErrorsSectionDelete,
-		sections.NewHTTPErrorsSectionUpdate,
+		sections.HTTPErrorsOps.Create,
+		sections.HTTPErrorsOps.Delete,
+		sections.HTTPErrorsOps.Update,
 	)
 }
 
@@ -28,9 +28,9 @@ func (c *Comparator) compareMailers(current, desired *parser.StructuredConfig) [
 		current.MailerEntryIndex, desired.MailerEntryIndex,
 		func(m *models.MailersSection) string { return m.Name },
 		mailersEqualWithoutMailerEntries,
-		sections.NewMailersSectionCreate,
-		sections.NewMailersSectionDelete,
-		sections.NewMailersSectionUpdate,
+		sections.MailersOps.Create,
+		sections.MailersOps.Delete,
+		sections.MailersOps.Update,
 		c.compareMailerEntriesWithIndex,
 	)
 }
@@ -55,9 +55,9 @@ func (c *Comparator) compareMailerEntriesWithIndex(mailersSection string, curren
 	return compareNamedMaps(
 		currentEntries, desiredEntries,
 		func(a, b *models.MailerEntry) bool { return a.Equal(*b) },
-		func(e *models.MailerEntry) Operation { return sections.NewMailerEntryCreate(mailersSection, e) },
-		func(e *models.MailerEntry) Operation { return sections.NewMailerEntryDelete(mailersSection, e) },
-		func(e *models.MailerEntry) Operation { return sections.NewMailerEntryUpdate(mailersSection, e) },
+		func(e *models.MailerEntry) Operation { return sections.MailerEntryOps.Create(mailersSection, e) },
+		func(e *models.MailerEntry) Operation { return sections.MailerEntryOps.Delete(mailersSection, e) },
+		func(e *models.MailerEntry) Operation { return sections.MailerEntryOps.Update(mailersSection, e) },
 	)
 }
 
@@ -69,9 +69,9 @@ func (c *Comparator) comparePeers(current, desired *parser.StructuredConfig) []O
 		current.PeerEntryIndex, desired.PeerEntryIndex,
 		func(p *models.PeerSection) string { return p.Name },
 		peersEqualWithoutPeerEntries,
-		sections.NewPeerSectionCreate,
-		sections.NewPeerSectionDelete,
-		sections.NewPeerSectionUpdate,
+		sections.PeerSectionOps.Create,
+		sections.PeerSectionOps.Delete,
+		sections.PeerSectionOps.Update,
 		c.comparePeerEntriesWithIndex,
 	)
 }
@@ -96,9 +96,9 @@ func (c *Comparator) comparePeerEntriesWithIndex(peersSection string, currentEnt
 	return compareNamedMaps(
 		currentEntries, desiredEntries,
 		func(a, b *models.PeerEntry) bool { return a.Equal(*b) },
-		func(e *models.PeerEntry) Operation { return sections.NewPeerEntryCreate(peersSection, e) },
-		func(e *models.PeerEntry) Operation { return sections.NewPeerEntryDelete(peersSection, e) },
-		func(e *models.PeerEntry) Operation { return sections.NewPeerEntryUpdate(peersSection, e) },
+		func(e *models.PeerEntry) Operation { return sections.PeerEntryOps.Create(peersSection, e) },
+		func(e *models.PeerEntry) Operation { return sections.PeerEntryOps.Delete(peersSection, e) },
+		func(e *models.PeerEntry) Operation { return sections.PeerEntryOps.Update(peersSection, e) },
 	)
 }
 
@@ -114,9 +114,9 @@ func (c *Comparator) compareCaches(current, desired *parser.StructuredConfig) []
 			return *s.Name
 		},
 		func(a, b *models.Cache) bool { return a.Equal(*b) },
-		sections.NewCacheCreate,
-		sections.NewCacheDelete,
-		sections.NewCacheUpdate,
+		sections.CacheOps.Create,
+		sections.CacheOps.Delete,
+		sections.CacheOps.Update,
 	)
 }
 
@@ -127,9 +127,9 @@ func (c *Comparator) compareRings(current, desired *parser.StructuredConfig) []O
 		desired.Rings,
 		func(r *models.Ring) string { return r.Name },
 		func(a, b *models.Ring) bool { return a.Equal(*b) },
-		sections.NewRingCreate,
-		sections.NewRingDelete,
-		sections.NewRingUpdate,
+		sections.RingOps.Create,
+		sections.RingOps.Delete,
+		sections.RingOps.Update,
 	)
 }
 
@@ -140,9 +140,9 @@ func (c *Comparator) comparePrograms(current, desired *parser.StructuredConfig) 
 		desired.Programs,
 		func(p *models.Program) string { return p.Name },
 		func(a, b *models.Program) bool { return a.Equal(*b) },
-		sections.NewProgramCreate,
-		sections.NewProgramDelete,
-		sections.NewProgramUpdate,
+		sections.ProgramOps.Create,
+		sections.ProgramOps.Delete,
+		sections.ProgramOps.Update,
 	)
 }
 
@@ -153,8 +153,8 @@ func (c *Comparator) compareFCGIApps(current, desired *parser.StructuredConfig) 
 		desired.FCGIApps,
 		func(a *models.FCGIApp) string { return a.Name },
 		func(a, b *models.FCGIApp) bool { return a.Equal(*b) },
-		sections.NewFCGIAppCreate,
-		sections.NewFCGIAppDelete,
-		sections.NewFCGIAppUpdate,
+		sections.FcgiAppOps.Create,
+		sections.FcgiAppOps.Delete,
+		sections.FcgiAppOps.Update,
 	)
 }

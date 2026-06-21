@@ -25,7 +25,7 @@ func (c *Comparator) compareFrontends(current, desired *parser.StructuredConfig,
 	// Find deleted frontends
 	for name, frontend := range currentFrontends {
 		if _, exists := desiredFrontends[name]; !exists {
-			operations = append(operations, sections.NewFrontendDelete(frontend))
+			operations = append(operations, sections.FrontendOps.Delete(frontend))
 			summary.FrontendsDeleted = append(summary.FrontendsDeleted, name)
 		}
 	}
@@ -46,7 +46,7 @@ func (c *Comparator) compareAddedFrontendsWithIndexes(desiredFrontends, currentF
 		if _, exists := currentFrontends[name]; exists {
 			continue
 		}
-		operations = append(operations, sections.NewFrontendCreate(frontend))
+		operations = append(operations, sections.FrontendOps.Create(frontend))
 		summary.FrontendsAdded = append(summary.FrontendsAdded, name)
 
 		// Create operations for all nested elements in the new frontend
@@ -174,7 +174,7 @@ func (c *Comparator) compareModifiedFrontendsWithIndexes(desiredFrontends, curre
 
 		// Compare frontend attributes (excluding ACLs, rules, and binds which we already compared)
 		if !frontendsEqualWithoutNestedCollections(currentFrontend, desiredFrontend) {
-			operations = append(operations, sections.NewFrontendUpdate(desiredFrontend))
+			operations = append(operations, sections.FrontendOps.Update(desiredFrontend))
 			frontendModified = true
 		}
 
@@ -226,9 +226,9 @@ func (c *Comparator) compareBindsWithIndex(frontendName string, currentBinds, de
 	return compareNamedMaps(
 		currentBinds, desiredBinds,
 		func(a, b *models.Bind) bool { return a.Equal(*b) },
-		func(b *models.Bind) Operation { return sections.NewBindFrontendCreate(frontendName, b.Name, b) },
-		func(b *models.Bind) Operation { return sections.NewBindFrontendDelete(frontendName, b.Name, b) },
-		func(b *models.Bind) Operation { return sections.NewBindFrontendUpdate(frontendName, b.Name, b) },
+		func(b *models.Bind) Operation { return sections.BindFrontendOps.Create(frontendName, b.Name, b) },
+		func(b *models.Bind) Operation { return sections.BindFrontendOps.Delete(frontendName, b.Name, b) },
+		func(b *models.Bind) Operation { return sections.BindFrontendOps.Update(frontendName, b.Name, b) },
 	)
 }
 
@@ -239,13 +239,13 @@ func (c *Comparator) compareCaptures(frontendName string, currentCaptures, desir
 		currentCaptures, desiredCaptures,
 		func(a, b *models.Capture) bool { return a.Equal(*b) },
 		func(capture *models.Capture, i int) Operation {
-			return sections.NewCaptureFrontendCreate(frontendName, capture, i)
+			return sections.CaptureFrontendOps.Create(frontendName, capture, i)
 		},
 		func(capture *models.Capture, i int) Operation {
-			return sections.NewCaptureFrontendDelete(frontendName, capture, i)
+			return sections.CaptureFrontendOps.Delete(frontendName, capture, i)
 		},
 		func(capture *models.Capture, i int) Operation {
-			return sections.NewCaptureFrontendUpdate(frontendName, capture, i)
+			return sections.CaptureFrontendOps.Update(frontendName, capture, i)
 		},
 	)
 }

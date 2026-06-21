@@ -9,19 +9,19 @@ import (
 	"github.com/haproxytech/client-native/v6/models"
 )
 
-// DescribeTopLevel returns a description function for top-level operations.
-func DescribeTopLevel(op OperationType, section, name string) func() string {
+// describeTopLevel returns a description function for top-level operations.
+func describeTopLevel(op OperationType, section, name string) func() string {
 	verb := opVerb(op)
 	return func() string {
 		return fmt.Sprintf("%s %s '%s'", verb, section, name)
 	}
 }
 
-// DescribeNamedChild returns a description function for named child operations.
+// describeNamedChild returns a description function for named child operations.
 // Also used for container children (user, mailer entry, etc.) where the parent
 // is a container section like userlist or mailers — the formatted output is
 // identical, only the documented intent differs.
-func DescribeNamedChild(op OperationType, childType, childName, parentType, parentName string) func() string {
+func describeNamedChild(op OperationType, childType, childName, parentType, parentName string) func() string {
 	verb := opVerb(op)
 	preposition := opPreposition(op)
 	return func() string {
@@ -29,8 +29,8 @@ func DescribeNamedChild(op OperationType, childType, childName, parentType, pare
 	}
 }
 
-// DescribeACL returns a description function for ACL operations with ACL name.
-func DescribeACL(op OperationType, aclName, parentType, parentName string) func() string {
+// describeACL returns a description function for ACL operations with ACL name.
+func describeACL(op OperationType, aclName, parentType, parentName string) func() string {
 	verb := opVerb(op)
 	preposition := opPreposition(op)
 	return func() string {
@@ -38,11 +38,11 @@ func DescribeACL(op OperationType, aclName, parentType, parentName string) func(
 	}
 }
 
-// DescribeTypedChild returns a description function for typed child operations
+// describeTypedChild returns a description function for typed child operations
 // where the identifier is extracted from a model field.
 // If identifier is empty, the fallback is used (e.g. "at index 3").
 // Non-empty identifiers are wrapped in parentheses (e.g. "(request)").
-func DescribeTypedChild(op OperationType, childType, identifier, fallback, parentType, parentName string) func() string {
+func describeTypedChild(op OperationType, childType, identifier, fallback, parentType, parentName string) func() string {
 	verb := opVerb(op)
 	preposition := opPreposition(op)
 
@@ -86,62 +86,62 @@ func opPreposition(op OperationType) string {
 
 // Name extraction functions - each accesses a different struct field.
 
-// BackendName extracts the name from a Backend model.
-func BackendName(b *models.Backend) string { return b.Name }
+// backendNameFn extracts the name from a Backend model.
+func backendNameFn(b *models.Backend) string { return b.Name }
 
-// FrontendName extracts the name from a Frontend model.
-func FrontendName(f *models.Frontend) string { return f.Name }
+// frontendNameFn extracts the name from a Frontend model.
+func frontendNameFn(f *models.Frontend) string { return f.Name }
 
-// DefaultsName extracts the name from a Defaults model.
-func DefaultsName(d *models.Defaults) string { return d.Name }
+// defaultsNameFn extracts the name from a Defaults model.
+func defaultsNameFn(d *models.Defaults) string { return d.Name }
 
-// CacheName extracts the name from a Cache model.
-func CacheName(c *models.Cache) string { return ptrStr(c.Name) }
+// cacheNameFn extracts the name from a Cache model.
+func cacheNameFn(c *models.Cache) string { return ptrStr(c.Name) }
 
-// HTTPErrorsSectionName extracts the name from an HTTPErrorsSection model.
-func HTTPErrorsSectionName(h *models.HTTPErrorsSection) string { return h.Name }
+// httpErrorsSectionName extracts the name from an HTTPErrorsSection model.
+func httpErrorsSectionName(h *models.HTTPErrorsSection) string { return h.Name }
 
-// LogForwardName extracts the name from a LogForward model.
-func LogForwardName(l *models.LogForward) string { return l.Name }
+// logForwardName extracts the name from a LogForward model.
+func logForwardName(l *models.LogForward) string { return l.Name }
 
-// MailersSectionName extracts the name from a MailersSection model.
-func MailersSectionName(m *models.MailersSection) string { return m.Name }
+// mailersSectionName extracts the name from a MailersSection model.
+func mailersSectionName(m *models.MailersSection) string { return m.Name }
 
-// PeerSectionName extracts the name from a PeerSection model.
-func PeerSectionName(p *models.PeerSection) string { return p.Name }
+// peerSectionName extracts the name from a PeerSection model.
+func peerSectionName(p *models.PeerSection) string { return p.Name }
 
-// ProgramName extracts the name from a Program model.
-func ProgramName(p *models.Program) string { return p.Name }
+// programNameFn extracts the name from a Program model.
+func programNameFn(p *models.Program) string { return p.Name }
 
-// ResolverName extracts the name from a Resolver model.
-func ResolverName(r *models.Resolver) string { return r.Name }
+// resolverNameFn extracts the name from a Resolver model.
+func resolverNameFn(r *models.Resolver) string { return r.Name }
 
-// RingName extracts the name from a Ring model.
-func RingName(r *models.Ring) string { return r.Name }
+// ringNameFn extracts the name from a Ring model.
+func ringNameFn(r *models.Ring) string { return r.Name }
 
-// CrtStoreName extracts the name from a CrtStore model.
-func CrtStoreName(c *models.CrtStore) string { return c.Name }
+// crtStoreName extracts the name from a CrtStore model.
+func crtStoreName(c *models.CrtStore) string { return c.Name }
 
-// UserlistName extracts the name from a Userlist model.
-func UserlistName(u *models.Userlist) string { return u.Name }
+// userlistName extracts the name from a Userlist model.
+func userlistName(u *models.Userlist) string { return u.Name }
 
-// FCGIAppName extracts the name from an FCGIApp model.
-func FCGIAppName(f *models.FCGIApp) string { return f.Name }
+// fcgiAppName extracts the name from an FCGIApp model.
+func fcgiAppName(f *models.FCGIApp) string { return f.Name }
 
-// UserName extracts the name from a User model.
-func UserName(u *models.User) string { return u.Username }
+// userNameFn extracts the name from a User model.
+func userNameFn(u *models.User) string { return u.Username }
 
-// MailerEntryName extracts the name from a MailerEntry model.
-func MailerEntryName(m *models.MailerEntry) string { return m.Name }
+// mailerEntryName extracts the name from a MailerEntry model.
+func mailerEntryName(m *models.MailerEntry) string { return m.Name }
 
-// PeerEntryName extracts the name from a PeerEntry model.
-func PeerEntryName(p *models.PeerEntry) string { return p.Name }
+// peerEntryName extracts the name from a PeerEntry model.
+func peerEntryName(p *models.PeerEntry) string { return p.Name }
 
-// NameserverName extracts the name from a Nameserver model.
-func NameserverName(n *models.Nameserver) string { return n.Name }
+// nameserverNameFn extracts the name from a Nameserver model.
+func nameserverNameFn(n *models.Nameserver) string { return n.Name }
 
-// LogProfileName extracts the name from a LogProfile model.
-func LogProfileName(l *models.LogProfile) string { return l.Name }
+// logProfileName extracts the name from a LogProfile model.
+func logProfileName(l *models.LogProfile) string { return l.Name }
 
-// AcmeProviderName extracts the name from an AcmeProvider model.
-func AcmeProviderName(a *models.AcmeProvider) string { return a.Name }
+// acmeProviderName extracts the name from an AcmeProvider model.
+func acmeProviderName(a *models.AcmeProvider) string { return a.Name }

@@ -234,7 +234,6 @@ go metricsServer.Start(ctx)
 
 7. **Webhook**:
    - `haptic_webhook_requests_total`, `haptic_webhook_request_duration_seconds`, `haptic_webhook_validation_total`
-   - `haptic_webhook_cert_rotations_total`
 
 8. **Parser cache**:
    - `haptic_parser_cache_hits_total`, `haptic_parser_cache_misses_total`

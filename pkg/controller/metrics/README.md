@@ -76,7 +76,6 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | `haptic_webhook_requests_total` | counter | `gvk`, `result` | Admission requests by kind and allow/deny/error |
 | `haptic_webhook_request_duration_seconds` | histogram | `gvk` | Per-request wall-clock |
 | `haptic_webhook_validation_total` | counter | `gvk`, `result` | Validation-only tally (no timing) — handy for ratios |
-| `haptic_webhook_cert_rotations_total` | counter | — | Webhook certificate rotations observed |
 
 ### Leader election
 

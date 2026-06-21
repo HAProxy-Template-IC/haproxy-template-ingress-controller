@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestParseVersionString covers the public wrapper around parseVersionParts
+// TestParseVersionString covers the public version-string parser
 // that user-facing config consumers call to validate version constraints.
 // The wrapper has its own contract: it must preserve the *original* input
 // string in Version.Full (for logging) regardless of which dotted form was

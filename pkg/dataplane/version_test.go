@@ -209,6 +209,9 @@ func TestVersionFromAPIInfo(t *testing.T) {
 	}
 }
 
+// TestParseVersionParts exercises the dotted major.minor[.patch] split through
+// the public ParseVersionString wrapper (the former private parseVersionParts
+// helper was collapsed into client.ParseVersion).
 func TestParseVersionParts(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -265,7 +268,7 @@ func TestParseVersionParts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			major, minor, _, err := parseVersionParts(tt.input)
+			v, err := ParseVersionString(tt.input)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -273,8 +276,8 @@ func TestParseVersionParts(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantMajor, major)
-			assert.Equal(t, tt.wantMinor, minor)
+			assert.Equal(t, tt.wantMajor, v.Major)
+			assert.Equal(t, tt.wantMinor, v.Minor)
 		})
 	}
 }

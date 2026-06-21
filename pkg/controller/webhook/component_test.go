@@ -312,7 +312,7 @@ func TestComponent_registerValidators(t *testing.T) {
 		config := &Config{
 			CertPEM: certPEM,
 			KeyPEM:  keyPEM,
-			Rules: []webhook.WebhookRule{
+			Rules: []WebhookRule{
 				{
 					APIGroups:   []string{"networking.k8s.io"},
 					APIVersions: []string{"v1"},
@@ -352,7 +352,7 @@ func TestComponent_registerValidators(t *testing.T) {
 		config := &Config{
 			CertPEM: certPEM,
 			KeyPEM:  keyPEM,
-			Rules: []webhook.WebhookRule{
+			Rules: []WebhookRule{
 				{
 					APIGroups:   []string{"unknown.group"},
 					APIVersions: []string{"v1"},
@@ -383,7 +383,7 @@ func TestComponent_registerValidators(t *testing.T) {
 		config := &Config{
 			CertPEM: certPEM,
 			KeyPEM:  keyPEM,
-			Rules:   []webhook.WebhookRule{}, // Empty rules
+			Rules:   []WebhookRule{}, // Empty rules
 		}
 
 		component := New(testutil.NewTestLogger(), config, mapper, nil)

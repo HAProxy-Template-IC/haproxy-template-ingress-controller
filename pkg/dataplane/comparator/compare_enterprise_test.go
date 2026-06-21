@@ -65,9 +65,9 @@ func TestCompareNamedSections_AddedProfiles(t *testing.T) {
 		desired,
 		func(p *v32ee.BotmgmtProfile) string { return p.Name },
 		eeModelEqual[v32ee.BotmgmtProfile],
-		sections.NewBotMgmtProfileCreate,
-		sections.NewBotMgmtProfileDelete,
-		sections.NewBotMgmtProfileUpdate,
+		sections.BotMgmtProfileOps.Create,
+		sections.BotMgmtProfileOps.Delete,
+		sections.BotMgmtProfileOps.Update,
 	)
 
 	require.Len(t, ops, 2, "should generate 2 create operations")
@@ -89,9 +89,9 @@ func TestCompareNamedSections_DeletedProfiles(t *testing.T) {
 		desired,
 		func(p *v32ee.BotmgmtProfile) string { return p.Name },
 		eeModelEqual[v32ee.BotmgmtProfile],
-		sections.NewBotMgmtProfileCreate,
-		sections.NewBotMgmtProfileDelete,
-		sections.NewBotMgmtProfileUpdate,
+		sections.BotMgmtProfileOps.Create,
+		sections.BotMgmtProfileOps.Delete,
+		sections.BotMgmtProfileOps.Update,
 	)
 
 	require.Len(t, ops, 2, "should generate 2 delete operations")
@@ -114,9 +114,9 @@ func TestCompareNamedSections_UpdatedProfiles(t *testing.T) {
 		desired,
 		func(p *v32ee.BotmgmtProfile) string { return p.Name },
 		eeModelEqual[v32ee.BotmgmtProfile],
-		sections.NewBotMgmtProfileCreate,
-		sections.NewBotMgmtProfileDelete,
-		sections.NewBotMgmtProfileUpdate,
+		sections.BotMgmtProfileOps.Create,
+		sections.BotMgmtProfileOps.Delete,
+		sections.BotMgmtProfileOps.Update,
 	)
 
 	require.Len(t, ops, 1, "should generate 1 update operation")
@@ -137,9 +137,9 @@ func TestCompareNamedSections_NoChanges(t *testing.T) {
 		desired,
 		func(p *v32ee.BotmgmtProfile) string { return p.Name },
 		eeModelEqual[v32ee.BotmgmtProfile],
-		sections.NewBotMgmtProfileCreate,
-		sections.NewBotMgmtProfileDelete,
-		sections.NewBotMgmtProfileUpdate,
+		sections.BotMgmtProfileOps.Create,
+		sections.BotMgmtProfileOps.Delete,
+		sections.BotMgmtProfileOps.Update,
 	)
 
 	assert.Empty(t, ops, "should generate no operations when profiles are identical")
@@ -163,9 +163,9 @@ func TestCompareNamedSections_MixedOperations(t *testing.T) {
 		desired,
 		func(p *v32ee.BotmgmtProfile) string { return p.Name },
 		eeModelEqual[v32ee.BotmgmtProfile],
-		sections.NewBotMgmtProfileCreate,
-		sections.NewBotMgmtProfileDelete,
-		sections.NewBotMgmtProfileUpdate,
+		sections.BotMgmtProfileOps.Create,
+		sections.BotMgmtProfileOps.Delete,
+		sections.BotMgmtProfileOps.Update,
 	)
 
 	// Expect: 1 create (new-profile), 1 delete (to-delete), 1 update (to-update)
