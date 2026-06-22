@@ -61,7 +61,7 @@ done
 # detection avoids infinite recursion on self-referential schemas
 # (ObjectMeta has none, but the helper is generic so we're safe).
 python3 - "$SCHEMA_DIR" "${RESOURCES[@]}" <<'PY'
-import json, sys, os
+import json, sys, os, subprocess, tempfile
 
 schema_dir = sys.argv[1]
 entries = sys.argv[2:]
@@ -145,86 +145,18 @@ def emit_crd(prefix, schema_name, group, plural, kind, scope, resolved):
     }
     return crd
 
-# Custom YAML emit (no PyYAML available, no extra deps). The shape is
-# fixed enough that a hand-rolled dumper handles it cleanly. Keeping
-# the dump deterministic (sorted keys, 2-space indent, block style for
-# strings) so diffs across re-fetches stay readable.
-def dump_yaml(node, indent=0):
-    sp = "  " * indent
+# Collapse multi-line strings (mostly schema descriptions) to a single
+# line before serialization. We don't need exact newline preservation in
+# schema descriptions, just legible text, and a single line keeps diffs
+# across re-fetches readable. yq handles all the YAML quoting/escaping.
+def collapse_multiline(node):
     if isinstance(node, dict):
-        if not node:
-            return "{}"
-        lines = []
-        for k in node:
-            v = node[k]
-            if isinstance(v, (dict, list)):
-                if isinstance(v, dict) and not v:
-                    lines.append(f"{sp}{k}: {{}}")
-                elif isinstance(v, list) and not v:
-                    lines.append(f"{sp}{k}: []")
-                else:
-                    lines.append(f"{sp}{k}:")
-                    sub = dump_yaml(v, indent + 1)
-                    lines.append(sub)
-            else:
-                lines.append(f"{sp}{k}: {scalar(v)}")
-        return "\n".join(lines)
+        return {k: collapse_multiline(v) for k, v in node.items()}
     if isinstance(node, list):
-        lines = []
-        for item in node:
-            if isinstance(item, dict):
-                # First key inline with `- `, rest indented
-                first = True
-                for k in item:
-                    v = item[k]
-                    prefix_str = f"{sp}- " if first else f"{sp}  "
-                    first = False
-                    if isinstance(v, (dict, list)):
-                        if isinstance(v, dict) and not v:
-                            lines.append(f"{prefix_str}{k}: {{}}")
-                        elif isinstance(v, list) and not v:
-                            lines.append(f"{prefix_str}{k}: []")
-                        else:
-                            lines.append(f"{prefix_str}{k}:")
-                            lines.append(dump_yaml(v, indent + 2))
-                    else:
-                        lines.append(f"{prefix_str}{k}: {scalar(v)}")
-            else:
-                lines.append(f"{sp}- {scalar(item)}")
-        return "\n".join(lines)
-    return scalar(node)
-
-def scalar(v):
-    if v is None:
-        return "null"
-    if v is True:
-        return "true"
-    if v is False:
-        return "false"
-    if isinstance(v, (int, float)):
-        return str(v)
-    s = str(v)
-    # YAML-quote when the string contains tricky characters or could
-    # be misparsed as a different type. Keeping rules narrow — most
-    # description strings don't need quoting.
-    needs_quote = (
-        s == ""
-        or s[0] in "!&*[]{}>|%@`,?-#"
-        or any(c in s for c in [":", "#"]) and not s.startswith("http")
-        or s.lower() in ("yes", "no", "true", "false", "null", "~")
-        or s.strip() != s
-    )
-    # Multi-line descriptions: collapse to single line so we never
-    # have to emit block-literal indentation that depends on the
-    # current depth (the YAML spec lets block-literal content sit
-    # below the parent key's indent, but our minimal dumper doesn't
-    # thread depth into scalar() — and we don't need exact newline
-    # preservation in schema descriptions, just legible text).
-    if "\n" in s:
-        s = " ".join(line.strip() for line in s.split("\n") if line.strip())
-    if not needs_quote:
-        return s
-    return "'" + s.replace("'", "''") + "'"
+        return [collapse_multiline(v) for v in node]
+    if isinstance(node, str) and "\n" in node:
+        return " ".join(line.strip() for line in node.split("\n") if line.strip())
+    return node
 
 # Run
 for entry in entries:
@@ -237,12 +169,24 @@ for entry in entries:
         print(f"!! schema {schema_name} not found in {endpoint}; skipping", file=sys.stderr)
         continue
     resolved = resolve(raw, components)
-    crd = emit_crd(prefix, schema_name, group, plural, kind, scope, resolved)
+    crd = collapse_multiline(emit_crd(prefix, schema_name, group, plural, kind, scope, resolved))
     out_path = os.path.join(schema_dir, prefix + ".yaml")
+    # Serialize via yq: JSON is valid YAML, so feed the CRD as JSON and
+    # let `yq -P` emit block-style YAML. The schema dir is re-parsed by
+    # DirFetcher (not byte-compared), so yq's formatting is fine.
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
+        json.dump(crd, tf)
+        tmp_json = tf.name
+    try:
+        yaml_body = subprocess.run(
+            ["yq", "-P", "-oy", ".", tmp_json],
+            check=True, capture_output=True, text=True,
+        ).stdout
+    finally:
+        os.unlink(tmp_json)
     with open(out_path, "w") as f:
         f.write("# Generated by scripts/fetch-k8s-openapi-schemas.sh — do not edit.\n")
         f.write("# Source: kubectl get --raw " + endpoint + " (schema " + schema_name + ")\n")
-        f.write(dump_yaml(crd))
-        f.write("\n")
+        f.write(yaml_body)
     print(f"wrote {out_path}")
 PY

@@ -321,50 +321,38 @@ wait_for_pods() {
 # Certificate verification
 #------------------------------------------------------------------------------
 
-verify_certificates() {
-    info "Verifying cert-manager resources..."
-
-    # Check SSL Issuer (with retry for race condition with cert-manager)
-    info "Checking SSL Issuer..."
-    local issuer_found=false
+# wait_for_resource <kind> <grep_pattern> <log_label> <die_message>
+# Polls "kubectl get <kind> -o name | grep <grep_pattern>" up to 10 times
+# (2s apart) for the race against cert-manager. On failure, lists all
+# resources of that kind and dies with exit code 5.
+wait_for_resource() {
+    local kind="$1" pattern="$2" label="$3" die_message="$4"
+    local found=false
     for ((i=1; i<=10; i++)); do
-        if kubectl get issuer -n "$NAMESPACE" -o name 2>/dev/null | grep -q "ssl-selfsigned"; then
-            issuer_found=true
+        if kubectl get "$kind" -n "$NAMESPACE" -o name 2>/dev/null | grep -q "$pattern"; then
+            found=true
             break
         fi
-        info "SSL Issuer not found yet (attempt $i/10)..."
+        info "$label not found yet (attempt $i/10)..."
         sleep 2
     done
-    if [[ "$issuer_found" != "true" ]]; then
-        warn "SSL Issuer not found, listing all issuers:"
-        kubectl get issuer -n "$NAMESPACE" -o wide || true
-        die "SSL self-signed Issuer not found" 5
+    if [[ "$found" != "true" ]]; then
+        warn "$label not found, listing all ${kind}s:"
+        kubectl get "$kind" -n "$NAMESPACE" -o wide || true
+        die "$die_message" 5
     fi
+}
 
-    # Check SSL Certificate (with retry for race condition with cert-manager)
-    info "Checking SSL Certificate..."
-    local cert_found=false
-    for ((i=1; i<=10; i++)); do
-        if kubectl get certificate -n "$NAMESPACE" -o name 2>/dev/null | grep -q "default-ssl-cert"; then
-            cert_found=true
-            break
-        fi
-        info "SSL Certificate not found yet (attempt $i/10)..."
-        sleep 2
-    done
-    if [[ "$cert_found" != "true" ]]; then
-        warn "SSL Certificate not found, listing all certificates:"
-        kubectl get certificate -n "$NAMESPACE" -o wide || true
-        die "default-ssl-cert Certificate not found" 5
-    fi
-
-    # Wait for certificate to be ready
-    info "Waiting for SSL certificate to be ready..."
+# wait_cert_ready <name>
+# Polls the Ready condition of certificate <name> up to 30 times (5s apart).
+# On failure, dumps status/describe and dies with exit code 5.
+wait_cert_ready() {
+    local name="$1"
     local retries=30
     local ready=false
     for ((i=1; i<=retries; i++)); do
         local status
-        status=$(kubectl get certificate default-ssl-cert -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+        status=$(kubectl get certificate "$name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
         if [[ "$status" == "True" ]]; then
             ready=true
             break
@@ -376,9 +364,25 @@ verify_certificates() {
     if [[ "$ready" != "true" ]]; then
         warn "Certificate status:"
         kubectl get certificate -n "$NAMESPACE" -o wide || true
-        kubectl describe certificate default-ssl-cert -n "$NAMESPACE" || true
-        die "SSL certificate not ready within timeout" 5
+        kubectl describe certificate "$name" -n "$NAMESPACE" || true
+        die "Certificate '$name' not ready within timeout" 5
     fi
+}
+
+verify_certificates() {
+    info "Verifying cert-manager resources..."
+
+    # Check SSL Issuer (with retry for race condition with cert-manager)
+    info "Checking SSL Issuer..."
+    wait_for_resource issuer "ssl-selfsigned" "SSL Issuer" "SSL self-signed Issuer not found"
+
+    # Check SSL Certificate (with retry for race condition with cert-manager)
+    info "Checking SSL Certificate..."
+    wait_for_resource certificate "default-ssl-cert" "SSL Certificate" "default-ssl-cert Certificate not found"
+
+    # Wait for certificate to be ready
+    info "Waiting for SSL certificate to be ready..."
+    wait_cert_ready default-ssl-cert
 
     # Check TLS Secret exists
     info "Checking SSL TLS Secret..."
@@ -388,58 +392,15 @@ verify_certificates() {
 
     # Check Webhook Issuer (with retry for race condition with cert-manager)
     info "Checking Webhook Issuer..."
-    local webhook_issuer_found=false
-    for ((i=1; i<=10; i++)); do
-        if kubectl get issuer -n "$NAMESPACE" -o name 2>/dev/null | grep -q "webhook-selfsigned"; then
-            webhook_issuer_found=true
-            break
-        fi
-        info "Webhook Issuer not found yet (attempt $i/10)..."
-        sleep 2
-    done
-    if [[ "$webhook_issuer_found" != "true" ]]; then
-        warn "Webhook Issuer not found, listing all issuers:"
-        kubectl get issuer -n "$NAMESPACE" -o wide || true
-        die "Webhook self-signed Issuer not found" 5
-    fi
+    wait_for_resource issuer "webhook-selfsigned" "Webhook Issuer" "Webhook self-signed Issuer not found"
 
     # Check Webhook Certificate (with retry for race condition with cert-manager)
     info "Checking Webhook Certificate..."
-    local webhook_cert_found=false
-    for ((i=1; i<=10; i++)); do
-        if kubectl get certificate -n "$NAMESPACE" -o name 2>/dev/null | grep -q "webhook-cert"; then
-            webhook_cert_found=true
-            break
-        fi
-        info "Webhook Certificate not found yet (attempt $i/10)..."
-        sleep 2
-    done
-    if [[ "$webhook_cert_found" != "true" ]]; then
-        warn "Webhook Certificate not found, listing all certificates:"
-        kubectl get certificate -n "$NAMESPACE" -o wide || true
-        die "webhook-cert Certificate not found" 5
-    fi
+    wait_for_resource certificate "webhook-cert" "Webhook Certificate" "webhook-cert Certificate not found"
 
     # Wait for webhook certificate to be ready
     info "Waiting for Webhook certificate to be ready..."
-    local webhook_ready=false
-    for ((i=1; i<=retries; i++)); do
-        local webhook_status
-        webhook_status=$(kubectl get certificate "${RELEASE_NAME}-webhook-cert" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
-        if [[ "$webhook_status" == "True" ]]; then
-            webhook_ready=true
-            break
-        fi
-        info "Webhook certificate not ready yet (attempt $i/$retries)..."
-        sleep 5
-    done
-
-    if [[ "$webhook_ready" != "true" ]]; then
-        warn "Webhook certificate status:"
-        kubectl get certificate -n "$NAMESPACE" -o wide || true
-        kubectl describe certificate "${RELEASE_NAME}-webhook-cert" -n "$NAMESPACE" || true
-        die "Webhook certificate not ready within timeout" 5
-    fi
+    wait_cert_ready "${RELEASE_NAME}-webhook-cert"
 
     # Check Webhook TLS Secret exists
     info "Checking Webhook TLS Secret..."

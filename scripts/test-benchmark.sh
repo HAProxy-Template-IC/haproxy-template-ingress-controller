@@ -27,7 +27,6 @@ INGRESS_ONLY=false
 HTTPROUTE_ONLY=false
 ITERATIONS=2
 PROFILE_INCLUDES=false
-EXTRA_ARGS=""
 
 # Temp directory (global for cleanup trap)
 TEMP_DIR=""
@@ -120,10 +119,6 @@ parse_args() {
             --profile-includes)
                 PROFILE_INCLUDES=true
                 shift
-                ;;
-            --extra-args)
-                EXTRA_ARGS="$2"
-                shift 2
                 ;;
             --help|-h)
                 usage
@@ -471,8 +466,7 @@ main() {
     # Run single benchmark invocation (compiles once, runs all tests)
     info "Running benchmark..."
     echo
-    # shellcheck disable=SC2086
-    "$CONTROLLER_BIN" benchmark "${args[@]}" $EXTRA_ARGS
+    "$CONTROLLER_BIN" benchmark "${args[@]}"
 }
 
 main "$@"
