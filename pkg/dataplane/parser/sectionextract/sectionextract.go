@@ -567,13 +567,13 @@ func extractUserlistsWithIndexes(p parser.Parser, conf *parserconfig.StructuredC
 
 		// Parse users and build pointer index for zero-copy iteration.
 		users, _ := configuration.ParseUsers(sectionName, p)
-		if userIndex := parserconfig.BuildUserIndex(users); userIndex != nil {
+		if userIndex := parserconfig.BuildPointerIndex(users, func(u *models.User) string { return u.Username }); userIndex != nil {
 			conf.UserIndex[sectionName] = userIndex
 		}
 
 		// Parse groups and build pointer index for zero-copy iteration.
 		groups, _ := configuration.ParseGroups(sectionName, p)
-		if groupIndex := parserconfig.BuildGroupIndex(groups); groupIndex != nil {
+		if groupIndex := parserconfig.BuildPointerIndex(groups, func(g *models.Group) string { return g.Name }); groupIndex != nil {
 			conf.GroupIndex[sectionName] = groupIndex
 		}
 

@@ -2,6 +2,7 @@ package auxiliaryfiles
 
 import (
 	"context"
+	"log/slog"
 	"path"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
@@ -25,22 +26,45 @@ import (
 // may contain full paths (e.g., "/etc/haproxy/ssl/ca/ca-bundle.pem"). We normalize using path.Base()
 // for comparison (slash-only — these are HAProxy target paths regardless of host OS).
 func CompareSSLCaFiles(ctx context.Context, c *client.DataplaneClient, desired []SSLCaFile) (*SSLCaFileDiff, error) {
-	return compareSSLStorageFiles(
-		ctx,
-		desired,
-		newSSLCaOps(c),
-		newSSLCaConfig(c),
-		func(f SSLCaFile) SSLCaFile {
-			return SSLCaFile{
-				Path:    path.Base(f.Path),
-				Content: f.Content,
-			}
-		},
+	// Check if SSL CA file storage is supported.
+	if !c.Capabilities().SupportsSslCaFiles {
+		slog.Debug(sslCAFileType+" storage not supported, skipping comparison",
+			"haproxy_version", c.DetectedVersion())
+		return &SSLCaFileDiff{}, nil
+	}
+
+	// Normalize desired files to use filenames for identifiers.
+	normalizedDesired := make([]SSLCaFile, len(desired))
+	for i, file := range desired {
+		normalizedDesired[i] = SSLCaFile{
+			Path:    path.Base(file.Path),
+			Content: file.Content,
+		}
+	}
+
+	// Use generic Compare function.
+	genericDiff, err := Compare(ctx, newSSLCaOps(c), normalizedDesired,
 		func(id, content string) SSLCaFile {
 			return SSLCaFile{Path: id, Content: content}
-		},
-		func(f SSLCaFile) string { return f.Path },
-	)
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	// Build map of original desired files keyed by basename so the normalised
+	// entries returned from the generic diff can be re-keyed back to the
+	// originals (which carry the full caller-supplied paths).
+	desiredMap := make(map[string]SSLCaFile)
+	for _, file := range desired {
+		desiredMap[path.Base(file.Path)] = file
+	}
+
+	getPath := func(f SSLCaFile) string { return f.Path }
+	return &SSLCaFileDiff{
+		ToCreate: restoreOriginals(genericDiff.ToCreate, desiredMap, getPath),
+		ToUpdate: restoreOriginals(genericDiff.ToUpdate, desiredMap, getPath),
+		ToDelete: genericDiff.ToDelete,
+	}, nil
 }
 
 // SyncSSLCaFiles synchronizes SSL CA files to the desired state by applying
@@ -57,5 +81,18 @@ func SyncSSLCaFiles(ctx context.Context, c *client.DataplaneClient, diff *SSLCaF
 	if diff == nil {
 		return nil, nil
 	}
-	return syncSSLStorageFiles(ctx, diff, newSSLCaOps(c), newSSLCaConfig(c))
+
+	// Check if SSL CA file storage is supported.
+	if !c.Capabilities().SupportsSslCaFiles {
+		if len(diff.ToCreate) > 0 || len(diff.ToUpdate) > 0 || len(diff.ToDelete) > 0 {
+			slog.Warn(sslCAFileType+" storage not supported, skipping sync operations",
+				"haproxy_version", c.DetectedVersion(),
+				"creates", len(diff.ToCreate),
+				"updates", len(diff.ToUpdate),
+				"deletes", len(diff.ToDelete))
+		}
+		return nil, nil
+	}
+
+	return Sync(ctx, newSSLCaOps(c), diff)
 }

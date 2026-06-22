@@ -15,7 +15,6 @@
 package webhook
 
 import (
-	admissionv1 "k8s.io/api/admissionregistration/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -23,25 +22,17 @@ import (
 
 // WebhookRule specifies which resources a webhook should intercept.
 type WebhookRule struct {
-	// APIGroups that this rule matches.
-	// Example: ["networking.k8s.io"]
-	APIGroups []string
+	// APIGroup that this rule matches.
+	// Example: "networking.k8s.io"
+	APIGroup string
 
-	// APIVersions that this rule matches.
-	// Example: ["v1"]
-	APIVersions []string
+	// APIVersion that this rule matches.
+	// Example: "v1"
+	APIVersion string
 
-	// Resources that this rule matches (plural, lowercase).
-	// Example: ["ingresses"]
-	Resources []string
-
-	// Operations that this rule matches.
-	// Default: ["CREATE", "UPDATE"]
-	Operations []admissionv1.OperationType
-
-	// Scope restricts the rule to cluster or namespace-scoped resources.
-	// Default: "*" (all scopes)
-	Scope *admissionv1.ScopeType
+	// Resource that this rule matches (plural, lowercase).
+	// Example: "ingresses"
+	Resource string
 }
 
 // ExtractWebhookRules extracts webhook rules from controller configuration.
@@ -73,15 +64,9 @@ func ExtractWebhookRules(cfg *config.Config) []WebhookRule {
 		// Use resource.Resources which is the plural form (e.g., "ingresses", "services")
 		// Kind is not needed here - the webhook server gets it from AdmissionRequest at runtime
 		rule := WebhookRule{
-			APIGroups:   []string{gv.Group},
-			APIVersions: []string{gv.Version},
-			Resources:   []string{resource.Resources},
-
-			// Default to CREATE and UPDATE operations
-			Operations: []admissionv1.OperationType{
-				admissionv1.Create,
-				admissionv1.Update,
-			},
+			APIGroup:   gv.Group,
+			APIVersion: gv.Version,
+			Resource:   resource.Resources,
 		}
 
 		rules = append(rules, rule)

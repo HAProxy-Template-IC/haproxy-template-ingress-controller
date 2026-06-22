@@ -71,25 +71,6 @@ func (rb *RingBuffer) Capacity() int {
 	return rb.capacity
 }
 
-// FindByType returns all events of the specified type, newest first.
-//
-// The returned slice is a copy - modifications won't affect the buffer.
-//
-// Example:
-//
-//	events := rb.FindByType("config.validated")
-//	for _, evt := range events {
-//	    // Process events (newest first)
-//	}
-func (rb *RingBuffer) FindByType(eventType string) []busevents.Event {
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
-
-	return rb.scanNewestFirst(func(event busevents.Event) bool {
-		return event.EventType() == eventType
-	})
-}
-
 // FindByTypeInWindow returns events of the specified type within the time window, newest first.
 //
 // Parameters:

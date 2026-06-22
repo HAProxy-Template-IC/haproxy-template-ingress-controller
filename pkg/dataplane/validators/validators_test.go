@@ -24,32 +24,32 @@ import (
 
 func TestForVersion(t *testing.T) {
 	tests := []struct {
-		name            string
-		major, minor    int
-		expectedVersion string
+		name         string
+		major, minor int
+		expectedSet  *ValidatorSet
 	}{
-		{"v2.9 maps to v30", 2, 9, "v30"},
-		{"v3.0 maps to v30", 3, 0, "v30"},
-		{"v3.1 maps to v31", 3, 1, "v31"},
-		{"v3.2 maps to v32", 3, 2, "v32"},
-		{"v3.3 maps to v33", 3, 3, "v33"},
-		{"v4.0 maps to v33", 4, 0, "v33"},
+		{"v2.9 maps to v30", 2, 9, validatorSetV30},
+		{"v3.0 maps to v30", 3, 0, validatorSetV30},
+		{"v3.1 maps to v31", 3, 1, validatorSetV31},
+		{"v3.2 maps to v32", 3, 2, validatorSetV32},
+		{"v3.3 maps to v33", 3, 3, validatorSetV33},
+		{"v4.0 maps to v33", 4, 0, validatorSetV33},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			vs := ForVersion(tt.major, tt.minor)
 			require.NotNil(t, vs)
-			assert.Equal(t, tt.expectedVersion, vs.version)
+			assert.Same(t, tt.expectedSet, vs)
 		})
 	}
 }
 
 func TestValidatorSet_Version(t *testing.T) {
-	assert.Equal(t, "v30", ForVersion(3, 0).version)
-	assert.Equal(t, "v31", ForVersion(3, 1).version)
-	assert.Equal(t, "v32", ForVersion(3, 2).version)
-	assert.Equal(t, "v33", ForVersion(3, 3).version)
+	assert.Same(t, validatorSetV30, ForVersion(3, 0))
+	assert.Same(t, validatorSetV31, ForVersion(3, 1))
+	assert.Same(t, validatorSetV32, ForVersion(3, 2))
+	assert.Same(t, validatorSetV33, ForVersion(3, 3))
 }
 
 func TestValidatorSet_NilFunctions(t *testing.T) {
@@ -57,7 +57,7 @@ func TestValidatorSet_NilFunctions(t *testing.T) {
 	// version" — every validation must be treated as valid (no error, no panic).
 	// The nil-tolerance is exercised through CachedValidator, whose validateCached
 	// guards nil hasher/validator fields inline.
-	cv := &CachedValidator{cache: NewCache(), set: &ValidatorSet{version: "test"}}
+	cv := &CachedValidator{cache: NewCache(), set: &ValidatorSet{}}
 
 	assert.NoError(t, cv.ValidateServer(&models.Server{}))
 	assert.NoError(t, cv.ValidateServerTemplate(&models.ServerTemplate{}))

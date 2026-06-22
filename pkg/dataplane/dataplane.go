@@ -121,6 +121,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
@@ -292,5 +293,5 @@ func (c *Client) SyncRuntimeFast(ctx context.Context, updates *RuntimeServerUpda
 		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 	}
-	return c.orch.syncRuntimeFast(ctx, updates, desiredConfig)
+	return c.orch.syncRuntimeRawPush(ctx, desiredConfig, updates, time.Now())
 }

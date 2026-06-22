@@ -15,8 +15,8 @@ import (
 )
 
 // TestDiffDetails_AppendSimpleCountChanges directly exercises the underlying
-// counter-formatting helper that appendMapCountChanges and appendIntMapCountChanges
-// both delegate to. The shared helper has its own zero-suppression contract
+// counter-formatting helper that appendMapCountChanges delegates to. The
+// shared helper has its own zero-suppression contract
 // (only emit a line when count > 0) that wasn't pinned anywhere in isolation.
 func TestDiffDetails_AppendSimpleCountChanges(t *testing.T) {
 	tests := []struct {

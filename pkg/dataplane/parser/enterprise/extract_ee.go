@@ -56,12 +56,12 @@ func parseDirective(line string) (keyword string, values []string) {
 	// Handle inline comments
 	commentIdx := strings.Index(line, "#")
 	mainPart := line
-	if commentIdx != -1 && !isInQuotedString(line, commentIdx) {
+	if commentIdx != -1 && !isInQuotes(line, commentIdx) {
 		mainPart = strings.TrimSpace(line[:commentIdx])
 	}
 
 	// Split into fields
-	fields := splitQuotedFields(mainPart)
+	fields := splitFields(mainPart, false)
 	if len(fields) == 0 {
 		return "", nil
 	}
@@ -71,52 +71,6 @@ func parseDirective(line string) (keyword string, values []string) {
 		values = fields[1:]
 	}
 	return keyword, values
-}
-
-// isInQuotedString checks if position is inside a quoted string.
-func isInQuotedString(s string, pos int) bool {
-	inQuotes := false
-	quoteChar := byte(0)
-	for i := 0; i < pos && i < len(s); i++ {
-		c := s[i]
-		if !inQuotes && (c == '"' || c == '\'') {
-			inQuotes = true
-			quoteChar = c
-		} else if inQuotes && c == quoteChar && (i == 0 || s[i-1] != '\\') {
-			inQuotes = false
-		}
-	}
-	return inQuotes
-}
-
-// splitQuotedFields splits a string into fields, preserving quoted strings.
-func splitQuotedFields(s string) []string {
-	var fields []string
-	var current strings.Builder
-	inQuotes := false
-	quoteChar := byte(0)
-
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case !inQuotes && (c == '"' || c == '\''):
-			inQuotes = true
-			quoteChar = c
-		case inQuotes && c == quoteChar && (i == 0 || s[i-1] != '\\'):
-			inQuotes = false
-		case !inQuotes && (c == ' ' || c == '\t'):
-			if current.Len() > 0 {
-				fields = append(fields, current.String())
-				current.Reset()
-			}
-		default:
-			current.WriteByte(c)
-		}
-	}
-	if current.Len() > 0 {
-		fields = append(fields, current.String())
-	}
-	return fields
 }
 
 // parseInt parses an integer value, returning nil on error.

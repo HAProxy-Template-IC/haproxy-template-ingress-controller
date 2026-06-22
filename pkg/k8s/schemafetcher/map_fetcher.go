@@ -29,8 +29,7 @@ import (
 // a file on disk" path where the controller still wants to drive
 // typegen without talking to the API server.
 //
-// Concurrent reads via Fetch are safe; concurrent writes via Add
-// are guarded by a mutex.
+// Concurrent reads via Fetch are safe.
 //
 // The zero value is ready to use.
 type MapFetcher struct {
@@ -43,19 +42,6 @@ type MapFetcher struct {
 // map don't affect lookups.
 func NewMapFetcher(seed map[schema.GroupVersionKind]*spec.Schema) *MapFetcher {
 	return &MapFetcher{schemas: maps.Clone(seed)}
-}
-
-// Add registers a schema for the supplied GVK, overwriting any
-// previous entry for that GVK. Returning the receiver lets callers
-// chain Add calls in test setup.
-func (f *MapFetcher) Add(gvk schema.GroupVersionKind, sch *spec.Schema) *MapFetcher {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.schemas == nil {
-		f.schemas = make(map[schema.GroupVersionKind]*spec.Schema)
-	}
-	f.schemas[gvk] = sch
-	return f
 }
 
 // Fetch implements [Fetcher]. Missing GVKs surface as

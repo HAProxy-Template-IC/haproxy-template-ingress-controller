@@ -181,41 +181,45 @@ func formatSummary(results *TestResults, verbose bool) string {
 	return out.String()
 }
 
-// formatJSON formats results as JSON.
-func formatJSON(results *TestResults) (string, error) {
-	// Convert duration to seconds for JSON output
-	type jsonTestResult struct {
-		TestName    string            `json:"testName"`
-		Description string            `json:"description,omitempty"`
-		Passed      bool              `json:"passed"`
-		Skipped     bool              `json:"skipped,omitempty"`
-		SkipReason  string            `json:"skipReason,omitempty"`
-		Duration    float64           `json:"duration"`
-		Assertions  []AssertionResult `json:"assertions,omitempty"`
-		RenderError string            `json:"renderError,omitempty"`
-	}
+// serializableTestResult is the projection of a single test result used for
+// both JSON and YAML output. Dual struct tags keep the two formats in sync.
+type serializableTestResult struct {
+	TestName    string            `json:"testName" yaml:"testName"`
+	Description string            `json:"description,omitempty" yaml:"description,omitempty"`
+	Passed      bool              `json:"passed" yaml:"passed"`
+	Skipped     bool              `json:"skipped,omitempty" yaml:"skipped,omitempty"`
+	SkipReason  string            `json:"skipReason,omitempty" yaml:"skipReason,omitempty"`
+	Duration    float64           `json:"duration" yaml:"duration"`
+	Assertions  []AssertionResult `json:"assertions,omitempty" yaml:"assertions,omitempty"`
+	RenderError string            `json:"renderError,omitempty" yaml:"renderError,omitempty"`
+}
 
-	type jsonResults struct {
-		TotalTests   int              `json:"totalTests"`
-		PassedTests  int              `json:"passedTests"`
-		FailedTests  int              `json:"failedTests"`
-		SkippedTests int              `json:"skippedTests,omitempty"`
-		Duration     float64          `json:"duration"`
-		Tests        []jsonTestResult `json:"tests"`
-	}
+// serializableResults is the projection of aggregate results used for both
+// JSON and YAML output.
+type serializableResults struct {
+	TotalTests   int                      `json:"totalTests" yaml:"totalTests"`
+	PassedTests  int                      `json:"passedTests" yaml:"passedTests"`
+	FailedTests  int                      `json:"failedTests" yaml:"failedTests"`
+	SkippedTests int                      `json:"skippedTests,omitempty" yaml:"skippedTests,omitempty"`
+	Duration     float64                  `json:"duration" yaml:"duration"`
+	Tests        []serializableTestResult `json:"tests" yaml:"tests"`
+}
 
-	jr := jsonResults{
+// buildSerializableResults converts test results into the projection shared by
+// the JSON and YAML formatters, converting durations to seconds.
+func buildSerializableResults(results *TestResults) serializableResults {
+	sr := serializableResults{
 		TotalTests:   results.TotalTests,
 		PassedTests:  results.PassedTests,
 		FailedTests:  results.FailedTests,
 		SkippedTests: results.SkippedTests,
 		Duration:     results.Duration.Seconds(),
-		Tests:        make([]jsonTestResult, 0, len(results.TestResults)),
+		Tests:        make([]serializableTestResult, 0, len(results.TestResults)),
 	}
 
 	for i := range results.TestResults {
 		test := &results.TestResults[i]
-		jr.Tests = append(jr.Tests, jsonTestResult{
+		sr.Tests = append(sr.Tests, serializableTestResult{
 			TestName:    test.TestName,
 			Description: test.Description,
 			Passed:      test.Passed,
@@ -227,7 +231,12 @@ func formatJSON(results *TestResults) (string, error) {
 		})
 	}
 
-	data, err := json.MarshalIndent(jr, "", "  ")
+	return sr
+}
+
+// formatJSON formats results as JSON.
+func formatJSON(results *TestResults) (string, error) {
+	data, err := json.MarshalIndent(buildSerializableResults(results), "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshalling JSON: %w", err)
 	}
@@ -237,51 +246,7 @@ func formatJSON(results *TestResults) (string, error) {
 
 // formatYAML formats results as YAML.
 func formatYAML(results *TestResults) (string, error) {
-	// Convert duration to seconds for YAML output
-	type yamlTestResult struct {
-		TestName    string            `yaml:"testName"`
-		Description string            `yaml:"description,omitempty"`
-		Passed      bool              `yaml:"passed"`
-		Skipped     bool              `yaml:"skipped,omitempty"`
-		SkipReason  string            `yaml:"skipReason,omitempty"`
-		Duration    float64           `yaml:"duration"`
-		Assertions  []AssertionResult `yaml:"assertions,omitempty"`
-		RenderError string            `yaml:"renderError,omitempty"`
-	}
-
-	type yamlResults struct {
-		TotalTests   int              `yaml:"totalTests"`
-		PassedTests  int              `yaml:"passedTests"`
-		FailedTests  int              `yaml:"failedTests"`
-		SkippedTests int              `yaml:"skippedTests,omitempty"`
-		Duration     float64          `yaml:"duration"`
-		Tests        []yamlTestResult `yaml:"tests"`
-	}
-
-	yr := yamlResults{
-		TotalTests:   results.TotalTests,
-		PassedTests:  results.PassedTests,
-		FailedTests:  results.FailedTests,
-		SkippedTests: results.SkippedTests,
-		Duration:     results.Duration.Seconds(),
-		Tests:        make([]yamlTestResult, 0, len(results.TestResults)),
-	}
-
-	for i := range results.TestResults {
-		test := &results.TestResults[i]
-		yr.Tests = append(yr.Tests, yamlTestResult{
-			TestName:    test.TestName,
-			Description: test.Description,
-			Passed:      test.Passed,
-			Skipped:     test.Skipped,
-			SkipReason:  test.SkipReason,
-			Duration:    test.Duration.Seconds(),
-			Assertions:  test.Assertions,
-			RenderError: test.RenderError,
-		})
-	}
-
-	data, err := yaml.Marshal(yr)
+	data, err := yaml.Marshal(buildSerializableResults(results))
 	if err != nil {
 		return "", fmt.Errorf("marshalling YAML: %w", err)
 	}

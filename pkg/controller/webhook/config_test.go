@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	admissionv1 "k8s.io/api/admissionregistration/v1"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
@@ -57,14 +56,10 @@ func TestExtractWebhookRules(t *testing.T) {
 			expectedRules: 1,
 			checkFirst: func(t *testing.T, rules []WebhookRule) {
 				t.Helper()
-				assert.Equal(t, []string{"networking.k8s.io"}, rules[0].APIGroups)
-				assert.Equal(t, []string{"v1"}, rules[0].APIVersions)
-				assert.Equal(t, []string{"ingresses"}, rules[0].Resources)
+				assert.Equal(t, "networking.k8s.io", rules[0].APIGroup)
+				assert.Equal(t, "v1", rules[0].APIVersion)
+				assert.Equal(t, "ingresses", rules[0].Resource)
 				// Kind is now resolved at runtime via RESTMapper, not stored in config
-				assert.Equal(t, []admissionv1.OperationType{
-					admissionv1.Create,
-					admissionv1.Update,
-				}, rules[0].Operations)
 			},
 		},
 		{
@@ -81,9 +76,9 @@ func TestExtractWebhookRules(t *testing.T) {
 			expectedRules: 1,
 			checkFirst: func(t *testing.T, rules []WebhookRule) {
 				t.Helper()
-				assert.Equal(t, []string{""}, rules[0].APIGroups)
-				assert.Equal(t, []string{"v1"}, rules[0].APIVersions)
-				assert.Equal(t, []string{"configmaps"}, rules[0].Resources)
+				assert.Equal(t, "", rules[0].APIGroup)
+				assert.Equal(t, "v1", rules[0].APIVersion)
+				assert.Equal(t, "configmaps", rules[0].Resource)
 				// Kind is now resolved at runtime via RESTMapper, not stored in config
 			},
 		},
@@ -178,8 +173,8 @@ func TestExtractWebhookRules_APIVersionParsing(t *testing.T) {
 			rules := ExtractWebhookRules(cfg)
 
 			assert.Len(t, rules, 1)
-			assert.Equal(t, []string{tt.expectedGroup}, rules[0].APIGroups)
-			assert.Equal(t, []string{tt.expectedVersion}, rules[0].APIVersions)
+			assert.Equal(t, tt.expectedGroup, rules[0].APIGroup)
+			assert.Equal(t, tt.expectedVersion, rules[0].APIVersion)
 		})
 	}
 }

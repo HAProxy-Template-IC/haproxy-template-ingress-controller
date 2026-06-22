@@ -143,16 +143,6 @@ type DiffDetails struct {
 	ServersModified map[string][]string
 	ServersDeleted  map[string][]string
 
-	// ACL changes (map of parent resource -> ACL names)
-	ACLsAdded    map[string][]string
-	ACLsModified map[string][]string
-	ACLsDeleted  map[string][]string
-
-	// HTTP rule changes (map of parent resource -> count)
-	HTTPRulesAdded    map[string]int
-	HTTPRulesModified map[string]int
-	HTTPRulesDeleted  map[string]int
-
 	// Auxiliary file changes
 	MapsAdded            int
 	MapsModified         int
@@ -171,15 +161,9 @@ type DiffDetails struct {
 // NewDiffDetails creates an empty DiffDetails with initialized maps.
 func NewDiffDetails() DiffDetails {
 	return DiffDetails{
-		ServersAdded:      make(map[string][]string),
-		ServersModified:   make(map[string][]string),
-		ServersDeleted:    make(map[string][]string),
-		ACLsAdded:         make(map[string][]string),
-		ACLsModified:      make(map[string][]string),
-		ACLsDeleted:       make(map[string][]string),
-		HTTPRulesAdded:    make(map[string]int),
-		HTTPRulesModified: make(map[string]int),
-		HTTPRulesDeleted:  make(map[string]int),
+		ServersAdded:    make(map[string][]string),
+		ServersModified: make(map[string][]string),
+		ServersDeleted:  make(map[string][]string),
 	}
 }
 
@@ -261,12 +245,8 @@ func (d *DiffDetails) String() string {
 	parts = d.appendResourceChanges(parts, d.FrontendsAdded, d.FrontendsModified, d.FrontendsDeleted, "Frontends")
 	parts = d.appendResourceChanges(parts, d.BackendsAdded, d.BackendsModified, d.BackendsDeleted, "Backends")
 
-	// Map-based changes (servers, ACLs)
+	// Map-based changes (servers)
 	parts = d.appendMapCountChanges(parts, d.ServersAdded, d.ServersModified, d.ServersDeleted, "Servers")
-	parts = d.appendMapCountChanges(parts, d.ACLsAdded, d.ACLsModified, d.ACLsDeleted, "ACLs")
-
-	// Int map changes (HTTP rules)
-	parts = d.appendIntMapCountChanges(parts, d.HTTPRulesAdded, d.HTTPRulesModified, d.HTTPRulesDeleted, "HTTP rules")
 
 	// Auxiliary file changes
 	parts = d.appendSimpleCountChanges(parts, d.MapsAdded, d.MapsModified, d.MapsDeleted, "Maps")
@@ -296,18 +276,6 @@ func (d *DiffDetails) appendMapCountChanges(parts []string, added, modified, del
 		total := 0
 		for _, items := range m {
 			total += len(items)
-		}
-		return total
-	}
-	return d.appendSimpleCountChanges(parts, sum(added), sum(modified), sum(deleted), resourceType)
-}
-
-// appendIntMapCountChanges appends formatted counts from maps of ints.
-func (d *DiffDetails) appendIntMapCountChanges(parts []string, added, modified, deleted map[string]int, resourceType string) []string {
-	sum := func(m map[string]int) int {
-		total := 0
-		for _, count := range m {
-			total += count
 		}
 		return total
 	}

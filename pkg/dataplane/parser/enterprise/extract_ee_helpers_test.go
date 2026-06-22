@@ -64,7 +64,7 @@ func TestParseDirective(t *testing.T) {
 	}
 }
 
-// isInQuotedString tracks quote state up to a position, so callers can
+// isInQuotes tracks quote state up to a position, so callers can
 // decide whether a given character (typically '#') is inside a quoted
 // string and should NOT be interpreted as a comment marker.
 //
@@ -96,12 +96,12 @@ func TestIsInQuotedString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isInQuotedString(tt.s, tt.pos))
+			assert.Equal(t, tt.want, isInQuotes(tt.s, tt.pos))
 		})
 	}
 }
 
-// splitQuotedFields tokenizes a string into fields the way HAProxy
+// splitFields (keepQuotes=false) tokenizes a string into fields the way HAProxy
 // configuration directives are split: whitespace separates tokens
 // EXCEPT inside matched quotes. Pin the contracts:
 //   - empty input yields no fields
@@ -148,7 +148,7 @@ func TestSplitQuotedFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := splitQuotedFields(tt.in)
+			got := splitFields(tt.in, false)
 			assert.Equal(t, tt.want, got)
 		})
 	}

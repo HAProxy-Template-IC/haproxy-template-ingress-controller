@@ -123,86 +123,6 @@ func (o *sslStorageOps) Delete(ctx context.Context, id string) error {
 	return o.delete(ctx, name)
 }
 
-// sslStorageConfig holds configuration for SSL CA file comparison/sync operations.
-type sslStorageConfig struct {
-	fileType        string // "SSL CA file" for logging
-	isSupported     func() bool
-	detectedVersion func() string
-}
-
-// compareSSLStorageFiles compares SSL CA storage files.
-// It handles capability checking, path normalization, and diff restoration.
-func compareSSLStorageFiles(
-	ctx context.Context,
-	desired []SSLCaFile,
-	ops FileOperations[SSLCaFile],
-	config sslStorageConfig,
-	normalize func(SSLCaFile) SSLCaFile,
-	newFile func(id, content string) SSLCaFile,
-	getPath func(SSLCaFile) string,
-) (*SSLCaFileDiff, error) {
-	// Check if storage is supported
-	if !config.isSupported() {
-		slog.Debug(config.fileType+" storage not supported, skipping comparison",
-			"haproxy_version", config.detectedVersion())
-		return &SSLCaFileDiff{}, nil
-	}
-
-	// Normalize desired files to use filenames for identifiers
-	normalizedDesired := make([]SSLCaFile, len(desired))
-	for i, file := range desired {
-		normalizedDesired[i] = normalize(file)
-	}
-
-	// Use generic Compare function
-	genericDiff, err := Compare(ctx, ops, normalizedDesired, newFile)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build map of original desired files keyed by basename so the normalised
-	// entries returned from the generic diff can be re-keyed back to the
-	// originals (which carry the full caller-supplied paths).
-	desiredMap := make(map[string]SSLCaFile)
-	for _, file := range desired {
-		desiredMap[path.Base(getPath(file))] = file
-	}
-
-	return &SSLCaFileDiff{
-		ToCreate: restoreOriginals(genericDiff.ToCreate, desiredMap, getPath),
-		ToUpdate: restoreOriginals(genericDiff.ToUpdate, desiredMap, getPath),
-		ToDelete: genericDiff.ToDelete,
-	}, nil
-}
-
-// syncSSLStorageFiles syncs SSL CA storage files.
-// It handles capability checking and delegates to the generic Sync function.
-// Returns reload IDs from create/update operations that triggered reloads.
-func syncSSLStorageFiles(
-	ctx context.Context,
-	diff *SSLCaFileDiff,
-	ops FileOperations[SSLCaFile],
-	config sslStorageConfig,
-) ([]string, error) {
-	if diff == nil {
-		return nil, nil
-	}
-
-	// Check if storage is supported
-	if !config.isSupported() {
-		if len(diff.ToCreate) > 0 || len(diff.ToUpdate) > 0 || len(diff.ToDelete) > 0 {
-			slog.Warn(config.fileType+" storage not supported, skipping sync operations",
-				"haproxy_version", config.detectedVersion(),
-				"creates", len(diff.ToCreate),
-				"updates", len(diff.ToUpdate),
-				"deletes", len(diff.ToDelete))
-		}
-		return nil, nil
-	}
-
-	return Sync(ctx, ops, diff)
-}
-
 // newSSLCaOps creates a FileOperations adapter for SSL CA files.
 func newSSLCaOps(c *client.DataplaneClient) *sslStorageOps {
 	return &sslStorageOps{
@@ -211,14 +131,5 @@ func newSSLCaOps(c *client.DataplaneClient) *sslStorageOps {
 		create:     c.CreateSSLCaFile,
 		update:     c.UpdateSSLCaFile,
 		delete:     c.DeleteSSLCaFile,
-	}
-}
-
-// newSSLCaConfig creates configuration for SSL CA file operations.
-func newSSLCaConfig(c *client.DataplaneClient) sslStorageConfig {
-	return sslStorageConfig{
-		fileType:        sslCAFileType,
-		isSupported:     func() bool { return c.Capabilities().SupportsSslCaFiles },
-		detectedVersion: c.DetectedVersion,
 	}
 }

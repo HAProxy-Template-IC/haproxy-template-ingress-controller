@@ -111,14 +111,9 @@ func (eb *EventBuffer) GetLast(n int) []Event {
 	return eb.buffer.GetLast(n)
 }
 
-// GetAll returns all events in the buffer.
-func (eb *EventBuffer) GetAll() []Event {
+// getAll returns all events in the buffer.
+func (eb *EventBuffer) getAll() []Event {
 	return eb.buffer.GetAll()
-}
-
-// Len returns the current number of events in the buffer.
-func (eb *EventBuffer) Len() int {
-	return eb.buffer.Len()
 }
 
 // FindByCorrelationID returns events matching the specified correlation ID.
@@ -161,24 +156,13 @@ func (eb *EventBuffer) convertEvent(event busevents.Event) Event {
 		correlationID = correlated.CorrelationID()
 	}
 
-	// Create summary based on event type
-	summary := eb.createSummary(event, eventType)
-
 	return Event{
 		Timestamp:     time.Now(),
 		Type:          eventType,
-		Summary:       summary,
+		Summary:       eventType,
 		Details:       nil, // Avoid exposing full event details for stability
 		CorrelationID: correlationID,
 	}
-}
-
-// createSummary generates a human-readable summary for an event.
-func (eb *EventBuffer) createSummary(event any, eventType string) string {
-	// For now, just use the event type as the summary
-	// In the future, we could add more sophisticated summarization
-	// based on specific event types
-	return eventType
 }
 
 // EventsVar exposes recent events as a debug variable.

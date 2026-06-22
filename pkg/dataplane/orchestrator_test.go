@@ -197,8 +197,6 @@ func TestConvertDiffSummary(t *testing.T) {
 	assert.Equal(t, []string{"srv1", "srv2"}, details.ServersAdded["api"])
 	assert.Equal(t, []string{"srv3"}, details.ServersModified["web"])
 	assert.Equal(t, []string{"srv4"}, details.ServersDeleted["old"])
-	require.NotNil(t, details.ACLsAdded)
-	require.NotNil(t, details.HTTPRulesAdded)
 }
 
 func TestConvertDiffSummary_Empty(t *testing.T) {
@@ -209,6 +207,4 @@ func TestConvertDiffSummary_Empty(t *testing.T) {
 	assert.Equal(t, 0, details.TotalOperations)
 	assert.False(t, details.GlobalChanged)
 	assert.False(t, details.DefaultsChanged)
-	require.NotNil(t, details.ACLsAdded)
-	require.NotNil(t, details.HTTPRulesAdded)
 }

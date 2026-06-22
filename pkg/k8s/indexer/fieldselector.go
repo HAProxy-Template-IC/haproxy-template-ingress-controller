@@ -12,7 +12,6 @@ import (
 type FieldSelectorMatcher struct {
 	evaluator     *JSONPathEvaluator
 	expectedValue string
-	expression    string
 }
 
 // NewFieldSelectorMatcher creates a new matcher for the given field selector expression.
@@ -51,7 +50,6 @@ func NewFieldSelectorMatcher(expression string) (*FieldSelectorMatcher, error) {
 	return &FieldSelectorMatcher{
 		evaluator:     evaluator,
 		expectedValue: expectedValue,
-		expression:    expression,
 	}, nil
 }
 
@@ -83,9 +81,4 @@ func (m *FieldSelectorMatcher) tryEvaluate(resource any) (string, bool) {
 		return "", false
 	}
 	return actualValue, true
-}
-
-// Expression returns the original field selector expression.
-func (m *FieldSelectorMatcher) Expression() string {
-	return m.expression
 }

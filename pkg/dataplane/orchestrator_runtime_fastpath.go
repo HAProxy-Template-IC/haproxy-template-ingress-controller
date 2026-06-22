@@ -77,28 +77,6 @@ func ComputeRuntimeServerUpdates(prev, current *parser.StructuredConfig) (*Runti
 	return &RuntimeServerUpdates{runtimeOps: runtimeOps, summary: diff.Summary}, nil
 }
 
-// syncRuntimeFast applies the precomputed runtime-eligible server changes to the
-// live worker via a single raw config push: it pushes the DESIRED config body
-// with skip_reload+skip_version and the runtime `set server` actions derived from
-// updates (X-Runtime-Actions). No per-pod fetch, no reload.
-//
-// Entered in two cases: (1) the pure runtime-raw lane, where the render diff has
-// no structural op (RuntimeServerUpdates.IsRuntimeEligible) and this is the ONLY
-// apply for the render; and (2) the pre-interval apply of a STRUCTURAL render's
-// runtime-eligible subset (scheduler.applyRuntimePreInterval), where the
-// skip_reload body push writes the structural changes to disk un-activated and
-// the scheduler's structural deploy force-reloads the same (or newer) body on the
-// deployment interval. Either way the change persists across any later reload
-// because every deploy re-renders the current endpoints — there is no
-// server-state-file (ADR-0011).
-func (o *orchestrator) syncRuntimeFast(
-	ctx context.Context,
-	updates *RuntimeServerUpdates,
-	desiredConfig string,
-) (*SyncResult, error) {
-	return o.syncRuntimeRawPush(ctx, desiredConfig, updates, time.Now())
-}
-
 // syncRuntimeRawPush applies the shared render diff to the live worker without
 // fetching: it pushes body (the desired render) with the runtime `set server`
 // actions derived from updates, via a single skip_reload+skip_version push. Only

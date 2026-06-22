@@ -22,15 +22,6 @@ import (
 	"gitlab.com/haproxy-haptic/scriggo"
 )
 
-// ProfilingEntry represents timing for a single template include/render.
-// This type provides a stable API for consumers while using Scriggo's
-// built-in profiling under the hood.
-type ProfilingEntry struct {
-	Name     string        // Template name or path
-	Path     string        // Source file path
-	Duration time.Duration // Execution time
-}
-
 // aggregateScriggoProfile converts Scriggo profile data into aggregated
 // IncludeStats format for easier consumption.
 func aggregateScriggoProfile(profile *scriggo.Profile) []IncludeStats {

@@ -147,7 +147,7 @@ func tokenizeLine(line string) (parts []string, comment string) {
 	}
 
 	// Split main part into fields, respecting quotes
-	parts = splitFields(mainPart)
+	parts = splitFields(mainPart, true)
 	return parts, comment
 }
 
@@ -173,7 +173,9 @@ func isInQuotes(line string, pos int) bool {
 }
 
 // splitFields splits a string into fields, respecting quoted strings.
-func splitFields(s string) []string {
+// When keepQuotes is true, the quote characters are preserved in the
+// output fields; when false, they are stripped.
+func splitFields(s string, keepQuotes bool) []string {
 	var fields []string
 	var current strings.Builder
 	inQuotes := false
@@ -187,31 +189,37 @@ func splitFields(s string) []string {
 			// Start quoted string
 			inQuotes = true
 			quoteChar = c
-			current.WriteByte(c)
+			if keepQuotes {
+				current.WriteByte(c)
+			}
 
 		case inQuotes && c == quoteChar:
-			// End quoted string (check for escape)
-			if i > 0 && s[i-1] != '\\' {
-				inQuotes = false
+			// A structural quote (not preceded by '\') closes the string; an
+			// escaped quote stays part of the value. Preserve the byte when
+			// keeping quotes, or when it's an escaped quote.
+			structural := i == 0 || s[i-1] != '\\'
+			inQuotes = !structural
+			if keepQuotes || !structural {
+				current.WriteByte(c)
 			}
-			current.WriteByte(c)
 
 		case !inQuotes && (c == ' ' || c == '\t'):
-			// Whitespace outside quotes - end field
-			if current.Len() > 0 {
-				fields = append(fields, current.String())
-				current.Reset()
-			}
+			fields = appendField(fields, &current)
 
 		default:
 			current.WriteByte(c)
 		}
 	}
 
-	// Add final field
+	return appendField(fields, &current)
+}
+
+// appendField appends the builder's accumulated content as a field when
+// non-empty, resets the builder, and returns the extended slice.
+func appendField(fields []string, current *strings.Builder) []string {
 	if current.Len() > 0 {
 		fields = append(fields, current.String())
+		current.Reset()
 	}
-
 	return fields
 }

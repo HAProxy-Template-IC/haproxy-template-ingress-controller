@@ -260,6 +260,20 @@ func (c *Component) checkRemoteVersion(endpoint *dataplane.Endpoint) (*dataplane
 	return version, nil
 }
 
+// backoffInterval computes the retry interval for the given retry count using
+// exponential backoff, clamped to maxRetryInterval.
+func backoffInterval(retryCount int) time.Duration {
+	interval := initialRetryInterval
+	for range retryCount - 1 {
+		interval *= retryBackoffFactor
+		if interval > maxRetryInterval {
+			interval = maxRetryInterval
+			break
+		}
+	}
+	return interval
+}
+
 // handleVersionCheckFailure handles transient version check failures.
 func (c *Component) handleVersionCheckFailure(podName string, err error) {
 	retry, exists := c.pendingRetries[podName]
@@ -272,14 +286,7 @@ func (c *Component) handleVersionCheckFailure(podName string, err error) {
 	retry.retryCount++
 
 	// Calculate next retry interval with exponential backoff
-	interval := initialRetryInterval
-	for range retry.retryCount - 1 {
-		interval *= retryBackoffFactor
-		if interval > maxRetryInterval {
-			interval = maxRetryInterval
-			break
-		}
-	}
+	interval := backoffInterval(retry.retryCount)
 
 	c.Logger().Warn("version check failed, will retry",
 		"pod", podName,
@@ -321,14 +328,7 @@ func (c *Component) scheduleRetryTimerLocked() {
 	var nextRetry time.Time
 	for _, retry := range c.pendingRetries {
 		// Calculate next retry time based on retry count
-		interval := initialRetryInterval
-		for range retry.retryCount - 1 {
-			interval *= retryBackoffFactor
-			if interval > maxRetryInterval {
-				interval = maxRetryInterval
-				break
-			}
-		}
+		interval := backoffInterval(retry.retryCount)
 
 		retryAt := retry.lastAttempt.Add(interval)
 		if nextRetry.IsZero() || retryAt.Before(nextRetry) {

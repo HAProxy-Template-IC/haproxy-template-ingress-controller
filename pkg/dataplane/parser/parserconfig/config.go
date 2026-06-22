@@ -240,15 +240,3 @@ func BuildPointerIndex[T any](items []*T, getKey func(*T) string) map[string]*T 
 	}
 	return index
 }
-
-// BuildUserIndex builds a pointer index from a slice of users.
-// Returns nil if the input slice is nil.
-func BuildUserIndex(users []*models.User) map[string]*models.User {
-	return BuildPointerIndex(users, func(u *models.User) string { return u.Username })
-}
-
-// BuildGroupIndex builds a pointer index from a slice of groups.
-// Returns nil if the input slice is nil.
-func BuildGroupIndex(groups []*models.Group) map[string]*models.Group {
-	return BuildPointerIndex(groups, func(g *models.Group) string { return g.Name })
-}

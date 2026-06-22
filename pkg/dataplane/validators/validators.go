@@ -20,18 +20,9 @@ import (
 	genvalidators "gitlab.com/haproxy-haptic/haptic/pkg/generated/validators"
 )
 
-const (
-	apiV30 = "v30"
-	apiV31 = "v31"
-	apiV32 = "v32"
-	apiV33 = "v33"
-)
-
 // ValidatorSet provides type-specific validation functions for a HAProxy version.
 // Each method validates a model directly without JSON conversion.
 type ValidatorSet struct {
-	version string
-
 	// Validator functions
 	validateServer              func(*models.Server) error
 	validateServerTemplate      func(*models.ServerTemplate) error
@@ -106,7 +97,6 @@ var (
 
 func init() {
 	validatorSetV30 = &ValidatorSet{
-		version:                     apiV30,
 		validateServer:              genvalidators.ValidateServerV30,
 		validateServerTemplate:      genvalidators.ValidateServerTemplateV30,
 		validateBind:                genvalidators.ValidateBindV30,
@@ -146,7 +136,6 @@ func init() {
 	}
 
 	validatorSetV31 = &ValidatorSet{
-		version:                     apiV31,
 		validateServer:              genvalidators.ValidateServerV31,
 		validateServerTemplate:      genvalidators.ValidateServerTemplateV31,
 		validateBind:                genvalidators.ValidateBindV31,
@@ -186,7 +175,6 @@ func init() {
 	}
 
 	validatorSetV32 = &ValidatorSet{
-		version:                     apiV32,
 		validateServer:              genvalidators.ValidateServerV32,
 		validateServerTemplate:      genvalidators.ValidateServerTemplateV32,
 		validateBind:                genvalidators.ValidateBindV32,
@@ -226,7 +214,6 @@ func init() {
 	}
 
 	validatorSetV33 = &ValidatorSet{
-		version:                     apiV33,
 		validateServer:              genvalidators.ValidateServerV33,
 		validateServerTemplate:      genvalidators.ValidateServerTemplateV33,
 		validateBind:                genvalidators.ValidateBindV33,

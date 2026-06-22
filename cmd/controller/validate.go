@@ -607,7 +607,7 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 
 	// Use centralized path resolution to get capability-aware paths
 	// This ensures CRTListDir is set correctly for HAProxy < 3.2
-	resolvedPaths := dataplane.ResolvePaths(basePaths, capabilities)
+	resolvedPaths := dataplane.ResolvePaths(basePaths)
 
 	// Create directories (include CRTListDir which may be same as GeneralDir)
 	dirsToCreate := []string{resolvedPaths.MapsDir, resolvedPaths.SSLDir, resolvedPaths.GeneralDir}

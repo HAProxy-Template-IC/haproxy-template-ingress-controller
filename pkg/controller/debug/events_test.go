@@ -107,7 +107,7 @@ func TestEventBuffer_StartAndCapture(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify events were captured
-	allEvents := buffer.GetAll()
+	allEvents := buffer.getAll()
 	assert.GreaterOrEqual(t, len(allEvents), 3)
 
 	// Check event types
@@ -144,29 +144,6 @@ func TestEventBuffer_GetLast(t *testing.T) {
 	// Get all
 	all := buffer.GetLast(100)
 	assert.GreaterOrEqual(t, len(all), 5)
-}
-
-func TestEventBuffer_Len(t *testing.T) {
-	bus := events.NewEventBus(100)
-	buffer := NewEventBuffer(100, bus)
-
-	ctx := t.Context()
-
-	bus.Start()
-	go buffer.Start(ctx)
-
-	// Initially empty (before our test events)
-	initialLen := buffer.Len()
-
-	// Publish 3 events
-	bus.Publish(&testEvent{name: "test1"})
-	bus.Publish(&testEvent{name: "test2"})
-	bus.Publish(&testEvent{name: "test3"})
-
-	time.Sleep(50 * time.Millisecond)
-
-	// Should have at least 3 more events
-	assert.GreaterOrEqual(t, buffer.Len(), initialLen+3)
 }
 
 func TestEventBuffer_FindByCorrelationID(t *testing.T) {
@@ -268,7 +245,7 @@ func TestEventBuffer_RingBufferOverflow(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Buffer should only contain last 5 events (ring buffer behavior)
-	assert.LessOrEqual(t, buffer.Len(), 5)
+	assert.LessOrEqual(t, len(buffer.getAll()), 5)
 }
 
 func TestEventBuffer_ContextCancellation(t *testing.T) {

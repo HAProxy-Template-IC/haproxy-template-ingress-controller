@@ -170,34 +170,6 @@ func decodeStorageNameList(resp *http.Response, resourceType string) ([]string, 
 	return names, nil
 }
 
-// namedItem represents a single item in an API listing response that uses the "name" field.
-// This is used by resources like log profiles that use "name" instead of "storage_name".
-type namedItem struct {
-	Name *string `json:"name"`
-}
-
-// decodeNameList decodes a JSON response body containing an array of named items
-// and extracts the name values into a string slice.
-func decodeNameList(resp *http.Response, resourceType string) ([]string, error) {
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get all %s failed with status %d", resourceType, resp.StatusCode)
-	}
-
-	var items []namedItem
-	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
-		return nil, fmt.Errorf("decoding %s response: %w", resourceType, err)
-	}
-
-	names := make([]string, 0, len(items))
-	for _, item := range items {
-		if item.Name != nil {
-			names = append(names, *item.Name)
-		}
-	}
-
-	return names, nil
-}
-
 // storageItemWithID extends storageItem with an ID fallback field, used by
 // general files where the API may populate either storage_name or id.
 type storageItemWithID struct {

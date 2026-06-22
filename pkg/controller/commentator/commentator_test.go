@@ -512,7 +512,7 @@ func TestEventCommentator_ProcessEvent(t *testing.T) {
 	ec.processEvent(event)
 
 	// Verify it was added to ring buffer
-	foundEvents := ec.ringBuffer.FindByType(events.EventTypeConfigParsed)
+	foundEvents := ec.ringBuffer.FindByTypeInWindow(events.EventTypeConfigParsed, longWindow)
 	require.Len(t, foundEvents, 1)
 }
 
@@ -543,7 +543,7 @@ func TestEventCommentator_StartStop(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify event was processed
-	assert.Len(t, ec.ringBuffer.FindByType(events.EventTypeConfigParsed), 1)
+	assert.Len(t, ec.ringBuffer.FindByTypeInWindow(events.EventTypeConfigParsed, longWindow), 1)
 
 	// Stop via context cancellation
 	cancel()

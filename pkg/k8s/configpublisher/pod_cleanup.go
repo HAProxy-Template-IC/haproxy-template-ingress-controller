@@ -194,7 +194,7 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 		}
 
 		// Remove pod from deployedToPods list
-		newDeployedToPods, removed := p.removePodFromList(current.Status.DeployedToPods, cleanup)
+		newDeployedToPods, removed := removePodFromStatus(current.Status.DeployedToPods, cleanup.PodName)
 		if !removed {
 			return nil // Pod not in this runtime config
 		}
@@ -227,22 +227,6 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 	if auxFiles != nil {
 		p.cleanupAuxiliaryFilePodReferences(ctx, auxFiles, cleanup)
 	}
-}
-
-// removePodFromList removes a pod from the deployment status list.
-func (p *Publisher) removePodFromList(pods []haproxyv1alpha1.PodDeploymentStatus, cleanup *PodCleanupRequest) ([]haproxyv1alpha1.PodDeploymentStatus, bool) {
-	newPods := []haproxyv1alpha1.PodDeploymentStatus{}
-	removed := false
-
-	for i := range pods {
-		if pods[i].PodName == cleanup.PodName {
-			removed = true
-			continue // Skip this pod
-		}
-		newPods = append(newPods, pods[i])
-	}
-
-	return newPods, removed
 }
 
 // auxFileGroup binds an AuxiliaryFileReferences slice to the metadata needed

@@ -48,8 +48,8 @@ func TestNewStructuredConfig(t *testing.T) {
 	})
 }
 
-// BuildPointerIndex is the generic helper that BuildUserIndex and
-// BuildGroupIndex (and similar future helpers) delegate to. It has
+// BuildPointerIndex is the generic helper the section extractors inline
+// (for users, groups, binds, servers, and similar nested entries). It has
 // three load-bearing skip rules:
 //
 //   - nil items slice → nil result (lets callers leave the section's
@@ -157,10 +157,10 @@ func TestBuildPointerIndex(t *testing.T) {
 	})
 }
 
-// BuildUserIndex / BuildGroupIndex are thin BuildPointerIndex wrappers
-// that bind the key extractor (Username for users, Name for groups).
-// Pin the bindings so a future refactor can't accidentally swap them.
-func TestBuildUserIndex(t *testing.T) {
+// The userlist extractor inlines BuildPointerIndex with the Username/Name
+// key extractors. Pin those bindings so a future refactor can't accidentally
+// swap them.
+func TestBuildPointerIndex_UserBinding(t *testing.T) {
 	users := []*models.User{
 		{Username: "alice"},
 		{Username: "bob"},
@@ -169,7 +169,7 @@ func TestBuildUserIndex(t *testing.T) {
 		{Username: "claire"}, // last
 	}
 
-	got := BuildUserIndex(users)
+	got := BuildPointerIndex(users, func(u *models.User) string { return u.Username })
 
 	assert.Len(t, got, 3)
 	assert.Contains(t, got, "alice")
@@ -177,11 +177,11 @@ func TestBuildUserIndex(t *testing.T) {
 	assert.Contains(t, got, "claire")
 
 	t.Run("nil input yields nil index", func(t *testing.T) {
-		assert.Nil(t, BuildUserIndex(nil))
+		assert.Nil(t, BuildPointerIndex[models.User](nil, func(u *models.User) string { return u.Username }))
 	})
 }
 
-func TestBuildGroupIndex(t *testing.T) {
+func TestBuildPointerIndex_GroupBinding(t *testing.T) {
 	groups := []*models.Group{
 		{Name: "admins"},
 		{Name: "users"},
@@ -189,13 +189,13 @@ func TestBuildGroupIndex(t *testing.T) {
 		{Name: ""},
 	}
 
-	got := BuildGroupIndex(groups)
+	got := BuildPointerIndex(groups, func(g *models.Group) string { return g.Name })
 
 	assert.Len(t, got, 2)
 	assert.Contains(t, got, "admins")
 	assert.Contains(t, got, "users")
 
 	t.Run("nil input yields nil index", func(t *testing.T) {
-		assert.Nil(t, BuildGroupIndex(nil))
+		assert.Nil(t, BuildPointerIndex[models.Group](nil, func(g *models.Group) string { return g.Name }))
 	})
 }

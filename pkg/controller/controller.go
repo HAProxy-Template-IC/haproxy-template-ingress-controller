@@ -393,70 +393,14 @@ func setupComponents(
 	g, gCtx := errgroup.WithContext(iterCtx)
 
 	// Start components in errgroup (these return nil on graceful shutdown)
-	g.Go(func() error {
-		if err := eventCommentator.Start(gCtx); err != nil {
-			logger.Error("event commentator failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if err := configLoaderComponent.Start(gCtx); err != nil {
-			logger.Error("config loader failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if err := credentialsLoaderComponent.Start(gCtx); err != nil {
-			logger.Error("credentials loader failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if err := basicValidator.Start(gCtx); err != nil {
-			logger.Error("basic validator failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if err := templateValidator.Start(gCtx); err != nil {
-			logger.Error("template validator failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if err := jsonpathValidator.Start(gCtx); err != nil {
-			logger.Error("jsonpath validator failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if err := validationTestsValidator.Start(gCtx); err != nil {
-			logger.Error("validationtests validator failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
-	g.Go(func() error {
-		if err := configChangeHandlerComponent.Start(gCtx); err != nil {
-			logger.Error("config change handler failed", "error", err)
-			cancel()
-			return err
-		}
-		return nil
-	})
+	startInErrGroup(g, gCtx, logger, cancel, "event commentator", eventCommentator.Start)
+	startInErrGroup(g, gCtx, logger, cancel, "config loader", configLoaderComponent.Start)
+	startInErrGroup(g, gCtx, logger, cancel, "credentials loader", credentialsLoaderComponent.Start)
+	startInErrGroup(g, gCtx, logger, cancel, "basic validator", basicValidator.Start)
+	startInErrGroup(g, gCtx, logger, cancel, "template validator", templateValidator.Start)
+	startInErrGroup(g, gCtx, logger, cancel, "jsonpath validator", jsonpathValidator.Start)
+	startInErrGroup(g, gCtx, logger, cancel, "validationtests validator", validationTestsValidator.Start)
+	startInErrGroup(g, gCtx, logger, cancel, "config change handler", configChangeHandlerComponent.Start)
 
 	logger.Debug("All components started")
 
