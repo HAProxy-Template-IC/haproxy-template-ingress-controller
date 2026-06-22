@@ -93,7 +93,6 @@ templateSnippets:
           SANs are present (falling back to `hostname` when no SANs are
           declared, matching the pre-SAN behaviour). -#}
       {%- var btlsVerifyHost = "" -%}
-      {%- var btlsConflictedReason = "" -%}
       {%- var btlsBroken = false -%}
       {#- gw client-cert: per Gateway API spec, when the route's parent
           Gateway carries `spec.tls.backend.clientCertificateRef`, the
@@ -574,18 +573,6 @@ templateSnippets:
           handling without any directive. We look up the Service by
           (namespace, name) and find the port matching backendRef.port. -#}
       {%- var resolvedProtoFlag = protoFlag -%}
-      {%- if protoFlag == "" -%}
-        {%- var svc = resources.services.GetSingle(backendNs, tostring(backendName)) -%}
-        {%- if svc != nil -%}
-          {%- for _, p := range svc.Spec.Ports -%}
-            {%- if toint(p.Port) == toint(backendPort) -%}
-              {%- if p.AppProtocol == "kubernetes.io/h2c" -%}
-                {%- resolvedProtoFlag = "h2" -%}
-              {%- end -%}
-            {%- end -%}
-          {%- end -%}
-        {%- end -%}
-      {%- end -%}
       {#- BackendTLSPolicy lookup: per Gateway API spec, when a
           BackendTLSPolicy in the same namespace targets this Service
           (optionally pinned to a sectionName matching the port name),
@@ -607,7 +594,6 @@ templateSnippets:
           SANs are present (falling back to `hostname` when no SANs are
           declared, matching the pre-SAN behaviour). -#}
       {%- var btlsVerifyHost = "" -%}
-      {%- var btlsConflictedReason = "" -%}
       {%- var btlsBroken = false -%}
       {#- gw client-cert: per Gateway API spec, when the route's parent
           Gateway carries `spec.tls.backend.clientCertificateRef`, the
@@ -617,16 +603,6 @@ templateSnippets:
       {%- var gwClientCertPath = "" -%}
       {%%
         var portNameForBackend = ""
-        if protoFlag == "" {
-          var svcLookup = resources.services.GetSingle(tostring(backendNs), tostring(backendName))
-          if svcLookup != nil {
-            for _, p := range svcLookup.Spec.Ports {
-              if toint(p.Port) == toint(backendPort) {
-                portNameForBackend = p.Name
-              }
-            }
-          }
-        }
         var winningPolicy *resources.backendtlspolicies.T = nil
         var winningPolicyTs = ""
         var winningPolicyKey = ""

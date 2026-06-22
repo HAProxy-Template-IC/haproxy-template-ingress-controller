@@ -660,7 +660,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-          {%- var needHTTPSTermination_pre = tostring(gfMap | dig("needHTTPSTermination")) == "true" %}
           {%- for _, gwKey := range gwOrder %}
             {%- var gi = byGateway[tostring(gwKey)].(map[string]any) %}
             {%- var aclSan = "gw_" + replace(replace(replace(replace(tostring(gi["ns"]) + "_" + tostring(gi["name"]), "-", "_"), ".", "_"), ":", "_"), "/", "_") %}

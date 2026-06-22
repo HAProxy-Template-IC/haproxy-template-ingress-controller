@@ -167,7 +167,6 @@ The `util-macros` snippet provides reusable macros imported by other libraries:
 
 | Macro | Purpose |
 |-------|---------|
-| `SanitizeRegex(pattern)` | Escapes `$` for HAProxy's double-quoted context |
 | `CalculateShardCount(resourceCount, itemsPerShard)` | Computes `clamp(count / itemsPerShard, 1, 2*GOMAXPROCS)` |
 | `HostMatchCondition(hosts)` | Builds a host-match ACL condition (in `util-ingress-helpers`) |
 | `BuildServerOptions(serverOpts)` | Renders server-line option flags (in `util-backend-servers-helpers`) |

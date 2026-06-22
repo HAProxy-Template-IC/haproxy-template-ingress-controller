@@ -276,14 +276,6 @@ templateSnippets:
       {%- end -%}
       {% end %}
 
-  util-path-map-entry-ingress:
-    template: |
-      {#- Backward-compatible wrapper for ShardedPathMapEntryIngress -#}
-      {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
-      {% macro PathMapEntryIngress(pathTypes []string, suffix string) string %}
-      {{ ShardedPathMapEntryIngress(pathTypes, suffix) }}
-      {% end %}
-
   # ============================================================================
   # Backend Generation
   # ============================================================================
@@ -429,9 +421,9 @@ templateSnippets:
 
         Matches: Ingress paths with pathType: Exact
       -#}
-      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
+      {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-path-exact-ingress
-      {{ PathMapEntryIngress([]string{"Exact"}, "") }}
+      {{ ShardedPathMapEntryIngress([]string{"Exact"}, "") }}
 
   map-pfxexact-500-ingress:
     template: |
@@ -445,9 +437,9 @@ templateSnippets:
         Matches: Ingress paths with pathType: Prefix or ImplementationSpecific
         Note: No trailing slash - matches exact path for prefix boundary check.
       -#}
-      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
+      {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-pfxexact-ingress
-      {{ PathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "") }}
+      {{ ShardedPathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "") }}
 
   map-path-prefix-500-ingress:
     template: |
@@ -461,9 +453,9 @@ templateSnippets:
         Matches: Ingress paths with pathType: Prefix or ImplementationSpecific
         Note: Adds trailing slash for HAProxy map_beg matching.
       -#}
-      {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
+      {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-path-prefix-ingress
-      {{ PathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "/") }}
+      {{ ShardedPathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "/") }}
 
   map-path-prefix-501-ingress-default:
     template: |

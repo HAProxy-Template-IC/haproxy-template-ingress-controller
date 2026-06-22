@@ -38,11 +38,6 @@ templateSnippets:
     template: |
       {#- Core utility macros for template rendering -#}
 
-      {#- Escapes $ for HAProxy double-quoted contexts (prevents env var expansion) -#}
-      {% macro SanitizeRegex(pattern string) string %}
-        {%% show replace(pattern, "$", "\\$") %%}
-      {% end %}
-
       {#- Calculates optimal shard count: clamp(count / itemsPerShard, 1, 2*GOMAXPROCS) -#}
       {% macro CalculateShardCount(resourceCount int, itemsPerShard int) string %}
         {%%

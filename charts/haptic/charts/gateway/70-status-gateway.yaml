@@ -18,7 +18,7 @@ templateSnippets:
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
-      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerProtocol, ListenerProtocolOr -%}
+      {%- import "util-resource-helpers" for ResourceNamespace, ListenerProtocolOr -%}
       {% macro GenerateGatewayStatusPatches(gateways []*resources.gateways.T) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
@@ -1041,82 +1041,6 @@ templateSnippets:
               })
             }
 
-            // Build the deployed-variant listener status. Programmed
-            // is taken from listenerData (which folds in the
-            // ResolvedRefs failure cases — listener with bad cert /
-            // unsupported kind can't be Programmed even if the
-            // chart's deploy succeeded for the other listeners).
-            var deployedListeners = []any{}
-            for _, ld := range listenerData {
-              var ldm = ld.(map[string]any)
-              var lname = tostring(ldm["name"])
-              deployedListeners = append(deployedListeners, map[string]any{
-                "name":           ldm["name"],
-                "supportedKinds": ldm["supportedKinds"],
-                "attachedRoutes": ldm["attachedRoutes"],
-                "conditions": []any{
-                  condition("Accepted",
-                    tostring(ldm["acceptedStatus"]),
-                    tostring(ldm["acceptedReason"]),
-                    tostring(ldm["acceptedMessage"]),
-                    generation, ListenerTransitionTime(gateway, lname, "Accepted", tostring(ldm["acceptedStatus"]))),
-                  condition("Programmed",
-                    tostring(ldm["programmedStatus"]),
-                    tostring(ldm["programmedReason"]),
-                    tostring(ldm["programmedMessage"]),
-                    generation,
-                    ListenerTransitionTime(gateway, lname, "Programmed", tostring(ldm["programmedStatus"]))),
-                  condition("ResolvedRefs",
-                    tostring(ldm["resolvedRefsStatus"]),
-                    tostring(ldm["resolvedRefsReason"]),
-                    tostring(ldm["resolvedRefsMessage"]),
-                    generation,
-                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
-                  condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
-                    generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
-                },
-              })
-            }
-
-            // Build the deployFailed-variant. Programmed=False unless
-            // the listener's own programming was already False for
-            // ref-resolution reasons (in which case the more-specific
-            // listener-level reason wins).
-            var failedListeners = []any{}
-            for _, ld := range listenerData {
-              var ldm = ld.(map[string]any)
-              var lname = tostring(ldm["name"])
-              var failProgrammedStatus = "False"
-              var failProgrammedReason = "Invalid"
-              var failProgrammedMessage = "Gateway not yet programmed"
-              if tostring(ldm["programmedStatus"]) == "False" {
-                failProgrammedReason = tostring(ldm["programmedReason"])
-                failProgrammedMessage = tostring(ldm["programmedMessage"])
-              }
-              failedListeners = append(failedListeners, map[string]any{
-                "name":           ldm["name"],
-                "supportedKinds": ldm["supportedKinds"],
-                "attachedRoutes": ldm["attachedRoutes"],
-                "conditions": []any{
-                  condition("Accepted",
-                    tostring(ldm["acceptedStatus"]),
-                    tostring(ldm["acceptedReason"]),
-                    tostring(ldm["acceptedMessage"]),
-                    generation, ListenerTransitionTime(gateway, lname, "Accepted", tostring(ldm["acceptedStatus"]))),
-                  condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
-                    generation, ListenerTransitionTime(gateway, lname, "Programmed", failProgrammedStatus)),
-                  condition("ResolvedRefs",
-                    tostring(ldm["resolvedRefsStatus"]),
-                    tostring(ldm["resolvedRefsReason"]),
-                    tostring(ldm["resolvedRefsMessage"]),
-                    generation,
-                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
-                  condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
-                    generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
-                },
-              })
-            }
-
             // Emit BOTH a "rendered" and "deployed" variant carrying the
             // same content. The "rendered" variant fires after every
             // successful render — that's what the Gateway API spec
@@ -1232,16 +1156,12 @@ templateSnippets:
 
             // Build individual condition entries so we can compose the
             // rendered vs deployed payloads from disjoint subsets.
-            // gwTopConditions remains as the "everything together" list
-            // used by debug-only consumers; the variants below carve it
-            // up by data-plane dependence.
             var gwAcceptedCond = condition("Accepted", gwAcceptedStatus, gwAcceptedReason, gwAcceptedMessage,
               generation, TopLevelTransitionTime(gateway, "Accepted", gwAcceptedStatus))
             var gwProgrammedCond = condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
               generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus))
             var gwResolvedRefsCond = condition("ResolvedRefs", gwResolvedRefsStatus, gwResolvedRefsReason, gwResolvedRefsMessage,
               generation, TopLevelTransitionTime(gateway, "ResolvedRefs", gwResolvedRefsStatus))
-            var gwTopConditions = []any{gwAcceptedCond, gwProgrammedCond, gwResolvedRefsCond}
 
             // GEP-91: GatewayConditionInsecureFrontendValidationMode is
             // emitted when the Gateway opts into AllowInsecureFallback
@@ -1275,7 +1195,6 @@ templateSnippets:
               gwInsecureFrontendCond = condition("InsecureFrontendValidationMode", "True", "ConfigurationChanged",
                 "Gateway is using AllowInsecureFallback for client-cert validation",
                 generation, TopLevelTransitionTime(gateway, "InsecureFrontendValidationMode", "True"))
-              gwTopConditions = append(gwTopConditions, gwInsecureFrontendCond)
             }
             // attachedListenerSets count: how many ListenerSets attach
             // to this Gateway, are admitted by spec.allowedListeners,
@@ -1477,13 +1396,6 @@ templateSnippets:
                 },
               })
             }
-            // Silence unused-variable warnings — gwTopConditions and the
-            // listener arrays from the byte-identical era are retained for
-            // observability/debug consumers but no longer fed to statusPatch.
-            _ = gwTopConditions
-            _ = deployedListeners
-            _ = failedListeners
-
             statusPatch(nsStr, nameStr,
               "gateway.networking.k8s.io/v1", "Gateway",
               map[string]interface{}{

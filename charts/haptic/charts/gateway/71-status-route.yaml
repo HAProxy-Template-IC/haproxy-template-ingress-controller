@@ -617,7 +617,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
-      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, GatewayKey, ListenerProtocolOr -%}
+      {%- import "util-resource-helpers" for ResourceNamespace, GatewayKey, ListenerProtocolOr -%}
       {% macro GenerateTLSRouteStatusPatches(routes []*resources.tlsroutes.T) %}
         {%- var controllerName = extraContext | dig_string("", "controllerName") %}
         {#- TLSRoute is v1 in Gateway API v1.5+ — the v1alpha2 served-version
