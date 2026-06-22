@@ -157,7 +157,7 @@ func buildValidationPaths(cfg *config.Config) (
 		GeneralDir: filepath.Join(tempDir, path.Base(cfg.Dataplane.GeneralStorageDir)),
 		ConfigFile: filepath.Join(tempDir, names.MainTemplateName),
 	}
-	resolvedPaths := dataplane.ResolvePaths(basePaths, capabilities)
+	resolvedPaths := dataplane.ResolvePaths(basePaths)
 
 	dirsToCreate := []string{resolvedPaths.MapsDir, resolvedPaths.SSLDir, resolvedPaths.GeneralDir}
 	if resolvedPaths.CRTListDir != resolvedPaths.SSLDir && resolvedPaths.CRTListDir != resolvedPaths.GeneralDir {

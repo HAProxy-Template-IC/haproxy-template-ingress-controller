@@ -314,14 +314,14 @@ func TestComponent_registerValidators(t *testing.T) {
 			KeyPEM:  keyPEM,
 			Rules: []WebhookRule{
 				{
-					APIGroups:   []string{"networking.k8s.io"},
-					APIVersions: []string{"v1"},
-					Resources:   []string{"ingresses"},
+					APIGroup:   "networking.k8s.io",
+					APIVersion: "v1",
+					Resource:   "ingresses",
 				},
 				{
-					APIGroups:   []string{""},
-					APIVersions: []string{"v1"},
-					Resources:   []string{"configmaps"},
+					APIGroup:   "",
+					APIVersion: "v1",
+					Resource:   "configmaps",
 				},
 			},
 		}
@@ -354,9 +354,9 @@ func TestComponent_registerValidators(t *testing.T) {
 			KeyPEM:  keyPEM,
 			Rules: []WebhookRule{
 				{
-					APIGroups:   []string{"unknown.group"},
-					APIVersions: []string{"v1"},
-					Resources:   []string{"unknowns"},
+					APIGroup:   "unknown.group",
+					APIVersion: "v1",
+					Resource:   "unknowns",
 				},
 			},
 		}

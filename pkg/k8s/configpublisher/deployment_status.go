@@ -141,7 +141,7 @@ func (p *Publisher) applyPodStatusToRuntimeConfig(ctx context.Context, update *D
 	_, err = p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(update.RuntimeConfigNamespace).
 		Patch(ctx, update.RuntimeConfigName, types.ApplyPatchType, ssaBytes,
-			metav1.PatchOptions{FieldManager: podStatusFieldManager(update.PodName), Force: ptrTrue()},
+			metav1.PatchOptions{FieldManager: podStatusFieldManager(update.PodName), Force: new(true)},
 			"status",
 		)
 	if err != nil {
@@ -223,7 +223,7 @@ func (p *Publisher) applyAuxiliaryFilePodStatus(kind, namespace, name string, en
 		p.logger.Debug("ssa payload build failed", "kind", kind, "name", name, "error", err)
 		return
 	}
-	if err := patcher(name, ssaBytes, metav1.PatchOptions{FieldManager: fieldManager, Force: ptrTrue()}); err != nil && !apierrors.IsNotFound(err) {
+	if err := patcher(name, ssaBytes, metav1.PatchOptions{FieldManager: fieldManager, Force: new(true)}); err != nil && !apierrors.IsNotFound(err) {
 		p.logger.Debug("ssa pod status on auxiliary file failed", "kind", kind, "name", name, "error", err)
 	}
 }
@@ -310,14 +310,4 @@ func buildPodStatusSSAPayload(kind, name, namespace string, podStatus *haproxyv1
 	}
 
 	return json.Marshal(payload)
-}
-
-// ptrTrue returns a pointer to true. Used to set PatchOptions.Force on SSA
-// calls. Force=true is appropriate here because each pod's apply is the
-// authoritative source for that pod's entry — if another field manager
-// (e.g. the cleanup path) claimed ownership transiently, we want our
-// per-pod apply to take it back without an error.
-func ptrTrue() *bool {
-	v := true
-	return &v
 }

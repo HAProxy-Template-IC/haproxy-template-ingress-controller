@@ -9,6 +9,10 @@ import (
 	ctlevents "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 )
 
+// longWindow is a time window large enough to cover every event added in
+// these tests, so FindByTypeInWindow subsumes the no-window lookup.
+const longWindow = 365 * 24 * time.Hour
+
 // mockEvent is a simple test event implementation.
 type mockEvent struct {
 	eventType string
@@ -73,17 +77,17 @@ func TestRingBuffer_FindByType(t *testing.T) {
 	rb.Add(mockEvent{eventType: "deployment.started", timestamp: time.Now()})
 
 	// Find by type
-	configEvents := rb.FindByType("config.parsed")
+	configEvents := rb.FindByTypeInWindow("config.parsed", longWindow)
 	assert.Len(t, configEvents, 2)
 
-	validatedEvents := rb.FindByType("config.validated")
+	validatedEvents := rb.FindByTypeInWindow("config.validated", longWindow)
 	assert.Len(t, validatedEvents, 1)
 
-	deploymentEvents := rb.FindByType("deployment.started")
+	deploymentEvents := rb.FindByTypeInWindow("deployment.started", longWindow)
 	assert.Len(t, deploymentEvents, 1)
 
 	// Non-existent type
-	missingEvents := rb.FindByType("nonexistent")
+	missingEvents := rb.FindByTypeInWindow("nonexistent", longWindow)
 	assert.Nil(t, missingEvents)
 }
 
@@ -99,7 +103,7 @@ func TestRingBuffer_FindByType_NewestFirst(t *testing.T) {
 	time.Sleep(1 * time.Millisecond)
 	rb.Add(mockEvent{eventType: "test", timestamp: now.Add(2 * time.Second)})
 
-	events := rb.FindByType("test")
+	events := rb.FindByTypeInWindow("test", longWindow)
 	assert.Len(t, events, 3)
 
 	// Verify newest first
@@ -136,11 +140,11 @@ func TestRingBuffer_TypeIndex_LazyCleanup(t *testing.T) {
 	}
 
 	// type1 should have no events (cleaned up lazily)
-	type1Events := rb.FindByType("type1")
+	type1Events := rb.FindByTypeInWindow("type1", longWindow)
 	assert.Nil(t, type1Events)
 
 	// type2 should have all 3
-	type2Events := rb.FindByType("type2")
+	type2Events := rb.FindByTypeInWindow("type2", longWindow)
 	assert.Len(t, type2Events, 3)
 }
 
@@ -170,7 +174,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 	assert.Equal(t, 100, rb.size)
 
 	// Should be able to find them
-	events := rb.FindByType("concurrent.test")
+	events := rb.FindByTypeInWindow("concurrent.test", longWindow)
 	assert.NotNil(t, events)
 }
 

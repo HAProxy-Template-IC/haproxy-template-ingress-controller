@@ -67,7 +67,7 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 
 	// Use centralized path resolution to get capability-aware paths
 	// This ensures CRTListDir is set correctly for HAProxy < 3.2
-	resolvedPaths := dataplane.ResolvePaths(basePaths, r.capabilities)
+	resolvedPaths := dataplane.ResolvePaths(basePaths)
 
 	// Create all directories (CRTListDir may be same as GeneralDir or SSLDir)
 	dirsToCreate := []string{resolvedPaths.MapsDir, resolvedPaths.SSLDir, resolvedPaths.GeneralDir}

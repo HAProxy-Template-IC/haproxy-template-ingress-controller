@@ -3,11 +3,17 @@ package auxiliaryfiles
 import (
 	"context"
 	"errors"
-	"sync"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 // --- sslStorageOps.Create ---
@@ -300,23 +306,80 @@ func TestVerifyExistsWithRetry_GetAllErrors_ContinuesRetrying(t *testing.T) {
 	assert.Equal(t, 3, callCount)
 }
 
-// --- compareSSLStorageFiles ---
+// --- SSL CA storage server (runtime ssl_ca_files endpoints) ---
 
-func TestCompareSSLStorageFiles_UnsupportedCapability(t *testing.T) {
-	cfg := sslStorageConfig{
-		fileType:        "SSL CA file",
-		isSupported:     func() bool { return false },
-		detectedVersion: func() string { return "v3.0.4" },
+// createSSLCaTestServer creates a mock HTTP server speaking the DataPlane API
+// runtime ssl_ca_files endpoints, backed by the given storage. The API version
+// in /v3/info controls SupportsSslCaFiles (v3.2+ => supported).
+func createSSLCaTestServer(t *testing.T, caFiles *mockStorage, apiVersion string) *httptest.Server {
+	t.Helper()
+	const collection = "/services/haproxy/runtime/ssl_ca_files"
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v3/info" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"api":{"version":%q}}`, apiVersion)
+			return
+		}
+
+		switch {
+		case r.URL.Path == collection && r.Method == http.MethodGet:
+			handleStorageList(w, caFiles)
+		case r.URL.Path == collection && r.Method == http.MethodPost:
+			handleSSLCaCreate(w, r, caFiles)
+		case strings.HasPrefix(r.URL.Path, collection+"/"):
+			name := strings.TrimPrefix(r.URL.Path, collection+"/")
+			switch r.Method {
+			case http.MethodGet:
+				handleStorageGet(w, caFiles, name)
+			case http.MethodPut:
+				handleStorageWrite(w, r, caFiles, name)
+			case http.MethodDelete:
+				handleStorageDelete(w, caFiles, name)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// handleSSLCaCreate handles POST to the collection endpoint, where the filename
+// is carried in the multipart file_upload part rather than the URL path.
+func handleSSLCaCreate(w http.ResponseWriter, r *http.Request, storage *mockStorage) {
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
+	file, header, err := r.FormFile("file_upload")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
 
-	diff, err := compareSSLStorageFiles(
+	content, _ := io.ReadAll(file)
+	name := header.Filename
+	if _, exists := storage.get(name); exists {
+		w.WriteHeader(http.StatusConflict)
+		return
+	}
+	storage.put(name, string(content))
+	w.WriteHeader(http.StatusCreated)
+}
+
+// --- CompareSSLCaFiles ---
+
+func TestCompareSSLCaFiles_UnsupportedCapability(t *testing.T) {
+	// v3.0 does not support SSL CA file storage; comparison short-circuits.
+	server := createSSLCaTestServer(t, newMockStorage(), "v3.0.4 87ad0bcf")
+	defer server.Close()
+	c := testutil.NewTestClient(t, server)
+
+	diff, err := CompareSSLCaFiles(
 		context.Background(),
+		c,
 		[]SSLCaFile{{Path: "ca.pem", Content: "data"}},
-		nil, // ops not needed — capability check short-circuits
-		cfg,
-		func(f SSLCaFile) SSLCaFile { return f },
-		func(id, content string) SSLCaFile { return SSLCaFile{Path: id, Content: content} },
-		func(f SSLCaFile) string { return f.Path },
 	)
 	require.NoError(t, err)
 	assert.Empty(t, diff.ToCreate)
@@ -324,126 +387,81 @@ func TestCompareSSLStorageFiles_UnsupportedCapability(t *testing.T) {
 	assert.Empty(t, diff.ToDelete)
 }
 
-func TestCompareSSLStorageFiles_PathNormalizationAndRestoration(t *testing.T) {
-	// Mock ops that returns no current files — all desired files should be created
-	ops := &sslStorageOps{
-		getAll: func(_ context.Context) ([]string, error) {
-			return []string{}, nil
-		},
-	}
-
-	cfg := sslStorageConfig{
-		fileType:        "SSL CA file",
-		isSupported:     func() bool { return true },
-		detectedVersion: func() string { return "v3.2.0" },
-	}
+func TestCompareSSLCaFiles_PathNormalizationAndRestoration(t *testing.T) {
+	// Empty storage — all desired files should be created.
+	server := createSSLCaTestServer(t, newMockStorage(), "v3.2.6 87ad0bcf")
+	defer server.Close()
+	c := testutil.NewTestClient(t, server)
 
 	desired := []SSLCaFile{
 		{Path: "/etc/haproxy/ssl/ca/trusted.pem", Content: "ca-data"},
 	}
 
-	diff, err := compareSSLStorageFiles(
-		context.Background(),
-		desired,
-		ops,
-		cfg,
-		func(f SSLCaFile) SSLCaFile {
-			// Normalize: strip directory path
-			return SSLCaFile{Path: "trusted.pem", Content: f.Content}
-		},
-		func(id, content string) SSLCaFile { return SSLCaFile{Path: id, Content: content} },
-		func(f SSLCaFile) string { return f.Path },
-	)
+	diff, err := CompareSSLCaFiles(context.Background(), c, desired)
 	require.NoError(t, err)
 	require.Len(t, diff.ToCreate, 1)
-	// Original path should be restored
+	// Original (full) path should be restored on the diff entry.
 	assert.Equal(t, "/etc/haproxy/ssl/ca/trusted.pem", diff.ToCreate[0].Path)
 	assert.Equal(t, "ca-data", diff.ToCreate[0].Content)
 }
 
-// --- syncSSLStorageFiles ---
+// --- SyncSSLCaFiles ---
 
-func TestSyncSSLStorageFiles_NilDiff(t *testing.T) {
-	cfg := sslStorageConfig{
-		fileType:    "SSL CA file",
-		isSupported: func() bool { return true },
-	}
+func TestSyncSSLCaFiles_NilDiff(t *testing.T) {
+	server := createSSLCaTestServer(t, newMockStorage(), "v3.2.6 87ad0bcf")
+	defer server.Close()
+	c := testutil.NewTestClient(t, server)
 
-	reloadIDs, err := syncSSLStorageFiles(context.Background(), nil, nil, cfg)
+	reloadIDs, err := SyncSSLCaFiles(context.Background(), c, nil)
 	require.NoError(t, err)
 	assert.Nil(t, reloadIDs)
 }
 
-func TestSyncSSLStorageFiles_UnsupportedCapability(t *testing.T) {
-	cfg := sslStorageConfig{
-		fileType:        "SSL CA file",
-		isSupported:     func() bool { return false },
-		detectedVersion: func() string { return "v3.0.4" },
-	}
+func TestSyncSSLCaFiles_UnsupportedCapability(t *testing.T) {
+	// v3.0 does not support SSL CA file storage; sync is skipped.
+	server := createSSLCaTestServer(t, newMockStorage(), "v3.0.4 87ad0bcf")
+	defer server.Close()
+	c := testutil.NewTestClient(t, server)
 
-	diff := &FileDiffGeneric[SSLCaFile]{
+	diff := &SSLCaFileDiff{
 		ToCreate: []SSLCaFile{{Path: "ca.pem", Content: "data"}},
 	}
 
-	reloadIDs, err := syncSSLStorageFiles(context.Background(), diff, nil, cfg)
+	reloadIDs, err := SyncSSLCaFiles(context.Background(), c, diff)
 	require.NoError(t, err)
 	assert.Nil(t, reloadIDs)
 }
 
-func TestSyncSSLStorageFiles_DelegatesToSync(t *testing.T) {
-	var (
-		mu         sync.Mutex
-		createdIDs []string
-	)
-	ops := &sslStorageOps{
-		create: func(_ context.Context, id, _ string) (string, error) {
-			// Sync runs creates concurrently within a phase; guard the recorder.
-			mu.Lock()
-			createdIDs = append(createdIDs, id)
-			mu.Unlock()
-			return "reload-" + id, nil
-		},
-		update: func(_ context.Context, id, _ string) (string, error) {
-			return "", nil
-		},
-		delete: func(_ context.Context, _ string) error {
-			return nil
-		},
-	}
+func TestSyncSSLCaFiles_DelegatesToSync(t *testing.T) {
+	storage := newMockStorage()
+	server := createSSLCaTestServer(t, storage, "v3.2.6 87ad0bcf")
+	defer server.Close()
+	c := testutil.NewTestClient(t, server)
 
-	cfg := sslStorageConfig{
-		fileType:        "SSL CA file",
-		isSupported:     func() bool { return true },
-		detectedVersion: func() string { return "v3.2.0" },
-	}
-
-	diff := &FileDiffGeneric[SSLCaFile]{
+	diff := &SSLCaFileDiff{
 		ToCreate: []SSLCaFile{
 			{Path: "a.pem", Content: "data-a"},
 			{Path: "b.pem", Content: "data-b"},
 		},
 	}
 
-	reloadIDs, err := syncSSLStorageFiles(context.Background(), diff, ops, cfg)
+	_, err := SyncSSLCaFiles(context.Background(), c, diff)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"a.pem", "b.pem"}, createdIDs)
-	assert.ElementsMatch(t, []string{"reload-a.pem", "reload-b.pem"}, reloadIDs)
+	assert.ElementsMatch(t, []string{"a.pem", "b.pem"}, storage.list())
 }
 
-func TestSyncSSLStorageFiles_EmptyDiff(t *testing.T) {
-	cfg := sslStorageConfig{
-		fileType:        "SSL CA file",
-		isSupported:     func() bool { return true },
-		detectedVersion: func() string { return "v3.2.0" },
-	}
+func TestSyncSSLCaFiles_EmptyDiff(t *testing.T) {
+	server := createSSLCaTestServer(t, newMockStorage(), "v3.2.6 87ad0bcf")
+	defer server.Close()
+	c := testutil.NewTestClient(t, server)
 
-	diff := &FileDiffGeneric[SSLCaFile]{
+	diff := &SSLCaFileDiff{
 		ToCreate: []SSLCaFile{},
 		ToUpdate: []SSLCaFile{},
 		ToDelete: []string{},
 	}
 
-	reloadIDs, err := syncSSLStorageFiles(context.Background(), diff, nil, cfg)
+	reloadIDs, err := SyncSSLCaFiles(context.Background(), c, diff)
 	require.NoError(t, err)
 	assert.Empty(t, reloadIDs)
 }

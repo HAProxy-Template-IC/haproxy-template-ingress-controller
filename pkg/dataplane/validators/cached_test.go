@@ -103,7 +103,7 @@ func TestCachedValidator_Accessors(t *testing.T) {
 	cv := NewCachedValidator(3, 1)
 
 	assert.NotNil(t, cv.set)
-	assert.Equal(t, "v31", cv.set.version)
+	assert.Same(t, validatorSetV31, cv.set)
 	assert.NotNil(t, cv.cache)
 	assert.Equal(t, 0, cacheLen(cv.cache))
 }

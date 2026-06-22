@@ -193,7 +193,7 @@ func TestSplitFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := splitFields(tt.input)
+			got := splitFields(tt.input, true)
 			assert.Equal(t, tt.want, got)
 		})
 	}

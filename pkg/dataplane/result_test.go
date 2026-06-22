@@ -14,12 +14,6 @@ func TestNewDiffDetails(t *testing.T) {
 	require.NotNil(t, details.ServersAdded)
 	require.NotNil(t, details.ServersModified)
 	require.NotNil(t, details.ServersDeleted)
-	require.NotNil(t, details.ACLsAdded)
-	require.NotNil(t, details.ACLsModified)
-	require.NotNil(t, details.ACLsDeleted)
-	require.NotNil(t, details.HTTPRulesAdded)
-	require.NotNil(t, details.HTTPRulesModified)
-	require.NotNil(t, details.HTTPRulesDeleted)
 
 	assert.Empty(t, details.ServersAdded)
 	assert.Equal(t, 0, details.TotalOperations)
@@ -189,35 +183,6 @@ func TestDiffDetails_String(t *testing.T) {
 			},
 			contains: []string{"Servers added: 3", "Servers modified: 1"},
 		},
-		{
-			name: "ACLs changed",
-			details: DiffDetails{
-				TotalOperations: 2,
-				ACLsAdded: map[string][]string{
-					"frontend-http": {"is_api", "is_static"},
-				},
-				ACLsDeleted: map[string][]string{
-					"frontend-http": {"old_acl"},
-				},
-			},
-			contains: []string{"ACLs added: 2", "ACLs deleted: 1"},
-		},
-		{
-			name: "HTTP rules changed",
-			details: DiffDetails{
-				TotalOperations: 5,
-				HTTPRulesAdded: map[string]int{
-					"frontend-http": 3,
-				},
-				HTTPRulesModified: map[string]int{
-					"frontend-http": 1,
-				},
-				HTTPRulesDeleted: map[string]int{
-					"frontend-http": 1,
-				},
-			},
-			contains: []string{"HTTP rules added: 3", "HTTP rules modified: 1", "HTTP rules deleted: 1"},
-		},
 	}
 
 	for _, tt := range tests {
@@ -274,20 +239,4 @@ func TestDiffDetails_AppendMapCountChanges(t *testing.T) {
 	assert.Contains(t, parts[0], "Items added: 3")
 	assert.Contains(t, parts[1], "Items modified: 1")
 	assert.Contains(t, parts[2], "Items deleted: 2")
-}
-
-func TestDiffDetails_AppendIntMapCountChanges(t *testing.T) {
-	details := &DiffDetails{}
-	parts := details.appendIntMapCountChanges(
-		[]string{},
-		map[string]int{"a": 5, "b": 3},
-		map[string]int{"c": 2},
-		map[string]int{"d": 1},
-		"Rules",
-	)
-
-	require.Len(t, parts, 3)
-	assert.Contains(t, parts[0], "Rules added: 8")
-	assert.Contains(t, parts[1], "Rules modified: 2")
-	assert.Contains(t, parts[2], "Rules deleted: 1")
 }

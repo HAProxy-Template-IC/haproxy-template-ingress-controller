@@ -6,8 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
 func TestResolvePaths(t *testing.T) {
@@ -18,35 +16,18 @@ func TestResolvePaths(t *testing.T) {
 		ConfigFile: "/etc/haproxy/haproxy.cfg",
 	}
 
-	// ResolvePaths intentionally ignores the Capabilities argument today
-	// (the second parameter is `_ Capabilities`): CRT-list files are
-	// always stored under GeneralDir regardless of SupportsCrtList,
-	// because the native CRT-list API triggers a reload on create
-	// without a skip_reload parameter. We pin three representative
-	// capability values to assert this is genuinely capability-invariant
-	// — if a future change starts branching on capabilities, the assertion
-	// pattern below stops being identical across cases and the test
-	// signals which branch needs explicit coverage.
-	for _, tt := range []struct {
-		name         string
-		capabilities Capabilities
-	}{
-		{"crt-list supported (v3.2+)", client.Capabilities{SupportsCrtList: true}},
-		{"crt-list not supported (v3.0/v3.1)", client.Capabilities{SupportsCrtList: false}},
-		{"empty capabilities", client.Capabilities{}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			resolved := ResolvePaths(basePath, tt.capabilities)
+	// CRT-list files are always stored under GeneralDir, because the native
+	// CRT-list API triggers a reload on create without a skip_reload
+	// parameter.
+	resolved := ResolvePaths(basePath)
 
-			require.NotNil(t, resolved)
-			assert.Equal(t, "/etc/haproxy/maps", resolved.MapsDir)
-			assert.Equal(t, "/etc/haproxy/ssl", resolved.SSLDir)
-			assert.Equal(t, "/etc/haproxy/files", resolved.GeneralDir)
-			assert.Equal(t, "/etc/haproxy/haproxy.cfg", resolved.ConfigFile)
-			assert.Equal(t, "/etc/haproxy/files", resolved.CRTListDir,
-				"CRTListDir should always be GeneralDir regardless of capabilities")
-		})
-	}
+	require.NotNil(t, resolved)
+	assert.Equal(t, "/etc/haproxy/maps", resolved.MapsDir)
+	assert.Equal(t, "/etc/haproxy/ssl", resolved.SSLDir)
+	assert.Equal(t, "/etc/haproxy/files", resolved.GeneralDir)
+	assert.Equal(t, "/etc/haproxy/haproxy.cfg", resolved.ConfigFile)
+	assert.Equal(t, "/etc/haproxy/files", resolved.CRTListDir,
+		"CRTListDir should always be GeneralDir")
 }
 
 func TestResolvedPaths_ToValidationPaths(t *testing.T) {

@@ -17,8 +17,6 @@ package conversion
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -250,7 +248,7 @@ func convertValidators(crdValidators []v1alpha1.ValidatorConfig) []config.Valida
 func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[string]config.ValidationTest, error) {
 	validationTests := make(map[string]config.ValidationTest, len(crdTests))
 
-	for _, testName := range slices.Collect(maps.Keys(crdTests)) {
+	for testName := range crdTests {
 		crdTest := crdTests[testName]
 		testConfig := config.ValidationTest{
 			Description:       crdTest.Description,

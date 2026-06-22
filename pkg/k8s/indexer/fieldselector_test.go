@@ -7,8 +7,7 @@ import (
 // TestNewFieldSelectorMatcher_ValidExpressions verifies parsing of valid
 // expressions. Parsing correctness (field path + expected value split,
 // whitespace trimming, split-on-first-'=') is observed end-to-end through
-// Matches against a resource whose field holds wantValue, plus the
-// Expression() round-trip.
+// Matches against a resource whose field holds wantValue.
 func TestNewFieldSelectorMatcher_ValidExpressions(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -59,11 +58,6 @@ func TestNewFieldSelectorMatcher_ValidExpressions(t *testing.T) {
 			matcher, err := NewFieldSelectorMatcher(tt.expression)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
-			}
-
-			// Expression() must round-trip the original input verbatim.
-			if matcher.Expression() != tt.expression {
-				t.Errorf("Expression() = %q, want %q", matcher.Expression(), tt.expression)
 			}
 
 			// Build a resource whose wantFieldPath holds wantValue; a

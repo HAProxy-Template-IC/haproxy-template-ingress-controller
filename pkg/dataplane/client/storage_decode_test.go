@@ -18,11 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The three decode helpers in storage_helpers.go (decodeStorageNameList,
-// decodeNameList, decodeStorageNameListWithFallback) parse the response
+// The two decode helpers in storage_helpers.go (decodeStorageNameList,
+// decodeStorageNameListWithFallback) parse the response
 // of every GetAll* storage call in the package — maps, SSL certificates,
 // general files, log profiles, etc. They share the same basic shape but
-// differ on which JSON field they pull (storage_name vs name vs both),
+// differ on which JSON field they pull (storage_name vs both),
 // and decodeStorageNameListWithFallback adds a fallback to "id" when
 // "storage_name" is absent (a real API quirk for general files).
 //
@@ -128,51 +128,6 @@ func TestDecodeStorageNameList(t *testing.T) {
 		got, err := decodeStorageNameList(resp, "maps")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"z.map", "a.map", "m.map"}, got)
-	})
-}
-
-func TestDecodeNameList(t *testing.T) {
-	// decodeNameList is the exact same shape but reads the "name" field
-	// instead of "storage_name". The branches are the same — we pin them
-	// to guarantee a future refactor unifying the two doesn't accidentally
-	// flip one to read the wrong field.
-
-	t.Run("non-200 status produces error", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: http.StatusInternalServerError,
-			Body:       io.NopCloser(strings.NewReader(`[]`)),
-		}
-		_, err := decodeNameList(resp, "log-profiles")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "log-profiles")
-		assert.Contains(t, err.Error(), "500")
-	})
-
-	t.Run("nil name is silently skipped", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: http.StatusOK,
-			Body: io.NopCloser(strings.NewReader(`[
-				{"name": "default"},
-				{"name": null},
-				{"name": "verbose"}
-			]`)),
-		}
-		got, err := decodeNameList(resp, "log-profiles")
-		require.NoError(t, err)
-		assert.Equal(t, []string{"default", "verbose"}, got)
-	})
-
-	t.Run("items with extraneous fields are tolerated", func(t *testing.T) {
-		// Forward compatibility: when the API adds new fields to a list
-		// item, we must keep parsing the existing field. Without this
-		// tolerance, every API minor version bump would break listing.
-		resp := &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(`[{"name": "default", "future_field": "ignored"}]`)),
-		}
-		got, err := decodeNameList(resp, "log-profiles")
-		require.NoError(t, err)
-		assert.Equal(t, []string{"default"}, got)
 	})
 }
 

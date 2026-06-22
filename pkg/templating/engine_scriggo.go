@@ -366,37 +366,6 @@ func (e *ScriggoEngine) ClearVMPool() {
 	scriggo.ClearVMPool()
 }
 
-// GetProfilingResults returns profiling data from the last render operation.
-// Returns nil if profiling is disabled or no render has occurred.
-// The results contain include/render call records from Scriggo's built-in profiler.
-func (e *ScriggoEngine) GetProfilingResults() []ProfilingEntry {
-	e.profilingMu.Lock()
-	defer e.profilingMu.Unlock()
-
-	if e.lastProfile == nil {
-		return nil
-	}
-
-	// Convert scriggo.Profile calls to ProfilingEntry slice
-	// Filter to macro/render operations
-	// Note: In Scriggo, `render` statements compile to OpCallMacro (CallKindMacro)
-	var entries []ProfilingEntry
-	for _, call := range e.lastProfile.Calls {
-		if call.Kind == scriggo.CallKindMacro {
-			name := call.TemplatePath
-			if name == "" {
-				name = call.Name
-			}
-			entries = append(entries, ProfilingEntry{
-				Name:     name,
-				Path:     call.File,
-				Duration: call.Duration,
-			})
-		}
-	}
-	return entries
-}
-
 // buildScriggoPostProcessors builds post-processors for the Scriggo engine.
 //
 // The template post-processor type is handled here (not in NewPostProcessor) because

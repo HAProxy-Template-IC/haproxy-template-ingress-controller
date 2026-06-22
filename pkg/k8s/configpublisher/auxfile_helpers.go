@@ -175,15 +175,3 @@ type cachedAuxFileStatus struct {
 	pods     []haproxyv1alpha1.PodDeploymentStatus
 	checksum string
 }
-
-// updateAuxFileDeploymentStatus was removed when the production status-
-// update path switched to Server-Side Apply with per-pod field managers.
-// The read-modify-write retry-on-conflict pattern it implemented was the
-// source of the deployedToPods drop bug — two concurrent updates from
-// different pods would each read the same snapshot and last-writer-wins
-// silently dropped one entry. SSA with listType=map keyed by podName
-// merges concurrent applies at the API-server level, so this helper is no
-// longer needed and is removed.
-//
-// Callers were updated to use `applyPodStatusToAuxiliaryFiles` in
-// deployment_status.go.

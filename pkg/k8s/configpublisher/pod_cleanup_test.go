@@ -16,67 +16,15 @@ import (
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 )
 
-// removePodFromList and filterStalePods are pure helpers on Publisher (they
-// don't use any Publisher state) that gate two cleanup paths:
-//   - removePodFromList strips a single terminated pod from a HAProxyCfg
-//     status during cleanupRuntimeConfigPodReference;
-//   - filterStalePods partitions DeployedToPods into still-running vs stale
-//     pods during ReconcileDeployedToPods.
+// filterStalePods is a pure helper on Publisher (it doesn't use any Publisher
+// state) that partitions DeployedToPods into still-running vs stale pods during
+// ReconcileDeployedToPods.
 //
-// Both are pinned with table-driven tests so future refactors can't silently
-// keep stale entries or drop running ones.
+// It's pinned with table-driven tests so future refactors can't silently keep
+// stale entries or drop running ones.
 
 func podStatus(name string) haproxyv1alpha1.PodDeploymentStatus {
 	return haproxyv1alpha1.PodDeploymentStatus{PodName: name}
-}
-
-func TestPublisher_RemovePodFromList(t *testing.T) {
-	p := &Publisher{}
-
-	tests := []struct {
-		name        string
-		pods        []haproxyv1alpha1.PodDeploymentStatus
-		cleanup     *PodCleanupRequest
-		wantPods    []haproxyv1alpha1.PodDeploymentStatus
-		wantRemoved bool
-	}{
-		{
-			name:        "removes the named pod and reports removed=true",
-			pods:        []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("b"), podStatus("c")},
-			cleanup:     &PodCleanupRequest{PodName: "b"},
-			wantPods:    []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("c")},
-			wantRemoved: true,
-		},
-		{
-			name:        "unknown pod leaves list intact and reports removed=false",
-			pods:        []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("b")},
-			cleanup:     &PodCleanupRequest{PodName: "missing"},
-			wantPods:    []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("b")},
-			wantRemoved: false,
-		},
-		{
-			name:        "removes ALL duplicates of the named pod (every match is dropped)",
-			pods:        []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("dup"), podStatus("b"), podStatus("dup")},
-			cleanup:     &PodCleanupRequest{PodName: "dup"},
-			wantPods:    []haproxyv1alpha1.PodDeploymentStatus{podStatus("a"), podStatus("b")},
-			wantRemoved: true,
-		},
-		{
-			name:        "empty input returns empty list and removed=false",
-			pods:        nil,
-			cleanup:     &PodCleanupRequest{PodName: "any"},
-			wantPods:    []haproxyv1alpha1.PodDeploymentStatus{},
-			wantRemoved: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotPods, gotRemoved := p.removePodFromList(tt.pods, tt.cleanup)
-			assert.Equal(t, tt.wantPods, gotPods)
-			assert.Equal(t, tt.wantRemoved, gotRemoved)
-		})
-	}
 }
 
 func TestPublisher_FilterStalePods(t *testing.T) {

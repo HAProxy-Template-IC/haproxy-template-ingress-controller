@@ -159,25 +159,6 @@ type StateProvider interface {
 	GetErrors() (*ErrorSummary, error)
 }
 
-// ComponentStatus represents the status of a controller component.
-//
-// Used by GetComponentStatus() to provide insight into component health.
-type ComponentStatus struct {
-	// Running indicates if the component is currently active
-	Running bool `json:"running"`
-
-	// LastSeen is the timestamp of the last activity from this component
-	LastSeen time.Time `json:"last_seen"`
-
-	// ErrorRate is the percentage of errors (0.0 to 1.0)
-	// Optional - may be 0 if not tracked
-	ErrorRate float64 `json:"error_rate,omitempty"`
-
-	// Details provides additional component-specific information
-	// Optional - may be nil
-	Details map[string]any `json:"details,omitempty"`
-}
-
 // PipelineStatus represents the complete status of the last reconciliation pipeline.
 //
 // This provides visibility into each stage of the pipeline: trigger, rendering,

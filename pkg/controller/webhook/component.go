@@ -349,25 +349,25 @@ func (c *Component) registerValidators() {
 		// but we only have the resources field (e.g., "ingresses")
 		// RESTMapper queries the Kubernetes API to get the authoritative mapping
 		kind, err := c.resolveKind(
-			rule.APIGroups[0],
-			rule.APIVersions[0],
-			rule.Resources[0],
+			rule.APIGroup,
+			rule.APIVersion,
+			rule.Resource,
 		)
 		if err != nil {
 			c.logger.Error("Failed to resolve kind, skipping validator registration",
 				"error", err,
-				"api_group", rule.APIGroups[0],
-				"api_version", rule.APIVersions[0],
-				"resource", rule.Resources[0])
+				"api_group", rule.APIGroup,
+				"api_version", rule.APIVersion,
+				"resource", rule.Resource)
 			continue
 		}
 
-		gvk := c.buildGVK(rule.APIGroups[0], rule.APIVersions[0], kind)
+		gvk := c.buildGVK(rule.APIGroup, rule.APIVersion, kind)
 
 		c.logger.Debug("Registering validator",
 			"gvk", gvk,
 			"kind", kind,
-			"resources", rule.Resources)
+			"resource", rule.Resource)
 
 		// Create resource validator
 		validator := c.createResourceValidator(gvk)
