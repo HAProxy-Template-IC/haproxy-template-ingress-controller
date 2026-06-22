@@ -439,15 +439,7 @@ templateSnippets:
         {%- var rewrite = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/rewrite-target"] %}
         {%- if rewrite != "" %}
           {#- Translate $1..$9 capture groups to \1..\9 -#}
-          {%- rewrite = replace(rewrite, "$1", "\\1") %}
-          {%- rewrite = replace(rewrite, "$2", "\\2") %}
-          {%- rewrite = replace(rewrite, "$3", "\\3") %}
-          {%- rewrite = replace(rewrite, "$4", "\\4") %}
-          {%- rewrite = replace(rewrite, "$5", "\\5") %}
-          {%- rewrite = replace(rewrite, "$6", "\\6") %}
-          {%- rewrite = replace(rewrite, "$7", "\\7") %}
-          {%- rewrite = replace(rewrite, "$8", "\\8") %}
-          {%- rewrite = replace(rewrite, "$9", "\\9") %}
+          {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") %}
       # nginx-ingress/backend-directives-rewrite-target ({{ key }})
       http-request replace-path (.*) {{ rewrite }}
         {%- end %}

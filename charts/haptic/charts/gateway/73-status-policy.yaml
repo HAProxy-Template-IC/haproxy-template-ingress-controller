@@ -2,7 +2,7 @@ templateSnippets:
   util-generate-backendtlspolicy-status-patches:
     template: |
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
-      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName -%}
+      {%- import "util-resource-helpers" for ResourceNamespace -%}
       {% macro GenerateBackendTLSPolicyStatusPatches(policies []*resources.backendtlspolicies.T, controllerName string) %}
         {%- for _, policy := range policies %}
           {%%

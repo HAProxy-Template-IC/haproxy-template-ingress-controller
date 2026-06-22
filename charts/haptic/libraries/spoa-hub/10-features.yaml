@@ -21,16 +21,6 @@ templateSnippets:
         {%- end -%}
       {%- end %}
 
-  # URL guard for annotation values that get interpolated into
-  # HAProxy directives (e.g. `http-request redirect location <url>`).
-  # An unsanitised URL with whitespace, newlines, or HAProxy
-  # metacharacters could let an Ingress-write RBAC holder inject
-  # arbitrary directives into the shared frontend (e.g. closing the
-  # current rule and opening a `http-request deny if TRUE`). The
-  # check is intentionally strict — RFC 3986 URIs are constrained
-  # enough that disallowing whitespace and newlines covers every
-  # realistic injection vector while passing every legitimate
-  # https://... value operators care about.
   util-spoa-hub-enabled:
     template: |-
       {{- extraContext | dig("spoaHub", "enabled") | fallback(false) | tostring() -}}
