@@ -67,7 +67,7 @@ git checkout -b release/controller-v<version>
 
 ```bash
 make release-controller VERSION=<version>
-# or directly: ./scripts/release-controller.sh <version>
+# or directly: ./scripts/release.sh controller <version>
 ```
 
 The script:
@@ -163,7 +163,7 @@ git checkout -b release/haptic-chart-v<version>
 
 ```bash
 make release-chart CHART_VERSION=<version>
-# or directly: ./scripts/release-chart.sh <version>
+# or directly: ./scripts/release.sh chart <version>
 ```
 
 The script:

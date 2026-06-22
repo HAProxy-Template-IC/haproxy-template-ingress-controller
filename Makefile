@@ -788,14 +788,14 @@ release-controller: ## Create a controller release (usage: make release-controll
 		echo "Error: VERSION must be specified (e.g., make release-controller VERSION=0.1.0)"; \
 		exit 1; \
 	fi
-	@./scripts/release-controller.sh $(VERSION)
+	@./scripts/release.sh controller $(VERSION)
 
 release-chart: ## Create a chart release (usage: make release-chart CHART_VERSION=0.1.0)
 	@if [ -z "$(CHART_VERSION)" ] || [ "$(CHART_VERSION)" = "dev" ]; then \
 		echo "Error: CHART_VERSION must be specified (e.g., make release-chart CHART_VERSION=0.1.0)"; \
 		exit 1; \
 	fi
-	@./scripts/release-chart.sh $(CHART_VERSION)
+	@./scripts/release.sh chart $(CHART_VERSION)
 
 goreleaser-snapshot: ## Test GoReleaser locally (no push)
 	goreleaser release --snapshot --clean

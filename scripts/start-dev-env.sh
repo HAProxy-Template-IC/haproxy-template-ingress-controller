@@ -372,13 +372,6 @@ troubleshooting() {
 		missing-helm)
 			warn "Install Helm: https://helm.sh/docs/intro/install/"
 			;;
-		rollout-timeout)
-			warn "Rollout timed out. Inspect events and logs:"
-			echo "  kubectl -n ${CTRL_NAMESPACE} get events --sort-by=.lastTimestamp | tail -n 50"
-			echo "  kubectl -n ${CTRL_NAMESPACE} describe deploy/${HELM_RELEASE_NAME}-controller"
-			echo "  kubectl -n ${CTRL_NAMESPACE} get pods -o wide"
-			echo "  kubectl -n ${CTRL_NAMESPACE} logs deploy/${HELM_RELEASE_NAME}-controller --previous || true"
-			;;
 		*) ;;
 	 esac
 }
@@ -647,6 +640,64 @@ build_and_load_local_image() {
     debug "Exported IMAGE_TAG=${IMAGE_TAG} (full image: ${image_with_sha})"
 }
 
+# Populate the global HELM_ARGS array with the shared helm upgrade --install
+# arguments. The three positional flags select the call-site-specific options:
+#   $1 create_namespace ("true" adds --create-namespace)
+#   $2 wait             ("true" adds --wait)
+#   $3 reset_values     ("true" adds --reset-values)
+# Includes the SPOA_TAG, webhook CA bundle, and Enterprise appends so both
+# deploy_controller and dev_restart stay in sync.
+build_helm_args() {
+    local create_namespace="$1"
+    local wait="$2"
+    local reset_values="$3"
+
+    HELM_ARGS=(
+        "${HELM_RELEASE_NAME}"
+        "${REPO_ROOT}/charts/haptic"
+        "--namespace" "${CTRL_NAMESPACE}"
+    )
+    if [[ "$create_namespace" == "true" ]]; then
+        HELM_ARGS+=("--create-namespace")
+    fi
+    HELM_ARGS+=(
+        "--values" "${ASSETS_DIR}/dev-values.yaml"
+        "--set" "image.tag=${IMAGE_TAG}"
+        "--set" "haproxyVersion=${HAPROXY_VERSION}"
+        "--set" "haproxy.image.repository=${HAPROXY_REPO}"
+        "--set" "haproxy.image.tag=${HAPROXY_TAG}"
+    )
+    if [[ "$wait" == "true" ]]; then
+        HELM_ARGS+=("--wait")
+    fi
+    HELM_ARGS+=("--timeout" "${TIMEOUT}s")
+    if [[ "$reset_values" == "true" ]]; then
+        HELM_ARGS+=("--reset-values")
+    fi
+
+    # Add Enterprise settings if using Enterprise HAProxy
+    # Note: UIDs are automatically derived by the Helm chart based on enterprise.enabled
+    if [[ "$HAPROXY_ENTERPRISE" == "true" ]]; then
+        HELM_ARGS+=("--set" "haproxy.enterprise.enabled=true")
+        HELM_ARGS+=("--set" "haproxy.enterprise.version=${HAPROXY_ENTERPRISE_VERSION}")
+        debug "Added Enterprise Helm values"
+    fi
+
+    # Override the spoa-hub image tag if SPOA_TAG is set (used by CI to
+    # point at the freshly-built ci-${CI_PIPELINE_ID} snapshot). Defaults
+    # in dev-values.yaml to main-latest for local devs.
+    if [[ -n "${SPOA_TAG:-}" ]]; then
+        HELM_ARGS+=("--set" "spoaHub.image.tag=${SPOA_TAG}")
+        debug "Using SPOA_TAG=${SPOA_TAG} for spoa-hub image"
+    fi
+
+    # Add webhook CA bundle if set
+    if [[ -n "${WEBHOOK_CA_BUNDLE:-}" ]]; then
+        HELM_ARGS+=("--set" "webhook.caBundle=${WEBHOOK_CA_BUNDLE}")
+        debug "Added webhook.caBundle to Helm values"
+    fi
+}
+
 deploy_controller() {
     build_and_load_local_image || {
         err "Failed to build or load image"
@@ -705,46 +756,14 @@ deploy_controller() {
     log INFO "Using image tag: ${IMAGE_TAG}"
     log INFO "Using HAProxy: ${HAPROXY_REPO}:${HAPROXY_TAG}"
 
-    # Build Helm command with webhook CA bundle if provided
-    local helm_args=(
-        "${HELM_RELEASE_NAME}"
-        "${REPO_ROOT}/charts/haptic"
-        "--namespace" "${CTRL_NAMESPACE}"
-        "--values" "${ASSETS_DIR}/dev-values.yaml"
-        "--set" "image.tag=${IMAGE_TAG}"
-        "--set" "haproxyVersion=${HAPROXY_VERSION}"
-        "--set" "haproxy.image.repository=${HAPROXY_REPO}"
-        "--set" "haproxy.image.tag=${HAPROXY_TAG}"
-        # Note: --wait is removed because readiness probes are disabled in dev mode
-        # We use kubectl rollout status instead to wait for pods
-        "--timeout" "${TIMEOUT}s"
-    )
-
-    # Add Enterprise settings if using Enterprise HAProxy
-    # Note: UIDs are automatically derived by the Helm chart based on enterprise.enabled
-    if [[ "$HAPROXY_ENTERPRISE" == "true" ]]; then
-        helm_args+=("--set" "haproxy.enterprise.enabled=true")
-        helm_args+=("--set" "haproxy.enterprise.version=${HAPROXY_ENTERPRISE_VERSION}")
-        debug "Added Enterprise Helm values"
-    fi
-
-    # Override the spoa-hub image tag if SPOA_TAG is set (used by CI to
-    # point at the freshly-built ci-${CI_PIPELINE_ID} snapshot). Defaults
-    # in dev-values.yaml to main-latest for local devs.
-    if [[ -n "${SPOA_TAG:-}" ]]; then
-        helm_args+=("--set" "spoaHub.image.tag=${SPOA_TAG}")
-        debug "Using SPOA_TAG=${SPOA_TAG} for spoa-hub image"
-    fi
-
-    # Add webhook CA bundle if set
-    if [[ -n "${WEBHOOK_CA_BUNDLE:-}" ]]; then
-        helm_args+=("--set" "webhook.caBundle=${WEBHOOK_CA_BUNDLE}")
-        debug "Added webhook.caBundle to Helm values"
-    fi
+    # Build Helm command with webhook CA bundle if provided.
+    # Note: --wait is omitted because readiness probes are disabled in dev mode;
+    # we use kubectl rollout status instead to wait for pods.
+    build_helm_args false false false
 
     # Use helm upgrade --install for idempotent deployment
     # Override image.tag with unique SHA-based tag to force pod restart
-    if helm upgrade --install "${helm_args[@]}" 2>&1 | tee /tmp/helm-output.log; then
+    if helm upgrade --install "${HELM_ARGS[@]}" 2>&1 | tee /tmp/helm-output.log; then
         ok "Controller Helm release deployed."
     else
         err "Helm deployment failed."
@@ -1112,21 +1131,18 @@ dev_restart() {
     verify_cluster_context
     print_section "🔄 Restarting Controller"
 
-    # Build and load new image unless skipped
+    # Build and load new image unless skipped.
+    # Even when --skip-build is set we still call build_and_load_local_image to
+    # tag and load the existing image with a unique tag.
     if [[ "$SKIP_BUILD" != "true" ]]; then
         log INFO "Rebuilding and loading controller image..."
-        build_and_load_local_image || {
-            err "Failed to rebuild image"
-            return 1
-        }
     else
         log INFO "Skipping image rebuild (--skip-build flag set)"
-        # Still need to tag and load existing image with unique tag
-        build_and_load_local_image || {
-            err "Failed to prepare image"
-            return 1
-        }
     fi
+    build_and_load_local_image || {
+        err "Failed to rebuild image"
+        return 1
+    }
 
     # Setup webhook certificates if webhook is enabled
     setup_webhook_certificates || {
@@ -1135,49 +1151,14 @@ dev_restart() {
     }
 
     # Build Helm command with webhook CA bundle if provided
-    local helm_args=(
-        "${HELM_RELEASE_NAME}"
-        "${REPO_ROOT}/charts/haptic"
-        "--namespace" "${CTRL_NAMESPACE}"
-        "--create-namespace"
-        "--values" "${ASSETS_DIR}/dev-values.yaml"
-        "--set" "image.tag=${IMAGE_TAG}"
-        "--set" "haproxyVersion=${HAPROXY_VERSION}"
-        "--set" "haproxy.image.repository=${HAPROXY_REPO}"
-        "--set" "haproxy.image.tag=${HAPROXY_TAG}"
-        "--wait"
-        "--timeout" "${TIMEOUT}s"
-        "--reset-values"
-    )
-
-    # Add Enterprise settings if using Enterprise HAProxy
-    # Note: UIDs are automatically derived by the Helm chart based on enterprise.enabled
-    if [[ "$HAPROXY_ENTERPRISE" == "true" ]]; then
-        helm_args+=("--set" "haproxy.enterprise.enabled=true")
-        helm_args+=("--set" "haproxy.enterprise.version=${HAPROXY_ENTERPRISE_VERSION}")
-        debug "Added Enterprise Helm values"
-    fi
-
-    # Override the spoa-hub image tag if SPOA_TAG is set (used by CI to
-    # point at the freshly-built ci-${CI_PIPELINE_ID} snapshot). Defaults
-    # in dev-values.yaml to main-latest for local devs.
-    if [[ -n "${SPOA_TAG:-}" ]]; then
-        helm_args+=("--set" "spoaHub.image.tag=${SPOA_TAG}")
-        debug "Using SPOA_TAG=${SPOA_TAG} for spoa-hub image"
-    fi
-
-    # Add webhook CA bundle if set
-    if [[ -n "${WEBHOOK_CA_BUNDLE:-}" ]]; then
-        helm_args+=("--set" "webhook.caBundle=${WEBHOOK_CA_BUNDLE}")
-        debug "Added webhook.caBundle to Helm values"
-    fi
+    build_helm_args true true true
 
     # Upgrade Helm release to pick up any changes
     # Using --install makes this idempotent (works even if release doesn't exist)
     # Override image.tag with unique SHA-based tag to force pod restart
     log INFO "Upgrading Helm release with image tag: ${IMAGE_TAG}..."
     log INFO "Using HAProxy: ${HAPROXY_REPO}:${HAPROXY_TAG}"
-    helm upgrade --install "${helm_args[@]}" || {
+    helm upgrade --install "${HELM_ARGS[@]}" || {
         warn "Helm upgrade failed, rolling back..."
         helm rollback "${HELM_RELEASE_NAME}" -n "${CTRL_NAMESPACE}" 2>/dev/null || true
         return 1
@@ -1259,14 +1240,6 @@ dev_clean() {
         ok "Cluster deleted"
     else
         warn "Cluster '$CLUSTER_NAME' not found"
-    fi
-
-    # Clean up local images if requested
-    if [[ "${1:-}" == "--images" ]]; then
-        log INFO "Removing local images..."
-        docker rmi "$LOCAL_IMAGE" 2>/dev/null || true
-        docker image prune -f >/dev/null 2>&1 || true
-        ok "Local images cleaned"
     fi
 }
 

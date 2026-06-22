@@ -17,8 +17,8 @@
 #
 # Sharding strategy
 # -----------------
-# Each test's ShortName is mapped to a shard index via FNV-1a hash
-# (well-defined across Bash 5 / Bash 4) modulo `$CI_NODE_TOTAL`. The
+# Each test's ShortName is mapped to a shard index via a coreutils
+# `cksum` (CRC32) hash modulo `$CI_NODE_TOTAL`. The
 # result is deterministic: the same test always lands on the same
 # shard for the same total. Adding new upstream tests redistributes,
 # but doesn't shift existing assignments unpredictably enough to hurt
@@ -97,25 +97,17 @@ if [[ ${#TEST_NAMES[@]} -eq 0 ]]; then
   exit 1
 fi
 
-# FNV-1a-32 hash. Bash arithmetic is 64-bit but we explicitly mask to
-# 32 bits to keep the hash deterministic regardless of host word size.
-fnv1a32() {
-  local input="$1"
-  local -i hash=2166136261  # FNV offset basis
-  local -i i len=${#input}
-  local -i byte
-  for (( i = 0; i < len; i++ )); do
-    printf -v byte '%d' "'${input:i:1}"
-    (( hash = (hash ^ byte) & 0xFFFFFFFF ))
-    (( hash = (hash * 16777619) & 0xFFFFFFFF ))
-  done
-  echo "$hash"
+# Deterministic, host-independent hash via coreutils `cksum` (CRC32).
+# `cksum` emits the same CRC32 for the same bytes on every machine, so
+# shard assignment stays stable across runs and hosts.
+crc32() {
+  printf '%s' "$1" | cksum | awk '{print $1}'
 }
 
 # Partition tests into the shard.
 SHARD_TESTS=()
 for name in "${TEST_NAMES[@]}"; do
-  hash="$(fnv1a32 "$name")"
+  hash="$(crc32 "$name")"
   # GitLab's CI_NODE_INDEX is 1-based; our modulo is 0-based.
   bucket=$(( (hash % SHARD_TOTAL) + 1 ))
   if (( bucket == SHARD_INDEX )); then

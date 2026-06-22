@@ -1543,7 +1543,7 @@ test-gateway-conformance:
     # are populated by GitLab CI's `parallel: <N>` keyword above; the
     # script hashes each upstream test ShortName into one of the
     # buckets so the partition is deterministic across runs and
-    # branches (FNV-1a 32-bit modulo N).
+    # branches (CRC32 modulo N).
     - |
       SHARD_PATTERN="$(scripts/shard-conformance-tests.sh "${CI_NODE_INDEX}" "${CI_NODE_TOTAL}")"
       echo "Conformance shard ${CI_NODE_INDEX}/${CI_NODE_TOTAL}: ${SHARD_PATTERN}"
