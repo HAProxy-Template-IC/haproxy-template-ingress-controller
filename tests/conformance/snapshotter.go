@@ -43,11 +43,6 @@ import (
 // the CI after_script already has it in its working set.
 const snapshotNamespace = "haptic"
 
-// snapshotComponentLabel marks the ConfigMaps the snapshotter
-// creates so the CI after_script can collect them with a single
-// label selector.
-const snapshotComponentLabel = "app.kubernetes.io/component=conformance-snapshot"
-
 // haproxyCfgGVR identifies the chart-published HAProxyCfg CRD —
 // the controller's RENDERED config (what the chart produced before
 // the dataplane API translated it into incremental ops). Capturing
@@ -100,8 +95,8 @@ type snapshottingRoundTripper struct {
 	// pattern: more than `pollSnapshotMinCalls` calls AND more
 	// than `pollSnapshotMinElapsed` since the first call
 	// suggests the test is stuck retrying.
-	callCount             map[string]int
-	pollSnapshotMinCalls  int
+	callCount              map[string]int
+	pollSnapshotMinCalls   int
 	pollSnapshotMinElapsed time.Duration
 }
 
@@ -274,15 +269,15 @@ func (s *snapshottingRoundTripper) snapshot(testName, host, urlHost, sni, reason
 				"haptic.io/test-name":         sanitizeForLabel(testName),
 			},
 			Annotations: map[string]string{
-				"haptic.io/test-name":          testName,
-				"haptic.io/timestamp":          time.Now().UTC().Format(time.RFC3339Nano),
-				"haptic.io/reason":             reason,
-				"haptic.io/request-host":       host,
-				"haptic.io/url-host":           urlHost,
-				"haptic.io/request-sni":        sni,
-				"haptic.io/source-pod":         pod,
-				"haptic.io/tarball-bytes":      fmt.Sprintf("%d", len(tarball)),
-				"haptic.io/haproxycfg-bytes":   fmt.Sprintf("%d", len(crdYAML)),
+				"haptic.io/test-name":        testName,
+				"haptic.io/timestamp":        time.Now().UTC().Format(time.RFC3339Nano),
+				"haptic.io/reason":           reason,
+				"haptic.io/request-host":     host,
+				"haptic.io/url-host":         urlHost,
+				"haptic.io/request-sni":      sni,
+				"haptic.io/source-pod":       pod,
+				"haptic.io/tarball-bytes":    fmt.Sprintf("%d", len(tarball)),
+				"haptic.io/haproxycfg-bytes": fmt.Sprintf("%d", len(crdYAML)),
 			},
 		},
 		BinaryData: map[string][]byte{

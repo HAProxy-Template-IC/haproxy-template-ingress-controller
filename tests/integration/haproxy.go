@@ -19,9 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/portforward"
-	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/transport/spdy"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
@@ -678,62 +676,6 @@ func getFreePort() (int, error) {
 // base64Encode encodes a string to base64
 func base64Encode(s string) string {
 	return base64.StdEncoding.EncodeToString([]byte(s))
-}
-
-// GetCurrentConfig reads the current HAProxy configuration from the pod
-func (h *HAProxyInstance) GetCurrentConfig() (string, error) {
-	ctx := context.Background()
-
-	// Get REST config from the namespace's cluster
-	config, err := h.namespace.cluster.getRestConfig()
-	if err != nil {
-		return "", fmt.Errorf("failed to get rest config: %w", err)
-	}
-
-	// Create the exec request
-	req := h.namespace.clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(h.Name).
-		Namespace(h.Namespace).
-		SubResource("exec")
-
-	// Configure exec options
-	option := &corev1.PodExecOptions{
-		Container: "haproxy", // Read from haproxy container
-		Command:   []string{"cat", "/etc/haproxy/haproxy.cfg"},
-		Stdin:     false,
-		Stdout:    true,
-		Stderr:    true,
-		TTY:       false,
-	}
-
-	req.VersionedParams(
-		option,
-		scheme.ParameterCodec,
-	)
-
-	// Create SPDY executor
-	exec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
-	if err != nil {
-		return "", fmt.Errorf("failed to create executor: %w", err)
-	}
-
-	// Buffers to capture output
-	var stdout, stderr bytes.Buffer
-
-	// Execute the command
-	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdin:  nil,
-		Stdout: &stdout,
-		Stderr: &stderr,
-		Tty:    false,
-	})
-
-	if err != nil {
-		return "", fmt.Errorf("failed to exec into pod: %w (stderr: %s)", err, stderr.String())
-	}
-
-	return stdout.String(), nil
 }
 
 // GetContainerLogs fetches logs from the specified container in the HAProxy pod

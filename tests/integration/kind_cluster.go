@@ -29,12 +29,6 @@ type KindClusterConfig struct {
 	Image string
 }
 
-// GetNodePortHost returns the hostname for accessing NodePort services.
-// In Docker-in-Docker, this is the dind hostname; otherwise localhost.
-func GetNodePortHost() string {
-	return kindutil.GetNodePortHost()
-}
-
 // KindCluster represents a Kind (Kubernetes in Docker) cluster for testing
 type KindCluster struct {
 	Name       string
@@ -328,11 +322,6 @@ func (n *Namespace) Delete() error {
 		return fmt.Errorf("failed to delete namespace: %w", err)
 	}
 	return nil
-}
-
-// Clientset returns the Kubernetes clientset
-func (n *Namespace) Clientset() *kubernetes.Clientset {
-	return n.clientset
 }
 
 // getRestConfig returns the REST config for the Kind cluster

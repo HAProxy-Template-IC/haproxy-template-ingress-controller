@@ -200,27 +200,6 @@ func (dc *DebugClient) GetRenderedConfigWithRetry(ctx context.Context, timeout t
 	return result, nil
 }
 
-// GetEvents retrieves recent events from the debug server.
-func (dc *DebugClient) GetEvents(ctx context.Context) ([]map[string]any, error) {
-	data, err := dc.getJSON(ctx, DebugPathEvents)
-	if err != nil {
-		return nil, err
-	}
-
-	// Response is an array of events
-	if events, ok := data["events"].([]any); ok {
-		result := make([]map[string]any, 0, len(events))
-		for _, e := range events {
-			if eventMap, ok := e.(map[string]any); ok {
-				result = append(result, eventMap)
-			}
-		}
-		return result, nil
-	}
-
-	return nil, fmt.Errorf("events not found in response")
-}
-
 // waitFor is a helper method that wraps testutil.WaitForConditionWithDescription
 // with a standard timeout configuration. This reduces boilerplate in wait functions.
 func (dc *DebugClient) waitFor(ctx context.Context, timeout time.Duration, description string, check func(context.Context) (bool, error)) error {
@@ -369,14 +348,6 @@ type FailedEndpoint struct {
 	Error string `json:"error"`
 }
 
-// ValidatedConfigInfo contains information about the last successfully validated config.
-type ValidatedConfigInfo struct {
-	Config               string `json:"config"`
-	Timestamp            string `json:"timestamp"`
-	ConfigBytes          int    `json:"config_bytes"`
-	ValidationDurationMs int64  `json:"validation_duration_ms"`
-}
-
 // ErrorSummary provides an aggregated view of recent errors.
 type ErrorSummary struct {
 	ConfigParseError       *ErrorInfo  `json:"config_parse_error,omitempty"`
@@ -435,27 +406,6 @@ func (dc *DebugClient) GetPipelineStatusWithRetry(ctx context.Context, timeout t
 		return nil, err
 	}
 	return result, nil
-}
-
-// GetValidatedConfig retrieves the last successfully validated HAProxy configuration.
-func (dc *DebugClient) GetValidatedConfig(ctx context.Context) (*ValidatedConfigInfo, error) {
-	data, err := dc.getJSON(ctx, DebugPathValidated)
-	if err != nil {
-		return nil, err
-	}
-
-	// Re-marshal and unmarshal to convert map to struct
-	jsonBytes, err := json.Marshal(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal validated config: %w", err)
-	}
-
-	var info ValidatedConfigInfo
-	if err := json.Unmarshal(jsonBytes, &info); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal validated config: %w", err)
-	}
-
-	return &info, nil
 }
 
 // GetErrors retrieves the error summary.
@@ -585,34 +535,6 @@ func (dc *DebugClient) WaitForAuxFileContains(ctx context.Context, fileName, exp
 
 	if err != nil {
 		return fmt.Errorf("waiting for file %s to contain %q (last content: %q): %w", fileName, expectedContent, lastContent, err)
-	}
-	return nil
-}
-
-// WaitForAuxFileNotContains waits until a specific auxiliary file does NOT contain the specified content.
-// This is useful for verifying that invalid content was rejected.
-func (dc *DebugClient) WaitForAuxFileNotContains(ctx context.Context, fileName, unexpectedContent string, timeout time.Duration) error {
-	var lastContent string
-
-	cfg := testutil.DefaultWaitConfig()
-	cfg.Timeout = timeout
-
-	err := testutil.WaitForCondition(ctx, cfg,
-		func(ctx context.Context) (bool, error) {
-			content, err := dc.GetGeneralFileContent(ctx, fileName)
-			if err != nil {
-				return false, err
-			}
-			lastContent = content
-
-			if !strings.Contains(content, unexpectedContent) {
-				return true, nil
-			}
-			return false, nil
-		})
-
-	if err != nil {
-		return fmt.Errorf("file %s still contains %q (last content: %q): %w", fileName, unexpectedContent, lastContent, err)
 	}
 	return nil
 }
