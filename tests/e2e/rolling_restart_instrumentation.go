@@ -17,7 +17,6 @@
 package e2e
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -473,19 +472,7 @@ func (s *proberSnapshotter) dumpConntrackState(dir string) {
 // output. We use a short timeout because the test is in flight — we don't
 // want a snapshot to block the next probe interval.
 func (s *proberSnapshotter) dumpCommand(dir, filename string, cmd string, args ...string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c := exec.CommandContext(ctx, cmd, args...)
-	var out, stderr bytes.Buffer
-	c.Stdout = &out
-	c.Stderr = &stderr
-	runErr := c.Run()
-	body := out.Bytes()
-	if runErr != nil {
-		body = append(body, []byte(fmt.Sprintf(
-			"\n--- command failed: %v\nstderr:\n%s\n", runErr, stderr.String()))...)
-	}
-	s.writeFile(dir, filename, string(body))
+	s.writeFile(dir, filename, string(runCommandCapture(10*time.Second, cmd, args...)))
 }
 
 // writeFile is best-effort — log on error, don't fail the test. The failure
@@ -719,15 +706,15 @@ func (ct *continuousTailer) tailKubeletViaDocker(ctx context.Context) {
 // which is observable from haptic-side or HAProxy-side logs alone.
 //
 // Plumbing path:
-//   1. docker exec into the kind control-plane container (we already do
-//      this for kubelet log capture)
-//   2. install tcpdump there if missing (kindest/node may or may not
-//      have it; apt-get is best-effort)
-//   3. resolve the HAProxy pod's haproxy-container PID via crictl
-//      (containerd's CRI lookup tool, present on the kind node)
-//   4. nsenter -t <pid> -n joins that container's network namespace
-//   5. tcpdump -w - streams pcap to stdout, which the docker exec
-//      passes back to us, which we redirect to a file.
+//  1. docker exec into the kind control-plane container (we already do
+//     this for kubelet log capture)
+//  2. install tcpdump there if missing (kindest/node may or may not
+//     have it; apt-get is best-effort)
+//  3. resolve the HAProxy pod's haproxy-container PID via crictl
+//     (containerd's CRI lookup tool, present on the kind node)
+//  4. nsenter -t <pid> -n joins that container's network namespace
+//  5. tcpdump -w - streams pcap to stdout, which the docker exec
+//     passes back to us, which we redirect to a file.
 //
 // All five steps are best-effort: any failure (no tcpdump, no crictl,
 // no PID, namespace mismatch) gets logged but doesn't fail the test.

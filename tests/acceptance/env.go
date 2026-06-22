@@ -1172,16 +1172,6 @@ func parseMetricValue(metricsBody, metricName string) float64 {
 	return 0
 }
 
-// GetMetricValue fetches a single metric value from the controller's metrics endpoint.
-func (mc *MetricsClient) GetMetricValue(ctx context.Context, metricName string) (float64, error) {
-	metricsBody, err := mc.GetMetrics(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	return parseMetricValue(metricsBody, metricName), nil
-}
-
 // GetMetricValues fetches metrics once and extracts multiple metric values from the same response.
 // This guarantees all returned values come from the same pod, avoiding service routing
 // inconsistencies when multiple replicas exist behind a ClusterIP service.
@@ -1196,46 +1186,6 @@ func (mc *MetricsClient) GetMetricValues(ctx context.Context, metricNames []stri
 		values[name] = parseMetricValue(metricsBody, name)
 	}
 	return values, nil
-}
-
-// GetLeaderPod parses metrics to find which pod is the leader.
-// Returns the pod name if found, empty string if no leader, or an error.
-func (mc *MetricsClient) GetLeaderPod(ctx context.Context) (string, error) {
-	metricsBody, err := mc.GetMetrics(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	// Parse the metrics to find the leader pod
-	scanner := bufio.NewScanner(strings.NewReader(metricsBody))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "#") || line == "" {
-			continue
-		}
-
-		// Look for: haptic_leader_election_is_leader{pod="pod-name"} 1
-		if strings.Contains(line, "haptic_leader_election_is_leader") {
-			// Check if this metric reports is_leader=1
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				value := parts[len(parts)-1]
-				if value == "1" || value == "1.0" {
-					// Extract pod name from label: pod="pod-name"
-					start := strings.Index(line, `pod="`)
-					if start != -1 {
-						start += 5 // len(`pod="`)
-						end := strings.Index(line[start:], `"`)
-						if end != -1 {
-							return line[start : start+end], nil
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return "", nil // No leader found
 }
 
 // SetupMetricsAccess creates the metrics service (if not exists) and returns a MetricsClient.

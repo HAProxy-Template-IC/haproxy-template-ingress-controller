@@ -76,42 +76,24 @@ func SlowWaitConfig() WaitConfig {
 // The function checks the condition immediately before waiting, so if the condition
 // is already satisfied, it returns without delay.
 func WaitForCondition(ctx context.Context, cfg WaitConfig, condition func(context.Context) (bool, error)) error {
-	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
+	return WaitForConditionWithDescription(ctx, cfg, "", condition)
+}
 
-	interval := cfg.InitialInterval
-	var lastErr error
-
-	// Check immediately before first wait
-	done, err := condition(ctx)
-	if done {
-		return nil
-	}
-	if err != nil {
-		lastErr = err
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return fmt.Errorf("timeout waiting for condition (last error: %w)", lastErr)
-			}
-			return fmt.Errorf("timeout waiting for condition: %w", ctx.Err())
-
-		case <-time.After(interval):
-			done, err := condition(ctx)
-			if done {
-				return nil
-			}
-			if err != nil {
-				lastErr = err
-			}
-
-			// Exponential backoff
-			interval = min(time.Duration(float64(interval)*cfg.Multiplier), cfg.MaxInterval)
+// waitTimeoutError formats the timeout error, omitting the attempt/elapsed
+// detail when no description was given (the plain WaitForCondition case).
+func waitTimeoutError(description string, attempt int, elapsed time.Duration, lastErr, ctxErr error) error {
+	if description == "" {
+		if lastErr != nil {
+			return fmt.Errorf("timeout waiting for condition (last error: %w)", lastErr)
 		}
+		return fmt.Errorf("timeout waiting for condition: %w", ctxErr)
 	}
+	if lastErr != nil {
+		return fmt.Errorf("timeout waiting for %s after %d attempts in %v (last error: %w)",
+			description, attempt, elapsed, lastErr)
+	}
+	return fmt.Errorf("timeout waiting for %s after %d attempts in %v: %w",
+		description, attempt, elapsed, ctxErr)
 }
 
 // WaitForConditionWithDescription is like WaitForCondition but includes a description
@@ -143,13 +125,7 @@ func WaitForConditionWithDescription(
 	for {
 		select {
 		case <-ctx.Done():
-			elapsed := time.Since(start)
-			if lastErr != nil {
-				return fmt.Errorf("timeout waiting for %s after %d attempts in %v (last error: %w)",
-					description, attempt, elapsed, lastErr)
-			}
-			return fmt.Errorf("timeout waiting for %s after %d attempts in %v: %w",
-				description, attempt, elapsed, ctx.Err())
+			return waitTimeoutError(description, attempt, time.Since(start), lastErr, ctx.Err())
 
 		case <-time.After(interval):
 			attempt++

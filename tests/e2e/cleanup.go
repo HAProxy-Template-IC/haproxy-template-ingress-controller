@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // DumpLogsOnFailure registers a t.Cleanup that, if the test fails, writes
@@ -224,7 +225,17 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 // dumpDir. Failures are logged via t.Logf but do not fail the test.
 func dumpCommand(t *testing.T, dumpDir, filename string, cmd string, args ...string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*1_000_000_000) // 30s
+	out := runCommandCapture(30*time.Second, cmd, args...)
+	if writeErr := os.WriteFile(filepath.Join(dumpDir, filename), out, 0644); writeErr != nil {
+		t.Logf("DumpLogsOnFailure: write %s: %v", filename, writeErr)
+	}
+}
+
+// runCommandCapture runs cmd with the given timeout and returns its combined
+// output, appending a failure note (including stderr) when the command errors
+// so the captured artifact is self-contained even when the command failed.
+func runCommandCapture(timeout time.Duration, cmd string, args ...string) []byte {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	c := exec.CommandContext(ctx, cmd, args...)
@@ -235,15 +246,10 @@ func dumpCommand(t *testing.T, dumpDir, filename string, cmd string, args ...str
 
 	out := stdout.Bytes()
 	if runErr != nil {
-		// Include stderr and the failure note so the artifact is
-		// self-contained even when the command itself failed.
 		out = append(out, []byte(fmt.Sprintf(
-			"\n--- command failed: %v\nstderr:\n%s\n",
-			runErr, stderr.String()))...)
+			"\n--- command failed: %v\nstderr:\n%s\n", runErr, stderr.String()))...)
 	}
-	if writeErr := os.WriteFile(filepath.Join(dumpDir, filename), out, 0644); writeErr != nil {
-		t.Logf("DumpLogsOnFailure: write %s: %v", filename, writeErr)
-	}
+	return out
 }
 
 // failureDumpDir returns (and creates if needed) a per-test directory

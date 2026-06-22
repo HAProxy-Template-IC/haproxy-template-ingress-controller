@@ -23,11 +23,6 @@ MODULE_NAME="haptic"
 
 echo "Generating clientset, informers, and listers..."
 
-# Ensure output directories exist
-mkdir -p "${SCRIPT_ROOT}/pkg/generated/clientset"
-mkdir -p "${SCRIPT_ROOT}/pkg/generated/listers"
-mkdir -p "${SCRIPT_ROOT}/pkg/generated/informers"
-
 # Clean previous generation to avoid stale files
 rm -rf "${SCRIPT_ROOT}/pkg/generated/clientset"
 rm -rf "${SCRIPT_ROOT}/pkg/generated/listers"
@@ -66,11 +61,6 @@ go run k8s.io/code-generator/cmd/informer-gen \
   --go-header-file "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
   "${MODULE_NAME}/pkg/apis/haproxytemplate/v1alpha1" \
   2>&1 || true  # Ignore formatting errors
-
-# Note: With the 'haptic' module name (no hyphens), no identifier fixup is needed.
-# The only thing we need to preserve is the API group name which contains hyphens.
-echo "  Preserving API group name..."
-# No-op since haptic has no hyphens that could cause identifier issues
 
 # Strip upstream boilerplate TODO that k8s.io/code-generator emits in
 # externalversions/generic.go. It's a comment about a hypothetical future

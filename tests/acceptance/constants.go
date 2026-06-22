@@ -40,13 +40,11 @@ var RequiredCRDs = []string{
 
 // Debug endpoint paths.
 const (
-	DebugPathConfig    = "/debug/vars/config"
-	DebugPathRendered  = "/debug/vars/rendered"
-	DebugPathPipeline  = "/debug/vars/pipeline"
-	DebugPathValidated = "/debug/vars/validated"
-	DebugPathErrors    = "/debug/vars/errors"
-	DebugPathEvents    = "/debug/vars/events"
-	DebugPathAuxFiles  = "/debug/vars/auxfiles"
+	DebugPathConfig   = "/debug/vars/config"
+	DebugPathRendered = "/debug/vars/rendered"
+	DebugPathPipeline = "/debug/vars/pipeline"
+	DebugPathErrors   = "/debug/vars/errors"
+	DebugPathAuxFiles = "/debug/vars/auxfiles"
 )
 
 // DebugServiceName returns the service name for a controller's debug endpoint.
