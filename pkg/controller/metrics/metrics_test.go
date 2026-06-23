@@ -87,6 +87,26 @@ func TestMetrics_RecordDeployment(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentErrors))
 }
 
+func TestMetrics_RecordDeploymentOperations(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Accumulate reloads and API operations.
+	metrics.RecordDeploymentOperations(2, 17)
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.HAProxyReloadsTotal))
+	assert.Equal(t, 17.0, testutil.ToFloat64(metrics.DataplaneAPIOperationsTotal))
+
+	// A runtime-only deployment (no reload) still records its API operations.
+	metrics.RecordDeploymentOperations(0, 3)
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.HAProxyReloadsTotal))
+	assert.Equal(t, 20.0, testutil.ToFloat64(metrics.DataplaneAPIOperationsTotal))
+
+	// A no-op deployment perturbs neither counter.
+	metrics.RecordDeploymentOperations(0, 0)
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.HAProxyReloadsTotal))
+	assert.Equal(t, 20.0, testutil.ToFloat64(metrics.DataplaneAPIOperationsTotal))
+}
+
 func TestMetrics_RecordRuntimeFastPath(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)

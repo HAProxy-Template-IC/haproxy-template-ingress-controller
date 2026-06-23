@@ -81,6 +81,57 @@ tests:
               summary: "No HAProxy controller leader elected"
               description: "No controller instance holds the leader lock - deployments are stalled"
 
+  - it: should include default config rejected alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyControllerConfigRejected
+            expr: increase(haptic_config_rejected_total[5m]) > 0
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "HAProxyTemplateConfig rejected by the validation gate"
+              description: "Validator {{ $labels.validator }} rejected a config change - the controller is serving the last-good config and the latest change is NOT live"
+
+  - it: should include default no HAProxy pods alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyControllerNoHAProxyPods
+            expr: haptic_resource_count{type="haproxy-pods"} < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "No HAProxy pods discovered"
+              description: "Controller {{ $labels.pod }} finds no HAProxy pods to manage - no config is reaching the data plane"
+
+  - it: should include default critical events dropped alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyControllerCriticalEventsDropped
+            expr: increase(haptic_events_dropped_critical_total[5m]) > 0
+            labels:
+              severity: critical
+            annotations:
+              summary: "Critical events dropped from the event bus"
+              description: "A critical subscriber's buffer overflowed - reconciliation work has been lost and the data plane may be stale"
+
+  - it: should disable no HAProxy pods alert when configured
+    set:
+      monitoring.prometheusRule.defaultRules.noHAProxyPods: false
+    asserts:
+      - notContains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyControllerNoHAProxyPods
+          any: true
+
   - it: should disable reconciliation errors alert when configured
     set:
       monitoring.prometheusRule.defaultRules.reconciliationErrors: false

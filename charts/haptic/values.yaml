@@ -650,14 +650,18 @@ gatewayClass:
     namespace: ""
 # Dataplane API credentials
 # If password is empty, it will be:
-#   1. Preserved from existing Secret (via lookup during helm install/upgrade)
-#   2. Generated deterministically from release name and namespace (for GitOps tools
-#      like ArgoCD where lookup is unavailable during template rendering)
-# Set explicit values for dev environments where you need predictable credentials.
+#   1. Preserved from the existing Secret (via lookup during helm install/upgrade)
+#   2. Otherwise generated as a random 32-char password
+# The Dataplane API is HAProxy's runtime control plane over plain HTTP, so the
+# password must not be guessable — set an explicit value for dev environments
+# where you need predictable credentials.
+# GitOps note: under ArgoCD/Flux (rendering without cluster lookup), an empty
+# password regenerates randomly on every sync and cannot be preserved — set an
+# explicit password here (e.g. via a SealedSecret / external secret).
 credentials:
   dataplane:
     username: admin
-    password: ""  # Leave empty for auto-generation
+    password: ""  # Leave empty for a random auto-generated password
 # ServiceAccount configuration
 serviceAccount:
   # Specifies whether a service account should be created
@@ -882,6 +886,14 @@ monitoring:
       deploymentFailures: true
       highQueueDepth: true
       leaderElectionLost: true
+      # A config change refused by the validation gate (latest change is not live)
+      configRejected: true
+      # Discovered HAProxy pods refused admission (e.g. version mismatch)
+      haproxyPodsRejected: true
+      # No HAProxy pods to manage — no config reaches the data plane
+      noHAProxyPods: true
+      # Critical event-bus drops — reconciliation work lost, data plane may be stale
+      criticalEventsDropped: true
   # Grafana dashboard ConfigMap
   # Creates a ConfigMap with dashboard JSON for Grafana sidecar discovery
   grafanaDashboard:

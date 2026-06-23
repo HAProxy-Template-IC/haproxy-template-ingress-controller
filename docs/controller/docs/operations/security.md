@@ -97,6 +97,8 @@ The controller pod exposes three HTTP ports (all chart defaults):
 
 Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, CNI encryption) rather than transport-level authentication for that hop.
 
+The Dataplane API is authenticated with a basic-auth password stored in the `<release>-credentials` Secret. When `credentials.dataplane.password` is left empty the chart generates a **random** 32-char password and preserves it across upgrades via `lookup`. Under GitOps tools that render without cluster access (ArgoCD/Flux), `lookup` is unavailable, so an empty password regenerates on every sync — set `credentials.dataplane.password` explicitly (e.g. via a SealedSecret / external secret) for those setups, which is the recommended pattern for any generated credential under GitOps.
+
 **The chart already ships default-on `NetworkPolicy` resources** for both the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods — both default `true` — restricting ingress to the exposed ports and egress to DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports. Set the relevant flag to `false` to manage your own; the example below mirrors the controller policy's shape:
 
 ```yaml

@@ -37,6 +37,15 @@ View Logs:
 Configuration:
   HAProxyTemplateConfig: {{ $controller.crdName }}
   Credentials Secret: {{ include "haptic.dataplane.credentialsSecretName" . }}
+{{- if not .Values.credentials.dataplane.password }}
+
+  ⚠ DataPlane API password: auto-generated (random) and stored in the Secret above.
+    It is preserved across `helm upgrade` via cluster lookup.
+    GitOps users (ArgoCD/Flux render without cluster lookup) MUST pin it:
+    a blank password regenerates every sync and continuously rolls the
+    controller AND HAProxy data-plane pods. Set an explicit value:
+      credentials.dataplane.password: <your-secret>   # e.g. via a SealedSecret
+{{- end }}
 
 Introspection Endpoint:
   Health checks and debugging are available on port {{ $debugPort }}

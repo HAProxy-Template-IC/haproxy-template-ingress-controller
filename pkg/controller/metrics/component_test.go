@@ -117,9 +117,11 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 
 	// Publish deployment completed event
 	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
-		Total:      2,
-		Succeeded:  2,
-		DurationMs: 2500,
+		Total:              2,
+		Succeeded:          2,
+		DurationMs:         2500,
+		ReloadsTriggered:   1,
+		TotalAPIOperations: 9,
 	}))
 
 	time.Sleep(100 * time.Millisecond)
@@ -127,6 +129,9 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	// Verify metrics updated
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentTotal))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentErrors))
+	// Reload + API-operation counters are sourced from the event payload.
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.HAProxyReloadsTotal))
+	assert.Equal(t, 9.0, testutil.ToFloat64(metrics.DataplaneAPIOperationsTotal))
 
 	// Publish deployment with partial failure
 	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{

@@ -25,23 +25,41 @@ Uses provided value or defaults to "admin"
 
 {{/*
 Dataplane API password
-Priority: 1) User-provided value, 2) Existing secret value, 3) Deterministic password from release identity
+Priority: 1) User-provided value, 2) Existing Secret value (preserved across
+upgrades via lookup), 3) A freshly generated random password.
 
-Uses lookup to preserve password across helm upgrades. When lookup is unavailable
-(e.g., ArgoCD dry-run rendering), falls back to a deterministic hash based on
-release name and namespace to prevent constant drift detection.
+The DataPlane API is HAProxy's full runtime control plane and is served over
+plain HTTP on the cluster network, so the password must not be guessable. The
+previous deterministic fallback (sha256 of release name + namespace) derived the
+credential entirely from public, guessable inputs — anyone who knew the release
+and namespace could reconstruct it. We now generate a random password instead.
+
+The result is memoised on .Values (like the webhook self-signed cert) so the
+Secret data and the credentials checksum annotations on both Deployments all see
+the SAME value within one render (randAlphaNum is non-deterministic — without
+this they would disagree and the pods would roll on every render).
+
+GitOps note: when lookup is unavailable (e.g. ArgoCD/Flux rendering without
+cluster access) AND no explicit password is set, a fresh random password is
+generated on every render — the value cannot be preserved, so it rotates on
+every sync. GitOps users should set credentials.dataplane.password explicitly
+(e.g. via a SealedSecret / external secret) — the recommended pattern for any
+generated credential under GitOps.
 */}}
 {{- define "haptic.dataplane.password" -}}
-{{- with .Values.credentials.dataplane.password -}}
-{{- . -}}
-{{- else -}}
-{{- with dig "data" "dataplane_password" "" (lookup "v1" "Secret" .Release.Namespace (include "haptic.dataplane.credentialsSecretName" .)) -}}
-{{- . | b64dec -}}
-{{- else -}}
-{{- /* Deterministic password for GitOps tools where lookup returns empty */ -}}
-{{- printf "%s-%s-haptic-dataplane-api" .Release.Name .Release.Namespace | sha256sum | trunc 32 -}}
+{{- if not (hasKey .Values "_dataplanePassword") -}}
+  {{- $pw := .Values.credentials.dataplane.password | default "" -}}
+  {{- if not $pw -}}
+    {{- $existing := dig "data" "dataplane_password" "" (lookup "v1" "Secret" .Release.Namespace (include "haptic.dataplane.credentialsSecretName" .)) -}}
+    {{- if $existing -}}
+      {{- $pw = $existing | b64dec -}}
+    {{- else -}}
+      {{- $pw = randAlphaNum 32 -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $_ := set .Values "_dataplanePassword" $pw -}}
 {{- end -}}
-{{- end -}}
+{{- get .Values "_dataplanePassword" -}}
 {{- end -}}
 
 {{/*

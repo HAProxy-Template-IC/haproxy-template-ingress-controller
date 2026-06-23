@@ -112,12 +112,20 @@ rate(haptic_reconciliation_duration_seconds_count[5m])
 | `haptic_deployment_total` | Counter | Total deployment attempts |
 | `haptic_deployment_duration_seconds` | Histogram | Time spent deploying to HAProxy |
 | `haptic_deployment_errors_total` | Counter | Failed deployments |
+| `haptic_haproxy_reloads_total` | Counter | HAProxy reloads triggered by deployments. A reload forks the HAProxy process; reload rate (vs runtime-API updates) is the canonical capacity/SLO signal |
+| `haptic_dataplane_api_operations_total` | Counter | DataPlane API operations issued across deployments (structural changes applied to HAProxy) |
 
 **Key queries:**
 
 ```promql
 # Deployment rate
 rate(haptic_deployment_total[5m])
+
+# HAProxy reload rate — the capacity/SLO signal (a reload forks the process)
+rate(haptic_haproxy_reloads_total[5m])
+
+# Share of deployments that needed a reload vs runtime-only updates
+rate(haptic_haproxy_reloads_total[5m]) / rate(haptic_deployment_total[5m])
 
 # 95th percentile deployment latency
 histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
