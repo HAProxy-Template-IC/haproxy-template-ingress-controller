@@ -15,12 +15,22 @@ The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) 
 |--------|--------|-----------------|------------------|
 | 3.0 | Supported (LTS) | `haproxytech/haproxy-debian:3.0.x` | `...:3.0r1` |
 | 3.1 | Supported | `haproxytech/haproxy-debian:3.1.x` | `...:3.1r1` |
-| 3.2 | Supported (default) | `haproxytech/haproxy-debian:3.2.x` | `...:3.2r1` |
+| 3.2 | Supported | `haproxytech/haproxy-debian:3.2.x` | `...:3.2r1` |
 | 3.3 | Supported | `haproxytech/haproxy-debian:3.3.x` | — |
+| 3.4 | Supported (default) | `haproxytech/haproxy-debian:3.4.x` | — |
+
+!!! note "HAProxy version vs DataPlane API version"
+    The series above is the **HAProxy binary** version. HAPTIC talks to each pod's
+    DataPlane API, which has its own release cadence: the HAProxy 3.3 and 3.4 images
+    both ship **DataPlane API v3.3**. HAPTIC bundles clients and validators for
+    DataPlane API v3.0–v3.3 and picks one from the version the pod reports at
+    `/v3/info`, so a 3.4 pod is served by the v3.3 client. Config syntax is still
+    validated against the matching HAProxy binary via `haproxy -c`, which is why a
+    per-series controller image exists.
 
 ## Selecting a Version
 
-Set `haproxyVersion` to your desired series. The chart defaults to `3.2`:
+Set `haproxyVersion` to your desired series. The chart defaults to `3.4`:
 
 ```bash
 # Use HAProxy 3.0 LTS

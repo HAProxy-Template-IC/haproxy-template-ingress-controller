@@ -101,7 +101,7 @@ dockers_v2:
       - "--target=runtime"
       - "--build-context=binary=."
 
-  # HAProxy 3.2 (default)
+  # HAProxy 3.2
   - id: haproxy32
     ids: [controller]
     dockerfile: Dockerfile
@@ -133,6 +133,24 @@ dockers_v2:
       - linux/arm/v7
     build_args:
       HAPROXY_VERSION: "3.3"
+    flags:
+      - "--target=runtime"
+      - "--build-context=binary=."
+
+  # HAProxy 3.4 (default)
+  - id: haproxy34
+    ids: [controller]
+    dockerfile: Dockerfile
+    images:
+      - "registry.gitlab.com/haproxy-haptic/haptic"
+    tags:
+      - "{{ .Version }}-haproxy3.4"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+    build_args:
+      HAPROXY_VERSION: "3.4"
     flags:
       - "--target=runtime"
       - "--build-context=binary=."

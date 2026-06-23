@@ -117,7 +117,7 @@ variables:
 .haproxy-version-matrix:
   parallel:
     matrix:
-      - HAPROXY_VERSION: ["3.0", "3.1", "3.2", "3.3"]
+      - HAPROXY_VERSION: ["3.0", "3.1", "3.2", "3.3", "3.4"]
 
 # Go module + build cache for the unit-test job. Earlier experiments
 # applied this cache to every Go-using job and measured regressions:
@@ -171,7 +171,7 @@ variables:
 # Base configuration for goreleaser jobs (snapshot and release)
 # Provides Docker login, buildx setup, and common dependencies
 .goreleaser-base:
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   extends:
     - .docker-dind
   needs:
@@ -293,7 +293,7 @@ build-python-docs:
 
 lint:
   stage: lint
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -318,7 +318,7 @@ lint:
 
 audit:
   stage: lint
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -336,7 +336,7 @@ audit:
 
 chart-test:
   stage: lint
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -364,7 +364,7 @@ chart-test:
 test:
   stage: test
   extends: .go-cache
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - if: $CI_COMMIT_TAG
       when: never
@@ -452,7 +452,7 @@ validate-helm-libraries:
 # Variables that control behavior:
 #   PLATFORMS: Docker build platforms (e.g., "linux/amd64" or "linux/amd64,linux/arm64,linux/arm/v7")
 #   SNAPSHOT_TAG: Image tag prefix (e.g., "ci-${CI_PIPELINE_ID}" or "main-${CI_COMMIT_SHORT_SHA}")
-#   CREATE_DEFAULT_TAG: If "true", creates a default tag pointing to haproxy3.2
+#   CREATE_DEFAULT_TAG: If "true", creates a default tag pointing to haproxy3.4
 .snapshot-build-base:
   stage: build
   extends:
@@ -491,7 +491,7 @@ validate-helm-libraries:
     # build failure fails the whole job.
     - |
       pids=""
-      for HAPROXY_VERSION in 3.0 3.1 3.2 3.3; do
+      for HAPROXY_VERSION in 3.0 3.1 3.2 3.3 3.4; do
         TAG="${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy${HAPROXY_VERSION}"
         echo "Starting build: ${TAG}"
         (
@@ -514,12 +514,12 @@ validate-helm-libraries:
         wait "${pid}" || failed=1
       done
       [ "${failed}" -eq 0 ]
-    # Create default tag if requested (points to haproxy3.2)
+    # Create default tag if requested (points to haproxy3.4)
     - |
       if [ "${CREATE_DEFAULT_TAG}" = "true" ]; then
         docker buildx imagetools create \
           --tag "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}" \
-          "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy3.2"
+          "${CI_REGISTRY_IMAGE}:${SNAPSHOT_TAG}-haproxy3.4"
       fi
 
 # Build snapshot images for CI testing (single-arch, fast)
@@ -559,8 +559,8 @@ build-ingress-conformance-image:
     # against HAProxy); the tag suffix just mirrors the conformance
     # job's variable so the two stay in lockstep when we revisit the
     # matrix.
-    HAPROXY_VERSION: "3.3"
-    INGRESS_CONFORMANCE_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance:ci-${CI_PIPELINE_ID}-haproxy3.3"
+    HAPROXY_VERSION: "3.4"
+    INGRESS_CONFORMANCE_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance:ci-${CI_PIPELINE_ID}-haproxy3.4"
   needs:
     - compute-ci-image-tag
     - job: build-ci
@@ -609,7 +609,7 @@ publish-main-snapshot:
 # Produces chart with version: 0.0.0-main.<short-sha>
 publish-chart-snapshot:
   stage: build
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   needs:
     - compute-ci-image-tag
     - job: build-ci
@@ -849,7 +849,7 @@ mirror-ingress-conformance-image:
 # from the prep stage via --build-context plugins=plugins.
 .build-spoa-image-base:
   stage: build
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   extends:
     - .docker-dind
   tags:
@@ -946,7 +946,7 @@ build-spoa-image-release:
 # Cosign keyless sign-by-digest of the released image.
 sign-spoa-image:
   stage: build
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
   needs:
@@ -970,7 +970,7 @@ sign-spoa-image:
 # CycloneDX SBOM via syft, attached as a cosign attestation.
 attest-spoa-sbom:
   stage: build
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
   needs:
@@ -1109,7 +1109,7 @@ test-integration:
 # Combined unit + integration coverage report (merges all HAProxy version coverage files)
 coverage-combined:
   stage: integration
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - if: $CI_COMMIT_TAG
       when: never
@@ -1133,6 +1133,9 @@ coverage-combined:
       artifacts: true
       optional: true
     - job: "test-integration: [3.3]"
+      artifacts: true
+      optional: true
+    - job: "test-integration: [3.4]"
       artifacts: true
       optional: true
   script:
@@ -1185,7 +1188,7 @@ test-acceptance:
     - job: build-ci
     - job: build-snapshot
   variables:
-    HAPROXY_VERSION: "3.2"
+    HAPROXY_VERSION: "3.4"
     KIND_NODE_IMAGE: kindest/node:${KIND_NODE_VERSION}
     KEEP_NAMESPACE: "true"  # Preserve namespaces so after_script can collect logs on failure
   before_script:
@@ -1493,7 +1496,7 @@ test-gateway-conformance:
     SKIP_DOCKER_BUILD: "1"
     # Pin to the most-recent supported HAProxy version. Matches the
     # default in versions.env / charts/haptic/values.yaml.
-    HAPROXY_VERSION: "3.3"
+    HAPROXY_VERSION: "3.4"
   needs:
     - compute-ci-image-tag
     - job: build-ci
@@ -1784,8 +1787,8 @@ test-ingress-conformance:
     SKIP_DOCKER_BUILD: "1"
     # Pin to the most-recent supported HAProxy version. Matches the
     # default in versions.env / charts/haptic/values.yaml.
-    HAPROXY_VERSION: "3.3"
-    INGRESS_CONFORMANCE_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance:ci-${CI_PIPELINE_ID}-haproxy3.3"
+    HAPROXY_VERSION: "3.4"
+    INGRESS_CONFORMANCE_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance:ci-${CI_PIPELINE_ID}-haproxy3.4"
   needs:
     - compute-ci-image-tag
     - job: build-ci
@@ -1979,7 +1982,7 @@ test-ingress-conformance:
 # Verifies that the chart works out-of-the-box with default values when cert-manager is installed
 test-helm-defaults:
   stage: integration
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   extends:
     - .docker-dind
   rules:
@@ -2011,7 +2014,7 @@ test-helm-defaults:
     # Unique cluster name - different from haproxy-test (integration) and haptic-dev (dev/routes)
     CLUSTER_NAME: helm-defaults
     NAMESPACE: haptic
-    HAPROXY_VERSION: "3.2"
+    HAPROXY_VERSION: "3.4"
     # Consumed by scripts/test-helm-defaults.sh — overrides
     # spoaHub.image.tag to the per-pipeline snapshot built by
     # build-spoa-image-snapshot above. Same scheme as test-e2e via
@@ -2155,7 +2158,7 @@ release-controller:
 
 release-chart:
   stage: deploy
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-medium-amd64
   id_tokens:
@@ -2355,7 +2358,7 @@ trigger-pages-release:
 # Create controller release tag when VERSION file changes on main
 create-controller-release-tag:
   stage: deploy
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
   needs:
@@ -2390,7 +2393,7 @@ create-controller-release-tag:
 # Create chart release tag when Chart.yaml version changes on main
 create-chart-release-tag:
   stage: deploy
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
   needs:

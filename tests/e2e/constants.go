@@ -82,7 +82,7 @@ const (
 	// is unset (i.e., not invoked through `make test-e2e`). Aligned with
 	// versions.env's DEFAULT_HAPROXY default. The Makefile passes the
 	// authoritative value via the env var.
-	defaultHAProxyVersion = "3.2"
+	defaultHAProxyVersion = "3.4"
 )
 
 // ChartHAProxyVersion is the haproxyVersion the e2e suite installs the

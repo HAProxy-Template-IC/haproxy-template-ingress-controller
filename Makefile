@@ -719,13 +719,12 @@ generate-clientset: ## Generate Kubernetes clientset, informers, and listers
 	./hack/update-codegen.sh
 	@echo "✓ Clientset, informers, and listers generated"
 
-# DataPlane API client versions, derived from versions.env: one entry per
-# HAPROXY_VERSIONS value (community), plus one per value that also has a matching
-# HAPROXY_ENTERPRISE_<n> (enterprise). Adding or removing a HAProxy version is
-# therefore a versions.env edit (plus its spec.json and oapi-codegen-<v>.yaml).
-DATAPLANE_API_VERSIONS := $(shell sh -c '. ./versions.env; \
-	for v in $$HAPROXY_VERSIONS; do printf "v%s " "$$(echo $$v | tr -d .)"; done; \
-	for v in $$HAPROXY_VERSIONS; do n=$$(echo $$v | tr -d .); eval "ee=\$$HAPROXY_ENTERPRISE_$$n"; [ -n "$$ee" ] && printf "v%see " "$$n"; done')
+# DataPlane API client versions = the oapi-codegen configs present under hack/.
+# Intentionally DECOUPLED from HAPROXY_VERSIONS: the DataPlane API has its own
+# release cadence, so a HAProxy binary release does not imply a new API version
+# (e.g. the HAProxy 3.4 image ships DataPlane API v3.3). Adding a DataPlane API
+# version is therefore a new hack/oapi-codegen-<v>.yaml plus its spec.json.
+DATAPLANE_API_VERSIONS := $(patsubst hack/oapi-codegen-%.yaml,%,$(wildcard hack/oapi-codegen-*.yaml))
 
 generate-dataplaneapi-all: ## Generate all HAProxy DataPlane API clients (community + enterprise)
 	@set -e; for v in $(DATAPLANE_API_VERSIONS); do \

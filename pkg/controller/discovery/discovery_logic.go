@@ -138,9 +138,8 @@ type rejection struct {
 //   - If already admitted, return cached endpoint (skip version check)
 //   - If new pod, check remote version via /v3/info
 //   - If version check fails, add to pending retries
-//   - If remote < local, permanently reject
-//   - If remote >= local, admit and cache version info
-//   - If remote > local, log warning once
+//   - If the remote DataPlane API major version matches the controller's
+//     series, admit and cache version info; otherwise permanently reject
 //
 // Returns the admitted endpoint set and the list of rejections. Rejections
 // are published as HAProxyPodRejectedEvent by the caller (after the mutex
@@ -175,15 +174,24 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 			continue
 		}
 
-		// Compare versions: remote must match local (major.minor)
-		comparison := remoteVersion.Compare(c.localVersion)
-		if comparison != 0 {
+		// Admit when the remote DataPlane API major version matches the
+		// controller's series. We compare MAJOR ONLY, deliberately: the pod's
+		// reported version (remoteVersion, from /v3/info) is the DataPlane API
+		// version, while c.localVersion is the controller's `haproxy -v` binary
+		// version. As of HAProxy 3.4 these decouple — the 3.4 image ships
+		// DataPlane API v3.3 — so they no longer share a minor, and a strict
+		// major.minor match would wrongly reject a correctly-paired 3.4 fleet.
+		// The controller's DataPlane API client supports every v3 minor (newer
+		// ones clamp down), and the chart pins the controller image and the
+		// HAProxy pods to the same series, so the major is the right gate; a
+		// different major (v2/v4) is genuinely unsupported.
+		if remoteVersion.Major != c.localVersion.Major {
 			// Version mismatch - permanently reject
 			direction := "older"
-			if comparison > 0 {
+			if remoteVersion.Major > c.localVersion.Major {
 				direction = "newer"
 			}
-			c.Logger().Error("rejecting pod: remote HAProxy version does not match local",
+			c.Logger().Error("rejecting pod: remote HAProxy major version does not match local series",
 				"pod", podName,
 				"remote_version", remoteVersion.Full,
 				"local_version", c.localVersion.Full,

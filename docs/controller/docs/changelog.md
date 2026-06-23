@@ -9,6 +9,10 @@ For Helm chart changes, see the [Chart CHANGELOG](/helm-chart/latest/changelog/)
 
 ## [Unreleased]
 
+### Added
+
+- HAProxy 3.4 support: the controller is now built, validated, and released for HAProxy 3.4 (which ships DataPlane API v3.3, served by the existing v3.3 client).
+
 ## [0.1.0] - 2026-03-09
 
 ### Added

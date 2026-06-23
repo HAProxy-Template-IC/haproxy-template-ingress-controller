@@ -55,7 +55,7 @@ kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
 You should see the controller pod and two HAProxy pods in `Running` state.
 
 !!! note "HAProxy version"
-    The chart defaults to HAProxy 3.2. To select a different version (e.g. 3.0 LTS or 3.3), set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for details.
+    The chart defaults to HAProxy 3.4. To select a different version (e.g. 3.0 LTS or 3.3), set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for details.
 
 ## Step 2: Deploy a Sample Application
 

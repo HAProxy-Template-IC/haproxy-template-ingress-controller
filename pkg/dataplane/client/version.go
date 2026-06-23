@@ -87,9 +87,12 @@ type Version struct {
 }
 
 // Compare orders two versions by major, then minor. Patch is INTENTIONALLY
-// ignored: Compare is used for series compatibility — e.g. discovery matching a
-// dataplaneapi version ("v3.3.5") against a HAProxy version ("3.3.10"), which
-// share major.minor but never patch.
+// ignored: Compare is used for series compatibility between two versions on the
+// SAME axis — e.g. the testrunner gating a test on minHAProxyVersion, comparing
+// two HAProxy binary versions that share major.minor but never patch. Do NOT
+// use it to compare a DataPlane API version against a HAProxy binary version:
+// as of HAProxy 3.4 those decouple at the minor level (the 3.4 image ships
+// DataPlane API v3.3), so only their major versions are comparable.
 // Returns -1 if v < other, 0 if same series, 1 if v > other.
 func (v *Version) Compare(other *Version) int {
 	switch {
