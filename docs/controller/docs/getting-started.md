@@ -226,6 +226,12 @@ The entire process typically completes in under 1 second.
 
 Now that you have a working setup, explore these topics:
 
+### Migrating from another ingress controller
+
+Replacing ingress-nginx or haproxy-ingress? See [Migrating to HAPTIC](./migrating.md)
+for the zero-downtime, one-Ingress-at-a-time cutover — and the three settings
+that silently break a migration if you miss them.
+
 ### Customize the Configuration
 
 The default configuration is generated from the HAProxyTemplateConfig CRD created by Helm. To customize:
