@@ -306,8 +306,15 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	// touch the cache (otherwise we'd record "" as "last deployed" and force the next
 	// real deployment to run, which is the safer side of the failure mode but is also
 	// a needless deploy).
+	//
+	// Only cache the hash when the deployment FULLY succeeded (event.Failed == 0).
+	// lastDeployedConfigHash is the "last SUCCESSFULLY deployed" hash that the
+	// skip-unchanged gate compares against; recording a failed/partial deploy here
+	// would make the gate refuse to re-push to the still-stale pods until the
+	// config changes or the drift timer fires, delaying self-heal. A failure leaves
+	// the cache at the last good hash so the next reconcile re-attempts immediately.
 	s.mu.Lock()
-	if event.ContentChecksum != "" {
+	if event.ContentChecksum != "" && event.Failed == 0 {
 		s.lastDeployedConfigHash = event.ContentChecksum
 		s.lastDeployedPodSetHash = computePodSetHash(s.currentEndpoints)
 		s.lastDeployedTime = time.Now()

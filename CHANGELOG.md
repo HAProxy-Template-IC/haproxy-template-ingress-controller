@@ -42,6 +42,8 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Fixed
 
+- A failed deployment to a pod no longer records the new config checksum on `HAProxyCfg.status.deployedToPods[].checksum`, which previously made a partial/failed rollout read as fully converged (the checksum matched `spec.checksum` even though the pod was serving stale config). The pod now keeps its last successfully-deployed checksum plus a `lastError`, so checksum-equality consumers correctly see it as not-yet-converged.
+- A partial or failed deployment is no longer cached as the "last deployed" config hash, so the controller re-attempts it on the next reconcile instead of suppressing the retry until the config changes or the drift-prevention timer fires (previously up to `driftPreventionInterval` of delayed self-heal).
 - DataPlane API minor versions newer than the newest bundled client (v3.3) now clamp down to it instead of selecting the oldest, most-restrictive v3.0 client; the client-selection and schema-validator version-resolution paths now agree.
 - The `_global` shared-fixtures entry in `validationTests` is no longer executed as a standalone test — it inflated the reported test count and ran its assertions against an empty-fixture render. Its fixtures still merge into every real test.
 - Watched-resource admission (e.g. Ingress) now uses the same ~9 s internal validation deadline as `HAProxyTemplateConfig` admission (was 5 s), so a large-config dry-run is not prematurely cut off and admitted-without-validation under the webhook's 10 s budget.

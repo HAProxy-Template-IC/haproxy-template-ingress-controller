@@ -69,6 +69,34 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 	// auxiliary file the controller manages.
 	podStatus := buildPodStatus(update)
 
+	// On a FAILED sync the pod did not receive update.Checksum, so advancing
+	// deployedToPods[pod].checksum to it would make the entry equal
+	// spec.checksum and falsely read as converged — the convergence signal is
+	// checksum-equality (LastError is advisory and ignored by e.g. the e2e
+	// poll). Preserve the last successfully-deployed checksum instead. Blanking
+	// it is not an option: an empty checksum is omitted from the SSA payload
+	// (buildPodStatusSSAPayload) and SSA would then DELETE the field this
+	// manager already owns, losing the last-good value. So re-emit the existing
+	// checksum unchanged; if the pod has no prior success, leave it empty so the
+	// pod correctly reads as never-converged.
+	if update.Error != "" {
+		existing, _ := p.existingPodChecksum(ctx, update.RuntimeConfigNamespace, update.RuntimeConfigName, update.PodName)
+		podStatus.Checksum = existing
+	}
+
+	// SSA-apply this pod's entry to HAProxyCfg.status.deployedToPods.
+	if err := p.applyPodStatusToRuntimeConfig(ctx, update, &podStatus); err != nil {
+		return fmt.Errorf("applying pod status to HAProxyCfg: %w", err)
+	}
+
+	// On failure the pod received neither the new config nor the new auxiliary
+	// files, so skip advancing their per-pod checksums — leaving the last-good
+	// values untouched (same preserve-on-failure rationale as the main config
+	// checksum above). The next successful deploy or reconcile re-applies them.
+	if update.Error != "" {
+		return nil
+	}
+
 	// Resolve auxiliary file references. SSA against HAProxyCfg.status
 	// doesn't return them, so we need a cached read (or fall back to API)
 	// to know which child resources to patch.
@@ -82,17 +110,39 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 		)
 	}
 
-	// SSA-apply this pod's entry to HAProxyCfg.status.deployedToPods.
-	if err := p.applyPodStatusToRuntimeConfig(ctx, update, &podStatus); err != nil {
-		return fmt.Errorf("applying pod status to HAProxyCfg: %w", err)
-	}
-
 	// SSA-apply this pod's entry to every auxiliary file's
 	// status.deployedToPods. Same per-pod field manager, same merge
 	// semantics — independent of each other and of the HAProxyCfg apply.
 	p.applyPodStatusToAuxiliaryFiles(ctx, auxFiles, update.PodName)
 
 	return nil
+}
+
+// existingPodChecksum returns the checksum currently recorded for podName in
+// the HAProxyCfg's status.deployedToPods (lister cache first, API fallback). It
+// is used to preserve the last successfully-deployed checksum when a later
+// deploy to that pod fails (see UpdateDeploymentStatus). Returns ("", false)
+// when the pod has no prior entry (never succeeded) or the config isn't
+// readable yet — both of which correctly leave the pod reading as not-converged.
+func (p *Publisher) existingPodChecksum(ctx context.Context, namespace, name, podName string) (string, bool) {
+	find := func(cfg *haproxyv1alpha1.HAProxyCfg) (string, bool) {
+		for i := range cfg.Status.DeployedToPods {
+			if cfg.Status.DeployedToPods[i].PodName == podName {
+				return cfg.Status.DeployedToPods[i].Checksum, true
+			}
+		}
+		return "", false
+	}
+	if p.listers != nil && p.listers.HAProxyCfgs != nil {
+		if cfg, err := p.listers.HAProxyCfgs.HAProxyCfgs(namespace).Get(name); err == nil {
+			return find(cfg)
+		}
+	}
+	cfg, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", false
+	}
+	return find(cfg)
 }
 
 // resolveAuxiliaryFileReferences finds the auxiliary file references for
