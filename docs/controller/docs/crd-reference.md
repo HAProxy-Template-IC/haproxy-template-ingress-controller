@@ -187,6 +187,7 @@ watchedResources:
       - metadata.namespace
       - metadata.name
     labelSelector: "app=myapp"  # Optional, equality-only ("k=v[,k=v]"); set-based syntax not supported
+    fieldSelector: "spec.ingressClassName=haproxy"  # Optional, client-side JSONPath equality ("field.path=value"); matches any field
     store: full  # or "on-demand" for cached store
     debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 2s default
 ```

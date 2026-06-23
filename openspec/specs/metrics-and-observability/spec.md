@@ -1,8 +1,10 @@
 # Metrics and Observability
 
+## Purpose
+
 Prometheus metrics, health endpoints, and structured logging for monitoring controller behavior and diagnosing issues.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Prometheus Metrics Endpoint
 

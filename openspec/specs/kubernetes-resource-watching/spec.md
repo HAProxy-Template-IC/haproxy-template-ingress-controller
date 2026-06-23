@@ -1,8 +1,10 @@
 # Kubernetes Resource Watching
 
+## Purpose
+
 Watches Kubernetes resources using client-go informers, maintains indexed stores, and delivers change notifications with debouncing and initial sync tracking.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Bulk Watcher
 

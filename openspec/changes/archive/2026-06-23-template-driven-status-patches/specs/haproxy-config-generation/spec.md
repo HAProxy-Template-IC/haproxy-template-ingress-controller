@@ -1,6 +1,6 @@
 # HAProxy Config Generation
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Pipeline Result Includes Status Patches
 

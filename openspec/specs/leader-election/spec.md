@@ -1,8 +1,10 @@
 # Leader Election
 
+## Purpose
+
 Kubernetes Lease-based leader election for HA deployments with automatic failover, hot-standby replicas, and configurable timing parameters.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Lease-Based Leader Election
 
@@ -51,24 +53,19 @@ THEN the OnStoppedLeading callback SHALL be invoked.
 WHEN a new leader is elected
 THEN the OnNewLeader callback SHALL be invoked on all replicas (including the new leader) with the new leader's identity string.
 
-### Requirement: Thread-Safe Leadership Queries
+### Requirement: Context-Based Leadership Signaling
 
-The leader election component SHALL provide thread-safe IsLeader() and GetLeader() methods. IsLeader() SHALL return true if the current replica holds the Lease. GetLeader() SHALL return the identity of the current leader.
+Leadership state SHALL be signaled exclusively through the callback context and callbacks, never through snapshot accessor methods. The leader election component SHALL NOT expose IsLeader() or GetLeader() accessors, because polling such accessors instead of deriving leadership from the context is racy. Leader-scoped work SHALL be tied to the context passed to OnStartedLeading, which is cancelled the moment leadership is lost.
 
-#### Scenario: IsLeader returns true for the active leader
+#### Scenario: Leadership derived from callback context
 
-WHEN a replica holds the Lease
-THEN IsLeader() SHALL return true.
+WHEN a replica becomes leader
+THEN leader-scoped work SHALL derive its lifetime from the context passed to OnStartedLeading rather than querying a leadership accessor.
 
-#### Scenario: IsLeader returns false for non-leaders
+#### Scenario: No snapshot accessors exposed
 
-WHEN a replica does not hold the Lease
-THEN IsLeader() SHALL return false.
-
-#### Scenario: GetLeader returns the current leader identity
-
-WHEN a leader has been elected
-THEN GetLeader() SHALL return the identity string of the current Lease holder.
+WHEN a caller needs to know whether this replica is the leader
+THEN the component SHALL NOT provide an IsLeader() or GetLeader() method, and the caller SHALL rely on the leadership callbacks and their context instead.
 
 ### Requirement: Graceful Release on Context Cancellation
 

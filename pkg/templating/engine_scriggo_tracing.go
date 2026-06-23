@@ -29,9 +29,9 @@ type scriggoTracingConfig struct {
 	// debugFilters records the filter-debug flag toggled at runtime by
 	// EnableFilterDebug / DisableFilterDebug and surfaced through
 	// IsFilterDebugEnabled (part of the Engine interface and the
-	// `validate --debug-filters` CLI flag). No filter currently consumes
-	// it directly; the Scriggo sort_by comparator does not log per
-	// comparison.
+	// `validate --debug-filters` CLI flag). The sort_by filter reads it
+	// (via the engine.globals override built at construction) and logs each
+	// comparison when set.
 	debugFilters bool
 	mu           sync.RWMutex
 	traces       []string

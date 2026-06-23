@@ -1,8 +1,10 @@
 # Storage Strategies
 
+## Purpose
+
 Provides indexed storage for Kubernetes resources with multiple backend strategies, thread-safe access, composite key matching, and overlay-based dry-run simulation for validation.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Unified Store Interface
 
@@ -179,36 +181,36 @@ THEN a ReadOnlyStoreError SHALL be returned identifying the attempted operation.
 
 ### Requirement: StoreProvider Abstraction
 
-StoreProvider SHALL provide access to stores by name via GetStore and list available stores via StoreNames. RealStoreProvider SHALL return actual stores from a map. CompositeStoreProvider SHALL wrap a base provider with per-store overlays, returning a CompositeStore for stores that have an overlay and the base store for those that do not.
+StoreProvider SHALL provide access to stores by name via GetStore and list available stores via StoreNames. RealStoreProvider SHALL return actual stores from a map. OverlayStoreProvider SHALL wrap a base provider with per-store overlays, returning a CompositeStore for stores that have an overlay and the base store for those that do not.
 
-#### Scenario: CompositeStoreProvider returns CompositeStore when overlay exists
+#### Scenario: OverlayStoreProvider returns CompositeStore when overlay exists
 
 WHEN GetStore is called for a store name that has an associated overlay
 THEN a CompositeStore wrapping the base store and overlay SHALL be returned.
 
-#### Scenario: CompositeStoreProvider returns base store when no overlay exists
+#### Scenario: OverlayStoreProvider returns base store when no overlay exists
 
 WHEN GetStore is called for a store name that has no associated overlay
 THEN the base store SHALL be returned directly.
 
 #### Scenario: Validate rejects overlays referencing non-existent stores
 
-WHEN Validate is called on a CompositeStoreProvider where an overlay references a store name that does not exist in the base provider
+WHEN Validate is called on an OverlayStoreProvider where an overlay references a store name that does not exist in the base provider
 THEN an error SHALL be returned identifying the non-existent store.
 
 ### Requirement: OverlayStoreProvider with ValidationContext
 
-OverlayStoreProvider SHALL apply a ValidationContext containing both K8s store overlays and HTTP content overlays. For K8s stores, it SHALL behave like CompositeStoreProvider. IsValidationMode SHALL return true when the ValidationContext is non-empty. GetHTTPOverlay SHALL return the HTTP content overlay for use by the render service.
+OverlayStoreProvider SHALL apply a ValidationContext containing both K8s store overlays and HTTP content overlays. For K8s stores, GetStore SHALL return a CompositeStore for stores that have an overlay and the base store otherwise. GetHTTPOverlay SHALL return the HTTP content overlay for use by the render service. Validation mode SHALL be detected out-of-band by the render service via a `*stores.OverlayStoreProvider` type assertion on the provider; the provider does not expose a dedicated IsValidationMode method. ValidationContext.IsEmpty SHALL report whether the context carries any non-empty K8s or HTTP overlay.
 
-#### Scenario: IsValidationMode true when context has overlays
+#### Scenario: Render service detects validation mode via type assertion
 
-WHEN an OverlayStoreProvider is created with a ValidationContext containing at least one non-empty K8s overlay or HTTP overlay
-THEN IsValidationMode SHALL return true.
+WHEN the render service receives a provider that is a `*stores.OverlayStoreProvider`
+THEN it SHALL obtain the HTTP overlay via GetHTTPOverlay and apply pending content, treating other provider types as production (accepted content only).
 
-#### Scenario: IsValidationMode false when context is nil
+#### Scenario: Nil context behaves like base provider
 
 WHEN an OverlayStoreProvider is created with a nil ValidationContext
-THEN IsValidationMode SHALL return false, and GetStore SHALL return base stores directly.
+THEN GetStore SHALL return base stores directly and GetHTTPOverlay SHALL return nil.
 
 ### Requirement: TypesStoreAdapter
 

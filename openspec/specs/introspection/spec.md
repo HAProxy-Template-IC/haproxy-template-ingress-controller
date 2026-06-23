@@ -1,8 +1,10 @@
 # Introspection
 
+## Purpose
+
 Debug HTTP server for inspecting internal controller state via a variable registry, JSONPath queries, and Go profiling endpoints.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Instance-Based Registry
 
@@ -18,33 +20,33 @@ THEN each Registry SHALL only expose its own variables, not those from the other
 WHEN a Registry instance is discarded and a new one is created
 THEN the old Registry and its registered variables SHALL become eligible for garbage collection with no stale references retained.
 
-### Requirement: Var Interface and Built-In Types
+### Requirement: Var Interface and Func Adapter
 
-Variables SHALL implement the Var interface with a `Get() (interface{}, error)` method. The system SHALL provide built-in types: IntVar (atomic int64), StringVar (mutex-protected string), FloatVar (atomic float64), MapVar (mutex-protected map), and Func (a function invoked on-demand to compute the value).
-
-#### Scenario: IntVar returns current atomic value
-
-WHEN an IntVar is set to 42 and then Get() is called
-THEN Get() SHALL return 42 with no error.
+Variables SHALL implement the Var interface with a single `Get() (any, error)` method. The system SHALL provide one built-in adapter type, `Func` (`type Func func() (any, error)`), which satisfies the Var interface by invoking the wrapped function on each Get. All other variable types are supplied by callers as custom types implementing the Var interface.
 
 #### Scenario: Func computes value on each Get
 
 WHEN a Func variable is registered that returns the current timestamp
 THEN each call to Get() SHALL invoke the function and return the current value.
 
-#### Scenario: MapVar returns thread-safe snapshot
+#### Scenario: Custom Var implementation is queried
 
-WHEN a MapVar is updated from multiple goroutines
-THEN Get() SHALL return a consistent map without data races.
+WHEN a caller-defined type implementing `Get() (any, error)` is published and Get() is called
+THEN Get() SHALL return the value produced by that implementation with no error.
 
 ### Requirement: HTTP Endpoints
 
-The introspection server SHALL expose: GET `/debug/vars` to list all registered variables and their values, and GET `/debug/vars/{path}` to retrieve a specific variable by its registration path. A `?field={.jsonpath}` query parameter SHALL be supported for extracting sub-fields from the returned value using JSONPath.
+The introspection server SHALL expose: GET `/debug/vars` to return an index of registered variable paths, GET `/debug/vars/all` to return every registered variable name together with its current value, and GET `/debug/vars/{path}` to retrieve a specific variable by its registration path. A `?field={.jsonpath}` query parameter SHALL be supported for extracting sub-fields from the returned value using JSONPath.
 
-#### Scenario: List all variables
+#### Scenario: List variable paths
 
 WHEN a GET request is made to `/debug/vars`
-THEN the response SHALL contain a JSON object with all registered variable names and their current values.
+THEN the response SHALL contain a JSON object with a `paths` array of all registered variable paths and a `count` field giving the number of paths.
+
+#### Scenario: List all variables with values
+
+WHEN a GET request is made to `/debug/vars/all`
+THEN the response SHALL contain a JSON object mapping each registered variable name to its current value.
 
 #### Scenario: Get specific variable by path
 
@@ -90,7 +92,7 @@ THEN all operations SHALL complete without data races or panics.
 
 ### Requirement: Graceful Shutdown
 
-The introspection HTTP server SHALL support graceful shutdown with a 30-second timeout. On context cancellation, the server SHALL stop accepting new connections and wait up to 30 seconds for in-flight requests to complete before forcing closure.
+The introspection HTTP server SHALL support graceful shutdown with a 10-second timeout. On context cancellation, the server SHALL stop accepting new connections and wait up to 10 seconds for in-flight requests to complete before forcing closure.
 
 #### Scenario: Server shuts down gracefully within timeout
 
@@ -100,7 +102,7 @@ THEN the server SHALL shut down immediately without error.
 #### Scenario: Server waits for in-flight requests
 
 WHEN the context is cancelled while requests are in-flight
-THEN the server SHALL wait up to 30 seconds for those requests to complete before forcing shutdown.
+THEN the server SHALL wait up to 10 seconds for those requests to complete before forcing shutdown.
 
 ### Requirement: Network Binding
 

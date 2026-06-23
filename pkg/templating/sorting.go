@@ -14,7 +14,11 @@
 
 package templating
 
-import "strings"
+import (
+	"fmt"
+	"log/slog"
+	"strings"
+)
 
 // sortableItems provides efficient multi-criteria sorting with pre-computed keys.
 // This optimization evaluates each criterion expression once per item (O(n))
@@ -27,6 +31,7 @@ type sortableItems struct {
 	criteria   []string
 	cachedKeys [][]sortKey // Pre-computed sort keys: cachedKeys[itemIndex][criterionIndex]
 	descending []bool      // Per-criterion descending flag
+	debug      bool        // When true, log each comparison (filter-debug mode)
 }
 
 // sortKey holds a pre-computed value for sorting with its type preserved.
@@ -99,7 +104,17 @@ func (s *sortableItems) Len() int {
 
 func (s *sortableItems) Less(i, j int) bool {
 	for ci := range s.criteria {
-		cmp := s.comparePrecomputedKeys(s.cachedKeys[i][ci], s.cachedKeys[j][ci])
+		a, b := s.cachedKeys[i][ci], s.cachedKeys[j][ci]
+		cmp := s.comparePrecomputedKeys(a, b)
+		if s.debug {
+			slog.Info("SORT comparison",
+				"criterion", s.criteria[ci],
+				"valA", a.value,
+				"valA_type", fmt.Sprintf("%T", a.value),
+				"valB", b.value,
+				"valB_type", fmt.Sprintf("%T", b.value),
+				"result", cmp)
+		}
 		if cmp != 0 {
 			if s.descending[ci] {
 				return cmp > 0

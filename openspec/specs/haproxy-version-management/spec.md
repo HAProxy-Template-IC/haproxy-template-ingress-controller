@@ -1,8 +1,10 @@
 # HAProxy Version Management
 
+## Purpose
+
 Multi-version HAProxy support with build-time version selection and guaranteed matching between controller and HAProxy image tags.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Version Definition in versions.env
 

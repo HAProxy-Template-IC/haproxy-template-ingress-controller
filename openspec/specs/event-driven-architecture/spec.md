@@ -1,8 +1,10 @@
 # Event-Driven Architecture
 
+## Purpose
+
 Generic EventBus infrastructure providing pub/sub messaging, scatter-gather requests, typed subscriptions, and pre-start buffering for component coordination.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Non-Blocking Publish
 
@@ -59,20 +61,6 @@ THEN the subscriber SHALL only receive events of type "ReconciliationTriggered".
 
 WHEN a type-filtered subscriber is registered and events of non-matching types are published
 THEN those events SHALL NOT appear on the subscriber's channel.
-
-### Requirement: Generic Typed Subscribe
-
-`Subscribe[T](ctx, bus, bufferSize)` SHALL return a channel of type T. The generic subscription SHALL filter events by Go type and deliver only events matching type T, already cast to the correct type.
-
-#### Scenario: Generic subscription delivers typed events
-
-WHEN Subscribe[ReconciliationTriggeredEvent] is called and a ReconciliationTriggeredEvent is published
-THEN the typed channel SHALL receive the event as a ReconciliationTriggeredEvent (not as interface{}).
-
-#### Scenario: Generic subscription ignores non-matching types
-
-WHEN Subscribe[ReconciliationTriggeredEvent] is called and a DeploymentCompletedEvent is published
-THEN the typed channel SHALL NOT receive the DeploymentCompletedEvent.
 
 ### Requirement: Scatter-Gather Requests
 

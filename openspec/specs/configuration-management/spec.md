@@ -1,8 +1,10 @@
 # Configuration Management
 
+## Purpose
+
 HAProxyTemplateConfig CRD schema, credentials management, environment variables, CLI flags, and Helm chart values for controller deployment configuration.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: HAProxyTemplateConfig CRD Schema
 

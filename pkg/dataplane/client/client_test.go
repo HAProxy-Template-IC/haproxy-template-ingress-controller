@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
 func TestNew_Validation(t *testing.T) {
@@ -222,6 +224,44 @@ func TestDataplaneClient_PreferredClient(t *testing.T) {
 
 			// Verify minor version matches expected
 			assert.Equal(t, tt.minorExpect, client.Clientset().MinorVersion())
+		})
+	}
+}
+
+// TestClientset_PreferredClient_ClampsNewerMinors verifies that a DataPlane API
+// minor newer than the newest bundled client (v3.3) clamps DOWN to it rather
+// than falling back to the oldest v3.0 client. Regression test for HAProxy 3.4+.
+func TestClientset_PreferredClient_ClampsNewerMinors(t *testing.T) {
+	cases := []struct {
+		name       string
+		apiVersion string
+	}{
+		{"v3.3 uses the v3.3 client", "v3.3.0 abc123de"},
+		{"v3.4 clamps down to the v3.3 client", "v3.4.1 def456gh"},
+		{"v3.9 clamps down to the v3.3 client", "v3.9.0 aaa000bb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v3/info" {
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprintf(w, `{"api":{"version":"%s"}}`, tc.apiVersion)
+					return
+				}
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			defer server.Close()
+
+			c, err := New(context.Background(), &Config{
+				BaseURL:  server.URL,
+				Username: "admin",
+				Password: "password",
+			})
+			require.NoError(t, err)
+
+			_, ok := c.PreferredClient().(*v33.Client)
+			require.Truef(t, ok, "%s: expected *v33.Client (newest bundled), got %T",
+				tc.apiVersion, c.PreferredClient())
 		})
 	}
 }

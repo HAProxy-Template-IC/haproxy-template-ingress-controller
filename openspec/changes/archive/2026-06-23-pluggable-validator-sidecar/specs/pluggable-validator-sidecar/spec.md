@@ -76,6 +76,11 @@ The wire format between the controller and a validator sidecar SHALL be length-p
 
 Length is an unsigned 32-bit big-endian integer. The JSON payload SHALL be valid UTF-8 with no BOM. Maximum frame size is 1 MiB by default.
 
+#### Scenario: Frame decoded by its length prefix
+
+WHEN a peer reads a frame
+THEN it SHALL read exactly 4 bytes as the big-endian unsigned length N, then read exactly N bytes as the UTF-8 JSON payload, and a declared length exceeding the 1 MiB maximum SHALL be rejected as a framing error that closes the connection.
+
 ### Requirement: Persistent Keep-Alive Connections
 
 Connections between the controller and a validator SHALL be persistent. A controller opens a connection to a validator on first demand and reuses it for many subsequent request-response cycles. The validator MUST honor the keep-alive contract:
@@ -205,8 +210,19 @@ The Manager SHALL expose `Healthy() (ok bool, failures []string)` summarising th
 
 The `Healthy()` callable SHALL be exposed for `/healthz` injection. This requirement does NOT define the `/healthz` wiring itself; that's the `pluggable-validator-webhook-wiring` capability.
 
+#### Scenario: Healthy reports per-socket failures
+
+GIVEN one validator whose `socketPath` is a writable unix socket and a second whose `socketPath` does not exist
+WHEN `Healthy()` is called
+THEN it SHALL return `ok = false` and a `failures` entry of the form `"<second-validator-name>: <reason>"` naming the missing socket, while the writable validator contributes no failure entry.
+
 ### Requirement: Authoritative Wire-Protocol Document
 
 The repository SHALL host the authoritative wire-protocol document at `docs/development/validator-protocol.md`. The hub-side spec at `haproxy-spoa-hub/specs/004-validate-mode/contracts/validate-socket-protocol.md` is a one-line pointer to this document.
 
 The HAPTIC-side document SHALL describe: framing, persistent connections with idle/poison semantics, adaptive pool semantics, request and response schemas, three-result behavior, parallel dispatch, error responses, versioning rules, and a worked example. It SHALL NOT describe the validator program's internals (plugins, dispatch logic, parser implementation) — those belong to each implementation's own repo.
+
+#### Scenario: Protocol document is present and authoritative
+
+WHEN the wire-protocol contract is consulted
+THEN the authoritative document SHALL exist at `docs/development/validator-protocol.md` covering framing, connection/pool semantics, request/response schemas, the three-result behavior, parallel dispatch, error responses, and versioning, AND the hub-side spec SHALL reference it rather than redefining the protocol.

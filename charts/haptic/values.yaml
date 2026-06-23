@@ -175,7 +175,7 @@ controller:
     extraVolumeMounts: []
     # Entries appended to spec.validators (CRD shape: name, socketPath,
     # files glob list, optional timeoutMs/maxConnections). Operators wire
-    # their own globs per enabled plugin. See docs/configuration/validators.md.
+    # their own globs per enabled plugin.
     entries: []
   # Default SSL Certificate Configuration
   # A default SSL certificate is required for HTTPS traffic.
@@ -498,13 +498,10 @@ controller:
         indexBy: ["metadata.namespace", "metadata.name"]
         #
         # Add custom or override library-defined entries. Per-resource
-        # debounceInterval is supported (default 2s). See
-        # docs/configuration/watched-resources.md.
+        # debounceInterval is supported (default 2s).
     # Override or extend the library-provided templateSnippets / maps /
     # files / haproxyConfig / validationTests sections by defining the
     # same keys here — user-provided values always win.
-    # Snippet name conventions and override examples:
-    # docs/configuration/template-overrides.md.
   # templateSnippets:
   # maps:
   # files:
@@ -967,7 +964,7 @@ haproxy:
       nodePort: 30404
     # Additional Service ports (corev1.ServicePort shape). Concatenated
     # with the http/https/stats entries above. Set http/https/stats.port=0
-    # to drop a default entry. See docs/configuration/haproxy-service.md.
+    # to drop a default entry.
     extraPorts: []
   # Dataplane API sidecar configuration
   dataplane:
@@ -1184,8 +1181,7 @@ haproxy:
     # Triggers (required when keda.enabled is true)
     # See: https://keda.sh/docs/2.17/scalers/
     triggers: []
-    # CPU/memory/prometheus/cron trigger examples:
-    # docs/configuration/keda-autoscaling.md.
+    # CPU/memory/prometheus/cron triggers (standard KEDA ScaledObject trigger shape).
   # HAProxy bootstrap config (replaced by the controller on first
   # reconcile). Processed via Helm `tpl` — chart helpers and value refs
   # are available. CRITICAL: keep the /ready 503 below; returning 200
@@ -1227,7 +1223,7 @@ haproxy:
   # NetworkPolicy for HAProxy loadbalancer pods. Requires a CNI that
   # enforces NetworkPolicy (Calico/Cilium/etc — kindnet does not).
   # allowExternal=false with empty allowedSources fails install by
-  # design (blocks accidental deny-all). See docs/configuration/network-policy.md.
+  # design (blocks accidental deny-all).
   networkPolicy:
     enabled: true
     # true = omit `from`, accept any source (public ingress pattern).
@@ -1347,7 +1343,6 @@ networkPolicy:
     # selector — apiserver runs host-network on most distros and would
     # silently fail the selector match → 502s). Both v4 and v6 catch-alls
     # present because ipBlock.cidr is single-family.
-    # docs/configuration/network-policy.md#webhook for tightening.
     webhook:
       enabled: true # Automatically enabled when webhook.enabled is true
       from:
@@ -1359,8 +1354,8 @@ networkPolicy:
     additionalRules: []
 
 # Extra Kubernetes resources to deploy alongside the chart. List or
-# dict; supports Helm templating. See docs/configuration/extra-deploy.md
-# for the list-vs-dict merge semantics + examples.
+# dict; supports Helm templating. The list and dict forms merge differently
+# (a dict merges by key; a list appends).
 # SPOA hub sidecar
 # Bundles the haproxy-spoa-hub binary plus seven plugin shared libraries
 # (coraza, external-auth, fingerprinting, maxmind, mirror, otel, sso-auth) inside
@@ -1425,7 +1420,7 @@ spoaHub:
   # The rendered slot count is `max(max-mirrors-per-route, this value)`.
   # Floor exists (issue #47) to keep handler state across SPOA-hub reloads
   # when transient renders drop slots. Bump if > 4 mirrors per HTTPRoute
-  # and you observe drop-flakes. See docs/spoa-hub/mirror-slots.md.
+  # and you observe drop-flakes.
   mirrorStaticMinSlots: 4
 
   # Plugins. Each entry has chart-managed lifecycle keys (enabled, timeoutMs,
@@ -1434,14 +1429,12 @@ spoaHub:
   # libraries that need a plugin can auto-enable it; explicit `--set ...
   # .enabled=<bool>` always wins. Inside `params:` use dotted keys or the
   # full `[plugins.params.<x>]` header — a bare `[x]` closes the scope.
-  # See docs/spoa-hub/plugin-config.md for per-plugin schemas.
   plugins:
     coraza:
       # Auto-enabled when nginx-ingress OR haproxy-ingress is on. Configures
       # the WAF *service* (rules, limits, runtime knobs → spoa-hub TOML);
       # dispatch lives separately under
       # `controller.templatingSettings.extraContext.coraza.dispatch`.
-      # See docs/spoa-hub/plugins/coraza.md.
       enabled: '{{ or .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled }}'
       timeoutMs: 15
       messages: ["check-request"]
@@ -1556,8 +1549,7 @@ spoaHub:
       messages: ["mirror"]
       dependsOn: []
       # Mirror plugin runtime knobs (1:1 with PluginConfig in
-      # haproxy-spoa-hub-plugin-mirror/src/config.rs). Per-field reference:
-      # docs/spoa-hub/plugins/mirror.md.
+      # haproxy-spoa-hub-plugin-mirror/src/config.rs).
       params: |
         # timeout_ms: omitted on purpose. The plugin default (60_000ms in
         # v0.5.0+) is the safety net for SPOE messages that don't carry

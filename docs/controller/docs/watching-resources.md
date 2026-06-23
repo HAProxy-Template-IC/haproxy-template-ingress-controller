@@ -92,10 +92,11 @@ Escape dots in JSONPath keys that contain them (`labels.kubernetes\\.io/service-
 
 ## Narrowing the Watch
 
-Two filters narrow what actually lands in the store:
+Three filters narrow what actually lands in the store:
 
 - `namespace:` — hard pin to a single namespace. Drops the need for `metadata.namespace` in `indexBy`.
 - `labelSelector:` — equality-only label-selector string applied to the resource itself (`"app=myapp"` or `"app=nginx,env=prod"`). Comma-separated `key=value` pairs only; set-based syntax (`"tier in (frontend,api)"`, `"!disabled"`) is **not** supported — `pkg/controller/conversion.parseLabelSelector` splits on `,` and `=`, dropping anything else.
+- `fieldSelector:` — a client-side JSONPath equality filter applied *after* the list is fetched (format `"field.path=value"`, e.g. `"spec.ingressClassName=haproxy"`). Unlike Kubernetes' native field selectors it can target **any** field, not just the server-supported ones, because the watcher evaluates it itself (at the cost of fetching the full list first). A resource that stops matching is handled as a delete; one that starts matching, as an add. This is what the bundled ingress / gateway libraries use to scope by `ingressClassName` / `gatewayClassName`.
 
 Need to scope by namespace *labels* rather than a single name? Watch the `namespaces` resource and gate inside the template, or run separate controller instances per scope.
 

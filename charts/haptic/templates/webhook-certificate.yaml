@@ -1,4 +1,14 @@
 {{- $cm := .Values.webhook.certManager }}
+{{- /* Guard a silent foot-gun: webhook enabled + cert-manager path selected,
+       but the cert-manager CRDs are absent on a LIVE cluster. The
+       `lookup ... kube-system` is a liveness probe — it returns empty during
+       `helm template`/CI (no API server), so this never trips offline. Without
+       this guard no Certificate (and thus no webhook-cert Secret) is created,
+       yet the controller Deployment mounts that Secret as required, leaving the
+       pod stuck in ContainerCreating with no clear signal. Fail fast instead. */ -}}
+{{- if and .Values.webhook.enabled $cm.enabled (not (.Capabilities.APIVersions.Has "cert-manager.io/v1")) (lookup "v1" "Namespace" "" "kube-system") }}
+{{- fail (printf "webhook.certManager.enabled=true but cert-manager CRDs (cert-manager.io/v1) are not installed on this cluster. The webhook TLS Secret %q cannot be created and the controller would hang in ContainerCreating. Resolve by ONE of: (1) install cert-manager (https://cert-manager.io/docs/installation/); (2) set webhook.certManager.enabled=false and provide webhook.caBundle plus a TLS Secret named %q; (3) set webhook.enabled=false." (include "haptic.webhook.secretName" .) (include "haptic.webhook.secretName" .)) }}
+{{- end }}
 {{- if and .Values.webhook.enabled $cm.enabled (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
 {{- $fullname := include "haptic.fullname" . }}
 {{- $svcName := include "haptic.webhook.serviceName" . }}

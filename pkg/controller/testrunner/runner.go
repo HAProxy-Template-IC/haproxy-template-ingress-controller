@@ -130,6 +130,12 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 	// Separate tests into runnable and skipped based on HAProxy version requirements
 	runnableTests := make(map[string]config.ValidationTest, len(testsToRun))
 	for name, test := range testsToRun {
+		// "_global" carries shared fixtures merged into every test (see the
+		// _global lookup in runSingleTest); it is never executed as a standalone
+		// test. The benchmark path excludes it the same way (cmd/controller/benchmark.go).
+		if name == "_global" {
+			continue
+		}
 		if reason := r.shouldSkipTest(&test); reason != "" {
 			results.SkippedTests++
 			results.TestResults = append(results.TestResults, TestResult{

@@ -244,6 +244,26 @@ spec:
          leaves spec.validators absent rather than emitting an invalid
          empty entry. */ -}}
   {{- $entries := default list $controller.validators.entries }}
+  {{- /* Auto-wire the spoa-hub validator when both the spoa-hub sidecar and the
+         validator sidecar are enabled: the chart already emits
+         general/spoa-hub-config.toml and runs the --validate-socket sidecar, so
+         admission-time WAF/TOML validation (ADR-0007 step 6) works out of the box
+         without the operator hand-adding the entry. An operator entry named
+         "spoa-hub" (here or in config.validators) takes precedence. */ -}}
+  {{- if include "haptic.spoaHub.enabled" . }}
+  {{- if include "haptic.validators.enabled" . }}
+    {{- $hasSpoa := false }}
+    {{- range $entries }}
+      {{- if eq .name "spoa-hub" }}{{- $hasSpoa = true }}{{- end }}
+    {{- end }}
+    {{- if not $hasSpoa }}
+      {{- $entries = append $entries (dict
+          "name" "spoa-hub"
+          "socketPath" (include "haptic.validators.socketPath" .)
+          "files" (list "general/spoa-hub-config.toml")) }}
+    {{- end }}
+  {{- end }}
+  {{- end }}
   {{- if $entries }}
     {{- $existing := default list $config.validators }}
     {{- $byName := dict }}

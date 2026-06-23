@@ -36,6 +36,14 @@ import (
 //
 //	sort_by(items, []string{"$.priority:desc", "$.name"})
 func scriggoSortBy(items []any, criteria []string) ([]any, error) {
+	return sortByItems(items, criteria, false)
+}
+
+// sortByItems is scriggoSortBy with an explicit filter-debug flag. When debug
+// is true, each comparison is logged via slog (criterion, both values + Go
+// types, result) — wired to the engine's EnableFilterDebug() / the
+// `validate --debug-filters` CLI flag through the engine.globals override.
+func sortByItems(items []any, criteria []string, debug bool) ([]any, error) {
 	if len(items) == 0 || len(criteria) == 0 {
 		// Return a copy for consistency with normal path (avoids modifying original slice)
 		result := make([]any, len(items))
@@ -51,6 +59,7 @@ func scriggoSortBy(items []any, criteria []string) ([]any, error) {
 	sortable := &sortableItems{
 		items:    result,
 		criteria: criteria,
+		debug:    debug,
 	}
 
 	// Precompute sort keys and sort
