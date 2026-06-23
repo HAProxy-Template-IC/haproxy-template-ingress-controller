@@ -154,6 +154,7 @@ Empty / invalid strings fall back to the 2s default silently — the validating 
 
 ## See Also
 
+- [Bring-your-own-CRD example](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd) — a runnable, self-validating example: watch a custom CRD, route on it, and write status back, with no Go
 - [CRD Reference](./crd-reference.md#watchedresources-required) — field-level documentation
 - [Templating Guide — The `resources` Variable](./templating.md#the-resources-variable) — `.List()` / `.Fetch()` / `.GetSingle()` semantics from the template side
 - [Performance](./operations/performance.md) — deciding when to narrow the watch versus scale the controller

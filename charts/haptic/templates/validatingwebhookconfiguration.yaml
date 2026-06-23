@@ -40,7 +40,7 @@ webhooks:
   - name: {{ $rule.name }}.validation.{{ $webhookSvcName }}
     clientConfig:
       {{- if not $cm.enabled }}
-      caBundle: {{ required "webhook.caBundle is required when webhook.certManager.enabled is false" $webhook.caBundle }}
+      caBundle: {{ include "haptic.webhook.caBundle" $ }}
       {{- end }}
       service:
         namespace: {{ $ns }}
@@ -95,7 +95,7 @@ webhooks:
   - name: haproxytemplateconfig.validation.{{ $webhookSvcName }}
     clientConfig:
       {{- if not $cm.enabled }}
-      caBundle: {{ required "webhook.caBundle is required when webhook.certManager.enabled is false" $webhook.caBundle }}
+      caBundle: {{ include "haptic.webhook.caBundle" $ }}
       {{- end }}
       service:
         namespace: {{ $ns }}

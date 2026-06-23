@@ -239,7 +239,7 @@ func createReconciliationComponents(
 
 	// Create Status Updater (updates HAProxyTemplateConfig CRD status with validation results)
 	// This allows users to see validation errors via `kubectl describe haproxytemplateconfig`
-	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, setup.Bus, logger)
+	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, k8sClient.Clientset(), setup.Bus, logger)
 
 	// Build a RESTMapper from the cluster's discovery so the status/resource
 	// appliers resolve apiVersion+kind → GroupVersionResource from authoritative

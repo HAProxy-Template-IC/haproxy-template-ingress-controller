@@ -25,7 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/record"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -51,7 +53,51 @@ func newStatusUpdaterFixture(t *testing.T, existing ...runtime.Object) (*StatusU
 	t.Helper()
 	crdClient := crdclientfake.NewSimpleClientset(existing...)
 	bus, logger := testutil.NewTestBusAndLogger()
-	return NewStatusUpdater(crdClient, bus, logger), crdClient
+	return NewStatusUpdater(crdClient, k8sfake.NewSimpleClientset(), bus, logger), crdClient
+}
+
+func TestStatusUpdater_EmitsEvents(t *testing.T) {
+	u, _ := newStatusUpdaterFixture(t)
+	rec := record.NewFakeRecorder(10)
+	u.recorder = rec
+	htc := &v1alpha1.HAProxyTemplateConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: testName},
+	}
+
+	// Invalid -> a Warning Event carrying the first error (+ "more" hint).
+	htc.Status = v1alpha1.HAProxyTemplateConfigStatus{
+		ValidationStatus: statusInvalid,
+		ValidationErrors: []string{"boom", "kaboom"},
+	}
+	u.emitStatusEvent(htc)
+	assertNextEvent(t, rec, "Warning", eventReasonValidationFailed, "boom (+1 more)")
+
+	// Invalid -> Valid is a recovery: a single Normal Event.
+	htc.Status = v1alpha1.HAProxyTemplateConfigStatus{ValidationStatus: statusValid}
+	u.emitStatusEvent(htc)
+	assertNextEvent(t, rec, "Normal", eventReasonValidated, "valid again")
+
+	// A subsequent routine Valid emits NOTHING (no spam on every success).
+	u.emitStatusEvent(htc)
+	select {
+	case e := <-rec.Events:
+		t.Fatalf("expected no event on routine success, got %q", e)
+	default:
+	}
+}
+
+func assertNextEvent(t *testing.T, rec *record.FakeRecorder, wantType, wantReason, wantMsgSubstr string) {
+	t.Helper()
+	select {
+	case e := <-rec.Events:
+		assert.Contains(t, e, wantType)
+		assert.Contains(t, e, wantReason)
+		if wantMsgSubstr != "" {
+			assert.Contains(t, e, wantMsgSubstr)
+		}
+	default:
+		t.Fatalf("expected an Event (%s/%s) but none was recorded", wantType, wantReason)
+	}
 }
 
 func getStatus(t *testing.T, crdClient *crdclientfake.Clientset) v1alpha1.HAProxyTemplateConfigStatus {

@@ -26,8 +26,13 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
+	clientsetscheme "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/scheme"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/tools/record"
 )
 
 const (
@@ -40,6 +45,13 @@ const (
 	// Validation status values written to HAProxyTemplateConfig.Status.ValidationStatus.
 	statusValid   = "Valid"
 	statusInvalid = "Invalid"
+
+	// eventSourceComponent identifies this controller as the source of emitted
+	// Kubernetes Events, so they appear under `kubectl describe haproxytemplateconfig`.
+	eventSourceComponent = "haptic-controller"
+	// Event reasons (CamelCase per Kubernetes convention).
+	eventReasonValidationFailed = "ValidationFailed"
+	eventReasonValidated        = "Validated"
 )
 
 // StatusUpdater updates HAProxyTemplateConfig status based on validation results.
@@ -60,6 +72,14 @@ type StatusUpdater struct {
 
 	crdClient versioned.Interface
 
+	// kubeClient, broadcaster and recorder emit Kubernetes Events on the
+	// HAProxyTemplateConfig so failures surface in `kubectl describe` /
+	// `kubectl get events`, not just in CRD status and controller logs. The
+	// broadcaster's lifecycle is owned by Start/Stop.
+	kubeClient  kubernetes.Interface
+	broadcaster record.EventBroadcaster
+	recorder    record.EventRecorder
+
 	// ctx is the event-loop context captured by Start. Handlers run only on the
 	// loop goroutine and use it for Kubernetes API calls so status writes abort
 	// on shutdown.
@@ -70,12 +90,17 @@ type StatusUpdater struct {
 	mu              sync.RWMutex
 	configNamespace string
 	configName      string
+	// lastEmittedStatus is the validation status of the most recent emitted
+	// Event, so a Normal "Validated" Event fires only on recovery
+	// (Invalid -> Valid), not on every routine successful validation.
+	lastEmittedStatus string
 }
 
 // NewStatusUpdater creates a new StatusUpdater.
 //
 // Parameters:
-//   - crdClient: Kubernetes client for HAProxyTemplateConfig CRD
+//   - crdClient: typed client for HAProxyTemplateConfig CRD status updates
+//   - kubeClient: core client used to emit Kubernetes Events on the CRD
 //   - eventBus: EventBus to subscribe to validation events
 //   - logger: Structured logger for diagnostics
 //
@@ -83,10 +108,14 @@ type StatusUpdater struct {
 //   - *StatusUpdater ready to start
 func NewStatusUpdater(
 	crdClient versioned.Interface,
+	kubeClient kubernetes.Interface,
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 ) *StatusUpdater {
-	u := &StatusUpdater{crdClient: crdClient}
+	u := &StatusUpdater{
+		crdClient:  crdClient,
+		kubeClient: kubeClient,
+	}
 
 	// Subscribe to only the event types we handle during construction (before
 	// EventBus.Start()) for proper startup synchronization and reduced buffer
@@ -114,6 +143,13 @@ func NewStatusUpdater(
 // Returns nil on graceful shutdown.
 func (u *StatusUpdater) Start(ctx context.Context) error {
 	u.ctx = ctx
+	// Build the Event recorder and forward recorded Events to the API server for
+	// the lifetime of the loop. Done here (not in the constructor) so the
+	// broadcaster goroutine only exists while the component is actually running.
+	u.broadcaster = record.NewBroadcaster()
+	u.recorder = u.broadcaster.NewRecorder(clientsetscheme.Scheme, corev1.EventSource{Component: eventSourceComponent})
+	u.broadcaster.StartRecordingToSink(&corev1client.EventSinkImpl{Interface: u.kubeClient.CoreV1().Events("")})
+	defer u.broadcaster.Shutdown()
 	return u.Base.Start(ctx)
 }
 
@@ -262,6 +298,45 @@ func (u *StatusUpdater) applyStatus(
 		return
 	}
 
+	u.emitStatusEvent(current)
+
 	u.Logger().Debug(successMsg,
 		append(logFields, "namespace", current.Namespace, "name", current.Name)...)
+}
+
+// emitStatusEvent records a Kubernetes Event reflecting the persisted validation
+// status: a Warning whenever the config is Invalid (the recorder aggregates
+// repeats), and a single Normal only on recovery (Invalid -> Valid) so routine
+// successful validations don't spam events.
+func (u *StatusUpdater) emitStatusEvent(htc *v1alpha1.HAProxyTemplateConfig) {
+	if u.recorder == nil {
+		return
+	}
+	u.mu.Lock()
+	prev := u.lastEmittedStatus
+	u.lastEmittedStatus = htc.Status.ValidationStatus
+	u.mu.Unlock()
+
+	switch htc.Status.ValidationStatus {
+	case statusInvalid:
+		u.recorder.Event(htc, corev1.EventTypeWarning, eventReasonValidationFailed, validationEventMessage(&htc.Status))
+	case statusValid:
+		if prev == statusInvalid {
+			u.recorder.Event(htc, corev1.EventTypeNormal, eventReasonValidated, "HAProxyTemplateConfig is valid again")
+		}
+	}
+}
+
+// validationEventMessage renders a concise Event message from the status: the
+// first validation error (plus a "+N more" hint), or the status message when no
+// per-error detail is available.
+func validationEventMessage(status *v1alpha1.HAProxyTemplateConfigStatus) string {
+	if len(status.ValidationErrors) == 0 {
+		return status.ValidationMessage
+	}
+	msg := status.ValidationErrors[0]
+	if len(status.ValidationErrors) > 1 {
+		msg = fmt.Sprintf("%s (+%d more)", msg, len(status.ValidationErrors)-1)
+	}
+	return msg
 }
