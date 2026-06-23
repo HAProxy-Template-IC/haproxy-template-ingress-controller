@@ -1,8 +1,10 @@
 # Validating Webhook
 
+## Purpose
+
 Admission webhook that validates Kubernetes resources (HAProxyTemplateConfig and watched resources) by performing dry-run rendering and HAProxy syntax validation before admitting changes to the cluster.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Webhook Server
 
@@ -72,7 +74,7 @@ THEN the GVK SHALL be formatted as `"networking.k8s.io/v1.Ingress"`.
 
 ### Requirement: Three-Phase Dry-Run Validation
 
-The DryRunValidator SHALL perform validation in phases: (1) Template rendering using an overlay store that simulates the proposed resource change, (2) HAProxy syntax validation of the rendered configuration, and (3) Embedded test execution if validation tests are configured. A failure in any phase SHALL reject the admission request with a user-readable reason. The render-validate pipeline (phases 1 and 2) SHALL be executed via ProposalValidator with a 30-second timeout.
+The DryRunValidator SHALL perform validation in phases: (1) Template rendering using an overlay store that simulates the proposed resource change, (2) HAProxy syntax validation of the rendered configuration, and (3) Embedded test execution if validation tests are configured. A failure in any phase SHALL reject the admission request with a user-readable reason. At admission, the render-validate pipeline (phases 1 and 2) SHALL run synchronously via the DryRunValidator on the caller's context, which the webhook bounds to ~5 seconds. The 30-second `DefaultValidationTimeout` applies only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), which the webhook does NOT use.
 
 #### Scenario: Rendering failure rejects admission
 
@@ -129,17 +131,17 @@ THEN the webhook reason SHALL contain only the meaningful error description with
 
 ### Requirement: Webhook Test Execution
 
-When the controller configuration includes embedded validation tests, the DryRunValidator SHALL execute them after successful rendering and syntax validation. Test execution SHALL use `Workers: 1` (sequential) in the webhook context. The test execution timeout SHALL be 60 seconds. Failed tests SHALL produce an error message listing the number of failed tests, their names, rendering errors, and failed assertion descriptions.
+When a prospective HAProxyTemplateConfig includes embedded validation tests, the webhook ConfigValidator SHALL execute them (via `configtest.RunValidationTests`) after successful rendering and syntax validation. The DryRunValidator SHALL NOT run validation tests. The run SHALL be bounded by a fixed budget (`min(budget, time left on the admission context)`) so it cannot approach the webhook timeout. Failed tests SHALL deny admission with an error message listing the failed test names and assertion descriptions. A run that cannot start or does not finish within the budget SHALL admit with a warning, deferring authoritative enforcement to the controller's load gate.
 
-#### Scenario: Sequential test execution in webhook
+#### Scenario: Failed validation test denies admission
 
-WHEN the DryRunValidator runs validation tests for an admission request
-THEN tests SHALL execute with a single worker (sequential) to minimize resource usage in the webhook context.
+WHEN the ConfigValidator runs validation tests for a prospective config and a test fails
+THEN the admission request SHALL be denied with a reason listing the failed tests.
 
-#### Scenario: Test execution timeout
+#### Scenario: Incomplete test run admits with warning
 
-WHEN validation test execution exceeds 60 seconds
-THEN the test run SHALL be cancelled and the admission request SHALL be rejected with a timeout error.
+WHEN validation test execution cannot finish within the admission budget
+THEN the admission request SHALL be admitted with a warning, leaving the controller's load gate to enforce the tests on load.
 
 ### Requirement: Fail-Open Without Validator
 
@@ -161,7 +163,7 @@ THEN the webhook SHALL return `Allowed: false` with reason `"metadata.name or me
 
 ### Requirement: Webhook Timeout
 
-The webhook component SHALL enforce a 10-second read/write timeout on the HTTPS server. The dry-run validation call to ValidateDirect SHALL use a 5-second context timeout. The ProposalValidator pipeline SHALL use a 30-second timeout for the render-validate pipeline.
+The webhook component SHALL enforce a 10-second read/write timeout on the HTTPS server. The dry-run validation call to ValidateDirect SHALL use a 5-second context timeout, and the render-validate pipeline SHALL run synchronously on that ~5-second context at admission. The 30-second `DefaultValidationTimeout` SHALL apply only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), not to admission.
 
 #### Scenario: Server read/write timeout
 

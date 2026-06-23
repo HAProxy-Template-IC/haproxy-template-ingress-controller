@@ -57,6 +57,14 @@ const (
 	// chart's 10 s timeoutSeconds so the controller returns a structured decision
 	// before the API server gives up.
 	configAdmissionTimeout = 9 * time.Second
+
+	// resourceAdmissionTimeout bounds a watched-resource (e.g. Ingress) dry-run
+	// admission: schema bootstrap + full render + `haproxy -c`. It matches
+	// configAdmissionTimeout's 9 s headroom under the chart's 10 s timeoutSeconds
+	// so a large config doesn't hit the deadline and fail open (failurePolicy=
+	// Ignore) before validation finishes. The watched-resource path skips the
+	// embedded validationTests suite, so 9 s is ample.
+	resourceAdmissionTimeout = 9 * time.Second
 )
 
 // Component is the webhook adapter component that manages webhook lifecycle.
@@ -435,9 +443,9 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 
 		// Derive from c.serverCtx (set in Start()) so iteration shutdown
 		// cancels in-flight validations promptly. Using context.Background()
-		// would orphan up to 5s of validation work past server cancellation,
-		// delaying graceful shutdown. The 5s deadline still bounds each
-		// admission individually; failurePolicy=Ignore admits on timeout.
+		// would orphan validation work past server cancellation, delaying
+		// graceful shutdown. The resourceAdmissionTimeout deadline still bounds
+		// each admission individually; failurePolicy=Ignore admits on timeout.
 		// Fall back to context.Background() if serverCtx hasn't been set
 		// yet — happens in unit tests that call this validator without
 		// going through Start(); in production Start() always sets
@@ -446,7 +454,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 		if parent == nil {
 			parent = context.Background()
 		}
-		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		ctx, cancel := context.WithTimeout(parent, resourceAdmissionTimeout)
 		defer cancel()
 
 		allowed, reason, warnings := c.dryRunValidator.ValidateDirect(

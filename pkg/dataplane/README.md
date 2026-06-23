@@ -11,7 +11,7 @@ Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative (`go do
 3. Fetch the current config from the Dataplane API and compare section-by-section to classify the changes as runtime-eligible (server field updates) or structural.
 4. Push the full rendered config in one request: a `skip_reload` push carrying `X-Runtime-Actions` when every change is a runtime-eligible server-field update (no reload), otherwise a `force_reload` push.
 5. Sync auxiliary files (maps, SSL certs, general files, crt-lists) in three phases — pre-config, config, post-config — so the main config never references a file that doesn't exist yet.
-6. Retry transient connection errors and surface structured errors (`ValidationError`, `ParseError`, `ConflictError`, etc.).
+6. Retry transient connection errors and surface structured errors (`SyncError`, `ValidationError`, `ParseError`, `ConnectionError`).
 
 ## Top-level API
 
@@ -117,8 +117,6 @@ if errors.As(err, &syncErr) {
 var valErr *dataplane.ValidationError
 var parseErr *dataplane.ParseError
 var connErr *dataplane.ConnectionError
-var conflictErr *dataplane.ConflictError
-var opErr *dataplane.OperationError
 ```
 
 For user-facing surfaces (webhook responses, CLI output), call `dataplane.SimplifyValidationError(err)` / `dataplane.SimplifyRenderingError(err)` to turn verbose library errors into a single readable line. Internal logs and metrics should keep the full chain.

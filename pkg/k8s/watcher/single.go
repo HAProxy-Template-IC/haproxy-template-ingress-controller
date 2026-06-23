@@ -50,6 +50,10 @@ type SingleWatcher struct {
 	syncCh    chan struct{} // Closed when sync completes
 	stopOnce  sync.Once     // Ensures Stop() is idempotent
 	startOnce sync.Once     // Ensures Start() is idempotent
+
+	// lastWatchErrNanos is the UnixNano timestamp of the most recent watch
+	// connection error (0 = none), recorded by handleWatchError for observability.
+	lastWatchErrNanos atomic.Int64
 }
 
 // NewSingle creates a new single-resource watcher with the provided configuration.
@@ -155,11 +159,23 @@ func (w *SingleWatcher) createInformer() error {
 // handleWatchError is called when the watch connection drops.
 // The Reflector will automatically retry with exponential backoff after this handler returns.
 func (w *SingleWatcher) handleWatchError(_ *cache.Reflector, err error) {
+	w.lastWatchErrNanos.Store(time.Now().UnixNano())
 	slog.Warn("SingleWatcher watch error (Reflector will retry)",
 		"gvr", w.config.GVR.String(),
 		"namespace", w.config.Namespace,
 		"name", w.config.Name,
 		"error", err)
+}
+
+// LastWatchError returns the time of the most recent watch-connection error,
+// or the zero time if none has occurred. The Reflector retries automatically;
+// this accessor exists purely for observability / health reporting.
+func (w *SingleWatcher) LastWatchError() time.Time {
+	ns := w.lastWatchErrNanos.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 // recordEvent emits the standard debug log for a received watch event.

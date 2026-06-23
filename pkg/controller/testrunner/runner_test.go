@@ -256,6 +256,55 @@ func TestRunner_RunTests(t *testing.T) {
 			testName: "non-existent",
 			wantErr:  true,
 		},
+		{
+			name: "_global fixtures entry is excluded from execution",
+			config: &v1alpha1.HAProxyTemplateConfigSpec{
+				HAProxyConfig: v1alpha1.HAProxyConfig{
+					Template: "global\n  maxconn 1000\n",
+				},
+				WatchedResources: map[string]v1alpha1.WatchedResource{
+					"services": {
+						APIVersion: "v1",
+						Resources:  "services",
+						IndexBy:    []string{"metadata.namespace", "metadata.name"},
+					},
+				},
+				ValidationTests: map[string]v1alpha1.ValidationTest{
+					"_global": {
+						Description: "shared fixtures only; must never run as a standalone test",
+						Fixtures: map[string][]runtime.RawExtension{
+							"services": {},
+						},
+						Assertions: []v1alpha1.ValidationAssertion{
+							{
+								// Would fail if _global were ever executed.
+								Type:    "contains",
+								Target:  "haproxy.cfg",
+								Pattern: "this-pattern-would-fail-if-global-executed",
+							},
+						},
+					},
+					"real-test": {
+						Description: "the only runnable test",
+						Fixtures: map[string][]runtime.RawExtension{
+							"services": {},
+						},
+						Assertions: []v1alpha1.ValidationAssertion{
+							{
+								Type:    "contains",
+								Target:  "haproxy.cfg",
+								Pattern: "maxconn",
+							},
+						},
+					},
+				},
+			},
+			wantErr:         false,
+			wantTotalTests:  1,
+			wantPassedTests: 1,
+			wantFailedTests: 0,
+			skipValidation:  true,
+		},
 	}
 
 	for _, tt := range tests {

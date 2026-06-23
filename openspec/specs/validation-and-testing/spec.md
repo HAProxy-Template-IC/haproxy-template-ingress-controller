@@ -1,8 +1,10 @@
 # Validation and Testing
 
+## Purpose
+
 HAProxy configuration syntax validation using the HAProxy binary, and an embedded validation test framework in HAProxyTemplateConfig CRDs with fixture-based resource simulation, multiple assertion types, and parallel test execution.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: HAProxy Syntax Validation
 

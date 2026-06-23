@@ -1,27 +1,24 @@
 # Template Engine
 
+## Purpose
+
 Scriggo-based template engine providing pre-compilation, concurrent rendering, profiling, tracing, and a resource-agnostic function library for generating HAProxy configurations.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Pre-Compilation and Engine Lifecycle
 
-The engine SHALL compile all entry-point templates at initialization time using Scriggo's BuildTemplate. Template snippets not listed as entry points SHALL be discovered and compiled automatically by Scriggo when referenced via render or render_glob statements. Compilation errors SHALL be reported as CompilationError with the template name, the first 200 characters of template content as TemplateSnippet, and the underlying cause. The New constructor SHALL reject unsupported engine types with UnsupportedEngineError.
+The engine SHALL compile all entry-point templates at initialization time using Scriggo's BuildTemplate. Template snippets not listed as entry points SHALL be discovered and compiled automatically by Scriggo when referenced via render or render_glob statements. Compilation errors SHALL be reported as CompilationError with the template name, the first 200 characters of template content as TemplateSnippet, and the underlying cause.
 
 #### Scenario: Templates compiled at initialization
 
-WHEN NewScriggo is called with a set of templates and entry points
+WHEN New is called with a set of templates and (optionally) entry points via Options.EntryPoints
 THEN all entry-point templates SHALL be compiled before the constructor returns, and compilation errors SHALL be detected at this point rather than at render time.
 
 #### Scenario: CompilationError includes template snippet
 
 WHEN a template with invalid syntax is compiled and its content exceeds 200 characters
 THEN the resulting CompilationError SHALL contain a TemplateSnippet field with the first 200 characters followed by "...".
-
-#### Scenario: Unsupported engine type rejected
-
-WHEN New is called with an EngineType other than EngineTypeScriggo
-THEN it SHALL return an UnsupportedEngineError containing the invalid engine type.
 
 ### Requirement: Thread-Safe Concurrent Rendering
 
@@ -58,7 +55,7 @@ THEN the engine SHALL create a new map with a default SharedContext and render s
 
 ### Requirement: Profiling Support
 
-The Engine interface SHALL provide RenderWithProfiling, which returns the rendered output and an aggregated slice of IncludeStats. Stats SHALL be aggregated by template name so that multiple renders of the same template produce a single entry with count > 1. Stats SHALL be sorted by TotalMs descending. When profiling is not enabled (engine created via NewScriggo), RenderWithProfiling SHALL return nil stats. Profiling SHALL be enabled by constructing the engine with NewScriggoWithProfiling or NewScriggoWithProfilingAndDeclarations.
+The Engine interface SHALL provide RenderWithProfiling, which returns the rendered output and an aggregated slice of IncludeStats. Stats SHALL be aggregated by template name so that multiple renders of the same template produce a single entry with count > 1. Stats SHALL be sorted by TotalMs descending. When profiling is not enabled (engine created without Options.Profiling set), RenderWithProfiling SHALL return nil stats. Profiling SHALL be enabled by constructing the engine with Options.Profiling set to true.
 
 #### Scenario: IncludeStats aggregated by template name
 
@@ -67,7 +64,7 @@ THEN RenderWithProfiling SHALL return an IncludeStats entry for that sub-templat
 
 #### Scenario: Profiling disabled returns nil stats
 
-WHEN an engine is created via NewScriggo (not NewScriggoWithProfiling) and RenderWithProfiling is called
+WHEN an engine is created without Options.Profiling (left at its false zero value) and RenderWithProfiling is called
 THEN the stats slice SHALL be nil.
 
 ### Requirement: Template Introspection
@@ -138,7 +135,7 @@ THEN the method SHALL execute on the runtime value and return the resolved path.
 #### Scenario: SharedContext provided automatically
 
 WHEN Render is called without a "shared" key in the template context
-THEN the engine SHALL automatically create and inject a new SharedContext, enabling cache functions to work.
+THEN the engine SHALL automatically create and inject a new SharedContext, enabling SharedContext caching (ComputeIfAbsent/Get) and first_seen to work.
 
 ### Requirement: Dynamic Includes
 
@@ -156,7 +153,7 @@ THEN the rendered template SHALL have access to that local variable.
 
 ### Requirement: Post-Processing Pipeline
 
-The engine SHALL support per-template post-processor chains configured at construction time. Post-processors SHALL be applied in sequence after rendering completes. The regex_replace post-processor type SHALL apply a compiled regular expression find/replace to the output. An indentation normalization fast path SHALL be used when the pattern is "^[ ]+".
+The engine SHALL support per-template post-processor chains configured at construction time. Post-processors SHALL be applied in sequence after rendering completes. The regex_replace post-processor type SHALL apply a compiled regular expression find/replace to the output, processing the output line by line so that line-anchored patterns (such as "^[ ]+" for indentation normalization) behave predictably.
 
 #### Scenario: Regex replace post-processor applied
 
@@ -196,19 +193,19 @@ The glob_match filter SHALL accept a list ([]string or []interface{}) and a glob
 WHEN glob_match is called with ["backend-ingress", "frontend-http", "backend-gateway"] and pattern "backend-*"
 THEN it SHALL return ["backend-ingress", "backend-gateway"].
 
-### Requirement: Cache Functions
+### Requirement: SharedContext Caching API
 
-The functions has_cached, get_cached, and set_cached SHALL provide per-render caching isolated between Render calls. has_cached SHALL return true if a key has been stored, get_cached SHALL return the stored value or nil, and set_cached SHALL store a value. The cache SHALL be backed by the SharedContext which uses singleflight for thread-safe compute-once semantics.
+The SharedContext runtime variable SHALL provide per-render caching isolated between Render calls via two methods: ComputeIfAbsent(key, compute) and Get(key). ComputeIfAbsent SHALL return the value for the key (computing and storing it via the supplied function only if absent) together with a wasComputed boolean that is true only for the caller that actually ran the computation. Get SHALL return the stored value or nil for read-only access. There SHALL be no mutating Set method, so check-then-act races are structurally prevented. The cache SHALL use singleflight for thread-safe compute-once semantics across concurrent renders.
 
 #### Scenario: Cache isolation between renders
 
-WHEN set_cached("key", "value") is called during one Render invocation
+WHEN ComputeIfAbsent("key", ...) stores a value during one Render invocation
 THEN a subsequent independent Render invocation SHALL NOT see that cached value (each Render gets a fresh or distinct SharedContext unless the caller reuses one).
 
 #### Scenario: Compute-once via SharedContext
 
-WHEN multiple concurrent template sections call has_cached/set_cached for the same key
-THEN the underlying SharedContext.ComputeIfAbsent SHALL ensure the computation runs exactly once.
+WHEN multiple concurrent template sections call ComputeIfAbsent for the same key
+THEN the supplied compute function SHALL run exactly once and exactly one caller SHALL observe wasComputed == true.
 
 ### Requirement: Navigation and Type Functions
 
@@ -308,13 +305,13 @@ THEN it SHALL return "ssl/api_example_com.pem".
 WHEN GetPath is called with an empty filename and type "cert" and SSLDir is "ssl"
 THEN it SHALL return "ssl".
 
-### Requirement: Multiple Engine Constructors
+### Requirement: Engine Constructor
 
-The package SHALL provide: New (generic constructor accepting EngineType, compiles all templates as entry points), NewScriggo (explicit entry points, non-entry templates discovered on demand), NewScriggoWithDeclarations (adds domain-specific type declarations), NewScriggoWithProfiling (enables profiling), and NewScriggoWithProfilingAndDeclarations (both profiling and declarations). All constructors SHALL accept customFilters, customFunctions, and postProcessorConfigs parameters. The fail function in customFunctions SHALL be skipped in favor of the Scriggo-native implementation.
+The package SHALL provide a single constructor, New(templates map[string]string, opts *Options), that builds the Scriggo engine. A nil opts (or a zero-value Options) SHALL compile every template as an entry point with no custom filters, functions, post-processors, type declarations, or profiling. The Options struct SHALL expose all optional behaviour as fields: EntryPoints (templates compiled explicitly; the remainder are snippets discovered on demand via render/render_glob), Filters and Functions (custom filters and global functions merged over the built-in set), PostProcessors (per-template post-processing config), Declarations (domain-specific type declarations registered with Scriggo), and Profiling (enables Scriggo's built-in profiler). The fail function supplied in Functions SHALL be skipped in favor of the Scriggo-native implementation.
 
-#### Scenario: NewScriggoWithDeclarations registers additional types
+#### Scenario: Declarations register additional types
 
-WHEN NewScriggoWithDeclarations is called with additionalDeclarations containing a domain-specific type
+WHEN New is called with Options.Declarations containing a domain-specific type
 THEN templates SHALL be able to reference that type in variable declarations and macro signatures.
 
 ### Requirement: Resource-Agnostic Design
@@ -325,3 +322,26 @@ Template functions and filters SHALL NOT contain knowledge of specific Kubernete
 
 WHEN the engine's registered functions and filters are enumerated
 THEN none SHALL reference specific Kubernetes resource types, fields, or API versions in their implementation.
+
+### Requirement: StatusPatchCollector in Render Context
+
+The render context SHALL include a `statusPatchCollector` key containing a StatusPatchCollector instance. The collector SHALL be created fresh for each render cycle (same lifecycle as FileRegistry). After rendering completes, the caller SHALL retrieve collected patches via `statusPatchCollector.Patches()`. The StatusPatchCollector SHALL be a new type in `pkg/templating` (or `pkg/controller/rendercontext`) implementing thread-safe collection with `sync.Mutex`.
+
+#### Scenario: StatusPatchCollector available in templates
+
+- **WHEN** a template accesses `statusPatchCollector` from the render context
+- **THEN** it SHALL receive a non-nil StatusPatchCollector instance
+
+#### Scenario: Fresh collector per render cycle
+
+- **WHEN** two consecutive render cycles execute
+- **THEN** each cycle SHALL have its own StatusPatchCollector instance with no patches carried over from the previous cycle
+
+### Requirement: toJSON Filter Registration
+
+The template engine SHALL register a `toJSON` filter function (also accessible as `to_json`) that serializes any Go value to a JSON string using `encoding/json.Marshal`. The filter SHALL be usable both as a piped filter (`value | toJSON`) and as a standalone function (`toJSON(value)`).
+
+#### Scenario: toJSON registered as filter
+
+- **WHEN** a template uses `{{ myMap | toJSON }}`
+- **THEN** the engine SHALL produce the JSON-serialized representation of myMap

@@ -155,6 +155,8 @@ Verifies target content matches a regex pattern:
 | `file:<name>` | A rendered general file (error pages, etc.), matched by filename |
 | `cert:<name>` | A rendered SSL certificate, matched by basename |
 | `crt-list:<name>` | A rendered crt-list file, matched by basename. Requires HAProxy 3.2+ |
+| `k8s:<template-name>` | The rendered YAML of a `spec.k8sResources` template (potentially multi-doc with `---`), so you can assert on emitted Kubernetes resources |
+| `status:<ns>/<name>:<phase>` | The JSON status payload a `statusPatch()` call emitted for resource `<ns>/<name>` in the given pipeline phase (`rendered`, `deployed`, `renderFailed`, or `deployFailed`) — the way to test status-patch templates |
 | `rendering_error` | The simplified render error string, populated only when the render itself failed. Use this on negative tests where you expect rendering to be rejected |
 
 Unknown targets fall back to `haproxy.cfg` silently — typos in `target:` won't error, they'll just match the wrong content. Sanity-check via `--dump-rendered` if an assertion behaves unexpectedly.
@@ -257,7 +259,7 @@ haptic-controller validate -f config.yaml --schema-dir tests/schemas
 # Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic-controller validate ...
 ```
 
-The `haptic-controller validate` command shells out to the `haproxy` binary on your `PATH` for the semantic validation phase. Install HAProxy locally (e.g. via your package manager) so that step can run; otherwise only the syntax phase is exercised.
+The `haptic-controller validate` command shells out to the `haproxy` binary on your `PATH` — both to detect the HAProxy version during setup (`haproxy -v`) and for the `haproxy_valid` assertions (`haproxy -c`). Install HAProxy locally (e.g. via your package manager) and ensure it is on `PATH`; if no `haproxy` is found, `validate` fails fast with a clear error (it does not silently fall back to a syntax-only check). To validate against a specific HAProxy version, run the matching per-version controller image, which bundles that version.
 
 If a template reaches for typed watched-resource access (`resources.gateways.List()` returning `[]*resources.gateways.T`, or a `case *resources.httproutes.T` type-switch branch) and no `--schema-dir` was supplied, validation fails at engine compile time with a clear "no schema for X" pointer back to the flag. Charts that stick to the untyped `resources["<name>"]` / `dig()` path validate fine without the flag.
 

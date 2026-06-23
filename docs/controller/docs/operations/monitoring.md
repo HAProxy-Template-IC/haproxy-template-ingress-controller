@@ -177,6 +177,7 @@ rate(haptic_validation_total[5m])
 |--------|------|--------|-------------|
 | `haptic_resource_count` | Gauge | `type` | Current count of watched resources |
 | `haptic_haproxy_pods_rejected_total` | Counter | `reason` | HAProxy pods refused admission by the discovery component. Persistent non-zero growth typically means the controller cannot talk to the deployed HAProxy pods (for example, the bundled HAProxy major.minor differs from the chart's `haproxyVersion`). |
+| `haptic_config_rejected_total` | Counter | `validator` | `HAProxyTemplateConfig` loads refused by the config-validation gate. The `validator` label names which check rejected it (`basic`, `template`, `jsonpath`, `validationtests`, or `coordinator` when a validator timed out). Non-zero growth means the leader is refusing new config and continuing on the last-good one — **alert on it**: the operator's latest change is not live. |
 
 **Key queries:**
 
@@ -194,6 +195,9 @@ delta(haptic_resource_count[1h])
 
 # Rejected HAProxy pods, broken down by reason
 sum by (reason) (rate(haptic_haproxy_pods_rejected_total[5m]))
+
+# Config rejected (leader refusing new config) — alert if > 0
+sum by (validator) (rate(haptic_config_rejected_total[5m]))
 ```
 
 ### Event Metrics

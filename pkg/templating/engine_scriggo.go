@@ -128,6 +128,14 @@ func newScriggoEngine(templates map[string]string, entryPoints []string, customF
 	// Build globals (filters become functions in Scriggo)
 	engine.globals = buildScriggoGlobals(customFilters, customFunctions, additionalDeclarations)
 
+	// Override sort_by with a debug-aware variant: when EnableFilterDebug()
+	// (the `validate --debug-filters` flag) is active, it logs each comparison.
+	// The flag is read dynamically so a post-construction toggle (the testrunner
+	// builds worker engines and enables debug afterwards) is honored.
+	engine.globals[FilterSortBy] = func(items []any, criteria []string) ([]any, error) {
+		return sortByItems(items, criteria, engine.IsFilterDebugEnabled())
+	}
+
 	// Store raw templates (all templates, not just entry points)
 	maps.Copy(engine.rawTemplates, templates)
 

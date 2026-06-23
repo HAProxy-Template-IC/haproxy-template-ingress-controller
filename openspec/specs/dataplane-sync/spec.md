@@ -1,8 +1,10 @@
 # Dataplane Sync
 
+## Purpose
+
 Orchestrates HAProxy configuration synchronization through a fetch-parse-compare-apply pipeline with three-phase auxiliary file management, full-config push (a runtime-action push with no reload, or a force-reload push), and connection-error retry logic.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Orchestrator Sync Workflow
 
@@ -62,7 +64,7 @@ The Comparator SHALL perform attribute-level comparison between two parsed Struc
 
 For indexed rule types (HTTP request rules, HTTP response rules, TCP request rules, TCP response rules, stick rules, HTTP after-response rules, backend switching rules, server switching rules), the Comparator SHALL use LCS-based content matching via the Myers diff algorithm instead of index-based positional comparison. Two rules SHALL be considered equal when their `Equal()` method returns true. The diff SHALL produce INSERT (CREATE at index) and DELETE operations for rule additions and removals, rather than cascading UPDATE operations caused by index shifts. Rules present in both current and desired configurations at different positions SHALL produce no operations. Rules at the same LCS position with different content SHALL produce UPDATE operations.
 
-The LCS diff positions SHALL be translated to correct Dataplane API indexes using a running offset that accounts for cumulative shifts from prior operations within the same rule section. DELETE operations SHALL use the current-config index. INSERT operations SHALL use the desired-config index (the target position in the final configuration). The existing priority system (deletes highest-index-first, creates lowest-index-first) SHALL handle execution ordering.
+The LCS diff positions SHALL be translated to correct Dataplane API indexes using a running offset that accounts for cumulative shifts from prior operations within the same rule section. DELETE operations SHALL use the current-config index. INSERT operations SHALL use the desired-config index (the target position in the final configuration). Within each rule section the operations SHALL be emitted as updates first, then deletes highest-index-first, then inserts lowest-index-first, so each index resolves to the intended rule when the edit script is read against the staged section.
 
 The LCS-based comparison SHALL be implemented as a single generic function parameterized over rule type, accepting an equality function and producing abstract diff entries (keep/insert/delete). Each rule-type-specific comparison function SHALL wrap this generic function with its own operation factory calls.
 
@@ -123,17 +125,17 @@ THEN the CREATE operation SHALL specify index 8.
 
 ### Requirement: Operation Ordering
 
-Operations produced by the Comparator SHALL be ordered for safe execution: deletes first (sorted by descending priority so children are deleted before parents), then creates (sorted by ascending priority so parents are created before children), then updates. Within each operation type, stable sort SHALL preserve the original order for operations with equal priority.
+Operations produced by the Comparator are pure descriptors (Type, Section, Describe) with no priority field and SHALL NOT be sorted into a global delete/create/update execution sequence: the orchestrator does not execute operations one at a time, it pushes the full rendered config in a single request. The only ordering the Comparator SHALL enforce is within each indexed rule section, where the LCS-based diff SHALL emit operations as updates first, then deletes in descending index order, then inserts in ascending index order, so that each operation's index resolves to the intended rule when the edit script is read against the staged section.
 
-#### Scenario: Delete operations precede creates
+#### Scenario: Deletes emitted in descending index order within a rule section
 
-WHEN the diff contains both delete and create operations
-THEN all delete operations SHALL appear before all create operations in the ordered list.
+WHEN an indexed rule section produces multiple delete operations
+THEN those deletes SHALL be emitted in descending index order so that each delete does not shift the index of a not-yet-processed delete.
 
-#### Scenario: Parent created before child
+#### Scenario: Inserts emitted in ascending index order within a rule section
 
-WHEN a new frontend and its bind are both created
-THEN the frontend create operation SHALL have lower priority than the bind create operation, placing it earlier in the ordered list.
+WHEN an indexed rule section produces multiple insert operations
+THEN those inserts SHALL be emitted in ascending index order so that each insert lands at its final-list position.
 
 ### Requirement: DiffSummary
 
@@ -269,7 +271,7 @@ THEN the operation SHALL be retried.
 
 ### Requirement: Structured Error Types
 
-The dataplane package SHALL define structured error types: SyncError (with Stage, Message, Cause, and Hints), ConnectionError (with Endpoint and Cause), ParseError (with ConfigType, ConfigSnippet, and Cause), ConflictError (with Retries, ExpectedVersion, and ActualVersion), OperationError (with OperationType, Section, Resource, and Cause), and FallbackError (with OriginalError and FallbackCause). All error types SHALL implement the error interface. SyncError, ConnectionError, ParseError, and OperationError SHALL implement Unwrap for error chain inspection.
+The dataplane package SHALL define structured error types: SyncError (with Stage, Message, Cause, and Hints), ConnectionError (with Endpoint and Cause), ParseError (with ConfigType, ConfigSnippet, and Cause), and ValidationError (with Phase, Message, and Cause). All error types SHALL implement the error interface and SHALL implement Unwrap for error chain inspection.
 
 #### Scenario: SyncError includes stage and hints
 

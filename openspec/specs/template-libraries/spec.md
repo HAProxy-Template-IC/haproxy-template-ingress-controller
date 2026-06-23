@@ -1,12 +1,14 @@
 # Template Libraries
 
+## Purpose
+
 YAML-based library system providing composable HAProxy configuration through a strict merge order, extension point pattern, shared state communication, and embedded validation tests.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Library Merge Order
 
-Libraries SHALL be merged using mustMergeOverwrite in the following fixed order: base, ssl, ingress, gateway, ingress-annotations-compat, haproxytech, haproxy-ingress, nginx-ingress, spoa-hub, values.yaml. Later libraries SHALL override earlier ones for the same keys. Each library SHALL be independently enableable via values.yaml under controller.templateLibraries.<name>.enabled. The gateway library SHALL additionally require Gateway API CRDs to be present (Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass"). The regex-last path matching order is NOT a separate library; it is selected via controller.config.routing.regexMatchOrder ("default" or "last") which swaps a snippet inside base.yaml at Helm render time.
+Libraries SHALL be merged using mustMergeOverwrite in the following fixed order: base, ssl, ingress, gateway, ingress-annotations-compat, haproxytech, haproxy-ingress, nginx-ingress, spoa-hub, values.yaml. The base, ssl, ingress, and ingress-annotations-compat libraries live as files (or split-library directories) under `libraries/`; the gateway, haproxytech, haproxy-ingress, and nginx-ingress libraries are conditional SUBCHARTS (`charts/haptic/charts/<name>/`) referenced as `subchart:<name>` entries in `haptic.mergeLibraries`. A disabled subchart is pruned from the release Secret, so its `.Subcharts.<name>` is absent and the entry is skipped during merge. Later libraries SHALL override earlier ones for the same keys. Each library SHALL be independently enableable via values.yaml under controller.templateLibraries.<name>.enabled. The gateway library SHALL additionally require Gateway API CRDs to be present (Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass"). The regex-last path matching order is NOT a separate library; it is selected via controller.config.routing.regexMatchOrder ("default" or "last") which swaps a snippet inside base.yaml at Helm render time.
 
 #### Scenario: Later library overrides earlier for same snippet name
 
@@ -30,7 +32,7 @@ THEN the user's version SHALL take precedence over all library versions.
 
 ### Requirement: Base Library
 
-The base library SHALL always be enabled and SHALL be completely resource-agnostic (no access to Ingress, HTTPRoute, or any other specific resource fields). It SHALL define the haproxyConfig entry-point template containing the full HAProxy configuration structure: global section with "default-path origin" and crt-base directives, defaults section with error files and `balance roundrobin`, a status frontend on port 8404, an HTTP frontend with routing logic, and a default_backend returning 404. The base library SHALL define all extension points using render_glob and SHALL provide utility macros (SanitizeRegex, CalculateShardCount, HostMatchCondition, BackendServers, BuildServerOptions). It SHALL define map file templates (host.map, path-exact.map, path-prefix-exact.map, path-prefix.map, path-regex.map, weighted-multi-backend.map) and static error page files (400, 403, 408, 500, 502, 503, 504). The haproxyConfig SHALL apply a regex_replace post-processor normalizing indentation to 2 spaces.
+The base library SHALL always be enabled and SHALL be completely resource-agnostic (no access to Ingress, HTTPRoute, or any other specific resource fields). It SHALL define the haproxyConfig entry-point template containing the full HAProxy configuration structure: global section with "default-path origin" and crt-base directives, defaults section with error files and `balance roundrobin`, a status frontend on port 8404, an HTTP frontend with routing logic, and a default_backend returning 404. The base library SHALL define all extension points using render_glob and SHALL provide utility macros (CalculateShardCount, HostMatchCondition, BackendServers, BuildServerOptions). It SHALL define map file templates (host.map, path-exact.map, path-prefix-exact.map, path-prefix.map, path-regex.map, weighted-multi-backend.map) and static error page files (400, 403, 408, 500, 502, 503, 504). The haproxyConfig SHALL apply a regex_replace post-processor normalizing indentation to 2 spaces.
 
 #### Scenario: Base library renders valid HAProxy config with no resources
 
@@ -54,17 +56,22 @@ THEN it SHALL execute render_glob "map-host-*" to collect host mappings from all
 
 ### Requirement: Extension Point Pattern
 
-The base library SHALL define extension points as render_glob calls with specific patterns. Each extension point SHALL render all matching template snippets in alphabetical order. Extension points SHALL include: `features-*` (feature registration), `global-top-*` (global sections), `frontend-matchers-advanced-*` (advanced route matching), `frontend-filters-*` (request/response filters), `frontends-*` (additional frontends), `backends-*` (backend definitions), `backend-directives-*` (backend configuration), `map-host-*` (host mappings), `map-path-exact-*` (exact path mappings), `map-path-prefix-exact-*` (prefix-exact mappings), `map-path-prefix-*` (prefix mappings), `map-path-regex-*` (regex mappings), and `map-weighted-backend-*` (weighted routing).
+The base library SHALL define extension points as render_glob calls with specific patterns. Each extension point SHALL render all matching template snippets in alphabetical order. Extension points SHALL include: `features-*` (feature registration), `status-patches-*` (resource status patch registration), `global-top-*` (global sections), `frontend-matchers-advanced-*` (advanced route matching), `frontend-filters-*` (request/response filters), `frontends-*` (additional frontends), `backends-*` (backend definitions), `backend-directives-*` (backend configuration), `map-host-*` (host mappings), `map-path-exact-*` (exact path mappings), `map-pfxexact-*` (prefix-exact mappings), `map-path-prefix-*` (prefix mappings), `map-path-regex-*` (regex mappings), and `map-weighted-backend-*` (weighted routing).
 
 #### Scenario: Snippets from multiple libraries rendered in alphabetical order
 
-WHEN backends-500-ingress (from ingress.yaml) and backends-500-gateway (from gateway.yaml) both exist
-THEN render_glob "backends-*" SHALL render backends-500-gateway before backends-500-ingress.
+- **WHEN** backends-500-ingress (from ingress.yaml) and backends-500-gateway (from gateway.yaml) both exist
+- **THEN** render_glob "backends-*" SHALL render backends-500-gateway before backends-500-ingress.
 
 #### Scenario: Extension point renders nothing when no snippets match
 
-WHEN no library defines a snippet matching "global-top-*"
-THEN render_glob "global-top-*" SHALL produce empty output.
+- **WHEN** no library defines a snippet matching "global-top-*"
+- **THEN** render_glob "global-top-*" SHALL produce empty output.
+
+#### Scenario: Status patches extension point renders at priority 200
+
+- **WHEN** `status-patches-200-ingress` and `backends-500-ingress` both exist
+- **THEN** render_glob "status-patches-*" SHALL execute before render_glob "backends-*"
 
 ### Requirement: Snippet Priority Numbering
 
@@ -91,7 +98,7 @@ THEN the generated crt-list SHALL contain a line with the sanitized certificate 
 
 ### Requirement: Ingress Library
 
-The Ingress library SHALL watch networking.k8s.io/v1 Ingress resources (filtered by spec.ingressClassName injected from Helm values), v1 Services, and discovery.k8s.io/v1 EndpointSlices. It SHALL register TLS certificates from Ingress spec.tls sections with the SSL infrastructure, deduplicated by namespace+secretName using first_seen. It SHALL generate backend names in the format `ing_<namespace>_<name>_<serviceName>_<port>`. It SHALL populate host.map, path-exact.map, path-prefix.map, and path-prefix-exact.map with entries derived from Ingress rules using the BACKEND qualifier format. Path types Exact, Prefix, and ImplementationSpecific SHALL be supported. Ingress backends SHALL NOT set a `balance` directive, inheriting the default from the base library's defaults section. Annotation-driven balance overrides from annotation libraries SHALL take precedence when set.
+The Ingress library SHALL watch networking.k8s.io/v1 Ingress resources (filtered by spec.ingressClassName injected from Helm values), v1 Services, and discovery.k8s.io/v1 EndpointSlices. It SHALL register TLS certificates from Ingress spec.tls sections with the SSL infrastructure, deduplicated by namespace+secretName using first_seen. It SHALL generate backend names in the format `<namespace>_<name>_svc_<serviceName>_<portIdentifier>`, where `<portIdentifier>` is the Service port NAME resolved via Service lookup when the Ingress references the port by number (falling back to the port number only when no name is available). It SHALL populate host.map, path-exact.map, path-prefix.map, and path-prefix-exact.map with entries derived from Ingress rules using the BACKEND qualifier format. Path types Exact, Prefix, and ImplementationSpecific SHALL be supported. Ingress backends SHALL NOT set a `balance` directive, inheriting the default from the base library's defaults section. Annotation-driven balance overrides from annotation libraries SHALL take precedence when set.
 
 #### Scenario: Ingress backend inherits balance from defaults
 
@@ -100,8 +107,8 @@ THEN the backend section SHALL NOT contain a `balance` directive, inheriting `ro
 
 #### Scenario: Ingress backend generated with correct name
 
-WHEN an Ingress "my-ingress" in namespace "default" routes to service "my-svc" port 80
-THEN a backend named "ing_default_my-ingress_my-svc_80" SHALL be generated.
+WHEN an Ingress "my-ingress" in namespace "default" routes to service "my-svc" on a port named "http" (e.g. referenced by number 80, resolved to its port name via Service lookup)
+THEN a backend named "default_my-ingress_svc_my-svc_http" SHALL be generated.
 
 #### Scenario: Ingress host.map entry generated
 
@@ -139,7 +146,7 @@ THEN the certificate SHALL be registered with the SSL infrastructure for crt-lis
 
 ### Requirement: HAProxyTech Annotations Library
 
-The HAProxyTech library SHALL process `haproxy.org/*` annotations on Ingress resources. It SHALL provide helper macros (Ann for annotation access with defaults, IKey for ingress key, IHosts for host extraction). It SHALL support SSL passthrough via haproxy.org/ssl-passthrough annotation. It SHALL provide backend-directives extension point snippets for backend configuration (config-snippet, server options). It SHALL provide frontend-filters extension point snippets for request/response manipulation (headers, access control, CORS, SSL redirect). It SHALL support userlist generation from auth secrets via global-top-* snippets.
+The HAProxyTech library SHALL process `haproxy.org/*` annotations on Ingress resources. It SHALL read annotation values via direct typed access on the Ingress (`ingress.Metadata.Annotations[...]`) inline within its snippets, rather than through dedicated helper macros. It SHALL support SSL passthrough via haproxy.org/ssl-passthrough annotation. It SHALL provide backend-directives extension point snippets for backend configuration (config-snippet, server options). It SHALL provide frontend-filters extension point snippets for request/response manipulation (headers, access control, CORS, SSL redirect). It SHALL support userlist generation from auth secrets via global-top-* snippets.
 
 #### Scenario: Backend config snippet annotation applied
 

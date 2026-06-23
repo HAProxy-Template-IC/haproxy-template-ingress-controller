@@ -852,12 +852,12 @@ Status patches use outcome-keyed variants:
 
 (The `RequestMirror` filter, previously listed here, **is** implemented — per-route mirroring via the bundled spoa-hub `mirror` plugin with percent/fraction sampling and multiple mirrors per rule.)
 
-### Untested Features
+### Partially Covered Features
 
-- Cross-namespace backend references
-- Cross-namespace parent Gateway references
-- Wildcard hostname patterns
-- Listener-specific route attachment (`sectionName`)
+- Cross-namespace **backend** references are implemented (`backendRef.namespace` honored, gated by `ReferenceGrant`) and exercised by the upstream Gateway API conformance suite — they simply aren't pinned by this library's own validationTests.
+- Cross-namespace **parent** Gateway references — not pinned by a validationTest.
+- Wildcard hostname patterns — regex host-map support exists; not pinned by a validationTest.
+- Listener-specific route attachment — `sectionName` drives `attachedRoutes` status counting, but per-listener routing isolation is not implemented.
 
 ---
 
@@ -897,11 +897,9 @@ Priority areas for future enhancement:
 
 2. **Per-backend filters** - Extend `backendRefs[].filters[]` beyond the already-supported `RequestHeaderModifier` to the remaining filter types, for different filter behavior per backend within the same rule.
 
-3. **Request mirroring** - Investigate integration with external SPOE agents (e.g., [Criteo traffic-mirroring](https://github.com/criteo/traffic-mirroring)) for traffic shadowing capabilities.
+3. **Cross-namespace validationTests** - Add library validationTests pinning cross-namespace **parent** Gateway references (cross-namespace backend refs via `ReferenceGrant` are already implemented and conformance-covered).
 
-4. **Cross-namespace testing** - Validate cross-namespace backend and Gateway references work correctly.
-
-5. **Wildcard hostname support** - Test and document wildcard hostname patterns (e.g., `*.example.com`).
+4. **Wildcard hostname tests** - Pin the existing regex host-map wildcard support (e.g., `*.example.com`) with validationTests.
 
 ---
 

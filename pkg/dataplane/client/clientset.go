@@ -301,32 +301,37 @@ func (c *Clientset) IsEnterprise() bool {
 //   - Enterprise clients (v32ee, v31ee, v30ee) if HAProxy Enterprise is detected
 //   - Community clients (v32, v31, v30) for HAProxy Community
 //
-// Version selection:
-//   - v3.2+ client if server is v3.2+
+// Version selection (newer minors clamp down to the newest bundled client):
+//   - v3.3 client if server is v3.3 or newer
+//   - v3.2 client if server is v3.2
 //   - v3.1 client if server is v3.1
 //   - v3.0 client if server is v3.0 or unknown
 func (c *Clientset) PreferredClient() any {
 	if c.isEnterprise {
-		switch c.minorVersion {
-		case 3:
-			// No v33ee client yet (HAProxy Enterprise 3.3 not released).
-			// Fall through to v32ee which has the same API endpoints.
+		// No v33ee client yet (newest bundled enterprise client is v3.2ee).
+		// v3.3+ enterprise minors clamp DOWN to it (same API endpoints) rather
+		// than falling through to the oldest v3.0ee client.
+		switch {
+		case c.minorVersion >= 2:
 			return c.v32eeClient
-		case 2:
-			return c.v32eeClient
-		case 1:
+		case c.minorVersion == 1:
 			return c.v31eeClient
 		default:
 			return c.v30eeClient
 		}
 	}
 
-	switch c.minorVersion {
-	case 3:
+	// v3.3 is the newest bundled community client. Minor versions newer than
+	// that clamp DOWN to it: the DataPlane API minor cadence is independent of
+	// these generated clients, so a v3.4+ server reuses the v3.3 client (newest
+	// API surface) instead of falling through to the oldest, most-restrictive
+	// v3.0 client. Mirrors getCachedValidatorForVersion in validate_syntax.go.
+	switch {
+	case c.minorVersion >= 3:
 		return c.v33Client
-	case 2:
+	case c.minorVersion == 2:
 		return c.v32Client
-	case 1:
+	case c.minorVersion == 1:
 		return c.v31Client
 	default:
 		return c.v30Client
