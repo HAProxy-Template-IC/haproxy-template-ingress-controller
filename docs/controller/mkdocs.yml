@@ -69,6 +69,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Migrating: migrating.md
   - Usage:
     - Templating: templating.md
     - CRD Reference: crd-reference.md
