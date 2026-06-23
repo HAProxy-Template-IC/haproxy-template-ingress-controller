@@ -21,7 +21,7 @@ The entire process takes approximately 15-20 minutes on a local Kubernetes clust
 - Helm 3.0+
 
 !!! note "Webhook Validation"
-    This guide disables the validating admission webhook (`webhook.enabled=false`) so you can install without provisioning a TLS certificate for it. By default the webhook intercepts CREATE/UPDATE on Ingresses, HTTPRoutes, and GRPCRoutes (the kinds the chart libraries opt in via `enableValidationWebhook: true`) and rejects changes that would break template rendering. For production, enable it together with [cert-manager](https://cert-manager.io/docs/installation/) — see [Security](./operations/security.md) for details.
+    The validating admission webhook is **enabled by default and works out of the box** — the chart generates a self-signed TLS certificate for it, with no cert-manager required. It intercepts CREATE/UPDATE on Ingresses, HTTPRoutes, and GRPCRoutes (the kinds the chart libraries opt in via `enableValidationWebhook: true`) and rejects changes that would break template rendering. The self-signed cert is long-lived and **not auto-rotated**; for automatic rotation set `webhook.certManager.enabled=true` (requires [cert-manager](https://cert-manager.io/docs/installation/)) — see [Security](./operations/security.md) for details.
 
 ## Step 1: Install with Helm
 
@@ -31,7 +31,6 @@ Install the controller and HAProxy using Helm:
 # Install from OCI registry (deploys both controller and HAProxy pods)
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
   --version 0.1.0 \
-  --set webhook.enabled=false \
   --namespace haptic --create-namespace
 ```
 

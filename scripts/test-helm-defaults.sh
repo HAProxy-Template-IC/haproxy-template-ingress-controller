@@ -370,7 +370,7 @@ wait_cert_ready() {
 }
 
 verify_certificates() {
-    info "Verifying cert-manager resources..."
+    info "Verifying certificate resources (cert-manager SSL + chart self-signed webhook)..."
 
     # Check SSL Issuer (with retry for race condition with cert-manager)
     info "Checking SSL Issuer..."
@@ -390,25 +390,30 @@ verify_certificates() {
         die "TLS secret 'default-ssl-cert' not found or wrong type" 5
     fi
 
-    # Check Webhook Issuer (with retry for race condition with cert-manager)
-    info "Checking Webhook Issuer..."
-    wait_for_resource issuer "webhook-selfsigned" "Webhook Issuer" "Webhook self-signed Issuer not found"
-
-    # Check Webhook Certificate (with retry for race condition with cert-manager)
-    info "Checking Webhook Certificate..."
-    wait_for_resource certificate "webhook-cert" "Webhook Certificate" "webhook-cert Certificate not found"
-
-    # Wait for webhook certificate to be ready
-    info "Waiting for Webhook certificate to be ready..."
-    wait_cert_ready "${RELEASE_NAME}-webhook-cert"
-
-    # Check Webhook TLS Secret exists
-    info "Checking Webhook TLS Secret..."
+    # Webhook serving cert: chart-native self-signed by default (no cert-manager).
+    # The chart renders the TLS Secret itself and injects the CA straight into the
+    # ValidatingWebhookConfiguration's caBundle, so there is no webhook Issuer or
+    # Certificate to wait for. Verify the Secret carries a CA and that the caBundle
+    # was actually wired (the crux of the zero-dependency default).
+    info "Checking Webhook TLS Secret (chart self-signed)..."
     if ! kubectl get secret "${RELEASE_NAME}-webhook-cert" -n "$NAMESPACE" -o jsonpath='{.type}' | grep -q "kubernetes.io/tls"; then
         die "TLS secret '${RELEASE_NAME}-webhook-cert' not found or wrong type" 5
     fi
+    if [[ -z "$(kubectl get secret "${RELEASE_NAME}-webhook-cert" -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)" ]]; then
+        die "Webhook TLS secret '${RELEASE_NAME}-webhook-cert' missing ca.crt" 5
+    fi
 
-    ok "All cert-manager resources verified"
+    info "Checking ValidatingWebhookConfiguration caBundle is wired..."
+    local vwc="${RELEASE_NAME}-webhook"
+    local ca_bundle
+    ca_bundle=$(kubectl get validatingwebhookconfiguration "$vwc" \
+        -o jsonpath='{.webhooks[0].clientConfig.caBundle}' 2>/dev/null || echo "")
+    if [[ -z "$ca_bundle" ]]; then
+        kubectl get validatingwebhookconfiguration "$vwc" -o yaml || true
+        die "ValidatingWebhookConfiguration '$vwc' has empty caBundle (self-signed CA not injected)" 5
+    fi
+
+    ok "All certificate resources verified"
 }
 
 #------------------------------------------------------------------------------

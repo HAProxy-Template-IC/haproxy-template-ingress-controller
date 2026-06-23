@@ -1,0 +1,12 @@
+# A sample WebApp. After HAPTIC processes it, `kubectl get webapp shop -n demo`
+# shows the Accepted column flip to True and `.status.conditions` is populated —
+# written back by the statusPatch() in haproxytemplateconfig.yaml.
+apiVersion: examples.haptic.dev/v1
+kind: WebApp
+metadata:
+  name: shop
+  namespace: demo
+spec:
+  host: shop.example.com
+  serviceName: shop-svc
+  servicePort: 8080

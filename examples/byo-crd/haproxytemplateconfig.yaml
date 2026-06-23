@@ -1,0 +1,136 @@
+# Bring-your-own-CRD example.
+#
+# HAPTIC routes on, and reports status back to, an arbitrary operator CRD with
+# ZERO Go code — only this HAProxyTemplateConfig. Here the watched resource is a
+# made-up `WebApp` (examples.haptic.dev/v1); swapping it for your own CRD is a
+# matter of changing `watchedResources` and the template, nothing else.
+#
+# Validate it offline (no cluster needed):
+#   make build
+#   ./bin/haptic-controller validate -f examples/byo-crd/haproxytemplateconfig.yaml
+#
+# The embedded validationTest renders the config from a WebApp fixture, runs
+# `haproxy -c` on the result, and checks the generated backend, host map, and
+# the status patch — so the example can't silently drift from engine behaviour.
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: byo-crd-example
+spec:
+  # 1. Watch the custom CRD. The controller is resource-agnostic — it learns the
+  #    WebApp's shape from the apiserver (or --schema-dir offline); no Go knows
+  #    "WebApp" exists.
+  watchedResources:
+    webapps:
+      apiVersion: examples.haptic.dev/v1
+      resources: webapps
+      indexBy:
+        - metadata.namespace
+        - metadata.name
+      enableValidationWebhook: true
+
+  # 2. Render HAProxy config from the WebApps: a host map + one backend each, and
+  #    register a status patch reporting the result back onto the WebApp.
+  haproxyConfig:
+    template: |
+      global
+        # default-path origin lets relative map paths resolve at runtime and
+        # during `haproxy -c` validation (the validator rewrites this directive).
+        default-path origin {{ pathResolver.GetBaseDir() }}
+        log stdout format raw local0
+
+      defaults
+        mode http
+        log global
+        option httplog
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+
+      # Resolve Service DNS names at runtime from the pod's /etc/resolv.conf
+      # (cluster DNS). init-addr none (on the server) lets HAProxy start before
+      # the name resolves, instead of failing at boot.
+      resolvers cluster-dns
+        parse-resolv-conf
+        hold valid 10s
+
+      frontend http
+        bind :8080
+        # Route by Host header via the generated host -> backend map.
+        use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("webapp-host.map", "map") }})]
+        default_backend webapp-not-found
+
+      {%- for _, wa := range resources.webapps.List() %}
+      {%%
+        var ns   = wa | dig("metadata", "namespace") | fallback("") | tostring()
+        var name = wa | dig("metadata", "name") | fallback("") | tostring()
+        var svc  = wa | dig("spec", "serviceName") | fallback("") | tostring()
+        var port = wa | dig("spec", "servicePort") | fallback(80) | toint()
+        var gen  = wa | dig("metadata", "generation") | fallback(0)
+      %%}
+      backend webapp_{{ ns }}_{{ name }}
+        # Resolve the Service via cluster DNS — this demo keeps it simple and
+        # skips EndpointSlice plumbing.
+        server app {{ svc }}.{{ ns }}.svc:{{ port }} check resolvers cluster-dns init-addr none
+      {%- statusPatch(ns, name, "examples.haptic.dev/v1", "WebApp", map[string]any{
+          "deployed": map[string]any{
+              "status": map[string]any{
+                  "conditions": []any{
+                      condition("Accepted", "True", "Accepted", "Routed by HAPTIC", gen, transitionTime(wa, "Accepted", "True")),
+                  },
+              },
+          },
+          "deployFailed": map[string]any{
+              "status": map[string]any{
+                  "conditions": []any{
+                      condition("Accepted", "False", "DeployFailed", "HAProxy deployment failed", gen, transitionTime(wa, "Accepted", "False")),
+                  },
+              },
+          },
+      }) %}
+      {%- end %}
+
+      backend webapp-not-found
+        http-request deny deny_status 404
+
+  maps:
+    webapp-host.map:
+      template: |
+        {%- for _, wa := range resources.webapps.List() %}
+        {{ wa | dig("spec", "host") | fallback("") | tostring() }} webapp_{{ wa | dig("metadata", "namespace") | fallback("") | tostring() }}_{{ wa | dig("metadata", "name") | fallback("") | tostring() }}
+        {%- end %}
+
+  # 3. Prove it. The fixture is the only "cluster state" the test needs.
+  validationTests:
+    test-webapp-routing:
+      description: A WebApp yields a backend, a host-map entry, and an Accepted status patch
+      fixtures:
+        webapps:
+          - apiVersion: examples.haptic.dev/v1
+            kind: WebApp
+            metadata:
+              namespace: demo
+              name: shop
+              generation: 1
+            spec:
+              host: shop.example.com
+              serviceName: shop-svc
+              servicePort: 8080
+      assertions:
+        - type: haproxy_valid
+          description: rendered config is valid HAProxy
+        - type: contains
+          target: haproxy.cfg
+          pattern: "backend webapp_demo_shop"
+        - type: contains
+          target: haproxy.cfg
+          pattern: "server app shop-svc\\.demo\\.svc:8080 check"
+        - type: contains
+          target: "map:webapp-host.map"
+          pattern: "shop\\.example\\.com webapp_demo_shop"
+        - type: contains
+          target: "status:demo/shop:deployed"
+          pattern: "\"type\":\"Accepted\""
+        - type: contains
+          target: "status:demo/shop:deployed"
+          pattern: "\"status\":\"True\""

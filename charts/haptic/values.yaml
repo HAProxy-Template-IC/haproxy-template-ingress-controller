@@ -527,14 +527,29 @@ webhook:
   service:
     # Service port (exposed to Kubernetes API server)
     port: 443
-  # Certificate management
-  # Choose ONE of the following options:
+  # Certificate management. Three mutually exclusive modes:
   #
-  # Option 1: Use cert-manager (default, recommended)
-  # Requires cert-manager to be installed in the cluster
-  # Creates a self-signed certificate automatically for dev/test
+  # Option 1 (DEFAULT): chart self-signed — certManager.enabled=false AND
+  #   caBundle empty. The chart generates a long-lived self-signed serving cert
+  #   and injects its caBundle, so the webhook works out of the box with no
+  #   external dependency. The cert is reused across upgrades (no churn); rotate
+  #   by deleting the Secret and running `helm upgrade`. Good for dev/test and
+  #   clusters without cert-manager.
+  #
+  # Option 2 (recommended for production): cert-manager — set
+  #   certManager.enabled=true. Requires cert-manager installed; gives real CA
+  #   chains and automatic rotation.
+  #
+  # Option 3: manual — certManager.enabled=false AND set caBundle below; create
+  #   the cert Secret (webhook.secretName) yourself.
+  #
+  # Upgrade note: if a prior release used cert-manager (the old default), its
+  #   webhook Secret lacks Helm ownership metadata, so `helm upgrade` to the
+  #   self-signed default (same Secret name) will refuse to adopt it. Either keep
+  #   certManager.enabled=true, or `kubectl delete secret <release>-webhook-cert`
+  #   first so the chart can recreate it.
   certManager:
-    enabled: true
+    enabled: false
     # Create a self-signed Issuer for webhook certificates
     # When enabled, the chart creates an Issuer that can sign webhook certificates
     # This is the simplest setup - just set enabled=true and createIssuer=true
@@ -551,12 +566,21 @@ webhook:
     duration: 8760h # 1 year
     # Renew certificate when this much time is left (default: 30 days)
     renewBefore: 720h # 30 days
+  # Option 1 (DEFAULT) self-signed cert settings — used when
+  # certManager.enabled=false AND caBundle is empty.
+  selfSigned:
+    # Validity of the chart-generated self-signed cert, in days. Long by
+    # default because the chart does NOT auto-rotate it: the cert is generated
+    # once and reused across upgrades (lookup-based, no churn). For automatic
+    # rotation use cert-manager (Option 2). To rotate manually: delete the
+    # Secret (webhook.secretName) and run `helm upgrade`.
+    certValidityDays: 3650 # 10 years
   #
-  # Option 2: Manual certificate management
-  # Provide base64-encoded CA bundle for ValidatingWebhookConfiguration
-  # This is required when certManager.enabled is false
-  # Create the certificate Secret manually with keys: tls.crt, tls.key, ca.crt
-  # Secret name is configured via webhook.secretName (default: {{ release-fullname }}-webhook-cert)
+  # Option 3: Manual certificate management
+  # Provide base64-encoded CA bundle for the ValidatingWebhookConfiguration and
+  # create the cert Secret (webhook.secretName) yourself, with keys tls.crt,
+  # tls.key, ca.crt. Only needed if you set certManager.enabled=false AND want
+  # to supply your own cert instead of the chart self-signed one.
   caBundle: "" # Base64-encoded CA certificate
   # Example:
   # caBundle: LS0tLS1CRUdJTi...
