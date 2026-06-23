@@ -154,6 +154,33 @@ controller:
           legacy.example.com legacy.example.com
 ```
 
+### Library Configuration via `extraContext`
+
+`extraContext` is a parameter bag exposed to every snippet (read with
+`extraContext | dig("key") | fallback("default")`). It carries chart-computed
+values (ports, the HAProxy service name, …) plus anything you set under
+`controller.config.templatingSettings.extraContext`.
+
+Bundled libraries ship sensible **defaults** for their tunables, which you can
+override here. For example, the nginx-ingress library's HTTP→HTTPS redirect
+status code — HAPTIC's equivalent of ingress-nginx's global `http-redirect-code`
+(default `308`):
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        nginxHttpRedirectCode: "301"   # override the library default of 308
+```
+
+A value you set here always wins over the library's default. Custom snippets
+read any key the same way:
+
+```scriggo
+{%- var code = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
+```
+
 ### Snippet Priority
 
 Snippets within a `render_glob` pattern execute in **alphabetical order**. Priority is encoded in the snippet name via a numeric prefix:

@@ -142,11 +142,10 @@ The library covers the common `nginx.ingress.kubernetes.io/*` annotations —
 backend timeouts, `load-balance`, `proxy-body-size`, `rewrite-target`,
 `ssl-redirect`/`force-ssl-redirect`, HSTS, CORS, `whitelist`/`denylist-source-range`,
 custom headers, basic + external auth, `ssl-passthrough`, canary, client mTLS,
-and ModSecurity. Full per-annotation reference:
+request mirroring (`mirror-target`), and ModSecurity. Full per-annotation reference:
 [nginx-ingress library docs](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/haptic/docs/libraries/nginx-ingress.md).
 
 !!! warning "Not carried over (silently dropped)"
-    `mirror-*` (use the Gateway API `RequestMirror` filter instead),
     `server-snippet`, `stream-snippet`, `auth-snippet`,
     `proxy-max-temp-file-size`, `auth-tls-verify-depth`, and the
     OpenTelemetry/OpenTracing families. `backend-protocol: AJP|FCGI` does **not**
@@ -155,8 +154,8 @@ and ModSecurity. Full per-annotation reference:
 !!! warning "Behaviour changes to check"
     - `proxy-read-timeout` and `proxy-send-timeout` collapse into one HAProxy `timeout server` (the larger wins) — asymmetric timeouts are lost.
     - `limit-rps` and `limit-connections` can't coexist; if both are set, `limit-connections` is dropped.
-    - `ssl-redirect` emits **301**, `force-ssl-redirect` emits **308** — clients/caches keyed on nginx's codes may differ.
     - External-auth (`auth-url`) and mTLS (`auth-tls-*`) annotations **fail the render** on a rule with no `host:` — add a host to any wildcard/default-backend Ingress that uses them.
+    - `mirror-target` needs `spoaHub.plugins.mirror` enabled and a rule `host:` (both fail the render otherwise, rather than silently no-op); `mirror-host` and `mirror-request-body: off` are not honoured.
     - Basic-auth Secret format is unchanged from ingress-nginx (htpasswd in a single `auth` key) — but it differs from the haproxy-ingress library's format, so don't mix.
 
 ---

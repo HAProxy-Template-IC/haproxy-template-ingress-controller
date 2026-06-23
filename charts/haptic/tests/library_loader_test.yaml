@@ -82,3 +82,29 @@ tests:
     asserts:
       - notExists:
           path: spec.templateSnippets["util-build-annotation-ssl-passthrough"]
+
+  # Library-declared extraContext defaults (haproxytemplateconfig.yaml merges a
+  # library's top-level templatingSettings.extraContext at lowest precedence).
+  - it: should merge a library-declared extraContext default into the rendered config
+    set:
+      controller.templateLibraries.nginxIngress.enabled: true
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.nginxHttpRedirectCode
+          value: "308"
+
+  - it: should not leak a library extraContext default when the library is disabled
+    set:
+      controller.templateLibraries.nginxIngress.enabled: false
+    asserts:
+      - notExists:
+          path: spec.templatingSettings.extraContext.nginxHttpRedirectCode
+
+  - it: operator extraContext override wins over a library-declared default
+    set:
+      controller.templateLibraries.nginxIngress.enabled: true
+      controller.config.templatingSettings.extraContext.nginxHttpRedirectCode: "301"
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.nginxHttpRedirectCode
+          value: "301"

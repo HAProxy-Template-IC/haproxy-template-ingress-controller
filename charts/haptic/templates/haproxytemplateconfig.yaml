@@ -285,6 +285,14 @@ spec:
       {{- $_ := set $config $key . }}
     {{- end }}
   {{- end }}
+  {{- /* Library-declared extraContext defaults. A template library may set
+         top-level `templatingSettings.extraContext.<key>` to provide a default
+         value its snippets read (e.g. nginx-ingress's nginxHttpRedirectCode).
+         Lowest precedence: `merge` fills only keys NOT already set by the
+         operator's controller.config or the chart-computed blocks above. */ -}}
+  {{- with ($mergedLibraries.templatingSettings | default dict).extraContext }}
+    {{- $_ := merge $extraContext . }}
+  {{- end }}
   {{- /* watchedResources: merge with the operator's override instead of replacing it */ -}}
   {{- with $mergedLibraries.watchedResources }}
     {{- $_ := set $config "watchedResources" (merge ($config.watchedResources | default dict) .) }}

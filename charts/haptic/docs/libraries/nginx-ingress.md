@@ -380,10 +380,21 @@ http-request redirect location /dashboard code 302 if { path / } { hdr(host) -i 
 
 | Annotation | Description | Redirect Code |
 |------------|-------------|---------------|
-| `ssl-redirect` | Enable SSL redirect | `301` |
+| `ssl-redirect` | Enable SSL redirect | `308` |
 | `force-ssl-redirect` | Force SSL redirect | `308` |
 
-If both are set, `force-ssl-redirect` takes precedence (code 308).
+Both emit a `308` (Permanent Redirect), matching ingress-nginx, which sends both
+via its `http-redirect-code` (default `308`). To change the code, set
+`nginxHttpRedirectCode` (HAPTIC's equivalent of nginx's global
+`http-redirect-code`) in values:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        nginxHttpRedirectCode: "301"   # valid: 301, 302, 303, 307, 308
+```
 
 **Usage**:
 
@@ -395,7 +406,7 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-request redirect scheme https code 301 if !{ ssl_fc } { hdr(host) -i example.com }
+http-request redirect scheme https code 308 if !{ ssl_fc } { hdr(host) -i example.com }
 ```
 
 ---
@@ -960,13 +971,21 @@ http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { hdr(host) -i ex
 
 ---
 
+## Request Mirroring
+
+`nginx.ingress.kubernetes.io/mirror-target` **is** supported, via the bundled SPOA hub **mirror** plugin (the same machinery the Gateway API `RequestMirror` filter uses) — enable it with `spoaHub.plugins.mirror`. Mirroring is fire-and-forget: a copy of each matching request is sent to the target and its response is discarded. Only the authority (`host[:port]`) of the `scheme://host[:port]$request_uri` value is used; the plugin re-attaches the live request path/query. Each mirror-target Ingress gets its own mirror slot, capped at `spoaHub.mirrorStaticMinSlots` (default 4).
+
+These constraints **fail the config** with an actionable message rather than silently doing nothing: the mirror plugin must be enabled, the Ingress must define a `host` (host-less / default-backend mirroring is unsupported), and the number of mirror-target Ingresses must not exceed the slot count (raise `spoaHub.mirrorStaticMinSlots`). `mirror-host` and `mirror-request-body: off` are **not** honoured — the plugin always forces the mirrored Host to the target authority and always forwards the buffered request body.
+
+---
+
 ## Unsupported Annotations
 
 The following nginx-ingress annotations are not supported:
 
 | Annotation | Reason |
 |------------|--------|
-| `mirror-*` | No nginx mirror annotation is wired; for request mirroring use the Gateway API `RequestMirror` filter (spoa-hub mirror plugin) |
+| `mirror-host`, `mirror-request-body: off` | Only `mirror-target` is honoured (see [Request Mirroring](#request-mirroring)); the plugin forces the mirrored Host to the target authority and always forwards the buffered body |
 | `enable-opentelemetry`, `opentelemetry-*` | Requires OpenTelemetry module |
 | `enable-opentracing`, `opentracing-*` | Requires OpenTracing module |
 | `server-snippet` | Nginx server-level directives have no HAProxy equivalent |
