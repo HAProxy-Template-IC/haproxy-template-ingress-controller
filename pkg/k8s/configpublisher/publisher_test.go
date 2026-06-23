@@ -241,7 +241,11 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	err = publisher.UpdateDeploymentStatus(ctx, &firstUpdate)
 	require.NoError(t, err)
 
-	// Update same pod with an error (error state transition triggers UpdateStatus)
+	// Update the same pod with a FAILED sync carrying a *different* checksum.
+	// The pod did not actually receive "def456", so the recorded checksum must
+	// NOT advance to it — otherwise deployedToPods[].checksum would equal
+	// spec.checksum and falsely read as converged. The last successfully-deployed
+	// checksum ("abc123") is preserved; only LastError is updated.
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamp
 	secondUpdate := DeploymentStatusUpdate{
 		RuntimeConfigName:      "test-config-haproxycfg",
@@ -254,7 +258,8 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	err = publisher.UpdateDeploymentStatus(ctx, &secondUpdate)
 	require.NoError(t, err)
 
-	// Verify only one pod entry exists with updated checksum and error
+	// Verify only one pod entry exists, with the LAST-SUCCESSFUL checksum
+	// preserved and the error recorded.
 	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs("default").
 		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
@@ -262,8 +267,52 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
 	assert.Equal(t, "haproxy-0", runtimeConfig.Status.DeployedToPods[0].PodName)
-	assert.Equal(t, "def456", runtimeConfig.Status.DeployedToPods[0].Checksum)
+	assert.Equal(t, "abc123", runtimeConfig.Status.DeployedToPods[0].Checksum,
+		"a failed sync must preserve the last successfully-deployed checksum, not advance to the failed one")
 	assert.Equal(t, "sync failed", runtimeConfig.Status.DeployedToPods[0].LastError)
+}
+
+// TestUpdateDeploymentStatus_FirstDeployFailureRecordsNoChecksum pins that when
+// a pod's very first deploy fails (no prior success to preserve), no checksum is
+// recorded at all — so the pod correctly reads as never-converged rather than
+// being stamped with the checksum it failed to receive.
+func TestUpdateDeploymentStatus_FirstDeployFailureRecordsNoChecksum(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
+
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+
+	_, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("test-uid-123"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "v1",
+	})
+	require.NoError(t, err)
+
+	// Pod's first-ever deploy fails — it never received "v1".
+	err = publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		Checksum:               "v1",
+		Error:                  "connection refused",
+	})
+	require.NoError(t, err)
+
+	runtimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, runtimeConfig.Status.DeployedToPods, 1)
+	assert.Equal(t, "haproxy-0", runtimeConfig.Status.DeployedToPods[0].PodName)
+	assert.Empty(t, runtimeConfig.Status.DeployedToPods[0].Checksum,
+		"a first-deploy failure must record no checksum (the pod never converged), not the failed one")
+	assert.Equal(t, "connection refused", runtimeConfig.Status.DeployedToPods[0].LastError)
 }
 
 func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {

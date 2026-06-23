@@ -135,3 +135,43 @@ func TestHandleDeploymentCompleted_EmptyChecksumLeavesCacheUntouched(t *testing.
 			"lastDeployedConfigHash untouched — nothing was deployed, so the "+
 			"previous real deploy's hash stays authoritative")
 }
+
+// TestHandleDeploymentCompleted_FailedDeployLeavesCacheUntouched pins that a
+// deployment that did not fully succeed (event.Failed > 0) must NOT be recorded
+// as the last-deployed hash. lastDeployedConfigHash is the "last SUCCESSFULLY
+// deployed" hash the skip-unchanged gate compares against; recording a
+// partial/failed deploy would make the gate refuse to re-push to the still-stale
+// pods until the config changes or the drift timer fires, delaying self-heal.
+// Leaving the cache at the prior good hash lets the next reconcile re-attempt
+// the same config immediately.
+func TestHandleDeploymentCompleted_FailedDeployLeavesCacheUntouched(t *testing.T) {
+	bus := testutil.NewTestBus()
+	bus.Start()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+
+	const priorDeployedHash = "real-deploy-hash-from-the-last-successful-deploy"
+
+	scheduler.mu.Lock()
+	scheduler.lastDeployedConfigHash = priorDeployedHash
+	scheduler.mu.Unlock()
+
+	// Partial-failure completion: 2 endpoints, 1 succeeded, 1 failed. The new
+	// checksum must NOT become the last-deployed hash.
+	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total:           2,
+		Succeeded:       1,
+		Failed:          1,
+		ContentChecksum: "checksum-of-the-partially-failed-deploy",
+	})
+
+	scheduler.handleDeploymentCompleted(event)
+
+	scheduler.mu.RLock()
+	got := scheduler.lastDeployedConfigHash
+	scheduler.mu.RUnlock()
+
+	require.Equal(t, priorDeployedHash, got,
+		"a partial/failed deployment (event.Failed=%d) must leave "+
+			"lastDeployedConfigHash untouched so the skip-unchanged gate keeps "+
+			"re-attempting until every pod converges", event.Failed)
+}
