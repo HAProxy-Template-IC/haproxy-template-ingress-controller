@@ -48,26 +48,30 @@ templateSnippets:
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#server-side-https-enforcement-through-redirect
 
         Annotations:
-          - nginx.ingress.kubernetes.io/ssl-redirect: "true|false" (code 301)
-          - nginx.ingress.kubernetes.io/force-ssl-redirect: "true|false" (code 308)
+          - nginx.ingress.kubernetes.io/ssl-redirect: "true|false"
+          - nginx.ingress.kubernetes.io/force-ssl-redirect: "true|false"
 
-        If both are set, force-ssl-redirect takes precedence (code 308).
+        Both emit the same redirect status, matching ingress-nginx, which sends
+        both via its global http-redirect-code (default 308). HAPTIC's equivalent
+        is the `nginxHttpRedirectCode` extraContext var (default 308, declared by
+        this library's _index.yaml; override via
+        controller.config.templatingSettings.extraContext.nginxHttpRedirectCode).
+        308 (Permanent Redirect) preserves the request method on POST where 301
+        may downgrade it to GET.
 
         Generated HAProxy Config:
           http-request redirect scheme https code <code> if !{ ssl_fc } <host-match>
       -#}
       {%- import "util-emit-annotation-ssl-redirect" for EmitAnnotationSSLRedirect -%}
+      {%- var redirectCode = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
+      {%- if redirectCode != "301" && redirectCode != "302" && redirectCode != "303" && redirectCode != "307" && redirectCode != "308" %}
+        {{- fail("Invalid extraContext.nginxHttpRedirectCode '" + redirectCode + "': must be one of 301, 302, 303, 307, 308 (the nginx http-redirect-code values).") -}}
+      {%- end %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var sslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] %}
         {%- var forceSslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/force-ssl-redirect"] %}
-        {%- var code = "" %}
-        {%- if forceSslRedirect == "true" %}
-          {%- code = "308" %}
-        {%- else if sslRedirect == "true" %}
-          {%- code = "301" %}
-        {%- end %}
-        {%- if code != "" %}
-          {{ EmitAnnotationSSLRedirect(ingress, code, "nginx-ingress/ssl-redirect") }}
+        {%- if forceSslRedirect == "true" || sslRedirect == "true" %}
+          {{ EmitAnnotationSSLRedirect(ingress, redirectCode, "nginx-ingress/ssl-redirect") }}
         {%- end %}
       {%- end -%}
 

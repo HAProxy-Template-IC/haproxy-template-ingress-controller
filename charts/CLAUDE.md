@@ -87,6 +87,26 @@ Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
+### Library-declared `extraContext` defaults
+
+A library may declare default values for the `templatingSettings.extraContext` parameter bag its own snippets read. Put them at the top level of the library file (or `_index.yaml` for a split library):
+
+```yaml
+templatingSettings:
+  extraContext:
+    nginxHttpRedirectCode: "308"   # consumed by this library's ssl-redirect snippet
+```
+
+`templates/haproxytemplateconfig.yaml` merges these into the rendered config's `templatingSettings.extraContext` at the **lowest precedence** — an operator override via `controller.config.templatingSettings.extraContext.<key>` and any chart-computed key both win (Helm `merge` fills only keys not already set). Snippets read the value the usual way, keeping a literal fallback so the snippet still works if the key is somehow absent (e.g. the library is loaded standalone in a test):
+
+```scriggo
+{%- var code = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
+```
+
+Use this for a library-global tunable that mirrors an upstream controller's global ConfigMap setting (the `nginxHttpRedirectCode` ↔ ingress-nginx `http-redirect-code` case is the canonical example). It is **not** for per-resource values — those come from annotations on the resource. The declaration is dropped from the output for a disabled library (its subchart is pruned), so the snippet's `fallback()` is what applies then.
+
+See ADR-0002 for the rationale (centralized vs decentralized loading rules).
+
 ### Split-library directories
 
 A library that has grown past comfortable one-file size may live as a directory of fragments instead of a single YAML file. The convention (see ADR-0008):

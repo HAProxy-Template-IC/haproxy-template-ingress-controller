@@ -85,6 +85,17 @@
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'
 
+# Library-declared extraContext defaults. These flow into the rendered config's
+# templatingSettings.extraContext as low-precedence defaults — an operator can
+# override any of them via controller.config.templatingSettings.extraContext.
+templatingSettings:
+  extraContext:
+    # The status code for ssl-redirect / force-ssl-redirect HTTP→HTTPS redirects
+    # — the equivalent of ingress-nginx's global `http-redirect-code` ConfigMap
+    # key. Default 308 (Permanent Redirect, matching ingress-nginx). Valid: 301,
+    # 302, 303, 307, 308.
+    nginxHttpRedirectCode: "308"
+
 watchedResources:
   secrets:
     apiVersion: v1

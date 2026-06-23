@@ -115,7 +115,61 @@ validationTests:
         pattern: "balance leastconn"
 
   test-nginx-ingress-ssl-redirect:
-    description: Nginx Ingress ssl-redirect annotation generates 301 redirect
+    description: Nginx Ingress ssl-redirect annotation generates 308 redirect (matches ingress-nginx)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: redirect-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: redirect-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: redirect-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: redirect-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: redirect.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: redirect-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "redirect scheme https code 308"
+
+  test-nginx-ingress-ssl-redirect-code-override:
+    description: ssl-redirect honours the nginxHttpRedirectCode extraContext override
+    extraContext:
+      nginxHttpRedirectCode: "301"
     fixtures:
       services:
         - apiVersion: v1
