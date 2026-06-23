@@ -62,5 +62,44 @@ spec:
             summary: "No HAProxy controller leader elected"
             description: "No controller instance holds the leader lock - deployments are stalled"
         {{- end }}
+        {{- if $defaults.configRejected }}
+        - alert: HAProxyControllerConfigRejected
+          expr: increase(haptic_config_rejected_total[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "HAProxyTemplateConfig rejected by the validation gate"
+            description: "Validator {{ `{{ $labels.validator }}` }} rejected a config change - the controller is serving the last-good config and the latest change is NOT live"
+        {{- end }}
+        {{- if $defaults.haproxyPodsRejected }}
+        - alert: HAProxyControllerHAProxyPodsRejected
+          expr: increase(haptic_haproxy_pods_rejected_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "HAProxy pods refused admission by discovery"
+            description: "Reason {{ `{{ $labels.reason }}` }}: the controller cannot manage discovered HAProxy pods (often a HAProxy major.minor mismatch with the chart's haproxyVersion)"
+        {{- end }}
+        {{- if $defaults.noHAProxyPods }}
+        - alert: HAProxyControllerNoHAProxyPods
+          expr: haptic_resource_count{type="haproxy-pods"} < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No HAProxy pods discovered"
+            description: "Controller {{ `{{ $labels.pod }}` }} finds no HAProxy pods to manage - no config is reaching the data plane"
+        {{- end }}
+        {{- if $defaults.criticalEventsDropped }}
+        - alert: HAProxyControllerCriticalEventsDropped
+          expr: increase(haptic_events_dropped_critical_total[5m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "Critical events dropped from the event bus"
+            description: "A critical subscriber's buffer overflowed - reconciliation work has been lost and the data plane may be stale"
+        {{- end }}
         {{- end }}
 {{- end }}

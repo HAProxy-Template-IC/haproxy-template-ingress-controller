@@ -149,6 +149,7 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.metrics.RecordReconciliation(0, false)
 	case *events.DeploymentCompletedEvent:
 		c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
+		c.metrics.RecordDeploymentOperations(e.ReloadsTriggered, e.TotalAPIOperations)
 	case *events.InstanceDeploymentFailedEvent:
 		c.metrics.RecordDeployment(0, false)
 	case *events.RuntimeFastPathResultEvent:

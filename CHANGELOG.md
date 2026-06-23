@@ -26,6 +26,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - HAProxy responses now carry a `Server: haptic` header.
 - Prometheus metrics for every bundled SPOA plugin (mirror, coraza, external-auth, fingerprinting, maxmind, otel, sso-auth) via the hub's `/metrics` endpoint.
 - Runtime fast-path metrics: `haptic_runtime_fast_path_fires_total`, `_applies_total`, `_failures_total`, `_server_updates_total`.
+- Deployment operation metrics: `haptic_haproxy_reloads_total` (HAProxy reloads triggered by deployments — the canonical capacity/SLO signal, since a reload forks the process) and `haptic_dataplane_api_operations_total` (DataPlane API operations applied to HAProxy).
 - `spec.dataplane.configPublishInterval`, `reloadVerificationTimeout`, and `syncTimeout` are now tunable via `HAProxyTemplateConfig`; `spec.watchedResources.*.debounceInterval` adds a per-resource override.
 - New `spoa-hub` container image bundling the hub plus seven plugin libraries, Cosign-signed by digest with a CycloneDX SBOM. A `spoa-hub` template library wires HAProxy to the sidecar, auto-enabled when any plugin is on.
 - External-auth flow wired end to end (nginx-ingress `auth-url` annotation → `auth-url.map` → per-frontend SPOE check + `deny_status 401`).

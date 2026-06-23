@@ -27,6 +27,8 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | `haptic_deployment_total` | counter | — | Deployments dispatched to at least one HAProxy endpoint |
 | `haptic_deployment_errors_total` | counter | — | Deployments that failed |
 | `haptic_deployment_duration_seconds` | histogram | — | Deployment duration, aggregated across all parallel endpoint calls |
+| `haptic_haproxy_reloads_total` | counter | — | HAProxy reloads triggered by deployments. A reload forks the HAProxy process; reload rate (vs runtime-API updates) is the key capacity/SLO signal |
+| `haptic_dataplane_api_operations_total` | counter | — | DataPlane API operations issued across deployments (structural changes applied to HAProxy) |
 
 ### Runtime-eligible fast path
 

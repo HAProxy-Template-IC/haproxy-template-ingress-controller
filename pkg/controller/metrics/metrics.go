@@ -37,6 +37,14 @@ type Metrics struct {
 	DeploymentTotal    prometheus.Counter
 	DeploymentErrors   prometheus.Counter
 
+	// HAProxy reload + DataPlane API operation counters, populated from
+	// DeploymentCompletedEvent. Reloads are the canonical capacity/SLO signal: a
+	// reload momentarily forks the HAProxy process, so a high reload rate (vs
+	// runtime-API updates) is what to capacity-plan and alert on. The data is
+	// already carried on the event; these surface it as cumulative counters.
+	HAProxyReloadsTotal         prometheus.Counter
+	DataplaneAPIOperationsTotal prometheus.Counter
+
 	// Runtime-eligible fast-path metrics. Fires counts every fast-path attempt
 	// (one per pod per reconcile); Applies counts the subset that actually
 	// applied >=1 runtime-eligible server update. Applies stuck at 0 while
@@ -152,6 +160,16 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_deployment_errors_total",
 			"Total number of failed deployments",
+		),
+		HAProxyReloadsTotal: pkgmetrics.NewCounter(
+			registry,
+			"haptic_haproxy_reloads_total",
+			"Total HAProxy reloads triggered by config deployments. A reload forks the HAProxy process; a high reload rate (vs runtime-API server updates) is the key capacity/SLO signal.",
+		),
+		DataplaneAPIOperationsTotal: pkgmetrics.NewCounter(
+			registry,
+			"haptic_dataplane_api_operations_total",
+			"Total DataPlane API operations issued across config deployments (structural changes applied to HAProxy pods).",
 		),
 
 		// Runtime-eligible fast-path metrics
@@ -337,6 +355,19 @@ func (m *Metrics) RecordDeployment(durationSeconds float64, success bool) {
 	m.DeploymentDuration.Observe(durationSeconds)
 	if !success {
 		m.DeploymentErrors.Inc()
+	}
+}
+
+// RecordDeploymentOperations records the HAProxy reload count and DataPlane API
+// operation count from a completed deployment. Both are cumulative; reloads is
+// the headline capacity/SLO signal (see the metric help text). Zero values are
+// skipped so a no-op deployment doesn't perturb the counters.
+func (m *Metrics) RecordDeploymentOperations(reloads, apiOperations int) {
+	if reloads > 0 {
+		m.HAProxyReloadsTotal.Add(float64(reloads))
+	}
+	if apiOperations > 0 {
+		m.DataplaneAPIOperationsTotal.Add(float64(apiOperations))
 	}
 }
 
