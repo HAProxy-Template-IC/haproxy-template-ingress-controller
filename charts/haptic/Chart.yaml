@@ -38,13 +38,13 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.2
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.4
       platforms:
         - linux/amd64
         - linux/arm64
         - linux/arm/v7
     - name: haproxy
-      image: haproxytech/haproxy-debian:3.2
+      image: haproxytech/haproxy-debian:3.4
       platforms:
         - linux/amd64
         - linux/arm64

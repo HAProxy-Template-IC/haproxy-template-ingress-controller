@@ -38,7 +38,7 @@ The full values reference lives in [`docs/reference.md`](./docs/reference.md). T
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | `replicaCount` | `2` | Controller replicas; 2+ runs with leader election |
-| `haproxyVersion` | `3.2` | Major.minor HAProxy series (`3.0` / `3.1` / `3.2` / `3.3`); pairs the controller image tag (`-haproxy3.2`) with the HAProxy pod image |
+| `haproxyVersion` | `3.4` | Major.minor HAProxy series (`3.0` / `3.1` / `3.2` / `3.3` / `3.4`); pairs the controller image tag (`-haproxy3.4`) with the HAProxy pod image |
 | `haproxy.image.tag` | derived from `haproxyPatchVersions` | Override to pin a specific patch |
 | `haproxy.enabled` | `true` | Disable to manage HAProxy pods separately |
 | `haproxy.enterprise.enabled` | `false` | Switch to HAProxy Enterprise images |
