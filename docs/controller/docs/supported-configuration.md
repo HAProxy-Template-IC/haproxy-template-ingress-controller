@@ -140,7 +140,20 @@ Server modifications avoid reloads **only** when changing these Runtime API-supp
 |-------|-------------|--------------|
 | **Maxconn** | Maximum connections | Runtime API `/runtime/frontends` |
 
-**Note:** Map files and auxiliary files are updated via the Storage API, which also avoids reloads when only file contents change.
+#### Map and Certificate Content
+
+Content updates to an **existing, already-referenced** map or certificate are applied to the live worker via the Runtime API — no reload:
+
+| Change | Mechanism | HAProxy version |
+|--------|-----------|-----------------|
+| **Map file content** — entries added, changed, or removed in a map already loaded by the running config (e.g. host/path routing maps, a weight or body-size policy map) | per-entry `set map` / `add map` / `del map` delta | v3.0+ |
+| **TLS certificate content** — a renewed certificate that keeps the same filename (e.g. a cert-manager rotation) | `set ssl cert` + `commit ssl cert` | v3.2+ |
+
+The new content is also written to disk (so a later, unrelated reload re-reads it), but the reload-free property comes from the Runtime API call, not the disk write. Caveats:
+
+- The map or certificate must already exist **and be referenced by the running config** so HAProxy has it loaded. **Creating or deleting** a map/cert file, or changing one the config doesn't reference, takes the reload path.
+- Other auxiliary files — general/error files, CA files, crt-lists — always reload when their content changes.
+- If a runtime apply fails for any reason, the controller falls back to a single reload, so the result always converges.
 
 ### Reload-Required Operations
 
@@ -171,6 +184,7 @@ Examples of server attributes that **require reload** when modified:
 | **Section Changes** | All main sections | Section-level modifications |
 | **Health Checks** | HTTP Checks, TCP Checks | Health check logic changed |
 | **Frontend Attributes** | Most frontend settings except Maxconn | Not supported by Runtime API |
+| **Auxiliary Files** | Creating/deleting any map or certificate; general/error files, CA files, crt-lists | Only content updates to an existing, referenced map (v3.0+) or certificate (v3.2+) are reload-free |
 
 ### Optimization Strategy
 

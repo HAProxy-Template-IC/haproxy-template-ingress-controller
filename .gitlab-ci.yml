@@ -68,6 +68,9 @@ variables:
 # failed empirically — `if:`-only job rules don't reliably fire on
 # this project's MR pipelines even when their condition is true.
 # Likely a project-level setting we can't see from outside.
+#
+# Workaround applied to !1162 (docs-only): this comment puts .gitlab-ci.yml
+# in the MR diff so the merge_request pipeline has runnable jobs.
 .rules-code:
   rules:
     - changes:
