@@ -2223,6 +2223,71 @@ func TestCompareModifiedFrontends(t *testing.T) {
 	})
 }
 
+func TestCompareModifiedFrontends_MaxconnRuntimeEligible(t *testing.T) {
+	comp := New()
+	mc := func(v int64) *int64 { return &v }
+	newConfig := func() *parser.StructuredConfig {
+		return &parser.StructuredConfig{BindIndex: make(map[string]map[string]*models.Bind)}
+	}
+	fe := func(name string, maxconn *int64, mode string) map[string]*models.Frontend {
+		return map[string]*models.Frontend{
+			name: {FrontendBase: models.FrontendBase{Name: name, Maxconn: maxconn, Mode: mode}},
+		}
+	}
+
+	t.Run("maxconn-only change is a runtime-eligible FrontendMaxconnUpdateOp", func(t *testing.T) {
+		summary := &DiffSummary{FrontendsModified: make([]string, 0)}
+		ops := comp.compareModifiedFrontendsWithIndexes(
+			fe("fe", mc(2000), "http"), fe("fe", mc(1000), "http"), newConfig(), newConfig(), summary)
+		require.Len(t, ops, 1)
+		op, ok := ops[0].(*sections.FrontendMaxconnUpdateOp)
+		require.True(t, ok, "expected *FrontendMaxconnUpdateOp, got %T", ops[0])
+		assert.Equal(t, "fe", op.FrontendName())
+		assert.Equal(t, "SetFrontendMaxConn fe 2000", op.RuntimeAction())
+		assert.Contains(t, summary.FrontendsModified, "fe")
+	})
+
+	t.Run("maxconn change alongside another attribute stays structural", func(t *testing.T) {
+		summary := &DiffSummary{FrontendsModified: make([]string, 0)}
+		ops := comp.compareModifiedFrontendsWithIndexes(
+			fe("fe", mc(2000), "tcp"), fe("fe", mc(1000), "http"), newConfig(), newConfig(), summary)
+		require.Len(t, ops, 1)
+		_, ok := ops[0].(*sections.FrontendMaxconnUpdateOp)
+		assert.False(t, ok, "maxconn+mode change must stay structural, got %T", ops[0])
+		assert.Equal(t, sections.OperationUpdate, ops[0].Type())
+	})
+
+	t.Run("unsetting maxconn stays structural (no runtime command to clear it)", func(t *testing.T) {
+		summary := &DiffSummary{FrontendsModified: make([]string, 0)}
+		ops := comp.compareModifiedFrontendsWithIndexes(
+			fe("fe", nil, "http"), fe("fe", mc(1000), "http"), newConfig(), newConfig(), summary)
+		require.Len(t, ops, 1)
+		_, ok := ops[0].(*sections.FrontendMaxconnUpdateOp)
+		assert.False(t, ok, "unsetting maxconn must stay structural, got %T", ops[0])
+	})
+
+	t.Run("setting maxconn where none existed is runtime-eligible", func(t *testing.T) {
+		summary := &DiffSummary{FrontendsModified: make([]string, 0)}
+		ops := comp.compareModifiedFrontendsWithIndexes(
+			fe("fe", mc(1500), "http"), fe("fe", nil, "http"), newConfig(), newConfig(), summary)
+		require.Len(t, ops, 1)
+		op, ok := ops[0].(*sections.FrontendMaxconnUpdateOp)
+		require.True(t, ok, "expected *FrontendMaxconnUpdateOp, got %T", ops[0])
+		assert.Equal(t, "SetFrontendMaxConn fe 1500", op.RuntimeAction())
+	})
+
+	t.Run("name with delimiter falls back to structural (no malformed runtime action)", func(t *testing.T) {
+		for _, name := range []string{"foo;bar", "foo bar"} {
+			summary := &DiffSummary{FrontendsModified: make([]string, 0)}
+			ops := comp.compareModifiedFrontendsWithIndexes(
+				fe(name, mc(2000), "http"), fe(name, mc(1000), "http"), newConfig(), newConfig(), summary)
+			require.Len(t, ops, 1, "name %q", name)
+			_, ok := ops[0].(*sections.FrontendMaxconnUpdateOp)
+			assert.False(t, ok, "name %q must stay structural to avoid corrupting the X-Runtime-Actions batch, got %T", name, ops[0])
+		}
+	})
+}
+
 func TestFrontendsEqualWithoutNestedCollections(t *testing.T) {
 	t.Run("equal frontends", func(t *testing.T) {
 		f1 := &models.Frontend{

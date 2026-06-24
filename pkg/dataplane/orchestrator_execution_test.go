@@ -265,6 +265,28 @@ func TestBuildRuntimeActions_MultipleOps(t *testing.T) {
 // arguments and produce a silently-malformed command, and an empty
 // Address with a set Port would emit `SetServerAddr backend SRV  8080`
 // (double space → empty IP arg).
+// TestBuildRuntimeActions_FrontendMaxconn pins that a frontend maxconn update
+// becomes the X-Runtime-Actions verb `SetFrontendMaxConn <name> <value>`
+// (parsed by the dataplane's executeRuntimeActions), and that it composes with
+// server actions in one semicolon-joined header.
+func TestBuildRuntimeActions_FrontendMaxconn(t *testing.T) {
+	t.Run("maxconn only", func(t *testing.T) {
+		got := buildRuntimeActions([]comparator.Operation{sections.NewFrontendMaxconnUpdate("http", 2000)})
+		assert.Equal(t, "SetFrontendMaxConn http 2000", got)
+	})
+
+	t.Run("maxconn composes with a server action", func(t *testing.T) {
+		ops := []comparator.Operation{
+			sections.NewServerUpdate("be",
+				&models.Server{Name: "SRV_1", ServerParams: models.ServerParams{Weight: int64Ptr(10)}},
+				&models.Server{Name: "SRV_1", ServerParams: models.ServerParams{Weight: int64Ptr(20)}}),
+			sections.NewFrontendMaxconnUpdate("http", 2000),
+		}
+		got := buildRuntimeActions(ops)
+		assert.Equal(t, "SetServerWeight be SRV_1 20;SetFrontendMaxConn http 2000", got)
+	})
+}
+
 func TestBuildRuntimeActions_SafetyGuards(t *testing.T) {
 	const backend = "mybackend"
 	const server = "SRV_1"
@@ -395,6 +417,18 @@ func TestPartitionByRuntimeEligibility(t *testing.T) {
 			name:           "non-update server op (CREATE) goes to structural",
 			ops:            []comparator.Operation{createOp},
 			wantRuntime:    0,
+			wantStructural: 1,
+		},
+		{
+			name:           "frontend maxconn update is runtime-eligible",
+			ops:            []comparator.Operation{sections.NewFrontendMaxconnUpdate("http", 2000)},
+			wantRuntime:    1,
+			wantStructural: 0,
+		},
+		{
+			name:           "frontend maxconn mixed with structural create",
+			ops:            []comparator.Operation{sections.NewFrontendMaxconnUpdate("http", 2000), createOp},
+			wantRuntime:    1,
 			wantStructural: 1,
 		},
 	}

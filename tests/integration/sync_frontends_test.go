@@ -4,6 +4,8 @@ package integration
 
 import (
 	"testing"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
 // TestSyncFrontends runs table-driven synchronization tests for frontend operations
@@ -22,6 +24,24 @@ func TestSyncFrontends(t *testing.T) {
 				"Create bind '*:80' in frontend 'web'",
 			},
 			expectedReload: true,
+		},
+		{
+			// A frontend maxconn-only change (identical otherwise) applies to the
+			// live worker via the runtime API (`set maxconn frontend`, carried as
+			// the SetFrontendMaxConn X-Runtime-Action on the skip_reload push) with
+			// NO reload. ReloadTriggered is false and the sync runs in runtime mode.
+			// All HAProxy versions support this; no capability gate.
+			name:              "frontend-maxconn-change-no-reload",
+			initialConfigFile: "frontends/maxconn-1000.cfg",
+			desiredConfigFile: "frontends/maxconn-2000.cfg",
+			expectedCreates:   0,
+			expectedUpdates:   1,
+			expectedDeletes:   0,
+			expectedOperations: []string{
+				"Update frontend 'web' maxconn to 2000 (runtime)",
+			},
+			expectedReload:   false,
+			expectedSyncMode: dataplane.SyncModeRuntime,
 		},
 		{
 			name:              "frontend-with-acl",

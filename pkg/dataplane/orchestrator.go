@@ -488,8 +488,16 @@ func (o *orchestrator) populatePostSyncParsedConfig(ctx context.Context, result 
 // (requires force_reload).
 func partitionByRuntimeEligibility(ops []comparator.Operation) (runtime, structural []comparator.Operation) {
 	for _, op := range ops {
-		serverOp, ok := op.(*sections.ServerUpdateOp)
-		if op.Type() == sections.OperationUpdate && ok && serverOp.IsFullyRuntimeEligible() {
+		if serverOp, ok := op.(*sections.ServerUpdateOp); ok &&
+			op.Type() == sections.OperationUpdate && serverOp.IsFullyRuntimeEligible() {
+			runtime = append(runtime, op)
+			continue
+		}
+		// A frontend maxconn-only change applies via `set maxconn frontend`
+		// (X-Runtime-Actions). The comparator only produces this op when maxconn
+		// is the sole differing attribute and the desired value is set, so it is
+		// runtime-eligible by construction.
+		if _, ok := op.(*sections.FrontendMaxconnUpdateOp); ok {
 			runtime = append(runtime, op)
 			continue
 		}
@@ -532,11 +540,12 @@ func partitionByRuntimeEligibility(ops []comparator.Operation) (runtime, structu
 func buildRuntimeActions(operations []comparator.Operation) string {
 	var actions []string
 	for _, op := range operations {
-		serverOp, ok := op.(*sections.ServerUpdateOp)
-		if !ok {
-			continue
+		switch o := op.(type) {
+		case *sections.ServerUpdateOp:
+			actions = append(actions, serverDeltaActions(o)...)
+		case *sections.FrontendMaxconnUpdateOp:
+			actions = append(actions, o.RuntimeAction())
 		}
-		actions = append(actions, serverDeltaActions(serverOp)...)
 	}
 	return strings.Join(actions, ";")
 }
