@@ -347,6 +347,56 @@ func (d *auxiliaryFileDiffs) anyDiffHasChanges() bool {
 		(d.crtlistDiff != nil && d.crtlistDiff.HasChanges())
 }
 
+// runtimeEligibleAuxUpdates partitions the auxiliary diff for the runtime fast
+// path. It returns the map files (mapDiff.ToUpdate, v3.0+) and SSL certificates
+// (sslDiff.ToUpdate, v3.2+ per caps) whose CONTENT changed — appliable to the
+// live worker via ReplaceRuntimeMap / ReplaceRuntimeSSLCert without a reload —
+// and auxNeedsReload reporting whether any OTHER auxiliary change still forces
+// one.
+//
+// The reload can be skipped only when auxNeedsReload is false: every auxiliary
+// change in the batch must be a content update to an already-existing map or
+// (on v3.2+) cert. File creation/deletion, a cert content update on <v3.2, and
+// any other auxiliary change (general files, CA files, crt-lists) remain
+// structural — consistent with the all-or-nothing runtime gate, where a single
+// non-runtime change makes a reload unavoidable and the runtime applies moot.
+func (d *auxiliaryFileDiffs) runtimeEligibleAuxUpdates(caps Capabilities) (mapUpdates []auxiliaryfiles.MapFile, certUpdates []auxiliaryfiles.SSLCertificate, auxNeedsReload bool) {
+	if d == nil {
+		return nil, nil, false
+	}
+
+	// General, CA and crt-list changes always take the reload path.
+	otherAuxChanged := (d.fileDiff != nil && d.fileDiff.HasChanges()) ||
+		(d.caFileDiff != nil && d.caFileDiff.HasChanges()) ||
+		(d.crtlistDiff != nil && d.crtlistDiff.HasChanges())
+
+	// Maps: content updates to existing maps are runtime-eligible (v3.0+);
+	// creating or deleting a map file stays structural.
+	mapStructural := d.mapDiff != nil && (len(d.mapDiff.ToCreate) > 0 || len(d.mapDiff.ToDelete) > 0)
+	if d.mapDiff != nil {
+		mapUpdates = d.mapDiff.ToUpdate
+	}
+
+	// SSL certs: content updates to an existing cert are runtime-eligible only on
+	// v3.2+ (set ssl cert + commit). Create/delete stays structural, and on <v3.2
+	// a content update must also reload.
+	certStructural := false
+	if d.sslDiff != nil {
+		if len(d.sslDiff.ToCreate) > 0 || len(d.sslDiff.ToDelete) > 0 {
+			certStructural = true
+		}
+		if len(d.sslDiff.ToUpdate) > 0 {
+			if caps.SupportsRuntimeSSLCerts {
+				certUpdates = d.sslDiff.ToUpdate
+			} else {
+				certStructural = true
+			}
+		}
+	}
+
+	return mapUpdates, certUpdates, otherAuxChanged || mapStructural || certStructural
+}
+
 // checksumMatchesLastDeployed returns true if the content checksum matches the
 // last deployed checksum, meaning aux file comparison can be skipped.
 func checksumMatchesLastDeployed(opts *SyncOptions) bool {

@@ -44,6 +44,20 @@ type syncTestCase struct {
 	// false = expects status 200 without reload
 	expectedReload bool
 
+	// expectedSyncMode, when non-empty, asserts the SyncResult.SyncMode (e.g.
+	// dataplane.SyncModeRuntime for a change applied via the runtime API with
+	// no reload). Leave empty to skip the assertion.
+	expectedSyncMode dataplane.SyncMode
+
+	// runtimeRequiresSSLCertCap marks a case whose no-reload expectation depends
+	// on runtime SSL certificate support (DataPlane API v3.2+). On older HAProxy
+	// the same cert-content change correctly falls back to a reload, so the
+	// runner flips expectedReload→true and expectedSyncMode→SyncModeReload when
+	// the connected HAProxy lacks SupportsRuntimeSSLCerts. This keeps the test
+	// asserting the *correct* path on every version in the CI matrix rather than
+	// skipping older versions.
+	runtimeRequiresSSLCertCap bool
+
 	// Auxiliary files for INITIAL configuration
 	// These files are uploaded before pushing the initial config to ensure it validates
 	// Map: HAProxy file path → testdata file to load
@@ -75,6 +89,12 @@ type syncTestCase struct {
 	verifyMapFiles        map[string]string
 	verifyGeneralFiles    map[string]string
 	verifySSLCertificates map[string]string
+
+	// verifyRuntimeMap, when true, additionally asserts that the live
+	// (in-memory) runtime map matches the verifyMapFiles expected content —
+	// proving a runtime-applied map change reached the worker's memory, not
+	// just the on-disk file.
+	verifyRuntimeMap bool
 
 	// Skip reason for unsupported features (test-first approach)
 	// If set, test will be skipped with this message
@@ -277,12 +297,28 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	// Step 5: Validate reload expectations
 	// With forceReload=true, synchronous reloads return no reload ID (empty string)
 	// but ReloadTriggered and ReloadVerified are both set to true.
-	if tc.expectedReload {
+	//
+	// Runtime SSL certificate replacement is v3.2+ only; on older HAProxy the
+	// cert-content change falls back to a reload, so adjust the expectation to
+	// match the connected version rather than skipping coverage there.
+	expectedReload := tc.expectedReload
+	expectedSyncMode := tc.expectedSyncMode
+	if tc.runtimeRequiresSSLCertCap && !client.Capabilities().SupportsRuntimeSSLCerts {
+		t.Logf("HAProxy %s lacks runtime SSL cert support; expecting reload fallback", client.DetectedVersion())
+		expectedReload = true
+		expectedSyncMode = dataplane.SyncModeReload
+	}
+
+	if expectedReload {
 		assert.True(t, result.ReloadTriggered, "expected reload to be triggered")
 		assert.True(t, result.ReloadVerified, "expected reload to be verified")
 	} else {
 		assert.False(t, result.ReloadTriggered, "expected no reload")
 		assert.Empty(t, result.ReloadID, "expected no reload ID")
+	}
+
+	if expectedSyncMode != "" {
+		assert.Equal(t, expectedSyncMode, result.SyncMode, "unexpected sync mode")
 	}
 
 	// Step 6: Parse desired config for idempotency verification
@@ -353,6 +389,17 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 			assert.Equal(t, string(expectedContent), actualContent,
 				"map file %s content mismatch", filename)
 			t.Logf("  ✓ Map file %s matches expected content", filename)
+
+			// When the change was applied via the runtime API (no reload), the
+			// on-disk file alone does not prove the live worker memory was
+			// updated. Assert the in-memory runtime map matches too.
+			if tc.verifyRuntimeMap {
+				runtimeEntries, err := client.GetRuntimeMapEntries(ctx, filename)
+				require.NoError(t, err, "failed to read runtime map %s", filename)
+				assert.Equal(t, parseMapToKV(string(expectedContent)), runtimeEntries,
+					"runtime (in-memory) map %s mismatch", filename)
+				t.Logf("  ✓ Runtime map %s matches expected content (%d entries)", filename, len(runtimeEntries))
+			}
 		}
 	}
 
@@ -393,4 +440,24 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 			t.Logf("  ✓ SSL certificate %s matches expected content", certName)
 		}
 	}
+}
+
+// parseMapToKV parses an HAProxy map file body into a key→value map (last value
+// wins on duplicate keys), matching how a runtime map is keyed. Used to compare
+// expected map content against the live runtime map (GetRuntimeMapEntries).
+func parseMapToKV(content string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(content, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		key, value := t, ""
+		if i := strings.IndexAny(t, " \t"); i >= 0 {
+			key = t[:i]
+			value = strings.TrimSpace(t[i+1:])
+		}
+		out[key] = value
+	}
+	return out
 }

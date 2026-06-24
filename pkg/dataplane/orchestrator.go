@@ -23,6 +23,7 @@ import (
 
 	"github.com/haproxytech/client-native/v6/models"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
@@ -169,7 +170,13 @@ func (o *orchestrator) applyChanges(
 	}
 
 	runtimeOps, structuralOps := partitionByRuntimeEligibility(diff.Operations)
-	needsReload := len(structuralOps) > 0 || auxDiffs.anyDiffHasChanges()
+
+	// Aux files normally force a reload, but content updates to existing maps
+	// (v3.0+) and SSL certs (v3.2+) are split out as runtime-eligible (applied
+	// live via ReplaceRuntimeMap / ReplaceRuntimeSSLCert); other aux changes and
+	// file create/delete keep forcing one.
+	mapRuntimeUpdates, certRuntimeUpdates, auxNeedsReload := auxDiffs.runtimeEligibleAuxUpdates(o.client.Capabilities())
+	needsReload := len(structuralOps) > 0 || auxNeedsReload
 	actions := buildRuntimeActions(runtimeOps)
 
 	version := o.resolveCurrentVersion(ctx, preCachedVersion)
@@ -185,41 +192,71 @@ func (o *orchestrator) applyChanges(
 	logOperationDetail(o.logger, "structural", structuralOps)
 
 	if !needsReload {
-		return o.applyRuntimeOnly(ctx, desiredConfig, diff, runtimeOps, actions, version, startTime)
+		return o.applyRuntimeOnly(ctx, desiredConfig, diff, runtimeOps, mapRuntimeUpdates, certRuntimeUpdates, auxDiffs, actions, version, opts, startTime)
 	}
 	return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, structuralOps, auxDiffs, actions, version, opts, startTime)
 }
 
-// applyRuntimeOnly issues one PushRawConfigurationSkipReload with the batched
-// X-Runtime-Actions header. The dataplane writes the new config to disk and
-// applies `set server …` socket commands to the live worker. No reload.
+// applyRuntimeOnly applies all changes without a reload: runtime-eligible map
+// and SSL-cert content updates go to the live worker via ReplaceRuntimeMap /
+// ReplaceRuntimeSSLCert, then one PushRawConfigurationSkipReload writes the new
+// config to disk and applies the batched `set server …` X-Runtime-Actions.
+//
+// If a runtime apply fails it falls back to applyWithReload. That is safe and
+// convergent: syncAuxiliaryFilesPreConfig already wrote the new map/cert content
+// to disk (skip_reload), so the force_reload re-reads it. structuralOps is empty
+// on this path by construction.
 func (o *orchestrator) applyRuntimeOnly(
 	ctx context.Context,
 	desiredConfig string,
 	diff *comparator.ConfigDiff,
 	runtimeOps []comparator.Operation,
+	mapUpdates []auxiliaryfiles.MapFile,
+	certUpdates []auxiliaryfiles.SSLCertificate,
+	auxDiffs *auxiliaryFileDiffs,
 	actions string,
 	version int64,
+	opts *SyncOptions,
 	startTime time.Time,
 ) (*SyncResult, error) {
-	o.logger.Debug("Pure-runtime sync: single skip_reload push with X-Runtime-Actions",
+	for _, m := range mapUpdates {
+		if err := o.client.ReplaceRuntimeMap(ctx, m.GetIdentifier(), m.GetContent()); err != nil {
+			o.logger.Warn("Runtime map apply failed; falling back to reload",
+				"map", m.GetIdentifier(), "error", err)
+			return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, nil, auxDiffs, actions, version, opts, startTime)
+		}
+	}
+	if len(certUpdates) > 0 {
+		pemByName := make(map[string]string, len(certUpdates))
+		for _, cert := range certUpdates {
+			pemByName[cert.GetIdentifier()] = cert.GetContent()
+		}
+		if err := o.client.ReplaceRuntimeSSLCerts(ctx, pemByName); err != nil {
+			o.logger.Warn("Runtime SSL cert apply failed; falling back to reload", "error", err)
+			return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, nil, auxDiffs, actions, version, opts, startTime)
+		}
+	}
+
+	o.logger.Debug("Pure-runtime sync: runtime map/cert updates + single skip_reload push with X-Runtime-Actions",
 		"op_count", len(runtimeOps),
+		"map_updates", len(mapUpdates),
+		"cert_updates", len(certUpdates),
 		"action_count", actionCount(actions))
 
 	if err := o.client.PushRawConfigurationSkipReload(ctx, desiredConfig, version, actions); err != nil {
 		return nil, wrapApplyError(err)
 	}
 
-	appliedOps := convertOperationsToApplied(runtimeOps)
+	appliedOps := o.buildAppliedOps(runtimeOps, nil, auxDiffs)
 	return &SyncResult{
 		Success:           true,
 		AppliedOperations: appliedOps,
 		ReloadTriggered:   false,
 		SyncMode:          SyncModeRuntime,
 		Duration:          time.Since(startTime),
-		Details:           convertDiffSummary(&diff.Summary),
+		Details:           o.buildDetails(diff, auxDiffs),
 		PostSyncVersion:   version + 1,
-		Message:           fmt.Sprintf("Applied %d server updates via runtime path", len(appliedOps)),
+		Message:           fmt.Sprintf("Applied %d runtime operations (%d map, %d cert updates) without reload", len(appliedOps), len(mapUpdates), len(certUpdates)),
 	}, nil
 }
 

@@ -4,6 +4,8 @@ package integration
 
 import (
 	"testing"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
 // TestSyncAuxiliary runs table-driven synchronization tests for auxiliary file operations
@@ -149,6 +151,26 @@ func TestSyncAuxiliary(t *testing.T) {
 			},
 			expectedReload: true,
 		},
+		{
+			// Same cert filename, new PEM bytes, identical config: applied to the
+			// live worker via the runtime API (set ssl cert + commit, v3.2+) with
+			// no reload. SyncMode=runtime confirms the runtime path fired — a wrong
+			// cert identifier would error and fall back to reload, failing this.
+			name:              "update-ssl-cert-content-no-config-change",
+			initialConfigFile: "ssl-frontend/with-ssl.cfg",
+			desiredConfigFile: "ssl-frontend/with-ssl.cfg", // SAME config
+			initialSSLCertificates: map[string]string{
+				"example.com.pem": "ssl-certs/example.com.pem",
+			},
+			sslCertificates: map[string]string{
+				"example.com.pem": "ssl-certs/updated.com.pem", // same name, different PEM
+			},
+			// v3.2+: runtime `set ssl cert`, no reload. Older HAProxy reloads
+			// (the runner flips the expectation via runtimeRequiresSSLCertCap).
+			expectedReload:            false,
+			expectedSyncMode:          dataplane.SyncModeRuntime,
+			runtimeRequiresSSLCertCap: true,
+		},
 
 		// ==================== MAP FILE OPERATIONS ====================
 		{
@@ -229,24 +251,92 @@ func TestSyncAuxiliary(t *testing.T) {
 			mapFiles: map[string]string{
 				"domains.map": "map-files/domains-updated.map", // Same name, different content
 			},
-			expectedCreates:    0,
-			expectedUpdates:    0,
-			expectedDeletes:    0,
+			expectedCreates: 0,
+			expectedUpdates: 0,
+			expectedDeletes: 0,
 			expectedOperations: []string{
 				// No HAProxy config operations expected - config is identical
 				// But map file update is tracked
 				"Updated map file domains.map",
 			},
-			expectedReload: true, // Map file PUT skips auto-reload; the orchestrator
-			// now force-reloads at the end of the sync when aux content
-			// changed but no config-side reload fired. Without this force-reload
-			// the new map content would persist to disk but HAProxy would keep
-			// the pre-update map in memory until the next reload. SyncResult
-			// surfaces this reload via ReloadTriggered=true; the value is "any
-			// reload during sync", not just PhaseConfig's reload.
+			// Map content changed while the config body is identical: the
+			// orchestrator applies the new map to the live worker via the
+			// runtime API (ReplaceRuntimeMap, no reload) instead of
+			// force-reloading. ReloadTriggered is false and the sync runs in
+			// the runtime mode. The on-disk map file is still updated (verified
+			// below) so any later unrelated reload converges.
+			//
+			// The updated map exercises all three runtime-delta op kinds
+			// against real HAProxy: api.example.com's value changes
+			// (atomic `set map`, no transient gap — the gitar-flagged case),
+			// admin.example.com is removed (`del map`), and blog/shop are
+			// added (`add map`).
+			expectedReload:   false,
+			expectedSyncMode: dataplane.SyncModeRuntime,
 			verifyMapFiles: map[string]string{
 				"domains.map": "map-files/domains-updated.map",
 			},
+			verifyRuntimeMap: true,
+		},
+		{
+			// Capstone for the chart-side "Strategy 1" relocation: a per-route
+			// policy value (here a body-size limit) that used to live in the
+			// backend section now lives in body-size.map, applied by a static,
+			// resource-agnostic frontend rule. Changing the value is therefore a
+			// map-content-only change against an identical config body — so it
+			// applies via the runtime API with NO reload. This pins the payoff
+			// of the relocation end-to-end: the exact rule form the chart emits
+			// (frontend-filters-250-request-body-size) is runtime-map-applicable.
+			name:              "update-map-only-bodysize-no-reload",
+			initialConfigFile: "map-frontend/with-body-size-map.cfg",
+			desiredConfigFile: "map-frontend/with-body-size-map.cfg", // SAME config
+			initialMapFiles: map[string]string{
+				"body-size.map": "map-files/body-size.map", // web 1048576
+			},
+			mapFiles: map[string]string{
+				"body-size.map": "map-files/body-size-updated.map", // web 8388608 (same name, new value)
+			},
+			expectedCreates: 0,
+			expectedUpdates: 0,
+			expectedDeletes: 0,
+			expectedOperations: []string{
+				"Updated map file body-size.map",
+			},
+			expectedReload:   false,
+			expectedSyncMode: dataplane.SyncModeRuntime,
+			verifyMapFiles: map[string]string{
+				"body-size.map": "map-files/body-size-updated.map",
+			},
+			verifyRuntimeMap: true,
+		},
+		{
+			// The common Strategy-1 transition: an operator ADDS a per-route
+			// policy (a body-size limit) to an ingress that didn't have one. The
+			// backend's body-size.map entry appears where there was none, against
+			// an identical config body. The live runtime map starts empty, so
+			// this exercises the empty -> first-entry delta (a single `add map`)
+			// — still no reload.
+			name:              "add-map-entry-bodysize-no-reload",
+			initialConfigFile: "map-frontend/with-body-size-map.cfg",
+			desiredConfigFile: "map-frontend/with-body-size-map.cfg", // SAME config
+			initialMapFiles: map[string]string{
+				"body-size.map": "map-files/body-size-empty.map", // no entries
+			},
+			mapFiles: map[string]string{
+				"body-size.map": "map-files/body-size.map", // web 1048576 (first entry)
+			},
+			expectedCreates: 0,
+			expectedUpdates: 0,
+			expectedDeletes: 0,
+			expectedOperations: []string{
+				"Updated map file body-size.map",
+			},
+			expectedReload:   false,
+			expectedSyncMode: dataplane.SyncModeRuntime,
+			verifyMapFiles: map[string]string{
+				"body-size.map": "map-files/body-size.map",
+			},
+			verifyRuntimeMap: true,
 		},
 	}
 

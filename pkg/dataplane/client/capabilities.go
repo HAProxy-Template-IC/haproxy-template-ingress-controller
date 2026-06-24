@@ -18,11 +18,12 @@ package client
 // Version thresholds verified against OpenAPI specs for v3.0, v3.1, v3.2, v3.3.
 type Capabilities struct {
 	// Storage capabilities
-	SupportsCrtList        bool // /v3/storage/ssl_crt_lists (v3.2+)
-	SupportsMapStorage     bool // /v3/storage/maps (v3.0+)
-	SupportsGeneralStorage bool // /v3/storage/general (v3.0+)
-	SupportsSslCaFiles     bool // /v3/runtime/ssl_ca_files (v3.2+)
-	SupportsSslCrlFiles    bool // /v3/runtime/ssl_crl_files (v3.2+)
+	SupportsCrtList         bool // /v3/storage/ssl_crt_lists (v3.2+)
+	SupportsMapStorage      bool // /v3/storage/maps (v3.0+)
+	SupportsGeneralStorage  bool // /v3/storage/general (v3.0+)
+	SupportsSslCaFiles      bool // /v3/runtime/ssl_ca_files (v3.2+)
+	SupportsSslCrlFiles     bool // /v3/runtime/ssl_crl_files (v3.2+)
+	SupportsRuntimeSSLCerts bool // /v3/runtime/ssl_certs replaceCert (v3.2+)
 
 	// Configuration capabilities
 	SupportsHTTP2            bool // HTTP/2 configuration (v3.0+)
@@ -121,10 +122,11 @@ func buildCapabilities(_, minor int, isEnterprise bool) Capabilities {
 
 	// v3.2+ features (community)
 	if minor >= 2 {
-		caps.SupportsCrtList = true        // Only v3.2+ has /storage/ssl_crt_lists
-		caps.SupportsSslCaFiles = true     // Only v3.2+ has /runtime/ssl_ca_files
-		caps.SupportsSslCrlFiles = true    // Only v3.2+ has /runtime/ssl_crl_files
-		caps.SupportsConfigMetadata = true // Metadata field on ACL, Server, etc. models (v3.2+)
+		caps.SupportsCrtList = true         // Only v3.2+ has /storage/ssl_crt_lists
+		caps.SupportsSslCaFiles = true      // Only v3.2+ has /runtime/ssl_ca_files
+		caps.SupportsSslCrlFiles = true     // Only v3.2+ has /runtime/ssl_crl_files
+		caps.SupportsRuntimeSSLCerts = true // Only v3.2+ has /runtime/ssl_certs replaceCert
+		caps.SupportsConfigMetadata = true  // Metadata field on ACL, Server, etc. models (v3.2+)
 	}
 
 	// Enterprise-only features (available in all enterprise versions)

@@ -132,18 +132,19 @@ func TestBuildCapabilities(t *testing.T) {
 			minor:        2,
 			isEnterprise: false,
 			want: Capabilities{
-				SupportsCrtList:        true, // Only v3.2+ has /storage/ssl_crt_lists
-				SupportsMapStorage:     true,
-				SupportsGeneralStorage: true,
-				SupportsSslCaFiles:     true, // v3.2+ has /runtime/ssl_ca_files
-				SupportsSslCrlFiles:    true, // v3.2+ has /runtime/ssl_crl_files
-				SupportsHTTP2:          true,
-				SupportsQUIC:           true,
-				SupportsLogProfiles:    true, // v3.1+ has log_profiles
-				SupportsTraces:         true, // v3.1+ has traces
-				SupportsConfigMetadata: true, // v3.2+ has Metadata field on config models
-				SupportsRuntimeMaps:    true,
-				SupportsRuntimeServers: true,
+				SupportsCrtList:         true, // Only v3.2+ has /storage/ssl_crt_lists
+				SupportsMapStorage:      true,
+				SupportsGeneralStorage:  true,
+				SupportsSslCaFiles:      true, // v3.2+ has /runtime/ssl_ca_files
+				SupportsSslCrlFiles:     true, // v3.2+ has /runtime/ssl_crl_files
+				SupportsRuntimeSSLCerts: true, // v3.2+ has /runtime/ssl_certs replaceCert
+				SupportsHTTP2:           true,
+				SupportsQUIC:            true,
+				SupportsLogProfiles:     true, // v3.1+ has log_profiles
+				SupportsTraces:          true, // v3.1+ has traces
+				SupportsConfigMetadata:  true, // v3.2+ has Metadata field on config models
+				SupportsRuntimeMaps:     true,
+				SupportsRuntimeServers:  true,
 			},
 		},
 		{
@@ -184,6 +185,7 @@ func TestBuildCapabilities(t *testing.T) {
 				SupportsGeneralStorage:            true,
 				SupportsSslCaFiles:                true, // v3.2+ has /runtime/ssl_ca_files
 				SupportsSslCrlFiles:               true, // v3.2+ has /runtime/ssl_crl_files
+				SupportsRuntimeSSLCerts:           true, // v3.2+ has /runtime/ssl_certs replaceCert
 				SupportsHTTP2:                     true,
 				SupportsQUIC:                      true,
 				SupportsLogProfiles:               true, // v3.1+ has log_profiles

@@ -24,6 +24,10 @@ output-options:
   # v32ee is intentionally left unfiltered). Pruning here is loss-free. The
   # on-disk spec.json stays the full source of truth for the validator generator.
   include-operation-ids:
+    - addMapEntry
+    - deleteRuntimeMapEntry
+    - replaceRuntimeMapEntry
+    - showRuntimeMap
     - createCaFile
     - createStorageGeneralFile
     - createStorageMapFile
