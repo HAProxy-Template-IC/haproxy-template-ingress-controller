@@ -28,7 +28,7 @@ The Nginx Ingress library implements these extension points:
 | Backend Directives | `backend-directives-670-nginx-ingress-session-affinity` | Cookie-based session affinity |
 | Backend Directives | `backend-directives-700-nginx-ingress-timeouts` | Backend timeouts |
 | Backend Directives | `backend-directives-710-nginx-ingress-load-balance` | Load balancing algorithm |
-| Backend Directives | `backend-directives-720-nginx-ingress-proxy-body-size` | Request body size limit |
+| Map (body-size) | `map-body-size-720-nginx-ingress` | Request body size limit (per-backend entry in `body-size.map`) |
 | Backend Directives | `backend-directives-730-nginx-ingress-backend-protocol` | Backend protocol (HTTPS, gRPC) |
 | Backend Directives | `backend-directives-740-nginx-ingress-proxy-protocol` | PROXY protocol to backend |
 | Backend Directives | `backend-directives-750-nginx-ingress-rewrite-target` | URL rewriting |
@@ -131,7 +131,7 @@ backend my-backend
 
 **Description**: Maximum allowed request body size. Requests exceeding this limit receive a 413 response.
 
-**Valid values**: Plain number (bytes), or with `k`/`m`/`g` suffix. Value `0` means unlimited (no directive emitted).
+**Valid values**: Plain number (bytes), or with `k`/`m`/`g` suffix. Value `0` means unlimited (no map entry emitted).
 
 **Usage**:
 
@@ -140,11 +140,20 @@ annotations:
   nginx.ingress.kubernetes.io/proxy-body-size: "10m"
 ```
 
-**Generated HAProxy Configuration**:
+**Generated configuration**: the per-backend limit is written to `body-size.map`
+(keyed on the resolved backend), not into the backend section. A shared,
+resource-agnostic frontend rule (base.yaml `frontend-filters-250-request-body-size`)
+enforces it, so adding or changing the limit is a map-only, reload-free update.
+
+```
+# body-size.map
+default_my-ingress_svc_my-service_80 10485760
+```
 
 ```haproxy
-backend my-backend
-    http-request deny deny_status 413 if { req.body_size gt 10485760 }
+# frontend (shared, static — emitted once regardless of how many backends set a limit)
+http-request set-var(txn.haptic_body_limit) var(txn.backend_name),map(maps/body-size.map,0),add(0)
+http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } { req.body_size,sub(txn.haptic_body_limit) -m int gt 0 }
 ```
 
 ---
@@ -340,10 +349,16 @@ annotations:
 
 **Generated HAProxy Configuration**:
 
+Capture/regex rewrites (value contains `$N`/`\N`) stay as a per-backend `replace-path`:
+
 ```haproxy
 backend my-backend
     http-request replace-path (.*) /\1
 ```
+
+A **literal** rewrite (no capture, e.g. `rewrite-target: "/new"`) is instead written to
+`path-rewrite.map` (`<backend_name> /new`) and applied by a shared frontend `set-path` rule,
+so changing it is a map-only, reload-free update.
 
 ---
 

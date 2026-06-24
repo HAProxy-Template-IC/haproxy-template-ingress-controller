@@ -996,6 +996,52 @@ templateSnippets:
          forwardfor). #}
       {{ "\n" }}http-response set-header Server haptic
 
+  frontend-filters-250-request-body-size:
+    template: |
+      {%- var bsMap, _ = pathResolver.GetPath("body-size.map", "map") -%}
+      {# Resource-agnostic request body-size enforcement. The per-backend limit
+         (bytes) is looked up from body-size.map keyed on the resolved backend;
+         resource libraries populate that map via map-body-size-* snippets. When a
+         backend has no entry the limit resolves to 0 and the deny never fires, so
+         this static rule is inert until a map entry exists — which is what makes
+         adding or raising a body-size limit a map-only (reload-free) change rather
+         than a per-backend `http-request deny` (a backend-section reload). `add(0)`
+         forces the map value to a signed integer; `sub(<var>)` then does the
+         dynamic comparison the literal `req.body_size gt <N>` form can't express. #}
+      {{ "\n" }}http-request set-var(txn.haptic_body_limit) var(txn.backend_name),map({{ bsMap }},0),add(0)
+      http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } { req.body_size,sub(txn.haptic_body_limit) -m int gt 0 }
+
+  frontend-filters-260-request-set-host:
+    template: |
+      {%- var m, _ = pathResolver.GetPath("reqhdr-host.map", "map") -%}
+      {# Resource-agnostic upstream Host override, keyed on the resolved backend.
+         Relocated from a per-backend `http-request set-header Host`; resource
+         libraries populate reqhdr-host.map via map-reqhdr-host-* snippets.
+         Inert until a backend has an entry, so changing the Host is map-only. #}
+      {{ "\n" }}http-request set-header Host %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
+
+  frontend-filters-261-request-set-xfwd-prefix:
+    template: |
+      {%- var m, _ = pathResolver.GetPath("reqhdr-xfwd-prefix.map", "map") -%}
+      {# Resource-agnostic X-Forwarded-Prefix override, keyed on the resolved backend. #}
+      {{ "\n" }}http-request set-header X-Forwarded-Prefix %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
+
+  frontend-filters-262-request-set-connection:
+    template: |
+      {%- var m, _ = pathResolver.GetPath("reqhdr-connection.map", "map") -%}
+      {# Resource-agnostic Connection header override, keyed on the resolved backend. #}
+      {{ "\n" }}http-request set-header Connection %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
+
+  frontend-filters-400-path-rewrite:
+    template: |
+      {%- var m, _ = pathResolver.GetPath("path-rewrite.map", "map") -%}
+      {# Resource-agnostic full-path rewrite, keyed on the resolved backend. Only
+         LITERAL replacements live in the map; capture/regex rewrites stay as
+         `http-request replace-path` in the backend (the regex side can't be
+         map-driven). Runs after routing (path-based backend selection already
+         happened), matching the old in-backend `replace-path (.*) <literal>`. #}
+      {{ "\n" }}http-request set-path %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
+
   # Status frontend directives — override or extend via status-extra-* snippets.
   # The status frontend (port 8404) serves health checks and can expose HAProxy's
   # built-in Prometheus exporter. Snippets are rendered inside the status frontend
@@ -1126,6 +1172,45 @@ maps:
     template: |
       # Weighted routing: random_weight:route_key → backend_name
       {{- render_glob "map-weighted-backend-*" }}
+
+  body-size.map:
+    template: |
+      # Per-backend request body-size limits: backend_name → max bytes.
+      # Populated by resource libraries via map-body-size-* snippets, consumed by
+      # the resource-agnostic frontend-filters-250-request-body-size rule. Keeping
+      # the limit in a map (instead of an http-request deny inside each backend)
+      # makes adding or changing a body-size cap a map-only, reload-free update.
+      {{- render_glob "map-body-size-*" -}}
+
+  reqhdr-host.map:
+    template: |
+      # Per-backend upstream Host override: backend_name → host value.
+      # Populated by resource libraries via map-reqhdr-host-* snippets, consumed by
+      # frontend-filters-260-request-set-host. Relocated from a per-backend
+      # `http-request set-header Host` so changing it is a map-only update.
+      {{- render_glob "map-reqhdr-host-*" -}}
+
+  reqhdr-xfwd-prefix.map:
+    template: |
+      # Per-backend X-Forwarded-Prefix override: backend_name → prefix value.
+      # Populated via map-reqhdr-xfwd-prefix-* snippets, consumed by
+      # frontend-filters-261-request-set-xfwd-prefix.
+      {{- render_glob "map-reqhdr-xfwd-prefix-*" -}}
+
+  reqhdr-connection.map:
+    template: |
+      # Per-backend Connection header override: backend_name → value.
+      # Populated via map-reqhdr-connection-* snippets, consumed by
+      # frontend-filters-262-request-set-connection.
+      {{- render_glob "map-reqhdr-connection-*" -}}
+
+  path-rewrite.map:
+    template: |
+      # Per-backend full-path rewrite: backend_name → replacement path.
+      # Only literal (non-capture) rewrites live here; capture/regex rewrites
+      # stay as `http-request replace-path` in the backend. Populated via
+      # map-path-rewrite-* snippets, consumed by frontend-filters-400-path-rewrite.
+      {{- render_glob "map-path-rewrite-*" -}}
 
 files:
   400.http:

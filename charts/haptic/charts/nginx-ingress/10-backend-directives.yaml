@@ -273,43 +273,54 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  backend-directives-720-nginx-ingress-proxy-body-size:
+  map-body-size-720-nginx-ingress:
     template: |
       {#-
-        Nginx Ingress Proxy Body Size Limit
+        Nginx Ingress Proxy Body Size Limit (Strategy 1: relocated to a map)
 
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-max-body-size
 
         Annotation: nginx.ingress.kubernetes.io/proxy-body-size
         Values: plain number (bytes), or with k/K, m/M, g/G suffix
-        Value "0" means unlimited (no directive emitted).
+        Value "0" means unlimited (no map entry emitted).
 
-        Generated HAProxy Config:
-          http-request deny deny_status 413 if { req.body_size gt <bytes> }
+        Emits `<backend_name> <bytes>` into body-size.map. The resource-agnostic
+        frontend-filters-250-request-body-size rule in base.yaml enforces it
+        (http-request deny 413) keyed on the resolved backend, so the per-backend
+        `http-request deny` no longer lives in the backend section — adding or
+        changing the cap is a map-only, reload-free update.
       -#}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var bodySize = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-body-size"] %}
-        {%- if bodySize != "" %}
-          {%- var bytes = 0 %}
-          {%- var sizeLen = len(bodySize) %}
-          {%- var lastChar = bodySize[sizeLen-1:] %}
-          {%- if lastChar == "k" || lastChar == "K" %}
-            {%- bytes = toint(bodySize[:sizeLen-1]) * 1024 %}
-          {%- else if lastChar == "m" || lastChar == "M" %}
-            {%- bytes = toint(bodySize[:sizeLen-1]) * 1048576 %}
-          {%- else if lastChar == "g" || lastChar == "G" %}
-            {%- bytes = toint(bodySize[:sizeLen-1]) * 1073741824 %}
-          {%- else %}
-            {%- bytes = toint(bodySize) %}
-          {%- end %}
-          {%- if bytes > 0 %}
-      # nginx-ingress/backend-directives-proxy-body-size ({{ key }})
-      http-request deny deny_status 413 if { req.body_size gt {{ bytes }} }
-          {%- end %}
-        {%- end %}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var bodySize = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-body-size"] -%}
+        {%- if bodySize != "" -%}
+          {%%
+            var bytes = 0
+            var sizeLen = len(bodySize)
+            var lastChar = bodySize[sizeLen-1:]
+            if lastChar == "k" || lastChar == "K" {
+              bytes = toint(bodySize[:sizeLen-1]) * 1024
+            } else if lastChar == "m" || lastChar == "M" {
+              bytes = toint(bodySize[:sizeLen-1]) * 1048576
+            } else if lastChar == "g" || lastChar == "G" {
+              bytes = toint(bodySize[:sizeLen-1]) * 1073741824
+            } else {
+              bytes = toint(bodySize)
+            }
+          %%}
+          {%- if bytes > 0 -%}
+            {%- for _, rule := range ingress.Spec.Rules -%}
+              {#- rule.Http is a value struct; .Paths is an empty slice when the
+                  rule has no http block, so the loop is a no-op (no nil guard). -#}
+              {%- for _, path := range rule.Http.Paths -%}
+                {%- var be = BackendNameIngress(ingress, path) -%}
+                {%- if first_seen("map-body-size", be) -%}
+      {{ "\n" }}{{ be }} {{ bytes }}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   backend-directives-725-nginx-ingress-limit-rate:
@@ -440,9 +451,43 @@ templateSnippets:
         {%- if rewrite != "" %}
           {#- Translate $1..$9 capture groups to \1..\9 -#}
           {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") %}
+          {#- Capture/regex rewrites (translated value contains a \1..\9 backreference)
+              stay backend-scoped — the regex side can't be map-driven. LITERAL
+              rewrites go to path-rewrite.map via map-path-rewrite-750-nginx-ingress
+              and are applied reload-free as a frontend set-path. The two branches
+              are mutually exclusive (one rewrite value per backend). The predicate
+              keys on an actual \N backreference, not any backslash, so a literal
+              path that happens to contain a backslash routes to the map. -#}
+          {%- if regex_search(rewrite, "\\\\[1-9]") %}
       # nginx-ingress/backend-directives-rewrite-target ({{ key }})
       http-request replace-path (.*) {{ rewrite }}
+          {%- end %}
         {%- end %}
+      {%- end -%}
+
+  map-path-rewrite-750-nginx-ingress:
+    template: |
+      {#- nginx rewrite-target LITERAL replacement (no \N capture) → path-rewrite.map,
+          consumed by base.yaml frontend-filters-400-path-rewrite as a set-path.
+          Capture rewrites stay as replace-path in backend-directives-750. -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var rewrite = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/rewrite-target"] -%}
+        {%- if rewrite != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") -%}
+          {%- if !regex_search(rewrite, "\\\\[1-9]") -%}
+            {%- for _, rule := range ingress.Spec.Rules -%}
+              {%- for _, path := range rule.Http.Paths -%}
+                {%- var be = BackendNameIngress(ingress, path) -%}
+                {%- if first_seen("map-path-rewrite", be) -%}
+      {{ "\n" }}{{ be }} {{ ValidateConfigValue(rewrite, "nginx.ingress.kubernetes.io/rewrite-target", key, false) }}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   backend-directives-770-nginx-ingress-rate-limiting:
@@ -533,51 +578,74 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  backend-directives-760-nginx-ingress-upstream-headers:
+  # Nginx Ingress upstream request headers (Strategy 1: relocated to maps).
+  # upstream-vhost / x-forwarded-prefix / connection-proxy-header were per-backend
+  # `http-request set-header` directives; they now emit `<backend_name> <value>`
+  # into per-header maps consumed by base.yaml's resource-agnostic
+  # frontend-filters-26x-request-set-* rules, so changing a value is a map-only,
+  # reload-free update. ValidateConfigValue still guards against config injection.
+  # Docs:
+  #   https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#upstream-vhost
+  #   https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#x-forwarded-prefix
+  map-reqhdr-host-760-nginx-ingress:
     template: |
+      {#- nginx upstream-vhost → reqhdr-host.map (shares "map-reqhdr-host"
+          first_seen namespace with the haproxytech set-host emitter). -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {#-
-        Nginx Ingress Upstream Request Headers
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/upstream-vhost"] -%}
+        {%- if v != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- var be = BackendNameIngress(ingress, path) -%}
+              {%- if first_seen("map-reqhdr-host", be) -%}
+      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "nginx.ingress.kubernetes.io/upstream-vhost", key, true) }}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
 
-        Documentation:
-          https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#upstream-vhost
-          https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#x-forwarded-prefix
+  map-reqhdr-xfwd-prefix-760-nginx-ingress:
+    template: |
+      {#- nginx x-forwarded-prefix → reqhdr-xfwd-prefix.map -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/x-forwarded-prefix"] -%}
+        {%- if v != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- var be = BackendNameIngress(ingress, path) -%}
+              {%- if first_seen("map-reqhdr-xfwd-prefix", be) -%}
+      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "nginx.ingress.kubernetes.io/x-forwarded-prefix", key, true) }}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
 
-        Annotations:
-          - nginx.ingress.kubernetes.io/upstream-vhost: "<host>" — overrides the
-            Host header sent to the upstream.
-          - nginx.ingress.kubernetes.io/x-forwarded-prefix: "<prefix>" — sets the
-            X-Forwarded-Prefix header (companion to rewrite-target).
-          - nginx.ingress.kubernetes.io/connection-proxy-header: "<value>" — sets
-            the Connection header sent to the upstream.
-
-        Emitted as backend (post-routing) http-request rules so rewriting Host
-        does not disturb the frontend's host-based backend selection.
-
-        Generated HAProxy Config:
-          http-request set-header Host <host>
-          http-request set-header X-Forwarded-Prefix <prefix>
-          http-request set-header Connection <value>
-      -#}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var upstreamVhost = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/upstream-vhost"] %}
-        {%- var xfp = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/x-forwarded-prefix"] %}
-        {%- var connHeader = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/connection-proxy-header"] %}
-        {%- if upstreamVhost != "" %}
-      # nginx-ingress/upstream-vhost ({{ key }})
-      http-request set-header Host {{ ValidateConfigValue(upstreamVhost, "nginx.ingress.kubernetes.io/upstream-vhost", key, true) }}
-        {%- end %}
-        {%- if xfp != "" %}
-      # nginx-ingress/x-forwarded-prefix ({{ key }})
-      http-request set-header X-Forwarded-Prefix {{ ValidateConfigValue(xfp, "nginx.ingress.kubernetes.io/x-forwarded-prefix", key, true) }}
-        {%- end %}
-        {%- if connHeader != "" %}
-      # nginx-ingress/connection-proxy-header ({{ key }})
-      http-request set-header Connection {{ ValidateConfigValue(connHeader, "nginx.ingress.kubernetes.io/connection-proxy-header", key, true) }}
-        {%- end %}
+  map-reqhdr-connection-760-nginx-ingress:
+    template: |
+      {#- nginx connection-proxy-header → reqhdr-connection.map -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/connection-proxy-header"] -%}
+        {%- if v != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- var be = BackendNameIngress(ingress, path) -%}
+              {%- if first_seen("map-reqhdr-connection", be) -%}
+      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "nginx.ingress.kubernetes.io/connection-proxy-header", key, true) }}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   backend-directives-780-nginx-ingress-upstream-hash:

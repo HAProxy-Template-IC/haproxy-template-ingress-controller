@@ -69,7 +69,7 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | `backend-directives-200-haproxytech-health-checks` | `haproxy.org/check` |
 | `backend-directives-210-haproxytech-advanced-health-checks` | `haproxy.org/check-http`, `haproxy.org/check-interval` |
 | `backend-directives-250-haproxytech-rate-limiting` | `haproxy.org/rate-limit-*` |
-| `backend-directives-250-haproxytech-set-host` | `haproxy.org/set-host` |
+| `map-reqhdr-host-250-haproxytech` | `haproxy.org/set-host` (relocated to reqhdr-host.map + shared frontend rule) |
 | `backend-directives-300-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
 | `backend-directives-350-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` |
 | `backend-directives-400-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
