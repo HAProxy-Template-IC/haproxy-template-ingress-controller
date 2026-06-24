@@ -235,6 +235,55 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
+  features-145-nginx-ingress-app-root:
+    template: |
+      {#-
+        nginx app-root — registers host→path into the shared gf["appRootHosts"].
+        base.yaml features-175-app-root-map builds app-root.map and
+        frontend-filters-065-app-root emits the gated rule, so changing an app-root
+        is a map-only, reload-free update (replaces the inline-ACL app-root redirect).
+        Annotation: nginx.ingress.kubernetes.io/app-root
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var appRoot = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/app-root"] %}
+        {%- if appRoot != "" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/app-root' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}
+              {%- var ar []any = coalesce(gf["appRootHosts"], []any{}) -%}
+              {%- gf["appRootHosts"] = append(ar, map[string]any{"host": toLower(rule.Host), "path": appRoot}) -%}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  features-150-nginx-ingress-mtls-error:
+    template: |
+      {#-
+        nginx auth-tls-error-page — registers host→error-page URL into the shared
+        gf["mtlsErrorHosts"]. base.yaml features-185-mtls-error-map builds
+        mtls-error.map and frontend-filters-075-mtls-error emits the
+        ssl_c_verify-gated redirect, so changing the error page is map-only and
+        reload-free. The cert-passthrough set-headers stay in the vendor
+        frontend-filters-790 snippet. Annotation: auth-tls-error-page
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var errorPage = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-error-page"] %}
+        {%- if errorPage != "" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- if regex_search(errorPage, "[[:cntrl:]]") %}{{ fail("Invalid URL in annotation 'nginx.ingress.kubernetes.io/auth-tls-error-page' on Ingress '" + key + "': must not contain control characters (newlines/tabs) — config-injection guard.") }}{%- end %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}
+              {%- var me []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
+              {%- gf["mtlsErrorHosts"] = append(me, map[string]any{"host": toLower(rule.Host), "location": errorPage}) -%}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
   backends-501-nginx-ingress-ssl-passthrough:
     template: |
       {#-

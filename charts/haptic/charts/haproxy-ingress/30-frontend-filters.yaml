@@ -110,36 +110,9 @@ templateSnippets:
             "haproxy-ingress/hsts") }}
       {%- end -%}
 
-  frontend-filters-640-haproxy-ingress-app-root:
-    template: |
-      {#-
-        HAProxy-Ingress App Root Annotation
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#app-root
-
-        Annotations:
-          - haproxy-ingress.github.io/app-root: "/path" (optional)
-
-        Generated HAProxy Config:
-          http-request redirect location <path> if { path / } <host-match>
-      -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var appRoot = ingress.Metadata.Annotations["haproxy-ingress.github.io/app-root"] %}
-          {%- if appRoot != "" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haproxy-ingress/app-root ({{ key }})
-      http-request redirect location {{ appRoot }} if { path / } {{ HostMatchCondition(hosts) }}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+  # app-root relocated to features-145-haproxy-ingress-app-root: it registers
+  # host→path into the shared gf["appRootHosts"]; base.yaml builds app-root.map and
+  # emits the gated rule (frontend-filters-065-app-root), a map-only reload-free update.
 
   # redirect-to relocated to features-135-haproxy-ingress-redirect-to: it registers
   # hosts into the shared host-keyed redirect map (base.yaml emits the rule from
@@ -238,34 +211,50 @@ templateSnippets:
         on unmatched requests — the same condition base.yaml uses to fall
         through to default_backend — scoped to this Ingress's host(s).
 
-        Generated HAProxy Config:
-          http-request redirect location <url> code <code> if <host-match> !{ var(txn.backend_name) -m found }
+        Generated HAProxy Config (one rule per distinct code, host→URL from the map):
+          http-request redirect location %[var(txn.host),map(maps/default-backend-redirect-<code>.map)] code <code> if !{ var(txn.backend_name) -m found } { var(txn.host),map(...) -m found }
+
+        Single-vendor, so the per-code maps are built and referenced here (not via
+        base.yaml). Changing the URL/code set is a map-only, reload-free update.
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- var codeMap = map[string]map[string]string{} -%}
+      {%- var codeHosts = map[string][]any{} -%}
+      {%- var seen = map[string]bool{} -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var redirectURL = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect"] %}
-          {%- if redirectURL != "" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect-code"] %}
-            {%- if code == "" %}{%- code = "302" %}{%- end %}
-            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
-            {%- var codeValid = false %}
-            {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
-            {%- if !codeValid %}
-              {{- fail("Invalid value '" + code + "' for annotation 'haproxy-ingress.github.io/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haproxy-ingress/default-backend-redirect ({{ key }})
-      http-request redirect location {{ redirectURL }} code {{ code }} if {{ HostMatchCondition(hosts) }} !{ var(txn.backend_name) -m found }
+        {%- var redirectURL = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect"] %}
+        {%- if redirectURL != "" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- if regex_search(redirectURL, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-ingress.github.io/default-backend-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect-code"] %}
+          {%- if code == "" %}{%- code = "302" %}{%- end %}
+          {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
+          {%- var codeValid = false %}
+          {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
+          {%- if !codeValid %}
+            {{- fail("Invalid value '" + code + "' for annotation 'haproxy-ingress.github.io/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+          {%- end %}
+          {%- if codeMap[code] == nil %}{%- codeMap[code] = map[string]string{} %}{%- end %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var host = toLower(rule.Host) %}
+            {%- if host != "" && !seen[host] %}
+              {%- seen[host] = true %}
+              {%- codeMap[code][host] = redirectURL %}
+              {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}), host) %}
             {%- end %}
           {%- end %}
-      {%- end -%}
+        {%- end %}
+      {%- end %}
+      {%- for code, hostURL := range codeMap %}
+        {%- var sortedHosts = sort_strings(coalesce(codeHosts[code], []any{})) %}
+        {%- var lines = []any{} %}
+        {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + hostURL[tostring(h)]) %}{%- end %}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var _, mapErr = fileRegistry.Register("map", "default-backend-redirect-" + code + ".map", mapContent) %}
+        {%- if mapErr != nil %}{{ fail("failed to register default-backend-redirect map: " + tostring(mapErr)) }}{%- end %}
+        {%- var m, _ = pathResolver.GetPath("default-backend-redirect-" + code + ".map", "map") %}
+      # haproxy-ingress/default-backend-redirect (code {{ code }})
+      http-request redirect location %[var(txn.host),map({{ m }})] code {{ code }} if !{ var(txn.backend_name) -m found } { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
 
   # ============================================================================
   # Phase 5: SSL Features
@@ -300,43 +289,29 @@ templateSnippets:
           - haproxy-ingress.github.io/auth-tls-cert-header: "true|false" (optional)
 
         Generated HAProxy Config:
-          http-request redirect location <url> code 302 if { ssl_c_verify gt 0 } <host-match>
           http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if <host-match>
           http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if <host-match>
           http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if <host-match>
 
-        Mirrors `frontend-filters-790-nginx-ingress-mtls-error` but uses the
-        haproxy-ingress.github.io/* annotation prefix and the haproxy-ingress
-        community's chosen header naming (X-SSL-Client-{CN,DN,Cert}). Runs
-        at priority 690 so haproxy-ingress directives compose with the
-        nginx-ingress equivalents at 790 — distinct hosts can mix prefixes.
+        The auth-tls-error-page redirect is relocated to
+        features-150-haproxy-ingress-mtls-error (registers host→URL into the shared
+        gf["mtlsErrorHosts"]; base.yaml emits the ssl_c_verify-gated rule from
+        mtls-error.map — map-only, reload-free). This snippet keeps only the
+        haproxy-ingress cert-passthrough set-headers (X-SSL-Client-{CN,DN,Cert}),
+        which compose with the nginx-ingress equivalents at 790.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var hosts = []string{} %}
-          {%- for _, rule := range ingress.Spec.Rules %}
-            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-          {%- end %}
-          {%- if len(hosts) > 0 %}
-            {%- var errorPage = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-error-page"] %}
-            {%- var certHeader = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] %}
-            {%- var cond = HostMatchCondition(hosts) %}
-            {%- if errorPage != "" %}
-              {#- Inline URL guard: this snippet renders via the
-                  always-compiled `frontend-filters-*` glob, so it can't
-                  import util macros from spoa-hub.yaml (that library
-                  is opt-in and absent under default values, which would
-                  break Scriggo's compile-time import resolution). -#}
-              {%- if strings_contains(errorPage, "\n") || strings_contains(errorPage, "\r") || strings_contains(errorPage, " ") || strings_contains(errorPage, "\t") -%}
-                {{- fail("Invalid URL in annotation 'haproxy-ingress.github.io/auth-tls-error-page' on Ingress " + ns + "/" + name + ": value contains whitespace or newlines. URLs must not contain whitespace — they are interpolated into HAProxy directives where whitespace is significant and could be used to inject arbitrary config.") -}}
-              {%- end %}
-      # haproxy-ingress/auth-tls-error-page ({{ key }})
-      http-request redirect location {{ errorPage }} code 302 if { ssl_c_verify gt 0 } {{ cond }}
+          {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
-            {%- if certHeader == "true" %}
+            {%- if len(hosts) > 0 %}
+            {%- var cond = HostMatchCondition(hosts) %}
       # haproxy-ingress/auth-tls-cert-header ({{ key }})
       http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } {{ cond }}
       http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } {{ cond }}

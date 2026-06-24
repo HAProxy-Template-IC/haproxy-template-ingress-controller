@@ -279,8 +279,11 @@ validationTests:
         target: crt-list:certificate-list.txt
         pattern: "ca-file [^ ]*general/default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
       - type: contains
+        target: map:mtls-error.map
+        pattern: "api.example.com https://login.example.com/cert-required"
+      - type: contains
         target: haproxy.cfg
-        pattern: "http-request redirect location https://login\\.example\\.com/cert-required code 302 if \\{ ssl_c_verify gt 0 \\}"
+        pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*mtls-error\\.map\\)\\] code 302 if \\{ ssl_c_verify gt 0 \\}"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-SSL-Client-Cert %\\[ssl_c_der,base64\\] if \\{ ssl_fc_has_crt \\}"

@@ -1093,6 +1093,74 @@ templateSnippets:
         {%- if mapErr != nil -%}{{ fail("failed to register redirect-location map: " + tostring(mapErr)) }}{%- end -%}
       {%- end -%}
 
+  features-175-app-root-map:
+    template: |
+      {#-
+        Builds app-root.map (host → root-redirect path) from gf["appRootHosts"].
+        Resource libraries (haproxy-ingress / nginx app-root) register {host, path}
+        entries in the features phase; frontend-filters-065-app-root emits the gated
+        rule, so adding/changing an app-root is a map-only, reload-free update.
+        First-writer-wins per host; hosts sorted for byte-deterministic output (no
+        spurious reload). Resource-agnostic: operates only on the generic gf list.
+      -#}
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var appRootHosts []any = coalesce(gf["appRootHosts"], []any{}) -%}
+      {%- if len(appRootHosts) > 0 -%}
+        {%- var pathByHost = map[string]string{} -%}
+        {%- var seen = map[string]bool{} -%}
+        {%- var hostKeys = []any{} -%}
+        {%- for _, entry := range appRootHosts -%}
+          {%- var host = tostring(entry | dig("host")) -%}
+          {%- if host != "" && !seen[host] -%}
+            {%- seen[host] = true -%}
+            {%- pathByHost[host] = tostring(entry | dig("path")) -%}
+            {%- hostKeys = append(hostKeys, host) -%}
+          {%- end -%}
+        {%- end -%}
+        {%- var sortedHosts = sort_strings(hostKeys) -%}
+        {%- var lines = []any{} -%}
+        {%- for _, host := range sortedHosts -%}
+          {%- lines = append(lines, tostring(host) + " " + pathByHost[tostring(host)]) -%}
+        {%- end -%}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
+        {%- var _, mapErr = fileRegistry.Register("map", "app-root.map", mapContent) -%}
+        {%- if mapErr != nil -%}{{ fail("failed to register app-root map: " + tostring(mapErr)) }}{%- end -%}
+      {%- end -%}
+
+  features-185-mtls-error-map:
+    template: |
+      {#-
+        Builds mtls-error.map (host → client-cert-verify error page URL) from
+        gf["mtlsErrorHosts"]. Resource libraries (haproxy-ingress / nginx
+        auth-tls-error-page) register {host, location} entries in the features phase;
+        frontend-filters-075-mtls-error emits the gated rule. The per-vendor
+        cert-passthrough set-header directives stay in their own vendor snippets.
+        First-writer-wins per host; hosts sorted for deterministic output.
+      -#}
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var mtlsErrorHosts []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
+      {%- if len(mtlsErrorHosts) > 0 -%}
+        {%- var locByHost = map[string]string{} -%}
+        {%- var seen = map[string]bool{} -%}
+        {%- var hostKeys = []any{} -%}
+        {%- for _, entry := range mtlsErrorHosts -%}
+          {%- var host = tostring(entry | dig("host")) -%}
+          {%- if host != "" && !seen[host] -%}
+            {%- seen[host] = true -%}
+            {%- locByHost[host] = tostring(entry | dig("location")) -%}
+            {%- hostKeys = append(hostKeys, host) -%}
+          {%- end -%}
+        {%- end -%}
+        {%- var sortedHosts = sort_strings(hostKeys) -%}
+        {%- var lines = []any{} -%}
+        {%- for _, host := range sortedHosts -%}
+          {%- lines = append(lines, tostring(host) + " " + locByHost[tostring(host)]) -%}
+        {%- end -%}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
+        {%- var _, mapErr = fileRegistry.Register("map", "mtls-error.map", mapContent) -%}
+        {%- if mapErr != nil -%}{{ fail("failed to register mtls-error map: " + tostring(mapErr)) }}{%- end -%}
+      {%- end -%}
+
   frontend-filters-060-redirect-location:
     template: |
       {#-
@@ -1113,6 +1181,40 @@ templateSnippets:
       {%- var m, _ = pathResolver.GetPath("redirect-loc-" + code + ".map", "map") %}
       # base/redirect-location (code {{ code }})
       http-request redirect location %[var(txn.host),map({{ m }})] code {{ code }} if { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
+
+  frontend-filters-065-app-root:
+    template: |
+      {#-
+        Host-keyed app-root redirect: when a registered host is requested at the
+        site root, redirect to its configured path (fixed 302). Single shared rule
+        driven by app-root.map (built by features-175-app-root-map). Runs before
+        path-rewrite so the gate sees the original request path. Resource-agnostic:
+        references only var(txn.host), path, and the map.
+      -#}
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var appRootHosts []any = coalesce(gf["appRootHosts"], []any{}) -%}
+      {%- if len(appRootHosts) > 0 %}
+      {%- var m, _ = pathResolver.GetPath("app-root.map", "map") %}
+      # base/app-root
+      http-request redirect location %[var(txn.host),map({{ m }})] code 302 if { path / } { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
+
+  frontend-filters-075-mtls-error:
+    template: |
+      {#-
+        Host-keyed mTLS error redirect: when client-cert verification failed
+        (ssl_c_verify gt 0) for a registered host, redirect to its error page
+        (fixed 302). Single shared rule driven by mtls-error.map (built by
+        features-185-mtls-error-map). The per-vendor X-SSL-Client-* cert-passthrough
+        set-header directives stay in their own vendor snippets. Resource-agnostic.
+      -#}
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var mtlsErrorHosts []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
+      {%- if len(mtlsErrorHosts) > 0 %}
+      {%- var m, _ = pathResolver.GetPath("mtls-error.map", "map") %}
+      # base/mtls-error
+      http-request redirect location %[var(txn.host),map({{ m }})] code 302 if { ssl_c_verify gt 0 } { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 
   # Status frontend directives — override or extend via status-extra-* snippets.
