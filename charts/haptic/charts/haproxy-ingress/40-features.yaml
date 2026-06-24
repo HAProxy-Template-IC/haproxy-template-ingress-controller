@@ -171,6 +171,42 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  features-135-haproxy-ingress-redirect-to:
+    template: |
+      {#-
+        HAProxy-Ingress redirect-to — host registration into the shared host-keyed
+        redirect map. base.yaml's frontend-filters-060-redirect-location emits the
+        rule from redirect-loc-<code>.map, so adding/removing a host redirect is a
+        map-only, reload-free update (replaces the per-ingress inline-ACL redirect).
+
+        Annotations:
+          - haproxy-ingress.github.io/redirect-to: "<url>"
+          - haproxy-ingress.github.io/redirect-to-code: "301|302|303|307|308" (default 302)
+      -#}
+      {#- Iterates unconditionally (no cross-render first_seen): features-* renders
+          once, and features-170-redirect-location-map dedups hosts locally so the
+          map and rule emitter stay in lockstep under churn. -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+          {%- var redirectTo = ingress.Metadata.Annotations["haproxy-ingress.github.io/redirect-to"] %}
+          {%- if redirectTo != "" %}
+            {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+            {%- if regex_search(redirectTo, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-ingress.github.io/redirect-to' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/redirect-to-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
+            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
+            {%- var codeValid = false %}
+            {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
+            {%- if !codeValid %}{%- code = "302" %}{%- end %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}
+                {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}
+                {%- gf["redirectHosts"] = append(rh, map[string]any{"host": toLower(rule.Host), "location": redirectTo, "code": code}) -%}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
   backends-501-haproxy-ingress-ssl-passthrough:
     template: |
       {#-

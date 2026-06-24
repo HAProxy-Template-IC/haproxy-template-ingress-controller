@@ -141,43 +141,10 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
-  frontend-filters-650-haproxy-ingress-redirects:
-    template: |
-      {#-
-        HAProxy-Ingress Redirect Annotations
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#redirect-to
-
-        Annotations:
-          - haproxy-ingress.github.io/redirect-to: "URL" (optional)
-          - haproxy-ingress.github.io/redirect-to-code: "301|302|303|307|308" (optional, default: 302)
-
-        Generated HAProxy Config:
-          http-request redirect location <url> code <code> if <host-match>
-      -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var redirectTo = ingress.Metadata.Annotations["haproxy-ingress.github.io/redirect-to"] %}
-          {%- if redirectTo != "" %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/redirect-to-code"] %}
-            {%- if code == "" %}{%- code = "302" %}{%- end %}
-            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
-            {%- var codeValid = false %}
-            {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
-            {%- if !codeValid %}{%- code = "302" %}{%- end %}
-            {%- if len(hosts) > 0 %}
-      # haproxy-ingress/redirect-to ({{ key }})
-      http-request redirect location {{ redirectTo }} code {{ code }} if {{ HostMatchCondition(hosts) }}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+  # redirect-to relocated to features-135-haproxy-ingress-redirect-to: it registers
+  # hosts into the shared host-keyed redirect map (base.yaml emits the rule from
+  # redirect-loc-<code>.map), so adding/changing a host redirect is a map-only,
+  # reload-free update instead of a per-ingress inline-ACL redirect.
 
   frontend-filters-660-haproxy-ingress-cors:
     template: |
