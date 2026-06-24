@@ -409,6 +409,48 @@ validationTests:
         target: haproxy.cfg
         pattern: "var\\(txn.host\\) -m str redirect.example.com"
 
+  test-haproxy-ingress-redirect-to:
+    description: HAProxy-Ingress redirect-to registers the host in the shared redirect-loc map (reload-free)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: rt-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rt-ing
+            annotations:
+              haproxy-ingress.github.io/redirect-to: "https://new.example.com/"
+              haproxy-ingress.github.io/redirect-to-code: "301"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: old.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: rt-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      # Host → location lands in the shared per-code redirect map (reload-free add).
+      - type: contains
+        target: map:redirect-loc-301.map
+        pattern: "old.example.com https://new.example.com/"
+      # base.yaml emits the per-code rule (literal code, location from the map).
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*redirect-loc-301\\.map\\)\\] code 301"
+      # No per-ingress inline-ACL host condition anymore.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "var\\(txn.host\\) -m str old.example.com"
+
   test-haproxy-ingress-hsts:
     description: HAProxy-Ingress HSTS annotations generate correct headers
     fixtures:

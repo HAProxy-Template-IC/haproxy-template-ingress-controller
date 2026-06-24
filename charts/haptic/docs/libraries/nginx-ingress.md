@@ -42,8 +42,7 @@ The Nginx Ingress library implements these extension points:
 | Frontend Filters | `frontend-filters-730-nginx-ingress-cors` | CORS headers |
 | Frontend Filters | `frontend-filters-740-nginx-ingress-custom-headers` | Custom request/response headers |
 | Frontend Filters | `frontend-filters-750-nginx-ingress-app-root` | Root path redirect |
-| Frontend Filters | `frontend-filters-760-nginx-ingress-permanent-redirect` | Permanent redirect (301) |
-| Frontend Filters | `frontend-filters-770-nginx-ingress-temporal-redirect` | Temporal redirect (302) |
+| Features | `features-140-nginx-ingress-redirects` | Permanent (301) / temporal (302) redirect — registers host→location in the shared `redirect-loc-<code>.map` |
 | Frontend Filters | `frontend-filters-780-nginx-ingress-canary` | Canary routing rules |
 | Frontend Filters | `frontend-filters-790-nginx-ingress-mtls-error` | mTLS error page and cert passthrough |
 | Features | `features-100-nginx-ingress-ssl-passthrough` | SSL passthrough registration |

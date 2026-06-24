@@ -193,77 +193,11 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
-  frontend-filters-760-nginx-ingress-permanent-redirect:
-    template: |
-      {#-
-        Nginx Ingress Permanent Redirect
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#permanent-redirect
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/permanent-redirect: "<url>"
-          - nginx.ingress.kubernetes.io/permanent-redirect-code: "<status>" (default: 301)
-
-        Redirects all requests to the specified URL with code 301 (overridable).
-
-        Generated HAProxy Config:
-          http-request redirect location <url> code <code> if <host-match>
-      -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var url = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect"] %}
-          {%- if url != "" %}
-            {%- var code = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect-code"] %}
-            {%- if code == "" %}{%- code = "301" %}{%- end %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # nginx-ingress/permanent-redirect ({{ key }})
-      http-request redirect location {{ url }} code {{ code }} if {{ HostMatchCondition(hosts) }}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
-
-  frontend-filters-770-nginx-ingress-temporal-redirect:
-    template: |
-      {#-
-        Nginx Ingress Temporal Redirect
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#temporal-redirect
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/temporal-redirect: "<url>"
-          - nginx.ingress.kubernetes.io/temporal-redirect-code: "<status>" (default: 302)
-
-        Redirects all requests to the specified URL with code 302 (overridable).
-
-        Generated HAProxy Config:
-          http-request redirect location <url> code <code> if <host-match>
-      -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-          {%- var url = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect"] %}
-          {%- if url != "" %}
-            {%- var code = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect-code"] %}
-            {%- if code == "" %}{%- code = "302" %}{%- end %}
-            {%- var hosts = []string{} %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # nginx-ingress/temporal-redirect ({{ key }})
-      http-request redirect location {{ url }} code {{ code }} if {{ HostMatchCondition(hosts) }}
-            {%- end %}
-          {%- end %}
-      {%- end -%}
+  # permanent-redirect / temporal-redirect relocated to
+  # features-140-nginx-ingress-redirects: they register hosts into the shared
+  # host-keyed redirect map (base.yaml emits the rule from redirect-loc-<code>.map),
+  # so adding/changing a host redirect is a map-only, reload-free update instead of
+  # a per-ingress inline-ACL redirect.
 
   frontend-filters-775-nginx-ingress-from-to-www-redirect:
     template: |

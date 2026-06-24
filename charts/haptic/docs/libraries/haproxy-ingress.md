@@ -61,7 +61,7 @@ The haproxy-ingress library hooks into these extension points. Snippet names enc
 | `features-105-haproxy-ingress-ssl-redirect` | `ssl-redirect`, `ssl-redirect-code` (registers hosts into the shared `ssl-redirect-<code>.map`; ssl.yaml emits the redirect rule) |
 | `frontend-filters-630-haproxy-ingress-hsts` | `hsts`, `hsts-max-age`, `hsts-include-subdomains`, `hsts-preload` |
 | `frontend-filters-640-haproxy-ingress-app-root` | `app-root` |
-| `frontend-filters-650-haproxy-ingress-redirects` | `redirect-to` |
+| `features-135-haproxy-ingress-redirect-to` | `redirect-to`, `redirect-to-code` (registers host→location in the shared `redirect-loc-<code>.map`) |
 | `frontend-filters-660-haproxy-ingress-cors` | `cors-enable`, `cors-*` |
 | `frontend-filters-670-haproxy-ingress-headers` | `headers` |
 

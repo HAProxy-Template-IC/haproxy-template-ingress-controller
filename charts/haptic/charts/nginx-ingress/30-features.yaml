@@ -189,6 +189,52 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  features-140-nginx-ingress-redirects:
+    template: |
+      {#-
+        nginx permanent-redirect / temporal-redirect — host registration into the
+        shared host-keyed redirect map. base.yaml's frontend-filters-060-redirect-location
+        emits the rule from redirect-loc-<code>.map, so adding/changing a host redirect
+        is a map-only, reload-free update (replaces the per-ingress inline-ACL redirect).
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/permanent-redirect[-code]  (default 301)
+          - nginx.ingress.kubernetes.io/temporal-redirect[-code]   (default 302)
+      -#}
+      {#- Registration iterates ingresses unconditionally (no cross-render first_seen):
+          features-* renders once, so each ingress is visited once anyway, and
+          features-170-redirect-location-map dedups hosts locally. This keeps the
+          map registration and the rule emitter in lockstep under churn, matching
+          the features-160-ssl-redirect-map rationale. -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- var permUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect"] %}
+          {%- if permUrl != "" %}
+            {%- if regex_search(permUrl, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- var pc = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect-code"] %}
+            {%- if pc == "" %}{%- pc = "301" %}{%- end %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}
+                {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}
+                {%- gf["redirectHosts"] = append(rh, map[string]any{"host": toLower(rule.Host), "location": permUrl, "code": pc}) -%}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+          {%- var tempUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect"] %}
+          {%- if tempUrl != "" %}
+            {%- if regex_search(tempUrl, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/temporal-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- var tc = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect-code"] %}
+            {%- if tc == "" %}{%- tc = "302" %}{%- end %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}
+                {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}
+                {%- gf["redirectHosts"] = append(rh, map[string]any{"host": toLower(rule.Host), "location": tempUrl, "code": tc}) -%}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
   backends-501-nginx-ingress-ssl-passthrough:
     template: |
       {#-

@@ -1042,6 +1042,79 @@ templateSnippets:
          happened), matching the old in-backend `replace-path (.*) <literal>`. #}
       {{ "\n" }}http-request set-path %[var(txn.backend_name),map({{ m }})] if { var(txn.backend_name),map({{ m }}) -m found }
 
+  features-170-redirect-location-map:
+    template: |
+      {#-
+        Builds redirect-loc-<code>.map (host → location URL) per distinct redirect
+        code from gf["redirectHosts"]. Resource libraries feed gf["redirectHosts"]
+        with {host, location, code} entries in the features phase; the rule is
+        emitted by frontend-filters-060-redirect-location. Mirrors the ssl-redirect
+        map machinery, but the location is a per-host map VALUE rather than a fixed
+        `scheme https`.
+
+        Host-collision policy: first-writer-wins per host — the first redirect
+        registered for a host (by feed order: features snippet number, then ingress
+        list order) claims it; later redirects for the same host are ignored, so a
+        host lands in exactly one code's map. A map is registered for every code
+        present (even one whose hosts were all claimed by another code), so the
+        rule's per-code map reference always resolves.
+      -#}
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var redirectHosts []any = coalesce(gf["redirectHosts"], []any{}) -%}
+      {%- var locByCode = map[string]map[string]string{} -%}
+      {%- var seenHost = map[string]bool{} -%}
+      {%- for _, entry := range redirectHosts -%}
+        {%- var e any = entry -%}
+        {%- var code = tostring(e | dig("code")) -%}
+        {%- var host = tostring(e | dig("host")) -%}
+        {%- if locByCode[code] == nil -%}{%- locByCode[code] = map[string]string{} -%}{%- end -%}
+        {%- if host != "" && !seenHost[host] -%}
+          {%- seenHost[host] = true -%}
+          {%- locByCode[code][host] = tostring(e | dig("location")) -%}
+        {%- end -%}
+      {%- end -%}
+      {#- Sort hosts before emitting lines so the map file is byte-deterministic
+          across renders. Scriggo/Go map iteration order is not stable, and a
+          reordered map file looks like a change to the controller — triggering a
+          spurious HAProxy sync/reload that would undermine the reload-free goal.
+          Same rationale as features-160-ssl-redirect-map and the ssl.yaml crt-list. -#}
+      {%- for code, hostLoc := range locByCode -%}
+        {%- var hostKeys = []any{} -%}
+        {%- for host := range hostLoc -%}
+          {%- hostKeys = append(hostKeys, host) -%}
+        {%- end -%}
+        {%- var sortedHosts = sort_strings(hostKeys) -%}
+        {%- var lines = []any{} -%}
+        {%- for _, host := range sortedHosts -%}
+          {%- lines = append(lines, tostring(host) + " " + hostLoc[tostring(host)]) -%}
+        {%- end -%}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
+        {%- var _, mapErr = fileRegistry.Register("map", "redirect-loc-" + code + ".map", mapContent) -%}
+        {%- if mapErr != nil -%}{{ fail("failed to register redirect-location map: " + tostring(mapErr)) }}{%- end -%}
+      {%- end -%}
+
+  frontend-filters-060-redirect-location:
+    template: |
+      {#-
+        Host-keyed location redirect. Emits one rule per distinct code in
+        gf["redirectHosts"]: the `code` must be a literal (HAProxy rejects a map
+        expression there), so the location comes from redirect-loc-<code>.map and
+        the code is fixed per rule. Runs after ssl-redirect (050) so a scheme-upgrade
+        redirect takes precedence for a host that has both. Resource-agnostic:
+        references only var(txn.host) + the per-code map.
+      -#}
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var redirectHosts []any = coalesce(gf["redirectHosts"], []any{}) -%}
+      {%- var codes = map[string]bool{} -%}
+      {%- for _, entry := range redirectHosts -%}
+        {%- codes[tostring(entry | dig("code"))] = true -%}
+      {%- end -%}
+      {%- for code := range codes %}
+      {%- var m, _ = pathResolver.GetPath("redirect-loc-" + code + ".map", "map") %}
+      # base/redirect-location (code {{ code }})
+      http-request redirect location %[var(txn.host),map({{ m }})] code {{ code }} if { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
+
   # Status frontend directives — override or extend via status-extra-* snippets.
   # The status frontend (port 8404) serves health checks and can expose HAProxy's
   # built-in Prometheus exporter. Snippets are rendered inside the status frontend

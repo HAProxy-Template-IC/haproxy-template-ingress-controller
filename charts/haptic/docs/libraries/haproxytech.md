@@ -56,7 +56,7 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | `frontend-filters-100-haproxytech-basic-headers` | `haproxy.org/forwarded-for`, `haproxy.org/src-ip-header` |
 | `frontend-filters-200-haproxytech-access-control` | `haproxy.org/allowlist`, `haproxy.org/denylist` |
 | `frontend-filters-300-haproxytech-cors` | `haproxy.org/cors-*` |
-| `frontend-filters-450-haproxytech-redirects` | `haproxy.org/request-redirect`, `haproxy.org/request-redirect-code` |
+| `features-130-haproxytech-request-redirect` | `haproxy.org/request-redirect`, `haproxy.org/request-redirect-code` (registers host→location in the shared `redirect-loc-<code>.map`) |
 | `frontend-filters-500-haproxytech-logging` | `haproxy.org/request-capture`, `haproxy.org/request-capture-len` |
 
 ### backend-directives-* (per-backend directives)
