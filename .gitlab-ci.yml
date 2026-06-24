@@ -1736,6 +1736,75 @@ test-gateway-conformance:
     when: on_failure
     expire_in: 1 week
 
+# On-demand job that produces a submittable Gateway API ConformanceReport.
+#
+# Unlike test-gateway-conformance (sharded 4x as a fast regression gate), this
+# runs the FULL suite in ONE process — `cSuite.Report()` only knows about the
+# tests the running instance executed, so a coherent report can't be stitched
+# from shards. It's `when: manual` so the ~full-suite runtime never lands on
+# every pipeline; trigger it when you want to refresh the report for an upstream
+# implementations-list submission. The report YAML is uploaded as an artifact
+# (download it, commit it under conformance/reports/, then open the
+# kubernetes-sigs/gateway-api PR — that PR is a deliberate, separate step).
+gateway-conformance-report:
+  stage: integration
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
+  extends:
+    - .docker-dind
+  # Full suite (~108 tests) unsharded plus the kind+helm bootstrap.
+  timeout: 60 minutes
+  interruptible: true
+  variables:
+    CTRL_NAMESPACE: haptic
+    RELEASE_NAME: haptic
+    SPOA_TAG: "ci-${CI_PIPELINE_ID}"
+    SKIP_DOCKER_BUILD: "1"
+    HAPROXY_VERSION: "3.4"
+    # Single source of truth for the kept-container name: exported into the
+    # environment, so the Makefile's `CONFORMANCE_CONTAINER ?=` picks it up AND
+    # the docker cp/rm below reference the same value — no drift.
+    CONFORMANCE_CONTAINER: haptic-conformance-run
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+    - job: build-snapshot
+    - job: build-spoa-image-snapshot
+  rules:
+    # On-demand only: never auto-runs. Failure of the (optional) job must not
+    # block the pipeline — the report artifact is still produced and uploaded.
+    - when: manual
+      allow_failure: true
+  # Reuse the snapshot-image pull from the sharded job verbatim.
+  before_script:
+    - !reference [test-gateway-conformance, before_script]
+  script:
+    # Bring up the conformance cluster (same as the sharded job).
+    - HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN="^$" make test-e2e
+    - |
+      # Full (unsharded) suite with report output. The container is KEPT (not
+      # --rm) so we can `docker cp` the report it wrote; the report is produced
+      # even when some tests fail (it records the failures), so capture it
+      # regardless of the test exit code, then propagate that code.
+      set +e
+      CONFORMANCE_KEEP_CONTAINER=1 \
+        CONFORMANCE_REPORT_OUTPUT=/conformance-report.yaml \
+        CONFORMANCE_IMPL_VERSION="$(cat VERSION 2>/dev/null || echo main)" \
+        TEST_RUN_PATTERN="" \
+        make test-gateway-conformance
+      rc=$?
+      docker cp "${CONFORMANCE_CONTAINER}:/conformance-report.yaml" ./conformance-report.yaml \
+        || echo "WARN: no conformance report was produced"
+      docker rm -f "${CONFORMANCE_CONTAINER}" >/dev/null 2>&1 || true
+      echo "=== Gateway API ConformanceReport ==="
+      cat ./conformance-report.yaml 2>/dev/null || true
+      exit "$rc"
+  artifacts:
+    name: "gateway-conformance-report-${CI_COMMIT_SHORT_SHA}"
+    when: always
+    paths:
+      - conformance-report.yaml
+    expire_in: 30 days
+
 # Upstream Kubernetes Ingress conformance suite
 # (kubernetes-sigs/ingress-controller-conformance).
 #

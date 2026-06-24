@@ -211,6 +211,9 @@ CONFORMANCE_IMAGE ?= haptic-conformance-test:latest
 CONFORMANCE_KIND_NETWORK ?= kind
 CONFORMANCE_KIND_CLUSTER ?= haptic-e2e
 CONFORMANCE_TIMEOUT ?= 30m
+# Container name used when CONFORMANCE_KEEP_CONTAINER is set (the report job
+# keeps the stopped container so it can `docker cp` the written report out).
+CONFORMANCE_CONTAINER ?= haptic-conformance-run
 
 # Ingress conformance variables. The upstream
 # kubernetes-sigs/ingress-controller-conformance project is dormant
@@ -263,10 +266,22 @@ test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sib
 	docker build -t $(CONFORMANCE_IMAGE) /tmp/haptic-conformance-build
 	@rm -rf /tmp/haptic-conformance-build
 	@echo "Running conformance suite..."
+	@# CONFORMANCE_KEEP_CONTAINER (set by the report job) keeps the stopped
+	@# container under a fixed name so the report file the test wrote inside it
+	@# can be `docker cp`'d out afterwards; otherwise --rm cleans up as before.
+	@# CONFORMANCE_REPORT_OUTPUT / CONFORMANCE_IMPL_VERSION are forwarded into
+	@# the test binary to enable + label the ConformanceReport.
+	@# Pre-remove any stale kept-container from a prior run that was interrupted
+	@# before its cleanup (job cancel / 60m timeout / runner death), so the
+	@# `docker run --name` below is idempotent instead of failing with
+	@# "name already in use". No-op when not keeping the container.
+	$(if $(CONFORMANCE_KEEP_CONTAINER),docker rm -f $(CONFORMANCE_CONTAINER) >/dev/null 2>&1 || true,)
 	docker run \
-		--rm \
+		$(if $(CONFORMANCE_KEEP_CONTAINER),--name $(CONFORMANCE_CONTAINER),--rm) \
 		--network $(CONFORMANCE_KIND_NETWORK) \
 		$(if $(CONFORMANCE_DEBUG),-e CONFORMANCE_DEBUG=$(CONFORMANCE_DEBUG)) \
+		$(if $(CONFORMANCE_REPORT_OUTPUT),-e CONFORMANCE_REPORT_OUTPUT=$(CONFORMANCE_REPORT_OUTPUT)) \
+		$(if $(CONFORMANCE_IMPL_VERSION),-e CONFORMANCE_IMPL_VERSION=$(CONFORMANCE_IMPL_VERSION)) \
 		$(CONFORMANCE_IMAGE) \
 		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
 		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")

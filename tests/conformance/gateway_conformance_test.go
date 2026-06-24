@@ -256,11 +256,19 @@ func TestGatewayAPIConformance(t *testing.T) {
 	usable, unusable, err := discoverStaticAddressPools(t.Context(), cfg)
 	require.NoError(t, err, "derive static-addresses pools from MetalLB IPAddressPool")
 
+	// The implementation version recorded in the conformance report. The
+	// dedicated report job passes the released chart version; defaults to
+	// "main" for ad-hoc local runs.
+	implVersion := os.Getenv("CONFORMANCE_IMPL_VERSION")
+	if implVersion == "" {
+		implVersion = "main"
+	}
+
 	opts := suite.ConformanceOptions{
-		Client:        c,
-		ClientOptions: clientOpts,
-		Clientset:     cs,
-		RestConfig:    cfg,
+		Client:           c,
+		ClientOptions:    clientOpts,
+		Clientset:        cs,
+		RestConfig:       cfg,
 		GatewayClassName: gatewayClassName,
 		Debug:            debug,
 		// CleanupBaseResources=false leaves the conformance suite's
@@ -280,7 +288,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"haproxy-haptic",
 			"haptic",
 			"https://gitlab.com/haproxy-haptic/haptic",
-			"main",
+			implVersion,
 			"https://gitlab.com/haproxy-haptic/haptic/-/issues",
 		),
 		// SkipTests is the right place to opt-out of *individual* upstream
@@ -623,6 +631,24 @@ func TestGatewayAPIConformance(t *testing.T) {
 		},
 		UsableNetworkAddresses:   usable,
 		UnusableNetworkAddresses: unusable,
+	}
+
+	// When CONFORMANCE_REPORT_OUTPUT is set, emit a submittable
+	// ConformanceReport to that path (RunConformanceWithOptions writes it
+	// when ReportOutputPath != ""). The report is keyed on ConformanceProfiles;
+	// these are REPORT-ONLY — test selection stays SupportedFeatures-driven
+	// (suite.go), so the per-shard gate (which leaves both unset) is byte-for-
+	// byte unchanged. A report compiled from a single shard would be
+	// incomplete — the suite only knows about the tests THIS instance ran — so
+	// report generation is reserved for the dedicated UNSHARDED full-suite job.
+	// haptic is a Gateway (not mesh) implementation, hence the GATEWAY-* profiles.
+	if reportPath := os.Getenv("CONFORMANCE_REPORT_OUTPUT"); reportPath != "" {
+		opts.ReportOutputPath = reportPath
+		opts.ConformanceProfiles = sets.New(
+			suite.GatewayHTTPConformanceProfileName,
+			suite.GatewayTLSConformanceProfileName,
+			suite.GatewayGRPCConformanceProfileName,
+		)
 	}
 
 	gwconformance.RunConformanceWithOptions(t, opts)
