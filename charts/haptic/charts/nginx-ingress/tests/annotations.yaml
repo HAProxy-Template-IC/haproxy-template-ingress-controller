@@ -165,6 +165,13 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "redirect scheme https code 308"
+      # Relocated to the shared host map (reload-free host add/remove).
+      - type: contains
+        target: map:ssl-redirect-308.map
+        pattern: "redirect.example.com 1"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "var\\(txn.host\\) -m str redirect.example.com"
 
   test-nginx-ingress-ssl-redirect-code-override:
     description: ssl-redirect honours the nginxHttpRedirectCode extraContext override
@@ -219,6 +226,9 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "redirect scheme https code 301"
+      - type: contains
+        target: map:ssl-redirect-301.map
+        pattern: "redirect.example.com 1"
 
   test-nginx-ingress-force-ssl-redirect:
     description: Nginx Ingress force-ssl-redirect annotation generates 308 redirect
@@ -271,6 +281,9 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "redirect scheme https code 308"
+      - type: contains
+        target: map:ssl-redirect-308.map
+        pattern: "force-redirect.example.com 1"
 
   test-nginx-ingress-cors:
     description: Nginx Ingress CORS annotations generate correct headers

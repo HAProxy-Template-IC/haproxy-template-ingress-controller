@@ -79,34 +79,10 @@ templateSnippets:
             "haproxy-ingress/denylist-source-range ({KEY})") }}
       {%- end -%}
 
-  frontend-filters-620-haproxy-ingress-ssl-redirect:
-    template: |
-      {#-
-        HAProxy-Ingress SSL Redirect Annotations
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-redirect
-
-        Annotations:
-          - haproxy-ingress.github.io/ssl-redirect: "true|false" (optional)
-          - haproxy-ingress.github.io/ssl-redirect-code: "301|302|303|307|308" (optional, default: 302)
-
-        Generated HAProxy Config:
-          http-request redirect scheme https code <code> if !{ ssl_fc } <host-match>
-      -#}
-      {%- import "util-emit-annotation-ssl-redirect" for EmitAnnotationSSLRedirect -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var sslRedirect = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-redirect"] %}
-        {%- if sslRedirect == "true" %}
-          {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-redirect-code"] %}
-          {%- if code == "" %}{%- code = "302" %}{%- end %}
-          {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
-          {%- var codeValid = false %}
-          {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
-          {%- if !codeValid %}{%- code = "302" %}{%- end %}
-          {{ EmitAnnotationSSLRedirect(ingress, code, "haproxy-ingress/ssl-redirect") }}
-        {%- end %}
-      {%- end -%}
-
+  # SSL redirect relocated to features-105-haproxy-ingress-ssl-redirect: it now
+  # registers hosts into the shared gf["sslRedirectHosts"] map (ssl.yaml emits the
+  # rule from ssl-redirect-<code>.map), so adding/removing a redirected host is a
+  # map-only, reload-free update instead of a per-ingress inline-ACL redirect.
   frontend-filters-630-haproxy-ingress-hsts:
     template: |
       {#-

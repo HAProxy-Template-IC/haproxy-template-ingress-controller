@@ -50,6 +50,40 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  features-105-nginx-ingress-ssl-redirect:
+    template: |
+      {#-
+        Nginx Ingress ssl-redirect / force-ssl-redirect — host registration into the
+        shared map. Code = extraContext.nginxHttpRedirectCode (default 308, the nginx
+        http-redirect-code equivalent). Registers redirected hosts into
+        gf["sslRedirectHosts"] in the features phase (before features-160-ssl-redirect-map);
+        ssl.yaml builds ssl-redirect-<code>.map and emits the shared redirect rule.
+        Replaces the per-ingress inline-ACL redirect, so adding/removing a redirected
+        host is a map-only, reload-free update.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- var redirectCode = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
+      {%- if redirectCode != "301" && redirectCode != "302" && redirectCode != "303" && redirectCode != "307" && redirectCode != "308" %}
+        {{- fail("Invalid extraContext.nginxHttpRedirectCode '" + redirectCode + "': must be one of 301, 302, 303, 307, 308 (the nginx http-redirect-code values).") -}}
+      {%- end %}
+      {#- Iterates unconditionally (no cross-render first_seen): features-* renders
+          once, so each ingress is visited once anyway, and features-160-ssl-redirect-map
+          dedups hosts locally. Routing registration through first_seen would re-expose
+          the cross-render cache leak that features-160 was rewritten to avoid (a leaked
+          key would skip registration, silently dropping the redirect for that render). -#}
+      {%- for _, ingress := range resources.ingresses.List() %}
+          {%- var sslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] %}
+          {%- var forceSslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/force-ssl-redirect"] %}
+          {%- if forceSslRedirect == "true" || sslRedirect == "true" %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}
+                {%- var redirectHosts []any = gf["sslRedirectHosts"] -%}
+                {%- gf["sslRedirectHosts"] = append(redirectHosts, map[string]any{"host": toLower(rule.Host), "code": redirectCode}) -%}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
   features-110-nginx-ingress-mtls:
     template: |
       {#-

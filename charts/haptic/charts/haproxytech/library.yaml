@@ -164,11 +164,12 @@ templateSnippets:
 
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- var sslRedirectDefault = extraContext | dig_string("", "ssl_redirect_default") -%}
+      {#- Iterates unconditionally (no cross-render first_seen): features-* renders
+          once, so each ingress is visited once anyway, and features-160-ssl-redirect-map
+          dedups hosts locally. Gating registration on first_seen re-exposes the
+          cross-render cache leak that features-160 was rewritten to avoid (a leaked
+          key would skip registration, silently dropping the redirect for that render). -#}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- if first_seen("haproxytech_sslRedirect", key) %}
           {%- var sslRedirect = ingress.Metadata.Annotations["haproxy.org/ssl-redirect"] %}
           {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && sslRedirectDefault == "true") %}
           {#- ssl-redirect-port targets an explicit port via a dedicated frontend-filter
@@ -186,7 +187,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-055-haproxytech-ssl-redirect-port:
