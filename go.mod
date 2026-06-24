@@ -26,7 +26,7 @@ require (
 	k8s.io/apiextensions-apiserver v0.36.2
 	k8s.io/apimachinery v0.36.2
 	k8s.io/client-go v0.36.2
-	k8s.io/kube-openapi v0.0.0-20260623045532-0b43c5e46c6b
+	k8s.io/kube-openapi v0.0.0-20260624041617-8f3fa4921821
 	sigs.k8s.io/controller-runtime v0.24.1
 	sigs.k8s.io/controller-tools v0.21.0
 	sigs.k8s.io/e2e-framework v0.7.0
