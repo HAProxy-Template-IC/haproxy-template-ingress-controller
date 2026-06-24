@@ -682,8 +682,11 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
+        target: map:app-root.map
+        pattern: "approot.example.com /dashboard"
+      - type: contains
         target: haproxy.cfg
-        pattern: "http-request redirect location /dashboard"
+        pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*app-root\\.map\\)\\] code 302 if \\{ path / \\}"
 
   # ============================================================================
   # Phase 3: Path Type Tests
@@ -1610,8 +1613,11 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
+        target: map:default-backend-redirect-301.map
+        pattern: "dbr.example.com https://fallback.example.com/"
+      - type: contains
         target: haproxy.cfg
-        pattern: "http-request redirect location https://fallback.example.com/ code 301 if \\{ var\\(txn.host\\) -m str dbr.example.com \\} !\\{ var\\(txn.backend_name\\) -m found \\}"
+        pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*default-backend-redirect-301\\.map\\)\\] code 301 if !\\{ var\\(txn.backend_name\\) -m found \\}"
 
   test-haproxy-ingress-default-backend-redirect-default-code:
     description: HAProxy-Ingress default-backend-redirect defaults to code 302
@@ -1650,7 +1656,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request redirect location https://fallback2.example.com/ code 302 if \\{ var\\(txn.host\\) -m str dbr2.example.com \\} !\\{ var\\(txn.backend_name\\) -m found \\}"
+        pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*default-backend-redirect-302\\.map\\)\\] code 302 if !\\{ var\\(txn.backend_name\\) -m found \\}"
+      - type: contains
+        target: map:default-backend-redirect-302.map
+        pattern: "dbr2.example.com https://fallback2.example.com/"
 
   # ==========================================================================
   # Security: CIDR-list config-injection guard (ValidateCidrList)

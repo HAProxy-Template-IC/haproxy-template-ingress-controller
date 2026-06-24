@@ -1606,6 +1606,50 @@ validationTests:
         target: rendering_error
         pattern: "must not contain control characters"
 
+  test-nginx-ingress-app-root-map-sorted:
+    description: app-root.map lines are sorted by host (deterministic output, no reload churn)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: ar-sort-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: zzz-ar-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/app-root: "/z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: zzz-ar.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: ar-sort-svc, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: aaa-ar-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/app-root: "/a"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: aaa-ar.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: ar-sort-svc, port: {number: 80}}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:app-root.map
+        pattern: "aaa-ar\\.example\\.com [^\\n]*\\nzzz-ar\\.example\\.com"
+
   test-nginx-ingress-app-root:
     description: Nginx Ingress app-root redirects root path
     fixtures:
@@ -1655,11 +1699,11 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
-        target: haproxy.cfg
-        pattern: "http-request redirect location /dashboard"
+        target: map:app-root.map
+        pattern: "approot.example.com /dashboard"
       - type: contains
         target: haproxy.cfg
-        pattern: "{ path / }"
+        pattern: "http-request redirect location %\\[var\\(txn.host\\),map\\([^)]*app-root\\.map\\)\\] code 302 if \\{ path / \\}"
 
   test-nginx-ingress-proxy-body-size:
     description: Nginx Ingress proxy-body-size limits request body via body-size.map (relocated from the backend)

@@ -210,14 +210,18 @@ templateSnippets:
           - haproxy.org/ssl-redirect-port: explicit https port
           - haproxy.org/ssl-redirect-code: redirect status code (default "302")
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {#- Per-code host→port maps (single-vendor): the redirect location interpolates
+          the port from ssl-redirect-port-<code>.map, so changing a port is a map-only,
+          reload-free update. First-writer-wins per host; hosts sorted for deterministic
+          map output. -#}
       {%- var sslRedirectDefault = extraContext | dig_string("", "ssl_redirect_default") -%}
+      {%- var portByCode = map[string]map[string]string{} -%}
+      {%- var codeHosts = map[string][]any{} -%}
+      {%- var seen = map[string]bool{} -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
         {%- var redirectPort = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-port"] %}
         {%- if redirectPort != "" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
           {%- if toint(redirectPort) <= 0 %}
             {{- fail("Invalid value '" + redirectPort + "' for annotation 'haproxy.org/ssl-redirect-port' on Ingress '" + key + "'. Must be a positive integer port.") -}}
           {%- end %}
@@ -226,17 +230,29 @@ templateSnippets:
           {%- if shouldRedirect %}
             {%- var code = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-code"] %}
             {%- if code == "" %}{%- code = "302" %}{%- end %}
-            {%- var hosts = []string{} %}
+            {%- if portByCode[code] == nil %}{%- portByCode[code] = map[string]string{} %}{%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-      # haproxytech/frontend-filters-haproxytech-ssl-redirect-port (for {{ key }})
-      http-request redirect location https://%[hdr(host),field(1,:)]:{{ redirectPort }}%[capture.req.uri] code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
+              {%- var host = toLower(rule.Host) %}
+              {%- if host != "" && !seen[host] %}
+                {%- seen[host] = true %}
+                {%- portByCode[code][host] = redirectPort %}
+                {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}), host) %}
+              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
-      {%- end -%}
+      {%- end %}
+      {%- for code, hostPort := range portByCode %}
+        {%- var sortedHosts = sort_strings(coalesce(codeHosts[code], []any{})) %}
+        {%- var lines = []any{} %}
+        {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + hostPort[tostring(h)]) %}{%- end %}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var _, mapErr = fileRegistry.Register("map", "ssl-redirect-port-" + code + ".map", mapContent) %}
+        {%- if mapErr != nil %}{{ fail("failed to register ssl-redirect-port map: " + tostring(mapErr)) }}{%- end %}
+        {%- var m, _ = pathResolver.GetPath("ssl-redirect-port-" + code + ".map", "map") %}
+      # haproxytech/ssl-redirect-port (code {{ code }})
+      http-request redirect location https://%[hdr(host),field(1,:)]:%[var(txn.host),map({{ m }})]%[capture.req.uri] code {{ code }} if !{ ssl_fc } { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
 
   features-130-haproxytech-request-redirect:
     template: |
@@ -1863,8 +1879,11 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
+        target: map:ssl-redirect-port-302.map
+        pattern: "secure.example.com 8443"
+      - type: contains
         target: haproxy.cfg
-        pattern: "http-request redirect location https://%\\[hdr\\(host\\),field\\(1,:\\)\\]:8443%\\[capture.req.uri\\] code 302"
+        pattern: "http-request redirect location https://%\\[hdr\\(host\\),field\\(1,:\\)\\]:%\\[var\\(txn.host\\),map\\([^)]*ssl-redirect-port-302\\.map\\)\\]%\\[capture.req.uri\\] code 302 if !\\{ ssl_fc \\}"
       - type: not_contains
         target: haproxy.cfg
         pattern: "redirect scheme https code 302 if.*ssl-redirect-302\\.map"
