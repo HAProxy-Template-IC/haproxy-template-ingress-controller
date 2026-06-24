@@ -1,6 +1,8 @@
 package comparator
 
 import (
+	"strings"
+
 	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
@@ -174,7 +176,12 @@ func (c *Comparator) compareModifiedFrontendsWithIndexes(desiredFrontends, curre
 
 		// Compare frontend attributes (excluding ACLs, rules, and binds which we already compared)
 		if !frontendsEqualWithoutNestedCollections(currentFrontend, desiredFrontend) {
-			operations = append(operations, sections.FrontendOps.Update(desiredFrontend))
+			if op, ok := frontendMaxconnOnlyUpdate(name, currentFrontend, desiredFrontend); ok {
+				// Only maxconn changed: apply via the runtime API (no reload).
+				operations = append(operations, op)
+			} else {
+				operations = append(operations, sections.FrontendOps.Update(desiredFrontend))
+			}
 			frontendModified = true
 		}
 
@@ -186,37 +193,66 @@ func (c *Comparator) compareModifiedFrontendsWithIndexes(desiredFrontends, curre
 	return operations
 }
 
+// frontendWithoutNestedCollections returns a copy of f with the nested
+// collections (ACLs, HTTP/TCP rules, binds, filters, captures, log targets,
+// switching rules) cleared, so attribute-level comparison ignores collections
+// the comparator diffs separately.
+func frontendWithoutNestedCollections(f *models.Frontend) models.Frontend {
+	c := *f
+	c.ACLList = nil
+	c.HTTPRequestRuleList = nil
+	c.HTTPResponseRuleList = nil
+	c.HTTPAfterResponseRuleList = nil
+	c.TCPRequestRuleList = nil
+	c.BackendSwitchingRuleList = nil
+	c.LogTargetList = nil
+	c.Binds = nil
+	c.FilterList = nil
+	c.CaptureList = nil
+	return c
+}
+
 // frontendsEqualWithoutNestedCollections checks if two frontends are equal, excluding ACLs, HTTP rules, and binds.
 // Uses the HAProxy models' built-in Equal() method to compare ALL frontend attributes
 // (mode, timeouts, etc.) automatically, excluding nested collections we compare separately.
 func frontendsEqualWithoutNestedCollections(f1, f2 *models.Frontend) bool {
-	// Create copies to avoid modifying originals
-	f1Copy := *f1
-	f2Copy := *f2
+	a := frontendWithoutNestedCollections(f1)
+	b := frontendWithoutNestedCollections(f2)
+	return a.Equal(b)
+}
 
-	// Clear nested collections so they don't affect comparison
-	f1Copy.ACLList = nil
-	f2Copy.ACLList = nil
-	f1Copy.HTTPRequestRuleList = nil
-	f2Copy.HTTPRequestRuleList = nil
-	f1Copy.HTTPResponseRuleList = nil
-	f2Copy.HTTPResponseRuleList = nil
-	f1Copy.HTTPAfterResponseRuleList = nil
-	f2Copy.HTTPAfterResponseRuleList = nil
-	f1Copy.TCPRequestRuleList = nil
-	f2Copy.TCPRequestRuleList = nil
-	f1Copy.BackendSwitchingRuleList = nil
-	f2Copy.BackendSwitchingRuleList = nil
-	f1Copy.LogTargetList = nil
-	f2Copy.LogTargetList = nil
-	f1Copy.Binds = nil
-	f2Copy.Binds = nil
-	f1Copy.FilterList = nil
-	f2Copy.FilterList = nil
-	f1Copy.CaptureList = nil
-	f2Copy.CaptureList = nil
-
-	return f1Copy.Equal(f2Copy)
+// frontendMaxconnOnlyUpdate returns a runtime-eligible maxconn-only update op
+// when the sole differing (non-nested) attribute between current and desired is
+// Maxconn and the desired value is set. Otherwise ok is false and the caller
+// emits a structural frontend update.
+//
+// Removing/unsetting maxconn (desired Maxconn nil) is NOT runtime-eligible —
+// there is no `set maxconn frontend` command to clear it — so it stays
+// structural. The desired value being set is what `SetFrontendMaxConn` applies
+// to the live worker; the on-disk config the skip_reload push writes carries it
+// across the next reload.
+func frontendMaxconnOnlyUpdate(name string, current, desired *models.Frontend) (sections.Operation, bool) {
+	if desired.Maxconn == nil {
+		return nil, false
+	}
+	// The dataplane tokenizes the X-Runtime-Actions header on spaces and ';';
+	// a frontend name containing either would split the `SetFrontendMaxConn
+	// <name> <value>` command into malformed tokens. Fall back to a structural
+	// (reload) update rather than emit a corrupt action — the same delimiter
+	// guard the server delta path applies via safeRuntimeArg. HAPTIC-rendered
+	// frontend names never contain these, so this only ever trips on
+	// hand-written configs.
+	if strings.ContainsAny(name, " ;") {
+		return nil, false
+	}
+	a := frontendWithoutNestedCollections(current)
+	b := frontendWithoutNestedCollections(desired)
+	a.Maxconn = nil
+	b.Maxconn = nil
+	if !a.Equal(b) {
+		return nil, false // something other than maxconn also differs
+	}
+	return sections.NewFrontendMaxconnUpdate(name, *desired.Maxconn), true
 }
 
 // compareBindsWithIndex compares bind configurations within a frontend using pointer indexes.
