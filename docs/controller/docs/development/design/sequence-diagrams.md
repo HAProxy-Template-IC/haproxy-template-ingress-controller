@@ -221,7 +221,8 @@ sequenceDiagram
     Client->>Client: Parse + comparator.Compare
 
     alt Only runtime changes
-        Note over Client: Server weight/address/port/maintenance only
+        Note over Client: Server weight/address/port/maintenance fields,<br/>and/or map &amp; cert content updates only
+        Client->>DP: set map / set ssl cert (existing+referenced maps/certs)
         Client->>DP: POST /v3/services/haproxy/configuration/raw?skip_reload=true (+ X-Runtime-Actions header)
         DP->>HAProxy: Runtime API commands via master socket
         HAProxy-->>DP: Updated
@@ -241,8 +242,8 @@ sequenceDiagram
 
 `pkg/dataplane.Client.Sync` analyses configuration changes to determine the optimal deployment strategy:
 
-1. **Runtime-Only Updates**: Server weight/address/port/maintenance changes → a single `skip_reload` raw push carrying `X-Runtime-Actions` → no reload
+1. **Runtime-Only Updates**: Server weight/address/port/maintenance changes, and/or content updates to an existing, already-referenced map (`set map`, v3.0+) or certificate (`set ssl cert`, v3.2+), are applied to the live worker via the Runtime API, then a single `skip_reload` raw push carries the `X-Runtime-Actions` server fields → no reload
 2. **Mixed Updates**: Apply runtime-eligible server changes via the Runtime API first, then ship the rendered config in one `force_reload` raw push → single reload
-3. **Structural Updates**: Backend/frontend/bind/ACL changes → one `force_reload` raw config push → reload required
+3. **Structural Updates**: Backend/frontend/bind/ACL changes, map/cert **create or delete**, and other auxiliary-file changes (general, CA, crt-list) → one `force_reload` raw config push → reload required
 
 The controller maintains its own `serverRuntimeSupportedJSONFields` table in `pkg/dataplane/comparator/sections/factory_server.go`, mirroring the Dataplane API's `RuntimeSupportedFields["server"]`. The comparator uses this table to classify each server-field change as runtime-eligible (no reload) or structural (reload required). This minimises service disruption by avoiding unnecessary HAProxy process reloads.
