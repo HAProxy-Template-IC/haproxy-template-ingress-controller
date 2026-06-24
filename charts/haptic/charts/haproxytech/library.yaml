@@ -564,15 +564,30 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  backend-directives-250-haproxytech-set-host:
+  map-reqhdr-host-250-haproxytech:
     template: |
-      {#- HAProxy set-host header -#}
-      {%- if ingress != nil %}
-        {%- var host = ingress.Metadata.Annotations["haproxy.org/set-host"] %}
-        {%- if host != "" %}
-      # haproxytech/backend-directives-haproxytech-set-host
-      http-request set-header Host '{{ host }}'
-        {%- end %}
+      {#- HAProxy set-host relocated to reqhdr-host.map (Strategy 1): emits
+          `<backend_name> <host>` consumed by base.yaml's resource-agnostic
+          frontend-filters-260-request-set-host rule, instead of a per-backend
+          `http-request set-header Host`. Shares the "map-reqhdr-host" first_seen
+          namespace with the nginx upstream-vhost emitter so a backend reached by
+          both annotations gets exactly one (deterministic, this snippet wins on
+          its lower numeric prefix). -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var host = ingress.Metadata.Annotations["haproxy.org/set-host"] -%}
+        {%- if host != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- var be = BackendNameIngress(ingress, path) -%}
+              {%- if first_seen("map-reqhdr-host", be) -%}
+      {{ "\n" }}{{ be }} {{ ValidateConfigValue(host, "haproxy.org/set-host", key, false) }}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   backend-directives-300-haproxytech-header-manipulation:
@@ -856,6 +871,46 @@ templateSnippets:
 # ============================================================================
 
 validationTests:
+  test-haproxytech-set-host:
+    description: haproxy.org/set-host relocates the upstream Host override to reqhdr-host.map (reload-free)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: sethost-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sethost-ing
+            annotations:
+              haproxy.org/set-host: "internal.svc.local"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: sethost.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: sethost-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:reqhdr-host.map
+        pattern: "default_sethost-ing_svc_sethost-svc_80 internal.svc.local"
+      # Relocated out of the backend: no per-backend set-header Host directive.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "set-header Host 'internal.svc.local'"
+
   test-auth-basic-cross-namespace:
     description: Basic authentication with secret in different namespace
     fixtures:

@@ -1190,9 +1190,48 @@ validationTests:
         target: haproxy.cfg
         pattern: "/api/\\$1"
 
+  test-haproxy-ingress-rewrite-target-literal:
+    description: HAProxy-Ingress rewrite-target with no capture group relocates to path-rewrite.map (reload-free)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: rwlit-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rwlit-ing
+            annotations:
+              haproxy-ingress.github.io/rewrite-target: "/new"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rwlit.example.com
+                http:
+                  paths:
+                    - path: /old
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rwlit-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-rewrite.map
+        pattern: "default_rwlit-ing_svc_rwlit-svc_80 /new"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "replace-path \\(\\.\\*\\) /new"
+
 
   test-haproxy-ingress-proxy-body-size:
-    description: HAProxy-Ingress proxy-body-size caps request body size with a 413
+    description: HAProxy-Ingress proxy-body-size caps request body via body-size.map (relocated from the backend)
     fixtures:
       services:
         - apiVersion: v1
@@ -1226,12 +1265,19 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
+      # Limit now lives in body-size.map keyed on the backend, not as an
+      # http-request deny inside the backend section.
       - type: contains
+        target: map:body-size.map
+        pattern: "default_body-ingress_svc_body-service_80 8388608"
+      # The old per-backend literal deny must be gone (relocated to the
+      # resource-agnostic frontend-filters-250-request-body-size scaffold).
+      - type: not_contains
         target: haproxy.cfg
         pattern: "http-request deny deny_status 413 if \\{ req.body_size gt 8388608 \\}"
 
   test-haproxy-ingress-proxy-body-size-unlimited:
-    description: HAProxy-Ingress proxy-body-size "0" emits no deny directive
+    description: HAProxy-Ingress proxy-body-size "0" emits no body-size.map entry
     fixtures:
       services:
         - apiVersion: v1
@@ -1265,9 +1311,10 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
+      # "0" = unlimited → no entry for this backend in body-size.map.
       - type: not_contains
-        target: haproxy.cfg
-        pattern: "req.body_size gt"
+        target: map:body-size.map
+        pattern: "body0-ingress"
 
   test-haproxy-ingress-ssl-ciphers-backend:
     description: HAProxy-Ingress ssl-ciphers-backend/ssl-cipher-suites-backend add ciphers to default-server when backend SSL is on

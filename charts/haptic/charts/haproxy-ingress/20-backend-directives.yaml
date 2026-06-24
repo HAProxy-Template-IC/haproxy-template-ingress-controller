@@ -457,43 +457,54 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  backend-directives-680-haproxy-ingress-proxy-body-size:
+  map-body-size-680-haproxy-ingress:
     template: |
       {#-
-        HAProxy-Ingress Proxy Body Size Limit
+        HAProxy-Ingress Proxy Body Size Limit (Strategy 1: relocated to a map)
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#proxy-body-size
 
         Annotation: proxy-body-size
         Values: plain number (bytes), or with k/K, m/M, g/G suffix.
-        Value "0" (the upstream default) means unlimited — no directive emitted.
+        Value "0" (the upstream default) means unlimited — no map entry emitted.
 
-        Generated HAProxy Config:
-          http-request deny deny_status 413 if { req.body_size gt <bytes> }
+        Emits `<backend_name> <bytes>` into body-size.map. The resource-agnostic
+        frontend-filters-250-request-body-size rule in base.yaml enforces it
+        (http-request deny 413) keyed on the resolved backend, so the cap is no
+        longer an http-request deny inside the backend section — adding or changing
+        it is a map-only, reload-free update.
       -#}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var bodySize = ingress.Metadata.Annotations["haproxy-ingress.github.io/proxy-body-size"] %}
-        {%- if bodySize != "" %}
-          {%- var bytes = 0 %}
-          {%- var sizeLen = len(bodySize) %}
-          {%- var lastChar = bodySize[sizeLen-1:] %}
-          {%- if lastChar == "k" || lastChar == "K" %}
-            {%- bytes = toint(bodySize[:sizeLen-1]) * 1024 %}
-          {%- else if lastChar == "m" || lastChar == "M" %}
-            {%- bytes = toint(bodySize[:sizeLen-1]) * 1048576 %}
-          {%- else if lastChar == "g" || lastChar == "G" %}
-            {%- bytes = toint(bodySize[:sizeLen-1]) * 1073741824 %}
-          {%- else %}
-            {%- bytes = toint(bodySize) %}
-          {%- end %}
-          {%- if bytes > 0 %}
-      # haproxy-ingress/proxy-body-size ({{ key }})
-      http-request deny deny_status 413 if { req.body_size gt {{ bytes }} }
-          {%- end %}
-        {%- end %}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var bodySize = ingress.Metadata.Annotations["haproxy-ingress.github.io/proxy-body-size"] -%}
+        {%- if bodySize != "" -%}
+          {%%
+            var bytes = 0
+            var sizeLen = len(bodySize)
+            var lastChar = bodySize[sizeLen-1:]
+            if lastChar == "k" || lastChar == "K" {
+              bytes = toint(bodySize[:sizeLen-1]) * 1024
+            } else if lastChar == "m" || lastChar == "M" {
+              bytes = toint(bodySize[:sizeLen-1]) * 1048576
+            } else if lastChar == "g" || lastChar == "G" {
+              bytes = toint(bodySize[:sizeLen-1]) * 1073741824
+            } else {
+              bytes = toint(bodySize)
+            }
+          %%}
+          {%- if bytes > 0 -%}
+            {%- for _, rule := range ingress.Spec.Rules -%}
+              {#- rule.Http is a value struct; .Paths is an empty slice when the
+                  rule has no http block, so the loop is a no-op (no nil guard). -#}
+              {%- for _, path := range rule.Http.Paths -%}
+                {%- var be = BackendNameIngress(ingress, path) -%}
+                {%- if first_seen("map-body-size", be) -%}
+      {{ "\n" }}{{ be }} {{ bytes }}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   backend-directives-685-haproxy-ingress-rate-limiting:
@@ -593,9 +604,51 @@ templateSnippets:
           {%- rewrite = replace(rewrite, "$7", "\\7") %}
           {%- rewrite = replace(rewrite, "$8", "\\8") %}
           {%- rewrite = replace(rewrite, "$9", "\\9") %}
+          {#- Capture/regex rewrites (value contains a \1..\9 backreference) stay
+              backend-scoped; LITERAL rewrites go to path-rewrite.map via
+              map-path-rewrite-690-haproxy-ingress (reload-free frontend set-path).
+              Mutually exclusive — one rewrite value per backend. The predicate keys
+              on an actual \N backreference, not any backslash. -#}
+          {%- if regex_search(rewrite, "\\\\[1-9]") %}
       # haproxy-ingress/rewrite-target ({{ key }})
       http-request replace-path (.*) {{ rewrite }}
+          {%- end %}
         {%- end %}
+      {%- end -%}
+
+  map-path-rewrite-690-haproxy-ingress:
+    template: |
+      {#- haproxy-ingress rewrite-target LITERAL replacement (no \N capture) →
+          path-rewrite.map, consumed by base.yaml frontend-filters-400-path-rewrite.
+          Capture rewrites stay as replace-path in backend-directives-690. -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var rewrite = ingress.Metadata.Annotations["haproxy-ingress.github.io/rewrite-target"] -%}
+        {%- if rewrite != "" -%}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
+          {%%
+            rewrite = replace(rewrite, "$1", "\\1")
+            rewrite = replace(rewrite, "$2", "\\2")
+            rewrite = replace(rewrite, "$3", "\\3")
+            rewrite = replace(rewrite, "$4", "\\4")
+            rewrite = replace(rewrite, "$5", "\\5")
+            rewrite = replace(rewrite, "$6", "\\6")
+            rewrite = replace(rewrite, "$7", "\\7")
+            rewrite = replace(rewrite, "$8", "\\8")
+            rewrite = replace(rewrite, "$9", "\\9")
+          %%}
+          {%- if !regex_search(rewrite, "\\\\[1-9]") -%}
+            {%- for _, rule := range ingress.Spec.Rules -%}
+              {%- for _, path := range rule.Http.Paths -%}
+                {%- var be = BackendNameIngress(ingress, path) -%}
+                {%- if first_seen("map-path-rewrite", be) -%}
+      {{ "\n" }}{{ be }} {{ ValidateConfigValue(rewrite, "haproxy-ingress.github.io/rewrite-target", key, false) }}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
       {%- end -%}
 
   backend-directives-695-haproxy-ingress-agent-check:

@@ -1525,6 +1525,74 @@ validationTests:
         target: haproxy.cfg
         pattern: "replace-path"
 
+  test-nginx-ingress-rewrite-target-literal:
+    description: Nginx rewrite-target with no capture group relocates to path-rewrite.map (reload-free)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: rwlit-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rwlit-ing
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: "/new"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: rwlit.example.com
+                http:
+                  paths:
+                    - path: /old
+                      pathType: Prefix
+                      backend: {service: {name: rwlit-svc, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      # Literal rewrite → path-rewrite.map entry + shared frontend set-path.
+      - type: contains
+        target: map:path-rewrite.map
+        pattern: "default_rwlit-ing_svc_rwlit-svc_80 /new"
+      # No per-backend replace-path for the literal case (it moved to the map).
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "replace-path \\(\\.\\*\\) /new"
+
+  test-nginx-ingress-rewrite-target-injection-rejected:
+    description: A control character in a literal rewrite-target aborts the render (path-rewrite.map injection guard)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: rwinj-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rwinj-ing
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: "/new\nevil-backend /pwned"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rwinj.example.com
+                http:
+                  paths:
+                    - path: /old
+                      pathType: Prefix
+                      backend: {service: {name: rwinj-svc, port: {number: 80}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "must not contain control characters"
+
   test-nginx-ingress-app-root:
     description: Nginx Ingress app-root redirects root path
     fixtures:
@@ -1581,7 +1649,7 @@ validationTests:
         pattern: "{ path / }"
 
   test-nginx-ingress-proxy-body-size:
-    description: Nginx Ingress proxy-body-size limits request body
+    description: Nginx Ingress proxy-body-size limits request body via body-size.map (relocated from the backend)
     fixtures:
       services:
         - apiVersion: v1
@@ -1629,6 +1697,11 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
+        target: map:body-size.map
+        pattern: "default_bodysize-ingress_svc_bodysize-service_80 10485760"
+      # The old per-backend literal deny must be gone (relocated to the
+      # resource-agnostic frontend-filters-250-request-body-size scaffold).
+      - type: not_contains
         target: haproxy.cfg
         pattern: "req.body_size gt 10485760"
 
@@ -1814,15 +1887,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
+      # Relocated to per-header maps keyed on the backend; the shared frontend
+      # set-header rules in base.yaml apply them. Adding/changing a value is now
+      # a map-only, reload-free update.
       - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-header Host internal.example.com"
+        target: map:reqhdr-host.map
+        pattern: "default_uh-ingress_svc_uh-svc_80 internal.example.com"
       - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-header X-Forwarded-Prefix /app"
+        target: map:reqhdr-xfwd-prefix.map
+        pattern: "default_uh-ingress_svc_uh-svc_80 /app"
       - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-header Connection keep-alive"
+        target: map:reqhdr-connection.map
+        pattern: "default_uh-ingress_svc_uh-svc_80 keep-alive"
 
   test-nginx-ingress-mirror-target:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
