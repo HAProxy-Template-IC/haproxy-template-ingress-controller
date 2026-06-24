@@ -203,6 +203,11 @@ spec:
 
         # Dataplane API sidecar
         - name: dataplane
+          # Resolve the relative storage dirs (maps/, ssl/, general/) in the
+          # dataplaneapi.yaml against the HAProxy base dir, so storage files land
+          # in the absolute production dirs while runtime map/cert identifiers
+          # stay relative (matching the config's default-path-origin paths).
+          workingDir: {{ dir $dataplaneConfig.mapsDir }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -280,9 +285,18 @@ spec:
                   backups_number: 10
                   backups_dir: /var/lib/dataplaneapi/backups
                 resources:
-                  maps_dir: {{ $dataplaneConfig.mapsDir }}
-                  ssl_certs_dir: {{ $dataplaneConfig.sslCertsDir }}
-                  general_storage_dir: {{ $dataplaneConfig.generalStorageDir }}
+                  # Relative storage dirs (basenames), resolved against the
+                  # container workingDir below (= parent of mapsDir). This makes
+                  # the dataplane address runtime maps/certs by the same relative
+                  # identifier HAProxy uses in the config (e.g. "maps/host.map",
+                  # from default-path origin), so runtime map/cert updates apply
+                  # without a reload. Storage files still land in the absolute
+                  # dirs because workingDir = dir(mapsDir). The absolute values in
+                  # values.yaml stay authoritative for the controller's
+                  # validation path derivation (extractValidationDirConfig).
+                  maps_dir: {{ base $dataplaneConfig.mapsDir }}
+                  ssl_certs_dir: {{ base $dataplaneConfig.sslCertsDir }}
+                  general_storage_dir: {{ base $dataplaneConfig.generalStorageDir }}
               haproxy:
                 config_file: {{ $dataplaneConfig.configFile }}
                 haproxy_bin: {{ $haproxyBin }}

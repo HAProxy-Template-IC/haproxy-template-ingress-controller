@@ -4,6 +4,7 @@
 package v31ee
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -76,6 +77,16 @@ type Map struct {
 	StorageName *string `json:"storage_name,omitempty"`
 }
 
+// MapEntries Entries of one runtime map
+type MapEntries = []MapEntry
+
+// MapEntry One Map Entry
+type MapEntry struct {
+	Id    *string `json:"id,omitempty"`
+	Key   *string `json:"key,omitempty"`
+	Value *string `json:"value,omitempty"`
+}
+
 // Maps Array of runtime map files
 type Maps = []Map
 
@@ -118,6 +129,9 @@ type SslCertificates = []SslCertificate
 
 // ForceReload defines model for force_reload.
 type ForceReload = bool
+
+// ParentName defines model for parent_name.
+type ParentName = string
 
 // SkipReload defines model for skip_reload.
 type SkipReload = bool
@@ -180,6 +194,30 @@ type PostHAProxyConfigurationParams struct {
 type GetConfigurationVersionParams struct {
 	// TransactionId ID of the transaction where we want to add the operation. Cannot be used when version is specified.
 	TransactionId *TransactionId `form:"transaction_id,omitempty" json:"transaction_id,omitempty"`
+}
+
+// AddMapEntryParams defines parameters for AddMapEntry.
+type AddMapEntryParams struct {
+	// ForceSync If true, immediately syncs changes to disk
+	ForceSync *bool `form:"force_sync,omitempty" json:"force_sync,omitempty"`
+}
+
+// DeleteRuntimeMapEntryParams defines parameters for DeleteRuntimeMapEntry.
+type DeleteRuntimeMapEntryParams struct {
+	// ForceSync If true, immediately syncs changes to disk
+	ForceSync *bool `form:"force_sync,omitempty" json:"force_sync,omitempty"`
+}
+
+// ReplaceRuntimeMapEntryJSONBody defines parameters for ReplaceRuntimeMapEntry.
+type ReplaceRuntimeMapEntryJSONBody struct {
+	// Value Map value
+	Value string `json:"value"`
+}
+
+// ReplaceRuntimeMapEntryParams defines parameters for ReplaceRuntimeMapEntry.
+type ReplaceRuntimeMapEntryParams struct {
+	// ForceSync If true, immediately syncs changes to disk
+	ForceSync *bool `form:"force_sync,omitempty" json:"force_sync,omitempty"`
 }
 
 // CreateStorageGeneralFileMultipartBody defines parameters for CreateStorageGeneralFile.
@@ -259,6 +297,12 @@ type ReplaceStorageSSLCertificateParams struct {
 
 // PostHAProxyConfigurationTextRequestBody defines body for PostHAProxyConfiguration for text/plain ContentType.
 type PostHAProxyConfigurationTextRequestBody = PostHAProxyConfigurationTextBody
+
+// AddMapEntryJSONRequestBody defines body for AddMapEntry for application/json ContentType.
+type AddMapEntryJSONRequestBody = MapEntry
+
+// ReplaceRuntimeMapEntryJSONRequestBody defines body for ReplaceRuntimeMapEntry for application/json ContentType.
+type ReplaceRuntimeMapEntryJSONRequestBody ReplaceRuntimeMapEntryJSONBody
 
 // CreateStorageGeneralFileMultipartRequestBody defines body for CreateStorageGeneralFile for multipart/form-data ContentType.
 type CreateStorageGeneralFileMultipartRequestBody CreateStorageGeneralFileMultipartBody
@@ -474,6 +518,22 @@ type ClientInterface interface {
 	// GetReload request
 	GetReload(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ShowRuntimeMap request
+	ShowRuntimeMap(ctx context.Context, parentName ParentName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddMapEntryWithBody request with any body
+	AddMapEntryWithBody(ctx context.Context, parentName ParentName, params *AddMapEntryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AddMapEntry(ctx context.Context, parentName ParentName, params *AddMapEntryParams, body AddMapEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteRuntimeMapEntry request
+	DeleteRuntimeMapEntry(ctx context.Context, parentName ParentName, id string, params *DeleteRuntimeMapEntryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceRuntimeMapEntryWithBody request with any body
+	ReplaceRuntimeMapEntryWithBody(ctx context.Context, parentName ParentName, id string, params *ReplaceRuntimeMapEntryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ReplaceRuntimeMapEntry(ctx context.Context, parentName ParentName, id string, params *ReplaceRuntimeMapEntryParams, body ReplaceRuntimeMapEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetAllStorageGeneralFiles request
 	GetAllStorageGeneralFiles(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -574,6 +634,78 @@ func (c *Client) GetConfigurationVersion(ctx context.Context, params *GetConfigu
 
 func (c *Client) GetReload(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReloadRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ShowRuntimeMap(ctx context.Context, parentName ParentName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewShowRuntimeMapRequest(c.Server, parentName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddMapEntryWithBody(ctx context.Context, parentName ParentName, params *AddMapEntryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddMapEntryRequestWithBody(c.Server, parentName, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddMapEntry(ctx context.Context, parentName ParentName, params *AddMapEntryParams, body AddMapEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddMapEntryRequest(c.Server, parentName, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteRuntimeMapEntry(ctx context.Context, parentName ParentName, id string, params *DeleteRuntimeMapEntryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteRuntimeMapEntryRequest(c.Server, parentName, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReplaceRuntimeMapEntryWithBody(ctx context.Context, parentName ParentName, id string, params *ReplaceRuntimeMapEntryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceRuntimeMapEntryRequestWithBody(c.Server, parentName, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReplaceRuntimeMapEntry(ctx context.Context, parentName ParentName, id string, params *ReplaceRuntimeMapEntryParams, body ReplaceRuntimeMapEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceRuntimeMapEntryRequest(c.Server, parentName, id, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1068,6 +1200,263 @@ func NewGetReloadRequest(server string, id string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewShowRuntimeMapRequest generates requests for ShowRuntimeMap
+func NewShowRuntimeMapRequest(server string, parentName ParentName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "parent_name", parentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/runtime/maps/%s/entries", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAddMapEntryRequest calls the generic AddMapEntry builder with application/json body
+func NewAddMapEntryRequest(server string, parentName ParentName, params *AddMapEntryParams, body AddMapEntryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddMapEntryRequestWithBody(server, parentName, params, "application/json", bodyReader)
+}
+
+// NewAddMapEntryRequestWithBody generates requests for AddMapEntry with any type of body
+func NewAddMapEntryRequestWithBody(server string, parentName ParentName, params *AddMapEntryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "parent_name", parentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/runtime/maps/%s/entries", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ForceSync != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force_sync", *params.ForceSync, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteRuntimeMapEntryRequest generates requests for DeleteRuntimeMapEntry
+func NewDeleteRuntimeMapEntryRequest(server string, parentName ParentName, id string, params *DeleteRuntimeMapEntryParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "parent_name", parentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/runtime/maps/%s/entries/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ForceSync != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force_sync", *params.ForceSync, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReplaceRuntimeMapEntryRequest calls the generic ReplaceRuntimeMapEntry builder with application/json body
+func NewReplaceRuntimeMapEntryRequest(server string, parentName ParentName, id string, params *ReplaceRuntimeMapEntryParams, body ReplaceRuntimeMapEntryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplaceRuntimeMapEntryRequestWithBody(server, parentName, id, params, "application/json", bodyReader)
+}
+
+// NewReplaceRuntimeMapEntryRequestWithBody generates requests for ReplaceRuntimeMapEntry with any type of body
+func NewReplaceRuntimeMapEntryRequestWithBody(server string, parentName ParentName, id string, params *ReplaceRuntimeMapEntryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "parent_name", parentName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/runtime/maps/%s/entries/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ForceSync != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "force_sync", *params.ForceSync, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }

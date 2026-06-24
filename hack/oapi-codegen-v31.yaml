@@ -24,6 +24,10 @@ output-options:
   # on-disk spec.json stays the full source of truth for the validator generator.
   # Keep this list in sync with the methods dispatched in pkg/dataplane/client.
   include-operation-ids:
+    - addMapEntry
+    - deleteRuntimeMapEntry
+    - replaceRuntimeMapEntry
+    - showRuntimeMap
     - createCaFile
     - createStorageGeneralFile
     - createStorageMapFile

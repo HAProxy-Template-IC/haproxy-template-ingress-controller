@@ -26,6 +26,12 @@ output-options:
   # four EE section GETs pull their respective profiles. Together they keep the
   # 76 reachable schemas the code needs while still pruning the other ~220.
   include-operation-ids:
+    - addMapEntry
+    - replaceCert
+    - getAllCerts
+    - deleteRuntimeMapEntry
+    - replaceRuntimeMapEntry
+    - showRuntimeMap
     - createCaFile
     - createStorageGeneralFile
     - createStorageMapFile
