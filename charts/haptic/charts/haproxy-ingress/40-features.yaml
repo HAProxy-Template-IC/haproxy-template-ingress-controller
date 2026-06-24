@@ -29,6 +29,44 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  features-105-haproxy-ingress-ssl-redirect:
+    template: |
+      {#-
+        HAProxy-Ingress SSL redirect — host registration into the shared map.
+
+        Annotations:
+          - haproxy-ingress.github.io/ssl-redirect: "true|false"
+          - haproxy-ingress.github.io/ssl-redirect-code: "301|302|303|307|308" (default 302)
+
+        Registers redirected hosts into gf["sslRedirectHosts"] in the features phase
+        (before features-160-ssl-redirect-map). ssl.yaml then builds ssl-redirect-<code>.map
+        and emits the shared `http-request redirect scheme https` rule. Replaces the
+        per-ingress inline-ACL redirect, so adding/removing a redirected host is a
+        map-only, reload-free update — matching the haproxytech ssl-redirect path.
+      -#}
+      {#- Iterates unconditionally (no cross-render first_seen): features-* renders
+          once, so each ingress is visited once anyway, and features-160-ssl-redirect-map
+          dedups hosts locally. Routing registration through first_seen would re-expose
+          the cross-render cache leak that features-160 was rewritten to avoid (a leaked
+          key would skip registration, silently dropping the redirect for that render). -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+          {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-redirect"] == "true" %}
+            {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-redirect-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
+            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
+            {%- var codeValid = false %}
+            {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
+            {%- if !codeValid %}{%- code = "302" %}{%- end %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}
+                {%- var redirectHosts []any = gf["sslRedirectHosts"] -%}
+                {%- gf["sslRedirectHosts"] = append(redirectHosts, map[string]any{"host": toLower(rule.Host), "code": code}) -%}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
   features-110-haproxy-ingress-mtls:
     template: |
       {#-

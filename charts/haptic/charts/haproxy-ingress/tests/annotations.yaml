@@ -398,6 +398,16 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https code 301"
+      # Relocated to the shared host map: the host registers into ssl-redirect-301.map
+      # (ssl.yaml emits the single map-based redirect rule), so adding/removing a
+      # redirected host is reload-free.
+      - type: contains
+        target: map:ssl-redirect-301.map
+        pattern: "redirect.example.com 1"
+      # No per-ingress inline-ACL host condition anymore.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "var\\(txn.host\\) -m str redirect.example.com"
 
   test-haproxy-ingress-hsts:
     description: HAProxy-Ingress HSTS annotations generate correct headers

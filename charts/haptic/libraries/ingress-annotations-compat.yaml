@@ -246,31 +246,10 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
-  util-emit-annotation-ssl-redirect:
-    template: |
-      {#-
-        Macro: EmitAnnotationSSLRedirect(ingress, code, commentLabel)
-
-        Emits the `http-request redirect scheme https code <code> if
-        !{ ssl_fc } <host-match>` rule scoped to the ingress's hosts.
-        The caller pre-computes `code` because the resolution rule
-        varies across libraries — haproxy-ingress reads a single
-        `ssl-redirect-code` annotation, nginx-ingress picks between 301
-        and 308 based on `force-ssl-redirect`.
-      -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition %}
-      {%- macro EmitAnnotationSSLRedirect(ingress *resources.ingresses.T, code string, commentLabel string) %}
-        {%- var hosts = []string{} %}
-        {%- for _, rule := range ingress.Spec.Rules %}
-          {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-        {%- end %}
-        {%- if len(hosts) > 0 %}
-          {%- var ns = ingress.Metadata.Namespace %}
-          {%- var name = ingress.Metadata.Name %}
-      # {{ commentLabel }} ({{ ns }}/{{ name }})
-      http-request redirect scheme https code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
-        {%- end %}
-      {%- end macro %}
+  # (util-emit-annotation-ssl-redirect / EmitAnnotationSSLRedirect removed: the
+  # haproxy-ingress and nginx ssl-redirect snippets now register hosts into the
+  # shared gf["sslRedirectHosts"] map in the features phase, like haproxytech, so
+  # ssl.yaml emits the single map-based redirect rule. No inline-ACL emitter needed.)
 
   # aclPrefix is per-library (haproxytech / hi / ni) — validation tests
   # assert on the resulting ACL names, so they must remain distinct.
