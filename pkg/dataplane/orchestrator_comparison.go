@@ -360,15 +360,18 @@ func (d *auxiliaryFileDiffs) anyDiffHasChanges() bool {
 // any other auxiliary change (general files, CA files, crt-lists) remain
 // structural — consistent with the all-or-nothing runtime gate, where a single
 // non-runtime change makes a reload unavoidable and the runtime applies moot.
-func (d *auxiliaryFileDiffs) runtimeEligibleAuxUpdates(caps Capabilities) (mapUpdates []auxiliaryfiles.MapFile, certUpdates []auxiliaryfiles.SSLCertificate, auxNeedsReload bool) {
+func (d *auxiliaryFileDiffs) runtimeEligibleAuxUpdates(caps Capabilities) (mapUpdates []auxiliaryfiles.MapFile, certUpdates []auxiliaryfiles.SSLCertificate, caUpdates []auxiliaryfiles.GeneralFile, auxNeedsReload bool) {
 	if d == nil {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 
-	// General, CA and crt-list changes always take the reload path.
-	otherAuxChanged := (d.fileDiff != nil && d.fileDiff.HasChanges()) ||
-		(d.caFileDiff != nil && d.caFileDiff.HasChanges()) ||
+	// CA-file (SSLCaFiles aux slot — dead in the bundled chart) and crt-list
+	// changes always take the reload path. CA trust bundles flow through the
+	// general-file diff below, flagged via GeneralFile.IsCaFile.
+	otherAuxChanged := (d.caFileDiff != nil && d.caFileDiff.HasChanges()) ||
 		(d.crtlistDiff != nil && d.crtlistDiff.HasChanges())
+
+	caUpdates, fileStructural := d.caFileRuntimeUpdates(caps)
 
 	// Maps: content updates to existing maps are runtime-eligible (v3.0+);
 	// creating or deleting a map file stays structural.
@@ -394,7 +397,30 @@ func (d *auxiliaryFileDiffs) runtimeEligibleAuxUpdates(caps Capabilities) (mapUp
 		}
 	}
 
-	return mapUpdates, certUpdates, otherAuxChanged || mapStructural || certStructural
+	return mapUpdates, certUpdates, caUpdates, otherAuxChanged || fileStructural || mapStructural || certStructural
+}
+
+// caFileRuntimeUpdates partitions the general-file diff: a CONTENT-only update
+// to a file flagged as a ca-file (an mTLS trust bundle referenced as
+// `ca-file <path>`) is runtime-eligible on v3.2+ — applied live via the runtime
+// add-entry endpoint. The same bytes are also written to disk (general storage,
+// skip_reload) so a later reload converges. Any other general-file change
+// (non-ca content, create, delete) or a ca-file update on <v3.2 forces a reload.
+func (d *auxiliaryFileDiffs) caFileRuntimeUpdates(caps Capabilities) (caUpdates []auxiliaryfiles.GeneralFile, structural bool) {
+	if d.fileDiff == nil {
+		return nil, false
+	}
+	if len(d.fileDiff.ToCreate) > 0 || len(d.fileDiff.ToDelete) > 0 {
+		structural = true
+	}
+	for _, f := range d.fileDiff.ToUpdate {
+		if f.IsCaFile && caps.SupportsSslCaFiles {
+			caUpdates = append(caUpdates, f)
+		} else {
+			structural = true
+		}
+	}
+	return caUpdates, structural
 }
 
 // checksumMatchesLastDeployed returns true if the content checksum matches the

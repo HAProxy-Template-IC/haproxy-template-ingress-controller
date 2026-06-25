@@ -10101,6 +10101,12 @@ type SetCaFileMultipartBody struct {
 	FileUpload openapi_types.File `json:"file_upload"`
 }
 
+// AddCaEntryMultipartBody defines parameters for AddCaEntry.
+type AddCaEntryMultipartBody struct {
+	// FileUpload Payload of the cert entry
+	FileUpload openapi_types.File `json:"file_upload"`
+}
+
 // ReplaceCertMultipartBody defines parameters for ReplaceCert.
 type ReplaceCertMultipartBody struct {
 	FileUpload openapi_types.File `json:"file_upload"`
@@ -10228,6 +10234,9 @@ type CreateCaFileMultipartRequestBody CreateCaFileMultipartBody
 
 // SetCaFileMultipartRequestBody defines body for SetCaFile for multipart/form-data ContentType.
 type SetCaFileMultipartRequestBody SetCaFileMultipartBody
+
+// AddCaEntryMultipartRequestBody defines body for AddCaEntry for multipart/form-data ContentType.
+type AddCaEntryMultipartRequestBody AddCaEntryMultipartBody
 
 // ReplaceCertMultipartRequestBody defines body for ReplaceCert for multipart/form-data ContentType.
 type ReplaceCertMultipartRequestBody ReplaceCertMultipartBody
@@ -10500,6 +10509,9 @@ type ClientInterface interface {
 
 	// SetCaFileWithBody request with any body
 	SetCaFileWithBody(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddCaEntryWithBody request with any body
+	AddCaEntryWithBody(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAllCerts request
 	GetAllCerts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10828,6 +10840,18 @@ func (c *Client) GetCaFile(ctx context.Context, name string, reqEditors ...Reque
 
 func (c *Client) SetCaFileWithBody(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetCaFileRequestWithBody(c.Server, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddCaEntryWithBody(ctx context.Context, name string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddCaEntryRequestWithBody(c.Server, name, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12261,6 +12285,42 @@ func NewSetCaFileRequestWithBody(server string, name string, contentType string,
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAddCaEntryRequestWithBody generates requests for AddCaEntry with any type of body
+func NewAddCaEntryRequestWithBody(server string, name string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/services/haproxy/runtime/ssl_ca_files/%s/entries", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}

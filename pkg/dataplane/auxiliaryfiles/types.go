@@ -25,6 +25,16 @@ type GeneralFile struct {
 	// Content is the file contents as a string. This maps to the 'file' field in
 	// multipart form uploads to the Dataplane API.
 	Content string
+
+	// IsCaFile marks this general file as an SSL CA / trust bundle referenced by
+	// the config as `ca-file <path>` (frontend client-cert verify or backend mTLS
+	// server verify). When set, a CONTENT-only update can be applied to the live
+	// worker via the runtime API (`add ssl ca-file` + commit, which replaces the
+	// file with the payload) without a reload on DataPlane API v3.2+ — the
+	// orchestrator's runtime fast path keys off this flag. It is metadata only:
+	// GetContent (used for diffing) ignores it, so it never causes a spurious diff
+	// against the content-keyed current state.
+	IsCaFile bool
 }
 
 // GetIdentifier implements the FileItem interface.

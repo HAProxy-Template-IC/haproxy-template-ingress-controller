@@ -59,6 +59,7 @@ output-options:
     - replaceStorageSSLCertificate
     - replaceStorageSSLCrtListFile
     - setCaFile
+    - addCaEntry
   # HAPTIC only uses the raw *Client (-> *http.Response, hand-decoded); the typed
   # "ClientWithResponses" half (ParseXxxResponse, WithBaseURL, per-op Response
   # structs) is ~39% of the generated file and has zero consumers. Suppress it by
