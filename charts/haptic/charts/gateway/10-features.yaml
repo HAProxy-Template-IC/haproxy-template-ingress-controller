@@ -357,7 +357,10 @@ templateSnippets:
             }
             var bundle = join(parts, "\n")
             var fname = "frontend-mtls-" + gwNs + "-" + gwName + suffix + ".crt"
-            var p, fErr = fileRegistry.Register("file", fname, bundle)
+            {#- "ca-file": a general file (same disk path) flagged so a
+                content-only client-CA bundle rotation applies via the runtime
+                API (add ssl ca-file) with no reload on v3.2+. -#}
+            var p, fErr = fileRegistry.Register("ca-file", fname, bundle)
             if fErr != nil {
               return "", ""
             }

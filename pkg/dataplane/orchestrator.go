@@ -172,10 +172,11 @@ func (o *orchestrator) applyChanges(
 	runtimeOps, structuralOps := partitionByRuntimeEligibility(diff.Operations)
 
 	// Aux files normally force a reload, but content updates to existing maps
-	// (v3.0+) and SSL certs (v3.2+) are split out as runtime-eligible (applied
-	// live via ReplaceRuntimeMap / ReplaceRuntimeSSLCert); other aux changes and
+	// (v3.0+), SSL certs (v3.2+), and ca-files / mTLS trust bundles (v3.2+) are
+	// split out as runtime-eligible (applied live via ReplaceRuntimeMap /
+	// ReplaceRuntimeSSLCert / ReplaceRuntimeSSLCaFiles); other aux changes and
 	// file create/delete keep forcing one.
-	mapRuntimeUpdates, certRuntimeUpdates, auxNeedsReload := auxDiffs.runtimeEligibleAuxUpdates(o.client.Capabilities())
+	mapRuntimeUpdates, certRuntimeUpdates, caRuntimeUpdates, auxNeedsReload := auxDiffs.runtimeEligibleAuxUpdates(o.client.Capabilities())
 	needsReload := len(structuralOps) > 0 || auxNeedsReload
 	actions := buildRuntimeActions(runtimeOps)
 
@@ -192,7 +193,7 @@ func (o *orchestrator) applyChanges(
 	logOperationDetail(o.logger, "structural", structuralOps)
 
 	if !needsReload {
-		return o.applyRuntimeOnly(ctx, desiredConfig, diff, runtimeOps, mapRuntimeUpdates, certRuntimeUpdates, auxDiffs, actions, version, opts, startTime)
+		return o.applyRuntimeOnly(ctx, desiredConfig, diff, runtimeOps, mapRuntimeUpdates, certRuntimeUpdates, caRuntimeUpdates, auxDiffs, actions, version, opts, startTime)
 	}
 	return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, structuralOps, auxDiffs, actions, version, opts, startTime)
 }
@@ -213,6 +214,7 @@ func (o *orchestrator) applyRuntimeOnly(
 	runtimeOps []comparator.Operation,
 	mapUpdates []auxiliaryfiles.MapFile,
 	certUpdates []auxiliaryfiles.SSLCertificate,
+	caUpdates []auxiliaryfiles.GeneralFile,
 	auxDiffs *auxiliaryFileDiffs,
 	actions string,
 	version int64,
@@ -236,11 +238,22 @@ func (o *orchestrator) applyRuntimeOnly(
 			return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, nil, auxDiffs, actions, version, opts, startTime)
 		}
 	}
+	if len(caUpdates) > 0 {
+		contentByPath := make(map[string]string, len(caUpdates))
+		for _, ca := range caUpdates {
+			contentByPath[ca.Path] = ca.GetContent()
+		}
+		if err := o.client.ReplaceRuntimeSSLCaFiles(ctx, contentByPath); err != nil {
+			o.logger.Warn("Runtime SSL ca-file apply failed; falling back to reload", "error", err)
+			return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, nil, auxDiffs, actions, version, opts, startTime)
+		}
+	}
 
-	o.logger.Debug("Pure-runtime sync: runtime map/cert updates + single skip_reload push with X-Runtime-Actions",
+	o.logger.Debug("Pure-runtime sync: runtime map/cert/ca-file updates + single skip_reload push with X-Runtime-Actions",
 		"op_count", len(runtimeOps),
 		"map_updates", len(mapUpdates),
 		"cert_updates", len(certUpdates),
+		"ca_updates", len(caUpdates),
 		"action_count", actionCount(actions))
 
 	if err := o.client.PushRawConfigurationSkipReload(ctx, desiredConfig, version, actions); err != nil {
@@ -256,7 +269,7 @@ func (o *orchestrator) applyRuntimeOnly(
 		Duration:          time.Since(startTime),
 		Details:           o.buildDetails(diff, auxDiffs),
 		PostSyncVersion:   version + 1,
-		Message:           fmt.Sprintf("Applied %d runtime operations (%d map, %d cert updates) without reload", len(appliedOps), len(mapUpdates), len(certUpdates)),
+		Message:           fmt.Sprintf("Applied %d runtime operations (%d map, %d cert, %d ca-file updates) without reload", len(appliedOps), len(mapUpdates), len(certUpdates), len(caUpdates)),
 	}, nil
 }
 

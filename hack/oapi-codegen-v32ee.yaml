@@ -61,6 +61,7 @@ output-options:
     - replaceStorageSSLCertificate
     - replaceStorageSSLCrtListFile
     - setCaFile
+    - addCaEntry
     # Section GETs included only to retain the model types the comparator/parser
     # use as Go types (their closures are kept by pruning, the ops are unused).
     - getBackend          # -> Backend -> Balance / BalanceAlgorithm

@@ -102,14 +102,24 @@ func (r *FileRegistry) Register(args ...any) (string, error) {
 
 	// Validate file type
 	switch fileType {
-	case "cert", "map", "file", "crt-list":
+	case "cert", "map", "file", "crt-list", "ca-file":
 		// Valid types
 	default:
-		return "", fmt.Errorf("file_registry.Register: invalid file type %q, must be \"cert\", \"map\", \"file\", or \"crt-list\"", fileType)
+		return "", fmt.Errorf("file_registry.Register: invalid file type %q, must be \"cert\", \"map\", \"file\", \"crt-list\", or \"ca-file\"", fileType)
+	}
+
+	// A "ca-file" (mTLS trust bundle, referenced as `ca-file <path>`) lives in the
+	// general storage dir and is delivered as a general file — the only
+	// difference is it is flagged so a content-only rotation can apply via the
+	// runtime API without a reload (see GetFiles). Resolve its path with the
+	// "file" routing so the config reference stays a GeneralDir path.
+	pathType := fileType
+	if fileType == "ca-file" {
+		pathType = "file"
 	}
 
 	// Compute predicted path using path resolver (same logic as pathResolver.GetPath() method)
-	pathInterface, err := r.pathResolver.GetPath(filename, fileType)
+	pathInterface, err := r.pathResolver.GetPath(filename, pathType)
 	if err != nil {
 		return "", fmt.Errorf("file_registry.Register: computing path: %w", err)
 	}
@@ -184,6 +194,17 @@ func (r *FileRegistry) GetFiles() *dataplane.AuxiliaryFiles {
 				Filename: path.Base(reg.Path),
 				Path:     reg.Path,
 				Content:  reg.Content,
+			})
+
+		case "ca-file":
+			// Delivered as a general file (disk-durable, referenced as
+			// `ca-file <path>`), flagged so a content-only rotation applies via
+			// the runtime API (`add ssl ca-file`) without a reload on v3.2+.
+			files.GeneralFiles = append(files.GeneralFiles, auxiliaryfiles.GeneralFile{
+				Filename: path.Base(reg.Path),
+				Path:     reg.Path,
+				Content:  reg.Content,
+				IsCaFile: true,
 			})
 		}
 	}

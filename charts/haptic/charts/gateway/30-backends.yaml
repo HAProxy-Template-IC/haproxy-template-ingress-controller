@@ -216,7 +216,11 @@ templateSnippets:
             var caBundle = join(caBundleParts, "\n")
             var policyName = winningPolicy.Metadata.Name
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
-            var resolvedPath, fileErr = fileRegistry.Register("file", caFilename, caBundle)
+            {#- "ca-file": delivered as a general file (same disk path) but
+                flagged so a content-only trust-bundle rotation applies via the
+                runtime API (add ssl ca-file) with no reload on v3.2+ — backend
+                mTLS / SPIFFE bundles rotate every few hours. -#}
+            var resolvedPath, fileErr = fileRegistry.Register("ca-file", caFilename, caBundle)
             if fileErr == nil {
               btlsCaPath = resolvedPath
             }
@@ -707,7 +711,11 @@ templateSnippets:
             var caBundle = join(caBundleParts, "\n")
             var policyName = winningPolicy.Metadata.Name
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
-            var resolvedPath, fileErr = fileRegistry.Register("file", caFilename, caBundle)
+            {#- "ca-file": delivered as a general file (same disk path) but
+                flagged so a content-only trust-bundle rotation applies via the
+                runtime API (add ssl ca-file) with no reload on v3.2+ — backend
+                mTLS / SPIFFE bundles rotate every few hours. -#}
+            var resolvedPath, fileErr = fileRegistry.Register("ca-file", caFilename, caBundle)
             if fileErr == nil {
               btlsCaPath = resolvedPath
             }

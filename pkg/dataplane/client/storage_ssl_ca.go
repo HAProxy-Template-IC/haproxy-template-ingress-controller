@@ -113,6 +113,48 @@ func (c *DataplaneClient) UpdateSSLCaFile(ctx context.Context, name, content str
 	return checkUpdateResponse(resp, "SSL CA file", name)
 }
 
+// AddRuntimeCaFileEntry replaces the live (in-memory) contents of an existing,
+// config-referenced CA file via the runtime add-entry endpoint
+// (`add ssl ca-file` + `commit ssl ca-file`), WITHOUT a reload. With no ongoing
+// transaction, `add ssl ca-file` starts an EMPTY transaction and commit replaces
+// the file with the payload — so passing the full desired bundle replaces the
+// live CA file (verified: a 2-cert bundle replaces a 1-cert file, no reload).
+// v3.2+ only.
+//
+// HAPTIC uses this instead of UpdateSSLCaFile (set ssl ca-file): the DataPlane
+// API's `set ssl ca-file` runtime path returns 500 under the master-worker
+// `set severity-output number;@1 <heredoc>;quit` wrapping — the slower CA
+// validation races the connection close and its response is lost. `add ssl
+// ca-file` wins that race and applies reliably. (Upstream client-native quirk;
+// see the runtime-socket reduction audit memo.)
+func (c *DataplaneClient) AddRuntimeCaFileEntry(ctx context.Context, name, content string) error {
+	body, contentType, err := buildMultipartFilePayload(name, content)
+	if err != nil {
+		return fmt.Errorf("building payload for SSL CA file '%s': %w", name, err)
+	}
+
+	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
+		V33: func(c *v33.Client) (*http.Response, error) {
+			return c.AddCaEntryWithBody(ctx, name, contentType, body)
+		},
+		V32: func(c *v32.Client) (*http.Response, error) {
+			return c.AddCaEntryWithBody(ctx, name, contentType, body)
+		},
+		V32EE: func(c *v32ee.Client) (*http.Response, error) {
+			return c.AddCaEntryWithBody(ctx, name, contentType, body)
+		},
+	}, requireSSLCaFiles)
+	if err != nil {
+		return fmt.Errorf("adding runtime SSL ca-file entry '%s': %w", name, err)
+	}
+	defer resp.Body.Close()
+
+	if _, err := checkCreateResponse(resp, "SSL CA file entry", name); err != nil {
+		return err
+	}
+	return nil
+}
+
 // DeleteSSLCaFile deletes an SSL CA file by name.
 // SSL CA file storage is only available in HAProxy DataPlane API v3.2+.
 func (c *DataplaneClient) DeleteSSLCaFile(ctx context.Context, name string) error {

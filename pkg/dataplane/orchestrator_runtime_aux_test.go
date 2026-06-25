@@ -16,8 +16,10 @@ import (
 func TestAuxiliaryFileDiffs_RuntimeEligibleAuxUpdates(t *testing.T) {
 	mapUpd := []auxiliaryfiles.MapFile{{Path: "host.map", Content: "a b\n"}}
 	certUpd := []auxiliaryfiles.SSLCertificate{{Path: "tls.pem", Content: "PEM"}}
-	caps32 := Capabilities{SupportsRuntimeSSLCerts: true}
-	caps31 := Capabilities{} // < v3.2: no runtime ssl certs
+	caUpd := []auxiliaryfiles.GeneralFile{{Path: "general/ca.crt", Content: "CABUNDLE", IsCaFile: true}}
+	nonCaUpd := []auxiliaryfiles.GeneralFile{{Path: "general/500.http", Content: "body", IsCaFile: false}}
+	caps32 := Capabilities{SupportsRuntimeSSLCerts: true, SupportsSslCaFiles: true}
+	caps31 := Capabilities{} // < v3.2: no runtime ssl certs / ca-files
 
 	tests := []struct {
 		name            string
@@ -25,6 +27,7 @@ func TestAuxiliaryFileDiffs_RuntimeEligibleAuxUpdates(t *testing.T) {
 		caps            Capabilities
 		wantMaps        int
 		wantCerts       int
+		wantCa          int
 		wantNeedsReload bool
 	}{
 		{name: "nil diff", in: nil, caps: caps32},
@@ -93,13 +96,48 @@ func TestAuxiliaryFileDiffs_RuntimeEligibleAuxUpdates(t *testing.T) {
 			wantNeedsReload: true,
 		},
 		{
-			name:            "ca file change forces reload",
+			name:            "ca file change (dead SSLCaFiles slot) forces reload",
 			in:              &auxiliaryFileDiffs{caFileDiff: &auxiliaryfiles.SSLCaFileDiff{ToDelete: []string{"ca.pem"}}},
 			caps:            caps32,
 			wantNeedsReload: true,
 		},
 		{
-			name:            "general file change forces reload",
+			name:   "ca-file (general) content update on v3.2+: runtime, no reload",
+			in:     &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToUpdate: caUpd}},
+			caps:   caps32,
+			wantCa: 1,
+		},
+		{
+			name:            "ca-file content update on <v3.2: forces reload",
+			in:              &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToUpdate: caUpd}},
+			caps:            caps31,
+			wantCa:          0,
+			wantNeedsReload: true,
+		},
+		{
+			name:            "ca-file create forces reload",
+			in:              &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToCreate: caUpd}},
+			caps:            caps32,
+			wantNeedsReload: true,
+		},
+		{
+			name:            "non-ca general file content update forces reload",
+			in:              &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToUpdate: nonCaUpd}},
+			caps:            caps32,
+			wantNeedsReload: true,
+		},
+		{
+			name: "ca-file + map update on v3.2+: both runtime, no reload",
+			in: &auxiliaryFileDiffs{
+				fileDiff: &auxiliaryfiles.FileDiff{ToUpdate: caUpd},
+				mapDiff:  &auxiliaryfiles.MapFileDiff{ToUpdate: mapUpd},
+			},
+			caps:     caps32,
+			wantCa:   1,
+			wantMaps: 1,
+		},
+		{
+			name:            "general file create forces reload",
 			in:              &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToCreate: []auxiliaryfiles.GeneralFile{{Filename: "x"}}}},
 			caps:            caps32,
 			wantNeedsReload: true,
@@ -114,9 +152,10 @@ func TestAuxiliaryFileDiffs_RuntimeEligibleAuxUpdates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			maps, certs, needsReload := tt.in.runtimeEligibleAuxUpdates(tt.caps)
+			maps, certs, ca, needsReload := tt.in.runtimeEligibleAuxUpdates(tt.caps)
 			assert.Len(t, maps, tt.wantMaps, "map updates")
 			assert.Len(t, certs, tt.wantCerts, "cert updates")
+			assert.Len(t, ca, tt.wantCa, "ca-file updates")
 			assert.Equal(t, tt.wantNeedsReload, needsReload, "needs reload")
 		})
 	}
