@@ -36,7 +36,7 @@ haproxyPatchVersions:
   # renovate: datasource=docker depName=haproxytech/haproxy-debian
   "3.3": "3.3.10"
   # renovate: datasource=docker depName=haproxytech/haproxy-debian
-  "3.4": "3.4.0"
+  "3.4": "3.4.1"
 
 # Latest tested revision tags for each supported HAProxy Enterprise major.minor.
 # Enterprise uses HAProxy's revision scheme (e.g. 3.2r1, 3.2r2).
