@@ -38,7 +38,7 @@ The Nginx Ingress library implements these extension points:
 | Backend Directives | `backend-directives-900-nginx-ingress-config-snippet` | Raw backend config injection |
 | Frontend Filters | `frontend-filters-700-nginx-ingress-access-control` | IP allowlist/denylist |
 | Features | `features-105-nginx-ingress-ssl-redirect` | HTTP to HTTPS redirect (registers hosts into the shared `ssl-redirect-<code>.map`; ssl.yaml emits the rule) |
-| Frontend Filters | `frontend-filters-720-nginx-ingress-hsts` | HSTS headers |
+| Features | `features-155-nginx-ingress-hsts` | HSTS header — registers host→value into the shared `hsts.map` |
 | Frontend Filters | `frontend-filters-730-nginx-ingress-cors` | CORS headers |
 | Frontend Filters | `frontend-filters-740-nginx-ingress-custom-headers` | Custom request/response headers |
 | Features | `features-145-nginx-ingress-app-root` | Root path redirect — registers host→path into the shared `app-root.map` |

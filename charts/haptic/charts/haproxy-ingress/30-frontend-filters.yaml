@@ -83,32 +83,9 @@ templateSnippets:
   # registers hosts into the shared gf["sslRedirectHosts"] map (ssl.yaml emits the
   # rule from ssl-redirect-<code>.map), so adding/removing a redirected host is a
   # map-only, reload-free update instead of a per-ingress inline-ACL redirect.
-  frontend-filters-630-haproxy-ingress-hsts:
-    template: |
-      {#-
-        HAProxy-Ingress HSTS Annotations
-
-        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#hsts
-
-        Annotations:
-          - haproxy-ingress.github.io/hsts: "true|false" (optional)
-          - haproxy-ingress.github.io/hsts-max-age: "<seconds>" (optional, default: 15768000)
-          - haproxy-ingress.github.io/hsts-include-subdomains: "true|false" (optional)
-          - haproxy-ingress.github.io/hsts-preload: "true|false" (optional)
-
-        Generated HAProxy Config:
-          http-response set-header Strict-Transport-Security "max-age=<age>[; includeSubDomains][; preload]" if <host-match>
-      -#}
-      {%- import "util-emit-annotation-hsts" for EmitAnnotationHSTS -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {{ EmitAnnotationHSTS(ingress,
-            "haproxy-ingress.github.io/hsts",
-            "haproxy-ingress.github.io/hsts-max-age",
-            "haproxy-ingress.github.io/hsts-include-subdomains",
-            "haproxy-ingress.github.io/hsts-preload",
-            "15768000",
-            "haproxy-ingress/hsts") }}
-      {%- end -%}
+  # HSTS relocated to features-155-haproxy-ingress-hsts: it registers host→value into
+  # the shared gf["hstsHosts"]; base.yaml builds hsts.map and emits the single shared
+  # response-header rule (frontend-filters-080-hsts), a map-only reload-free update.
 
   # app-root relocated to features-145-haproxy-ingress-app-root: it registers
   # host→path into the shared gf["appRootHosts"]; base.yaml builds app-root.map and
