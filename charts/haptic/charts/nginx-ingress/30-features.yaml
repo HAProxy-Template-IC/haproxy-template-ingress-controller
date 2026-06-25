@@ -284,6 +284,25 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
+  features-155-nginx-ingress-hsts:
+    template: |
+      {#-
+        nginx HSTS — registers host→Strict-Transport-Security value into the shared
+        gf["hstsHosts"]; base.yaml features-190-hsts-map builds hsts.map and
+        frontend-filters-080-hsts emits the single shared response-header rule
+        (map-only, reload-free). Annotations: hsts / hsts-max-age /
+        hsts-include-subdomains / hsts-preload.
+      -#}
+      {%- import "util-register-annotation-hsts" for RegisterAnnotationHSTS -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ RegisterAnnotationHSTS(ingress,
+            "nginx.ingress.kubernetes.io/hsts",
+            "nginx.ingress.kubernetes.io/hsts-max-age",
+            "nginx.ingress.kubernetes.io/hsts-include-subdomains",
+            "nginx.ingress.kubernetes.io/hsts-preload",
+            "15724800") }}
+      {%- end -%}
+
   backends-501-nginx-ingress-ssl-passthrough:
     template: |
       {#-

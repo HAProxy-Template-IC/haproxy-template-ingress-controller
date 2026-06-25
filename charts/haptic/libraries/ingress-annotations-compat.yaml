@@ -144,40 +144,35 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
-  util-emit-annotation-hsts:
+  util-register-annotation-hsts:
     template: |
       {#-
-        Macro: EmitAnnotationHSTS(
-          ingress, enabledAnn, maxAgeAnn, subdomainsAnn, preloadAnn,
-          defaultMaxAge, commentLabel
+        Macro: RegisterAnnotationHSTS(
+          ingress, enabledAnn, maxAgeAnn, subdomainsAnn, preloadAnn, defaultMaxAge
         )
 
-        Reads the HSTS annotation set off the ingress and emits the
-        `http-response set-header Strict-Transport-Security` rule scoped
-        to the ingress's hosts. No-op when the enabledAnn is not "true"
-        or the ingress has no hosts.
+        Reads the HSTS annotation set off the ingress and registers each host's
+        Strict-Transport-Security value into the shared gf["hstsHosts"]. base.yaml
+        features-190-hsts-map builds hsts.map (host→value) and
+        frontend-filters-080-hsts emits the single shared response-header rule, so
+        changing an HSTS value is a map-only, reload-free update. No-op when the
+        enabledAnn is not "true" or the ingress has no hosts.
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition %}
-      {%- macro EmitAnnotationHSTS(ingress *resources.ingresses.T, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string, commentLabel string) %}
-        {%- var enabled = ingress.Metadata.Annotations[enabledAnn] %}
-        {%- if enabled == "true" %}
-          {%- var hosts = []string{} %}
+      {%- macro RegisterAnnotationHSTS(ingress *resources.ingresses.T, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string) %}
+        {%- if ingress.Metadata.Annotations[enabledAnn] == "true" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- var maxAge = ingress.Metadata.Annotations[maxAgeAnn] %}
+          {%- if maxAge == "" %}{%- maxAge = defaultMaxAge %}{%- end %}
+          {%- if regex_search(maxAge, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation '" + maxAgeAnn + "' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- var hstsValue = "max-age=" + maxAge %}
+          {%- if ingress.Metadata.Annotations[subdomainsAnn] == "true" %}{%- hstsValue = hstsValue + "; includeSubDomains" %}{%- end %}
+          {%- if ingress.Metadata.Annotations[preloadAnn] == "true" %}{%- hstsValue = hstsValue + "; preload" %}{%- end %}
+          {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
           {%- for _, rule := range ingress.Spec.Rules %}
-            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
-          {%- end %}
-          {%- if len(hosts) > 0 %}
-            {%- var ns = ingress.Metadata.Namespace %}
-            {%- var name = ingress.Metadata.Name %}
-            {%- var key = ns + "/" + name %}
-            {%- var maxAge = ingress.Metadata.Annotations[maxAgeAnn] %}
-            {%- if maxAge == "" %}{%- maxAge = defaultMaxAge %}{%- end %}
-            {%- var includeSubdomains = ingress.Metadata.Annotations[subdomainsAnn] %}
-            {%- var preload = ingress.Metadata.Annotations[preloadAnn] %}
-            {%- var hstsValue = "max-age=" + maxAge %}
-            {%- if includeSubdomains == "true" %}{%- hstsValue = hstsValue + "; includeSubDomains" %}{%- end %}
-            {%- if preload == "true" %}{%- hstsValue = hstsValue + "; preload" %}{%- end %}
-      # {{ commentLabel }} ({{ key }})
-      http-response set-header Strict-Transport-Security "{{ hstsValue }}" if { ssl_fc } {{ HostMatchCondition(hosts) }}
+            {%- if rule.Host != "" %}
+              {%- var hh []any = coalesce(gf["hstsHosts"], []any{}) %}
+              {%- gf["hstsHosts"] = append(hh, map[string]any{"host": toLower(rule.Host), "value": hstsValue}) %}
+            {%- end %}
           {%- end %}
         {%- end %}
       {%- end macro %}

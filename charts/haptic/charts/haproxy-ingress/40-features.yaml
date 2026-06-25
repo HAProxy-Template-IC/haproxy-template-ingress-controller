@@ -207,6 +207,25 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
+  features-155-haproxy-ingress-hsts:
+    template: |
+      {#-
+        haproxy-ingress HSTS — registers host→Strict-Transport-Security value into the
+        shared gf["hstsHosts"]; base.yaml features-190-hsts-map builds hsts.map and
+        frontend-filters-080-hsts emits the single shared response-header rule
+        (map-only, reload-free). Annotations: hsts / hsts-max-age /
+        hsts-include-subdomains / hsts-preload.
+      -#}
+      {%- import "util-register-annotation-hsts" for RegisterAnnotationHSTS -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ RegisterAnnotationHSTS(ingress,
+            "haproxy-ingress.github.io/hsts",
+            "haproxy-ingress.github.io/hsts-max-age",
+            "haproxy-ingress.github.io/hsts-include-subdomains",
+            "haproxy-ingress.github.io/hsts-preload",
+            "15768000") }}
+      {%- end -%}
+
   features-145-haproxy-ingress-app-root:
     template: |
       {#-

@@ -44,32 +44,9 @@ templateSnippets:
   # registers hosts into the shared gf["sslRedirectHosts"] map (ssl.yaml emits the
   # rule from ssl-redirect-<code>.map), so adding/removing a redirected host is a
   # map-only, reload-free update instead of a per-ingress inline-ACL redirect.
-  frontend-filters-720-nginx-ingress-hsts:
-    template: |
-      {#-
-        Nginx Ingress HSTS Annotations
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#http-strict-transport-security
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/hsts: "true|false" (optional)
-          - nginx.ingress.kubernetes.io/hsts-max-age: "<seconds>" (optional, default: 15724800)
-          - nginx.ingress.kubernetes.io/hsts-include-subdomains: "true|false" (optional)
-          - nginx.ingress.kubernetes.io/hsts-preload: "true|false" (optional)
-
-        Generated HAProxy Config:
-          http-response set-header Strict-Transport-Security "max-age=<age>[; includeSubDomains][; preload]" if { ssl_fc } <host-match>
-      -#}
-      {%- import "util-emit-annotation-hsts" for EmitAnnotationHSTS -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {{ EmitAnnotationHSTS(ingress,
-            "nginx.ingress.kubernetes.io/hsts",
-            "nginx.ingress.kubernetes.io/hsts-max-age",
-            "nginx.ingress.kubernetes.io/hsts-include-subdomains",
-            "nginx.ingress.kubernetes.io/hsts-preload",
-            "15724800",
-            "nginx-ingress/hsts") }}
-      {%- end -%}
+  # HSTS relocated to features-155-nginx-ingress-hsts: it registers host→value into
+  # the shared gf["hstsHosts"]; base.yaml builds hsts.map and emits the single shared
+  # response-header rule (frontend-filters-080-hsts), a map-only reload-free update.
 
   frontend-filters-730-nginx-ingress-cors:
     template: |

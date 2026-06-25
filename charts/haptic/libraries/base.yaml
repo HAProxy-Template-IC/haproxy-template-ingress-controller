@@ -1161,6 +1161,39 @@ templateSnippets:
         {%- if mapErr != nil -%}{{ fail("failed to register mtls-error map: " + tostring(mapErr)) }}{%- end -%}
       {%- end -%}
 
+  features-190-hsts-map:
+    template: |
+      {#-
+        Builds hsts.map (host → Strict-Transport-Security header value) from
+        gf["hstsHosts"]. Resource libraries register {host, value} entries in the
+        features phase; frontend-filters-080-hsts emits the single shared
+        response-header rule, so changing an HSTS value is a map-only, reload-free
+        update. First-writer-wins per host; hosts sorted for deterministic output.
+      -#}
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var hstsHosts []any = coalesce(gf["hstsHosts"], []any{}) -%}
+      {%- if len(hstsHosts) > 0 -%}
+        {%- var valByHost = map[string]string{} -%}
+        {%- var seen = map[string]bool{} -%}
+        {%- var hostKeys = []any{} -%}
+        {%- for _, entry := range hstsHosts -%}
+          {%- var host = tostring(entry | dig("host")) -%}
+          {%- if host != "" && !seen[host] -%}
+            {%- seen[host] = true -%}
+            {%- valByHost[host] = tostring(entry | dig("value")) -%}
+            {%- hostKeys = append(hostKeys, host) -%}
+          {%- end -%}
+        {%- end -%}
+        {%- var sortedHosts = sort_strings(hostKeys) -%}
+        {%- var lines = []any{} -%}
+        {%- for _, host := range sortedHosts -%}
+          {%- lines = append(lines, tostring(host) + " " + valByHost[tostring(host)]) -%}
+        {%- end -%}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" -%}
+        {%- var _, mapErr = fileRegistry.Register("map", "hsts.map", mapContent) -%}
+        {%- if mapErr != nil -%}{{ fail("failed to register hsts map: " + tostring(mapErr)) }}{%- end -%}
+      {%- end -%}
+
   frontend-filters-060-redirect-location:
     template: |
       {#-
@@ -1215,6 +1248,22 @@ templateSnippets:
       {%- var m, _ = pathResolver.GetPath("mtls-error.map", "map") %}
       # base/mtls-error
       http-request redirect location %[var(txn.host),map({{ m }})] code 302 if { ssl_c_verify gt 0 } { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
+
+  frontend-filters-080-hsts:
+    template: |
+      {#-
+        Host-keyed HSTS response header. Single shared rule driven by hsts.map
+        (built by features-190-hsts-map), gated on a TLS connection (ssl_fc).
+        var(txn.host) set during request routing is still in scope at response time.
+        Resource-agnostic: references only var(txn.host) and the map.
+      -#}
+      {%- var gf = shared.Get("globalFeatures") -%}
+      {%- var hstsHosts []any = coalesce(gf["hstsHosts"], []any{}) -%}
+      {%- if len(hstsHosts) > 0 %}
+      {%- var m, _ = pathResolver.GetPath("hsts.map", "map") %}
+      # base/hsts
+      http-response set-header Strict-Transport-Security %[var(txn.host),map({{ m }})] if { ssl_fc } { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 
   # Status frontend directives — override or extend via status-extra-* snippets.
