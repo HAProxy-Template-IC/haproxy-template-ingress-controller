@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -29,6 +30,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
@@ -122,6 +124,37 @@ func fetchAndValidateInitialConfig(
 		CredentialsVersion: secretResource.GetResourceVersion(),
 	}
 	return bundle, nil
+}
+
+// validateInitialConfigValidationTests runs the initial config's embedded
+// validationTests synchronously and returns an error if the suite fails, runs
+// incomplete, or cannot be set up. runIteration calls this on load so a restart
+// or upgrade can't quietly serve a HAProxyTemplateConfig that fails its own
+// tests — the live scatter-gather gate only blocks a change on an
+// already-running controller, which a fresh pod bypasses.
+//
+// On error, runIteration returns it, leaving the controller un-initialized
+// (/healthz 503). The liveness probe then restarts the pod, so a bad config
+// surfaces as CrashLoopBackOff and a rolling upgrade stalls on the old, good
+// pods instead of rolling out the break. A config with no validationTests
+// passes at zero cost.
+func validateInitialConfigValidationTests(
+	ctx context.Context,
+	cfg *coreconfig.Config,
+	bootstrap validator.TypeBootstrapper,
+	logger *slog.Logger,
+) error {
+	result, err := validator.RunValidationTestsSync(ctx, cfg, bootstrap, 0, logger)
+	if err != nil {
+		return fmt.Errorf("running validationTests: %w", err)
+	}
+	if result.Incomplete {
+		return errors.New("validationTests did not complete within the suite timeout")
+	}
+	if !result.Passed {
+		return fmt.Errorf("validationTests failed: %s", strings.Join(result.Failures, "; "))
+	}
+	return nil
 }
 
 // waitForInitialConfig polls for the HAProxyTemplateConfig until it exists.

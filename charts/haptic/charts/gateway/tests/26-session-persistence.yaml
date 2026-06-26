@@ -1,5 +1,9 @@
 validationTests:
   test-httproute-session-persistence-cookie-default:
+    # sessionPersistence is an experimental-channel HTTPRoute field; skip when
+    # that channel is absent (the snippet correctly emits no cookie directive,
+    # so the assertion can't pass). See haptic.gatewayExperimental.disabled.
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "GEP-1619: HTTPRoute rule with sessionPersistence (type unset → Cookie) emits the HAProxy cookie-insert + dynamic-cookie-key directives on the rule's backend."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -97,6 +101,7 @@ validationTests:
         pattern: "dynamic-cookie-key "
 
   test-httproute-session-persistence-cookie-defaultname:
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "GEP-1619: HTTPRoute sessionPersistence with no sessionName defaults the cookie name to SESSION (type Cookie is the apiserver-defaulted value the stored object carries)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -165,6 +170,7 @@ validationTests:
         pattern: "cookie SESSION insert indirect nocache dynamic"
 
   test-httproute-session-persistence-only-on-declaring-rule:
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "GEP-1619: a sessionPersistence on one rule must NOT leak its cookie directive onto a sibling rule's distinct backend."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -259,6 +265,7 @@ validationTests:
         pattern: "(?s)backend gtw_default_sp-route3_plain-b_80.*?cookie .* insert"
 
   test-grpcroute-session-persistence-cookie:
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "GEP-1619: GRPCRoute rule with sessionPersistence emits the cookie-insert directive on its backend."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"

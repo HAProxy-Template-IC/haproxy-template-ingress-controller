@@ -329,7 +329,11 @@ validationTests:
         target: map:haproxy-ingress-waf.map
         pattern: '(?m)^default/hi-waf-hostless deny$'
   test-haproxy-ingress-waf-coexist-with-nginx-modsec-snippet:
-    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    # Skip when spoa-hub OR nginx-ingress is disabled: this test exercises the
+    # coexistence of haproxy-ingress.github.io/waf with
+    # nginx.ingress.kubernetes.io/modsecurity-snippet, the latter scanned only
+    # by nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (include "haptic.nginxIngress.disabled" .) }}true{{ end }}'
     description: "When BOTH nginx.ingress.kubernetes.io/modsecurity-snippet and haproxy-ingress.github.io/waf are present in the cluster, nginx's \"global rules + always dispatch\" wins for dispatch (the send-spoe-group..."
     extraContext:
       spoaHub:

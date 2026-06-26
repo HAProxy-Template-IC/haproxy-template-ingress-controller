@@ -15,6 +15,8 @@
 package validator
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -22,6 +24,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -139,5 +142,62 @@ func TestValidationTestsValidator_NoTestsIsNoOpPass(t *testing.T) {
 	resp := runValidationTestsValidator(t, cfg)
 	if !resp.Valid {
 		t.Fatalf("expected config with no validationTests to pass trivially, errors: %v", resp.Errors)
+	}
+}
+
+// RunValidationTestsSync backs both the live validator and the controller's
+// startup load gate; these pin its behaviour directly, independent of the
+// event-driven validator.
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+func TestRunValidationTestsSync_Passes(t *testing.T) {
+	result, err := RunValidationTestsSync(context.Background(), configWithValidationTest("frontend http"), stubTypeBootstrapper, 0, testLogger())
+	if err != nil {
+		t.Fatalf("unexpected setup error: %v", err)
+	}
+	if !result.Passed || result.Incomplete {
+		t.Fatalf("expected a passing complete run, got %+v", result)
+	}
+}
+
+func TestRunValidationTestsSync_Fails(t *testing.T) {
+	result, err := RunValidationTestsSync(context.Background(), configWithValidationTest("this-string-is-never-rendered"), stubTypeBootstrapper, 0, testLogger())
+	if err != nil {
+		t.Fatalf("unexpected setup error: %v", err)
+	}
+	if result.Passed {
+		t.Fatal("expected a failing validationTest to NOT pass")
+	}
+	if !strings.Contains(strings.Join(result.Failures, "\n"), "test-frontend-present") {
+		t.Fatalf("expected the failing test name in the failures, got: %v", result.Failures)
+	}
+}
+
+func TestRunValidationTestsSync_NoTestsZeroCostPass(t *testing.T) {
+	cfg := configWithValidationTest("frontend http")
+	cfg.ValidationTests = nil
+	// A nil bootstrap proves the no-tests path short-circuits before any setup.
+	result, err := RunValidationTestsSync(context.Background(), cfg, nil, 0, testLogger())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Passed {
+		t.Fatalf("expected zero-cost pass with no validationTests, got %+v", result)
+	}
+}
+
+func TestRunValidationTestsSync_BootstrapErrorSurfaces(t *testing.T) {
+	boom := func(context.Context, *coreconfig.Config) (*typebootstrap.Result, error) {
+		return nil, errors.New("schema server unreachable")
+	}
+	_, err := RunValidationTestsSync(context.Background(), configWithValidationTest("frontend http"), boom, 0, testLogger())
+	if err == nil {
+		t.Fatal("expected a setup error when the bootstrap fails")
+	}
+	if !strings.Contains(err.Error(), "schema acquisition failed") {
+		t.Fatalf("expected a wrapped schema-acquisition error, got: %v", err)
 	}
 }

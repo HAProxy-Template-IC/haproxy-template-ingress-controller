@@ -879,24 +879,20 @@ validationTests:
     description: Global SSL test fixtures
     fixtures:
       secrets:
-        # Provide default SSL certificate in the Helm release namespace (haproxy-haptic)
-        # This is required for all tests since the default SSL certificate template
-        # uses .Release.Namespace as the default namespace
+        # Default SSL certificate, required by every test that renders a full
+        # config (the default.pem template loads it). Its namespace MUST match
+        # default.pem's lookup — extraContext.default_ssl_cert_namespace, which
+        # the chart sets to the release namespace. Library YAML isn't Helm-tpl'd,
+        # so templates/haproxytemplateconfig.yaml rewrites this namespace to that
+        # same value (keeping the fixture and the lookup in lock-step regardless
+        # of release namespace). The "haptic" placeholder is default.pem's own
+        # fallback, used when the default certificate is disabled (no rewrite).
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
           metadata:
             name: default-ssl-cert
-            namespace: haproxy-haptic
-          data:
-            tls.crt: *test_tls_crt
-            tls.key: *test_tls_key
-        - apiVersion: v1
-          kind: Secret
-          type: kubernetes.io/tls
-          metadata:
-            name: default-ssl-cert
-            namespace: default
+            namespace: haptic
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key

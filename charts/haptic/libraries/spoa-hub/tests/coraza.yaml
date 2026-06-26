@@ -8,9 +8,11 @@
 
 validationTests:
   test-spoa-hub-config-render-modsecurity-snippet-single:
-    # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
-    # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
-    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Skip on HAProxy <3.1 (fixture pins haproxyVersion=3.2 so the spoa-hub
+    # backend renders `mode spop`, which 3.0 can't parse) OR when nginx-ingress
+    # is disabled: the fixture's nginx.ingress.kubernetes.io/* annotations are
+    # scanned only by nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "A single Ingress with nginx.ingress.kubernetes.io/modsecurity-snippet sees its rule appended into the rendered coraza directives, with a comment marker identifying the source Ingress. The rule sits BELOW the values-supplied base directives."
     extraContext:
       haproxyVersion: "3.2"
@@ -74,9 +76,11 @@ validationTests:
         pattern: 'SecRuleEngine On'
 
   test-spoa-hub-config-render-modsecurity-snippet-multi-deterministic:
-    # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
-    # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
-    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Skip on HAProxy <3.1 (fixture pins haproxyVersion=3.2 so the spoa-hub
+    # backend renders `mode spop`, which 3.0 can't parse) OR when nginx-ingress
+    # is disabled: the fixture's nginx.ingress.kubernetes.io/* annotations are
+    # scanned only by nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "Multiple Ingresses with modsecurity-snippet annotations are inlined into the rendered coraza directives in deterministic order — sorted by `<namespace>/<name>` — so renders are reproducible and don't churn the dataplane API push payload across reconciliations."
     extraContext:
       haproxyVersion: "3.2"
@@ -145,9 +149,11 @@ validationTests:
   # ============================================================================
 
   test-spoa-hub-config-render-modsecurity-snippet-isolated-per-app:
-    # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
-    # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
-    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Skip on HAProxy <3.1 (fixture pins haproxyVersion=3.2 so the spoa-hub
+    # backend renders `mode spop`, which 3.0 can't parse) OR when nginx-ingress
+    # is disabled: the fixture's nginx.ingress.kubernetes.io/* annotations are
+    # scanned only by nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "Multi-tenant isolation: Two Ingresses with distinct modsecurity-snippet annotations each get their own [plugins.params.applications.\"<ns>/<name>\"] block in the rendered spoa-hub-config.toml."
     extraContext:
       haproxyVersion: "3.2"
@@ -221,7 +227,10 @@ validationTests:
         pattern: '\[plugins\.params\.applications\."tenant-b/bravo"\][\s\S]*?SecRuleEngine On'
 
   test-spoa-hub-coraza-app-map-routes-by-resource-id:
-    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
+    # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by
+    # nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: coraza-app.map carries one identity row per Ingress with a modsecurity-snippet, keyed by `<namespace>/<name>` (resource id). The frontend filter sets `txn.coraza_app` from `var(txn.resource_id),map(..
     extraContext:
       haproxyVersion: "3.2"
@@ -290,7 +299,10 @@ validationTests:
         pattern: 'app=var\(txn.coraza_app\)'
 
   test-spoa-hub-config-render-modsecurity-snippet-host-less-accepted:
-    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
+    # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by
+    # nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "An Ingress with modsecurity-snippet and a host-less rule renders successfully — coraza-app.map is keyed by <ns>/<name> (resource id), so the host dimension is irrelevant. The previous fail-loud guard is obsolete."
     extraContext:
       haproxyVersion: "3.2"
@@ -336,6 +348,11 @@ validationTests:
         target: map:coraza-app.map
         pattern: '(?m)^default/hostless-modsec default/hostless-modsec$'
   test-spoa-hub-config-render-modsecurity-snippet-rejects-toml-triple-quote:
+    # Skip when nginx-ingress is disabled: the fixture's
+    # nginx.ingress.kubernetes.io/modsecurity-snippet annotation is scanned only
+    # by nginx-ingress's util-nginx-ingress-coraza-scan, which produces the
+    # rendering error this test asserts on.
+    _helm_skip_test: '{{ include "haptic.nginxIngress.disabled" . }}'
     description: "An Ingress whose modsecurity-snippet contains a TOML triple-quote delimiter (\"\"\") is rejected at render time. The annotation value lands inside `directives = \"\"\"..."
     extraContext:
       haproxyVersion: "3.2"
@@ -384,6 +401,11 @@ validationTests:
         pattern: "default/injector annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote"
 
   test-spoa-hub-config-render-modsecurity-without-coraza-fails:
+    # Skip when nginx-ingress is disabled: the fixture's
+    # nginx.ingress.kubernetes.io/modsecurity-snippet annotation is scanned only
+    # by nginx-ingress's util-nginx-ingress-coraza-scan, which produces the
+    # rendering error this test asserts on.
+    _helm_skip_test: '{{ include "haptic.nginxIngress.disabled" . }}'
     description: "An Ingress carrying nginx.ingress.kubernetes.io/modsecurity-snippet while the spoaHub coraza plugin is NOT enabled fails the render with an explicit error. Silent ignore would hide a real misconfiguration; the operator wrote a per-Ingress WAF rule and nothing enforces it."
     extraContext:
       haproxyVersion: "3.2"
@@ -718,7 +740,10 @@ validationTests:
         pattern: '!\{ var\(txn\.coraza_mode\) -m str detect \}'
 
   test-coraza-dispatch-default-on-with-opt-out:
-    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
+    # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by
+    # nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "With dispatch.mode=default-on and one Ingress carrying nginx.ingress.kubernetes.io/enable-modsecurity: \"false\", the coraza-disabled.map gets a `<ns>/<name> 1` entry; the send-spoe-group dispatch line is gated only on txn.coraza_disabled (so the opted-out resource skips the WAF)."
     extraContext:
       haproxyVersion: "3.2"
@@ -779,7 +804,10 @@ validationTests:
         pattern: '(?m)^default/opted-out 1$'
 
   test-coraza-dispatch-enable-modsecurity-bogus-rejected:
-    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
+    # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by
+    # nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity set to a value other than \"true\" or \"false\" makes rendering fail loud. Only \"true\"/\"false\" are accepted."
     extraContext:
       haproxyVersion: "3.2"
@@ -813,7 +841,10 @@ validationTests:
         pattern: 'default/bogus'
 
   test-coraza-dispatch-enable-modsecurity-host-less-accepted:
-    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
+    # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by
+    # nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity: \"false\" and a host-less rule renders successfully — coraza-disabled.map is now keyed by <ns>/<name> (resource id), so the host dimension is irrelevant and the previous fail-loud guard is obsolete."
     extraContext:
       haproxyVersion: "3.2"
