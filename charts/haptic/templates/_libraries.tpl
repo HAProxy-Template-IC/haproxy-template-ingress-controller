@@ -56,6 +56,35 @@ Args (list): [library dict, root context]
 {{- end }}
 
 {{/*
+Returns "true" when the nginx-ingress template library is disabled (empty
+string otherwise), mirroring `haptic.spoaHub.disabled`. validationTests whose
+fixtures rely on nginx.ingress.kubernetes.io/* annotations — scanned only by
+the nginx-ingress library's util-nginx-ingress-coraza-scan — use this in their
+`_helm_skip_test` predicate so they don't run (and fail) when the library is
+absent from the bundle.
+*/}}
+{{- define "haptic.nginxIngress.disabled" -}}
+{{- if not .Values.controller.templateLibraries.nginxIngress.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Returns "true" when the Gateway API *experimental* channel is absent (empty
+string otherwise). Detected via the TCPRoute GVK, which the experimental
+channel ships but the standard channel does not (the same marker
+libraries/gateway/_index.yaml uses to gate TCPRoute wiring). Experimental-only
+HTTPRoute/GRPCRoute fields (sessionPersistence, retry) only exist when this
+channel is installed, so validationTests asserting the directives those fields
+drive use this in their `_helm_skip_test` predicate — otherwise they fail (and,
+with the fatal load gate, crash-loop the controller) on a standard-channel
+cluster where the snippets correctly emit nothing. Capabilities reflects the
+live cluster at install/upgrade; offline renders opt in via
+`--api-versions .../v1alpha2/TCPRoute` (CI and scripts/test-templates.sh do).
+*/}}
+{{- define "haptic.gatewayExperimental.disabled" -}}
+{{- if not (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1alpha2/TCPRoute") -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 Set a value at a dotted path within a dict, creating intermediate dicts as needed.
 Args (list): [obj dict, path string, value any]
 Returns: empty (mutates obj by side effect)

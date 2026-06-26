@@ -285,6 +285,22 @@ spec:
       {{- $_ := set $config $key . }}
     {{- end }}
   {{- end }}
+  {{- /* Keep the bundled default-ssl-cert validationTests fixture (ssl.yaml's
+         _global) in the same namespace default.pem looks it up in
+         (extraContext.default_ssl_cert_namespace, set above to the release
+         namespace). Library YAML can't be Helm-templated, so rewrite it here —
+         now that the libraries (and thus _global) are merged into $config.
+         Without this the suite fails in any release namespace other than the
+         library placeholder, which crash-loops the controller because the load
+         gate runs validationTests fatally. */ -}}
+  {{- if $defaultSSL.enabled }}
+    {{- $nsValue := ($defaultSSL.namespace | default .Release.Namespace) }}
+    {{- range $sec := (dig "validationTests" "_global" "fixtures" "secrets" (list) $config) }}
+      {{- if eq (dig "metadata" "name" "" $sec) $defaultSSL.secretName }}
+        {{- $_ := set (index $sec "metadata") "namespace" $nsValue }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
   {{- /* Library-declared extraContext defaults. A template library may set
          top-level `templatingSettings.extraContext.<key>` to provide a default
          value its snippets read (e.g. nginx-ingress's nginxHttpRedirectCode).

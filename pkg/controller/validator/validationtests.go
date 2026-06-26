@@ -52,11 +52,16 @@ const validationTestsRunTimeout = 25 * time.Second
 
 // ValidationTestsValidator runs the config's embedded validationTests — the
 // exact suite the `controller validate` CLI runs — as a scatter-gather
-// validator, so the running controller never accepts (at startup or on a live
-// change) a config whose tests fail. On failure the config-validation
+// validator. It guards live config changes: when a CRD update's tests fail the
 // aggregation publishes ConfigInvalidEvent and the last-good config keeps
-// serving; at startup the controller stays unready until a passing config is
-// present.
+// serving.
+//
+// The load path is guarded separately by the same suite: controller.runIteration
+// calls RunValidationTestsSync on the initial config and crash-loops the pod if
+// it fails (see that function and the startup gate in iteration.go). Both gates
+// share RunValidationTestsSync so a config's tests behave identically whether
+// they run on a live change or at load — the controller never serves a config
+// whose own tests fail.
 //
 // It builds a throwaway engine from the candidate config (using the same
 // live-schema TypeBootstrapper the TemplateValidator uses, so typed access in
@@ -171,14 +176,35 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 	}
 }
 
-// runTests resolves typed schemas, builds the engine, and runs the suite via the
-// shared configtest helper (the same one the admission webhook uses, so the two
-// gates can't drift). Any setup error is returned so the caller can fail
-// validation with a clear reason rather than silently skipping the gate.
+// runTests delegates to RunValidationTestsSync with this validator's bootstrap,
+// run timeout, and lifecycle context.
 func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config) (configtest.Result, error) {
-	bootstrapCtx, cancel := context.WithTimeout(v.baseCtx(), validationTestsBootstrapTimeout)
+	return RunValidationTestsSync(v.baseCtx(), cfg, v.bootstrap, v.runTimeout, v.logger)
+}
+
+// RunValidationTestsSync resolves typed schemas, builds a throwaway engine, and
+// runs the config's embedded validationTests via the shared configtest helper
+// (the same one the admission webhook uses, so the gates can't drift). It is the
+// shared core behind both the live scatter-gather gate (the validator's
+// HandleRequest) and the startup load gate (controller.runIteration) — so a
+// config's tests are bootstrapped, compiled, and executed identically whether
+// they run on a live change or at controller load.
+//
+// A config with no validationTests is a zero-cost pass. A runTimeout <= 0 uses
+// the default suite budget (validationTestsRunTimeout). Any setup error is
+// returned so the caller can fail validation with a clear reason rather than
+// silently skipping the gate.
+func RunValidationTestsSync(ctx context.Context, cfg *coreconfig.Config, bootstrap TypeBootstrapper, runTimeout time.Duration, logger *slog.Logger) (configtest.Result, error) {
+	if len(cfg.ValidationTests) == 0 {
+		return configtest.Result{Passed: true}, nil
+	}
+	if runTimeout <= 0 {
+		runTimeout = validationTestsRunTimeout
+	}
+
+	bootstrapCtx, cancel := context.WithTimeout(ctx, validationTestsBootstrapTimeout)
 	defer cancel()
-	bootstrapResult, err := v.bootstrap(bootstrapCtx, cfg)
+	bootstrapResult, err := bootstrap(bootstrapCtx, cfg)
 	if err != nil {
 		return configtest.Result{}, fmt.Errorf("schema acquisition failed (typed validationTests cannot run without real schemas): %w", err)
 	}
@@ -192,7 +218,7 @@ func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config) (configtest.
 		return configtest.Result{}, fmt.Errorf("building validation engine: %w", err)
 	}
 
-	return configtest.RunValidationTests(v.baseCtx(), cfg, engine, bootstrapResult.Types, v.runTimeout, v.logger)
+	return configtest.RunValidationTests(ctx, cfg, engine, bootstrapResult.Types, runTimeout, logger)
 }
 
 // respond publishes the validator's ConfigValidationResponse.

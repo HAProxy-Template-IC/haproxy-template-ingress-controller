@@ -111,7 +111,10 @@ func runIteration(
 	state := &configState{}
 
 	// 0. Setup components BEFORE fetching config so we can start servers early.
-	setup := setupComponents(ctx, infra.IntrospectionRegistry, newIterationTypeBootstrapper(k8sClient, logger), logger)
+	// The type bootstrapper is also reused by the step-2.5 startup validationTests
+	// gate below, so it's hoisted to a local rather than constructed inline.
+	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
+	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, logger)
 	defer setup.Cancel()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
@@ -143,6 +146,19 @@ func runIteration(
 		return err
 	}
 	cfg, crd, creds := bundle.Config, bundle.CRD, bundle.Credentials
+
+	// 2.5. Fail-closed on the initial config's embedded validationTests. A
+	// running controller already rejects a live CRD change whose tests fail (the
+	// scatter-gather reinit gate), but a fresh pod — every helm upgrade restarts
+	// the controllers — loads the config after only structural validation. Run
+	// the suite here so a restart/upgrade can't quietly serve a config that fails
+	// its own tests. Returning an error keeps the controller un-initialized
+	// (/healthz 503) and the liveness probe restarts the pod, so the bad config
+	// surfaces as CrashLoopBackOff and a rolling upgrade stalls on the old, good
+	// pods. No validationTests in the config → zero-cost pass.
+	if err := validateInitialConfigValidationTests(ctx, cfg, typeBootstrapper, logger); err != nil {
+		return fmt.Errorf("initial HAProxyTemplateConfig %q failed validationTests on load: %w", crdName, err)
+	}
 
 	// Mark config as loaded and record initial CRD/Secret versions so the
 	// bootstrap watcher events don't trigger redundant reinitialization.
