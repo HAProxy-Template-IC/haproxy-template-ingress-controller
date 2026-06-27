@@ -668,7 +668,6 @@ templateSnippets:
         {%- if cookie != "" %}
       # haproxytech/backend-directives-haproxytech-session-persistence
       cookie {{ cookie }} insert indirect nocache dynamic
-      # Note: dynamic-cookie-key would be set by base template for multi-instance support
         {%- end %}
       {%- end -%}
 

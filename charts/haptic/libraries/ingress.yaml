@@ -306,7 +306,7 @@ templateSnippets:
       backend {{ backendKey }}
           guid {{ make_guid("be", backendKey) }}
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-                  {{- render_glob "backend-directives-*" inherit_context }}
+                  {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
         default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
         {{ BackendServers(svcName, 0, port, serverOpts, portName, backendKey, ns) | indent(2, true) }}
                 {%- end -%}
@@ -333,7 +333,7 @@ templateSnippets:
       backend {{ backendKey }}
           guid {{ make_guid("be", backendKey) }}
               {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-              {{- render_glob "backend-directives-*" inherit_context }}
+              {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
         default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
         {{ BackendServers(dbSvcName, 0, port, serverOpts, portName, backendKey, ns) | indent(2, true) }}
             {%- end -%}

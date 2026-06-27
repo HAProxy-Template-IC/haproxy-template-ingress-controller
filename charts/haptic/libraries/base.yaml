@@ -104,94 +104,49 @@ templateSnippets:
   # prefix, emit their unique path-match cascade, and render the suffix.
   # ----------------------------------------------------------------------------
   util-routing-prefix:
-    template: |-
+    template: |
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      # Host and path extraction
       http-request set-var(txn.base) base
       http-request set-var(txn.path) path
-      # txn.host_full keeps the Host header verbatim (with any :port suffix)
-      # so port-pinned routes — Gateway listeners on non-default ports —
-      # match before the port-stripped fallback lookups. The full-host
-      # lookup only fires when a request actually carried a port,
-      # so the common port-default case has zero overhead.
       http-request set-var(txn.host_full) req.hdr(Host),lower
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      # Seed host_match to '' so the cascade below can consistently use
-      # `len 0` to mean "no match yet" — works whether or not the
-      # `host_full -m sub :` gate fired on the first lookup.
+      # host_match cascade: full-host (port-pinned) > host > wildcard > regex
       http-request set-var(txn.host_match) str()
       http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }},'') if { var(txn.host_full) -m sub : } { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
-      # Listener-port translation:
-      # txn.listener_port is the user-facing listener port the request
-      # arrived on, used by host.map fallback below and by any
-      # port-aware filter (e.g. redirect-port logic). For chart-static
-      # binds this equals dst_port; that is the default below.
-      #
-      # Resource libraries that introduce a pod-port → listener-port
-      # mapping (e.g. Gateway API's per-Gateway HTTPS binds, which
-      # listen on allocated pod ports like 18002 while the chart's
-      # host/path map entries are keyed by the original listener port
-      # like 8443) plug a translation into the
-      # `frontend-routing-listener-port-*` extension point. Without
-      # such a library, no map files are referenced and dst_port
-      # passes through unchanged. base.yaml itself never names any
-      # resource-library map.
       http-request set-var(txn.dst_port) dst_port
       http-request set-var(txn.listener_port) var(txn.dst_port)
-      {#- Extension point: resource libraries may override txn.listener_port
-          based on bind metadata (e.g. pod-port → user-facing-port maps).
-          render_glob output is emitted on a fresh line — the leading
-          newline below is load-bearing because the comment + render_glob
-          form would otherwise fuse with the next snippet's first line.
-          See `charts/CLAUDE.md` "Whitespace Control" for the
-          `{{- … -}}` trim-across-line-boundaries semantics. -#}
+      {#- Extension point: libraries may remap txn.listener_port from bind metadata.
+          The blank line before render_glob is load-bearing (charts/CLAUDE.md → Whitespace Control). -#}
 
       {{ render_glob "frontend-routing-listener-port-*" }}
-      # Per-listener-port fallback: when no hostname-based lookup
-      # matched, isolate routes by the inbound listener port.
-      # Resource libraries that emit listeners on non-default ports
-      # (e.g. Gateway API listener-port-matching) write
-      # `<host>:<port>` and / or `:<port>` entries into host.map.
-      #
-      # Gate: `len 0` rather than `!found`, because the host_full and
-      # host-regex lookups above may have already SET host_match (to
-      # an empty string when the lookup yielded no match). `-m found`
-      # would be true after that, blocking this fallback. `-m len 0`
-      # fires whenever the variable is set-but-empty, which is
-      # exactly the post-cascade state we want to recover from.
+      # listener-port fallback (host:port / :port keys) when no host matched
       http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
   util-routing-suffix:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      # Parse qualifier type
+      # qualifier = field 1 of path_match (BACKEND | MULTIBACKEND)
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
-
-      # Extension point: advanced matchers (method/header/query)
-      {{- render_glob "frontend-matchers-advanced-*" }}
+      {#- Advanced matchers (method/header/query) may rewrite path_match; re-parse
+          the qualifier afterwards, but only when a matcher actually emitted rules. -#}
+      {%- var adv = render_glob "frontend-matchers-advanced-*" %}
+      {{ adv }}
+      {%- if strip(adv) != "" %}
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
-
-      # MULTIBACKEND: weighted routing via random selection
+      {%- end %}
+      # MULTIBACKEND: weighted random selection
       http-request set-var(txn.total_weight) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.random_weight) rand(),mod(txn.total_weight) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.route_key) var(txn.path_match),field(3,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.lookup_key) var(txn.random_weight),concat(:,txn.route_key,) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ mapPath("weighted-multi-backend.map") }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-
       # BACKEND: direct routing
       http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
-
-      # Owner-resource identity for per-resource feature blocks
-      # (auth-url, auth-method, coraza-app, …). Derived from the qualifier
-      # value the routing chain has already produced — no extra map lookup.
-      # Format: <ns>/<name>. Backend names use `_` as separator
-      # (`<ns>_<name>_svc_<svc>_<port>` for Ingress, `<ns>_<name>_<ruleIdx>`
-      # for Gateway weighted routing); K8s names disallow `_` so field(1,_)
-      # / field(2,_) is collision-free.
+      # owner resource id <ns>/<name>, keying per-resource feature maps (auth, coraza, …). See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#frontend-routing-logic
       http-request set-var(txn.resource_namespace) var(txn.backend_name),field(1,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
@@ -219,9 +174,8 @@ templateSnippets:
           - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
       -#}
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      # base/frontend-routing-logic
+      # base/frontend-routing-logic — host/path → backend. See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#frontend-routing-logic
       {{ render "util-routing-prefix" }}
-      # Path matching: Exact > Regex > Prefix-exact > Prefix
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
@@ -899,19 +853,9 @@ templateSnippets:
       option dontlognull
       option log-health-checks
       option forwardfor
-      # Retry on TCP-connect failure against a DIFFERENT server in the
-      # same backend. Without this, HAProxy's default `retries 3` re-
-      # tries the same dead server three times and gives up; combined
-      # with `option redispatch`, retries land on any other healthy
-      # server in the backend — matching nginx-ingress's default
-      # `proxy-next-upstream: "error timeout"` behaviour and envoy's
-      # default retry policy. This is what closes the K8s pod-
-      # termination race window: when an old pod's IP becomes
-      # unreachable (kubelet finished cleanup, netns gone) and
-      # HAProxy hasn't yet processed the EndpointSlice update, the
-      # request retries against the new pod's SRV slot instead of
-      # hanging on the dead IP until the client times out.
-      # https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/
+      # Retry a failed TCP connect on a different server in the backend (not the
+      # same dead one); with the default `retries 3` this closes the pod-termination
+      # race during rolling updates. See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#connection-reliability-and-timeouts
       option redispatch
 
   defaults-settings-200-balance:
@@ -920,44 +864,10 @@ templateSnippets:
 
   defaults-settings-300-timeouts:
     template: |
-      # timeout connect default: 100ms (vs HAProxy's recommended 5s and
-      # the default of every other major K8s ingress controller — they
-      # all ship 5s).
-      #
-      # Why this is right for HAPTIC specifically:
-      #
-      # An ingress controller's backends are pod IPs from EndpointSlice,
-      # reached over the cluster's CNI fabric. There's no per-connection
-      # DNS, no LB-pool resolution, just a direct TCP SYN to a
-      # kube-routed IP. Same-node connects are sub-millisecond; cross-node
-      # via VXLAN overlay (flannel/calico/cilium) is typically <30ms; even
-      # AWS cross-AZ stays under ~10ms p99. 100ms is 3-100× the typical
-      # case.
-      #
-      # The pathological case 100ms targets is the one we actively want
-      # to fail fast on: a SYN to a pod IP whose pod just terminated.
-      # The chart does in-place runtime updates on rolling restart, so
-      # for the brief window between EndpointSlice update and HAPTIC's
-      # deploy landing, the SRV slot's address can point at a dying pod.
-      # HAPTIC keeps that window short by reacting to the EndpointSlice
-      # change as fast as possible: the EndpointSlice watcher runs with
-      # debounceInterval: "0" (the 2s pkg/k8s/types.DefaultDebounceInterval
-      # that the other watchers use is bypassed for endpoints), the
-      # reconciler fires immediately with no refractory window, and the
-      # deployer's runtime-eligible fast path swaps the server address
-      # without a reload. BUT — a request already dispatched into HAProxy
-      # when the EP changes is committed to that slot; fast reaction
-      # doesn't help the in-flight request, only future ones. The
-      # committed request has to wait for `timeout connect` before
-      # `option redispatch` retries against a live slot. At 5s connect
-      # timeout, the request sits 5s before being saved — well past the
-      # typical client request budget, surfacing as 504/client timeout.
-      # At 100ms, the full failover including the original connect attempt
-      # + retry completes inside ~200ms.
-      #
-      # Operators on genuinely slow networks (multi-region, satellite,
-      # constrained CPU) can override via
-      # `controller.config.extraContext.timeout_connect: "5000"`.
+      # timeout connect 100ms (vs the usual 5s): fast-fail a SYN to a just-terminated
+      # pod IP so `option redispatch` retries a live server within ~200ms instead of
+      # stalling 5s into a 504. Override extraContext.timeout_connect on slow networks.
+      # See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#connection-reliability-and-timeouts
       timeout connect {{ extraContext | dig("timeout_connect") | fallback("100") }}
       timeout client {{ extraContext | dig("timeout_client") | fallback("50000") }}
       timeout server {{ extraContext | dig("timeout_server") | fallback("50000") }}
@@ -1308,20 +1218,12 @@ templateSnippets:
       {%- else %}
       backend default_backend
           guid be:default_backend
-          # gRPC unmatched-request handling. We need a trailers-only style
-          # response (HEADERS frame with END_STREAM, no DATA) that carries
-          # content-type: application/grpc + grpc-status: 12. Without
-          # content-type, grpc-go reports "malformed header: missing HTTP
-          # content-type" and tears down the HTTP/2 connection, cancelling
-          # every sibling multiplexed stream.
-          #
-          # HAProxy's `http-request return` action strips `content-type`
-          # from `hdr` arguments when no body source is provided. We
-          # restore it via `http-after-response set-header`, which runs on
-          # responses produced by the `return` action.
+          # gRPC-aware fallback: a trailers-only grpc-status 12 (Unimplemented) for
+          # application/grpc, else a plain 404. content-type is re-added via
+          # http-after-response (the `return` action strips it). See
+          # https://haproxy-haptic.org/helm-chart/latest/libraries/base/#grpc-request-handling
           http-request return status 200 hdr "grpc-status" "12" hdr "grpc-message" "Unimplemented" if { req.hdr(content-type) -m sub "application/grpc" }
           http-after-response set-header content-type "application/grpc" if { res.hdr(grpc-status) -m found }
-          # Non-gRPC: plain HTTP/1.1 / HTTP/2 404.
           http-request return status 404
       {%- end %}
 
@@ -1359,18 +1261,14 @@ maps:
   host.map:
     template: |
       # Host to normalized host mapping (strips port, wildcards)
-      {{- render_glob "map-host-*" -}}
+      {{ render_glob "map-host-*" -}}
 
   host-regex.map:
     template: |
-      # Wildcard hostname matches via regex. Used as a fallback after
-      # exact host.map lookup and the single-label regsub-strip miss,
-      # to handle multi-label hosts under a wildcard listener (e.g.
-      # `multiple.prefixes.bar.com` against an `*.bar.com` listener).
-      # Each entry: <regex pattern> <normalized host key>. The
-      # normalized key reuses the existing `.<wildcard-suffix>` form
-      # so the downstream path-map lookups don't need to change.
-      {{- render_glob "map-host-regex-*" -}}
+      # Wildcard-host regex fallback: <regex pattern> <normalized host key>, tried
+      # after the exact host.map + single-label regsub miss (multi-label hosts under
+      # a wildcard listener). See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#frontend-routing-logic
+      {{ render_glob "map-hostregex-*" -}}
 
   path-exact.map:
     template: |
@@ -1390,51 +1288,44 @@ maps:
   path-regex.map:
     template: |
       # Regex matches (use with map_reg())
-      {{- render_glob "map-path-regex-*" -}}
+      {{ render_glob "map-path-regex-*" -}}
 
   weighted-multi-backend.map:
     template: |
       # Weighted routing: random_weight:route_key → backend_name
-      {{- render_glob "map-weighted-backend-*" }}
+      {{ render_glob "map-weighted-backend-*" }}
 
   body-size.map:
     template: |
-      # Per-backend request body-size limits: backend_name → max bytes.
-      # Populated by resource libraries via map-body-size-* snippets, consumed by
-      # the resource-agnostic frontend-filters-250-request-body-size rule. Keeping
-      # the limit in a map (instead of an http-request deny inside each backend)
-      # makes adding or changing a body-size cap a map-only, reload-free update.
-      {{- render_glob "map-body-size-*" -}}
+      # Per-backend request body-size limits: backend_name → max bytes. Populated by resource
+      # libraries (map-body-size-*); enforced by frontend-filters-250-request-body-size.
+      # See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#map-files
+      {{ render_glob "map-body-size-*" -}}
 
   reqhdr-host.map:
     template: |
-      # Per-backend upstream Host override: backend_name → host value.
-      # Populated by resource libraries via map-reqhdr-host-* snippets, consumed by
-      # frontend-filters-260-request-set-host. Relocated from a per-backend
-      # `http-request set-header Host` so changing it is a map-only update.
-      {{- render_glob "map-reqhdr-host-*" -}}
+      # Per-backend upstream Host override: backend_name → host. Populated by
+      # map-reqhdr-host-*; applied by frontend-filters-260-request-set-host.
+      {{ render_glob "map-reqhdr-host-*" -}}
 
   reqhdr-xfwd-prefix.map:
     template: |
-      # Per-backend X-Forwarded-Prefix override: backend_name → prefix value.
-      # Populated via map-reqhdr-xfwd-prefix-* snippets, consumed by
-      # frontend-filters-261-request-set-xfwd-prefix.
-      {{- render_glob "map-reqhdr-xfwd-prefix-*" -}}
+      # Per-backend X-Forwarded-Prefix override: backend_name → prefix. Populated via
+      # map-reqhdr-xfwd-prefix-*; applied by frontend-filters-261-request-set-xfwd-prefix.
+      {{ render_glob "map-reqhdr-xfwd-prefix-*" -}}
 
   reqhdr-connection.map:
     template: |
-      # Per-backend Connection header override: backend_name → value.
-      # Populated via map-reqhdr-connection-* snippets, consumed by
-      # frontend-filters-262-request-set-connection.
-      {{- render_glob "map-reqhdr-connection-*" -}}
+      # Per-backend Connection header override: backend_name → value. Populated via
+      # map-reqhdr-connection-*; applied by frontend-filters-262-request-set-connection.
+      {{ render_glob "map-reqhdr-connection-*" -}}
 
   path-rewrite.map:
     template: |
-      # Per-backend full-path rewrite: backend_name → replacement path.
-      # Only literal (non-capture) rewrites live here; capture/regex rewrites
-      # stay as `http-request replace-path` in the backend. Populated via
-      # map-path-rewrite-* snippets, consumed by frontend-filters-400-path-rewrite.
-      {{- render_glob "map-path-rewrite-*" -}}
+      # Per-backend literal full-path rewrite: backend_name → replacement path (capture/regex
+      # rewrites stay as http-request replace-path in the backend). Populated via
+      # map-path-rewrite-*; applied by frontend-filters-400-path-rewrite.
+      {{ render_glob "map-path-rewrite-*" -}}
 
 files:
   400.http:
@@ -1770,26 +1661,16 @@ haproxyConfig:
         {# Gateway-derived — goes through the same h2c-detection inspector. #}
         {{- render_glob "http-bind-extra-*" | indent(2, true) }}
 
-        # Wait up to 1s for the first wire bytes so the byte-preface ACL
-        # can decide. Both protocols deliver first bytes immediately on
-        # well-behaved clients; the delay is the safety net for slow
-        # initial sends, not the common path.
+        # Wait for the first wire bytes so the h2c-preface ACL can classify the
+        # connection (safety net for slow initial sends; fast clients aren't delayed).
         tcp-request inspect-delay 1s
 
-        # h2c prior-knowledge preface: PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n
-        # (24 bytes). The hex below is the byte-exact match.
-        # gRPC-Go's insecure dial uses prior-knowledge by default; HAProxy
-        # can't parse Upgrade: h2c, so the wire-byte preface is the only
-        # signal available in mode tcp. The conformance suite's
-        # vendor/sigs.k8s.io/gateway-api/conformance/utils/grpc/grpc.go
-        # uses insecure.NewCredentials() unconditionally — every
-        # GRPCRoute test exercises this path.
+        # Detect the h2c prior-knowledge preface (PRI * HTTP/2.0..SM.., 24 bytes; hex
+        # below) — the only h2c signal available in mode tcp. See
+        # https://haproxy-haptic.org/helm-chart/latest/libraries/base/#h2c-cleartext-detection
         acl is_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
 
-        # Accept as soon as we have 24 bytes (enough for the preface
-        # decision) — fast path for both protocols. Fall through to
-        # WAIT_END for slow initial sends (HTTP/1.1 minimal requests
-        # under 24 bytes — rare in practice but possible).
+        # Decide as soon as 24 bytes are in; WAIT_END covers shorter HTTP/1.1 sends.
         tcp-request content accept if { req.len ge 24 }
         tcp-request content accept if WAIT_END
 
@@ -1799,9 +1680,7 @@ haproxyConfig:
     backend http-h1-loopback
         guid be:http-h1-loopback
         mode tcp
-        # send-proxy-v2 mirrors the existing ssl-loopback pattern
-        # (libraries/ssl.yaml ~line 460); preserves original client IP
-        # and port across the unix-socket hop.
+        # send-proxy-v2 preserves the original client IP/port across the unix-socket hop.
         server loopback unix@/etc/haproxy/http-h1-frontend.sock send-proxy-v2
 
     backend http-h2c-loopback
@@ -1812,9 +1691,8 @@ haproxyConfig:
     frontend http_frontend
         guid fe:http_frontend
         mode http
-        # accept-proxy parses the PROXY v2 header from http-h1-loopback's
-        # send-proxy-v2, so `src` and request logging see the original
-        # client. Mode 660 matches ssl-frontend.sock for consistency.
+        # accept-proxy reads the PROXY v2 header from http-h1-loopback's send-proxy-v2,
+        # so `src` and logging see the original client.
         bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy
         {# Extension point for early frontend directives (options, captures, ACLs) #}
         {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
@@ -1826,11 +1704,7 @@ haproxyConfig:
         {# Runs AFTER routing decisions, BEFORE backend selection #}
         {# Libraries can inject filter logic here (header modification, redirects, rewrites) #}
         {{- render_glob "frontend-filters-*" | indent(2, true) }}
-        # Use backend from txn.backend_name (set by qualifier logic in "frontend-routing-logic")
-        # Falls through to default_backend if backend_name is empty
         use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
-
-        # Default backend
         default_backend default_backend
 
     frontend http_frontend_h2c

@@ -396,7 +396,7 @@ templateSnippets:
       {{- ShardedHTTPRouteHostMap(resources.httproutes.List()) -}}
       {{- ShardedGRPCRouteHostMap(resources.grpcroutes.List()) -}}
 
-  map-host-regex-500-gateway:
+  map-hostregex-500-gateway:
     template: |
       {%- import "util-resource-helpers" for ListenerHostname -%}
       {#-
@@ -424,7 +424,7 @@ templateSnippets:
         already by the exact host.map entry for any sibling exact
         listener — and per spec must not match `*.bar.com`).
       -#}
-      # gateway/map-host-regex-gateway
+      # gateway/map-hostregex-gateway
       {%%
         var seen = map[string]bool{}
         var suffixEntries = []any{}

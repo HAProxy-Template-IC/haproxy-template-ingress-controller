@@ -691,14 +691,9 @@ templateSnippets:
           {%- end %}
           tcp-request content accept if { req_ssl_hello_type 1 }
 
-          # Route to passthrough backends based on SNI. Wildcard
-          # patterns (`*.example.com`) match any single-label
-          # subdomain; SSL passthrough emits `-m end .example.com` for
-          # those, exact patterns use `-m str`. Per Gateway API
-          # hostname semantics, `*.example.com` matches `foo.example.com`
-          # but NOT the bare `example.com`, so the `.` prefix in the
-          # `-m end` literal preserves the single-label-required rule
-          # (anything ending in `.example.com`).
+          # Route to passthrough backends by SNI: wildcard *.host → `-m end .host` (single-label
+          # subdomain only, not bare host), exact → `-m str`. See
+          # https://haproxy-haptic.org/helm-chart/latest/libraries/ssl/#ssl-passthrough
           {# Filter to Passthrough-mode entries only — the
              gateway-ssl-passthrough builder now also emits Terminate
              entries (consumed by frontends-600-gateway-tls-listener for
@@ -725,11 +720,8 @@ templateSnippets:
 
           {%- var needHTTPSTermination = tostring(gfMap | dig("needHTTPSTermination")) == "true" %}
           {%- if needHTTPSTermination %}
-          # Default: route to loopback backend for SSL termination.
-          # Some routing on this port expects TLS termination (HTTPS
-          # Gateway listener, Ingress with spec.tls, …) — ssl-loopback
-          # is the chart's HTTPS-frontend bridge, so unmatched SNIs
-          # land there for cert-based termination + Host-based routing.
+          # Unmatched SNIs fall through to ssl-loopback (the chart's HTTPS-frontend bridge) for
+          # cert-based TLS termination — HTTPS Gateway listeners / Ingress spec.tls.
           default_backend ssl-loopback
           {%- end %}
 
