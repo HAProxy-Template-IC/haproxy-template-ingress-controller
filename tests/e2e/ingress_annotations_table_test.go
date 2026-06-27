@@ -59,7 +59,6 @@ func TestIngressAnnotations(t *testing.T) {
 	assertWebhookAdmittedOnly := func(_ *testing.T, _ string) {}
 	_ = assertWebhookAdmittedOnly // avoid unused warning before first use below
 
-
 	cases := []struct {
 		// host is the request Host: header. Also used as the kebab-cased
 		// sub-test name segment so it must be a valid DNS label.
@@ -205,23 +204,28 @@ func TestIngressAnnotations(t *testing.T) {
 			name: "hi-session-cookie",
 			host: "ingress-hi-session-cookie.localdev.me",
 			annotations: map[string]string{
-				"haproxy-ingress.github.io/affinity":                  "cookie",
-				"haproxy-ingress.github.io/session-cookie-name":       "HISESSION",
-				"haproxy-ingress.github.io/session-cookie-strategy":   "insert",
-				"haproxy-ingress.github.io/session-cookie-domain":     "example.com",
-				"haproxy-ingress.github.io/session-cookie-dynamic":    "false",
-				"haproxy-ingress.github.io/session-cookie-keywords":   "nocache",
-				"haproxy-ingress.github.io/session-cookie-preserve":   "false",
-				"haproxy-ingress.github.io/session-cookie-same-site":  "Lax",
+				"haproxy-ingress.github.io/affinity":                 "cookie",
+				"haproxy-ingress.github.io/session-cookie-name":      "HISESSION",
+				"haproxy-ingress.github.io/session-cookie-strategy":  "insert",
+				"haproxy-ingress.github.io/session-cookie-domain":    "example.com",
+				"haproxy-ingress.github.io/session-cookie-dynamic":   "false",
+				"haproxy-ingress.github.io/session-cookie-keywords":  "nocache",
+				"haproxy-ingress.github.io/session-cookie-preserve":  "false",
+				"haproxy-ingress.github.io/session-cookie-same-site": "Lax",
 			},
 		},
 		{
 			name: "hi-healthcheck",
 			host: "ingress-hi-healthcheck.localdev.me",
 			annotations: map[string]string{
-				"haproxy-ingress.github.io/backend-check-interval":  "5s",
-				"haproxy-ingress.github.io/health-check-uri":        "/healthz",
-				"haproxy-ingress.github.io/health-check-port":       "8080",
+				"haproxy-ingress.github.io/backend-check-interval": "5s",
+				"haproxy-ingress.github.io/health-check-uri":       "/healthz",
+				// NOTE: do not set health-check-port here. The shared echo-server
+				// backend listens only on port 80, so a health check against any
+				// other port can never succeed — the server settles DOWN after
+				// fall*interval and the route returns 503 (flaky on slow runners).
+				// The health-check-port annotation's rendering is covered by the
+				// chart validationTests instead.
 				"haproxy-ingress.github.io/health-check-rise-count": "2",
 				"haproxy-ingress.github.io/health-check-fall-count": "3",
 			},
@@ -371,7 +375,7 @@ func TestIngressAnnotations(t *testing.T) {
 			name: "nginx-proxy-tuning",
 			host: "ingress-nginx-proxy-tuning.localdev.me",
 			annotations: map[string]string{
-				"nginx.ingress.kubernetes.io/proxy-body-size":      "10m",
+				"nginx.ingress.kubernetes.io/proxy-body-size":       "10m",
 				"nginx.ingress.kubernetes.io/proxy-connect-timeout": "10",
 				"nginx.ingress.kubernetes.io/proxy-read-timeout":    "30",
 				"nginx.ingress.kubernetes.io/proxy-send-timeout":    "30",
@@ -381,10 +385,10 @@ func TestIngressAnnotations(t *testing.T) {
 			name: "nginx-session-cookie",
 			host: "ingress-nginx-session-cookie.localdev.me",
 			annotations: map[string]string{
-				"nginx.ingress.kubernetes.io/affinity":             "cookie",
-				"nginx.ingress.kubernetes.io/session-cookie-name":  "NGSESSION",
-				"nginx.ingress.kubernetes.io/session-cookie-path":  "/",
-				"nginx.ingress.kubernetes.io/session-cookie-hash":  "sha1",
+				"nginx.ingress.kubernetes.io/affinity":            "cookie",
+				"nginx.ingress.kubernetes.io/session-cookie-name": "NGSESSION",
+				"nginx.ingress.kubernetes.io/session-cookie-path": "/",
+				"nginx.ingress.kubernetes.io/session-cookie-hash": "sha1",
 			},
 		},
 		{
@@ -469,7 +473,7 @@ func TestIngressAnnotations(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		feature := features.New("Ingress: " + tc.name).
+		feature := features.New("Ingress: "+tc.name).
 			Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 				client, err := cfg.NewClient()
 				if err != nil {
