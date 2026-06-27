@@ -1743,6 +1743,13 @@ haproxyConfig:
       params:
         pattern: "^[ ]+"
         replace: "  "
+    # Collapse runs of blank / whitespace-only lines (left behind by empty
+    # extension-point snippets and render_glob boundaries) into a single blank
+    # line. HAProxy ignores blank lines, so this is purely for readability.
+    - type: template
+      params:
+        source: |-
+          {{- regexp("\\n([ \\t]*\\n)+").ReplaceAll(input, "\n\n") -}}
 
 # Global fixtures merged with all validation tests
 # Test fixtures override global fixtures when same resource exists (by namespace/name)
