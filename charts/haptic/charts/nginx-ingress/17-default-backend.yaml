@@ -81,7 +81,7 @@ templateSnippets:
       backend {{ backendName }}
           guid {{ make_guid("be", backendName) }}
           {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-          {{- render_glob "backend-directives-*" inherit_context }}
+          {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
         default-server check{{ BuildServerOptions(serverOpts) }}
         {{ BackendServers(svcName, 0, port, nil, portName, backendName, svcNs) | indent(2, true) }}
           {%- end -%}

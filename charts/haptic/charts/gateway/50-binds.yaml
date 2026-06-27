@@ -236,25 +236,15 @@ templateSnippets:
           tcp-request content reject
               {%- end %}
             {%- else %}
-          # SNI-based dispatch to the route's TCP backend. Wildcard
-          # SNI patterns (`*.example.com`) match any single subdomain
-          # via `-m end .example.com` (preserving the spec's
-          # single-label-required rule). The reject must come BEFORE
-          # the accept rule (which terminates the tcp-request content
-          # phase): `tcp-request content` rules are evaluated in order
-          # and the first matching `accept` ends the phase, so a
-          # `reject` placed *after* an unconditional accept can never
-          # fire. We build an `allowed_sni` ACL alternation from the
-          # route entries' SNIs and reject when the inbound SNI isn't
-          # in the allowlist — that's what closes the upstream
-          # `TLSRouteHostnameIntersection`'s "should not reach backend"
-          # subtests (where the conformance suite expects a TLS
-          # connection with a non-claimed SNI to be refused), plus
-          # `TLSRouteInvalidBackendRefNonexistent` /
-          # `TLSRouteInvalidBackendRefUnknownKind` (a route with
-          # unresolvable refs is filtered out at Pass 2's
-          # ResolvedRefs gate, so its SNI never enters the allowlist
-          # and lands here).
+          {#- reject-before-accept: `tcp-request content` rules evaluate in order and the
+              first matching accept ends the phase, so a reject placed after an unconditional
+              accept can never fire. The allowed_sni alternation + reject closes the conformance
+              subtests TLSRouteHostnameIntersection ("should not reach backend") and
+              TLSRouteInvalidBackendRefNonexistent / ...UnknownKind — routes with unresolvable
+              refs are dropped at the Pass-2 ResolvedRefs gate, so their SNI never enters the
+              allowlist and lands here. -#}
+          # SNI dispatch to the route's TCP backend; wildcard SNIs (*.example.com) match a
+          # single subdomain via `-m end .example.com`. Reject any SNI not in the allowlist.
               {%- if portMode == "Terminate" %}
                 {#- Post-termination: ssl_fc_sni is the SNI HAProxy
                     just consumed during the TLS handshake. The

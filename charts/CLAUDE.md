@@ -301,7 +301,7 @@ In addition to the snippet-based extension points below, libraries may declare f
 | `frontend-filters-*` | Request/response filters (after routing) | gateway, haproxytech |
 | `backend-directives-*` | Backend configuration directives | haproxytech |
 | `map-host-*` | Host map entries | gateway, ingress |
-| `map-host-regex-*` | Regex host map entries (wildcard/regex hostnames) | gateway |
+| `map-hostregex-*` | Regex host map entries (wildcard/regex hostnames) — distinct prefix from `map-host-*` so the exact-host glob doesn't subsume it | gateway, haproxy-ingress |
 | `map-path-exact-*` | Exact path map entries | gateway, ingress |
 | `map-path-prefix-*` | Prefix path map entries | gateway, ingress |
 | `map-pfxexact-*` | Prefix-exact map entries | gateway, haproxy-ingress, ingress |

@@ -50,119 +50,62 @@ _helm_load:
 maps:
   coraza-app.map:
     template: |
-      # Coraza WAF: per-Ingress per-app routing for multi-tenant rule
-      # isolation. Keyed by `<ns>/<name>` (resource id from
-      # `txn.resource_id`, set by base.yaml from the routing chain's
-      # qualifier value); the value is the same `<ns>/<name>` matching
-      # the rendered `[plugins.params.applications."<ns>/<name>"]`
-      # block in spoa-hub-config.toml.
-      #
-      # The frontend filter sets `txn.coraza_app` from this lookup and
-      # the SPOE check-request message passes it as `app=` to the
-      # plugin, which routes the request to that app's WAF instance.
-      # Per-Ingress rules from `nginx.ingress.kubernetes.io/modsecurity-snippet`
-      # only fire on traffic the routing chain attributes to the
-      # carrying Ingress — they don't bleed into other Ingresses'
-      # traffic.
-      #
-      # Empty / no entry → SPOE arg is empty → plugin falls through to
-      # the default WAF (chart-default base directives only).
-      # Populated by nginx-ingress.yaml's map-coraza-app-500-nginx-ingress
-      # snippet from the `nginx.ingress.kubernetes.io/modsecurity-snippet`
-      # annotation; the map renders only when the nginx-ingress library
-      # is loaded — matching where the per-app
-      # `[plugins.params.applications]` blocks are populated via
-      # `gf["sphCorazaApps"]`.
-      {{- render_glob "map-coraza-app-*" -}}
+      # Coraza WAF per-Ingress app routing: <ns>/<name> (resource id) → app, so each
+      # tenant's modsecurity-snippet rules stay isolated. Populated by nginx-ingress
+      # map-coraza-app-*; fed to the check-request SPOE app= arg (empty → default WAF).
+      # See https://haproxy-haptic.org/controller/latest/operations/spoa-hub/
+      {{ render_glob "map-coraza-app-*" -}}
 
   haproxy-ingress-waf.map:
     template: |
-      # Coraza WAF: per-Ingress opt-in driven by
-      # haproxy-ingress.github.io/waf and /waf-mode annotations. Keyed
-      # by `<ns>/<name>` (resource id from `txn.resource_id`). The
-      # value is the resolved enforcement mode for the resource:
-      #   - "deny"   — default; blocks on rule_id >= 1 && action == deny
-      #   - "detect" — shadow mode; runs the WAF, txn.hub.coraza.* vars
-      #                are populated, but the deny rule is skipped via
-      #                `!{ var(txn.coraza_mode) -m str detect }`
-      # Empty / no entry → no opt-in for that resource; under
-      # conditional dispatch the request skips the SPOE roundtrip
-      # entirely. Populated
-      # by haproxy-ingress.yaml's map-haproxy-ingress-waf-500-* snippet.
-      {{- render_glob "map-haproxy-ingress-waf-*" -}}
+      # Coraza WAF per-Ingress enforcement mode: <ns>/<name> → deny (block) | detect (shadow).
+      # Populated by haproxy-ingress map-haproxy-ingress-waf-* (/waf + /waf-mode); read into
+      # txn.coraza_mode (empty → no opt-in; request skips the WAF SPOE roundtrip).
+      # See https://haproxy-haptic.org/controller/latest/operations/spoa-hub/
+      {{ render_glob "map-haproxy-ingress-waf-*" -}}
 
   coraza-disabled.map:
     template: |
-      # Coraza WAF: per-Ingress opt-out under default-on dispatch
-      # (controller.templatingSettings.extraContext.coraza.dispatch.mode
-      # == "default-on"). Keyed by host+path; presence of an entry
-      # excludes the path from the unconditional send-spoe-group
-      # dispatch in `frontend-spoe-filters-050-coraza`.
-      #
-      # Populated by nginx-ingress.yaml's
-      # map-coraza-disabled-500-nginx-ingress snippet from the
-      # `nginx.ingress.kubernetes.io/enable-modsecurity: "false"`
-      # annotation. Empty under default `mode: opt-in` (no opt-out
-      # gate is needed when the dispatch is already gated per-path).
-      {{- render_glob "map-coraza-disabled-*" -}}
+      # Coraza WAF per-path opt-out (only under coraza.dispatch.mode=default-on): an entry
+      # (keyed by host+path) excludes that path from the unconditional WAF SPOE dispatch.
+      # Populated by nginx-ingress map-coraza-disabled-* (enable-modsecurity: "false");
+      # empty under the default opt-in dispatch. See https://haproxy-haptic.org/controller/latest/operations/spoa-hub/
+      {{ render_glob "map-coraza-disabled-*" -}}
 
   auth-url.map:
     template: |
-      # External-auth: per-ingress auth-url annotation values.
-      # Keyed by `<ns>/<name>` (resource id from `txn.resource_id`).
+      # External-auth per-ingress auth-url. Keyed by <ns>/<name> (resource id).
       # Populated by ingress libraries' map-auth-url-* contributions.
-      {{- render_glob "map-auth-url-*" -}}
+      {{ render_glob "map-auth-url-*" -}}
 
   auth-signin.map:
     template: |
-      # External-auth: per-ingress sign-in URL for browser redirect on
-      # auth failure. When set for a route, an auth failure produces a
-      # 302 to this URL instead of a 401 — the standard pattern for
-      # OIDC / SAML browser flows where the auth service redirects
-      # unauthenticated users to a login page.
+      # External-auth per-ingress sign-in URL: when set, an auth failure redirects (302) to it
+      # instead of denying (401) — browser OIDC/SAML login flows. Keyed by <ns>/<name>.
       # Populated by ingress libraries' map-auth-signin-* contributions.
-      {{- render_glob "map-auth-signin-*" -}}
+      {{ render_glob "map-auth-signin-*" -}}
 
   auth-forward-headers.map:
     template: |
-      # External-auth: per-ingress allowlist of request headers to
-      # forward to the auth service. Populated by ingress libraries'
-      # map-auth-forward-headers-* contributions from the
-      # `haproxy-ingress.github.io/auth-headers-request` annotation
-      # (no nginx-ingress equivalent — `auth-snippet` is freeform
-      # HAProxy config injection, out of scope for templated wiring).
-      # The value flows into the SPOE message's `forward_headers` arg
-      # as a comma-separated list. Empty value (no annotation) → the
-      # plugin falls back to its plugin-level forward_headers config.
-      {{- render_glob "map-auth-forward-headers-*" -}}
+      # External-auth per-ingress request-header allowlist forwarded to the auth service (comma
+      # list). Keyed by <ns>/<name>. Populated by ingress map-auth-forward-headers-*
+      # (haproxy-ingress.github.io/auth-headers-request); fed to the check-auth SPOE
+      # forward_headers arg (empty → plugin-level default).
+      {{ render_glob "map-auth-forward-headers-*" -}}
 
   auth-extract-headers.map:
     template: |
-      # External-auth: per-ingress union of response header names the
-      # plugin should extract from the auth reply. Populated by ingress
-      # libraries' map-auth-extract-headers-* contributions; each entry
-      # is the comma-separated union of that ingress's
-      # `auth-response-headers` / `auth-headers-succeed` and
-      # `auth-headers-fail` annotation values. The value flows into the
-      # SPOE message's `extract_headers` arg as a comma list; the
-      # plugin then publishes each extracted header as a transaction
-      # variable `txn.hub.external_auth.<name>` (with dashes →
-      # underscores) and the ingress libraries' frontend
-      # `set-header` (pass) / `deny ... hdr` (fail) snippets consume
-      # those vars per-route. Empty value (no annotation) → no
-      # per-route extraction; the plugin uses its plugin-level
-      # extract_headers config.
-      {{- render_glob "map-auth-extract-headers-*" -}}
+      # External-auth per-ingress response-header names to extract from the auth reply (comma
+      # union of auth-response-headers / auth-headers-succeed|fail). Keyed by <ns>/<name>.
+      # Populated by ingress map-auth-extract-headers-*; fed to the check-auth SPOE
+      # extract_headers arg, which publishes each as txn.hub.external_auth.<name>.
+      # See https://haproxy-haptic.org/controller/latest/operations/spoa-hub/
+      {{ render_glob "map-auth-extract-headers-*" -}}
 
 
   auth-method.map:
     template: |
-      # External-auth: per-ingress HTTP method override for the auth
-      # subrequest. Populated by ingress libraries' map-auth-method-*
-      # contributions from the
-      # `{nginx.ingress.kubernetes.io,haproxy-ingress.github.io}/auth-method`
-      # annotations. The value flows into the SPOE message's `method`
-      # arg (see spoe-message-check-auth-body); the external-auth
-      # plugin v0.3.0+ treats an empty value as "no override" and falls
-      # back to its plugin-level method config.
-      {{- render_glob "map-auth-method-*" -}}
+      # External-auth per-ingress HTTP method override for the auth subrequest. Keyed by
+      # <ns>/<name>. Populated by ingress map-auth-method-* ({nginx,haproxy}-ingress
+      # auth-method annotations); fed to the check-auth SPOE method arg (empty → no override).
+      {{ render_glob "map-auth-method-*" -}}

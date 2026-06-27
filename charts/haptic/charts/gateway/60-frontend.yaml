@@ -89,24 +89,14 @@ templateSnippets:
       http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map_reg({{ regexPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_sni_listener) -m len 0 }
       http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map({{ exactPath }},'') if { var(txn.gw_host_canonical) -m found }
       http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map_reg({{ regexPath }},'') if { var(txn.gw_host_canonical) -m found } { var(txn.gw_host_listener) -m len 0 }
-      # 421 only when SNI matched a listener AND that listener differs
-      # from the Host's listener. With the catch-all marker emitted
-      # into the regex map (`^.*$ catchall:<gw-ns>/<gw-name>`), every
-      # request whose SNI matches a Gateway with at least one
-      # hostname-less HTTPS listener gets a non-empty
-      # `gw_sni_listener`. The `len 0` gate now only fires when SNI
-      # matches NO Gateway at all (orphan TLS, served by HAProxy's
-      # default cert) — in which case routing decides the response
-      # and returning 421 would mis-flag a request the server never
-      # *claimed* belonged to a different listener.
-      #
-      # Conformance: HTTPRouteHTTPSListenerDetectMisdirectedRequests's
-      # 15 sub-cases (Gateway with a no-hostname `https` listener +
-      # specific-hostname listeners + a wildcard listener) all hinge
-      # on the catch-all marker — without it, SNI=example.org gets
-      # `gw_sni_listener=""` and the 421 gate's `!len 0` blocks all
-      # 421 emissions, including the spec-mandated cases like
-      # `SNI=example.org` + `Host=second-example.org`.
+      {#- The catch-all marker in the regex map (`^.*$ catchall:<gw-ns>/<gw-name>`) makes every
+          SNI matching a Gateway with any hostname-less HTTPS listener yield a non-empty
+          gw_sni_listener, so the `len 0` gate only fires for orphan TLS (SNI matches no Gateway,
+          served by the default cert) where a 421 would mis-flag an unclaimed request.
+          Conformance: HTTPRouteHTTPSListenerDetectMisdirectedRequests's 15 sub-cases hinge on
+          the marker — without it SNI=example.org → gw_sni_listener="" blocks the spec-mandated
+          421 (e.g. SNI=example.org + Host=second-example.org). -#}
+      # 421: SNI matched one listener but the Host belongs to a different one (misdirected request).
       http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
   # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
   # Named with 010- prefix so alphabetical sort matches intended execution order

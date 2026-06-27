@@ -123,22 +123,65 @@ See [Template Libraries → Snippet Priority](../template-libraries.md#snippet-p
 
 ### Frontend Routing Logic
 
-The base library implements a sophisticated routing system using HAProxy maps and transaction variables:
+The base library implements the routing system using HAProxy maps and transaction variables. The rendered config keeps the per-frontend directives terse; this section is the reference the generated comments link to.
 
-1. **Host matching**: Extracts and matches the Host header
-2. **Path matching**: Evaluates paths in order (Exact > Regex > Prefix-exact > Prefix). Set `controller.config.routing.regexMatchOrder=last` in values.yaml to switch to performance-first ordering (Exact > Prefix-exact > Prefix > Regex).
-3. **Qualifier system**: Supports `BACKEND` (direct) and `MULTIBACKEND` (weighted) routing
+**1. Host matching** — `txn.host_match` is resolved through a fall-through cascade, each step tried only if the previous left it empty (`-m len 0`):
+
+| Order | Lookup | Purpose |
+|-------|--------|---------|
+| 1 | `host_full` (Host header verbatim, incl. `:port`) | Port-pinned routes — e.g. Gateway listeners on non-default ports — match before the port-stripped lookups. Only fires when the request actually carried a port, so the common case has zero overhead. |
+| 2 | `host` (port stripped) | Normal hostname match. |
+| 3 | `host` with leading label removed (`regsub(^[^.]*,,)`) | Wildcard hosts (`*.example.com` stored as `.example.com`). |
+| 4 | `host-regex.map` | Regex hostnames. |
+| 5 | `host:listener_port` / `:listener_port` | Per-listener-port fallback when no hostname matched (Gateway listeners on dedicated ports). |
+
+`txn.host_match` is seeded to `''` first so every step can use `-m len 0` ("not matched yet") consistently — `-m found` would be true after a lookup that yielded an empty string, blocking the rest of the cascade.
+
+**Listener-port translation.** `txn.listener_port` is the user-facing port the request arrived on. For chart-static binds it equals `dst_port`. Resource libraries that map a pod-port to a different listener port (e.g. Gateway API per-Gateway HTTPS binds listening on an allocated pod port like `18002` while the map keys use the original `8443`) plug a translation into the `frontend-routing-listener-port-*` extension point. With no such library, `dst_port` passes through unchanged.
+
+**2. Path matching** — evaluated in order Exact > Regex > Prefix-exact > Prefix:
 
 ```haproxy
-# Path matching order: Exact > Regex > Prefix-exact > Prefix
-http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map(maps/path-exact.map)
-http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map_reg(maps/path-regex.map) if !{ var(txn.path_match) -m found }
-http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map(maps/path-prefix-exact.map) if !{ var(txn.path_match) -m found }
-http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map_beg(maps/path-prefix.map) if !{ var(txn.path_match) -m found }
+http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(maps/path-exact.map)
+http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg(maps/path-regex.map) if !{ var(txn.path_match) -m found }
+http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(maps/path-prefix-exact.map) if !{ var(txn.path_match) -m found }
+http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg(maps/path-prefix.map) if !{ var(txn.path_match) -m found }
 ```
 
 !!! note "Overriding Path Match Order"
     Setting `controller.config.routing.regexMatchOrder=last` swaps in the alternate `frontend-routing-logic-regex-last` variant of this snippet at Helm load time, producing performance-first ordering (Exact > Prefix-exact > Prefix > Regex). Faster matchers run first and regex matching is only evaluated as a fallback. The variant snippet is unset before the merged config is rendered, so it never appears in the operator-visible output.
+
+**3. Qualifier system** — the first `:`-separated field of `path_match` selects the routing mode: `BACKEND:<name>` routes directly, `MULTIBACKEND:<weight>:<key>` selects a weighted backend via random draw. Advanced matchers (method / header / query, contributed by the gateway library through `frontend-matchers-advanced-*`) may rewrite `path_match`, so the qualifier is re-parsed after they run.
+
+**Owner-resource identity.** `txn.resource_id` (`<namespace>/<name>`) is derived from the qualifier value the routing chain already produced — no extra map lookup — and keys the per-resource feature maps (auth, Coraza WAF, body-size, header rewrites). Backend names use `_` as the separator (`<ns>_<name>_svc_<svc>_<port>` for Ingress, `<ns>_<name>_<ruleIdx>` for Gateway weighted routing); Kubernetes names disallow `_`, so splitting on it is collision-free.
+
+### Connection Reliability and Timeouts
+
+The defaults section is tuned for a Kubernetes ingress workload, where backends are pod IPs from EndpointSlices reached directly over the cluster's CNI fabric.
+
+**`timeout connect` defaults to 100ms** (most controllers ship HAProxy's 5s). Same-node connects are sub-millisecond, cross-node VXLAN overlay (flannel/calico/cilium) is typically under 30ms, and even AWS cross-AZ stays under ~10ms p99 — so 100ms is already several times the normal case. The case it deliberately fails fast on is a TCP SYN to a pod IP whose pod just terminated: during the brief window between an EndpointSlice update and HAPTIC's runtime update landing, a server slot can still point at a dying pod. A request already dispatched into HAProxy is committed to that slot and must wait out `timeout connect` before `option redispatch` retries it elsewhere. At 5s that surfaces as a client-visible 504; at 100ms the full failover (original attempt + retry) completes within ~200ms.
+
+Override it for genuinely slow networks (multi-region, satellite, constrained CPU):
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        timeout_connect: "5000"   # ms; also timeout_client / timeout_server / timeout_http_request / timeout_http_keep_alive
+```
+
+**`option redispatch`** lets a failed TCP connect be retried against a *different* server in the backend rather than the same dead one. Combined with HAProxy's default `retries 3`, this is what closes the pod-termination race during rolling updates — the retry lands on a healthy slot instead of hanging on the dead IP until the client times out. It matches nginx-ingress's default `proxy-next-upstream: "error timeout"` and envoy's default retry policy. See HAProxy's [retries documentation](https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/).
+
+### h2c Cleartext Detection
+
+The plaintext HTTP entry point is an outer `mode tcp` frontend that inspects the first wire bytes and routes to one of two unix-socket-bound inner `mode http` frontends, preserving the original client IP via PROXY-protocol v2 across the hop. Both inner frontends share the same routing logic, so any HTTP-level snippet lands in both protocol paths.
+
+HAProxy cannot auto-detect HTTP/2 cleartext (h2c) on a plaintext bind, and it cannot parse an `Upgrade: h2c` handshake in `mode tcp`. The only available signal is the HTTP/2 *prior-knowledge* connection preface — the 24 bytes `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` — which the outer frontend matches byte-exactly with an `acl ... req.payload(0,24) -m bin <hex>`. gRPC-Go's insecure dial uses prior-knowledge by default, and the Gateway API conformance suite dials every GRPCRoute test with `insecure.NewCredentials()`, so this path is exercised by all gRPC conformance tests. The connection is classified as soon as 24 bytes arrive (with a `WAIT_END` fallback for shorter HTTP/1.1 sends); the ~10µs unix-socket round-trip is invisible against backend latency.
+
+### gRPC Request Handling
+
+The `default_backend` returns a gRPC-aware fallback for unmatched requests. For `application/grpc` requests it returns a trailers-only response (`grpc-status: 12`, Unimplemented) instead of a plain 404 — without a valid `content-type`, grpc-go reports "malformed header: missing HTTP content-type" and tears down the whole HTTP/2 connection, cancelling every multiplexed stream on it. Because HAProxy's `http-request return` strips `content-type` from its header arguments, the base library re-adds it with `http-after-response set-header`, which runs on responses produced by the `return` action. Non-gRPC requests get a plain `404`.
 
 ### Built-in Operators and Functions
 

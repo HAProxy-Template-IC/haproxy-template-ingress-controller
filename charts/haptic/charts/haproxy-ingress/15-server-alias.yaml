@@ -55,7 +55,7 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
-  map-host-regex-650-haproxy-ingress-alias:
+  map-hostregex-650-haproxy-ingress-alias:
     template: |
       {#-
         server-alias-regex → host-regex.map entries.
@@ -68,7 +68,7 @@ templateSnippets:
         The value is emitted verbatim (it is already a HAProxy-compatible PCRE),
         mapped to the primary host's normalised key.
 
-        Extension Point: map-host-regex-* (priority 650 - compatibility layer)
+        Extension Point: map-hostregex-* (priority 650 - compatibility layer)
       -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
@@ -80,7 +80,7 @@ templateSnippets:
       {%- var primaryKey = MapKeyForHost(rules[0] | dig("host")) %}
       {%- if primaryKey != "" %}
       {%- if isFirst %}
-      # haproxy-ingress/map-host-regex-alias
+      # haproxy-ingress/map-hostregex-alias
       {%- isFirst = false %}
       {%- end %}
       # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} server-alias-regex

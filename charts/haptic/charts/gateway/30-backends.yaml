@@ -322,10 +322,8 @@ templateSnippets:
       {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
       {%- end %}
       {%- if btlsBroken %}
-          # BackendTLSPolicy targeting this backend has unresolved
-          # caCertificateRefs (and no wellKnownCACertificates: System
-          # fallback). Refuse all traffic per Gateway API spec —
-          # silently downgrading to plaintext would defeat the policy.
+          # BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading
+          # to plaintext would defeat the policy. See https://haproxy-haptic.org/helm-chart/latest/libraries/gateway/
           http-request return status 503
       {%- end %}
       {#- HTTPRoute retry (spec.rules[].retry — experimental, GEP-1731).
@@ -817,10 +815,8 @@ templateSnippets:
       {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
       {%- end %}
       {%- if btlsBroken %}
-          # BackendTLSPolicy targeting this backend has unresolved
-          # caCertificateRefs (and no wellKnownCACertificates: System
-          # fallback). Refuse all traffic per Gateway API spec —
-          # silently downgrading to plaintext would defeat the policy.
+          # BackendTLSPolicy CA unresolved → fail closed (503) per Gateway API spec; downgrading
+          # to plaintext would defeat the policy. See https://haproxy-haptic.org/helm-chart/latest/libraries/gateway/
           http-request return status 503
       {%- end %}
       {#- GEP-1619 session persistence (type Cookie / unset) — see the

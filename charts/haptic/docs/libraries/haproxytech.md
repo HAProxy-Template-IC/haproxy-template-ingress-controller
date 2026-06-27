@@ -1279,13 +1279,12 @@ spec:
 ```haproxy
 backend app-backend
     cookie SERVERID insert indirect nocache dynamic
-    dynamic-cookie-key <generated-key>
     server pod1 10.0.1.5:8080 cookie pod1
 ```
 
 **Dependencies**: None
 
-**Note**: For multi-instance setups, dynamic cookies ensure consistency across controller instances.
+**Note**: `insert … dynamic` makes HAProxy derive the cookie value by hashing each server's address with a per-process key. No `dynamic-cookie-key` is emitted, so each HAProxy instance uses its own key — affinity holds per instance, not across instances. For affinity that survives across all replicas, pin a fixed key via a custom config snippet.
 
 ---
 
