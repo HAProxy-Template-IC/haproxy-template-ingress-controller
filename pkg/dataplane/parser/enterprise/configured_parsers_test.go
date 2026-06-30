@@ -33,7 +33,6 @@ func TestNewConfiguredParsers_AllSectionMapsPreAllocated(t *testing.T) {
 			"Peers":      c.Peers,
 			"Mailers":    c.Mailers,
 			"Cache":      c.Cache,
-			"Program":    c.Program,
 			"HTTPErrors": c.HTTPErrors,
 			"Ring":       c.Ring,
 			"LogForward": c.LogForward,

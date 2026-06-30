@@ -65,9 +65,6 @@ const (
 	// SectionCache is a cache section (named).
 	SectionCache Section = "cache"
 
-	// SectionProgram is a program section for external programs (named).
-	SectionProgram Section = "program"
-
 	// SectionHTTPErrors is an http-errors section (named).
 	SectionHTTPErrors Section = "http-errors"
 
@@ -120,7 +117,6 @@ var ceSections = map[Section]bool{
 	SectionPeers:      true,
 	SectionMailers:    true,
 	SectionCache:      true,
-	SectionProgram:    true,
 	SectionHTTPErrors: true,
 	SectionRing:       true,
 	SectionLogForward: true,

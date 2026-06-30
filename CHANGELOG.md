@@ -88,6 +88,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - `renderResource()` template function — use `spec.k8sResources` instead.
 - The dormant event-driven webhook-cert-rotation pipeline (the `certloader` component, its cert events, the webhook-cert watcher, and the `haptic_webhook_cert_expiry_timestamp_seconds` / `haptic_webhook_cert_rotations_total` metrics) — it was never wired in and never rotated certs; webhook-cert hot-reload (see Added) replaces it.
 - `namespaceSelector` on `watchedResources` entries (was never wired up). Scope at the template level, via `labelSelector:`, or with separate controller instances.
+- Management of HAProxy `program` sections — `client-native` v6.4.0 dropped the `program` model (HAProxy removed the section in 3.3). Rendered configs may still contain `program` sections on older HAProxy versions, but the controller no longer parses, diffs, or normalizes them.
 
 ## [0.1.0] - 2026-03-09
 
