@@ -1,5 +1,7 @@
 ---
 description: "Get started with HAPTIC, the template-driven HAProxy ingress controller for Kubernetes. Install with Helm, deploy HAProxy, and verify your setup."
+hide:
+  - navigation
 ---
 
 # Getting Started

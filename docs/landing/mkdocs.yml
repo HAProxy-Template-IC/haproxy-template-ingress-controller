@@ -7,6 +7,12 @@ repo_url: https://gitlab.com/haproxy-haptic/haptic
 
 docs_dir: docs
 
+# The landing page markup lives in overrides/home.html (the theme custom_dir),
+# which `mkdocs serve` does not watch by default — edits there wouldn't
+# live-reload. Watch it explicitly so serve rebuilds on home.html changes.
+watch:
+  - overrides
+
 theme:
   name: material
   custom_dir: overrides

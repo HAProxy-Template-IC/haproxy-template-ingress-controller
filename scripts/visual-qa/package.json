@@ -1,0 +1,13 @@
+{
+  "name": "haptic-visual-qa",
+  "private": true,
+  "type": "module",
+  "description": "Headless-browser DOM-geometry checks for the docs landing page (overflow / crowding / sibling-size consistency).",
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "playwright": "^1.49.0"
+  }
+}
