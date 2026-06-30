@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 # Changelog
 
 All notable changes to the HAProxy Template Ingress Controller will be documented in this file.

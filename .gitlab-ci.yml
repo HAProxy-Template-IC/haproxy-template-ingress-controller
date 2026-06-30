@@ -5,9 +5,11 @@ stages:
   - integration
   - deploy
 
-# Triggers the documented zero-jobs-MR workaround. This MR (!995) is
-# chart-comment-only; `**/*.yaml` is in `.rules-code` but the pipeline
-# came back empty anyway, same shape as !980's gap.
+# Triggers the documented zero-jobs-MR workaround. This MR (!1179) is
+# docs-only (landing-page redesign + controller-docs nav fix); its diff
+# matches scripts/** and **/*.yaml/**/*.md in `.rules-code`, yet the MR
+# pipeline still came back empty — same shape as the !980/!995 gap.
+# Touching .gitlab-ci.yml gives the pipeline runnable jobs.
 
 # Prevent duplicate pipelines for MR and branch pushes
 workflow:

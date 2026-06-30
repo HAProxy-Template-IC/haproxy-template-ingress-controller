@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 # Migrating to HAPTIC
 
 How to move an existing cluster from **ingress-nginx** or **haproxy-ingress** to
