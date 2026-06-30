@@ -139,3 +139,65 @@ templateSnippets:
             {%- end %}
           {%- end %}
         {%- end %}
+
+  # ============================================================================
+  # Per-Gateway HTTP bind emission (HTTP sibling of the HTTPS bind above)
+  #
+  # Lands on the OUTER `frontend http-tcp` via the `http-bind-extra-*`
+  # extension point, so h2c detection + PROXY-v2 dst_port preservation
+  # (accept-proxy on the loopback) carry the unique pod port through to
+  # `http_frontend`'s routing — the same way the HTTPS per-Gateway bind
+  # works on `frontend https`.
+  #
+  # Why this exists: without a per-Gateway HTTP bind, every HTTP-only
+  # Gateway collapses onto the chart-static `bind *:80` and shares one
+  # host.map, so a no-hostname listener on one Gateway catches another
+  # Gateway's hosts (the GatewayHTTPListenerIsolation leak). Phase 3
+  # (17-per-gateway-services) now emits a per-Gateway LB Service for
+  # HTTP-only Gateways too, DNATing `<lb-ip>:<listenerPort>` →
+  # `<pod-ip>:<podPort>`; this snippet provides the matching bind.
+  #
+  # Dedup by listener PORT (not listener name) to match phase 3's
+  # Service, which exposes each listener port once and DNATs it to the
+  # first listener's allocated pod port. Multiple HTTP listeners on the
+  # same Gateway+port (different hostnames) therefore share one bind and
+  # are disambiguated downstream by Host in host.map — exactly the
+  # listener-isolation contract.
+  #
+  # Skipped:
+  #   * Pinned-IP Gateways (`spec.addresses` set) — they take the
+  #     gateway-static-addresses path (targetPort = listenerPort →
+  #     chart-static bind). Phase 1's allocator skips them, mirroring
+  #     phase 3's gate.
+  #   * Non-HTTP listeners (HTTPS handled above; TLS via ssl-tcp /
+  #     frontends-600).
+  #
+  # Sorts AFTER `http-bind-extra-050-gateway-multi-port-bind` (which
+  # binds non-default HTTP *listener* ports for pinned/static paths).
+  # ============================================================================
+  http-bind-extra-100-per-gateway:
+    template: |
+      {{ render "util-gateway-pod-port-allocator" -}}
+      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
+        {%- for _, gw := range resources.gateways.List() %}
+          {%- var gwNs = gw.Metadata.Namespace %}
+          {%- var gwName = gw.Metadata.Name %}
+          {%- if gwNs != "" && gwName != "" && len(gw.Spec.Addresses) == 0 %}
+            {%- var seenPort = map[int]bool{} %}
+            {%- for _, listener := range gw.Spec.Listeners %}
+              {%- if listener.Protocol == "HTTP" %}
+                {%- var lName = listener.Name %}
+                {%- var lPort = toint(listener.Port) %}
+                {%- if lName != "" && lPort > 0 && !seenPort[lPort] %}
+                  {%- seenPort[lPort] = true %}
+                  {%- var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort) %}
+                  {%- var podPort = lPort %}
+                  {%- if val, ok := allocations[allocKey]; ok %}
+                    {%- podPort = toint(val) %}
+                  {%- end %}
+      bind *:{{ podPort }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}

@@ -94,7 +94,14 @@ templateSnippets:
           var gwNs = gw.Metadata.Namespace
           var gwName = gw.Metadata.Name
           for _, listener := range gw.Spec.Listeners {
-            if listener.Protocol != "HTTPS" {
+            {#- HTTP and HTTPS listeners both get a per-Gateway bind on a
+                unique pod port, so each Gateway's routing is isolated by
+                destination (dst_port) rather than collapsing onto the
+                shared chart-static :80 / :443 binds. TLS listeners are
+                excluded — TLS-Passthrough flows through chart-static
+                `frontend ssl-tcp` and TLS-Terminate (non-default port)
+                renders its own `frontends-600` mode-tcp frontend. -#}
+            if listener.Protocol != "HTTPS" && listener.Protocol != "HTTP" {
               continue
             }
             var lName = listener.Name
