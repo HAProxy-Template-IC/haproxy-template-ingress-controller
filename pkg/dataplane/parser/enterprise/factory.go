@@ -242,17 +242,6 @@ func (f *DefaultFactory) CreateCacheParsers() *parser.Parsers {
 	)
 }
 
-// CreateProgramParsers creates parsers for program sections.
-func (f *DefaultFactory) CreateProgramParsers() *parser.Parsers {
-	return createParsers(
-		&parsers.Command{},
-		&parsers.User{},
-		&parsers.Group{},
-		&parsers.ConfigSnippet{},
-		&extra.UnProcessed{},
-	)
-}
-
 // CreateHTTPErrorsParsers creates parsers for http-errors sections.
 func (f *DefaultFactory) CreateHTTPErrorsParsers() *parser.Parsers {
 	return createParsers(

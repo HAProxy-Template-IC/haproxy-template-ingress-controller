@@ -59,10 +59,6 @@ type ConfiguredParsers struct {
 	// Key is cache name.
 	Cache map[string]*parser.Parsers
 
-	// Program holds per-program parser collections.
-	// Key is program name.
-	Program map[string]*parser.Parsers
-
 	// HTTPErrors holds per-http-errors parser collections.
 	// Key is http-errors name.
 	HTTPErrors map[string]*parser.Parsers
@@ -136,7 +132,6 @@ func NewConfiguredParsers() *ConfiguredParsers {
 		Peers:      make(map[string]*parser.Parsers),
 		Mailers:    make(map[string]*parser.Parsers),
 		Cache:      make(map[string]*parser.Parsers),
-		Program:    make(map[string]*parser.Parsers),
 		HTTPErrors: make(map[string]*parser.Parsers),
 		Ring:       make(map[string]*parser.Parsers),
 		LogForward: make(map[string]*parser.Parsers),
@@ -203,7 +198,6 @@ var namedFactories = map[Section]namedSlot{
 	SectionPeers:      {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Peers }, (*DefaultFactory).CreatePeersParsers},
 	SectionMailers:    {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Mailers }, (*DefaultFactory).CreateMailersParsers},
 	SectionCache:      {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Cache }, (*DefaultFactory).CreateCacheParsers},
-	SectionProgram:    {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Program }, (*DefaultFactory).CreateProgramParsers},
 	SectionHTTPErrors: {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.HTTPErrors }, (*DefaultFactory).CreateHTTPErrorsParsers},
 	SectionRing:       {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.Ring }, (*DefaultFactory).CreateRingParsers},
 	SectionLogForward: {func(c *ConfiguredParsers) map[string]*parser.Parsers { return c.LogForward }, (*DefaultFactory).CreateLogForwardParsers},

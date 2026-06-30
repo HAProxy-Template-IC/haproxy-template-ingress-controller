@@ -60,8 +60,8 @@ func All(p parser.Parser, conf *parserconfig.StructuredConfig) error {
 		return err
 	}
 
-	// Program and application sections (programs, log-forwards, fcgi-apps, crt-stores).
-	if err := programSections(p, conf); err != nil {
+	// Application sections (log-forwards, fcgi-apps, crt-stores).
+	if err := applicationSections(p, conf); err != nil {
 		return err
 	}
 
@@ -127,15 +127,9 @@ func serviceSections(p parser.Parser, conf *parserconfig.StructuredConfig) error
 	return nil
 }
 
-// programSections extracts program and application sections
-// (programs, log-forwards, fcgi-apps, crt-stores).
-func programSections(p parser.Parser, conf *parserconfig.StructuredConfig) error {
-	programs, err := extractPrograms(p)
-	if err != nil {
-		return fmt.Errorf("extracting programs: %w", err)
-	}
-	conf.Programs = programs
-
+// applicationSections extracts application sections
+// (log-forwards, fcgi-apps, crt-stores).
+func applicationSections(p parser.Parser, conf *parserconfig.StructuredConfig) error {
 	logForwards, err := extractLogForwards(p)
 	if err != nil {
 		return fmt.Errorf("extracting log-forwards: %w", err)
@@ -581,12 +575,6 @@ func extractUserlistsWithIndexes(p parser.Parser, conf *parserconfig.StructuredC
 	}
 
 	conf.Userlists = userlists
-}
-
-// extractPrograms extracts all program sections using client-native's ParseProgram.
-// Programs are external processes managed by HAProxy.
-func extractPrograms(p parser.Parser) ([]*models.Program, error) {
-	return extractSectionsByParse(p, parser.Program, "program", configuration.ParseProgram)
 }
 
 // extractLogForwards extracts all log-forward sections using client-native's ParseLogForward.

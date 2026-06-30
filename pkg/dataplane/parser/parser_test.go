@@ -716,41 +716,6 @@ userlist myusers
 	}
 }
 
-func TestParseFromString_ProgramSection(t *testing.T) {
-	config := `
-global
-    daemon
-
-program myprogram
-    command /usr/bin/myprogram --config /etc/myprogram.cfg
-    user nobody
-    group nogroup
-`
-
-	p := newTestParser(t)
-
-	conf, err := p.ParseFromString(config)
-	if err != nil {
-		t.Fatalf("ParseFromString() failed: %v", err)
-	}
-
-	if len(conf.Programs) != 1 {
-		t.Fatalf("Expected 1 program, got: %d", len(conf.Programs))
-	}
-
-	program := conf.Programs[0]
-
-	// Verify program name
-	if program.Name != "myprogram" {
-		t.Errorf("Expected program name='myprogram', got: %q", program.Name)
-	}
-
-	// Verify program command
-	if program.Command == nil || *program.Command == "" {
-		t.Error("Expected program command to be set")
-	}
-}
-
 func TestParseFromString_LogForwardSection(t *testing.T) {
 	config := `
 global
@@ -883,10 +848,6 @@ global
 userlist auth
     user admin password $6$hash
 
-program dataplaned
-    command dataplaneapi
-    user haproxy
-
 log-forward syslog
     dgram-bind 127.0.0.1:1514
     log global
@@ -910,9 +871,6 @@ crt-store ssl
 	if len(conf.Userlists) != 1 {
 		t.Errorf("Expected 1 userlist, got: %d", len(conf.Userlists))
 	}
-	if len(conf.Programs) != 1 {
-		t.Errorf("Expected 1 program, got: %d", len(conf.Programs))
-	}
 	if len(conf.LogForwards) != 1 {
 		t.Errorf("Expected 1 log-forward, got: %d", len(conf.LogForwards))
 	}
@@ -934,12 +892,6 @@ userlist users1
 
 userlist users2
     user user2 password $6$hash2
-
-program prog1
-    command /usr/bin/prog1
-
-program prog2
-    command /usr/bin/prog2
 
 fcgi-app fcgi1
     docroot /var/www1
@@ -964,9 +916,6 @@ crt-store store2
 	// Verify multiple sections of same type
 	if len(conf.Userlists) != 2 {
 		t.Errorf("Expected 2 userlists, got: %d", len(conf.Userlists))
-	}
-	if len(conf.Programs) != 2 {
-		t.Errorf("Expected 2 programs, got: %d", len(conf.Programs))
 	}
 	if len(conf.FCGIApps) != 2 {
 		t.Errorf("Expected 2 fcgi-apps, got: %d", len(conf.FCGIApps))

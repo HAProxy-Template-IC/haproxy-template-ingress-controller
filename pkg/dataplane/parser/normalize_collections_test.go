@@ -166,7 +166,7 @@ func TestNormalizeCrtStoresMetadata(t *testing.T) {
 // normalizeAcmeProvidersMetadata is the simpler one-level cousin —
 // no nested collection, just iterate-and-normalize. Its branches are
 // the same generic shape shared with normalizeRingsMetadata,
-// normalizeProgramsMetadata, normalizeFCGIAppsMetadata, and
+// normalizeFCGIAppsMetadata, and
 // normalizeCachesMetadata, so the cases here also implicitly document
 // the contract those siblings adhere to. The contract is:
 //

@@ -7,7 +7,7 @@ require (
 	github.com/arch-go/arch-go/v2 v2.1.2
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/golangci/golangci-lint/v2 v2.12.2
-	github.com/haproxytech/client-native/v6 v6.3.9
+	github.com/haproxytech/client-native/v6 v6.4.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.18.7
 	github.com/oapi-codegen/oapi-codegen/v2 v2.7.1

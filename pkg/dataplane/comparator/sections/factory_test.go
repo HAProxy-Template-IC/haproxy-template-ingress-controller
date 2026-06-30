@@ -1151,46 +1151,6 @@ func TestPeerSectionFactoryFunctions(t *testing.T) {
 	}
 }
 
-func TestProgramFactoryFunctions(t *testing.T) {
-	program := &models.Program{Name: "myprogram"}
-
-	tests := []struct {
-		name             string
-		factory          func(*models.Program) Operation
-		wantType         OperationType
-		wantDescContains string
-	}{
-		{
-			name:             "ProgramOps.Create",
-			factory:          ProgramOps.Create,
-			wantType:         OperationCreate,
-			wantDescContains: "Create program 'myprogram'",
-		},
-		{
-			name:             "ProgramOps.Update",
-			factory:          ProgramOps.Update,
-			wantType:         OperationUpdate,
-			wantDescContains: "Update program 'myprogram'",
-		},
-		{
-			name:             "ProgramOps.Delete",
-			factory:          ProgramOps.Delete,
-			wantType:         OperationDelete,
-			wantDescContains: "Delete program 'myprogram'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			op := tt.factory(program)
-
-			assert.Equal(t, tt.wantType, op.Type())
-			assert.Equal(t, "program", op.Section())
-			assert.Contains(t, op.Describe(), tt.wantDescContains)
-		})
-	}
-}
-
 func TestRingFactoryFunctions(t *testing.T) {
 	ring := &models.Ring{
 		RingBase: models.RingBase{Name: "myring"},
@@ -2042,11 +2002,6 @@ func TestNameExtractors(t *testing.T) {
 	t.Run("peerSectionName", func(t *testing.T) {
 		p := &models.PeerSection{PeerSectionBase: models.PeerSectionBase{Name: "peers"}}
 		assert.Equal(t, "peers", peerSectionName(p))
-	})
-
-	t.Run("programNameFn", func(t *testing.T) {
-		p := &models.Program{Name: "prog"}
-		assert.Equal(t, "prog", programNameFn(p))
 	})
 
 	t.Run("resolverNameFn", func(t *testing.T) {

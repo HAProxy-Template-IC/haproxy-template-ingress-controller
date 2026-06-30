@@ -85,7 +85,6 @@ func normalizeOtherSectionsMetadataWithIndexes(config *parserconfig.StructuredCo
 	normalizeCachesMetadata(config.Caches)
 	normalizeRingsMetadata(config.Rings)
 	normalizeUserlistsMetadataWithIndexes(config.Userlists, config.UserIndex, config.GroupIndex)
-	normalizeProgramsMetadata(config.Programs)
 	normalizeFCGIAppsMetadata(config.FCGIApps)
 	normalizeCrtStoresMetadata(config.CrtStores)
 	normalizeAcmeProvidersMetadata(config.AcmeProviders)
@@ -164,14 +163,6 @@ func normalizeUserlistsMetadataWithIndexes(userlists []*models.Userlist, userInd
 					group.Metadata = NormalizeMetadata(group.Metadata)
 				}
 			}
-		}
-	}
-}
-
-func normalizeProgramsMetadata(programs []*models.Program) {
-	for _, program := range programs {
-		if program != nil {
-			program.Metadata = NormalizeMetadata(program.Metadata)
 		}
 	}
 }

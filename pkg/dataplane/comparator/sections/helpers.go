@@ -110,9 +110,6 @@ func mailersSectionName(m *models.MailersSection) string { return m.Name }
 // peerSectionName extracts the name from a PeerSection model.
 func peerSectionName(p *models.PeerSection) string { return p.Name }
 
-// programNameFn extracts the name from a Program model.
-func programNameFn(p *models.Program) string { return p.Name }
-
 // resolverNameFn extracts the name from a Resolver model.
 func resolverNameFn(r *models.Resolver) string { return r.Name }
 

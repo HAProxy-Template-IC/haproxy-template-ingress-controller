@@ -248,7 +248,6 @@ func (c *Comparator) Compare(current, desired *parser.StructuredConfig) (*Config
 		c.compareCaches(current, desired),
 		c.compareRings(current, desired),
 		c.compareUserlists(current, desired),
-		c.comparePrograms(current, desired),
 		c.compareLogForwards(current, desired),
 		c.compareLogProfiles(current, desired),        // v3.1+ only
 		c.compareTraces(current, desired),             // v3.1+ only, singleton

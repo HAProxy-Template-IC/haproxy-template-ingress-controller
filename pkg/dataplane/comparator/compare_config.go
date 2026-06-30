@@ -133,19 +133,6 @@ func (c *Comparator) compareRings(current, desired *parser.StructuredConfig) []O
 	)
 }
 
-// comparePrograms compares program sections between current and desired configurations.
-func (c *Comparator) comparePrograms(current, desired *parser.StructuredConfig) []Operation {
-	return compareNamedSections(
-		current.Programs,
-		desired.Programs,
-		func(p *models.Program) string { return p.Name },
-		func(a, b *models.Program) bool { return a.Equal(*b) },
-		sections.ProgramOps.Create,
-		sections.ProgramOps.Delete,
-		sections.ProgramOps.Update,
-	)
-}
-
 // compareFCGIApps compares fcgi-app sections between current and desired configurations.
 func (c *Comparator) compareFCGIApps(current, desired *parser.StructuredConfig) []Operation {
 	return compareNamedSections(

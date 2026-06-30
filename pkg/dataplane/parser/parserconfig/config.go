@@ -61,7 +61,6 @@ type StructuredConfig struct {
 	Rings       []*models.Ring
 	HTTPErrors  []*models.HTTPErrorsSection
 	Userlists   []*models.Userlist
-	Programs    []*models.Program
 	LogForwards []*models.LogForward
 	FCGIApps    []*models.FCGIApp
 	CrtStores   []*models.CrtStore

@@ -27,7 +27,6 @@ The controller supports all configuration sections that can be managed through t
 | **Rings** | Ring buffer configurations | 10 | Create/Update/Delete |
 | **HTTPErrors** | HTTP error response sections | 10 | Create/Update/Delete |
 | **Userlists** | User authentication lists | 10 | Create/Delete (no update) |
-| **Programs** | External program configurations | 10 | Create/Update/Delete |
 | **LogForwards** | Syslog forwarding sections | 10 | Create/Update/Delete |
 | **LogProfiles** | Log-format profiles (DataPlane API 3.1+) | 10 | Create/Update/Delete |
 | **Traces** | Traces section (singleton, DataPlane API 3.1+) | 10 | Update only |
@@ -106,7 +105,6 @@ The following sections use **whole-section comparison** via the models' `.Equal(
 - **Rings**: All ring attributes
 - **HTTPErrors**: Includes errorfiles
 - **Userlists**: Includes users and groups
-- **Programs**: All program attributes
 - **LogForwards**: Includes log targets
 - **FCGIApps**: Includes pass-header and set-param directives
 - **CrtStores**: Includes crt-load entries
@@ -270,7 +268,7 @@ The implementation uses two approaches for optimal performance:
    - **Benefit:** Lets the controller skip the HAProxy reload whenever no structural change is present
 
 2. **Whole-Section Replacement** (infrequently-changing resources)
-   - Sections without exposed child operations: Rings, HTTPErrors, Userlists, Programs, LogForwards, FCGIApps, CrtStores
+   - Sections without exposed child operations: Rings, HTTPErrors, Userlists, LogForwards, FCGIApps, CrtStores
    - Uses `.Equal()` method to compare the entire section including nested components
    - If any attribute changes, the entire section is replaced
    - **Benefit:** Simpler code, fewer operations for resources that rarely change

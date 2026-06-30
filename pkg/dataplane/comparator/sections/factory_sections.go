@@ -24,7 +24,6 @@ var (
 	HTTPErrorsOps   = NewTopLevelCRUD("http_errors", "http-errors section", httpErrorsSectionName)
 	MailersOps      = NewTopLevelCRUD("mailers", "mailers", mailersSectionName)
 	PeerSectionOps  = NewTopLevelCRUD("peers", "peer section", peerSectionName)
-	ProgramOps      = NewTopLevelCRUD("program", "program", programNameFn)
 	ResolverOps     = NewTopLevelCRUD("resolver", "resolver", resolverNameFn)
 	RingOps         = NewTopLevelCRUD("ring", "ring", ringNameFn)
 	CrtStoreOps     = NewTopLevelCRUD("crt_store", "crt-store", crtStoreName)
