@@ -170,6 +170,7 @@ func waitForInitialConfig(
 	state *configState,
 	logger *slog.Logger,
 ) error {
+	logger.Info("Stage 2: Fetching and validating initial configuration")
 	state.SetWaiting("waiting for HAProxyTemplateConfig")
 
 	// Try immediately first

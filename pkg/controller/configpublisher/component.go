@@ -263,7 +263,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	c.MarkReady()
 
-	c.logger.Debug("config publisher starting")
+	c.logger.Debug("Config publisher starting")
 
 	// Start async workers for K8S API operations.
 	// These workers process work items from their channels, allowing the main

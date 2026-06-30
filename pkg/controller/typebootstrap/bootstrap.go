@@ -159,7 +159,7 @@ func Bootstrap(ctx context.Context, cfg Config) (*Result, error) {
 		}
 		if res.Name == "" {
 			result.Errors[res.Name] = errors.New("watched resource has empty Name")
-			cfg.Logger.Warn("typebootstrap: skipping watched resource with empty name",
+			cfg.Logger.Warn("Typebootstrap: skipping watched resource with empty name",
 				"gvk", res.GVK.String())
 			continue
 		}
@@ -182,7 +182,7 @@ func Bootstrap(ctx context.Context, cfg Config) (*Result, error) {
 			// available for debug surfaces (status CRD, log) that
 			// want to enumerate which resource broke.
 			result.Errors[res.Name] = err
-			cfg.Logger.Error("typebootstrap: schema acquisition failed for resource — failing iteration startup",
+			cfg.Logger.Error("Typebootstrap: schema acquisition failed for resource — failing iteration startup",
 				"resource", res.Name,
 				"gvk", res.GVK.String(),
 				"error", err)

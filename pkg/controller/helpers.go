@@ -54,13 +54,13 @@ func startBackgroundComponents(
 ) {
 	go func() {
 		if err := stateCache.Start(ctx); err != nil {
-			logger.Error("state cache failed", "error", err)
+			logger.Error("State cache failed", "error", err)
 		}
 	}()
 
 	go func() {
 		if err := metricsComponent.Start(ctx); err != nil {
-			logger.Error("metrics component failed", "error", err)
+			logger.Error("Metrics component failed", "error", err)
 		}
 	}()
 }

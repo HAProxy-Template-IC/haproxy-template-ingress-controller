@@ -284,7 +284,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	// Ensure cleanup happens regardless of validation outcome
 	defer func() {
 		if err := os.RemoveAll(tempDir); err != nil {
-			s.logger.Warn("failed to clean up validation temp directory",
+			s.logger.Warn("Failed to clean up validation temp directory",
 				"temp_dir", tempDir,
 				"error", err,
 			)

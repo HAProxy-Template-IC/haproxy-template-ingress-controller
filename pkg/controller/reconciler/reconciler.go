@@ -32,6 +32,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -188,7 +189,7 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 // of cluster state.
 func (r *Reconciler) handleIndexSynchronized(event *events.IndexSynchronizedEvent) {
 	r.Logger().Info("All indices synchronized, triggering initial reconciliation",
-		"resource_counts", event.ResourceCounts)
+		logging.CountsGroup("resource_counts", event.ResourceCounts))
 	r.triggerReconciliation(reasonIndexSynchronized)
 }
 

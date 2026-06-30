@@ -300,7 +300,7 @@ func (o *orchestrator) applyWithReload(
 		// re-stages the config and the new worker reads it from disk —
 		// but loses the in-flight-drain benefit.
 		if err := o.client.PushRawConfigurationSkipReload(ctx, desiredConfig, version, actions); err != nil {
-			o.logger.Warn("skip_reload+actions push failed; force_reload will converge state",
+			o.logger.Warn("Skip_reload+actions push failed; force_reload will converge state",
 				"error", err)
 		} else {
 			// Successful skip_reload push bumped the version.
@@ -668,7 +668,7 @@ func logOperationDetail(logger interface {
 	Debug(msg string, args ...any)
 }, partition string, ops []comparator.Operation) {
 	for i, op := range ops {
-		logger.Debug("diff op",
+		logger.Debug("Diff op",
 			"partition", partition,
 			"i", i,
 			"type", op.Type(),

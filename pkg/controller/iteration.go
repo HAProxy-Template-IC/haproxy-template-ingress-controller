@@ -58,18 +58,18 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 	}
 	mgr, err := pluggablevalidator.NewManager(logger, configs)
 	if err != nil {
-		logger.Error("pluggable-validator manager construction failed; feature disabled for this iteration",
+		logger.Error("Pluggable-validator manager construction failed; feature disabled for this iteration",
 			slog.Any("error", err))
 		return nil
 	}
 	if mgr.Configured() {
-		logger.Info("pluggable validators registered",
+		logger.Info("Pluggable validators registered",
 			slog.Int("count", len(configs)),
 			slog.Any("names", mgr.Names()),
 		)
 	}
 	setup.AddCleanup(func() {
-		logger.Debug("closing pluggable-validator connection pools")
+		logger.Debug("Closing pluggable-validator connection pools")
 		mgr.Close()
 	})
 	return mgr

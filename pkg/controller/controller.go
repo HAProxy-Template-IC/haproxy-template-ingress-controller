@@ -336,6 +336,8 @@ func setupComponents(
 	typeBootstrapper validator.TypeBootstrapper,
 	logger *slog.Logger,
 ) *componentSetup {
+	logger.Info("Stage 1: Creating config management components")
+
 	// Create EventBus with buffer for pre-start events
 	bus := busevents.NewEventBus(100)
 
@@ -349,7 +351,7 @@ func setupComponents(
 
 	// Register event drop callback for observability
 	bus.SetDropCallback(func(info busevents.DropInfo) {
-		logger.Warn("event dropped due to full subscriber buffer",
+		logger.Warn("Event dropped due to full subscriber buffer",
 			"subscriber", info.SubscriberName,
 			"event_type", info.EventType,
 			"buffer_size", info.BufferSize,

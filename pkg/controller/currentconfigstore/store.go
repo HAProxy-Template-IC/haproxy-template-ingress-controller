@@ -69,7 +69,7 @@ func (s *Store) Update(resource any) {
 
 	u, ok := resource.(*unstructured.Unstructured)
 	if !ok {
-		s.logger.Warn("unexpected resource type", "type", fmt.Sprintf("%T", resource))
+		s.logger.Warn("Unexpected resource type", "type", fmt.Sprintf("%T", resource))
 		return
 	}
 
@@ -81,7 +81,7 @@ func (s *Store) Update(resource any) {
 
 	content, found, err := unstructured.NestedString(u.Object, "spec", "content")
 	if err != nil {
-		s.logger.Debug("failed to extract spec.content", "error", err)
+		s.logger.Debug("Failed to extract spec.content", "error", err)
 	}
 	if !found || content == "" {
 		s.clear("HAProxyCfg has no content")
@@ -105,7 +105,7 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 		s.mu.RUnlock()
 
 		if generation == lastGen && hasConfig {
-			s.logger.Debug("current config unchanged (generation match), skipping parse",
+			s.logger.Debug("Current config unchanged (generation match), skipping parse",
 				"generation", generation)
 			return
 		}
@@ -126,7 +126,7 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 			s.mu.Lock()
 			s.lastGeneration = generation
 			s.mu.Unlock()
-			s.logger.Debug("current config unchanged (spec.checksum match), skipping decompression",
+			s.logger.Debug("Current config unchanged (spec.checksum match), skipping decompression",
 				"generation", generation)
 			return
 		}
@@ -137,7 +137,7 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	if isCompressed {
 		decompressed, err := compression.Decompress(content)
 		if err != nil {
-			s.logger.Warn("failed to decompress current config", "error", err)
+			s.logger.Warn("Failed to decompress current config", "error", err)
 			return
 		}
 		content = decompressed
@@ -157,13 +157,13 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	s.mu.RUnlock()
 
 	if unchanged {
-		s.logger.Debug("current config unchanged (hash match), skipping parse")
+		s.logger.Debug("Current config unchanged (hash match), skipping parse")
 		return
 	}
 
 	parsed, err := s.parser.ParseFromString(content)
 	if err != nil {
-		s.logger.Warn("failed to parse current config", "error", err)
+		s.logger.Warn("Failed to parse current config", "error", err)
 		return
 	}
 
@@ -172,5 +172,5 @@ func (s *Store) updateWithContent(u *unstructured.Unstructured, content string) 
 	s.contentHash = hashStr
 	s.lastGeneration = generation
 	s.mu.Unlock()
-	s.logger.Debug("current config updated", "backends", len(parsed.Backends), "generation", generation)
+	s.logger.Debug("Current config updated", "backends", len(parsed.Backends), "generation", generation)
 }

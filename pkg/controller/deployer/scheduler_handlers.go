@@ -37,7 +37,7 @@ func (s *DeploymentScheduler) handleTemplateRendered(event *events.TemplateRende
 	s.lastContentChecksum = event.ContentChecksum
 	s.lastValidatedStatusPatches = event.StatusPatches
 
-	s.logger.Debug("cached rendered config for deployment after validation",
+	s.logger.Debug("Cached rendered config for deployment after validation",
 		"config_bytes", event.ConfigBytes,
 		"aux_files", event.AuxiliaryFileCount)
 }
@@ -59,7 +59,7 @@ func (s *DeploymentScheduler) handleConfigValidated(event *events.ConfigValidate
 	s.templateConfigNamespace = tc.Namespace
 	s.mu.Unlock()
 
-	s.logger.Debug("cached template config metadata for runtime config name computation",
+	s.logger.Debug("Cached template config metadata for runtime config name computation",
 		"template_config_name", tc.Name,
 		"template_config_namespace", tc.Namespace)
 }
@@ -78,7 +78,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 
 	// Log warnings if any
 	for _, warning := range event.Warnings {
-		s.logger.Warn("validation warning", "warning", warning)
+		s.logger.Warn("Validation warning", "warning", warning)
 	}
 
 	// Get current state and cache validated config BEFORE scheduling
@@ -106,12 +106,12 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	s.mu.Unlock()
 
 	if config == "" {
-		s.logger.Error("no rendered config available for deployment")
+		s.logger.Error("No rendered config available for deployment")
 		return
 	}
 
 	if len(endpoints) == 0 {
-		s.logger.Debug("no endpoints available yet, config cached for later deployment")
+		s.logger.Debug("No endpoints available yet, config cached for later deployment")
 		return
 	}
 
@@ -136,7 +136,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	s.mu.RUnlock()
 
 	if canSkip {
-		s.logger.Debug("skipping deployment - config unchanged since last deploy",
+		s.logger.Debug("Skipping deployment - config unchanged since last deploy",
 			"config_hash", configHash[:8],
 			"pod_set_hash", podSetHash[:8],
 			"last_deployed", s.lastDeployedTime.Format(time.RFC3339))
@@ -217,12 +217,12 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 		"count", endpointCount)
 
 	if !hasValidConfig {
-		s.logger.Debug("no validated config available yet, skipping deployment")
+		s.logger.Debug("No validated config available yet, skipping deployment")
 		return
 	}
 
 	if endpointCount == 0 {
-		s.logger.Debug("no endpoints available, skipping deployment")
+		s.logger.Debug("No endpoints available, skipping deployment")
 		return
 	}
 
@@ -257,19 +257,19 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
 
-	s.logger.Warn("validation failed, deploying cached config as fallback",
+	s.logger.Warn("Validation failed, deploying cached config as fallback",
 		"trigger_reason", event.TriggerReason,
 		"errors", event.Errors,
 		"correlation_id", correlationID)
 
 	if !hasValidConfig {
-		s.logger.Error("validation fallback failed: no cached config available",
+		s.logger.Error("Validation fallback failed: no cached config available",
 			"correlation_id", correlationID)
 		return
 	}
 
 	if len(endpoints) == 0 {
-		s.logger.Debug("validation fallback skipped: no endpoints available",
+		s.logger.Debug("Validation fallback skipped: no endpoints available",
 			"correlation_id", correlationID)
 		return
 	}
@@ -348,7 +348,7 @@ func (s *DeploymentScheduler) handleConfigPublished(event *events.ConfigPublishe
 	s.runtimeConfigName = event.RuntimeConfigName
 	s.runtimeConfigNamespace = event.RuntimeConfigNamespace
 
-	s.logger.Debug("cached runtime config metadata for deployment events",
+	s.logger.Debug("Cached runtime config metadata for deployment events",
 		"runtime_config_name", event.RuntimeConfigName,
 		"runtime_config_namespace", event.RuntimeConfigNamespace)
 }

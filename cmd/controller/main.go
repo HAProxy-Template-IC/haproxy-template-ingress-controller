@@ -30,7 +30,6 @@ import (
 	"fmt"
 	"os"
 
-	_ "github.com/KimMachineGun/automemlimit"
 	"github.com/spf13/cobra"
 )
 

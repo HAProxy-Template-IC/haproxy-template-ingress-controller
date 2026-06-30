@@ -355,7 +355,7 @@ func (c *Component) handleBecameLeader(ctx context.Context) {
 	c.checksumCache = make(map[string]string)
 	c.lastAppliedKeys = make(map[string]appliedKeyMeta)
 	c.mu.Unlock()
-	c.Logger().Info("became leader, clearing resource checksum cache")
+	c.Logger().Info("Became leader, clearing resource checksum cache")
 
 	if c.discoveryClient != nil {
 		c.recoverManagedResources(ctx)
@@ -369,7 +369,7 @@ func (c *Component) handleBecameLeader(ctx context.Context) {
 // type list.
 func (c *Component) recoverManagedResources(ctx context.Context) {
 	if c.ownNamespace == "" {
-		c.Logger().Debug("skipping managed-resource recovery — OwnNamespace is empty")
+		c.Logger().Debug("Skipping managed-resource recovery — OwnNamespace is empty")
 		return
 	}
 	apiResourceLists, err := c.discoveryClient.ServerPreferredNamespacedResources()
@@ -379,7 +379,7 @@ func (c *Component) recoverManagedResources(ctx context.Context) {
 	// covered by subsequent reconciliations as the controller observes
 	// applies on those types.
 	if err != nil && len(apiResourceLists) == 0 {
-		c.Logger().Warn("managed-resource recovery failed: discovery returned no resources", "error", err)
+		c.Logger().Warn("Managed-resource recovery failed: discovery returned no resources", "error", err)
 		return
 	}
 
@@ -401,7 +401,7 @@ func (c *Component) recoverManagedResources(ctx context.Context) {
 		}
 	}
 	if recovered > 0 || skipped > 0 {
-		c.Logger().Info("managed-resource recovery complete",
+		c.Logger().Info("Managed-resource recovery complete",
 			"recovered", recovered, "skipped_types", skipped)
 	}
 }
@@ -496,7 +496,7 @@ func hasOwnerRefUID(obj *unstructured.Unstructured, uid string) bool {
 func (c *Component) listSafely(ctx context.Context, gvr schema.GroupVersionResource, labelSelector string) (items *unstructuredList, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			c.Logger().Debug("dynamic-client panic during managed-resource recovery, skipping",
+			c.Logger().Debug("Dynamic-client panic during managed-resource recovery, skipping",
 				"gvr", gvr.String(), "panic", r)
 			items = nil
 			err = fmt.Errorf("recovered: %v", r)
@@ -525,7 +525,7 @@ func (c *Component) handleLostLeadership() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.isLeader {
-		c.Logger().Info("lost leadership, pausing resource applies")
+		c.Logger().Info("Lost leadership, pausing resource applies")
 	}
 	c.isLeader = false
 }
@@ -552,7 +552,7 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	deleted := c.pruneOrphans(ctx, desiredKeys)
 
 	if applied+skipped+deleted+refused > 0 {
-		c.Logger().Debug("resource applier pass complete",
+		c.Logger().Debug("Resource applier pass complete",
 			"applied", applied, "skipped", skipped,
 			"deleted", deleted, "refused", refused,
 			"duration_ms", time.Since(startTime).Milliseconds())
@@ -577,7 +577,7 @@ const (
 func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource, desiredKeys map[string]appliedKeyMeta) applyOutcome {
 	gvr, err := c.gvrResolver.Resolve(r.APIVersion, r.Kind)
 	if err != nil {
-		c.Logger().Error("failed to resolve GVR for rendered resource",
+		c.Logger().Error("Failed to resolve GVR for rendered resource",
 			"api_version", r.APIVersion, "kind", r.Kind, "error", err)
 		return applyOutcomeError
 	}
@@ -598,7 +598,7 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 	object := c.prepareForApply(r.Object, partial)
 	payload, err := json.Marshal(object)
 	if err != nil {
-		c.Logger().Error("failed to marshal rendered resource",
+		c.Logger().Error("Failed to marshal rendered resource",
 			"namespace", r.Namespace, "name", r.Name, "kind", r.Kind, "error", err)
 		return applyOutcomeError
 	}
@@ -622,7 +622,7 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 		},
 	)
 	if err != nil {
-		c.Logger().Error("failed to apply rendered resource",
+		c.Logger().Error("Failed to apply rendered resource",
 			"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(),
 			"retriable", statusapplier.IsRetriable(err), "error", err)
 		return applyOutcomeError
@@ -654,7 +654,7 @@ func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]app
 			ctx, meta.Name, metav1.DeleteOptions{},
 		)
 		if err != nil && !apierrors.IsNotFound(err) {
-			c.Logger().Error("failed to delete orphan resource",
+			c.Logger().Error("Failed to delete orphan resource",
 				"namespace", meta.Namespace, "name", meta.Name, "gvr", meta.GVR.String(),
 				"error", err)
 			// Keep it in the cache so we'll try again next reconciliation.
@@ -682,7 +682,7 @@ func (c *Component) refused(r *templating.RenderedResource) bool {
 		return false
 	}
 	if r.Namespace == "" || (c.ownNamespace != "" && r.Namespace != c.ownNamespace) {
-		c.Logger().Warn("refusing to apply resource outside controller namespace",
+		c.Logger().Warn("Refusing to apply resource outside controller namespace",
 			"target_namespace", r.Namespace,
 			"controller_namespace", c.ownNamespace,
 			"kind", r.Kind, "name", r.Name,

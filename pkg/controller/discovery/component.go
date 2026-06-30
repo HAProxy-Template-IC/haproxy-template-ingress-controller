@@ -149,7 +149,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger) (*Component, error) 
 		},
 	})
 
-	c.Logger().Debug("detected local HAProxy version",
+	c.Logger().Debug("Detected local HAProxy version",
 		"version", localVersion.Full,
 		"major", localVersion.Major,
 		"minor", localVersion.Minor)

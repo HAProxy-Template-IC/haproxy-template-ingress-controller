@@ -43,6 +43,8 @@ func setupResourceWatchers(
 	k8sClient *client.Client,
 	logger *slog.Logger,
 ) (*resourcewatcher.ResourceWatcherComponent, error) {
+	logger.Info("Stage 3: Starting resource watchers")
+
 	// Extract resource type names for IndexSynchronizationTracker
 	// Include haproxy-pods which is auto-injected by ResourceWatcherComponent
 	resourceNames := make([]string, 0, len(cfg.WatchedResources)+1)
@@ -70,7 +72,7 @@ func setupResourceWatchers(
 	if err := resourceWatcher.WaitForAllSync(setup.IterCtx); err != nil {
 		return nil, fmt.Errorf("resource watcher sync failed: %w", err)
 	}
-	logger.Debug("all resource indices synced")
+	logger.Debug("All resource indices synced")
 
 	return resourceWatcher, nil
 }
@@ -88,6 +90,8 @@ func setupConfigWatchers(
 	secretGVR schema.GroupVersionResource,
 	logger *slog.Logger,
 ) error {
+	logger.Info("Stage 4: Starting config watchers")
+
 	// Create watcher for HAProxyTemplateConfig CRD
 	crdWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
 		GVR:       crdGVR,
@@ -167,7 +171,7 @@ func setupConfigWatchers(
 		return fmt.Errorf("config watcher sync failed: %w", err)
 	}
 
-	logger.Debug("config and secret watchers synced")
+	logger.Debug("Config and secret watchers synced")
 
 	// Initial config already passed via bootstrap event. Watchers handle subsequent changes only.
 

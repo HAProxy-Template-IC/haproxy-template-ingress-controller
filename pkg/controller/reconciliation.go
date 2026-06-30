@@ -115,7 +115,7 @@ func createReconciliationComponents(
 	}
 	capabilities := dataplane.CapabilitiesFromVersion(localVersion)
 
-	logger.Info("detected local HAProxy version",
+	logger.Info("Detected local HAProxy version",
 		"version", localVersion.Full,
 		"supports_crt_list", capabilities.SupportsCrtList,
 		"supports_map_storage", capabilities.SupportsMapStorage,
@@ -428,7 +428,7 @@ func createConfigPublisher(crdClientset versioned.Interface, k8sClient *client.C
 
 	// Wait for cache to sync before creating publisher
 	// This ensures listers have initial data before first use
-	logger.Debug("waiting for HAProxy CRD informer caches to sync")
+	logger.Debug("Waiting for HAProxy CRD informer caches to sync")
 	syncResult := informerFactory.WaitForCacheSync(stopCh)
 	for informerType, synced := range syncResult {
 		if !synced {

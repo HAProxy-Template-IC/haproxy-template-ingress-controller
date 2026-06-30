@@ -303,7 +303,7 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	// DeploymentScheduledEvent, so reloads can never burst under churn.
 	go s.runDeployLoop(ctx)
 
-	s.logger.Debug("deployment scheduler starting",
+	s.logger.Debug("Deployment scheduler starting",
 		"min_deployment_interval_ms", s.minDeploymentInterval.Milliseconds(),
 		"deployment_timeout_ms", s.deploymentTimeout.Milliseconds())
 

@@ -161,7 +161,7 @@ func retryWhileReloadInProgress(ctx context.Context, logger *slog.Logger, fn fun
 		}
 		if ctx.Err() != nil || time.Now().After(deadline) {
 			if logger != nil {
-				logger.Debug("reload-in-progress retry exhausted; scheduled deploy will converge",
+				logger.Debug("Reload-in-progress retry exhausted; scheduled deploy will converge",
 					"attempts", attempt, "error", err.Error())
 			}
 			return err

@@ -110,7 +110,7 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 	// Process resource (filter fields, extract keys, convert for templates)
 	result, err := w.indexer.Process(resource)
 	if err != nil {
-		w.logger.Error("failed to process resource for indexing",
+		w.logger.Error("Failed to process resource for indexing",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -120,7 +120,7 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 
 	// Add converted resource to store
 	if err := w.store.Add(result.ConvertedResource, result.Keys); err != nil {
-		w.logger.Error("failed to add resource to store",
+		w.logger.Error("Failed to add resource to store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -132,7 +132,7 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 	// Resource-level audit log. Routinely required during rolling-restart
 	// debugging — without per-resource detail "endpoints modified=1" in the
 	// aggregated index-update event is ambiguous across parallel tests.
-	w.logger.Debug("watcher add",
+	w.logger.Debug("Watcher add",
 		"gvr", w.config.GVR.String(),
 		"name", resource.GetName(),
 		"namespace", resource.GetNamespace(),
@@ -148,7 +148,7 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 	// Process resource (filter fields, extract keys, convert for templates)
 	result, err := w.indexer.Process(resource)
 	if err != nil {
-		w.logger.Error("failed to process resource for indexing",
+		w.logger.Error("Failed to process resource for indexing",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -158,7 +158,7 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 
 	// Update converted resource in store
 	if err := w.store.Update(result.ConvertedResource, result.Keys); err != nil {
-		w.logger.Error("failed to update resource in store",
+		w.logger.Error("Failed to update resource in store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -168,7 +168,7 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 	}
 
 	// Resource-level audit log — see processAdd for rationale.
-	w.logger.Debug("watcher update",
+	w.logger.Debug("Watcher update",
 		"gvr", w.config.GVR.String(),
 		"name", resource.GetName(),
 		"namespace", resource.GetNamespace(),
@@ -184,7 +184,7 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 	// Extract keys for deletion (before filtering)
 	keys, err := w.indexer.ExtractKeys(resource)
 	if err != nil {
-		w.logger.Error("failed to extract keys from resource for deletion",
+		w.logger.Error("Failed to extract keys from resource for deletion",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -194,7 +194,7 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 
 	// Delete from store
 	if err := w.store.Delete(keys...); err != nil {
-		w.logger.Error("failed to delete resource from store",
+		w.logger.Error("Failed to delete resource from store",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -204,7 +204,7 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 	}
 
 	// Resource-level audit log — see processAdd for rationale.
-	w.logger.Debug("watcher delete",
+	w.logger.Debug("Watcher delete",
 		"gvr", w.config.GVR.String(),
 		"name", resource.GetName(),
 		"namespace", resource.GetNamespace(),
@@ -228,7 +228,7 @@ func (w *Watcher) shouldSkipUpdate(oldResource, newResource *unstructured.Unstru
 	oldVersion := oldResource.GetResourceVersion()
 	newVersion := newResource.GetResourceVersion()
 	if oldVersion != "" && newVersion != "" && oldVersion == newVersion {
-		w.logger.Debug("skipping update - resource version unchanged (resync)",
+		w.logger.Debug("Skipping update - resource version unchanged (resync)",
 			"gvr", w.config.GVR.String(),
 			"name", newResource.GetName(),
 			"namespace", newResource.GetNamespace(),
@@ -259,7 +259,7 @@ func (w *Watcher) matchesFieldSelector(resource *unstructured.Unstructured) bool
 	matches, err := w.fieldSelectorMatcher.Matches(resource.Object)
 	if err != nil {
 		// Log unexpected errors, but treat as non-match
-		w.logger.Warn("field selector evaluation error",
+		w.logger.Warn("Field selector evaluation error",
 			"gvr", w.config.GVR.String(),
 			"name", resource.GetName(),
 			"namespace", resource.GetNamespace(),
@@ -309,7 +309,7 @@ func (w *Watcher) logUpdateContent(ctx context.Context, oldResource, newResource
 	oldJSON, oldErr := json.Marshal(oldResource.Object)
 	newJSON, newErr := json.Marshal(newResource.Object)
 	if oldErr != nil || newErr != nil {
-		w.logger.Debug("watcher update: JSON marshal failed (forensic dump only)",
+		w.logger.Debug("Watcher update: JSON marshal failed (forensic dump only)",
 			"gvr", w.config.GVR.String(),
 			"name", newResource.GetName(),
 			"namespace", newResource.GetNamespace(),
@@ -317,7 +317,7 @@ func (w *Watcher) logUpdateContent(ctx context.Context, oldResource, newResource
 			"new_err", newErr)
 		return
 	}
-	w.logger.Debug("watcher update: pre/post content",
+	w.logger.Debug("Watcher update: pre/post content",
 		"gvr", w.config.GVR.String(),
 		"name", newResource.GetName(),
 		"namespace", newResource.GetNamespace(),

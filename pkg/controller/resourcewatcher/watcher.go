@@ -114,7 +114,7 @@ func New(
 		},
 	}
 
-	logger.Debug("auto-injected haproxy-pods watcher",
+	logger.Debug("Auto-injected haproxy-pods watcher",
 		"label_selector", cfg.PodSelector.MatchLabels)
 
 	// Create a watcher for each resource type (including auto-injected haproxy-pods)
@@ -185,7 +185,7 @@ func New(
 		rwc.watchers[resourceTypeName] = w
 		rwc.stores[resourceTypeName] = w.Store()
 
-		rwc.logger.Debug("created resource watcher",
+		rwc.logger.Debug("Created resource watcher",
 			"resource_type", resourceTypeName,
 			"gvr", gvr.String(),
 			"index_by", watchedResource.IndexBy,
@@ -205,7 +205,7 @@ func New(
 //
 // Use WaitForAllSync() to wait for initial synchronization to complete.
 func (r *ResourceWatcherComponent) Start(ctx context.Context) error {
-	r.logger.Debug("starting resource watchers", "count", len(r.watchers))
+	r.logger.Debug("Starting resource watchers", "count", len(r.watchers))
 
 	// Start all watchers in goroutines
 	for resourceTypeName, w := range r.watchers {
@@ -214,17 +214,17 @@ func (r *ResourceWatcherComponent) Start(ctx context.Context) error {
 		resourceWatcher := w
 
 		go func() {
-			r.logger.Debug("starting watcher", "resource_type", name)
+			r.logger.Debug("Starting watcher", "resource_type", name)
 
 			if err := resourceWatcher.Start(ctx); err != nil {
-				r.logger.Error("watcher failed",
+				r.logger.Error("Watcher failed",
 					"resource_type", name,
 					"error", err)
 			}
 		}()
 	}
 
-	r.logger.Debug("all resource watchers started")
+	r.logger.Debug("All resource watchers started")
 
 	// Wait for context cancellation
 	<-ctx.Done()
@@ -239,20 +239,20 @@ func (r *ResourceWatcherComponent) Start(ctx context.Context) error {
 //   - nil if all watchers synced successfully
 //   - error if sync fails or context is cancelled
 func (r *ResourceWatcherComponent) WaitForAllSync(ctx context.Context) error {
-	r.logger.Debug("waiting for all resource watchers to sync", "count", len(r.watchers))
+	r.logger.Debug("Waiting for all resource watchers to sync", "count", len(r.watchers))
 
 	// Wait for all watchers to sync in parallel using errgroup
 	g, gCtx := errgroup.WithContext(ctx)
 
 	for resourceTypeName, w := range r.watchers {
 		g.Go(func() error {
-			r.logger.Debug("waiting for watcher sync", "resource_type", resourceTypeName)
+			r.logger.Debug("Waiting for watcher sync", "resource_type", resourceTypeName)
 
 			if _, err := w.WaitForSync(gCtx); err != nil {
 				return fmt.Errorf("watcher sync failed for %q: %w", resourceTypeName, err)
 			}
 
-			r.logger.Debug("watcher synced", "resource_type", resourceTypeName)
+			r.logger.Debug("Watcher synced", "resource_type", resourceTypeName)
 			return nil
 		})
 	}

@@ -83,7 +83,7 @@ func (c *Component) publishWorker(ctx context.Context) {
 
 // processPublishWork decides whether to publish immediately or buffer for throttle.
 func (c *Component) processPublishWork(ctx context.Context, work *publishWorkItem) {
-	c.logger.Debug("processing publish work",
+	c.logger.Debug("Processing publish work",
 		"config_name", work.templateConfig.Name,
 		"config_namespace", work.templateConfig.Namespace,
 		"config_bytes", len(work.entry.config),
@@ -125,7 +125,7 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 			c.discardCachedConfig(superseded.correlationID)
 		}
 
-		c.logger.Debug("throttling CRD publish, buffering for later",
+		c.logger.Debug("Throttling CRD publish, buffering for later",
 			"checksum", work.entry.contentChecksum,
 			"correlation_id", work.correlationID,
 			"deploy_driven", work.deployDriven,
@@ -160,7 +160,7 @@ func (c *Component) flushPendingPublish(ctx context.Context) {
 		if c.skipIfAlreadyPublished(w, "skipping throttled publish, config already published") {
 			continue
 		}
-		c.logger.Debug("flushing throttled CRD publish",
+		c.logger.Debug("Flushing throttled CRD publish",
 			"correlation_id", w.correlationID,
 			"deploy_driven", w.deployDriven,
 		)
@@ -204,7 +204,7 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 
 	result, err := c.publisher.PublishConfig(publishCtx, request)
 	if err != nil {
-		c.logger.Error("failed to publish runtime configuration",
+		c.logger.Error("Failed to publish runtime configuration",
 			"error", err,
 			"config_name", work.templateConfig.Name,
 			"correlation_id", work.correlationID,
@@ -214,7 +214,7 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 	}
 
 	checksumHex := request.Checksum
-	c.logger.Debug("runtime configuration published successfully",
+	c.logger.Debug("Runtime configuration published successfully",
 		"runtime_config_name", result.RuntimeConfigName,
 		"runtime_config_namespace", result.RuntimeConfigNamespace,
 		"checksum", checksumHex,
@@ -252,7 +252,7 @@ func (c *Component) validationFailedWorker(ctx context.Context) {
 
 // processValidationFailedWork performs the actual invalid config publishing.
 func (c *Component) processValidationFailedWork(ctx context.Context, work *validationFailedWorkItem) {
-	c.logger.Debug("processing validation failed work",
+	c.logger.Debug("Processing validation failed work",
 		"config_name", work.templateConfig.Name,
 		"config_namespace", work.templateConfig.Namespace,
 		"error_count", len(work.event.Errors),
@@ -279,7 +279,7 @@ func (c *Component) processValidationFailedWork(ctx context.Context, work *valid
 
 	result, err := c.publisher.PublishConfig(publishCtx, request)
 	if err != nil {
-		c.logger.Error("failed to publish invalid runtime configuration",
+		c.logger.Error("Failed to publish invalid runtime configuration",
 			"error", err,
 			"config_name", work.templateConfig.Name,
 			"correlation_id", work.correlationID,
@@ -288,7 +288,7 @@ func (c *Component) processValidationFailedWork(ctx context.Context, work *valid
 		return
 	}
 
-	c.logger.Warn("invalid runtime configuration published",
+	c.logger.Warn("Invalid runtime configuration published",
 		"runtime_config_name", result.RuntimeConfigName,
 		"runtime_config_namespace", result.RuntimeConfigNamespace,
 		"validation_error", validationError,
@@ -368,7 +368,7 @@ func (c *Component) processAllPendingStatusWork(ctx context.Context) {
 	podKeys := slices.Collect(maps.Keys(c.statusWorkPending))
 	c.statusWorkPendingMu.Unlock()
 
-	c.logger.Debug("processing coalesced status updates",
+	c.logger.Debug("Processing coalesced status updates",
 		"pending_pod_count", len(podKeys),
 	)
 
@@ -404,7 +404,7 @@ func (c *Component) processAllPendingStatusWork(ctx context.Context) {
 func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem) {
 	event := work.event
 
-	c.logger.Debug("processing status update for pod",
+	c.logger.Debug("Processing status update for pod",
 		"runtime_config_name", event.RuntimeConfigName,
 		"runtime_config_namespace", event.RuntimeConfigNamespace,
 		"pod_name", event.PodName,
@@ -429,7 +429,7 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 	defer cancel()
 
 	if err := c.publisher.UpdateDeploymentStatus(updateCtx, &update); err != nil {
-		c.logger.Warn("failed to update deployment status",
+		c.logger.Warn("Failed to update deployment status",
 			"error", err,
 			"runtime_config_name", event.RuntimeConfigName,
 			"pod_name", event.PodName,
@@ -437,7 +437,7 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 		return
 	}
 
-	c.logger.Debug("deployment status updated successfully",
+	c.logger.Debug("Deployment status updated successfully",
 		"runtime_config_name", event.RuntimeConfigName,
 		"pod_name", event.PodName,
 	)

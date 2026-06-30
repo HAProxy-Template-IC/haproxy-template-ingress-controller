@@ -274,11 +274,11 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 	testResult, testErr := configtest.RunValidationTests(ctx, cfg, engine, typedResourceTypes, configValidationTestsBudget, v.logger)
 	switch {
 	case testErr != nil:
-		v.logger.Warn("validationTests could not run at admission; admitting (load gate still enforces)",
+		v.logger.Warn("ValidationTests could not run at admission; admitting (load gate still enforces)",
 			"namespace", namespace, "name", name, "error", testErr)
 		return true, "", []string{fmt.Sprintf("validationTests could not run at admission: %v — the controller's load gate will still enforce them", testErr)}
 	case testResult.Incomplete:
-		v.logger.Warn("validationTests did not finish within the admission budget; admitting (load gate still enforces)",
+		v.logger.Warn("ValidationTests did not finish within the admission budget; admitting (load gate still enforces)",
 			"namespace", namespace, "name", name, "budget", configValidationTestsBudget)
 		return true, "", []string{fmt.Sprintf("validationTests did not finish within %s at admission and were not fully checked here — the controller's load gate will enforce them", configValidationTestsBudget)}
 	case !testResult.Passed:
@@ -311,7 +311,7 @@ func (v *ConfigValidator) resolveSchemas(ctx context.Context, cfg *coreconfig.Co
 	}
 	bootstrapResult, err := v.bootstrap(ctx, cfg)
 	if err != nil {
-		v.logger.Warn("per-admission schema bootstrap failed; validating with startup-fixed schemas (load gate re-bootstraps on load)",
+		v.logger.Warn("Per-admission schema bootstrap failed; validating with startup-fixed schemas (load gate re-bootstraps on load)",
 			"namespace", namespace, "name", name, "error", err)
 		return v.declarations, v.typedResourceTypes
 	}

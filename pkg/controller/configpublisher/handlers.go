@@ -45,7 +45,7 @@ func (c *Component) lookupCachedConfig(eventID, correlationID, eventName, action
 	c.mu.RUnlock()
 
 	if !hasTemplateConfig || !hasRenderedConfig {
-		c.logger.Warn("cannot "+action+", missing cached state",
+		c.logger.Warn("Cannot "+action+", missing cached state",
 			"has_template_config", hasTemplateConfig,
 			"has_rendered_config", hasRenderedConfig,
 			"correlation_id", correlationID,
@@ -63,20 +63,20 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	// event.TemplateConfig contains *v1alpha1.HAProxyTemplateConfig (original CRD for metadata)
 
 	if event.TemplateConfig == nil {
-		c.logger.Warn("config validated event contains nil template config - this indicates a bug in event publishing",
+		c.logger.Warn("Config validated event contains nil template config - this indicates a bug in event publishing",
 			"version", event.Version)
 		return
 	}
 
 	templateConfig, ok := event.TemplateConfig.(*v1alpha1.HAProxyTemplateConfig)
 	if !ok {
-		c.logger.Warn("config validated event contains unexpected template config type - expected *v1alpha1.HAProxyTemplateConfig",
+		c.logger.Warn("Config validated event contains unexpected template config type - expected *v1alpha1.HAProxyTemplateConfig",
 			"actual_type", fmt.Sprintf("%T", event.TemplateConfig),
 			"version", event.Version)
 		return
 	}
 
-	c.logger.Debug("caching template config for publishing",
+	c.logger.Debug("Caching template config for publishing",
 		"config_name", templateConfig.Name,
 		"config_namespace", templateConfig.Namespace,
 		"version", event.Version,
@@ -101,7 +101,7 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 		correlationID = event.EventID()
 	}
 
-	c.logger.Debug("caching rendered config for publishing",
+	c.logger.Debug("Caching rendered config for publishing",
 		"config_bytes", event.ConfigBytes,
 		"auxiliary_file_count", event.AuxiliaryFileCount,
 		"correlation_id", correlationID,
@@ -131,7 +131,7 @@ func (c *Component) handleValidationCompleted(event *events.ValidationCompletedE
 		return
 	}
 
-	c.logger.Debug("queuing configuration for async publishing",
+	c.logger.Debug("Queuing configuration for async publishing",
 		"config_name", templateConfig.Name,
 		"config_namespace", templateConfig.Namespace,
 		"config_bytes", len(entry.config),
@@ -172,7 +172,7 @@ func (c *Component) handleDeployedConfigPublishRequest(event *events.DeployedCon
 	c.mu.RUnlock()
 
 	if !hasTemplateConfig || templateConfig == nil {
-		c.logger.Debug("skipping deployed-config publish, no template config cached yet",
+		c.logger.Debug("Skipping deployed-config publish, no template config cached yet",
 			"checksum", event.ContentChecksum)
 		return
 	}
@@ -204,7 +204,7 @@ func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) 
 		return
 	}
 
-	c.logger.Debug("queuing invalid configuration for async publishing",
+	c.logger.Debug("Queuing invalid configuration for async publishing",
 		"config_name", templateConfig.Name,
 		"config_namespace", templateConfig.Namespace,
 		"error_count", len(event.Errors),
@@ -248,7 +248,7 @@ func queueWithCoalesce[T any](
 	select {
 	case oldWork := <-ch:
 		oldID := correlationOf(oldWork)
-		c.logger.Debug("coalescing "+logName+" work",
+		c.logger.Debug("Coalescing "+logName+" work",
 			"old_correlation_id", oldID,
 			"new_correlation_id", correlationID,
 		)
@@ -273,7 +273,7 @@ func queueWithCoalesce[T any](
 // processes them, only the latest update is applied. This prevents channel overflow
 // during high-frequency reconciliation cycles.
 func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEvent) {
-	c.logger.Debug("queuing deployment status update for pod",
+	c.logger.Debug("Queuing deployment status update for pod",
 		"runtime_config_name", event.RuntimeConfigName,
 		"runtime_config_namespace", event.RuntimeConfigNamespace,
 		"pod_name", event.PodName,
@@ -317,13 +317,13 @@ func (c *Component) handlePodTerminated(ctx context.Context, event *events.HAPro
 	c.mu.RUnlock()
 
 	if !hasConfig || namespace == "" {
-		c.logger.Debug("skipping pod cleanup - no template config available yet",
+		c.logger.Debug("Skipping pod cleanup - no template config available yet",
 			"pod_name", event.PodName,
 		)
 		return
 	}
 
-	c.logger.Debug("cleaning up pod references after termination",
+	c.logger.Debug("Cleaning up pod references after termination",
 		"pod_name", event.PodName,
 		"pod_namespace", event.PodNamespace,
 		"crd_namespace", namespace,
@@ -340,7 +340,7 @@ func (c *Component) handlePodTerminated(ctx context.Context, event *events.HAPro
 	defer cancel()
 
 	if err := c.publisher.CleanupPodReferences(ctx, &cleanupReq); err != nil {
-		c.logger.Warn("failed to cleanup pod references",
+		c.logger.Warn("Failed to cleanup pod references",
 			"error", err,
 			"pod_name", event.PodName,
 			"pod_namespace", event.PodNamespace,
@@ -349,7 +349,7 @@ func (c *Component) handlePodTerminated(ctx context.Context, event *events.HAPro
 		return
 	}
 
-	c.logger.Debug("pod references cleaned up successfully",
+	c.logger.Debug("Pod references cleaned up successfully",
 		"pod_name", event.PodName,
 		"pod_namespace", event.PodNamespace,
 	)
@@ -371,7 +371,7 @@ func (c *Component) handlePodsDiscovered(ctx context.Context, event *events.HAPr
 	c.mu.RUnlock()
 
 	if !hasConfig || namespace == "" {
-		c.logger.Debug("skipping pod reconciliation - no template config available yet",
+		c.logger.Debug("Skipping pod reconciliation - no template config available yet",
 			"pod_count", len(event.Endpoints),
 		)
 		return
@@ -389,9 +389,9 @@ func (c *Component) handlePodsDiscovered(ctx context.Context, event *events.HAPr
 
 	// Reconcile status against running pods (namespace-scoped)
 	if err := c.publisher.ReconcileDeployedToPods(ctx, namespace, podNames); err != nil {
-		c.logger.Warn("failed to reconcile deployed pods status", "error", err)
+		c.logger.Warn("Failed to reconcile deployed pods status", "error", err)
 	} else {
-		c.logger.Debug("reconciled deployed pods status",
+		c.logger.Debug("Reconciled deployed pods status",
 			"namespace", namespace,
 			"running_pods", len(podNames))
 	}
@@ -437,7 +437,7 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	defer c.mu.Unlock()
 
 	if c.hasTemplateConfig || len(c.renderedConfigs) > 0 {
-		c.logger.Info("lost leadership, clearing cached configuration state",
+		c.logger.Info("Lost leadership, clearing cached configuration state",
 			"had_template_config", c.hasTemplateConfig,
 			"rendered_configs_count", len(c.renderedConfigs),
 		)

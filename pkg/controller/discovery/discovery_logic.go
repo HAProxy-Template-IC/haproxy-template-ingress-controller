@@ -37,16 +37,16 @@ import (
 //  6. Publishes HAProxyPodTerminatedEvent for removed pods
 //  7. Publishes HAProxyPodsDiscoveredEvent with version-validated endpoints
 func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfig.Credentials, source string) {
-	c.Logger().Debug("triggering HAProxy pod discovery", "source", source)
+	c.Logger().Debug("Triggering HAProxy pod discovery", "source", source)
 
 	// Call pure Discovery component with logger for debugging
 	candidates, err := c.discovery.DiscoverEndpointsWithLogger(podStore, credentials, c.Logger())
 	if err != nil {
-		c.Logger().Error("discovery failed", "error", err)
+		c.Logger().Error("Discovery failed", "error", err)
 		return
 	}
 
-	c.Logger().Debug("discovered candidate pods", "count", len(candidates))
+	c.Logger().Debug("Discovered candidate pods", "count", len(candidates))
 
 	// Build map of current candidates for tracking removals
 	currentCandidates := make(map[string]string)
@@ -158,7 +158,7 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 
 		// Check if already admitted
 		if cachedEndpoint, exists := c.admittedPods[podName]; exists {
-			c.Logger().Debug("pod already admitted, using cached version",
+			c.Logger().Debug("Pod already admitted, using cached version",
 				"pod", podName,
 				"version", cachedEndpoint.DetectedFullVersion)
 			admitted = append(admitted, cachedEndpoint)
@@ -191,7 +191,7 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 			if remoteVersion.Major > c.localVersion.Major {
 				direction = "newer"
 			}
-			c.Logger().Error("rejecting pod: remote HAProxy major version does not match local series",
+			c.Logger().Error("Rejecting pod: remote HAProxy major version does not match local series",
 				"pod", podName,
 				"remote_version", remoteVersion.Full,
 				"local_version", c.localVersion.Full,
@@ -296,7 +296,7 @@ func (c *Component) handleVersionCheckFailure(podName string, err error) {
 	// Calculate next retry interval with exponential backoff
 	interval := backoffInterval(retry.retryCount)
 
-	c.Logger().Warn("version check failed, will retry",
+	c.Logger().Warn("Version check failed, will retry",
 		"pod", podName,
 		"error", err,
 		"retry_count", retry.retryCount,
@@ -311,7 +311,7 @@ func (c *Component) cleanupRemovedPods(currentCandidates map[string]string) {
 	// Clean up admitted pods
 	for podName := range c.admittedPods {
 		if _, exists := currentCandidates[podName]; !exists {
-			c.Logger().Debug("cleaning up state for removed pod", "pod", podName)
+			c.Logger().Debug("Cleaning up state for removed pod", "pod", podName)
 			delete(c.admittedPods, podName)
 			delete(c.pendingRetries, podName)
 		}
@@ -356,7 +356,7 @@ func (c *Component) scheduleRetryTimerLocked() {
 	// Calculate delay (minimum 1 second to avoid tight loops)
 	delay := max(time.Until(nextRetry), time.Second)
 
-	c.Logger().Debug("scheduling retry timer for pending pods",
+	c.Logger().Debug("Scheduling retry timer for pending pods",
 		"pending_count", len(c.pendingRetries),
 		"delay", delay)
 
@@ -367,7 +367,7 @@ func (c *Component) scheduleRetryTimerLocked() {
 
 // handleRetryTimer is called when the retry timer fires to re-check pending pods.
 func (c *Component) handleRetryTimer() {
-	c.Logger().Debug("retry timer fired, re-triggering discovery for pending pods")
+	c.Logger().Debug("Retry timer fired, re-triggering discovery for pending pods")
 
 	// Get current state
 	c.mu.RLock()
@@ -379,7 +379,7 @@ func (c *Component) handleRetryTimer() {
 	c.mu.RUnlock()
 
 	if pendingCount == 0 {
-		c.Logger().Debug("no pending pods to retry")
+		c.Logger().Debug("No pending pods to retry")
 		return
 	}
 
@@ -387,7 +387,7 @@ func (c *Component) handleRetryTimer() {
 	if hasCredentials && hasDataplanePort && podStore != nil {
 		c.triggerDiscovery(podStore, *credentials, "retry_timer")
 	} else {
-		c.Logger().Warn("retry timer fired but cannot discover pods, missing requirements",
+		c.Logger().Warn("Retry timer fired but cannot discover pods, missing requirements",
 			"has_credentials", hasCredentials,
 			"has_dataplane_port", hasDataplanePort,
 			"has_pod_store", podStore != nil)

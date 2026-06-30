@@ -294,7 +294,7 @@ func runOfflineTypeBootstrap(
 	if err != nil {
 		return nil, fmt.Errorf("loading schema directory %q: %w", validateSchemaDir, err)
 	}
-	logger.Info("offline type bootstrap: loaded schema directory",
+	logger.Info("Offline type bootstrap: loaded schema directory",
 		"path", validateSchemaDir,
 		"schemas", dirFetcher.Len())
 
@@ -321,7 +321,7 @@ func runOfflineTypeBootstrap(
 			// warning. Most watched resources won't have typed
 			// support yet; only the ones the operator has supplied
 			// a schema for via --schema-dir.
-			logger.Debug("offline type bootstrap: no GVK mapping; skipping typed support",
+			logger.Debug("Offline type bootstrap: no GVK mapping; skipping typed support",
 				"resource", name, "apiVersion", wr.APIVersion, "resources", wr.Resources)
 			continue
 		}

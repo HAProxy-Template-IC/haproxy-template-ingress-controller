@@ -29,6 +29,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -91,7 +92,7 @@ func New(
 // Start begins monitoring resource synchronization events by running the
 // embedded component.Base event loop until ctx is cancelled.
 func (t *IndexSynchronizationTracker) Start(ctx context.Context) error {
-	t.Logger().Debug("index synchronization tracker started",
+	t.Logger().Debug("Index synchronization tracker started",
 		"expected_resources", len(t.expectedResources))
 
 	return t.Base.Start(ctx)
@@ -117,14 +118,14 @@ func (t *IndexSynchronizationTracker) handleResourceSyncComplete(event *events.R
 
 	// Check if this is an expected resource
 	if _, expected := t.expectedResources[resourceTypeName]; !expected {
-		t.Logger().Warn("received sync complete for unexpected resource",
+		t.Logger().Warn("Received sync complete for unexpected resource",
 			"resource_type", resourceTypeName)
 		return
 	}
 
 	// Check if already marked as synced
 	if t.expectedResources[resourceTypeName] {
-		t.Logger().Debug("resource already marked as synced, ignoring duplicate event",
+		t.Logger().Debug("Resource already marked as synced, ignoring duplicate event",
 			"resource_type", resourceTypeName)
 		return
 	}
@@ -133,7 +134,7 @@ func (t *IndexSynchronizationTracker) handleResourceSyncComplete(event *events.R
 	t.expectedResources[resourceTypeName] = true
 	t.resourceCounts[resourceTypeName] = initialCount
 
-	t.Logger().Debug("resource synced",
+	t.Logger().Debug("Resource synced",
 		"resource_type", resourceTypeName,
 		"initial_count", initialCount,
 		"synced_count", t.syncedCount(),
@@ -143,9 +144,9 @@ func (t *IndexSynchronizationTracker) handleResourceSyncComplete(event *events.R
 	if t.allResourcesSynced() && !t.allSynced {
 		t.allSynced = true
 
-		t.Logger().Debug("all resource indices synchronized",
+		t.Logger().Debug("All resource indices synchronized",
 			"total_resources", len(t.expectedResources),
-			"resource_counts", t.resourceCounts)
+			logging.CountsGroup("resource_counts", t.resourceCounts))
 
 		// Publish IndexSynchronizedEvent
 		t.EventBus().Publish(events.NewIndexSynchronizedEvent(t.resourceCounts))

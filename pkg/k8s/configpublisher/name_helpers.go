@@ -119,7 +119,7 @@ func (p *Publisher) compressIfNeeded(content string, threshold int64, resourceTy
 
 	// Only use compression if it actually reduces size
 	if len(compressedContent) >= len(content) {
-		p.logger.Debug("compression skipped, no size reduction",
+		p.logger.Debug("Compression skipped, no size reduction",
 			"resource_type", resourceType,
 			"original_bytes", len(content),
 			"compressed_bytes", len(compressedContent),
@@ -128,7 +128,7 @@ func (p *Publisher) compressIfNeeded(content string, threshold int64, resourceTy
 	}
 
 	ratio := float64(len(compressedContent)) * 100 / float64(len(content))
-	p.logger.Debug("compressed content for CRD storage",
+	p.logger.Debug("Compressed content for CRD storage",
 		"resource_type", resourceType,
 		"original_bytes", len(content),
 		"compressed_bytes", len(compressedContent),

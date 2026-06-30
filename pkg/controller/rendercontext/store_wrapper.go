@@ -161,7 +161,7 @@ func (w *StoreWrapper) loadSnapshot() {
 	if len(w.IndexBy) > 0 {
 		idx, err := indexer.New(indexer.Config{IndexBy: w.IndexBy})
 		if err != nil {
-			w.Logger.Warn("failed to build snapshot indexer; Fetch/GetSingle will bypass the snapshot",
+			w.Logger.Warn("Failed to build snapshot indexer; Fetch/GetSingle will bypass the snapshot",
 				"resource_type", w.ResourceType,
 				"index_by", w.IndexBy,
 				"error", err)
@@ -188,7 +188,7 @@ func (w *StoreWrapper) loadSnapshot() {
 		if cl, ok := w.Store.(cachedLister); ok {
 			cached, err := cl.ListCached()
 			if err != nil {
-				w.Logger.Warn("failed to list cached resources for snapshot prime",
+				w.Logger.Warn("Failed to list cached resources for snapshot prime",
 					"resource_type", w.ResourceType, "error", err)
 			} else {
 				items = cached
@@ -201,7 +201,7 @@ func (w *StoreWrapper) loadSnapshot() {
 		// (see LazySnapshot above).
 		listed, err := w.Store.List()
 		if err != nil {
-			w.Logger.Warn("failed to list resources for snapshot",
+			w.Logger.Warn("Failed to list resources for snapshot",
 				"resource_type", w.ResourceType, "error", err)
 		} else {
 			items = listed
@@ -229,7 +229,7 @@ func (w *StoreWrapper) indexItemLocked(item any) {
 		// Item appears but isn't reachable via keyed lookup.
 		// Mirrors what would happen if the underlying store had
 		// also failed to extract keys.
-		w.Logger.Warn("failed to extract snapshot index keys for item",
+		w.Logger.Warn("Failed to extract snapshot index keys for item",
 			"resource_type", w.ResourceType, "error", err)
 		return
 	}
@@ -299,7 +299,7 @@ func (w *StoreWrapper) get(stringKeys []string, op string) []any {
 		// wrapper remains functional even without IndexBy.
 		items, err := w.Store.Get(stringKeys...)
 		if err != nil {
-			w.Logger.Warn("failed to get resources from store (no snapshot index)",
+			w.Logger.Warn("Failed to get resources from store (no snapshot index)",
 				"resource_type", w.ResourceType,
 				"op", op,
 				"keys", stringKeys,
@@ -335,7 +335,7 @@ func (w *StoreWrapper) get(stringKeys []string, op string) []any {
 			// it.
 			items, err := w.Store.Get(stringKeys...)
 			if err != nil {
-				w.Logger.Warn("failed to fetch single key for lazy snapshot",
+				w.Logger.Warn("Failed to fetch single key for lazy snapshot",
 					"resource_type", w.ResourceType,
 					"op", op,
 					"keys", stringKeys,

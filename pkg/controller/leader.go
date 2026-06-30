@@ -87,7 +87,7 @@ func startLeaderOnlyComponents(
 	// before the leaderelection callback calls eventBus.Start() to replay buffered events.
 	errCh, err := registry.StartLeaderOnlyComponentsAsync(leaderCtx)
 	if err != nil {
-		logger.Error("failed to start leader-only components", "error", err)
+		logger.Error("Failed to start leader-only components", "error", err)
 		parentCancel()
 		// Return empty components struct - the error will propagate via errgroup
 		return &leaderOnlyComponents{
@@ -102,7 +102,7 @@ func startLeaderOnlyComponents(
 		select {
 		case err, ok := <-errCh:
 			if ok && err != nil && leaderCtx.Err() == nil {
-				logger.Error("leader-only component failed", "error", err)
+				logger.Error("Leader-only component failed", "error", err)
 				parentCancel()
 				return err
 			}
@@ -216,7 +216,7 @@ func setupLeaderElection(
 			logger.Warn("POD_NAME environment variable not set, using hostname as identity")
 			hostname, err := os.Hostname()
 			if err != nil {
-				logger.Error("failed to get hostname for leader election identity", "error", err)
+				logger.Error("Failed to get hostname for leader election identity", "error", err)
 			}
 			podName = hostname
 		}
@@ -260,7 +260,7 @@ func setupLeaderElection(
 		// This ensures the elector can release the lease on context cancellation
 		setup.ErrGroup.Go(func() error {
 			if err := elector.Start(setup.IterCtx); err != nil {
-				logger.Error("leader election failed", "error", err)
+				logger.Error("Leader election failed", "error", err)
 				return err
 			}
 			return nil

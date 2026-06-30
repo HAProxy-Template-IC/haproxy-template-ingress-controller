@@ -207,7 +207,7 @@ func (b *Builder) Build() *BuildResult {
 	// rather than the previous map+method shape (`resources.gateways.List()`).
 	controller := make(map[string]templating.ResourceStore)
 	if b.haproxyPodStore != nil {
-		b.logger.Debug("wrapping HAProxy pods store for rendering context")
+		b.logger.Debug("Wrapping HAProxy pods store for rendering context")
 		controller["haproxy_pods"] = &StoreWrapper{
 			Store:        b.haproxyPodStore,
 			ResourceType: names.HAProxyPodsResourceType,
@@ -231,7 +231,7 @@ func (b *Builder) Build() *BuildResult {
 	// collector is resource-agnostic: templates pass any apiVersion / kind.
 	renderedResourceCollector := templating.NewRenderedResourceCollector()
 
-	b.logger.Debug("rendering context built",
+	b.logger.Debug("Rendering context built",
 		"resource_count", len(b.typedResourceTypes),
 		"controller_fields", len(controller),
 		"snippet_count", len(snippetNames))
@@ -264,7 +264,7 @@ func (b *Builder) Build() *BuildResult {
 
 	// Add HTTP fetcher if provided
 	if b.httpFetcher != nil {
-		b.logger.Debug("http object added to template context")
+		b.logger.Debug("HTTP object added to template context")
 		templateContext["http"] = b.httpFetcher
 	}
 
@@ -279,7 +279,7 @@ func (b *Builder) Build() *BuildResult {
 	MergeExtraContextInto(templateContext, b.config)
 
 	if b.config.TemplatingSettings.ExtraContext != nil {
-		b.logger.Debug("added extra context variables to template context",
+		b.logger.Debug("Added extra context variables to template context",
 			"variable_count", len(b.config.TemplatingSettings.ExtraContext))
 	}
 
@@ -588,7 +588,7 @@ func adaptSliceForResource(
 	for _, item := range items {
 		ptr, err := wrapItemToPointer(item, elemType)
 		if err != nil {
-			logger.Warn("typed resource: WrapInto failed; skipping item",
+			logger.Warn("Typed resource: WrapInto failed; skipping item",
 				"resource", resourceName, "op", op, "error", err)
 			continue
 		}
@@ -619,7 +619,7 @@ func adaptSingleForResource(
 	}
 	ptr, err := wrapItemToPointer(item, elemType)
 	if err != nil {
-		logger.Warn("typed resource: WrapInto failed; returning nil",
+		logger.Warn("Typed resource: WrapInto failed; returning nil",
 			"resource", resourceName, "op", "GetSingle", "error", err)
 		return reflect.Zero(returnType)
 	}

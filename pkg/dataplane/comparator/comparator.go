@@ -218,7 +218,7 @@ func compareContainerSection[P, C any](
 //	cmp := comparator.New()
 //	diff, err := cmp.Compare(currentConfig, desiredConfig)
 //	if err != nil {
-//	    slog.Error("comparison failed", "error", err)
+//	    slog.Error("Comparison failed", "error", err)
 //	    os.Exit(1)
 //	}
 //

@@ -185,7 +185,7 @@ func (w *HTTPStoreWrapper) getCachedContent(url string) (string, bool) {
 	// Validation mode: use overlay for content retrieval
 	if w.overlay != nil {
 		if content, ok := w.overlay.GetContent(url); ok {
-			w.logger.Debug("returning content via overlay",
+			w.logger.Debug("Returning content via overlay",
 				"url", url,
 				"size", len(content),
 				"has_pending", w.overlay.HasPendingURL(url))
@@ -197,7 +197,7 @@ func (w *HTTPStoreWrapper) getCachedContent(url string) (string, bool) {
 	// Production mode: only return accepted content
 	store := w.component.GetStore()
 	if content, ok := store.Get(url); ok {
-		w.logger.Debug("returning accepted content",
+		w.logger.Debug("Returning accepted content",
 			"url", url,
 			"size", len(content))
 		return content, true

@@ -34,7 +34,7 @@ import (
 // The namespace parameter ensures namespace-scoped operations. The controller
 // should only manage CRDs in its own namespace.
 func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanupRequest) error {
-	p.logger.Debug("cleaning up pod references",
+	p.logger.Debug("Cleaning up pod references",
 		"pod", cleanup.PodName,
 		"namespace", cleanup.Namespace,
 	)
@@ -94,7 +94,7 @@ func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace strin
 			return p.reconcileSingleRuntimeConfigStatus(ctx, listedCfg, runningSet, &auxFiles)
 		})
 		if err != nil {
-			p.logger.Warn("failed to reconcile HAProxyCfg status",
+			p.logger.Warn("Failed to reconcile HAProxyCfg status",
 				"name", listedCfg.Name,
 				"error", err,
 			)
@@ -136,7 +136,7 @@ func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 		return nil
 	}
 
-	p.logger.Debug("removing stale pod entries from HAProxyCfg status",
+	p.logger.Debug("Removing stale pod entries from HAProxyCfg status",
 		"name", cfg.Name,
 		"namespace", cfg.Namespace,
 		"stale_pods", stalePods,
@@ -214,7 +214,7 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 		return nil
 	})
 	if err != nil {
-		p.logger.Debug("status update conflict during cleanup (will retry on next reconciliation)",
+		p.logger.Debug("Status update conflict during cleanup (will retry on next reconciliation)",
 			"type", "runtime_config_status",
 			"name", runtimeConfig.Name,
 			"error", err,
@@ -300,7 +300,7 @@ func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFi
 				removePodMutation(cleanup.PodName),
 			)
 			if err != nil {
-				p.logger.Warn("failed to cleanup "+group.label+" pod reference",
+				p.logger.Warn("Failed to cleanup "+group.label+" pod reference",
 					group.logKey, ref.Name,
 					"error", err,
 				)
@@ -319,11 +319,11 @@ func (p *Publisher) reconcileAuxiliaryFilePods(ctx context.Context, auxFiles *ha
 			err := mutateAuxFilePodStatus(
 				func() (*auxFileHandle, error) { return group.handle(ctx, ref.Namespace, ref.Name) },
 				filterRunningPods(runningSet, func(removed []string) {
-					p.logger.Debug("removing stale pods from "+group.label, "name", ref.Name, "removed_pods", removed)
+					p.logger.Debug("Removing stale pods from "+group.label, "name", ref.Name, "removed_pods", removed)
 				}),
 			)
 			if err != nil {
-				p.logger.Warn("failed to reconcile "+group.label+" pods", "name", ref.Name, "error", err)
+				p.logger.Warn("Failed to reconcile "+group.label+" pods", "name", ref.Name, "error", err)
 			}
 		}
 	}

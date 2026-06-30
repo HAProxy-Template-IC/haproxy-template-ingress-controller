@@ -103,7 +103,7 @@ func startEarlyInfrastructureServers(
 		// This ensures the server stays running across iterations
 		go func() {
 			if err := infra.IntrospectionServer.Serve(ctx); err != nil {
-				logger.Error("introspection server failed", "error", err, "port", debugPort)
+				logger.Error("Introspection server failed", "error", err, "port", debugPort)
 			}
 		}()
 
@@ -125,7 +125,7 @@ func startEarlyInfrastructureServers(
 		if !infra.metricsServerStarted {
 			go func() {
 				if err := infra.MetricsServer.Start(ctx); err != nil {
-					logger.Error("metrics server failed", "error", err)
+					logger.Error("Metrics server failed", "error", err)
 				}
 			}()
 			logger.Info("Metrics HTTP server started (first iteration)",
@@ -163,7 +163,7 @@ func setupInfrastructureServers(
 	// Start event buffer (created before EventBus.Start() to ensure proper subscription)
 	go func() {
 		if err := eventBuffer.Start(ctx); err != nil {
-			logger.Error("event buffer failed", "error", err)
+			logger.Error("Event buffer failed", "error", err)
 		}
 	}()
 
