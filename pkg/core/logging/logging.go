@@ -10,8 +10,27 @@ package logging
 import (
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 )
+
+// CountsGroup turns a map of named counts into a single slog group attribute so
+// each counter is emitted as its own logfmt key (e.g. resource_counts.ingresses=9)
+// instead of a non-logfmt Go map literal (resource_counts="map[ingresses:9 ...]").
+// Keys are sorted for stable output.
+func CountsGroup(key string, counts map[string]int) slog.Attr {
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	attrs := make([]any, 0, len(keys))
+	for _, k := range keys {
+		attrs = append(attrs, slog.Int(k, counts[k]))
+	}
+	return slog.Group(key, attrs...)
+}
 
 // LevelTrace is a log level below Debug, used for very verbose diagnostic output.
 // Following slog convention of 4-level gaps: TRACE=-8, DEBUG=-4, INFO=0, WARN=4, ERROR=8.

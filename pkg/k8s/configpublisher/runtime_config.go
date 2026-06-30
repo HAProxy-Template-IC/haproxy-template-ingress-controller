@@ -128,7 +128,7 @@ func (p *Publisher) updateValidationErrorStatus(ctx context.Context, cfg *haprox
 		HAProxyCfgs(cfg.Namespace).
 		UpdateStatus(ctx, cfg, metav1.UpdateOptions{})
 	if err != nil {
-		p.logger.Debug("status update conflict (will retry on next reconciliation)",
+		p.logger.Debug("Status update conflict (will retry on next reconciliation)",
 			"type", "runtime_config_status",
 			"name", cfg.Name,
 			"error", err,
@@ -141,7 +141,7 @@ func (p *Publisher) updateValidationErrorStatus(ctx context.Context, cfg *haprox
 func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest, existing, runtimeConfig *haproxyv1alpha1.HAProxyCfg) (*haproxyv1alpha1.HAProxyCfg, error) {
 	// Skip update if checksum hasn't changed (content is identical)
 	if existing.Spec.Checksum == runtimeConfig.Spec.Checksum {
-		p.logger.Debug("skipping HAProxyCfg spec update, checksum unchanged",
+		p.logger.Debug("Skipping HAProxyCfg spec update, checksum unchanged",
 			"name", existing.Name,
 			"checksum", existing.Spec.Checksum,
 		)
@@ -186,7 +186,7 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 
 	// Skip UpdateStatus if nothing changed
 	if auxiliaryRefsEqual(current.Status.AuxiliaryFiles, newAux) {
-		p.logger.Debug("skipping HAProxyCfg status update, references unchanged",
+		p.logger.Debug("Skipping HAProxyCfg status update, references unchanged",
 			"name", current.Name,
 		)
 		return nil

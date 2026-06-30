@@ -87,7 +87,7 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	// This handles all CE directives with full field extraction
 	if err := p.ceParser.Process(strings.NewReader(config)); err != nil {
 		// Log but continue - EE configs may contain directives client-native doesn't understand
-		slog.Debug("client-native parser warning (continuing with EE parser)",
+		slog.Debug("Client-native parser warning (continuing with EE parser)",
 			"error", err)
 	}
 

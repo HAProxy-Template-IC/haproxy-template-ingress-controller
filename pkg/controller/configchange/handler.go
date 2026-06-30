@@ -223,7 +223,7 @@ func (h *ConfigChangeHandler) EnableReinitialization() {
 //
 //	go handler.Start(ctx)
 func (h *ConfigChangeHandler) Start(ctx context.Context) error {
-	h.logger.Debug("config change handler starting", "validators", h.validators)
+	h.logger.Debug("Config change handler starting", "validators", h.validators)
 
 	for {
 		select {

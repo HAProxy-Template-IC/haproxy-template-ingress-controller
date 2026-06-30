@@ -68,7 +68,7 @@ func NewWithListers(k8sClient kubernetes.Interface, crdClient versioned.Interfac
 //
 // Returns PublishResult containing the names of created/updated resources.
 func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*PublishResult, error) {
-	p.logger.Debug("publishing runtime config",
+	p.logger.Debug("Publishing runtime config",
 		"template_config", req.TemplateConfigName,
 		"namespace", req.TemplateConfigNamespace,
 	)
@@ -95,7 +95,7 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 
 	// Update HAProxyCfg status with child resource references
 	if err := p.updateRuntimeConfigStatus(ctx, runtimeConfig, result); err != nil {
-		p.logger.Debug("status update conflict (will retry on next reconciliation)",
+		p.logger.Debug("Status update conflict (will retry on next reconciliation)",
 			"type", "runtime_config_status",
 			"name", runtimeConfig.Name,
 			"error", err,
@@ -103,7 +103,7 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		// Non-blocking - status update is informational
 	}
 
-	p.logger.Debug("published runtime config",
+	p.logger.Debug("Published runtime config",
 		"runtime_config", runtimeConfig.Name,
 		"map_files", len(result.MapFileNames),
 		"secrets", len(result.SecretNames),
@@ -126,7 +126,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for _, mapFile := range req.AuxiliaryFiles.MapFiles {
 		mapFileName, err := p.createOrUpdateMapFile(ctx, req, runtimeConfig, mapFile)
 		if err != nil {
-			p.logger.Debug("auxiliary file update conflict (will retry on next reconciliation)",
+			p.logger.Debug("Auxiliary file update conflict (will retry on next reconciliation)",
 				"type", "map_file",
 				"name", mapFile.Path,
 				"error", err,
@@ -140,7 +140,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for _, cert := range req.AuxiliaryFiles.SSLCertificates {
 		secretName, err := p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, cert)
 		if err != nil {
-			p.logger.Debug("auxiliary file update conflict (will retry on next reconciliation)",
+			p.logger.Debug("Auxiliary file update conflict (will retry on next reconciliation)",
 				"type", "ssl_secret",
 				"path", cert.Path,
 				"error", err,
@@ -154,7 +154,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for _, generalFile := range req.AuxiliaryFiles.GeneralFiles {
 		generalFileName, err := p.createOrUpdateGeneralFile(ctx, req, runtimeConfig, generalFile)
 		if err != nil {
-			p.logger.Debug("auxiliary file update conflict (will retry on next reconciliation)",
+			p.logger.Debug("Auxiliary file update conflict (will retry on next reconciliation)",
 				"type", "general_file",
 				"name", generalFile.Filename,
 				"error", err,
@@ -168,7 +168,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	for _, crtListFile := range req.AuxiliaryFiles.CRTListFiles {
 		crtListFileName, err := p.createOrUpdateCRTListFile(ctx, req, runtimeConfig, crtListFile)
 		if err != nil {
-			p.logger.Debug("auxiliary file update conflict (will retry on next reconciliation)",
+			p.logger.Debug("Auxiliary file update conflict (will retry on next reconciliation)",
 				"type", "crt_list_file",
 				"path", crtListFile.Path,
 				"error", err,
@@ -192,7 +192,7 @@ func (p *Publisher) DeleteRuntimeConfig(ctx context.Context, namespace, name str
 	}
 
 	if err == nil {
-		p.logger.Debug("deleted runtime config",
+		p.logger.Debug("Deleted runtime config",
 			"name", name,
 			"namespace", namespace,
 		)

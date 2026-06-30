@@ -119,7 +119,7 @@ func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *schedule
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					b.logger.Error("bypass apply panicked; scheduled deploy will converge",
+					b.logger.Error("Bypass apply panicked; scheduled deploy will converge",
 						"endpoint", ep.URL, "panic", r)
 				}
 			}()
@@ -149,7 +149,7 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 
 	syncer, err := b.clientFor(ctx, ep)
 	if err != nil {
-		b.logger.Debug("bypass client open failed; scheduled deploy will converge",
+		b.logger.Debug("Bypass client open failed; scheduled deploy will converge",
 			"endpoint", ep.URL, "error", err)
 		return
 	}
@@ -160,7 +160,7 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 	result, err := syncer.SyncRuntimeFast(ctx, dep.runtimeUpdates, dep.config, opts)
 	if err != nil {
 		b.publishResult(0, true)
-		b.logger.Debug("bypass apply failed; scheduled deploy will converge",
+		b.logger.Debug("Bypass apply failed; scheduled deploy will converge",
 			"endpoint", ep.URL, "error", err)
 		return
 	}
@@ -172,7 +172,7 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 	b.publishConfigApplied(dep, ep, result, partial)
 	successes.Add(1)
 	if ops > 0 {
-		b.logger.Debug("bypass applied runtime server changes ahead of scheduled deploy",
+		b.logger.Debug("Bypass applied runtime server changes ahead of scheduled deploy",
 			"endpoint", ep.URL,
 			"ops", ops,
 			"duration_ms", result.Duration.Milliseconds())

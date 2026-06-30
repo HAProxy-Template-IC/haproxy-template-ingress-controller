@@ -60,7 +60,7 @@ func podStatusFieldManager(podName string) string {
 // only one of two HAProxy pods listed, and TestIngress* polls timed out
 // because the missing pod never showed up at the latest spec.checksum.
 func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *DeploymentStatusUpdate) error {
-	p.logger.Debug("updating deployment status (SSA)",
+	p.logger.Debug("Updating deployment status (SSA)",
 		"runtime_config", update.RuntimeConfigName,
 		"pod", update.PodName,
 	)
@@ -104,7 +104,7 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 	if err != nil {
 		// Auxiliary file lookups are best-effort during status updates —
 		// the next reconcile retries. Don't fail the whole call.
-		p.logger.Debug("auxiliary file reference lookup failed (proceeding with HAProxyCfg-only SSA)",
+		p.logger.Debug("Auxiliary file reference lookup failed (proceeding with HAProxyCfg-only SSA)",
 			"runtime_config", update.RuntimeConfigName,
 			"error", err,
 		)
@@ -270,11 +270,11 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 func (p *Publisher) applyAuxiliaryFilePodStatus(kind, namespace, name string, entry *haproxyv1alpha1.PodDeploymentStatus, fieldManager string, patcher func(name string, data []byte, opts metav1.PatchOptions) error) {
 	ssaBytes, err := buildPodStatusSSAPayload(kind, name, namespace, entry)
 	if err != nil {
-		p.logger.Debug("ssa payload build failed", "kind", kind, "name", name, "error", err)
+		p.logger.Debug("Ssa payload build failed", "kind", kind, "name", name, "error", err)
 		return
 	}
 	if err := patcher(name, ssaBytes, metav1.PatchOptions{FieldManager: fieldManager, Force: new(true)}); err != nil && !apierrors.IsNotFound(err) {
-		p.logger.Debug("ssa pod status on auxiliary file failed", "kind", kind, "name", name, "error", err)
+		p.logger.Debug("Ssa pod status on auxiliary file failed", "kind", kind, "name", name, "error", err)
 	}
 }
 

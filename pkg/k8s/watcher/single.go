@@ -439,7 +439,7 @@ func (w *SingleWatcher) Stop() error {
 //
 //	err := watcher.WaitForSync(ctx)
 //	if err != nil {
-//	    slog.Error("watcher sync failed", "error", err)
+//	    slog.Error("Watcher sync failed", "error", err)
 //	    os.Exit(1)
 //	}
 //	slog.Info("Watcher synced, resource is available")

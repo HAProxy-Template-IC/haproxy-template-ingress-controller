@@ -159,7 +159,7 @@ func (c *Component) HandleEvent(event busevents.Event) {
 // path keeps the strict "deny on any failure" semantics.
 func (c *Component) handleValidationRequest(req *events.ProposalValidationRequestedEvent) {
 	hasHTTPOverlay := req.HTTPOverlay != nil && !req.HTTPOverlay.IsEmpty()
-	c.logger.Debug("processing proposal validation request",
+	c.logger.Debug("Processing proposal validation request",
 		"request_id", req.ID,
 		"source", req.Source,
 		"context", req.SourceContext,
@@ -180,7 +180,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 
 	// Validate overlays reference valid stores
 	if err := overlayProvider.Validate(); err != nil {
-		c.logger.Warn("proposal validation failed: invalid overlays",
+		c.logger.Warn("Proposal validation failed: invalid overlays",
 			"request_id", req.ID,
 			"error", err,
 		)
@@ -203,7 +203,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider)
 	if err != nil {
 		// Render failed
-		c.logger.Warn("proposal validation failed: render error",
+		c.logger.Warn("Proposal validation failed: render error",
 			"request_id", req.ID,
 			"error", err,
 		)
@@ -218,7 +218,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 
 	// Check validation result
 	if !validationResult.Valid {
-		c.logger.Info("proposal validation failed",
+		c.logger.Info("Proposal validation failed",
 			"request_id", req.ID,
 			"phase", validationResult.Phase,
 			"error", validationResult.Error,
@@ -234,7 +234,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 	}
 
 	// Validation succeeded
-	c.logger.Debug("proposal validation succeeded",
+	c.logger.Debug("Proposal validation succeeded",
 		"request_id", req.ID,
 		"source", req.Source,
 		"duration_ms", time.Since(startTime).Milliseconds(),
@@ -345,7 +345,7 @@ func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *s
 	baselineResult, baselineErr := c.runBaselineCheck(ctx)
 	baselineFailed := baselineErr != nil || (baselineResult != nil && !baselineResult.Valid)
 	if baselineFailed {
-		c.logger.Warn("admitting proposed change because baseline validation already fails — pre-existing broken state, not the new resource",
+		c.logger.Warn("Admitting proposed change because baseline validation already fails — pre-existing broken state, not the new resource",
 			"proposed_render_err", proposedErr,
 			"proposed_validation_phase", validationPhaseOf(proposedResult),
 			"proposed_validation_err", validationErrorOf(proposedResult),

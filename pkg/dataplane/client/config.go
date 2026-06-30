@@ -28,7 +28,7 @@ import (
 //
 //	version, err := dpClient.GetVersion(context.Background())
 //	if err != nil {
-//	    slog.Error("failed to get version", "error", err)
+//	    slog.Error("Failed to get version", "error", err)
 //	    os.Exit(1)
 //	}
 //	fmt.Printf("Current version: %d\n", version)
@@ -93,7 +93,7 @@ func (c *DataplaneClient) GetVersion(ctx context.Context) (int64, error) {
 //
 //	config, err := dpClient.GetRawConfiguration(context.Background())
 //	if err != nil {
-//	    slog.Error("failed to get config", "error", err)
+//	    slog.Error("Failed to get config", "error", err)
 //	    os.Exit(1)
 //	}
 //	fmt.Printf("Current config:\n%s\n", config)
@@ -162,7 +162,7 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 //
 //	reloadID, err := dpClient.PushRawConfiguration(context.Background(), newConfig, 1)
 //	if err != nil {
-//	    slog.Error("failed to push config", "error", err)
+//	    slog.Error("Failed to push config", "error", err)
 //	    os.Exit(1)
 //	}
 //	if reloadID != "" {

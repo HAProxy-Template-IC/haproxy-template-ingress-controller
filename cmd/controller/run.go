@@ -27,7 +27,9 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
@@ -127,6 +129,18 @@ func runController(_ *cobra.Command, _ []string) error {
 	logLevelEnv := os.Getenv("LOG_LEVEL")
 	logger := logging.NewDynamicLogger(logLevelEnv)
 	slog.SetDefault(logger)
+
+	// Route client-go's klog output (leader election, informers) through slog
+	// so it shares the same logfmt format and dynamic level as everything else.
+	klog.SetSlogLogger(logger)
+
+	// Set GOMEMLIMIT from the cgroup limit. Done here (not via automemlimit's
+	// blank-import init) so its "GOMEMLIMIT is updated" line goes through our
+	// slog handler instead of the stdlib default. Mirrors automemlimit's
+	// default options (FromCgroup provider, 0.9 ratio).
+	if _, err := memlimit.SetGoMemLimitWithOpts(memlimit.WithLogger(logger)); err != nil {
+		logger.Warn("Failed to set GOMEMLIMIT from cgroup", "error", err)
+	}
 
 	// Log detected resource limits for observability.
 	// GOGC: report the env override if set, otherwise "default" (Go 1.26's Green Tea

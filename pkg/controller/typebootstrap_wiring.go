@@ -195,7 +195,7 @@ func runTypeBootstrap(
 	//     target to confirm a particular resource got typed.
 	//     "type bootstrap" is the operator-facing identifier;
 	//     downstream code searches anchor on it.
-	logger.Info("type bootstrap completed",
+	logger.Info("Type bootstrap completed",
 		"typed_count", len(result.Types),
 		"degraded_count", len(result.Errors),
 		"typed_resources", typedResourceNames(result))
@@ -238,7 +238,7 @@ func buildBootstrapResources(
 	for name, wr := range cfg.WatchedResources {
 		gvk, err := resolveKind(mapper, &wr)
 		if err != nil {
-			logger.Warn("type bootstrap: skipping resource whose Kind couldn't be resolved",
+			logger.Warn("Type bootstrap: skipping resource whose Kind couldn't be resolved",
 				"resource", name,
 				"apiVersion", wr.APIVersion,
 				"resources", wr.Resources,

@@ -141,7 +141,7 @@ func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	m.MarkReady()
 
-	m.logger.Debug("drift monitor starting",
+	m.logger.Debug("Drift monitor starting",
 		"drift_prevention_interval_ms", m.driftPreventionInterval.Milliseconds())
 
 	// Start initial drift prevention timer
@@ -180,7 +180,7 @@ func (m *DriftPreventionMonitor) handleDeploymentCompleted() {
 	// Record activity for health check - handling events counts as activity
 	m.healthTracker.RecordActivity()
 
-	m.logger.Debug("deployment completed, resetting drift prevention timer")
+	m.logger.Debug("Deployment completed, resetting drift prevention timer")
 	m.resetDriftTimer()
 }
 
@@ -189,7 +189,7 @@ func (m *DriftPreventionMonitor) handleDeploymentCompleted() {
 // This stops the drift timer since only the leader needs drift prevention.
 // The new leader will start their own drift timer when they acquire leadership.
 func (m *DriftPreventionMonitor) handleLostLeadership() {
-	m.logger.Info("lost leadership, stopping drift timer")
+	m.logger.Info("Lost leadership, stopping drift timer")
 	m.stopDriftTimer()
 }
 
@@ -236,7 +236,7 @@ func (m *DriftPreventionMonitor) resetDriftTimer() {
 	m.driftTimerChan = m.driftTimer.C
 	m.timerActive = true
 
-	m.logger.Debug("drift prevention timer reset",
+	m.logger.Debug("Drift prevention timer reset",
 		"next_trigger_in_ms", m.driftPreventionInterval.Milliseconds())
 }
 

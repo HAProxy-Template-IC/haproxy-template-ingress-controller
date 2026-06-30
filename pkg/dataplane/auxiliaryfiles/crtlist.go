@@ -56,7 +56,7 @@ func CompareCRTLists(ctx context.Context, c *client.DataplaneClient, desired []C
 	// Always use general file storage for CRT-lists to avoid reload on create.
 	// Native CRT-list API triggers reload without skip_reload support.
 	// General file storage returns 201 (no reload), reducing total reloads.
-	slog.Debug("using general file storage for CRT-lists to avoid reload on create")
+	slog.Debug("Using general file storage for CRT-lists to avoid reload on create")
 
 	// Convert CRT-list files to general files for storage
 	generalFiles := CRTListsToGeneralFiles(desired)

@@ -34,20 +34,20 @@ func (c *Component) tryInitialDiscovery(source string) {
 	// Already done - skip
 	if c.initialDiscoveryDone {
 		c.mu.Unlock()
-		c.Logger().Debug("tryInitialDiscovery: already done, skipping", "source", source)
+		c.Logger().Debug("TryInitialDiscovery: already done, skipping", "source", source)
 		return
 	}
 
 	// Check all requirements
 	if !c.initialSyncComplete {
 		c.mu.Unlock()
-		c.Logger().Debug("tryInitialDiscovery: initial sync not complete", "source", source)
+		c.Logger().Debug("TryInitialDiscovery: initial sync not complete", "source", source)
 		return
 	}
 
 	if !c.hasCredentials || !c.hasDataplanePort || c.podStore == nil {
 		c.mu.Unlock()
-		c.Logger().Debug("tryInitialDiscovery: missing requirements",
+		c.Logger().Debug("TryInitialDiscovery: missing requirements",
 			"source", source,
 			"has_credentials", c.hasCredentials,
 			"has_dataplane_port", c.hasDataplanePort,
@@ -61,7 +61,7 @@ func (c *Component) tryInitialDiscovery(source string) {
 	credentials := c.credentials
 	c.mu.Unlock()
 
-	c.Logger().Debug("performing initial discovery", "source", source)
+	c.Logger().Debug("Performing initial discovery", "source", source)
 	c.triggerDiscovery(podStore, *credentials, source)
 }
 
@@ -73,7 +73,7 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	// Type-assert config
 	config, ok := event.Config.(*coreconfig.Config)
 	if !ok {
-		c.Logger().Error("invalid config type in ConfigValidatedEvent",
+		c.Logger().Error("Invalid config type in ConfigValidatedEvent",
 			"expected", "*coreconfig.Config",
 			"actual", fmt.Sprintf("%T", event.Config))
 		return
@@ -97,7 +97,7 @@ func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	hasCredentials := c.hasCredentials
 	c.mu.Unlock()
 
-	c.Logger().Debug("config validated, updated dataplane port",
+	c.Logger().Debug("Config validated, updated dataplane port",
 		"old_port", oldPort,
 		"new_port", c.dataplanePort)
 
@@ -121,7 +121,7 @@ func (c *Component) handleCredentialsUpdated(event *events.CredentialsUpdatedEve
 	// Type-assert credentials
 	credentials, ok := event.Credentials.(*coreconfig.Credentials)
 	if !ok {
-		c.Logger().Error("invalid credentials type in CredentialsUpdatedEvent",
+		c.Logger().Error("Invalid credentials type in CredentialsUpdatedEvent",
 			"expected", "*coreconfig.Credentials",
 			"actual", fmt.Sprintf("%T", event.Credentials))
 		return
@@ -137,7 +137,7 @@ func (c *Component) handleCredentialsUpdated(event *events.CredentialsUpdatedEve
 	hasDataplanePort := c.hasDataplanePort
 	c.mu.Unlock()
 
-	c.Logger().Debug("credentials updated", "secret_version", event.SecretVersion)
+	c.Logger().Debug("Credentials updated", "secret_version", event.SecretVersion)
 
 	// Try initial discovery (might be blocked by missing requirements)
 	if !initialDiscoveryDone {
@@ -163,7 +163,7 @@ func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdate
 
 	// Skip initial sync events (wait for ResourceSyncCompleteEvent)
 	if event.ChangeStats.IsInitialSync {
-		c.Logger().Debug("skipping initial sync event for haproxy-pods")
+		c.Logger().Debug("Skipping initial sync event for haproxy-pods")
 		return
 	}
 
@@ -185,7 +185,7 @@ func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdate
 		return
 	}
 
-	c.Logger().Debug("haproxy pods changed",
+	c.Logger().Debug("HAProxy pods changed",
 		"created", event.ChangeStats.Created,
 		"modified", event.ChangeStats.Modified,
 		"deleted", event.ChangeStats.Deleted)
@@ -194,7 +194,7 @@ func (c *Component) handleResourceIndexUpdated(event *events.ResourceIndexUpdate
 	if hasCredentials && hasDataplanePort && podStore != nil {
 		c.triggerDiscovery(podStore, *credentials, "resource_index_updated")
 	} else {
-		c.Logger().Debug("skipping discovery, missing requirements",
+		c.Logger().Debug("Skipping discovery, missing requirements",
 			"has_credentials", hasCredentials,
 			"has_dataplane_port", hasDataplanePort,
 			"has_pod_store", podStore != nil)
@@ -212,14 +212,14 @@ func (c *Component) handleResourceSyncComplete(event *events.ResourceSyncComplet
 		return
 	}
 
-	c.Logger().Debug("haproxy pods initial sync complete")
+	c.Logger().Debug("HAProxy pods initial sync complete")
 
 	// Set initialSyncComplete atomically and check for duplicate
 	c.mu.Lock()
 	if c.initialSyncComplete {
 		// Already processed - skip duplicate
 		c.mu.Unlock()
-		c.Logger().Debug("skipping duplicate ResourceSyncCompleteEvent for haproxy-pods")
+		c.Logger().Debug("Skipping duplicate ResourceSyncCompleteEvent for haproxy-pods")
 		return
 	}
 	c.initialSyncComplete = true
@@ -262,5 +262,5 @@ func (c *Component) SetPodStore(store types.Store) {
 
 	c.podStore = store
 
-	c.Logger().Debug("pod store set")
+	c.Logger().Debug("Pod store set")
 }

@@ -97,7 +97,7 @@ func NewEventCommentator(eventBus *busevents.EventBus, logger *slog.Logger, buff
 //
 //	go commentator.Start(ctx)
 func (ec *EventCommentator) Start(ctx context.Context) error {
-	ec.logger.Debug("event commentator starting", "buffer_capacity", ec.ringBuffer.Capacity())
+	ec.logger.Debug("Event commentator starting", "buffer_capacity", ec.ringBuffer.Capacity())
 
 	for {
 		select {

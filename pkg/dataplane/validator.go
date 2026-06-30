@@ -139,7 +139,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	versionHash := hashVersion(version)
 
 	if isValidationCached(configHash, auxHash, versionHash) {
-		slog.Debug("validation cache hit, skipping validation")
+		slog.Debug("Validation cache hit, skipping validation")
 		return nil, ErrValidationCacheHit // Cache hit - caller should use parser cache if parsed config needed
 	}
 
@@ -171,7 +171,7 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	semanticMs = time.Since(semanticStart).Milliseconds()
 
 	// Log timing breakdown for visibility when debugging
-	slog.Debug("validation phase timing breakdown",
+	slog.Debug("Validation phase timing breakdown",
 		"total_ms", time.Since(startTime).Milliseconds(),
 		"syntax_ms", syntaxMs,
 		"schema_ms", schemaMs,

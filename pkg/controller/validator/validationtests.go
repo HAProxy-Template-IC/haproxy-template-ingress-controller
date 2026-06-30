@@ -150,7 +150,7 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 
 	result, err := v.runTests(cfg)
 	if err != nil {
-		v.logger.Error("validationTests could not run",
+		v.logger.Error("ValidationTests could not run",
 			"version", req.Version, "error", err)
 		v.respond(req, false, []string{err.Error()})
 		return
@@ -161,16 +161,16 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 	case result.Incomplete:
 		// Daemon load gate fails CLOSED on an incomplete run: never accept a
 		// config we didn't finish validating.
-		v.logger.Error("validationTests did not complete in time",
+		v.logger.Error("ValidationTests did not complete in time",
 			"version", req.Version, "run_timeout", v.runTimeout, "duration_ms", duration.Milliseconds())
 		v.respond(req, false, []string{fmt.Sprintf(
 			"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", v.runTimeout)})
 	case result.Passed:
-		v.logger.Debug("validationTests passed",
+		v.logger.Debug("ValidationTests passed",
 			"version", req.Version, "duration_ms", duration.Milliseconds())
 		v.respond(req, true, nil)
 	default:
-		v.logger.Error("validationTests failed",
+		v.logger.Error("ValidationTests failed",
 			"version", req.Version, "duration_ms", duration.Milliseconds(), "failures", result.Failures)
 		v.respond(req, false, result.Failures)
 	}

@@ -470,7 +470,7 @@ func (o *orchestrator) checkForChanges(
 
 	// Log changes
 	if diff.Summary.HasChanges() {
-		o.logger.Debug("configuration changes detected",
+		o.logger.Debug("Configuration changes detected",
 			"total_operations", diff.Summary.TotalOperations(),
 			"creates", diff.Summary.TotalCreates,
 			"updates", diff.Summary.TotalUpdates,
@@ -478,7 +478,7 @@ func (o *orchestrator) checkForChanges(
 	}
 
 	if hasAuxChanges {
-		o.logger.Debug("auxiliary file changes detected",
+		o.logger.Debug("Auxiliary file changes detected",
 			"general_files", auxDiffs.fileDiff != nil && auxDiffs.fileDiff.HasChanges(),
 			"ssl_certs", auxDiffs.sslDiff != nil && auxDiffs.sslDiff.HasChanges(),
 			"ssl_ca_files", auxDiffs.caFileDiff != nil && auxDiffs.caFileDiff.HasChanges(),

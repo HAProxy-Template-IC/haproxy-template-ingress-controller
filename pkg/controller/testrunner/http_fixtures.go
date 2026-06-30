@@ -85,7 +85,7 @@ func (w *FixtureHTTPStoreWrapper) Fetch(args ...any) (any, error) {
 		return nil, fmt.Errorf("http.Fetch: no fixture defined for URL: %s (add an httpResources fixture for this URL)", url)
 	}
 
-	w.logger.Debug("returning fixture content",
+	w.logger.Debug("Returning fixture content",
 		"url", url,
 		"size", len(content))
 
@@ -117,7 +117,7 @@ func CreateHTTPStoreFromFixtures(fixtures []config.HTTPResourceFixture, logger *
 
 	for _, fixture := range fixtures {
 		store.LoadFixture(fixture.URL, fixture.Content)
-		logger.Debug("loaded HTTP fixture",
+		logger.Debug("Loaded HTTP fixture",
 			"url", fixture.URL,
 			"size", len(fixture.Content))
 	}

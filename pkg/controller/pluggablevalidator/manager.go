@@ -291,7 +291,7 @@ func sortDiagnostics(diags []Diagnostic) {
 func (m *Manager) validateOne(ctx context.Context, client *Client, validatorName string, file File) *Response {
 	key := NewCacheKey(validatorName, file.Path, []byte(file.Content))
 	if cached, hit := m.cache.Get(key); hit {
-		m.logger.Debug("cache hit",
+		m.logger.Debug("Cache hit",
 			slog.String("validator", validatorName),
 			slog.String("path", file.Path))
 		return cached
@@ -316,7 +316,7 @@ func (m *Manager) validateOne(ctx context.Context, client *Client, validatorName
 	// failures (synthetic ProtocolError responses) so a transient
 	// sidecar outage doesn't poison subsequent admissions.
 	if resp.IsSynthetic() {
-		m.logger.Debug("transport failure (not cached)",
+		m.logger.Debug("Transport failure (not cached)",
 			slog.String("validator", validatorName),
 			slog.String("path", file.Path))
 		return resp

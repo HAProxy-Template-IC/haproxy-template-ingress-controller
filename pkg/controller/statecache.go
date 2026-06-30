@@ -172,7 +172,7 @@ func (sc *StateCache) HandleEvent(event busevents.Event) {
 func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 	cfg, ok := e.Config.(*coreconfig.Config)
 	if !ok {
-		sc.Logger().Error("type assertion failed for ConfigValidatedEvent config",
+		sc.Logger().Error("Type assertion failed for ConfigValidatedEvent config",
 			"expected", "*coreconfig.Config",
 			"got", fmt.Sprintf("%T", e.Config))
 		return
@@ -200,7 +200,7 @@ func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 func (sc *StateCache) handleCredentialsUpdated(e *events.CredentialsUpdatedEvent) {
 	creds, ok := e.Credentials.(*coreconfig.Credentials)
 	if !ok {
-		sc.Logger().Error("type assertion failed for CredentialsUpdatedEvent credentials",
+		sc.Logger().Error("Type assertion failed for CredentialsUpdatedEvent credentials",
 			"expected", "*coreconfig.Credentials",
 			"got", fmt.Sprintf("%T", e.Credentials))
 		return

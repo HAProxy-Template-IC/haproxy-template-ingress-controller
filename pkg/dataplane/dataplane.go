@@ -42,7 +42,7 @@
 //	// Create client once, reuse for multiple operations
 //	client, err := dataplane.NewClient(context.Background(), endpoint)
 //	if err != nil {
-//	    slog.Error("failed to create client", "error", err)
+//	    slog.Error("Failed to create client", "error", err)
 //	    os.Exit(1)
 //	}
 //	defer client.Close()
@@ -62,7 +62,7 @@
 //
 //	result, err := client.Sync(ctx, desiredConfig, nil, nil)
 //	if err != nil {
-//	    slog.Error("sync failed", "error", err)
+//	    slog.Error("Sync failed", "error", err)
 //	    os.Exit(1)
 //	}
 //

@@ -48,7 +48,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 	// Defensive check: atomically set deploymentInProgress from false to true
 	// This prevents concurrent deployments if scheduler has bugs
 	if !c.deploymentInProgress.CompareAndSwap(false, true) {
-		c.Logger().Error("dropping duplicate DeploymentScheduledEvent - deployment already in progress",
+		c.Logger().Error("Dropping duplicate DeploymentScheduledEvent - deployment already in progress",
 			"reason", event.Reason,
 			"endpoint_count", len(event.Endpoints),
 			"correlation_id", correlationID)
@@ -116,7 +116,7 @@ func (c *Component) deployToEndpoints(
 	startTime := time.Now()
 
 	if len(endpoints) == 0 {
-		c.Logger().Error("no valid endpoints to deploy to")
+		c.Logger().Error("No valid endpoints to deploy to")
 		// Publish completion event so downstream components know deployment didn't happen.
 		// Forward the status patches anyway so the StatusApplier can still write the
 		// "deployed" variant if appropriate (the zero-endpoint guard in StatusApplier
@@ -290,7 +290,7 @@ func (c *Component) handleEndpointFailure(
 	correlationID string,
 	state *deploymentState,
 ) {
-	c.Logger().Error("deployment failed for endpoint",
+	c.Logger().Error("Deployment failed for endpoint",
 		"endpoint", ep.URL,
 		"pod", ep.PodName,
 		"error", err,
@@ -491,7 +491,7 @@ func (c *Component) deployToSingleEndpoint(
 		c.versionCache.set(endpoint.URL, result.PostSyncVersion, cachedParsed, contentChecksum)
 	}
 
-	c.Logger().Debug("sync completed for endpoint",
+	c.Logger().Debug("Sync completed for endpoint",
 		"endpoint", endpoint.URL,
 		"pod", endpoint.PodName,
 		"applied_operations", len(result.AppliedOperations),

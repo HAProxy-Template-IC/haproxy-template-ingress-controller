@@ -120,7 +120,7 @@ func (c *Component) Name() string {
 func (c *Component) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
-	c.logger.Debug("http store starting",
+	c.logger.Debug("HTTP store starting",
 		"eviction_interval", c.evictionInterval)
 
 	// Create eviction ticker if eviction is enabled
@@ -275,7 +275,7 @@ func (c *Component) RegisterURL(url string) {
 		return
 	}
 
-	c.logger.Debug("registering URL for periodic refresh",
+	c.logger.Debug("Registering URL for periodic refresh",
 		"url", url,
 		"delay", delay.String())
 

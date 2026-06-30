@@ -68,7 +68,7 @@ func validateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *Valid
 	haproxyCheckMs = time.Since(haproxyCheckStart).Milliseconds()
 
 	// Log semantic validation timing breakdown
-	slog.Debug("semantic validation timing breakdown",
+	slog.Debug("Semantic validation timing breakdown",
 		"clear_dirs_ms", clearMs,
 		"write_aux_ms", writeAuxMs,
 		"write_config_ms", writeConfigMs,
@@ -313,7 +313,7 @@ func interpretHAProxyExitError(output []byte, exitErr error, configContent strin
 		return fmt.Errorf("haproxy exited with error but produced no output: %w", exitErr)
 	}
 	if !hasFailureLines(string(output)) {
-		slog.Warn("haproxy emitted advisory output (no [ALERT]) — treating validation as success",
+		slog.Warn("HAProxy emitted advisory output (no [ALERT]) — treating validation as success",
 			"output", trimmedOutput)
 		return nil
 	}

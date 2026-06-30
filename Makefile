@@ -36,6 +36,7 @@ KIND_CLUSTER ?= haptic-dev  # Kind cluster name for local testing
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
 VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
+SOURCE_HASH := $(shell ./scripts/source-hash.sh 2>/dev/null || echo "unknown")
 CHART_VERSION := $(shell grep '^version:' charts/haptic/Chart.yaml 2>/dev/null | awk '{print $$2}' || echo "dev")
 
 # Coverage packages (excludes generated code)
@@ -559,7 +560,7 @@ build: ## Build the controller binary for local development (with PGO if profile
 	@mkdir -p bin
 	$(GO) build \
 		-pgo=auto \
-		-ldflags="-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		-ldflags="-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) -X main.sourceHash=$(SOURCE_HASH)" \
 		-o bin/haptic-controller \
 		./cmd/controller
 
@@ -571,7 +572,7 @@ build-for-docker: ## Build binary in platform-structured path for Docker builds 
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build \
 		-trimpath \
 		-buildvcs=false \
-		-ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT)" \
+		-ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.sourceHash=$(SOURCE_HASH)" \
 		-o dist/linux/amd64/haptic-controller \
 		./cmd/controller
 	@echo "✓ Binary built: dist/linux/amd64/haptic-controller"

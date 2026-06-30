@@ -338,7 +338,7 @@ func (c *Component) handleBecameLeader(_ context.Context) {
 	// Clear checksum cache — the previous leader may have applied different checksums.
 	c.checksumCache = make(map[string]string)
 	c.mu.Unlock()
-	c.Logger().Info("became leader, clearing status checksum cache")
+	c.Logger().Info("Became leader, clearing status checksum cache")
 }
 
 // leaderRLocked returns the current leader flag under a read lock.
@@ -354,7 +354,7 @@ func (c *Component) handleLostLeadership() {
 	defer c.mu.Unlock()
 
 	if c.isLeader {
-		c.Logger().Info("lost leadership, pausing status patch application")
+		c.Logger().Info("Lost leadership, pausing status patch application")
 	}
 
 	c.isLeader = false
@@ -376,7 +376,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 
 		gvr, err := c.gvrResolver.Resolve(patch.APIVersion, patch.Kind)
 		if err != nil {
-			c.Logger().Error("failed to resolve GVR for status patch",
+			c.Logger().Error("Failed to resolve GVR for status patch",
 				"api_version", patch.APIVersion,
 				"kind", patch.Kind,
 				"error", err)
@@ -393,7 +393,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 		// Compute checksum of the status payload.
 		payloadBytes, err := json.Marshal(statusPayload)
 		if err != nil {
-			c.Logger().Error("failed to marshal status payload",
+			c.Logger().Error("Failed to marshal status payload",
 				"namespace", patch.Namespace,
 				"name", patch.Name,
 				"error", err)
@@ -440,7 +440,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 
 		ssaBytes, err := json.Marshal(ssaPayload)
 		if err != nil {
-			c.Logger().Error("failed to marshal SSA payload",
+			c.Logger().Error("Failed to marshal SSA payload",
 				"namespace", patch.Namespace,
 				"name", patch.Name,
 				"error", err)
@@ -460,7 +460,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 			statusKey,
 		)
 		if err != nil {
-			c.Logger().Error("failed to apply status patch",
+			c.Logger().Error("Failed to apply status patch",
 				"namespace", patch.Namespace,
 				"name", patch.Name,
 				"gvr", gvrStr,
@@ -484,7 +484,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	durationMs := time.Since(startTime).Milliseconds()
 
 	if applied > 0 || skipped > 0 {
-		c.Logger().Debug("status patches applied",
+		c.Logger().Debug("Status patches applied",
 			"phase", phaseKey,
 			"applied", applied,
 			"skipped", skipped,

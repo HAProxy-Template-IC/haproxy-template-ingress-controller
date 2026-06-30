@@ -147,7 +147,7 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	c.MarkReady()
 
-	c.logger.Debug("reconciliation coordinator starting")
+	c.logger.Debug("Reconciliation coordinator starting")
 
 	for {
 		select {

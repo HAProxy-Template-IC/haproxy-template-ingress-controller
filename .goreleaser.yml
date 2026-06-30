@@ -18,6 +18,9 @@ builds:
     binary: haptic-controller
     env:
       - CGO_ENABLED=0
+      # Source hash for dev/snapshot/release parity; defaults to "unknown" when CI
+      # doesn't export SOURCE_HASH (e.g. local `goreleaser build`).
+      - SOURCE_HASH={{ if index .Env "SOURCE_HASH" }}{{ .Env.SOURCE_HASH }}{{ else }}unknown{{ end }}
     # Reproducible build flags
     flags:
       - -trimpath
@@ -36,6 +39,7 @@ builds:
       - -X main.version={{.Version}}
       - -X main.commit={{.Commit}}
       - -X main.date={{.CommitDate}}
+      - -X main.sourceHash={{ .Env.SOURCE_HASH }}
     # Use commit timestamp for reproducibility
     mod_timestamp: "{{ .CommitTimestamp }}"
 

@@ -96,7 +96,7 @@ func (r *Registry) prepareComponentsToStart(isLeader bool) []*registeredComponen
 func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent) error {
 	name := comp.component.Name()
 
-	r.logger.Debug("starting component", "name", name)
+	r.logger.Debug("Starting component", "name", name)
 
 	// Set status to Running before calling Start()
 	r.updateStatus(name, StatusRunning, nil)
@@ -124,7 +124,7 @@ func (r *Registry) startComponent(ctx context.Context, comp *registeredComponent
 			// Wait for component to signal subscription complete
 			select {
 			case <-readyCh:
-				r.logger.Debug("component subscription ready", "name", name)
+				r.logger.Debug("Component subscription ready", "name", name)
 			case <-ctx.Done():
 				return ctx.Err()
 			}

@@ -56,7 +56,7 @@ func (c *Component) createOverlay(namespace, name string, object any, operation,
 	if !ok {
 		// If not a runtime.Object, return empty overlay
 		// This shouldn't happen for K8s resources but handles edge cases
-		c.logger.Warn("object is not runtime.Object",
+		c.logger.Warn("Object is not runtime.Object",
 			"request_id", requestID,
 			"type", fmt.Sprintf("%T", object))
 		return stores.NewStoreOverlay()
@@ -68,7 +68,7 @@ func (c *Component) createOverlay(namespace, name string, object any, operation,
 	case operationUpdate:
 		return stores.NewStoreOverlayForUpdate(obj)
 	default:
-		c.logger.Warn("unknown operation type",
+		c.logger.Warn("Unknown operation type",
 			"request_id", requestID,
 			"operation", operation)
 		return stores.NewStoreOverlay()
