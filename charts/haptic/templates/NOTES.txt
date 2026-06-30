@@ -79,7 +79,7 @@ If you don't intend to use Gateway API on this cluster, silence this notice by s
 
 If you DO want Gateway API support, install the CRDs and re-run `helm upgrade`:
 
-  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
 {{- end }}
 
 {{- with .Values.networkPolicy }}

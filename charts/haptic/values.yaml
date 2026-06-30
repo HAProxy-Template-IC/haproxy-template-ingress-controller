@@ -623,7 +623,7 @@ ingressClass:
 # Creates a GatewayClass resource for Gateway API
 # Only created when gateway library is enabled and Gateway API CRDs are installed
 # Prerequisites: Gateway API CRDs must be installed first:
-#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
 gatewayClass:
   # Enable GatewayClass creation
   enabled: true
