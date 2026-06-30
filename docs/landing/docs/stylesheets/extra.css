@@ -476,6 +476,14 @@
 .feat {
   position: relative;
   overflow: hidden;                 /* clip the hover top-rule to the rounded corners */
+  display: grid;
+  grid-template-columns: auto 1fr;  /* icon + title share a row; description spans below */
+  grid-template-areas:
+    "icon title"
+    "desc desc";
+  align-items: center;
+  column-gap: 0.85rem;
+  row-gap: 0.7rem;
   padding: 1.2rem 1.2rem 1.25rem;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -502,12 +510,12 @@
   box-shadow: 0 18px 38px -20px rgba(0, 0, 0, 0.75);
 }
 .feat-ico {
+  grid-area: icon;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 44px;
   height: 44px;
-  margin-bottom: 0.8rem;
   border-radius: 10px;
   background: var(--accent-soft);
   border: 1px solid var(--border-strong);
@@ -516,13 +524,15 @@
 [data-md-color-scheme="slate"] .feat-ico { color: var(--accent-2); }
 .feat-ico svg { width: 22px; height: 22px; }
 .landing .feat h3 {
-  margin: 0 0 0.35rem;
+  grid-area: title;
+  margin: 0;
   font-size: 0.98rem;
   font-weight: 700;
   font-family: var(--mono);
   color: var(--fg);
 }
 .landing .feat p {
+  grid-area: desc;
   margin: 0;
   font-size: 0.82rem;
   color: var(--muted);

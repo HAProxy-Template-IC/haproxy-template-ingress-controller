@@ -5,11 +5,10 @@ stages:
   - integration
   - deploy
 
-# Triggers the documented zero-jobs-MR workaround. This MR (!1179) is
-# docs-only (landing-page redesign + controller-docs nav fix); its diff
-# matches scripts/** and **/*.yaml/**/*.md in `.rules-code`, yet the MR
-# pipeline still came back empty — same shape as the !980/!995 gap.
-# Touching .gitlab-ci.yml gives the pipeline runnable jobs.
+# Triggers the documented zero-jobs-MR workaround. This MR (!1183) is
+# docs-only (landing-page CSS/HTML polish); its diff matches only `docs/**`,
+# which doesn't fire `.rules-docs` reliably — same shape as the !980/!995
+# gap. Touching .gitlab-ci.yml gives the pipeline runnable jobs.
 
 # Prevent duplicate pipelines for MR and branch pushes
 workflow:

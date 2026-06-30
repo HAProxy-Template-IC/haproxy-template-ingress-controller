@@ -88,8 +88,8 @@
             <div class="out-name"><span class="out-dot"></span>haproxy.cfg</div>
             <pre class="code out">backend <span class="t-fn">echo</span>
   <span class="t-kw">balance</span> <span class="t-str">roundrobin</span>
-  <span class="t-kw">server</span> ep-0 <span class="t-num">10.42.0.7:8080</span> check
-  <span class="t-kw">server</span> ep-1 <span class="t-num">10.42.0.9:8080</span> check</pre>
+  <span class="t-kw">server</span> SRV_1 <span class="t-num">10.42.0.7:8080</span> check
+  <span class="t-kw">server</span> SRV_2 <span class="t-num">10.42.0.9:8080</span> check</pre>
           </div>
         </div>
       </div>
@@ -143,8 +143,9 @@
           </svg>
         </span>
         <h3>Watch Any Resource</h3>
-        <p>Resource-agnostic by design: point HAPTIC at any Kubernetes kind —
-           even a CRD you defined — with no per-resource controller code.</p>
+        <p>HAPTIC watches any Kubernetes resource — a built-in kind or a CRD of
+           your own. No resource type is baked into the controller; your
+           templates decide what to read.</p>
       </article>
 
       <article class="feat">
