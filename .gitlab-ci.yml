@@ -76,8 +76,11 @@ variables:
   rules:
     - changes:
         - "**/*.go"
-        - go.mod
-        - go.sum
+        # **/ so nested module bumps (e.g. tools/linters/*/go.mod from
+        # renovate) match too — a bare `go.mod` only matches repo-root and
+        # produces a zero-jobs MR pipeline otherwise.
+        - "**/go.mod"
+        - "**/go.sum"
         - .tool-versions
         - Makefile
         - Dockerfile
