@@ -248,16 +248,26 @@ templateSnippets:
         {%- keys = append(keys, k) %}
       {%- end %}
       {%- var sortedKeys = sort_strings(keys) %}
+      {%- var seenPod = map[string]bool{} %}
       {%- var lines = []any{} %}
       {%- for _, key := range sortedKeys %}
-        {#- Allocator key shape: `<gwNs>/<gwName>:<lName>:<port>`.
-            The listener port is the last colon-delimited field. -#}
+        {#- Identity map: `<podPort> <podPort>`. A request landing on a
+            per-Gateway bind (dst_port = the unique pod port) keeps
+            listener_port = pod port, so the host.map / path-map keys —
+            which this refactor scopes by the SAME per-Gateway pod port
+            (util-gateway-port-scope) — resolve to that Gateway only. A
+            no-hostname listener on one Gateway can no longer catch
+            another Gateway's hosts via the shared `:<listenerPort>`
+            fallback (the GatewayHTTPListenerIsolation leak). Pinned /
+            chart-static binds have no allocation, so their dst_port
+            misses this map and falls through to base's default
+            (`listener_port = dst_port = listenerPort`) — correct, since
+            their keys stay listener-port-scoped. -#}
         {%- var keyStr = tostring(key) %}
-        {%- var parts = split(keyStr, ":") %}
-        {%- if len(parts) >= 2 %}
-          {%- var listenerPort = parts[len(parts) - 1] %}
-          {%- var podPort = tostring(allocations[keyStr]) %}
-          {%- lines = append(lines, podPort + " " + listenerPort) %}
+        {%- var podPort = tostring(allocations[keyStr]) %}
+        {%- if !seenPod[podPort] %}
+          {%- seenPod[podPort] = true %}
+          {%- lines = append(lines, podPort + " " + podPort) %}
         {%- end %}
       {%- end %}
       {#- The DataPlane API rejects empty file uploads with 422
@@ -292,3 +302,68 @@ templateSnippets:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
+
+  # Representative pod port per (Gateway, port): the pod port of the FIRST
+  # allocated listener on that Gateway+port — the one phase-3's Service
+  # DNATs to and phase-4 binds. Host/path map keys are scoped by this so
+  # every listener sharing a Gateway+port lands on the same bind and is
+  # disambiguated by Host, and so a no-hostname listener's catch-all is
+  # scoped to its own Gateway (GatewayHTTPListenerIsolation).
+  util-gateway-port-scope:
+    template: |
+      {{ render "util-gateway-pod-port-allocator" -}}
+      {%- var _, _ = shared.ComputeIfAbsent("gatewayPortScope", func() any {
+        var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any)
+        var scope = map[string]any{}
+        for _, gw := range resources.gateways.List() {
+          var gwNs = gw.Metadata.Namespace
+          var gwName = gw.Metadata.Name
+          var seenPort = map[int]bool{}
+          for _, listener := range gw.Spec.Listeners {
+            var lName = listener.Name
+            var lPort = toint(listener.Port)
+            if lName == "" || lPort <= 0 || seenPort[lPort] {
+              continue
+            }
+            seenPort[lPort] = true
+            var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
+            if val, ok := allocations[allocKey]; ok {
+              scope[gwNs + "/" + gwName + ":" + tostring(lPort)] = toint(val)
+            }
+          }
+        }
+        return scope
+      }) %}
+
+  # Port-scope SUFFIX for a Gateway listener's host/path map keys.
+  #   * catch-all listener (empty hostname): ALWAYS `:<podPort>` — this is
+  #     what closes the no-hostname cross-Gateway leak (base's `:port`
+  #     fallback then resolves to THIS Gateway's pod port only).
+  #   * hostname'd listener on a NON-default port: `:<podPort>` — base's
+  #     `host:port` cascade step carries the port, scoped per Gateway.
+  #   * hostname'd listener on the protocol's DEFAULT port (HTTP:80 /
+  #     HTTPS:443 / TLS:443): "" (bare host) — base's wildcard/host
+  #     cascade steps don't carry a port, so suffixing would break
+  #     wildcard matching; cross-Gateway same-hostname collisions on a
+  #     default port stay possible but are not what the isolation tests
+  #     exercise.
+  # Falls back to the listener port when the Gateway has no allocation
+  # (pinned / chart-static), keeping those keys listener-port-scoped.
+  util-gateway-port-scope-for:
+    template: |
+      {%- macro PortScopeSuffix(gwNs string, gwName string, port int, proto string, hostname string) string %}
+        {{ render "util-gateway-port-scope" -}}
+        {%%
+          var scope = shared.Get("gatewayPortScope").(map[string]any)
+          var scopePort = port
+          if val, ok := scope[gwNs + "/" + gwName + ":" + tostring(port)]; ok {
+            scopePort = toint(val)
+          }
+          var isNonDefault = (proto == "HTTP" && port != 80) || ((proto == "HTTPS" || proto == "TLS") && port != 443)
+          var suffix = ""
+          if hostname == "" || isNonDefault {
+            suffix = ":" + tostring(scopePort)
+          }
+        %%}
+        {{- suffix -}}
+      {%- end macro -%}
