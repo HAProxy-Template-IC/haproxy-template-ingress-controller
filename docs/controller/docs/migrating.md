@@ -9,31 +9,20 @@ How to move an existing cluster from **ingress-nginx** or **haproxy-ingress** to
 HAPTIC with zero downtime — run both controllers side by side, cut over one
 Ingress at a time, and flip DNS only when you're ready.
 
-!!! danger "Three things that silently break a migration"
-    Each of these fails *quietly* — routing looks installed but doesn't behave as
-    before. Read these before anything else:
+HAPTIC is built to coexist with your current controller: it ships a distinct
+IngressClass (`haptic`, **not** cluster-default) and its own HAProxy Service, so
+it adopts *only* the Ingresses you explicitly point at it. Nothing you have today
+moves until you move it, and every step is a `kubectl patch` away from rollback.
 
-    1. **HAPTIC ignores your existing Ingresses by default.** It only serves
-       Ingresses whose `spec.ingressClassName` equals `ingressClass.name`
-       (default **`haptic`**). Your `ingressClassName: nginx` Ingresses are
-       filtered out *at the watch level* and never routed. → [Match the class](#1-match-the-ingressclass)
-    2. **ingress-nginx annotations are off by default.** The
-       `nginx.ingress.kubernetes.io/*` compatibility library is **disabled**, so
-       every such annotation (timeouts, auth, CORS, rate-limits, redirects) is a
-       silent no-op until you enable it. → [Enable the library](#2-enable-the-annotation-library)
-    3. **Ingress status writes are on by default.** HAPTIC writes
-       `.status.loadBalancer` on every Ingress it adopts, which `external-dns`
-       can act on — repointing DNS to HAPTIC *before you've verified it*. → [Control the cutover](#3-control-the-dns-cutover)
+Work through the cutover below in order. If something doesn't route as expected,
+the [Troubleshooting](#troubleshooting) section at the end covers the handful of
+defaults that most often trip up a migration.
 
 ## Before you start
 
-- HAPTIC is installed and its HAProxy pods are running (see [Getting Started](getting-started.md)).
 - Your incumbent controller (ingress-nginx / haproxy-ingress) is still running and serving traffic. **Leave it running** until cutover is complete.
+- You have Helm and cluster access. Step 1 below installs HAPTIC with the migration-specific flags. If HAPTIC is *already* installed, that's fine — it adopts nothing until you point Ingresses at its class; just apply the same flags with `helm upgrade` instead.
 - You can edit Ingress manifests (to change `ingressClassName`) or you accept renaming HAPTIC's class to match — see below.
-
-HAPTIC is designed to coexist: it ships a distinct IngressClass (`haptic`,
-**not** marked cluster-default) and its own HAProxy Service, so it adopts
-*only* the Ingresses you explicitly point at it.
 
 ## The cutover, step by step
 
@@ -44,6 +33,15 @@ HAPTIC is designed to coexist: it ships a distinct IngressClass (`haptic`,
     ```bash
     helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
       --namespace haptic --create-namespace \
+      --set haproxy.service.type=LoadBalancer \
+      --set controller.statusPatches.enabled=false   # no DNS writes yet
+    ```
+
+    If HAPTIC is already installed, apply the same flags with `helm upgrade`:
+
+    ```bash
+    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      --namespace haptic --reuse-values \
       --set haproxy.service.type=LoadBalancer \
       --set controller.statusPatches.enabled=false   # no DNS writes yet
     ```
@@ -195,6 +193,32 @@ reference:
     - `auth-method: POST|PUT|PATCH` forwards an **empty** body to the auth service.
 
 ---
+
+## Troubleshooting
+
+Three defaults cause most "it's installed but doesn't behave like before"
+reports. Each fails quietly, so check them first.
+
+- **Existing Ingresses aren't being routed.** HAPTIC only serves Ingresses whose
+  `spec.ingressClassName` equals `ingressClass.name` (default **`haptic`**), and
+  the filter is applied *at the watch level* — an `ingressClassName: nginx`
+  Ingress is never even seen. Fix: [match the IngressClass](#1-match-the-ingressclass).
+
+- **Annotations seem to be ignored.** The `nginx.ingress.kubernetes.io/*`
+  compatibility library is **disabled by default**, so those annotations
+  (timeouts, auth, CORS, rate-limits, redirects) are silent no-ops until you turn
+  it on. Fix: [enable the annotation library](#2-enable-the-annotation-library).
+  (The `haproxy-ingress.github.io/*` and `haproxy.org/*` libraries are on by
+  default.)
+
+- **DNS cut over before you were ready.** Ingress status writes are **on by
+  default**: as soon as HAPTIC's HAProxy Service has an address it stamps
+  `.status.loadBalancer` onto every adopted Ingress, and `external-dns` can act
+  on that to repoint DNS. Keep it off until you've verified routing. Fix:
+  [control the DNS cutover](#3-control-the-dns-cutover).
+
+See also [Troubleshooting](troubleshooting.md) for general "my Ingress isn't
+being served" diagnostics.
 
 ## See also
 
