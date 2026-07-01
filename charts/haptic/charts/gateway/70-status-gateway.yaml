@@ -413,6 +413,17 @@ templateSnippets:
             var gwAcceptedStatus = "True"
             var gwAcceptedReason = "Accepted"
             var gwAcceptedMessage = "Gateway accepted"
+            // spec.infrastructure.parametersRef: HAPTIC implements no
+            // implementation-specific infrastructure parameters, so ANY
+            // parametersRef references an unsupported resource →
+            // Accepted=False/InvalidParameters (GatewayInvalidParametersRef).
+            // The address checks below may further refine to
+            // UnsupportedAddress/AddressNotUsable if spec.addresses is also bad.
+            if dig(gateway, "spec", "infrastructure", "parametersRef") != nil {
+              gwAcceptedStatus = "False"
+              gwAcceptedReason = "InvalidParameters"
+              gwAcceptedMessage = "spec.infrastructure.parametersRef references an unsupported resource"
+            }
             var gwEffectiveAddresses []any = gatewayAddresses
             var hasUnsupportedAddrType = false
             var hasUnusableAddr = false
