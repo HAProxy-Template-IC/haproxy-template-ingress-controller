@@ -666,11 +666,11 @@ validationTests:
         pattern: 'http-request redirect location "%\[var\(txn\.gw_request_scheme\)\]://example\.org%\[var\(txn\.gw_redir_port_part\)\]%\[path\]" code 302'
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(\) if .* \{ var\(txn\.listener_port\) -m int \d+ \} !\{ ssl_fc \}'
+        pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(\) if .* \{ var\(txn\.gw_listener_port\) -m int \d+ \} !\{ ssl_fc \}'
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(:\),concat\(,txn\.listener_port,\) if .* !\{ var\(txn\.gw_redir_port_part\) -m found \}'
+        pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(:\),concat\(,txn\.gw_listener_port,\) if .* !\{ var\(txn\.gw_redir_port_part\) -m found \}'
 
       - type: contains
         target: haproxy.cfg

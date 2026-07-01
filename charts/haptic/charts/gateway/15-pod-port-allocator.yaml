@@ -363,6 +363,67 @@ templateSnippets:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
+      {#- txn.gw_listener_port = the USER-FACING Gateway listener port (e.g. 80 /
+          443) the client connected to, resolved from the pod dst_port via
+          pod-gw-listener-port.map. Consumed by the RequestRedirect filter's
+          port-omit rule. Set here UNCONDITIONALLY (not in the redirect filter
+          snippet) so the map_int converter is present in the startup config and
+          HAProxy loads the map file — a converter that only appears once a
+          redirect route exists is added at runtime by the DataPlane API without
+          the map ever being loaded, so the lookup silently misses and the pod
+          port leaks into Location. map_int (not map): the key is the integer
+          dst_port. Chart-static binds miss the map and fall back to dst_port,
+          which already IS the listener port there. -#}
+      http-request set-var(txn.gw_listener_port) var(txn.dst_port),map_int({{ mapPath("pod-gw-listener-port.map") }}) if { var(txn.dst_port),map_int({{ mapPath("pod-gw-listener-port.map") }}) -m found }
+      http-request set-var(txn.gw_listener_port) var(txn.dst_port) if !{ var(txn.gw_listener_port) -m found }
+
+  # Pod-port → USER-FACING Gateway listener port map. Distinct from
+  # `pod-listener-port.map` (which is an identity `<podPort> <podPort>` map so
+  # host.map / path-map keys stay scoped by the per-Gateway pod port for
+  # GatewayHTTPListenerIsolation). Some sites need the *real* listener port a
+  # client connected to (e.g. 80 / 443), NOT the internal pod port — the
+  # RequestRedirect filter must decide whether to include the port in the
+  # Location header per the Gateway API well-known-port omit rule, which is
+  # defined against the user-facing listener port. `txn.listener_port` can't
+  # serve that (it equals the pod port on the per-Gateway path), so this map
+  # translates dst_port (pod port) → the actual Gateway listener port. Chart-
+  # static binds have no allocation, miss this map, and callers fall back to
+  # dst_port (which already IS the listener port there).
+  #
+  # Schema: `<podPort> <listenerPort>` per line, deduped by podPort. The
+  # allocation key is `<gwNs>/<gwName>:<listenerName>:<listenerPort>`, so the
+  # listener port is the last `:`-separated field.
+  features-171-pod-gateway-listener-port-map:
+    template: |
+      {{ render "util-gateway-pod-port-allocator" -}}
+      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
+      {%- var keys = []any{} %}
+      {%- for k := range allocations %}
+        {%- keys = append(keys, k) %}
+      {%- end %}
+      {%- var sortedKeys = sort_strings(keys) %}
+      {%- var seenPod = map[string]bool{} %}
+      {%- var lines = []any{} %}
+      {%- for _, key := range sortedKeys %}
+        {%- var keyStr = tostring(key) %}
+        {%- var podPort = tostring(allocations[keyStr]) %}
+        {%- if !seenPod[podPort] %}
+          {%- seenPod[podPort] = true %}
+          {%- var parts = split(keyStr, ":") %}
+          {%- var listenerPort = tostring(parts[len(parts)-1]) %}
+          {%- lines = append(lines, podPort + " " + listenerPort) %}
+        {%- end %}
+      {%- end %}
+      {%- var content = "" %}
+      {%- if len(lines) > 0 %}
+        {%- content = (lines | toStringSlice() | join("\n")) + "\n" %}
+      {%- else %}
+        {%- content = "# no per-Gateway pod-port allocations\n" %}
+      {%- end %}
+      {%- var _, regErr = fileRegistry.Register("map", "pod-gw-listener-port.map", content) %}
+      {%- if regErr != nil %}
+        {{ fail("failed to register pod-gw-listener-port.map: " + tostring(regErr)) }}
+      {%- end %}
 
   # Representative pod port per (Gateway, port): the pod port of the FIRST
   # allocated listener on that Gateway+port — the one phase-3's Service
