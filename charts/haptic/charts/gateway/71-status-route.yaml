@@ -965,3 +965,246 @@ templateSnippets:
           {%- end -%}
         {%- end -%}
       {% end %}
+
+  util-generate-tcproute-status-patches:
+    template: |
+      {#-
+        Generate TCPRoute Status Patches
+
+        L4 raw-TCP routing. Mirrors the TLSRoute generator but simpler:
+        TCPRoute has NO hostnames (no SNI) and no TLS mode, so there is no
+        hostname-intersection step and no Passthrough/Terminate
+        ProtocolConflict guard. Attaches only to `protocol: TCP` listeners.
+
+        Conditions emitted per parentRef:
+          - Accepted: True/Accepted | False/{NoMatchingParent,
+                       NotAllowedByListeners}
+          - ResolvedRefs: True/ResolvedRefs | False/{InvalidKind,
+                       RefNotPermitted, BackendNotFound}
+
+        Status is emitted on the DEPLOYED variant only (same rationale as
+        TLSRoute) so a conformance dial sees a routable backend before
+        Accepted=True appears. TCPRoute is v1 (v1alpha2 retired).
+      -#}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {%- import "util-resource-helpers" for GatewayKey, ListenerProtocolOr -%}
+      {% macro GenerateTCPRouteStatusPatches(routes []*resources.tcproutes.T) %}
+        {%- var controllerName = extraContext | dig_string("", "controllerName") %}
+        {%- var apiVersion = "gateway.networking.k8s.io/v1" %}
+        {%- var kind = "TCPRoute" %}
+
+        {%- var ourGateways = map[string]bool{} %}
+        {%- for _, gw := range resources.gateways.List() %}
+          {%%
+            var gwKey = GatewayKey(gw.Metadata.Namespace, gw.Metadata.Name)
+            ourGateways[gwKey] = true
+          %%}
+        {%- end %}
+
+        {%- for _, route := range routes %}
+          {%%
+            var nsStr = route.Metadata.Namespace
+            var nameStr = route.Metadata.Name
+            var generation = route.Metadata.Generation
+
+            // ResolvedRefs — fail-fast on first invalid backendRef.
+            // Precedence: InvalidKind > RefNotPermitted > BackendNotFound.
+            var allRefsResolved = true
+            var refFailReason = ""
+            var refFailMsg = ""
+            for _, backendRef := range route.Spec.Rules[*].BackendRefs {
+              var svcName = backendRef.Name
+              var svcNamespace = backendRef.Namespace
+              if svcNamespace == "" { svcNamespace = nsStr }
+              var group = backendRef.Group
+              var refKind = backendRef.Kind
+              if refKind == "" { refKind = "Service" }
+              if !((group == "" || group == "core") && refKind == "Service") {
+                allRefsResolved = false
+                refFailReason = "InvalidKind"
+                refFailMsg = "Unsupported backend kind " + group + "/" + refKind
+                break
+              }
+              if svcNamespace != nsStr {
+                if ReferenceGrantPermitted(
+                  "gateway.networking.k8s.io", kind, nsStr,
+                  "", "Service", svcNamespace, svcName) != "true" {
+                  allRefsResolved = false
+                  refFailReason = "RefNotPermitted"
+                  refFailMsg = "Cross-namespace backend ref " + svcNamespace + "/" + svcName + " requires a matching ReferenceGrant"
+                  break
+                }
+              }
+              var svc = resources.services.GetSingle(svcNamespace, svcName)
+              if svc == nil {
+                allRefsResolved = false
+                refFailReason = "BackendNotFound"
+                refFailMsg = "Backend not found: " + svcNamespace + "/" + svcName
+                break
+              }
+            }
+
+            var parents = []any{}
+            var parentIdx = 0
+            for _, parentRef := range route.Spec.ParentRefs {
+              var gwGroup = parentRef.Group
+              if gwGroup == "" { gwGroup = "gateway.networking.k8s.io" }
+              var gwKind = parentRef.Kind
+              if gwKind == "" { gwKind = "Gateway" }
+              var gwNamespace = parentRef.Namespace
+              if gwNamespace == "" { gwNamespace = nsStr }
+              var gwName = parentRef.Name
+
+              if gwGroup == "gateway.networking.k8s.io" && gwKind == "Gateway" {
+                var gwKey = gwNamespace + "/" + gwName
+                if ourGateways[gwKey] {
+                  var parentRefStatus = map[string]any{
+                    "group": "gateway.networking.k8s.io",
+                    "kind":  "Gateway",
+                    "name":  gwName,
+                  }
+                  if dig(parentRef, "namespace") != nil {
+                    parentRefStatus["namespace"] = gwNamespace
+                  }
+                  var sectionNameStr = ""
+                  if dig(parentRef, "sectionName") != nil {
+                    sectionNameStr = parentRef.SectionName
+                    parentRefStatus["sectionName"] = sectionNameStr
+                  }
+                  var parentPort = toint(parentRef.Port)
+                  var gw = resources.gateways.GetSingle(gwNamespace, gwName)
+
+                  var acceptedStatus = "False"
+                  var acceptedReason = "NotAllowedByListeners"
+                  var acceptedMsg = "No listener accepts this route"
+                  var sawSectionMatch = false
+                  var sawPortMatch = false
+                  if gw != nil {
+                    for _, listener := range gw.Spec.Listeners {
+                      var listenerName = listener.Name
+                      if sectionNameStr != "" && listenerName != sectionNameStr {
+                        continue
+                      }
+                      if sectionNameStr != "" {
+                        sawSectionMatch = true
+                      }
+                      var listenerPort = toint(listener.Port)
+                      if parentPort != 0 && listenerPort != parentPort {
+                        continue
+                      }
+                      if parentPort != 0 {
+                        sawPortMatch = true
+                      }
+                      // Protocol filter: TCPRoute only attaches to TCP listeners.
+                      var listenerProto = ListenerProtocolOr(listener, "HTTP")
+                      if listenerProto != "TCP" {
+                        continue
+                      }
+                      // allowedRoutes.kinds intersection (absent → permit all).
+                      var kindOk = true
+                      if dig(listener, "allowedRoutes", "kinds") != nil {
+                        kindOk = false
+                        for _, ak := range listener.AllowedRoutes.Kinds {
+                          var akGroup = ak.Group
+                          if akGroup == "" { akGroup = "gateway.networking.k8s.io" }
+                          if akGroup == "gateway.networking.k8s.io" && ak.Kind == kind {
+                            kindOk = true
+                            break
+                          }
+                        }
+                      }
+                      var nsOk = false
+                      var fromMode = listener.AllowedRoutes.Namespaces.From
+                      if fromMode == "" { fromMode = "Same" }
+                      switch fromMode {
+                      case "Same":
+                        nsOk = nsStr == gwNamespace
+                      case "All":
+                        nsOk = true
+                      case "Selector":
+                        var selectorMap = listener.AllowedRoutes.Namespaces.Selector.MatchLabels
+                        if len(selectorMap) > 0 {
+                          var nsObj = resources.namespaces.GetSingle(nsStr)
+                          if nsObj != nil {
+                            var allMatch = true
+                            for k, v := range selectorMap {
+                              var actual, ok = nsObj.Metadata.Labels[k]
+                              if !ok || actual != v {
+                                allMatch = false
+                                break
+                              }
+                            }
+                            nsOk = allMatch
+                          }
+                        }
+                      }
+                      if !kindOk || !nsOk {
+                        continue
+                      }
+                      acceptedStatus = "True"
+                      acceptedReason = "Accepted"
+                      acceptedMsg = "Route accepted"
+                      break
+                    }
+                  }
+                  if acceptedStatus == "False" {
+                    if sectionNameStr != "" && !sawSectionMatch {
+                      acceptedReason = "NoMatchingParent"
+                      acceptedMsg = "Section " + sectionNameStr + " not found on parent gateway"
+                    } else if parentPort != 0 && !sawPortMatch {
+                      acceptedReason = "NoMatchingParent"
+                      acceptedMsg = "No listener with port " + tostring(parentPort) + " on parent gateway"
+                    }
+                  }
+
+                  var resolvedStatus = "True"
+                  var resolvedReason = "ResolvedRefs"
+                  var resolvedMsg = "All backend references resolved"
+                  if !allRefsResolved {
+                    resolvedStatus = "False"
+                    resolvedReason = refFailReason
+                    resolvedMsg = refFailMsg
+                  }
+
+                  parents = append(parents, map[string]any{
+                    "parentRef":      parentRefStatus,
+                    "controllerName": controllerName,
+                    "conditions": []any{
+                      condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
+                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                      condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
+                        generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                    },
+                  })
+                }
+              }
+              parentIdx = parentIdx + 1
+            }
+
+            if len(parents) > 0 {
+              statusPatch(nsStr, nameStr, apiVersion, kind,
+                map[string]interface{}{
+                  "deployed": map[string]interface{}{
+                    "parents": parents,
+                  },
+                })
+            }
+          %%}
+        {%- end %}
+      {% end %}
+
+  util-sharded-tcproute-status-patches:
+    template: |
+      {%- import "util-generate-tcproute-status-patches" for GenerateTCPRouteStatusPatches -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {% macro ShardedTCPRouteStatusPatches(routes []*resources.tcproutes.T) %}
+        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+        {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateTCPRouteStatusPatches(routes) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateTCPRouteStatusPatches(shard_slice(routes, i, n)) }}
+          {%- end -%}
+        {%- end -%}
+      {% end %}

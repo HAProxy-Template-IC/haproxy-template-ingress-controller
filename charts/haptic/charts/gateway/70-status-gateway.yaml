@@ -1462,6 +1462,7 @@ templateSnippets:
       {%- import "util-sharded-gateway-status-patches" for ShardedGatewayStatusPatches -%}
       {%- import "util-sharded-route-status-patches" for ShardedHTTPRouteStatusPatches, ShardedGRPCRouteStatusPatches -%}
       {%- import "util-sharded-tlsroute-status-patches" for ShardedTLSRouteStatusPatches -%}
+      {%- import "util-sharded-tcproute-status-patches" for ShardedTCPRouteStatusPatches -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- if gf["addresses"] != nil %}
         {%- var allGateways = resources.gateways.List() -%}
@@ -1487,6 +1488,10 @@ templateSnippets:
       {%- var allTLSRoutes = resources.tlsroutes.List() -%}
       {%- if len(allTLSRoutes) > 0 -%}
         {{- ShardedTLSRouteStatusPatches(allTLSRoutes) -}}
+      {%- end -%}
+      {%- var allTCPRoutes = resources.tcproutes.List() -%}
+      {%- if len(allTCPRoutes) > 0 -%}
+        {{- ShardedTCPRouteStatusPatches(allTCPRoutes) -}}
       {%- end -%}
 
   status-patches-220-listenerset:
