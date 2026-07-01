@@ -855,7 +855,22 @@ templateSnippets:
               var listenerAcceptedStatus = "True"
               var listenerAcceptedReason = "Accepted"
               var listenerAcceptedMessage = "Listener accepted"
-              if protocol == "HTTPS" && resolvedRefsStatus == "True" {
+              // Supported-protocol gate (Gateway API core): the chart routes
+              // HTTP, HTTPS, TLS and TCP listeners. Any other protocol (UDP,
+              // or a bogus value like INVALID) makes the listener
+              // Accepted=False with reason UnsupportedProtocol, and the
+              // listener contributes no bind (the allocator / bind snippets
+              // already ignore non-HTTP/HTTPS/TLS/TCP). A Gateway whose
+              // listeners are ALL unsupported ends up with zero accepted
+              // listeners and is not Accepted (handled by the gateway-level
+              // aggregation); a mix keeps the Gateway Accepted with only the
+              // unsupported listener rejected (GatewayListenerUnsupportedProtocol).
+              if protocol != "HTTP" && protocol != "HTTPS" && protocol != "TLS" && protocol != "TCP" {
+                listenerAcceptedStatus = "False"
+                listenerAcceptedReason = "UnsupportedProtocol"
+                listenerAcceptedMessage = "Protocol " + protocol + " is not supported"
+              }
+              if listenerAcceptedStatus == "True" && protocol == "HTTPS" && resolvedRefsStatus == "True" {
                 var listenerPort = toint(listener.Port)
                 var feValidation any = nil
                 // dig() outer presence check distinguishes "TLS frontend
@@ -1102,6 +1117,27 @@ templateSnippets:
                 gwResolvedRefsReason = tostring(ldm["resolvedRefsReason"])
                 gwResolvedRefsMessage = "Listener " + tostring(ldm["name"]) + ": " + tostring(ldm["resolvedRefsMessage"])
                 break
+              }
+            }
+            // A Gateway with listeners but NONE accepted (e.g. every listener
+            // uses an unsupported protocol) is itself Accepted=False. One or
+            // more accepted listeners keeps it Accepted (GatewayListenerUnsupported
+            // Protocol: the all-unsupported Gateway is not accepted; the mixed
+            // HTTP+unsupported Gateway stays accepted with only the bad listener
+            // rejected). Only override the default Accepted=True — never revive a
+            // Gateway already False for another reason (e.g. UnsupportedAddress).
+            if gwAcceptedStatus == "True" && len(listenerData) > 0 {
+              var anyListenerAccepted = false
+              for _, ld := range listenerData {
+                if tostring(ld.(map[string]any)["acceptedStatus"]) == "True" {
+                  anyListenerAccepted = true
+                  break
+                }
+              }
+              if !anyListenerAccepted {
+                gwAcceptedStatus = "False"
+                gwAcceptedReason = "ListenersNotValid"
+                gwAcceptedMessage = "No listeners are accepted"
               }
             }
             // Validate spec.tls.backend.clientCertificateRef when set.
