@@ -277,15 +277,29 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// assigning them post-construction works (and reads the same).
 	opts.GatewayClassName = gatewayClassName
 	opts.Debug = debug
-	// CleanupBaseResources=false leaves the conformance suite's
-	// fixtures (HTTPRoutes, GRPCRoutes, backend Deployments,
-	// reference Gateways…) in place after the suite exits, so
-	// the after_script captures haproxy.cfg / kubectl get pods /
-	// kubectl get httproutes.yaml with the *failing* route still
-	// applied. With cleanup=true those artifacts are empty by the
-	// time after_script runs, making any failure undiagnosable
-	// from CI alone. The kind cluster is per-shard ephemeral so
-	// leftover fixtures cost nothing.
+	// Two DISTINCT cleanup knobs — v1.6.0 split them and they must be set
+	// differently:
+	//
+	//   CleanupTestResources (per-TEST routes, deleted at each subtest's
+	//   end) MUST be true. It gates the per-test t.Cleanup that deletes a
+	//   test's HTTPRoutes/GRPCRoutes/etc. between tests. Left false (the Go
+	//   zero value — v1.6.0 moved this from a hardcoded `true` to this new
+	//   ConformanceOptions field, so an unset field silently disables it),
+	//   every test's routes stay applied to the SHARED `same-namespace`
+	//   Gateway for the whole run. They then co-reside: one test's no-hostname
+	//   catch-all route (e.g. backend-protocol-h2c) serves another test's
+	//   non-matching paths (exact-matching `/Two` → 200 instead of 404),
+	//   failing ~all HTTP/GRPC routing tests even though each passes in
+	//   isolation. This is test-isolation, not a data-plane bug.
+	//
+	//   CleanupBaseResources (shared Gateways/backends, deleted at SUITE end)
+	//   stays false so the after_script can inspect the base topology after a
+	//   shard exits. Per-test route diagnosis does NOT depend on this: the
+	//   snapshotting RoundTripper above captures haproxy.cfg + the HAProxyCfg
+	//   CRD at the exact moment each request fails, before that test's
+	//   t.Cleanup runs. The kind cluster is per-shard ephemeral so the
+	//   leftover base fixtures cost nothing.
+	opts.CleanupTestResources = true
 	opts.CleanupBaseResources = false
 	opts.SupportedFeatures = supported.UnsortedList()
 	opts.TimeoutConfig = timeoutCfg
