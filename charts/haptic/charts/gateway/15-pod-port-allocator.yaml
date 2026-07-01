@@ -41,7 +41,6 @@ templateSnippets:
 
   util-gateway-pod-port-allocator:
     template: |
-      {%- import "util-bounded-k8s-name" for BoundedK8sName %}
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol %}
       {#- Initialise the per-Gateway-listener pod-port allocation map.
           Idempotent — multiple snippets render this; only the first
@@ -88,7 +87,6 @@ templateSnippets:
             don't shift when a new alphabetically-earlier Gateway
             arrives. -#}
         var basePort = toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000))
-        var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
         var allTuples = []any{}
         for _, gw := range resources.gateways.List() {
           var gwNs = gw.Metadata.Namespace
@@ -118,73 +116,53 @@ templateSnippets:
           }
         }
 
-        {#- Iterate tuples in SORTED-key order so pass-1 collision
-            resolution is deterministic across renders (and across the
-            parallel map renderers that each recompute this). Watch lag
-            means a freshly-created per-Gateway Service may not be visible
-            yet when a sibling Gateway renders, so two Gateways can end up
-            reusing the SAME targetPort from their (stale) Services. Guard
-            the reuse with `!usedPorts[tp]`: the first sorted tuple keeps
-            the port, any colliding sibling drops to pass 2 and gets a
-            fresh one. Without this, two Gateways share a pod port, their
-            host/path map keys collide in the shared maps, and cross-
-            Gateway isolation breaks (GatewayHTTPListenerIsolation). -#}
-        var allKeys = []any{}
-        var keyToTuple = map[string]any{}
+        {#- Allocate ONE pod port per (Gateway, PORT) — every listener
+            sharing a Gateway+port shares the single bind and is
+            host-disambiguated downstream. Then expand to the
+            per-(Gateway,listener) keys consumers look up.
+
+            PURELY DETERMINISTIC from the Gateway set alone: sort the
+            distinct (Gateway, port) keys and assign basePort + index. No
+            read-back of existing Services. This is REQUIRED for
+            correctness, not just simplicity: the per-Gateway Service
+            (k8sResources render) and the HAProxy bind (haproxyConfig
+            render) are SEPARATE render passes; if the allocation depended
+            on the currently-deployed Services (which those very passes
+            mutate) the two passes could compute different pod ports — the
+            Service would DNAT to a port nothing binds, 404-ing every
+            request. A pure function of the Gateway spec guarantees Service
+            targetPort == bind port in every pass.
+
+            Trade-off: adding/removing a Gateway shifts the ordinals of
+            later (Gateway, port) keys, so their pod ports churn. That's
+            fine — the shift is applied atomically across Service, bind and
+            host/path maps in one render, kube-proxy re-DNATs, and HAProxy
+            reloads are hitless. Collision-free by construction (distinct
+            index per key). -#}
+        var portKeys = []any{}
+        var portKeySeen = map[string]bool{}
         for _, tAny := range allTuples {
-          var k = tostring(tAny.(map[string]any)["key"])
-          allKeys = append(allKeys, k)
-          keyToTuple[k] = tAny
+          var t = tAny.(map[string]any)
+          var pk = tostring(t["gwNs"]) + "/" + tostring(t["gwName"]) + ":" + tostring(toint(t["lPort"]))
+          if !portKeySeen[pk] {
+            portKeySeen[pk] = true
+            portKeys = append(portKeys, pk)
+          }
         }
-        var sortedAllKeys = sort_strings(allKeys)
+        var sortedPortKeys = sort_strings(portKeys)
 
+        var portPod = map[string]any{}
+        for i, pkAny := range sortedPortKeys {
+          portPod[tostring(pkAny)] = basePort + i
+        }
+
+        {#- Expand to per-(Gateway,listener) keys, all pointing at their
+            (Gateway,port) pod port. -#}
         var result = map[string]any{}
-        var usedPorts = map[int]bool{}
-        var newTuples = []any{}
-        for _, kAny := range sortedAllKeys {
-          var t = keyToTuple[tostring(kAny)].(map[string]any)
-          var found = false
-          if ctrlNs != "" {
-            var svcName = BoundedK8sName("gw", tostring(t["gwNs"]), tostring(t["gwName"]), "")
-            var svc = resources.services.GetSingle(ctrlNs, svcName)
-            if svc != nil {
-              var lPort = toint(t["lPort"])
-              for _, sp := range svc.Spec.Ports {
-                if toint(sp.Port) == lPort {
-                  var tp = toint(sp.TargetPort)
-                  if tp >= basePort && !usedPorts[tp] {
-                    result[tostring(t["key"])] = tp
-                    usedPorts[tp] = true
-                    found = true
-                    break
-                  }
-                }
-              }
-            }
-          }
-          if !found {
-            newTuples = append(newTuples, t)
-          }
-        }
-
-        var newKeys = []any{}
-        for _, tAny := range newTuples {
-          newKeys = append(newKeys, tostring(tAny.(map[string]any)["key"]))
-        }
-        var sortedNewKeys = sort_strings(newKeys)
-        var newKeyToTuple = map[string]any{}
-        for _, tAny := range newTuples {
-          newKeyToTuple[tostring(tAny.(map[string]any)["key"])] = tAny
-        }
-
-        var nextPort = basePort
-        for _, keyAny := range sortedNewKeys {
-          for usedPorts[nextPort] {
-            nextPort++
-          }
-          result[tostring(keyAny)] = nextPort
-          usedPorts[nextPort] = true
-          nextPort++
+        for _, tAny := range allTuples {
+          var t = tAny.(map[string]any)
+          var pk = tostring(t["gwNs"]) + "/" + tostring(t["gwName"]) + ":" + tostring(toint(t["lPort"]))
+          result[tostring(t["key"])] = portPod[pk]
         }
         return result
       }) %}

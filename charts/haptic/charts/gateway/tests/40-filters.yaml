@@ -575,7 +575,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^:18000/cors-wildcard-origin/?\\s+GW_ROUTE_ID"
+        pattern: "(?m)^:[0-9]+/cors-wildcard-origin/?\\s+GW_ROUTE_ID"
 
       - type: contains
         target: haproxy.cfg

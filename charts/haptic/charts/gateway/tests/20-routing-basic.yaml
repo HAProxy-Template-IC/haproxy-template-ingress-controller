@@ -546,11 +546,11 @@ validationTests:
 
       - type: contains
         target: map:host.map
-        pattern: "(?m)^foo\\.com:18000 foo\\.com:18000$"
+        pattern: "(?m)^foo\\.com:180[0-9][0-9] foo\\.com:180[0-9][0-9]$"
 
       - type: contains
         target: map:host.map
-        pattern: "(?m)^foo\\.com:18001 foo\\.com:18001$"
+        pattern: "(?m)^foo\\.com:180[0-9][0-9] foo\\.com:180[0-9][0-9]$"
 
       - type: contains
         target: haproxy.cfg

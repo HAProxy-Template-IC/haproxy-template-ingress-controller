@@ -86,31 +86,27 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      # Both HTTP and HTTPS listeners get a per-Gateway pod-port
-      # allocation (they each get a per-Gateway bind for listener
-      # isolation); only TLS listeners are excluded. gw-alpha sorts
-      # BEFORE gw-zulu alphabetically. Within gw-alpha, `http:80` <
-      # `https:443` because the `http` key ends at `:` (0x3A) while
-      # `https` continues with `s` (0x73). Among gw-zulu's two HTTPS
-      # listeners, `https-alt` < `https` because `-` (0x2D) < `:`
-      # (0x3A). Sorted keys:
-      #   1. default/gw-alpha:http:80
-      #   2. default/gw-alpha:https:443
-      #   3. default/gw-zulu:https-alt:8443
-      #   4. default/gw-zulu:https:443
-      # → ports 18000, 18001, 18002, 18003.
+      # One pod port is allocated per (Gateway, PORT) — HTTP and HTTPS
+      # listeners both get a per-Gateway bind for listener isolation;
+      # only TLS listeners are excluded. The distinct (Gateway, port)
+      # keys are sorted, then assigned basePort + index. Keys here (the
+      # per-listener key maps to its (Gateway, port) pod port):
+      #   default/gw-alpha:443  → 18000  (port "443" < "80": '4' < '8')
+      #   default/gw-alpha:80    → 18001
+      #   default/gw-zulu:443   → 18002
+      #   default/gw-zulu:8443  → 18003
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+# gw-pod-port: default/gw-alpha:http:80 = 18000$'
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-alpha:https:443 = 18000$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+# gw-pod-port: default/gw-alpha:https:443 = 18001$'
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-alpha:http:80 = 18001$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https-alt:8443 = 18002$'
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https:443 = 18002$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https:443 = 18003$'
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https-alt:8443 = 18003$'
 
       # TLS-Passthrough listeners are still excluded — they flow through
       # the chart-static `frontend ssl-tcp`, not a per-Gateway bind.
