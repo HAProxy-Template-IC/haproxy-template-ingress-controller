@@ -138,4 +138,4 @@ To move from one major.minor to another (e.g. 3.2 → 3.3):
 3. Clear any `haproxy.image.tag` override, or update it to a patch in the new series
 4. Run `helm upgrade`
 
-The controller and HAProxy pods will restart with the new images.
+The controller and HAProxy pods restart with the new images.

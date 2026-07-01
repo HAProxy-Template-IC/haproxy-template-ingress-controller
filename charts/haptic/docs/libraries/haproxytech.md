@@ -1363,7 +1363,7 @@ timeout server 30s
 
 **Status**: ❌ Not Implemented
 
-**Description**: Maximum inactivity time on the client side. The haproxytech library does not emit a per-backend `timeout client` (it would have no effect anyway — `timeout client` only applies in frontend/defaults sections).
+**Description**: Maximum inactivity time on the client side. The haproxytech library does not emit a per-backend `timeout client` (it would have no effect — `timeout client` only applies in frontend/defaults sections).
 
 **Workaround**: Set the global `timeout client` via the `defaults-settings-300-timeouts` snippet override. See [Base Library](base.md#injecting-custom-configuration).
 

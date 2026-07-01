@@ -108,7 +108,7 @@ kubectl apply -f echo-app.yaml
 
 ## Step 3: Create an Ingress Resource
 
-Create an Ingress resource that the controller will process:
+Create an Ingress resource that the controller processes:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -137,7 +137,7 @@ Save as `echo-ingress.yaml` and apply:
 kubectl apply -f echo-ingress.yaml
 ```
 
-The controller will automatically detect this new Ingress, render the HAProxy configuration, validate it, and deploy it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
+The controller automatically detects this new Ingress, renders the HAProxy configuration, validates it, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
 
 ## Step 4: Verify the Configuration
 

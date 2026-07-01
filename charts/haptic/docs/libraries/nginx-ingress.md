@@ -177,7 +177,7 @@ http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } 
 | `GRPCS` | `ssl verify none proto h2` |
 
 !!! warning "Unsupported Protocols"
-    `AJP` and `FCGI` are not supported by HAProxy and will fail with an error.
+    `AJP` and `FCGI` are not supported by HAProxy and fail with an error.
 
 **Usage**:
 
@@ -242,7 +242,7 @@ annotations:
 | `$http_xxxx` | `req.hdr(xxxx)` (underscores replaced with hyphens) |
 | `$arg_XXXX` | `url_param(XXXX)` |
 
-Values not starting with `$` are passed through as-is (assumed to be HAProxy fetch expressions). Unrecognized `$variables` will fail with an error.
+Values not starting with `$` are passed through as-is (assumed to be HAProxy fetch expressions). Unrecognized `$variables` fail with an error.
 
 **Usage**:
 
