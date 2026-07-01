@@ -118,11 +118,31 @@ templateSnippets:
           }
         }
 
+        {#- Iterate tuples in SORTED-key order so pass-1 collision
+            resolution is deterministic across renders (and across the
+            parallel map renderers that each recompute this). Watch lag
+            means a freshly-created per-Gateway Service may not be visible
+            yet when a sibling Gateway renders, so two Gateways can end up
+            reusing the SAME targetPort from their (stale) Services. Guard
+            the reuse with `!usedPorts[tp]`: the first sorted tuple keeps
+            the port, any colliding sibling drops to pass 2 and gets a
+            fresh one. Without this, two Gateways share a pod port, their
+            host/path map keys collide in the shared maps, and cross-
+            Gateway isolation breaks (GatewayHTTPListenerIsolation). -#}
+        var allKeys = []any{}
+        var keyToTuple = map[string]any{}
+        for _, tAny := range allTuples {
+          var k = tostring(tAny.(map[string]any)["key"])
+          allKeys = append(allKeys, k)
+          keyToTuple[k] = tAny
+        }
+        var sortedAllKeys = sort_strings(allKeys)
+
         var result = map[string]any{}
         var usedPorts = map[int]bool{}
         var newTuples = []any{}
-        for _, tAny := range allTuples {
-          var t = tAny.(map[string]any)
+        for _, kAny := range sortedAllKeys {
+          var t = keyToTuple[tostring(kAny)].(map[string]any)
           var found = false
           if ctrlNs != "" {
             var svcName = BoundedK8sName("gw", tostring(t["gwNs"]), tostring(t["gwName"]), "")
@@ -132,7 +152,7 @@ templateSnippets:
               for _, sp := range svc.Spec.Ports {
                 if toint(sp.Port) == lPort {
                   var tp = toint(sp.TargetPort)
-                  if tp >= basePort {
+                  if tp >= basePort && !usedPorts[tp] {
                     result[tostring(t["key"])] = tp
                     usedPorts[tp] = true
                     found = true
