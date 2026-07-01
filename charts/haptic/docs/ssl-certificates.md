@@ -96,7 +96,7 @@ controller:
     namespace: "certificates"
 ```
 
-The controller will reference the Secret at `certificates/my-wildcard-cert`.
+The controller references the Secret at `certificates/my-wildcard-cert`.
 
 ### TLS Secret Format
 
@@ -125,7 +125,7 @@ controller:
 ```
 
 !!! warning
-    This disables HTTPS support entirely. HAProxy will only serve HTTP traffic.
+    This disables HTTPS support entirely. HAProxy serves only HTTP traffic.
 
 ### Certificate Rotation
 
@@ -142,7 +142,7 @@ kubectl create secret tls default-ssl-cert \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-The controller watches the Secret and will automatically deploy the updated certificate to HAProxy.
+The controller watches the Secret and automatically deploys the updated certificate to HAProxy.
 
 ### SSL Troubleshooting
 

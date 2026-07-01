@@ -785,6 +785,57 @@ func (c *Component) Start(ctx context.Context) error {
 - Linting guidelines: `docs/controller/docs/development/linting.md`
 - Configuration reference: `docs/controller/docs/supported-configuration.md`
 
+## User Documentation Authoring
+
+Applies to **all** user-facing docs — controller (`docs/controller/docs/`), chart
+(`charts/haptic/docs/`), and landing (`docs/landing/`). The reader is often new to
+HAPTIC and takes every sentence literally.
+
+- **Examine prerequisites vs. procedure for contradictions.** Cross-check every
+  "Before you start" / "Prerequisites" item against the steps that follow. If a
+  step performs it, it's not a prerequisite (e.g. don't list "HAPTIC is installed"
+  when step 1 installs it).
+- **Don't state a restriction unless it's actually true.** Prohibitions ("don't
+  install it beforehand", "must be X", "only works with Y") must be technically
+  necessary, not just the path you happened to describe. Ask *what actually breaks
+  if the reader does the opposite?* If nothing breaks, describe the alternative
+  path instead of forbidding it.
+- **Everything must be copy-pastable.** Never tell the reader to hand-edit a
+  command ("swap `install` for `upgrade`", "drop the `--create-namespace` flag").
+  Give the complete runnable command for each case, even if two commands overlap.
+- **Don't assume the reader's state.** They may have already created Ingresses
+  with HAPTIC's class, installed HAPTIC, or set custom values. Don't write
+  sentences that only hold under an assumed state; branch explicitly ("if X, do A;
+  otherwise B") instead.
+- **Never add sentences that carry no value.** Every sentence must instruct, warn,
+  or inform. Cut reassurances and filler ("anyway", "as you'd expect", "simply") —
+  they don't help and can confuse readers who read them as load-bearing.
+
+### Distilled style rules (Google/Microsoft/Diátaxis)
+
+- **Second person, active voice, present tense.** "You configure the class" /
+  "The controller writes status" — not "the class is configured" or "will write".
+- **Don't mix doc types on one page** (Diátaxis). A how-to gives steps; a
+  reference lists facts; an explanation gives background. Keep them separate — a
+  tutorial that also explains theory serves no one.
+- **One action per step.** Numbered steps are imperative and single-purpose
+  ("Run X.", "Set Y."). Put results/notes in a separate sentence, not the step.
+- **Front-load.** Lead each section/paragraph with what it's about; put the most
+  important information first. Descriptive headings, sentence case.
+- **Descriptive link text** — link the thing ("[Getting Started](...)"), never
+  "click [here]" or a bare URL.
+- **Define an acronym on first use**, then reuse it. Don't assume jargon.
+- **Contractions are fine and preferred** (`isn't`, `don't`) for a warm, clear
+  tone — but stay consistent (don't mix `isn't` and "is not" for the same kind of
+  statement). Prefer negative contractions so readers don't miss a "not".
+- **Write for a global audience.** Short sentences, common words, no idioms/slang;
+  the serial (Oxford) comma; spell out ambiguous dates (2026-07-01, not 07/01).
+- **Show, then tell.** Prefer a runnable example over a paragraph describing it.
+
+Full guides: [Google](https://developers.google.com/style),
+[Microsoft](https://learn.microsoft.com/en-us/style-guide/welcome/),
+[Diátaxis](https://diataxis.fr/).
+
 ## Changelog Guidelines
 
 The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the controller software.

@@ -190,16 +190,20 @@ backend my-backend
 | Annotation | Status | Description |
 |------------|--------|-------------|
 | `limit-connections` | ✅ Supported | Backend `fullconn` limit |
-| `maxconn-server` | ❌ Not Implemented | Library reads the value but never emits `maxconn` to HAProxy today (use `haproxy.org/pod-maxconn` from the [haproxytech library](haproxytech.md) instead) |
-| `maxqueue-server` | ❌ Not Implemented | Library reads the value but never emits `maxqueue` to HAProxy today |
+| `maxconn-server` | ✅ Supported | Per-server `maxconn` on the `default-server` line |
+| `maxqueue-server` | ✅ Supported | Per-server `maxqueue` on the `default-server` line |
 
-`maxconn-server` and `maxqueue-server` populate `serverOpts["maxconnValue"]` / `serverOpts["maxqueueValue"]` in `backend-directives-620-haproxy-ingress-maxconn`, but no consumer reads those keys, so the annotations are silent no-ops.
+`maxconn-server` and `maxqueue-server` append `maxconn <n>` / `maxqueue <n>` to
+`serverOpts["flags"]` in `backend-directives-620-haproxy-ingress-maxconn`, which
+`BuildServerOptions` (base library) emits onto the `default-server` line.
 
-**Usage** (only `limit-connections` produces output today):
+**Usage**:
 
 ```yaml
 annotations:
   haproxy-ingress.github.io/limit-connections: "1000"
+  haproxy-ingress.github.io/maxconn-server: "50"
+  haproxy-ingress.github.io/maxqueue-server: "100"
 ```
 
 ---
@@ -211,18 +215,24 @@ annotations:
 | Annotation | Status | Description |
 |------------|--------|-------------|
 | `health-check-uri` | ✅ Supported | HTTP health check path — emitted as `option httpchk GET <uri>` |
-| `backend-check-interval` | ❌ Not Implemented | Library reads the value but never emits `inter` to HAProxy today |
-| `health-check-port` | ❌ Not Implemented | Library reads the value but never emits `port` on `default-server` today |
-| `health-check-fall-count` | ❌ Not Implemented | Library reads the value but never emits `fall` to HAProxy today |
-| `health-check-rise-count` | ❌ Not Implemented | Library reads the value but never emits `rise` to HAProxy today |
+| `backend-check-interval` | ✅ Supported | Emitted as `inter <value>` on the `default-server` line |
+| `health-check-port` | ✅ Supported | Emitted as `port <n>` on the `default-server` line |
+| `health-check-fall-count` | ✅ Supported | Emitted as `fall <n>` on the `default-server` line |
+| `health-check-rise-count` | ✅ Supported | Emitted as `rise <n>` on the `default-server` line |
 
-The `Not Implemented` rows are silent no-ops: `backend-directives-630-haproxy-ingress-health-checks` populates `serverOpts["checkIntervalValue"]` / `checkPortValue` / `fallCountValue` / `riseCountValue`, but no consumer reads those keys, so they don't influence the rendered config. Use the `haproxy.org/check-*` annotations from the [haproxytech library](haproxytech.md) when you need interval/fall/rise control.
+`backend-directives-630-haproxy-ingress-health-checks` appends `inter` / `port` /
+`fall` / `rise` to `serverOpts["flags"]`, which `BuildServerOptions` (base
+library) emits onto the `default-server` line.
 
-**Usage** (only `health-check-uri` produces output today):
+**Usage**:
 
 ```yaml
 annotations:
   haproxy-ingress.github.io/health-check-uri: "/healthz"
+  haproxy-ingress.github.io/backend-check-interval: "5s"
+  haproxy-ingress.github.io/health-check-port: "8082"
+  haproxy-ingress.github.io/health-check-fall-count: "3"
+  haproxy-ingress.github.io/health-check-rise-count: "2"
 ```
 
 **Generated HAProxy Configuration**:
@@ -230,11 +240,11 @@ annotations:
 ```haproxy
 backend my-backend
     option httpchk GET /healthz
-    default-server check
+    default-server check inter 5s port 8082 fall 3 rise 2
     server SRV_1 10.0.0.1:8080 enabled
 ```
 
-`check` lives on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload.
+`check` and its tuning (`inter`, `port`, `fall`, `rise`) live on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload.
 
 ---
 
@@ -296,11 +306,11 @@ server SRV_1 10.0.0.1:8443 ssl alpn h2 ca-file /path/to/ca.pem crt /path/to/clie
 
 ### haproxy-ingress.github.io/initial-weight
 
-**Status**: ❌ Not Implemented
+**Status**: ✅ Supported
 
-**Description**: Initial weight for backend servers (0-256). The library reads and validates the value (0-256 range), then writes it to `serverOpts["weightValue"]` in `backend-directives-660-haproxy-ingress-server-options`, but no consumer reads the key — so the annotation is a silent no-op today. Use `weight N` flags in the [haproxytech library's](haproxytech.md) backend-config-snippet for working server-weight control.
+**Description**: Initial weight for backend servers (0-256). The library reads and validates the value (0-256 range), then appends `weight <n>` to `serverOpts["flags"]` in `backend-directives-660-haproxy-ingress-server-options`, which `BuildServerOptions` (base library) emits onto the `default-server` line.
 
-**Usage** (no effect today):
+**Usage**:
 
 ```yaml
 annotations:

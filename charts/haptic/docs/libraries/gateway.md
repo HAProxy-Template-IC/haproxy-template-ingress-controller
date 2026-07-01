@@ -16,7 +16,7 @@ The Gateway API library implements the [Kubernetes Gateway API](https://gateway-
 This library is **enabled by default**.
 
 !!! warning "Gateway API CRDs Required"
-    The Gateway API library requires Gateway API CRDs to be installed in your cluster. Without them, the library will not be merged into the configuration.
+    The Gateway API library requires Gateway API CRDs to be installed in your cluster. Without them, the library is not merged into the configuration.
 
 ## Configuration
 
@@ -829,7 +829,7 @@ The `controllerName` in route status is set from `gatewayClass.controllerName` i
 
 ### Address Discovery
 
-Addresses are automatically discovered from the controller's LoadBalancer Service. If no address is assigned yet, Gateway addresses and Ingress status are not populated. Once an address becomes available, subsequent reconciliations will update all resource statuses.
+Addresses are automatically discovered from the controller's LoadBalancer Service. If no address is assigned yet, Gateway addresses and Ingress status are not populated. Once an address becomes available, subsequent reconciliations update all resource statuses.
 
 ### Phase-Aware Status
 
@@ -854,7 +854,7 @@ Status patches use outcome-keyed variants:
 
 ### Partially Covered Features
 
-- Cross-namespace **backend** references are implemented (`backendRef.namespace` honored, gated by `ReferenceGrant`) and exercised by the upstream Gateway API conformance suite — they simply aren't pinned by this library's own validationTests.
+- Cross-namespace **backend** references are implemented (`backendRef.namespace` honored, gated by `ReferenceGrant`) and exercised by the upstream Gateway API conformance suite — they aren't pinned by this library's own validationTests.
 - Cross-namespace **parent** Gateway references — not pinned by a validationTest.
 - Wildcard hostname patterns — regex host-map support exists; not pinned by a validationTest.
 - Listener-specific route attachment — `sectionName` drives `attachedRoutes` status counting, but per-listener routing isolation is not implemented.
