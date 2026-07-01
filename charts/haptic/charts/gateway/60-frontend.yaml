@@ -454,7 +454,13 @@ templateSnippets:
             }
           }
         %%}
-        {%- if len(backendRefs) > 0 %}
+        {#- NO `if len(backendRefs) > 0` guard here: a matched rule with ZERO
+            backendRefs (omitted or empty) must ALSO route to the 500 sink, not
+            fall through to 404. With no refs, validRefs below is empty, so the
+            len(validRefs)==0 branch emits BACKEND:gw-invalid-backend (HTTP 500) —
+            per the Gateway API rule that a matched rule with no usable backend
+            returns 500 (conformance HTTPRouteNoBackendRefs). -#}
+        {%- if true %}
           {#- Filter to backendRefs the chart can route to. Per Gateway API
               spec, a backendRef is "valid" only when:
                 - Group is "" or "core" (kept simple, the chart only
