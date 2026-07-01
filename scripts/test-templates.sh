@@ -146,6 +146,7 @@ if ! helm template "$CHART_DIR" \
     --api-versions=gateway.networking.k8s.io/v1/TCPRoute \
     $HAPROXY_VERSION_ARG \
     --set controller.templateLibraries.gateway.enabled=true \
+    --set controller.templateLibraries.gateway.experimentalChannel=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
     | yq 'select(.kind == "HAProxyTemplateConfig")' \

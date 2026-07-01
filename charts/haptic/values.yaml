@@ -106,6 +106,17 @@ controller:
     # for a leaner install.
     gateway:
       enabled: true
+      # Set true only when the Gateway API *Experimental* channel is installed
+      # (experimental-install.yaml). As of v1.6 the Standard and Experimental
+      # installs ship an IDENTICAL set of CRDs — the difference is field-level
+      # additions to HTTPRoute (retry / GEP-1731, sessionPersistence / GEP-1619),
+      # which Helm .Capabilities cannot detect (it sees GVKs, not fields). The
+      # validationTests that assert those directives can only pass when the
+      # fields exist, so they are skipped unless this flag opts in. The route
+      # snippets themselves emit the directives only when the typed field is
+      # present, so leaving this false on a Standard-channel cluster is safe —
+      # it just skips the experimental-field self-tests.
+      experimentalChannel: false
     # Shared Ingress-scoped macros for the vendor annotation libraries
     # below (level 2.5). See docs/adr/0003-annotation-compat-scaffold-level-2-5.md.
     ingressAnnotationsCompat:
