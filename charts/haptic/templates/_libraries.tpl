@@ -78,10 +78,13 @@ drive use this in their `_helm_skip_test` predicate — otherwise they fail (and
 with the fatal load gate, crash-loop the controller) on a standard-channel
 cluster where the snippets correctly emit nothing. Capabilities reflects the
 live cluster at install/upgrade; offline renders opt in via
-`--api-versions .../v1alpha2/TCPRoute` (CI and scripts/test-templates.sh do).
+`--api-versions .../v1/TCPRoute` (CI and scripts/test-templates.sh do).
+TCPRoute is the Experimental-channel marker at whatever version the cluster
+serves it: v1 on Gateway API v1.6+, v1alpha2 on older releases. Check both so
+the marker is correct across the whole supported version range.
 */}}
 {{- define "haptic.gatewayExperimental.disabled" -}}
-{{- if not (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1alpha2/TCPRoute") -}}true{{- end -}}
+{{- if not (or (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/TCPRoute") (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1alpha2/TCPRoute")) -}}true{{- end -}}
 {{- end -}}
 
 {{/*

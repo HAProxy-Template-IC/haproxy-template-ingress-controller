@@ -68,7 +68,7 @@ THRESHOLD = int(os.environ.get("CHART_RELEASE_SIZE_THRESHOLD", "950000"))
 # so it renders (worst case). Mirrors the api-versions set in `make lint-chart-ci`.
 API_VERSIONS = [
     "--api-versions=gateway.networking.k8s.io/v1/GatewayClass",
-    "--api-versions=gateway.networking.k8s.io/v1alpha2/TCPRoute",
+    "--api-versions=gateway.networking.k8s.io/v1/TCPRoute",
 ]
 # Top-level chart files Helm stores parsed (metadata / values / schema / lock),
 # NOT as raw entries in chart.files.

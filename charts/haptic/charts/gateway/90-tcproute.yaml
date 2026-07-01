@@ -306,7 +306,7 @@ validationTests:
                   kinds:
                     - kind: TCPRoute
       tcproutes:
-        - apiVersion: gateway.networking.k8s.io/v1alpha2
+        - apiVersion: gateway.networking.k8s.io/v1
           kind: TCPRoute
           metadata:
             name: tcp-app
@@ -391,7 +391,7 @@ validationTests:
                   kinds:
                     - kind: TCPRoute
       tcproutes:
-        - apiVersion: gateway.networking.k8s.io/v1alpha2
+        - apiVersion: gateway.networking.k8s.io/v1
           kind: TCPRoute
           metadata:
             name: tcp-app-mismatch
