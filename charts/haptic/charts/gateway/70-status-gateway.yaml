@@ -568,16 +568,20 @@ templateSnippets:
 
             // Per-Gateway LB IP read-back (phase 5 of the per-Gateway-IP
             // refactor). When the Gateway has NO spec.addresses but DOES
-            // have at least one HTTPS listener, phase 3 emitted a
+            // have at least one HTTP or HTTPS listener, phase 3 emitted a
             // per-Gateway LoadBalancer Service named
             // `gw-<gwNs>-<gwName>` in the controller namespace. Read its
             // realized LB IP back into status.addresses so clients
             // (including the conformance suite's RoundTripper) connect
             // to the per-Gateway IP — that's what makes the per-Gateway
-            // bind on the allocated pod port reachable.
+            // bind on the allocated pod port reachable. Without this the
+            // Gateway would report the shared chart-static LB IP, whose
+            // :80 bind isn't scoped to this Gateway's routes, so the
+            // pod-port-keyed host/path maps would 404 (over-isolation).
             //
             // Falls through silently when:
-            //   - No HTTPS listener (phase 3 didn't emit a Service)
+            //   - No HTTP/HTTPS listener (phase 3 didn't emit a Service —
+            //     e.g. TLS-only Gateways use the chart-static path)
             //   - Service hasn't been allocated an IP yet (MetalLB
             //     reconciliation lag — gwEffectiveAddresses stays at
             //     the chart's main LB IP from gatewayAddresses, which
@@ -585,14 +589,14 @@ templateSnippets:
             //   - ctrlNs / podSelector unset (chart-static deployment)
             var phase5CtrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
             if len(gwSpecAddrs) == 0 && phase5CtrlNs != "" {
-              var hasHTTPSListener = false
+              var hasIsolatedListener = false
               for _, listener := range gateway.Spec.Listeners {
-                if listener.Protocol == "HTTPS" {
-                  hasHTTPSListener = true
+                if listener.Protocol == "HTTPS" || listener.Protocol == "HTTP" {
+                  hasIsolatedListener = true
                   break
                 }
               }
-              if hasHTTPSListener {
+              if hasIsolatedListener {
                 // Per-Gateway IP path takes ownership of status.addresses
                 // here, REPLACING the chart-static fallback. Reset
                 // upfront so a not-yet-realized Service leaves

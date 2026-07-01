@@ -79,6 +79,23 @@ validationTests:
             loadBalancer:
               ingress:
                 - ip: "203.0.113.50"
+        # HTTP-only Gateways now also get a per-Gateway Service (they get a
+        # per-Gateway HTTP bind for listener isolation), so the status
+        # patcher reads THIS IP back — not the chart's main LB IP.
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: gw-default-gw-http-only
+            namespace: haptic-system
+            labels:
+              gateway.networking.k8s.io/gateway-name: gw-http-only
+              gateway.networking.k8s.io/gateway-namespace: default
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.51"
       secrets:
         - apiVersion: v1
           kind: Secret
@@ -99,7 +116,12 @@ validationTests:
       - type: not_contains
         target: 'status:default/gw-https-allocated:rendered'
         pattern: '"value":"10\.0\.0\.1"'
-      # gw-http-only: status.addresses keeps the chart's main LB IP.
+      # gw-http-only: now uses its OWN per-Gateway Service IP (HTTP
+      # listeners are isolated by per-Gateway bind, same as HTTPS), NOT
+      # the chart's main LB IP.
       - type: contains
+        target: 'status:default/gw-http-only:rendered'
+        pattern: '"value":"203\.0\.113\.51"'
+      - type: not_contains
         target: 'status:default/gw-http-only:rendered'
         pattern: '"value":"10\.0\.0\.1"'
