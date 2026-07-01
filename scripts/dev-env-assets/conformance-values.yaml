@@ -67,16 +67,6 @@ controller:
     # tight polling cadence.
     dataplane:
       driftPreventionInterval: 10m
-      # The chart default (5s) rate-limits STRUCTURAL reloads to prevent
-      # reload storms in production. The Gateway API conformance suite churns
-      # dozens of Gateways/Routes/Policies and asserts on Programmed status
-      # convergence (which lands only after the data-plane deploy) within a
-      # tight window; at 5s the deploy queue backs up and Programmed lags
-      # minutes behind, spuriously failing status/ObservedGeneration tests and
-      # cascading into setup-readiness timeouts. Lower it here so structural
-      # deploys converge quickly — same rationale as the acceptance suite's
-      # 100ms. This is a TEST-ENVIRONMENT knob; the product default stays 5s.
-      minDeploymentInterval: 250ms
 
     templatingSettings:
       extraContext:
