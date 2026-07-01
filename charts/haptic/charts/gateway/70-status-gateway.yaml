@@ -80,6 +80,7 @@ templateSnippets:
               "kind":  "HTTPRoute",
               "route": r,
               "needsTLSProtocol": false,
+              "needsTCPProtocol": false,
             })
           }
           for _, r := range resources.grpcroutes.List() {
@@ -87,6 +88,7 @@ templateSnippets:
               "kind":  "GRPCRoute",
               "route": r,
               "needsTLSProtocol": false,
+              "needsTCPProtocol": false,
             })
           }
           for _, r := range resources.tlsroutes.List() {
@@ -94,6 +96,21 @@ templateSnippets:
               "kind":  "TLSRoute",
               "route": r,
               "needsTLSProtocol": true,
+              "needsTCPProtocol": false,
+            })
+          }
+          // TCPRoute counts toward TCP listeners only (needsTCPProtocol gate
+          // below). Without this, a Gateway's TCP listener reported
+          // attachedRoutes=0 because the count only walked HTTP/GRPC/TLS routes
+          // (GatewayAPI TCPRouteMultipleRoutesAttachment expects the count to
+          // reflect attached TCPRoutes). resources.tcproutes is already
+          // referenced elsewhere in this file (ShardedTCPRouteStatusPatches).
+          for _, r := range resources.tcproutes.List() {
+            allRoutesForCount = append(allRoutesForCount, map[string]any{
+              "kind":  "TCPRoute",
+              "route": r,
+              "needsTLSProtocol": false,
+              "needsTCPProtocol": true,
             })
           }
 
@@ -102,6 +119,7 @@ templateSnippets:
             var routeKind = em["kind"].(string)
             var route = em["route"]
             var needsTLSProtocol = em["needsTLSProtocol"].(bool)
+            var needsTCPProtocol = em["needsTCPProtocol"].(bool)
             var routeNs = ResourceNamespace(route)
             var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
@@ -177,6 +195,12 @@ templateSnippets:
                 //       even without explicit allowedRoutes.kinds.
                 var listenerProtoCount = ListenerProtocolOr(listener, "HTTP")
                 if needsTLSProtocol && listenerProtoCount != "TLS" {
+                  continue
+                }
+                // TCPRoute counts only toward TCP listeners — a no-sectionName
+                // TCPRoute parented to a Gateway would otherwise be counted
+                // against every listener (HTTP/HTTPS/TLS) too.
+                if needsTCPProtocol && listenerProtoCount != "TCP" {
                   continue
                 }
 
