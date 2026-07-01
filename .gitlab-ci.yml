@@ -1775,11 +1775,22 @@ gateway-conformance-report:
     # environment, so the Makefile's `CONFORMANCE_CONTAINER ?=` picks it up AND
     # the docker cp/rm below reference the same value — no drift.
     CONFORMANCE_CONTAINER: haptic-conformance-run
+  # This job is `when: manual` with no `changes:` rule, so GitLab adds it to
+  # EVERY MR pipeline and validates its `needs:` DAG at creation time. On a
+  # docs-only diff the build jobs are rule-gated out (esp. build-spoa-image-
+  # snapshot via .rules-spoa), so a hard `needs:` would fail pipeline creation
+  # with "job does not exist". All needs are therefore `optional: true`: if a
+  # dep is present the report waits for it, if absent the job simply can't be
+  # triggered — which is fine, it's manual and allow_failure anyway.
   needs:
-    - compute-ci-image-tag
+    - job: compute-ci-image-tag
+      optional: true
     - job: build-ci
+      optional: true
     - job: build-snapshot
+      optional: true
     - job: build-spoa-image-snapshot
+      optional: true
   rules:
     # On-demand only: never auto-runs. Failure of the (optional) job must not
     # block the pipeline — the report artifact is still produced and uploaded.
