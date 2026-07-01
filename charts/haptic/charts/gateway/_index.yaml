@@ -69,6 +69,8 @@ _helm_load:
       when: *noTCPRoute
     - path: validationTests.test-tcproute-basic-l4-forward
       when: *noTCPRoute
+    - path: validationTests.test-tcproute-multi-listener-single-backend
+      when: *noTCPRoute
     - path: validationTests.test-tcproute-unattached-no-frontend
       when: *noTCPRoute
 
