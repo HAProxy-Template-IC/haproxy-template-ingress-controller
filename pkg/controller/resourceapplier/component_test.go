@@ -112,7 +112,7 @@ func setLeader(c *Component) {
 // these events directly (mirrors how the Coordinator publishes them in
 // production) — there is no side-channel cache to seed.
 func reconciliationCompletedEvent(resources []templating.RenderedResource) *events.ReconciliationCompletedEvent {
-	return events.NewReconciliationCompletedEvent(0, resources)
+	return events.NewReconciliationCompletedEvent(0, resources, nil)
 }
 
 func sampleResource(ns, name string, port int) templating.RenderedResource {

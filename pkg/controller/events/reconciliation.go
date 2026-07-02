@@ -114,6 +114,14 @@ type ReconciliationCompletedEvent struct {
 	// be nil when the render didn't emit any K8s resources.
 	RenderedResources []templating.RenderedResource
 
+	// StatusPatches are the chart-rendered status patches of this cycle.
+	// The ResourceApplier forwards them on ResourcesAppliedEvent after its
+	// apply pass so the StatusApplier writes the "rendered" variant only
+	// AFTER the same render's infrastructure resources exist (conditions
+	// must describe materialized state — conformance's GatewayInfrastructure
+	// lists labeled resources the moment Accepted turns True).
+	StatusPatches []templating.StatusPatch
+
 	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -134,17 +142,62 @@ type ReconciliationCompletedEvent struct {
 func NewReconciliationCompletedEvent(
 	durationMs int64,
 	renderedResources []templating.RenderedResource,
+	statusPatches []templating.StatusPatch,
 	opts ...CorrelationOption,
 ) *ReconciliationCompletedEvent {
 	return &ReconciliationCompletedEvent{
 		DurationMs:        durationMs,
 		RenderedResources: slices.Clone(renderedResources),
+		StatusPatches:     slices.Clone(statusPatches),
 		timestamped:       newTimestamped(),
 		Correlation:       newCorrelation(opts...),
 	}
 }
 
 func (e *ReconciliationCompletedEvent) EventType() string { return EventTypeReconciliationCompleted }
+
+// Coalescible implements busevents.CoalescibleEvent. A completed cycle is a
+// full-state notification — RenderedResources and StatusPatches are the
+// COMPLETE desired set of the render — so for consumers that declare it in
+// their CoalescesOn list only the newest of an uninterrupted run matters.
+func (e *ReconciliationCompletedEvent) Coalescible() bool { return true }
+
+// ResourcesAppliedEvent is published by the ResourceApplier after it finishes
+// applying a cycle's rendered resources (and pruning orphans). It forwards
+// the cycle's StatusPatches so the StatusApplier writes the "rendered"
+// status variant strictly AFTER the same render's infrastructure resources
+// exist. Without this ordering the two appliers race: Accepted=True could
+// land while e.g. the per-Gateway Service is still being created, and
+// consumers (including the Gateway API conformance GatewayInfrastructure
+// test) that list infrastructure the moment Accepted turns True find
+// nothing.
+type ResourcesAppliedEvent struct {
+	// StatusPatches forwarded from the ReconciliationCompletedEvent that
+	// triggered the apply pass.
+	StatusPatches []templating.StatusPatch
+
+	timestamped
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
+}
+
+// NewResourcesAppliedEvent creates a new ResourcesAppliedEvent. The patches
+// slice is NOT cloned: the publisher forwards the (already defensively
+// cloned) slice from the ReconciliationCompletedEvent it consumed.
+func NewResourcesAppliedEvent(statusPatches []templating.StatusPatch, opts ...CorrelationOption) *ResourcesAppliedEvent {
+	return &ResourcesAppliedEvent{
+		StatusPatches: statusPatches,
+		timestamped:   newTimestamped(),
+		Correlation:   newCorrelation(opts...),
+	}
+}
+
+func (e *ResourcesAppliedEvent) EventType() string { return EventTypeResourcesApplied }
+
+// Coalescible implements busevents.CoalescibleEvent — full-state semantics,
+// same rationale as ReconciliationCompletedEvent.Coalescible.
+func (e *ResourcesAppliedEvent) Coalescible() bool { return true }
 
 // ReconciliationFailedEvent is published when a reconciliation cycle fails.
 //

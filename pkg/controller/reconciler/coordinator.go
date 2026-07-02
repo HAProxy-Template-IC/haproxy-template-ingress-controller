@@ -289,6 +289,7 @@ func (c *Coordinator) handlePipelineSuccess(
 	c.eventBus.Publish(events.NewReconciliationCompletedEvent(
 		totalDuration,
 		result.RenderedResources,
+		result.StatusPatches,
 		events.PropagateCorrelation(triggerEvent),
 	))
 

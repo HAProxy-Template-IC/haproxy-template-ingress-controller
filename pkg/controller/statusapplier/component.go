@@ -26,9 +26,12 @@
 //
 // Event mapping:
 //
-//   - TemplateRenderedEvent: apply the "rendered" variant directly from
-//     event.StatusPatches. Marks the resource as in-progress (Accepted=Unknown /
-//     "rendering") well before HAProxy reload completes.
+//   - ResourcesAppliedEvent: apply the "rendered" variant directly from
+//     event.StatusPatches (forwarded by the ResourceApplier after the same
+//     render's resources were applied). Ordering matters: conditions like
+//     Accepted=True must not precede the infrastructure resources they
+//     describe, so the rendered variant rides the post-apply event rather
+//     than TemplateRenderedEvent.
 //   - DeploymentCompletedEvent: apply the "deployed" variant from
 //     event.StatusPatches. The Deployer forwards the patches from the
 //     DeploymentScheduledEvent that triggered the deploy, so the patches
@@ -50,8 +53,8 @@
 //
 // Leader transitions: the Reconciler triggers an immediate reconciliation on
 // BecameLeaderEvent (per pkg/controller/reconciler/CLAUDE.md), producing a
-// fresh TemplateRenderedEvent with patches. The applier therefore has no
-// replay responsibility on leadership change.
+// fresh render whose patches arrive via ResourcesAppliedEvent. The applier
+// therefore has no replay responsibility on leadership change.
 package statusapplier
 
 import (
@@ -118,13 +121,13 @@ type GVRResolver interface {
 // Component applies template-driven status patches to Kubernetes resources
 // via Server-Side Apply (SSA).
 //
-// This is an all-replica component that subscribes in the constructor. It caches
-// patches from TemplateRenderedEvent and applies the appropriate variant based
-// on pipeline lifecycle events. Only the leader applies patches to avoid conflicts.
+// This is an all-replica component that subscribes in the constructor and
+// applies the appropriate variant based on pipeline lifecycle events. Only the
+// leader applies patches to avoid conflicts.
 //
 // Event flow (every applied phase reads patches directly from event.StatusPatches):
 //
-//	TemplateRenderedEvent → apply "rendered" variant (if leader)
+//	ResourcesAppliedEvent → apply "rendered" variant (if leader)
 //	DeploymentCompletedEvent → apply "deployed" variant (if leader)
 //	DeploymentSkippedEvent → apply "deployed" variant (if leader); the data
 //	    plane is already at the rendered config so Programmed conditions
@@ -199,7 +202,7 @@ func New(cfg *Config) *Component {
 		BufferSize: EventBufferSize,
 		Handler:    c,
 		EventTypes: []string{
-			events.EventTypeTemplateRendered,
+			events.EventTypeResourcesApplied,
 			events.EventTypeDeploymentCompleted,
 			events.EventTypeDeploymentSkipped,
 			events.EventTypeReconciliationFailed,
@@ -212,7 +215,7 @@ func New(cfg *Config) *Component {
 
 // CoalescesOn opts this applier into component.Base's mailbox coalescing.
 // All three declared types are latest-wins FOR THIS COMPONENT: rendered
-// patches ride every TemplateRenderedEvent, and the deployed variant rides
+// patches ride every ResourcesAppliedEvent, and the deployed variant rides
 // every DeploymentCompleted/SkippedEvent — each event carries the FULL
 // current patch set, so only the newest of an uninterrupted run matters.
 // Collapsing runs keeps the mailbox queue bounded by the deploy cadence
@@ -222,7 +225,7 @@ func New(cfg *Config) *Component {
 // gateway-api conformance).
 func (c *Component) CoalescesOn() []string {
 	return []string{
-		events.EventTypeTemplateRendered,
+		events.EventTypeResourcesApplied,
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeDeploymentSkipped,
 	}
@@ -248,8 +251,8 @@ func (c *Component) HandleEvent(event busevents.Event) {
 
 	ctx := c.ctx
 	switch e := event.(type) {
-	case *events.TemplateRenderedEvent:
-		c.handleTemplateRendered(ctx, e)
+	case *events.ResourcesAppliedEvent:
+		c.handleResourcesApplied(ctx, e)
 
 	case *events.DeploymentCompletedEvent:
 		c.handleDeploymentCompleted(ctx, e)
@@ -268,10 +271,11 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	}
 }
 
-// handleTemplateRendered applies the "rendered" variant directly from the
+// handleResourcesApplied applies the "rendered" variant directly from the
 // event payload. Patches are config-level (Accepted/ResolvedRefs); no
-// data-plane gate is needed.
-func (c *Component) handleTemplateRendered(ctx context.Context, event *events.TemplateRenderedEvent) {
+// data-plane gate is needed, but the ResourceApplier publishing this event
+// guarantees the same render's k8sResources already exist.
+func (c *Component) handleResourcesApplied(ctx context.Context, event *events.ResourcesAppliedEvent) {
 	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
 		return
 	}

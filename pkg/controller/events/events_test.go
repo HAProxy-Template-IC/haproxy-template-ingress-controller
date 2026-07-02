@@ -257,7 +257,7 @@ func TestReconciliationEvents(t *testing.T) {
 	})
 
 	t.Run("ReconciliationCompletedEvent", func(t *testing.T) {
-		event := NewReconciliationCompletedEvent(100, nil)
+		event := NewReconciliationCompletedEvent(100, nil, nil)
 		require.NotNil(t, event)
 		assert.Equal(t, int64(100), event.DurationMs)
 		assert.Nil(t, event.RenderedResources)
@@ -768,7 +768,7 @@ func TestCorrelation(t *testing.T) {
 		event2 := NewReconciliationStartedEvent("middle",
 			PropagateCorrelation(event1))
 
-		event3 := NewReconciliationCompletedEvent(100, nil,
+		event3 := NewReconciliationCompletedEvent(100, nil, nil,
 			PropagateCorrelation(event2))
 
 		// All events should share the same correlation ID
@@ -818,7 +818,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"NewLeaderObserved", NewNewLeaderObservedEvent("id", false)},
 		{"ReconciliationTriggered", NewReconciliationTriggeredEvent("reason", true)},
 		{"ReconciliationStarted", NewReconciliationStartedEvent("trigger")},
-		{"ReconciliationCompleted", NewReconciliationCompletedEvent(0, nil)},
+		{"ReconciliationCompleted", NewReconciliationCompletedEvent(0, nil, nil)},
 		{"ReconciliationFailed", NewReconciliationFailedEvent("error", "phase", nil)},
 		{"SecretResourceChanged", NewSecretResourceChangedEvent(nil)},
 		{"CredentialsUpdated", NewCredentialsUpdatedEvent(nil, "v1")},

@@ -166,10 +166,8 @@ func TestHandleTemplateRendered_NoApplyWhenNotLeader(t *testing.T) {
 		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
-	templateEvent := events.NewTemplateRenderedEvent(
-		"haproxy config", nil, patches, nil, 0, 100, "test", "abc123", false,
-	)
-	comp.handleTemplateRendered(context.Background(), templateEvent)
+	renderedEvent := events.NewResourcesAppliedEvent(patches)
+	comp.handleResourcesApplied(context.Background(), renderedEvent)
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -189,10 +187,8 @@ func TestHandleTemplateRendered_AppliesWhenLeader(t *testing.T) {
 		"rendered": {"conditions": []any{map[string]any{"type": "Ready"}}},
 	})
 
-	templateEvent := events.NewTemplateRenderedEvent(
-		"haproxy config", nil, patches, nil, 0, 100, "test", "abc123", false,
-	)
-	comp.handleTemplateRendered(context.Background(), templateEvent)
+	renderedEvent := events.NewResourcesAppliedEvent(patches)
+	comp.handleResourcesApplied(context.Background(), renderedEvent)
 
 	// Should publish StatusUpdateCompletedEvent
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
@@ -215,10 +211,8 @@ func TestHandleTemplateRendered_SkipsEmptyPatches(t *testing.T) {
 
 	setLeader(comp)
 
-	templateEvent := events.NewTemplateRenderedEvent(
-		"haproxy config", nil, nil, nil, 0, 100, "test", "abc123", false,
-	)
-	comp.handleTemplateRendered(context.Background(), templateEvent)
+	renderedEvent := events.NewResourcesAppliedEvent(nil)
+	comp.handleResourcesApplied(context.Background(), renderedEvent)
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -457,7 +451,7 @@ func TestHandleReconciliationFailed_SkipsWithoutPatches(t *testing.T) {
 // TestHandleBecameLeader_DoesNotReplayPatches: with the stateless applier,
 // becoming leader does NOT replay any patches. The Reconciler fires a fresh
 // reconciliation on BecameLeaderEvent, which produces a fresh
-// TemplateRenderedEvent the applier consumes normally.
+// ResourcesAppliedEvent the applier consumes normally.
 func TestHandleBecameLeader_DoesNotReplayPatches(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClientWithPatchSuccess()
@@ -788,19 +782,15 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	})
 
 	// 1. TemplateRendered while not leader — no apply.
-	bus.Publish(events.NewTemplateRenderedEvent(
-		"config", nil, patches, nil, 0, 50, "test", "hash1", false,
-	))
+	bus.Publish(events.NewResourcesAppliedEvent(patches))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 
 	// 2. Become leader — does NOT replay anything (stateless applier).
 	bus.Publish(events.NewBecameLeaderEvent("test-identity"))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 
-	// 3. TemplateRendered after becoming leader applies normally.
-	bus.Publish(events.NewTemplateRenderedEvent(
-		"config", nil, patches, nil, 0, 50, "test", "hash1", false,
-	))
+	// 3. ResourcesApplied after becoming leader applies normally.
+	bus.Publish(events.NewResourcesAppliedEvent(patches))
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, events.StatusPatchPhaseRendered, completedEvent.Phase)
 	assert.Equal(t, 1, completedEvent.AppliedCount)
@@ -809,14 +799,12 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	bus.Publish(events.NewLostLeadershipEvent("test-identity", "demoted"))
 	time.Sleep(testutil.StartupDelay) // Wait for event to process
 
-	// 5. Receive another template rendered — should NOT apply.
+	// 5. Receive another rendered patch set — should NOT apply.
 	testutil.DrainChannel(eventChan)
 	patches2 := newTestPatches(map[string]map[string]any{
 		"rendered": {"conditions": []any{map[string]any{"type": "Accepted", "status": "True"}}},
 	})
-	bus.Publish(events.NewTemplateRenderedEvent(
-		"config2", nil, patches2, nil, 0, 50, "test", "hash2", false,
-	))
+	bus.Publish(events.NewResourcesAppliedEvent(patches2))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
@@ -948,9 +936,7 @@ func TestHandleEvent_RoutesCorrectly(t *testing.T) {
 	comp.ctx = context.Background()
 
 	// Verify each event type is routed without panics
-	comp.HandleEvent(events.NewTemplateRenderedEvent(
-		"config", nil, nil, nil, 0, 50, "test", "hash", false,
-	))
+	comp.HandleEvent(events.NewResourcesAppliedEvent(nil))
 	comp.HandleEvent(events.NewDeploymentCompletedEvent(&events.DeploymentResult{Total: 1, Succeeded: 1}))
 	comp.HandleEvent(events.NewReconciliationFailedEvent("err", "deploy", nil))
 	comp.HandleEvent(events.NewBecameLeaderEvent("identity"))

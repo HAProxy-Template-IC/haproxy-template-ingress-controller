@@ -341,6 +341,16 @@ func (c *Component) handleReconciliationCompleted(ctx context.Context, event *ev
 	// applyAndPrune handles the empty-set case: any resources still in
 	// lastAppliedKeys but not in the new desired set are pruned.
 	c.applyAndPrune(ctx, event.RenderedResources)
+
+	// Forward the cycle's status patches now that its resources exist: the
+	// StatusApplier writes the "rendered" variant on this event, so
+	// conditions like Accepted=True can never precede the infrastructure
+	// they describe (e.g. per-Gateway Services carrying the gateway-name
+	// label, which conformance lists the moment Accepted turns True).
+	c.EventBus().Publish(events.NewResourcesAppliedEvent(
+		event.StatusPatches,
+		events.PropagateCorrelation(event),
+	))
 }
 
 // handleBecameLeader clears the checksum cache and rebuilds
