@@ -185,8 +185,11 @@ func (c *Component) HandleEvent(event busevents.Event) {
 // during a single deployment. Without it, the deployer would process every
 // queued event in FIFO order — deploying the OLDEST pending config first
 // and falling further and further behind under load.
-func (c *Component) CoalescesOn() string {
-	return events.EventTypeDeploymentScheduled
+func (c *Component) CoalescesOn() []string {
+	// ONLY deployment.scheduled: every deployment.completed must be seen
+	// individually (it clears the single-threaded deployer's in-flight
+	// bookkeeping), so it must never be listed here.
+	return []string{events.EventTypeDeploymentScheduled}
 }
 
 // HealthCheck implements the lifecycle.HealthChecker interface.

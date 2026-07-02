@@ -47,7 +47,9 @@ func (h *blockingRecorder) HandleEvent(event busevents.Event) {
 	h.mu.Unlock()
 }
 
-func (h *blockingRecorder) CoalescesOn() string { return events.EventTypeReconciliationTriggered }
+func (h *blockingRecorder) CoalescesOn() []string {
+	return []string{events.EventTypeReconciliationTriggered}
+}
 
 func (h *blockingRecorder) snapshot() []busevents.Event {
 	h.mu.Lock()

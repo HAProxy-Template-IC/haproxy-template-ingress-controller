@@ -287,13 +287,12 @@ func New(cfg *Config) *Component {
 	return c
 }
 
-// CoalescesOn opts this applier into component.Base's type-aware coalescing:
+// CoalescesOn opts this applier into component.Base's mailbox coalescing:
 // under churn only the LATEST reconciliation.completed matters (it carries the
-// latest rendered resources, superseding earlier ones), so Base drains
-// superseded events and applies the latest once — keeping the subscriber buffer
-// drained so it never overflows and drops these (coalescible) events.
-func (c *Component) CoalescesOn() string {
-	return events.EventTypeReconciliationCompleted
+// latest rendered resources, superseding earlier ones), so runs of them
+// collapse in the mailbox and the bus can never overflow this subscriber.
+func (c *Component) CoalescesOn() []string {
+	return []string{events.EventTypeReconciliationCompleted}
 }
 
 // HealthCheck returns nil if the component is healthy.

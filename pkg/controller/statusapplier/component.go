@@ -210,16 +210,22 @@ func New(cfg *Config) *Component {
 	return c
 }
 
-// CoalescesOn opts this applier into component.Base's type-aware coalescing:
-// under churn the Coordinator publishes a burst of template.rendered events and
-// only the LATEST rendered status matters (it supersedes earlier ones), so Base
-// drains superseded template.rendered events and applies the latest once. This
-// keeps the subscriber buffer drained so it never overflows and drops the
-// INTERLEAVED deployment.completed events — which are NOT coalesced (a different
-// type) and carry Programmed=True. Losing one of those was the root of the
-// Programmed-lag stall.
-func (c *Component) CoalescesOn() string {
-	return events.EventTypeTemplateRendered
+// CoalescesOn opts this applier into component.Base's mailbox coalescing.
+// All three declared types are latest-wins FOR THIS COMPONENT: rendered
+// patches ride every TemplateRenderedEvent, and the deployed variant rides
+// every DeploymentCompleted/SkippedEvent — each event carries the FULL
+// current patch set, so only the newest of an uninterrupted run matters.
+// Collapsing runs keeps the mailbox queue bounded by the deploy cadence
+// instead of the render rate: without it a burst of deployment events (each
+// costing an SSA fan-out to apply) backlogs the queue and status latency
+// grows unboundedly (observed: 512-deep backlog and 90s Programmed lag in
+// gateway-api conformance).
+func (c *Component) CoalescesOn() []string {
+	return []string{
+		events.EventTypeTemplateRendered,
+		events.EventTypeDeploymentCompleted,
+		events.EventTypeDeploymentSkipped,
+	}
 }
 
 // HealthCheck returns nil if the component is healthy.
@@ -400,7 +406,13 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	// checksumCache is guarded by c.mu; counters are atomic. errgroup never
 	// returns an error here (per-patch failures are logged + published, not
 	// propagated) so Wait's return is ignored.
-	const maxStatusApplyConcurrency = 16
+	// 64 (not 16): under conformance-grade churn every deployed-variant
+	// apply touches 30-60 resources with changed payloads; at 16 the batch
+	// costs 4 round-trip waves (~0.6-1.8s wall), which is slower than the
+	// deploy cadence (~1/s) — the mailbox queue then grows without bound
+	// (observed 512 deep). At 64 the batch is ~one wave and the worker
+	// keeps up.
+	const maxStatusApplyConcurrency = 64
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(maxStatusApplyConcurrency)
 

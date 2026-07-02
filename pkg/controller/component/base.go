@@ -50,12 +50,12 @@ type PanicHandler interface {
 }
 
 // CoalescingHandler is an optional interface implemented by handlers whose
-// events of a given type have latest-wins semantics. When it returns a
-// non-empty event-type string, Base runs in MAILBOX mode: a dedicated intake
-// goroutine drains the subscription channel immediately into an internal
-// unbounded queue, so the bus-side buffer can never fill and the bus never
-// drops this subscriber's events — no matter how slow the handler is.
-// Uninterrupted runs of coalescible events of the declared type (i.e.
+// events of the declared types have latest-wins semantics. When it returns a
+// non-empty list, Base runs in MAILBOX mode: a dedicated intake goroutine
+// drains the subscription channel immediately into an internal unbounded
+// queue, so the bus-side buffer can never fill and the bus never drops this
+// subscriber's events — no matter how slow the handler is. Uninterrupted
+// runs of coalescible events of a declared type (i.e.
 // event.(busevents.CoalescibleEvent).Coalescible() == true) collapse to
 // their latest element at the queue tail; any other event is appended,
 // preserving arrival order across event types. The worker dispatches from
@@ -67,10 +67,16 @@ type PanicHandler interface {
 // including non-coalescible ones and the final event of a burst, whose loss
 // leaves stale state until the next external trigger.
 //
-// The empty string disables coalescing — handlers that conditionally need
-// it can return "" to opt out at runtime (plain channel loop, no mailbox).
+// Declaring a type is a per-component statement that ONLY the latest queued
+// event of that type matters to THIS component. Never declare a type whose
+// every instance carries per-event bookkeeping for the component (e.g. the
+// deployer must see every deployment.completed to clear its in-flight flag,
+// so it declares only deployment.scheduled).
+//
+// An empty list disables coalescing — handlers that conditionally need it
+// can return nil to opt out at runtime (plain channel loop, no mailbox).
 type CoalescingHandler interface {
-	CoalescesOn() string
+	CoalescesOn() []string
 }
 
 // Base is a reusable event-loop implementation. It subscribes on
@@ -149,8 +155,8 @@ func (b *Base) Start(ctx context.Context) error {
 	b.logger.Debug(b.name + " starting")
 
 	if ch, ok := b.handler.(CoalescingHandler); ok {
-		if eventType := ch.CoalescesOn(); eventType != "" {
-			return b.startMailbox(ctx, eventType)
+		if types := ch.CoalescesOn(); len(types) > 0 {
+			return b.startMailbox(ctx, types)
 		}
 	}
 
@@ -180,14 +186,18 @@ const mailboxBacklogWarnFloor = 256
 // cannot fill and the bus never drops for this subscriber), while this
 // goroutine dispatches from the queue head. Consecutive coalescible events
 // of eventType collapse at the tail; everything else keeps arrival order.
-func (b *Base) startMailbox(ctx context.Context, eventType string) error {
+func (b *Base) startMailbox(ctx context.Context, eventTypes []string) error {
 	b.mbNotify = make(chan struct{}, 1)
+	coalesced := make(map[string]struct{}, len(eventTypes))
+	for _, t := range eventTypes {
+		coalesced[t] = struct{}{}
+	}
 
 	go func() {
 		for {
 			select {
 			case event := <-b.eventChan:
-				b.mailboxEnqueue(event, eventType)
+				b.mailboxEnqueue(event, coalesced)
 			case <-ctx.Done():
 				return
 			case <-b.stopCh:
@@ -212,7 +222,7 @@ func (b *Base) startMailbox(ctx context.Context, eventType string) error {
 				}
 				if entry.superseded > 0 {
 					b.logger.Debug(b.name+" coalesced events",
-						"event_type", eventType,
+						"event_type", entry.event.EventType(),
 						"superseded_count", entry.superseded)
 				}
 				b.dispatch(entry.event)
@@ -222,11 +232,11 @@ func (b *Base) startMailbox(ctx context.Context, eventType string) error {
 }
 
 // mailboxEnqueue appends event to the mailbox queue, collapsing it into the
-// tail entry when both are coalescible events of eventType (latest wins,
-// superseded count carried for logging).
-func (b *Base) mailboxEnqueue(event busevents.Event, eventType string) {
+// tail entry when both are coalescible events of the same declared type
+// (latest wins, superseded count carried for logging).
+func (b *Base) mailboxEnqueue(event busevents.Event, coalescedTypes map[string]struct{}) {
 	coalescible := false
-	if event.EventType() == eventType {
+	if _, declared := coalescedTypes[event.EventType()]; declared {
 		if c, ok := event.(busevents.CoalescibleEvent); ok && c.Coalescible() {
 			coalescible = true
 		}
@@ -235,7 +245,7 @@ func (b *Base) mailboxEnqueue(event busevents.Event, eventType string) {
 	b.mbMu.Lock()
 	if coalescible && len(b.mbQueue) > 0 {
 		tail := &b.mbQueue[len(b.mbQueue)-1]
-		if tail.event.EventType() == eventType {
+		if tail.event.EventType() == event.EventType() {
 			if tc, ok := tail.event.(busevents.CoalescibleEvent); ok && tc.Coalescible() {
 				tail.event = event
 				tail.superseded++
