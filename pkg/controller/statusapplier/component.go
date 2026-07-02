@@ -110,6 +110,13 @@ const (
 	fieldManagerPrefix = "haptic"
 
 	statusKey = "status"
+
+	// checksumCacheMaxEntries bounds the SSA-skip checksum cache. Sized for
+	// ~64k live resource×phase combinations — far above any realistic
+	// steady state (the gateway-api conformance suite peaks below 500) —
+	// so only pathological create/delete churn over a long leader tenure
+	// ever triggers the wholesale reset.
+	checksumCacheMaxEntries = 65536
 )
 
 // GVRResolver resolves apiVersion + kind to a GroupVersionResource.
@@ -583,8 +590,22 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 		return patchFailed
 	}
 
-	// Update checksum cache on success.
+	// Update checksum cache on success. The cache has no per-key eviction —
+	// the applier is deliberately stateless about which resources still
+	// exist (patches travel on events; deletions are invisible here), so
+	// under sustained create/delete churn keys for vanished resources
+	// accumulate. Bound it by wholesale reset: entries are pure SSA-skip
+	// hints, so the cost of a reset is one redundant apply per live
+	// resource+phase on the next pass, and the ceiling is generous enough
+	// that steady-state deployments never hit it.
+	// ponytail: wholesale reset; per-key eviction needs a deletion signal
+	// this component intentionally doesn't have.
 	c.mu.Lock()
+	if len(c.checksumCache) >= checksumCacheMaxEntries {
+		c.Logger().Info("Status checksum cache reset after reaching size bound",
+			"entries", len(c.checksumCache))
+		c.checksumCache = make(map[string]string, checksumCacheMaxEntries/4)
+	}
 	c.checksumCache[cacheKey] = checksum
 	c.mu.Unlock()
 
