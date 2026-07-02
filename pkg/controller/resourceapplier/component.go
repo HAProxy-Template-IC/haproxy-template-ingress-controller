@@ -62,10 +62,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -547,26 +549,44 @@ func (c *Component) handleLostLeadership() {
 func (c *Component) applyAndPrune(ctx context.Context, resources []templating.RenderedResource) {
 	startTime := time.Now()
 	desiredKeys := make(map[string]appliedKeyMeta, len(resources))
-	var applied, skipped, refused int
+	var dkMu sync.Mutex
+	var applied, skipped, refused atomic.Int64
 
+	// Apply resources CONCURRENTLY (bounded fan-out). A serial loop made each
+	// reconciliation's apply pass slow (one SSA round-trip per changed
+	// resource), so under churn ReconciliationCompletedEvents piled up past the
+	// subscriber buffer and the bus DROPPED them — and a dropped reconciliation
+	// means the rendered output resources (HAProxyCfg, map files, …) silently
+	// stop tracking reality: an incomplete reconciliation. Mirrors
+	// statusapplier's bounded errgroup fan-out, which never overflows. The
+	// checksumCache/lastAppliedKeys are c.mu-guarded and desiredKeys is
+	// dkMu-guarded, so concurrent applyOne calls are safe.
+	const maxApplyConcurrency = 16
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxApplyConcurrency)
 	for i := range resources {
 		r := &resources[i]
-		switch outcome := c.applyOne(ctx, r, desiredKeys); outcome {
-		case applyOutcomeApplied:
-			applied++
-		case applyOutcomeSkipped:
-			skipped++
-		case applyOutcomeRefused:
-			refused++
-		}
+		g.Go(func() error {
+			switch outcome := c.applyOne(gctx, r, desiredKeys, &dkMu); outcome {
+			case applyOutcomeApplied:
+				applied.Add(1)
+			case applyOutcomeSkipped:
+				skipped.Add(1)
+			case applyOutcomeRefused:
+				refused.Add(1)
+			}
+			return nil
+		})
 	}
+	_ = g.Wait()
 
 	deleted := c.pruneOrphans(ctx, desiredKeys)
 
-	if applied+skipped+deleted+refused > 0 {
+	appliedN, skippedN, refusedN := int(applied.Load()), int(skipped.Load()), int(refused.Load())
+	if appliedN+skippedN+deleted+refusedN > 0 {
 		c.Logger().Debug("Resource applier pass complete",
-			"applied", applied, "skipped", skipped,
-			"deleted", deleted, "refused", refused,
+			"applied", appliedN, "skipped", skippedN,
+			"deleted", deleted, "refused", refusedN,
 			"duration_ms", time.Since(startTime).Milliseconds())
 	}
 }
@@ -586,7 +606,7 @@ const (
 // updates the checksum cache + lastAppliedKeys on success, and returns the
 // outcome. It also stages the desiredKeys entry so pruneOrphans can compute
 // the keep-set after every resource has been processed.
-func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource, desiredKeys map[string]appliedKeyMeta) applyOutcome {
+func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource, desiredKeys map[string]appliedKeyMeta, dkMu *sync.Mutex) applyOutcome {
 	gvr, err := c.gvrResolver.Resolve(r.APIVersion, r.Kind)
 	if err != nil {
 		c.Logger().Error("Failed to resolve GVR for rendered resource",
@@ -604,7 +624,9 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 	// ownership handles the actual cleanup when a field disappears from
 	// haptic's rendered spec.
 	if !partial {
+		dkMu.Lock()
 		desiredKeys[key] = appliedKeyMeta{GVR: gvr, Namespace: r.Namespace, Name: r.Name}
+		dkMu.Unlock()
 	}
 
 	object := c.prepareForApply(r.Object, partial)
@@ -643,7 +665,10 @@ func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource
 	c.mu.Lock()
 	c.checksumCache[key] = checksum
 	if !partial {
-		c.lastAppliedKeys[key] = desiredKeys[key]
+		// Inline the meta rather than reading desiredKeys[key]: under the
+		// concurrent fan-out the map is dkMu-guarded, and this is the same
+		// value written above, so we avoid a second lock ordering.
+		c.lastAppliedKeys[key] = appliedKeyMeta{GVR: gvr, Namespace: r.Namespace, Name: r.Name}
 	}
 	c.mu.Unlock()
 	return applyOutcomeApplied
