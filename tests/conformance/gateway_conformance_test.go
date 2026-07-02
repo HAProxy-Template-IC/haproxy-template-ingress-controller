@@ -206,18 +206,19 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// genuine slowness on the chart or controller side.
 	timeoutCfg.MaxTimeToConsistency = 10 * time.Second
 	timeoutCfg.RequestTimeout = 10 * time.Second
-	timeoutCfg.GatewayMustHaveAddress = 30 * time.Second
-	timeoutCfg.GatewayMustHaveCondition = 30 * time.Second
-	timeoutCfg.GatewayStatusMustHaveListeners = 30 * time.Second
-	timeoutCfg.GatewayListenersMustHaveConditions = 30 * time.Second
-	timeoutCfg.ListenerSetMustHaveCondition = 30 * time.Second
-	timeoutCfg.ListenerSetListenersMustHaveConditions = 30 * time.Second
-	timeoutCfg.HTTPRouteMustHaveCondition = 30 * time.Second
-	timeoutCfg.TLSRouteMustHaveCondition = 30 * time.Second
-	timeoutCfg.RouteMustHaveParents = 30 * time.Second
-	timeoutCfg.NamespacesMustBeReady = 90 * time.Second
-	timeoutCfg.LatestObservedGenerationSet = 20 * time.Second
-	timeoutCfg.DefaultTestTimeout = 30 * time.Second
+	// The status-wait budgets (GatewayMustHaveCondition,
+	// LatestObservedGenerationSet, DefaultTestTimeout, …) deliberately stay
+	// at upstream defaults. Earlier revisions tightened them to 20-30s and
+	// that produced a ROTATING set of 1-7 spurious failures across
+	// otherwise-identical runs: the same subtest context covers helper
+	// preambles (NamespacesMustBeReady, initial GETs through the shared
+	// client) which under the suite's 16-way parallel churn can consume a
+	// tightened budget before the actual status wait even starts — the
+	// controller itself updates these statuses in ~1-2s when probed in
+	// isolation. The data-plane contract stays enforced by the 10s
+	// MaxTimeToConsistency/RequestTimeout above; the object-status budgets
+	// are apiserver/test-infra bound and tightening them buys nothing but
+	// flakes (this file said so in the comment above all along).
 	debug := os.Getenv("CONFORMANCE_DEBUG") != ""
 
 	// Sibling-container execution model: this binary runs on the kind
