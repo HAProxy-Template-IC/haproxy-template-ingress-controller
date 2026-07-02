@@ -1163,16 +1163,27 @@ templateSnippets:
             // Gateway already False for another reason (e.g. UnsupportedAddress).
             if gwAcceptedStatus == "True" && len(listenerData) > 0 {
               var anyListenerAccepted = false
+              var anyListenerRejected = false
               for _, ld := range listenerData {
                 if tostring(ld.(map[string]any)["acceptedStatus"]) == "True" {
                   anyListenerAccepted = true
-                  break
+                } else {
+                  anyListenerRejected = true
                 }
               }
               if !anyListenerAccepted {
                 gwAcceptedStatus = "False"
                 gwAcceptedReason = "ListenersNotValid"
                 gwAcceptedMessage = "No listeners are accepted"
+              } else if anyListenerRejected {
+                // Mixed: at least one listener accepted, at least one rejected.
+                // The Gateway stays Accepted=True (it can serve the good
+                // listeners) but reports ListenersNotValid so consumers see
+                // that not every listener is valid. The conformance test
+                // GatewayListenerUnsupportedProtocol pins exactly
+                // Accepted=True / Reason=ListenersNotValid for this shape.
+                gwAcceptedReason = "ListenersNotValid"
+                gwAcceptedMessage = "One or more listeners are not accepted"
               }
             }
             // Validate spec.tls.backend.clientCertificateRef when set.
