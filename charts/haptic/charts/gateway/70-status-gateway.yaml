@@ -1404,30 +1404,18 @@ templateSnippets:
             // block until reload is verified, while Accepted/ResolvedRefs
             // (which don't depend on HAProxy state) are surfaced immediately.
             //
-            // BUT: the Gateway CRD ships a status default that pre-populates
-            // .status.conditions with Accepted=Unknown AND Programmed=Unknown,
-            // both with observedGeneration unset (serialised as 0). If the
-            // rendered variant emits only Accepted+ResolvedRefs, the API-
-            // server-defaulted Programmed entry sticks around at
-            // observedGeneration=0 until the deployed variant lands after the
-            // data-plane reload. The conformance helper
-            // ConditionsHaveLatestObservedGeneration (FilterStaleConditions)
-            // flags ANY top-level condition whose observedGeneration trails
-            // metadata.generation — so the base gateway's setup-readiness wait
-            // (and every ObservedGenerationBump test) fails while Programmed
-            // sits at generation 0. Under gateway-api v1.6's higher churn the
-            // deployed variant lands seconds-to-minutes late, so that window
-            // is large. FilterStaleConditions checks observedGeneration ONLY,
-            // not the status value — so emitting Programmed=Unknown/Pending
-            // with observedGeneration=generation in the rendered variant bumps
-            // it out of "stale" immediately WITHOUT claiming True before the
-            // reload. The deployed variant still owns Programmed=True (SSA
-            // Force=true) once the data plane is verified, preserving the
-            // poll-then-dial guarantee.
-            var renderedProgrammedCond = condition("Programmed", "Unknown", "Pending",
-              "Waiting for controller to program the Gateway data plane",
-              generation, TopLevelTransitionTime(gateway, "Programmed", "Unknown"))
-            var renderedTopConditions = []any{gwAcceptedCond, gwResolvedRefsCond, renderedProgrammedCond}
+            // NOTE: the rendered variant must NOT emit Programmed at all. The
+            // Gateway CRD pre-seeds Programmed=Unknown at observedGeneration=0,
+            // which looks stale to the conformance obsGen helper until the
+            // deployed variant lands — but emitting Programmed=Unknown here to
+            // bump observedGeneration is worse: the rendered phase would then
+            // Force-own Programmed and every re-render (constant on the shared
+            // all-namespaces gateway as routes attach/detach) resets it to
+            // Unknown, flickering the deployed Programmed=True back down so it
+            // never stabilises under churn. The real remedy for the stale
+            // gen-0 window is deploy-pipeline throughput (land the deployed
+            // Programmed=True/gen sooner), not a rendered-phase placeholder.
+            var renderedTopConditions = []any{gwAcceptedCond, gwResolvedRefsCond}
             if gwInsecureFrontendCond != nil {
               renderedTopConditions = append(renderedTopConditions, gwInsecureFrontendCond)
             }
