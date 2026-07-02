@@ -31,7 +31,6 @@ import (
 	"log/slog"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -50,17 +49,26 @@ type PanicHandler interface {
 	HandlePanic(recovered any, event busevents.Event)
 }
 
-// CoalescingHandler is an optional interface implemented by handlers that
-// want intermediate coalescible events of a given type to be skipped after
-// each dispatch. After Base dispatches an event, if the handler is a
-// CoalescingHandler returning a non-empty event-type string, Base drains
-// the channel for the latest pending event of that type that is also
-// coalescible (i.e. event.(busevents.CoalescibleEvent).Coalescible() == true)
-// and re-dispatches it. Non-matching events and non-coalescible events of
-// the same type pass through dispatch normally.
+// CoalescingHandler is an optional interface implemented by handlers whose
+// events of a given type have latest-wins semantics. When it returns a
+// non-empty event-type string, Base runs in MAILBOX mode: a dedicated intake
+// goroutine drains the subscription channel immediately into an internal
+// unbounded queue, so the bus-side buffer can never fill and the bus never
+// drops this subscriber's events — no matter how slow the handler is.
+// Uninterrupted runs of coalescible events of the declared type (i.e.
+// event.(busevents.CoalescibleEvent).Coalescible() == true) collapse to
+// their latest element at the queue tail; any other event is appended,
+// preserving arrival order across event types. The worker dispatches from
+// the queue head at its own pace.
+//
+// This exists because slow handlers (e.g. status appliers doing SSA
+// round-trips per event) otherwise stall the channel long enough under
+// burst for the bus to overflow the subscriber buffer and drop events —
+// including non-coalescible ones and the final event of a burst, whose loss
+// leaves stale state until the next external trigger.
 //
 // The empty string disables coalescing — handlers that conditionally need
-// it can return "" to opt out at runtime.
+// it can return "" to opt out at runtime (plain channel loop, no mailbox).
 type CoalescingHandler interface {
 	CoalescesOn() string
 }
@@ -77,6 +85,19 @@ type Base struct {
 	handler   EventHandler
 	stopCh    chan struct{}
 	stopOnce  sync.Once
+
+	// Mailbox state (only used when the handler is a CoalescingHandler
+	// with a non-empty CoalescesOn; see startMailbox).
+	mbMu     sync.Mutex
+	mbQueue  []mailboxEntry
+	mbNotify chan struct{}
+}
+
+// mailboxEntry is one queued event plus how many earlier coalescible events
+// of the same run it superseded (for the coalesced-events debug log).
+type mailboxEntry struct {
+	event      busevents.Event
+	superseded int
 }
 
 // Config wires up a new Base.
@@ -121,9 +142,17 @@ func New(cfg *Config) *Base {
 }
 
 // Start drives the event loop until the context is cancelled or Stop is
-// called. Returns nil on graceful shutdown.
+// called. Returns nil on graceful shutdown. Handlers implementing
+// CoalescingHandler (non-empty CoalescesOn) run in mailbox mode — see
+// CoalescingHandler for the semantics and why.
 func (b *Base) Start(ctx context.Context) error {
 	b.logger.Debug(b.name + " starting")
+
+	if ch, ok := b.handler.(CoalescingHandler); ok {
+		if eventType := ch.CoalescesOn(); eventType != "" {
+			return b.startMailbox(ctx, eventType)
+		}
+	}
 
 	for {
 		select {
@@ -135,37 +164,120 @@ func (b *Base) Start(ctx context.Context) error {
 			return nil
 		case event := <-b.eventChan:
 			b.dispatch(event)
-			b.drainCoalesced()
 		}
 	}
 }
 
-// drainCoalesced is a no-op unless the handler implements CoalescingHandler
-// and returns a non-empty event type. When enabled, it pulls events off the
-// channel non-blockingly: uninterrupted runs of coalescible events of the
-// declared type collapse to their latest element; any other event flushes the
-// held run first and then passes through dispatch normally, preserving arrival
-// order across event types. Flushing at run boundaries (not only when the
-// channel empties) is what guarantees the coalesced type cannot be starved by
-// sustained traffic of other types.
-func (b *Base) drainCoalesced() {
-	ch, ok := b.handler.(CoalescingHandler)
-	if !ok {
-		return
-	}
-	eventType := ch.CoalescesOn()
-	if eventType == "" {
-		return
-	}
-	coalesce.DrainLatestByType(b.eventChan, eventType, b.dispatch,
-		func(latest busevents.Event, superseded int) {
-			if superseded > 0 {
-				b.logger.Debug(b.name+" coalesced events",
-					"event_type", eventType,
-					"superseded_count", superseded)
+// mailboxBacklogWarnFloor is the queue length from which power-of-two
+// crossings emit a backlog warning (256, 512, 1024, …). The queue is
+// unbounded by design — never dropping is the point — so backlog growth is
+// surfaced instead of capped.
+const mailboxBacklogWarnFloor = 256
+
+// startMailbox runs the two-goroutine mailbox loop: the intake goroutine
+// moves events off the subscription channel into the internal queue the
+// instant they arrive (only µs-scale mutex work, so the bus-side buffer
+// cannot fill and the bus never drops for this subscriber), while this
+// goroutine dispatches from the queue head. Consecutive coalescible events
+// of eventType collapse at the tail; everything else keeps arrival order.
+func (b *Base) startMailbox(ctx context.Context, eventType string) error {
+	b.mbNotify = make(chan struct{}, 1)
+
+	go func() {
+		for {
+			select {
+			case event := <-b.eventChan:
+				b.mailboxEnqueue(event, eventType)
+			case <-ctx.Done():
+				return
+			case <-b.stopCh:
+				return
 			}
-			b.dispatch(latest)
-		})
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			b.logger.Info(b.name+" shutting down", "reason", ctx.Err())
+			return nil
+		case <-b.stopCh:
+			b.logger.Info(b.name + " shutting down")
+			return nil
+		case <-b.mbNotify:
+			for {
+				entry, ok := b.mailboxPop()
+				if !ok {
+					break
+				}
+				if entry.superseded > 0 {
+					b.logger.Debug(b.name+" coalesced events",
+						"event_type", eventType,
+						"superseded_count", entry.superseded)
+				}
+				b.dispatch(entry.event)
+			}
+		}
+	}
+}
+
+// mailboxEnqueue appends event to the mailbox queue, collapsing it into the
+// tail entry when both are coalescible events of eventType (latest wins,
+// superseded count carried for logging).
+func (b *Base) mailboxEnqueue(event busevents.Event, eventType string) {
+	coalescible := false
+	if event.EventType() == eventType {
+		if c, ok := event.(busevents.CoalescibleEvent); ok && c.Coalescible() {
+			coalescible = true
+		}
+	}
+
+	b.mbMu.Lock()
+	if coalescible && len(b.mbQueue) > 0 {
+		tail := &b.mbQueue[len(b.mbQueue)-1]
+		if tail.event.EventType() == eventType {
+			if tc, ok := tail.event.(busevents.CoalescibleEvent); ok && tc.Coalescible() {
+				tail.event = event
+				tail.superseded++
+				b.mbMu.Unlock()
+				b.mailboxNotify()
+				return
+			}
+		}
+	}
+	b.mbQueue = append(b.mbQueue, mailboxEntry{event: event})
+	n := len(b.mbQueue)
+	b.mbMu.Unlock()
+
+	if n >= mailboxBacklogWarnFloor && n&(n-1) == 0 {
+		b.logger.Warn(b.name+" mailbox backlog growing — handler slower than event arrival",
+			"queue_len", n)
+	}
+	b.mailboxNotify()
+}
+
+// mailboxPop removes and returns the queue head.
+func (b *Base) mailboxPop() (mailboxEntry, bool) {
+	b.mbMu.Lock()
+	defer b.mbMu.Unlock()
+	if len(b.mbQueue) == 0 {
+		return mailboxEntry{}, false
+	}
+	entry := b.mbQueue[0]
+	b.mbQueue[0] = mailboxEntry{} // release the event for GC
+	b.mbQueue = b.mbQueue[1:]
+	if len(b.mbQueue) == 0 {
+		b.mbQueue = nil // reset backing array so it can't grow unboundedly
+	}
+	return entry, true
+}
+
+// mailboxNotify wakes the worker; the 1-buffered channel coalesces wakeups.
+func (b *Base) mailboxNotify() {
+	select {
+	case b.mbNotify <- struct{}{}:
+	default:
+	}
 }
 
 // dispatch forwards event to the handler, recovering panics so a single bad
