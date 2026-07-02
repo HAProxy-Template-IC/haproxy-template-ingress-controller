@@ -110,6 +110,19 @@ func TestGatewayAPIConformance(t *testing.T) {
 	cfg, err := config.GetConfig()
 	require.NoError(t, err, "load Kubernetes config")
 
+	// client-go defaults to QPS=5/Burst=10 — a SHARED limiter across the
+	// suite's dozens of parallel tests. The upstream status helpers poll at
+	// 100ms intervals, so 15-30 concurrently waiting subtests demand a
+	// sustained 150-300 QPS; anything lower queues requests in the limiter
+	// until plain GETs die with "client rate limiter Wait returned an
+	// error: context deadline exceeded" (observed as a rotating 1-5 test
+	// failure set across otherwise-identical runs — at QPS=100 roughly
+	// every second run still failed). The suite rebuilds its own clients
+	// from this RestConfig (suite.go), so tuning it here covers them all.
+	// Server-side API Priority & Fairness still protects the apiserver.
+	cfg.QPS = 500
+	cfg.Burst = 1000
+
 	clientOpts := client.Options{}
 	c, err := client.New(cfg, clientOpts)
 	require.NoError(t, err, "create controller-runtime client")
