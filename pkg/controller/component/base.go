@@ -229,33 +229,40 @@ func (b *Base) startMailbox(ctx context.Context, eventTypes []string) error {
 			b.logger.Info(b.name + " shutting down")
 			return nil
 		case <-b.mbNotify:
-			for {
-				// Honor shutdown between dispatches: with a slow handler and
-				// a deep queue, draining to empty first would delay shutdown
-				// by the whole backlog. Undispatched entries stay queued and
-				// are discarded at the next Start (term boundary), matching
-				// FlushPending semantics.
-				select {
-				case <-ctx.Done():
-					b.logger.Info(b.name+" shutting down", "reason", ctx.Err())
-					return nil
-				case <-b.stopCh:
-					b.logger.Info(b.name + " shutting down")
-					return nil
-				default:
-				}
-				entry, ok := b.mailboxPop()
-				if !ok {
-					break
-				}
-				if entry.superseded > 0 {
-					b.logger.Debug(b.name+" coalesced events",
-						"event_type", entry.event.EventType(),
-						"superseded_count", entry.superseded)
-				}
-				b.dispatch(entry.event)
+			if stopped := b.mailboxDrain(ctx); stopped {
+				return nil
 			}
 		}
+	}
+}
+
+// mailboxDrain dispatches queued entries until the queue is empty or
+// shutdown is requested; returns true on shutdown. Checking for shutdown
+// between dispatches is load-bearing: with a slow handler and a deep queue,
+// draining to empty first would delay shutdown by the whole backlog.
+// Undispatched entries stay queued and are discarded at the next Start
+// (term boundary), matching FlushPending semantics.
+func (b *Base) mailboxDrain(ctx context.Context) (stopped bool) {
+	for {
+		select {
+		case <-ctx.Done():
+			b.logger.Info(b.name+" shutting down", "reason", ctx.Err())
+			return true
+		case <-b.stopCh:
+			b.logger.Info(b.name + " shutting down")
+			return true
+		default:
+		}
+		entry, ok := b.mailboxPop()
+		if !ok {
+			return false
+		}
+		if entry.superseded > 0 {
+			b.logger.Debug(b.name+" coalesced events",
+				"event_type", entry.event.EventType(),
+				"superseded_count", entry.superseded)
+		}
+		b.dispatch(entry.event)
 	}
 }
 

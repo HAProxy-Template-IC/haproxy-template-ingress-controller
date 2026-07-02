@@ -101,6 +101,12 @@ func DrainLatestByType(
 // so cross-type arrival order is preserved and sustained other-type traffic
 // cannot starve the coalesced type. The trailing run is flushed before
 // returning when the channel is empty.
+//
+// NOTE: reconciler.Coordinator.coalesceQueuedTriggers is a deliberately
+// DIFFERENT hand-rolled drain, not an accidental duplicate — it merges an
+// entire drained run (coalescible or not) into a single re-render,
+// exploiting the fact that a render always reads current store state; this
+// one preserves per-event dispatch with arrival ordering.
 func drainLatest(
 	eventChan <-chan busevents.Event,
 	handleOther func(busevents.Event),

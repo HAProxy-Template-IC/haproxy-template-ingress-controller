@@ -75,11 +75,21 @@ func (c *Component) handleTrigger(event *events.TriggerEvent) {
 | Component | Event Type | Purpose |
 |-----------|------------|---------|
 | DeploymentScheduler (`pkg/controller/deployer`) | `HAProxyPodsDiscoveredEvent` | Use only the most recent pod-discovery snapshot per scheduling decision |
-| Deployer (`pkg/controller/deployer`) | `DeploymentScheduledEvent` | Deploy only the latest config when several land back-to-back |
+
+This is deliberately the ONLY remaining `DrainLatest` consumer: the
+DeploymentScheduler runs a hand-rolled event loop with extra `select` arms
+(deploy-signal, ticker) that cannot embed `component.Base`. Every
+`component.Base`-embedded component coalesces through Base's MAILBOX mode
+instead (declare types via `CoalescesOn() []string` — see
+`pkg/controller/component`): the Deployer's `DeploymentScheduledEvent`
+coalescing moved there. A third, intentionally different mechanism lives in
+`reconciler.Coordinator.coalesceQueuedTriggers` (merges a whole drained run
+into ONE re-render, exploiting renders always reading current store state).
 
 Grep for `coalesce.DrainLatest[` to find every call site — adding a new one is
 the canonical sign you should also update this table and consider whether the
-event type should implement `CoalescibleEvent`.
+event type should implement `CoalescibleEvent` (or whether the component can
+simply embed `component.Base` and use mailbox coalescing instead).
 
 ## Design Principles
 

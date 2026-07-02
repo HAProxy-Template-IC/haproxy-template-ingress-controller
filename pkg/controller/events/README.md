@@ -18,7 +18,7 @@ One file per category. The full list as of writing, with representative types:
 | `config.go` | CRD parsed / validated / invalid | `ConfigParsedEvent`, `ConfigValidatedEvent` |
 | `credentials.go` | `Secret` ingestion and validation | `CredentialsUpdatedEvent` |
 | `resource.go` | Watched-resource index changes | `ResourceIndexUpdatedEvent`, `IndexSynchronizedEvent` |
-| `reconciliation.go` | Reconciliation pipeline lifecycle | `ReconciliationTriggeredEvent`, `ReconciliationCompletedEvent` |
+| `reconciliation.go` | Reconciliation pipeline lifecycle | `ReconciliationTriggeredEvent`, `ReconciliationCompletedEvent`, `ResourcesAppliedEvent` |
 | `template.go` | Rendering | `TemplateRenderedEvent`, `TemplateRenderFailedEvent` |
 | `validation.go` | Syntax/semantic validation | `ValidationCompletedEvent`, `ValidationFailedEvent` |
 | `deployment.go` | HAProxy deployment scheduler + executor | `DeploymentScheduledEvent`, `InstanceDeployedEvent` |

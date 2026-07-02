@@ -31,7 +31,9 @@ Work in this package when:
 The applier is **stateless on the success path**. Patches travel on the
 event that triggers each apply:
 
-- `TemplateRenderedEvent.StatusPatches` → `rendered` variant
+- `ResourcesAppliedEvent.StatusPatches` → `rendered` variant (published by
+  the ResourceApplier AFTER the same render's `spec.k8sResources` were
+  applied, so conditions never precede the infrastructure they describe)
 - `DeploymentCompletedEvent.StatusPatches` → `deployed` variant
 - `DeploymentSkippedEvent.StatusPatches` → `deployed` variant
 - `ReconciliationFailedEvent.StatusPatches` → `renderFailed` or

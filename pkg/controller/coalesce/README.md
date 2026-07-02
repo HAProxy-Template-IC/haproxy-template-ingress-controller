@@ -53,7 +53,7 @@ func (c *Component) handleSomeEvent(event *events.SomeEvent) {
 
 - [`pkg/events`](../../events/) — defines the `CoalescibleEvent` interface
 - [`pkg/controller/reconciler`](../reconciler/) — primary *producer*: marks `ReconciliationTriggeredEvent` coalescible (or not, depending on the trigger reason) before publishing
-- Consumers (grep `coalesce.DrainLatest[`): `pkg/controller/deployer`
+- Consumers (grep `coalesce.DrainLatest[`): only `pkg/controller/deployer`'s `DeploymentScheduler.handlePodsDiscovered` (hand-rolled loop that can't embed `component.Base`); Base-embedded components coalesce via Base's mailbox mode (`CoalescesOn() []string`) instead
 
 ## License
 

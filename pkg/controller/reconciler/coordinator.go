@@ -172,6 +172,12 @@ func (c *Coordinator) Start(ctx context.Context) error {
 }
 
 // coalesceQueuedTriggers drains any reconciliation triggers already queued
+//
+// NOTE: deliberately NOT pkg/controller/coalesce.DrainLatest and not
+// component.Base's mailbox — those preserve per-event dispatch with
+// arrival ordering, while this merges the whole drained run into ONE
+// re-render (correct here because a render always reads current store
+// state, so intermediate triggers carry no information of their own).
 // behind `first` and returns a single representative to render. A render reads
 // the LATEST store state, so ONE render after draining N triggers is equivalent
 // to N serial renders — but it collapses a churn burst into O(1) renders
