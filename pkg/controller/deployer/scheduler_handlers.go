@@ -181,21 +181,21 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 func (s *DeploymentScheduler) handlePodsDiscovered(ctx context.Context, event *events.HAProxyPodsDiscoveredEvent) {
 	s.performPodsDiscovered(ctx, event)
 
-	// After processing completes, drain for latest coalescible event
-	for {
-		latest, supersededCount := coalesce.DrainLatest[*events.HAProxyPodsDiscoveredEvent](
-			s.eventChan,
-			func(e busevents.Event) { s.handleEvent(ctx, e) },
-		)
-		if latest == nil {
-			return
-		}
-		if supersededCount > 0 {
-			s.logger.Debug("Coalesced HAProxy pods discovered events",
-				"superseded_count", supersededCount)
-		}
-		s.performPodsDiscovered(ctx, latest)
-	}
+	// After processing completes, drain queued events: consecutive coalescible
+	// pods-discovered events collapse to their latest; any other event type
+	// flushes the held pods-discovered event first and is then handled in
+	// arrival order, so neither side can starve the other.
+	coalesce.DrainLatest(
+		s.eventChan,
+		func(e busevents.Event) { s.handleEvent(ctx, e) },
+		func(latest *events.HAProxyPodsDiscoveredEvent, supersededCount int) {
+			if supersededCount > 0 {
+				s.logger.Debug("Coalesced HAProxy pods discovered events",
+					"superseded_count", supersededCount)
+			}
+			s.performPodsDiscovered(ctx, latest)
+		},
+	)
 }
 
 // performPodsDiscovered executes the actual pod discovery handling logic.

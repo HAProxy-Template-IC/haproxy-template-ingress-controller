@@ -221,7 +221,8 @@ func TestBase_NonCoalescibleEventPassesThrough(t *testing.T) {
 		t.Fatal("first event never started processing")
 	}
 
-	// One coalescible (would be skipped) and one non-coalescible (must pass through).
+	// One coalescible (flushed at the run boundary the non-coalescible event
+	// creates) and one non-coalescible (must pass through).
 	bus.Publish(events.NewReconciliationTriggeredEvent("skipped", true))
 	bus.Publish(events.NewReconciliationTriggeredEvent("must_arrive", false))
 

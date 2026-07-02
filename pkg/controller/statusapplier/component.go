@@ -412,127 +412,14 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 		}
 
 		g.Go(func() error {
-			gvr, err := c.gvrResolver.Resolve(patch.APIVersion, patch.Kind)
-			if err != nil {
-				c.Logger().Error("Failed to resolve GVR for status patch",
-					"api_version", patch.APIVersion,
-					"kind", patch.Kind,
-					"error", err)
-				c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
-					patch.Namespace, patch.Name,
-					fmt.Sprintf("%s/%s", patch.APIVersion, patch.Kind),
-					err.Error(), false,
-				))
-				return nil
-			}
-
-			gvrStr := gvr.String()
-
-			// Compute checksum of the status payload.
-			payloadBytes, err := json.Marshal(statusPayload)
-			if err != nil {
-				c.Logger().Error("Failed to marshal status payload",
-					"namespace", patch.Namespace,
-					"name", patch.Name,
-					"error", err)
-				return nil
-			}
-			checksum := fmt.Sprintf("%x", sha256.Sum256(payloadBytes))
-
-			// Check checksum cache — skip if already applied.
-			// Cache key includes the phase so rendered and deployed track
-			// separate "last applied checksum"s. Without that, rendered's
-			// apply (content A) updates the cache, deployed's apply (content
-			// B) updates the cache again, and the next rendered apply
-			// (content A) sees mismatch and re-writes — overwriting the
-			// deployed state in K8s. With phase-scoped keys: rendered cache
-			// hits on the second pass, K8s keeps deployed's content. SSA
-			// behaviour with field manager "haptic" still owns every field
-			// each phase touches, so the LAST write wins and we let that
-			// last write be deployed.
-			cacheKey := fmt.Sprintf("%s/%s/%s/%s", phaseKey, patch.Namespace, patch.Name, gvrStr)
-			c.mu.RLock()
-			lastChecksum := c.checksumCache[cacheKey]
-			c.mu.RUnlock()
-
-			if lastChecksum == checksum {
+			switch c.applyOnePatch(gctx, patch, statusPayload, phaseKey) {
+			case patchApplied:
+				applied.Add(1)
+			case patchSkipped:
 				skipped.Add(1)
-				return nil
+			case patchFailed:
+				// Logged and published inside applyOnePatch.
 			}
-
-			// Build the SSA patch payload: wrap status content under .status.
-			// For cluster-scoped resources (e.g. GatewayClass) the namespace is
-			// empty; omit the field rather than serialising "namespace": "" so
-			// the API server's SSA codec doesn't claim ownership of an empty
-			// namespace string we'd then have to track.
-			metadata := map[string]any{"name": patch.Name}
-			if patch.Namespace != "" {
-				metadata["namespace"] = patch.Namespace
-			}
-			ssaPayload := map[string]any{
-				"apiVersion": patch.APIVersion,
-				"kind":       patch.Kind,
-				"metadata":   metadata,
-				statusKey:    statusPayload,
-			}
-
-			ssaBytes, err := json.Marshal(ssaPayload)
-			if err != nil {
-				c.Logger().Error("Failed to marshal SSA payload",
-					"namespace", patch.Namespace,
-					"name", patch.Name,
-					"error", err)
-				return nil
-			}
-
-			// Apply via SSA on the status subresource.
-			_, err = c.dynamicClient.Resource(gvr).Namespace(patch.Namespace).Patch(
-				gctx,
-				patch.Name,
-				types.ApplyPatchType,
-				ssaBytes,
-				metav1.PatchOptions{
-					FieldManager: fieldManagerPrefix + "-" + phaseKey,
-					Force:        new(true),
-				},
-				statusKey,
-			)
-			if err != nil {
-				// The resource was deleted between render and apply — a benign
-				// race that is common under churn (the store snapshot still had
-				// it when we rendered, but it has since been deleted, e.g. by a
-				// conformance test's per-test cleanup). There is no status to
-				// write, so this is NOT a failure. Skip it silently: at volume
-				// (hundreds of stale patches per run under heavy churn) logging
-				// an error and publishing a StatusUpdateFailedEvent for each
-				// would flood the event bus and the commentator/metrics
-				// subscribers, degrading the very pipeline whose status we are
-				// applying. The next render (with the delete propagated) drops
-				// the patch. Do NOT cache the checksum — a same-name resource
-				// recreated with identical status content must still be applied.
-				if apierrors.IsNotFound(err) {
-					skipped.Add(1)
-					return nil
-				}
-				c.Logger().Error("Failed to apply status patch",
-					"namespace", patch.Namespace,
-					"name", patch.Name,
-					"gvr", gvrStr,
-					"phase", phaseKey,
-					"error", err)
-				c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
-					patch.Namespace, patch.Name, gvrStr,
-					err.Error(), IsRetriable(err),
-				))
-				return nil
-			}
-
-			// Update checksum cache on success.
-			c.mu.Lock()
-			c.checksumCache[cacheKey] = checksum
-			c.mu.Unlock()
-
-			applied.Add(1)
 			return nil
 		})
 	}
@@ -553,6 +440,139 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 	c.EventBus().Publish(events.NewStatusUpdateCompletedEvent(
 		phase, appliedN, skippedN, durationMs,
 	))
+}
+
+// patchOutcome classifies one status-patch apply attempt.
+type patchOutcome int
+
+const (
+	patchFailed patchOutcome = iota
+	patchApplied
+	patchSkipped
+)
+
+// applyOnePatch applies a single phase-variant status payload to its target
+// resource via SSA, going through the phase-scoped checksum cache first.
+func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusPatch, statusPayload map[string]any, phaseKey string) patchOutcome {
+	gvr, err := c.gvrResolver.Resolve(patch.APIVersion, patch.Kind)
+	if err != nil {
+		c.Logger().Error("Failed to resolve GVR for status patch",
+			"api_version", patch.APIVersion,
+			"kind", patch.Kind,
+			"error", err)
+		c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
+			patch.Namespace, patch.Name,
+			fmt.Sprintf("%s/%s", patch.APIVersion, patch.Kind),
+			err.Error(), false,
+		))
+		return patchFailed
+	}
+
+	gvrStr := gvr.String()
+
+	// Compute checksum of the status payload.
+	payloadBytes, err := json.Marshal(statusPayload)
+	if err != nil {
+		c.Logger().Error("Failed to marshal status payload",
+			"namespace", patch.Namespace,
+			"name", patch.Name,
+			"error", err)
+		return patchFailed
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(payloadBytes))
+
+	// Check checksum cache — skip if already applied.
+	// Cache key includes the phase so rendered and deployed track
+	// separate "last applied checksum"s. Without that, rendered's
+	// apply (content A) updates the cache, deployed's apply (content
+	// B) updates the cache again, and the next rendered apply
+	// (content A) sees mismatch and re-writes — overwriting the
+	// deployed state in K8s. With phase-scoped keys: rendered cache
+	// hits on the second pass, K8s keeps deployed's content. SSA
+	// behaviour with field manager "haptic" still owns every field
+	// each phase touches, so the LAST write wins and we let that
+	// last write be deployed.
+	cacheKey := fmt.Sprintf("%s/%s/%s/%s", phaseKey, patch.Namespace, patch.Name, gvrStr)
+	c.mu.RLock()
+	lastChecksum := c.checksumCache[cacheKey]
+	c.mu.RUnlock()
+
+	if lastChecksum == checksum {
+		return patchSkipped
+	}
+
+	// Build the SSA patch payload: wrap status content under .status.
+	// For cluster-scoped resources (e.g. GatewayClass) the namespace is
+	// empty; omit the field rather than serialising "namespace": "" so
+	// the API server's SSA codec doesn't claim ownership of an empty
+	// namespace string we'd then have to track.
+	metadata := map[string]any{"name": patch.Name}
+	if patch.Namespace != "" {
+		metadata["namespace"] = patch.Namespace
+	}
+	ssaPayload := map[string]any{
+		"apiVersion": patch.APIVersion,
+		"kind":       patch.Kind,
+		"metadata":   metadata,
+		statusKey:    statusPayload,
+	}
+
+	ssaBytes, err := json.Marshal(ssaPayload)
+	if err != nil {
+		c.Logger().Error("Failed to marshal SSA payload",
+			"namespace", patch.Namespace,
+			"name", patch.Name,
+			"error", err)
+		return patchFailed
+	}
+
+	// Apply via SSA on the status subresource.
+	_, err = c.dynamicClient.Resource(gvr).Namespace(patch.Namespace).Patch(
+		ctx,
+		patch.Name,
+		types.ApplyPatchType,
+		ssaBytes,
+		metav1.PatchOptions{
+			FieldManager: fieldManagerPrefix + "-" + phaseKey,
+			Force:        new(true),
+		},
+		statusKey,
+	)
+	if err != nil {
+		// The resource was deleted between render and apply — a benign
+		// race that is common under churn (the store snapshot still had
+		// it when we rendered, but it has since been deleted, e.g. by a
+		// conformance test's per-test cleanup). There is no status to
+		// write, so this is NOT a failure. Skip it silently: at volume
+		// (hundreds of stale patches per run under heavy churn) logging
+		// an error and publishing a StatusUpdateFailedEvent for each
+		// would flood the event bus and the commentator/metrics
+		// subscribers, degrading the very pipeline whose status we are
+		// applying. The next render (with the delete propagated) drops
+		// the patch. Do NOT cache the checksum — a same-name resource
+		// recreated with identical status content must still be applied.
+		if apierrors.IsNotFound(err) {
+			return patchSkipped
+		}
+		c.Logger().Error("Failed to apply status patch",
+			"namespace", patch.Namespace,
+			"name", patch.Name,
+			"gvr", gvrStr,
+			"phase", phaseKey,
+			"error", err)
+		c.EventBus().Publish(events.NewStatusUpdateFailedEvent(
+			patch.Namespace, patch.Name, gvrStr,
+			err.Error(), IsRetriable(err),
+		))
+		return patchFailed
+	}
+
+	// Update checksum cache on success.
+	c.mu.Lock()
+	c.checksumCache[cacheKey] = checksum
+	c.mu.Unlock()
+
+	return patchApplied
 }
 
 // IsRetriable returns true if the error is likely transient and the operation

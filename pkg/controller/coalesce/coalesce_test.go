@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -53,115 +54,122 @@ func (e *otherCoalescibleEvent) EventType() string    { return "other.coalescibl
 func (e *otherCoalescibleEvent) Timestamp() time.Time { return e.timestamp }
 func (e *otherCoalescibleEvent) Coalescible() bool    { return e.coalescible }
 
+// flushRecord captures one flush callback invocation.
+type flushRecord struct {
+	value      string
+	superseded int
+}
+
+// drainRecorder runs DrainLatest over ch recording both callbacks and the
+// combined delivery order ("flush:v" / "other:v" entries).
+func drainRecorder(ch chan busevents.Event) (flushes []flushRecord, handled []busevents.Event, order []string) {
+	DrainLatest(
+		ch,
+		func(e busevents.Event) {
+			handled = append(handled, e)
+			switch ev := e.(type) {
+			case *coalescibleEvent:
+				order = append(order, "other:"+ev.value)
+			case *otherCoalescibleEvent:
+				order = append(order, "other:"+ev.value)
+			case *testEvent:
+				order = append(order, "other:"+ev.value)
+			}
+		},
+		func(latest *coalescibleEvent, superseded int) {
+			flushes = append(flushes, flushRecord{value: latest.value, superseded: superseded})
+			order = append(order, "flush:"+latest.value)
+		},
+	)
+	return flushes, handled, order
+}
+
 func TestDrainLatest_EmptyChannel(t *testing.T) {
 	ch := make(chan busevents.Event, 10)
-	var handled []busevents.Event
 
-	latest, superseded := DrainLatest[*coalescibleEvent](ch, func(e busevents.Event) {
-		handled = append(handled, e)
-	})
+	flushes, handled, _ := drainRecorder(ch)
 
-	assert.Nil(t, latest)
-	assert.Equal(t, 0, superseded)
+	assert.Empty(t, flushes)
 	assert.Empty(t, handled)
 }
 
 func TestDrainLatest_SingleCoalescibleEvent(t *testing.T) {
 	ch := make(chan busevents.Event, 10)
-	var handled []busevents.Event
+	ch <- &coalescibleEvent{value: "first", coalescible: true}
 
-	event := &coalescibleEvent{value: "first", coalescible: true}
-	ch <- event
+	flushes, handled, _ := drainRecorder(ch)
 
-	latest, superseded := DrainLatest[*coalescibleEvent](ch, func(e busevents.Event) {
-		handled = append(handled, e)
-	})
-
-	assert.Equal(t, event, latest)
-	assert.Equal(t, 0, superseded)
+	require.Len(t, flushes, 1)
+	assert.Equal(t, flushRecord{value: "first", superseded: 0}, flushes[0])
 	assert.Empty(t, handled)
 }
 
 func TestDrainLatest_MultipleCoalescibleEvents(t *testing.T) {
 	ch := make(chan busevents.Event, 10)
-	var handled []busevents.Event
-
 	ch <- &coalescibleEvent{value: "first", coalescible: true}
 	ch <- &coalescibleEvent{value: "second", coalescible: true}
 	ch <- &coalescibleEvent{value: "third", coalescible: true}
 
-	latest, superseded := DrainLatest[*coalescibleEvent](ch, func(e busevents.Event) {
-		handled = append(handled, e)
-	})
+	flushes, handled, _ := drainRecorder(ch)
 
-	assert.NotNil(t, latest)
-	assert.Equal(t, "third", latest.value)
-	assert.Equal(t, 2, superseded)
+	require.Len(t, flushes, 1, "an uninterrupted run collapses to one flush")
+	assert.Equal(t, flushRecord{value: "third", superseded: 2}, flushes[0])
 	assert.Empty(t, handled)
 }
 
-func TestDrainLatest_NonCoalescibleEventsPassedToHandler(t *testing.T) {
+func TestDrainLatest_NonCoalescibleEventEndsRun(t *testing.T) {
 	ch := make(chan busevents.Event, 10)
-	var handled []busevents.Event
-
-	// Mix of coalescible and non-coalescible
 	ch <- &coalescibleEvent{value: "c1", coalescible: true}
-	ch <- &coalescibleEvent{value: "c2", coalescible: false} // Not coalescible
+	ch <- &coalescibleEvent{value: "c2", coalescible: false} // Not coalescible: run boundary
 	ch <- &coalescibleEvent{value: "c3", coalescible: true}
 
-	latest, superseded := DrainLatest[*coalescibleEvent](ch, func(e busevents.Event) {
-		handled = append(handled, e)
-	})
+	flushes, handled, order := drainRecorder(ch)
 
-	assert.NotNil(t, latest)
-	assert.Equal(t, "c3", latest.value)
-	assert.Equal(t, 1, superseded) // Only c1 was superseded
-	assert.Len(t, handled, 1)      // c2 was passed to handler
+	// c1's run is flushed BEFORE c2 is handled — arrival order is preserved,
+	// runs do not span boundary events.
+	require.Len(t, flushes, 2)
+	assert.Equal(t, flushRecord{value: "c1", superseded: 0}, flushes[0])
+	assert.Equal(t, flushRecord{value: "c3", superseded: 0}, flushes[1])
+	require.Len(t, handled, 1)
 	assert.Equal(t, "c2", handled[0].(*coalescibleEvent).value)
+	assert.Equal(t, []string{"flush:c1", "other:c2", "flush:c3"}, order)
 }
 
-func TestDrainLatest_DifferentEventTypesPassedToHandler(t *testing.T) {
+func TestDrainLatest_DifferentEventTypeEndsRun(t *testing.T) {
 	ch := make(chan busevents.Event, 10)
-	var handled []busevents.Event
-
 	ch <- &coalescibleEvent{value: "target1", coalescible: true}
-	ch <- &testEvent{value: "other"} // Different type
+	ch <- &testEvent{value: "other"} // Different type: run boundary
 	ch <- &coalescibleEvent{value: "target2", coalescible: true}
 
-	latest, superseded := DrainLatest[*coalescibleEvent](ch, func(e busevents.Event) {
-		handled = append(handled, e)
-	})
+	flushes, handled, order := drainRecorder(ch)
 
-	assert.NotNil(t, latest)
-	assert.Equal(t, "target2", latest.value)
-	assert.Equal(t, 1, superseded)
-	assert.Len(t, handled, 1)
+	require.Len(t, flushes, 2)
+	assert.Equal(t, flushRecord{value: "target1", superseded: 0}, flushes[0])
+	assert.Equal(t, flushRecord{value: "target2", superseded: 0}, flushes[1])
+	require.Len(t, handled, 1)
 	assert.Equal(t, "other", handled[0].(*testEvent).value)
+	assert.Equal(t, []string{"flush:target1", "other:other", "flush:target2"}, order)
 }
 
 func TestDrainLatest_EventWithoutCoalescibleInterface(t *testing.T) {
 	ch := make(chan busevents.Event, 10)
-	var handled []busevents.Event
-
-	// testEvent doesn't implement CoalescibleEvent
 	ch <- &testEvent{value: "first"}
 	ch <- &testEvent{value: "second"}
 
-	latest, superseded := DrainLatest[*testEvent](ch, func(e busevents.Event) {
-		handled = append(handled, e)
-	})
+	var handled []busevents.Event
+	DrainLatest(
+		ch,
+		func(e busevents.Event) { handled = append(handled, e) },
+		func(latest *testEvent, superseded int) {
+			t.Fatalf("flush must not be called for events without CoalescibleEvent, got %q", latest.value)
+		},
+	)
 
-	// Events without CoalescibleEvent interface are not coalescible
-	assert.Nil(t, latest)
-	assert.Equal(t, 0, superseded)
 	assert.Len(t, handled, 2) // Both passed to handler
 }
 
 func TestDrainLatest_MixedEventTypes(t *testing.T) {
 	ch := make(chan busevents.Event, 10)
-	var handled []busevents.Event
-
-	// Various event types in the channel
 	ch <- &coalescibleEvent{value: "c1", coalescible: true}
 	ch <- &otherCoalescibleEvent{value: "o1", coalescible: true}
 	ch <- &testEvent{value: "t1"}
@@ -169,28 +177,69 @@ func TestDrainLatest_MixedEventTypes(t *testing.T) {
 	ch <- &coalescibleEvent{value: "c3", coalescible: false}
 	ch <- &coalescibleEvent{value: "c4", coalescible: true}
 
-	latest, superseded := DrainLatest[*coalescibleEvent](ch, func(e busevents.Event) {
-		handled = append(handled, e)
-	})
+	flushes, handled, order := drainRecorder(ch)
 
-	assert.NotNil(t, latest)
-	assert.Equal(t, "c4", latest.value)
-	assert.Equal(t, 2, superseded) // c1 and c2 were superseded
-	assert.Len(t, handled, 3)      // o1, t1, and c3 were passed to handler
+	require.Len(t, flushes, 3)
+	assert.Equal(t, []flushRecord{
+		{value: "c1", superseded: 0},
+		{value: "c2", superseded: 0},
+		{value: "c4", superseded: 0},
+	}, flushes)
+	assert.Len(t, handled, 3) // o1, t1, and c3 were passed to handler
+	assert.Equal(t, []string{"flush:c1", "other:o1", "other:t1", "flush:c2", "other:c3", "flush:c4"}, order)
 }
 
 func TestDrainLatest_OnlyNonCoalescible(t *testing.T) {
 	ch := make(chan busevents.Event, 10)
-	var handled []busevents.Event
-
 	ch <- &coalescibleEvent{value: "c1", coalescible: false}
 	ch <- &coalescibleEvent{value: "c2", coalescible: false}
 
-	latest, superseded := DrainLatest[*coalescibleEvent](ch, func(e busevents.Event) {
-		handled = append(handled, e)
-	})
+	flushes, handled, _ := drainRecorder(ch)
 
-	assert.Nil(t, latest)
-	assert.Equal(t, 0, superseded)
+	assert.Empty(t, flushes)
 	assert.Len(t, handled, 2) // All passed to handler
+}
+
+// TestDrainLatest_SustainedOtherTrafficCannotStarveCoalesced is the regression
+// test for the conformance-observed starvation: the pre-fix drain held the
+// coalesced event back until the channel was empty, so under sustained
+// other-type traffic (each dispatch slower than the arrival gap) the coalesced
+// type was never delivered — rendered status patches starved for 54s while
+// deployment-completed applies flowed. The fix flushes the held event at every
+// run boundary: even when the handler keeps refilling the channel with
+// other-type events (simulated here), every coalescible event is delivered
+// before the other-type event that arrived after it.
+func TestDrainLatest_SustainedOtherTrafficCannotStarveCoalesced(t *testing.T) {
+	ch := make(chan busevents.Event, 64)
+	ch <- &coalescibleEvent{value: "c1", coalescible: true}
+	ch <- &testEvent{value: "t1"}
+
+	var order []string
+	refills := 0
+	DrainLatest(
+		ch,
+		func(e busevents.Event) {
+			order = append(order, "other:"+e.(*testEvent).value)
+			// Simulate sustained traffic: while this (slow) handler runs, a
+			// new coalescible event and a new other event arrive, so the
+			// channel is never empty between other-type dispatches.
+			if refills < 3 {
+				refills++
+				ch <- &coalescibleEvent{value: "c-refill", coalescible: true}
+				ch <- &testEvent{value: "t-refill"}
+			}
+		},
+		func(latest *coalescibleEvent, superseded int) {
+			order = append(order, "flush:"+latest.value)
+		},
+	)
+
+	// The channel was non-empty from start to finish, yet every coalescible
+	// event was flushed before the other-type event that followed it.
+	assert.Equal(t, []string{
+		"flush:c1", "other:t1",
+		"flush:c-refill", "other:t-refill",
+		"flush:c-refill", "other:t-refill",
+		"flush:c-refill", "other:t-refill",
+	}, order)
 }

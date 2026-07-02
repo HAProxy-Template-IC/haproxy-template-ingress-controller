@@ -18,7 +18,7 @@ Work in this package when:
 
 ## Package Purpose
 
-Provides centralized "latest wins" coalescing for controller components. When events arrive faster than they can be processed, intermediate events are skipped and only the latest is processed.
+Provides centralized "latest wins" coalescing for controller components. When events arrive faster than they can be processed, intermediate events of the coalesced type are skipped within uninterrupted runs and only each run's latest is processed.
 
 ## Key Function: DrainLatest
 
@@ -26,15 +26,16 @@ Provides centralized "latest wins" coalescing for controller components. When ev
 func DrainLatest[T busevents.Event](
     eventChan <-chan busevents.Event,
     handleOther func(busevents.Event),
-) (latest T, supersededCount int)
+    flush func(latest T, supersededCount int),
+)
 ```
 
 **What it does:**
 
-1. Non-blocking drain of the event channel
-2. Returns the latest event of type T that is coalescible
-3. Passes non-coalescible events and other types to handleOther
-4. Returns nil if no coalescible events found
+1. Non-blocking drain of the event channel until momentarily empty
+2. Collapses uninterrupted runs of coalescible T-events to their latest, delivered via `flush`
+3. Any other event is a run boundary: the held run is flushed FIRST, then the event goes to `handleOther` — arrival order across event types is preserved
+4. The trailing run is flushed before returning
 
 **Coalescibility rules:**
 
@@ -42,25 +43,30 @@ func DrainLatest[T busevents.Event](
 2. Event must implement `CoalescibleEvent` interface
 3. `Coalescible()` must return true
 
+**Why flush-at-boundary matters (starvation regression):** an earlier design
+held the run's latest back until the channel drained empty. Under sustained
+mixed traffic (each `handleOther` dispatch slower than the event arrival gap)
+the channel never emptied, so the coalesced type was starved for the entire
+burst — observed as rendered status patches stalling 54s in gateway-api
+conformance while deployment-completed applies flowed. It also reordered
+events: later other-type events were dispatched ahead of the older held event.
+
 ## Usage Pattern
 
 ```go
 func (c *Component) handleTrigger(event *events.TriggerEvent) {
     c.performWork(event)
 
-    // After work completes, drain for latest coalescible event
-    for {
-        latest, superseded := coalesce.DrainLatest[*events.TriggerEvent](
-            c.eventChan,
-            c.handleEvent,
-        )
-        if latest == nil {
-            return
-        }
-        c.logger.Debug("Processing coalesced event",
-            "superseded_count", superseded)
-        c.performWork(latest)
-    }
+    // After work completes, drain queued events: consecutive coalescible
+    // TriggerEvents collapse to their latest, everything else is handled
+    // in arrival order.
+    coalesce.DrainLatest(
+        c.eventChan,
+        c.handleEvent,
+        func(latest *events.TriggerEvent, superseded int) {
+            c.performWork(latest)
+        },
+    )
 }
 ```
 

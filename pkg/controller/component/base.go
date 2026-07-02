@@ -142,12 +142,12 @@ func (b *Base) Start(ctx context.Context) error {
 
 // drainCoalesced is a no-op unless the handler implements CoalescingHandler
 // and returns a non-empty event type. When enabled, it pulls events off the
-// channel non-blockingly: events of the declared type that are also
-// coalescible supersede earlier ones; non-matching events and
-// non-coalescible events of the same type pass through dispatch normally.
-// The latest superseding event is dispatched once the channel is empty,
-// then the loop repeats so a newer coalescible event arriving during the
-// re-dispatch is also skipped.
+// channel non-blockingly: uninterrupted runs of coalescible events of the
+// declared type collapse to their latest element; any other event flushes the
+// held run first and then passes through dispatch normally, preserving arrival
+// order across event types. Flushing at run boundaries (not only when the
+// channel empties) is what guarantees the coalesced type cannot be starved by
+// sustained traffic of other types.
 func (b *Base) drainCoalesced() {
 	ch, ok := b.handler.(CoalescingHandler)
 	if !ok {
@@ -157,18 +157,15 @@ func (b *Base) drainCoalesced() {
 	if eventType == "" {
 		return
 	}
-	for {
-		latest, superseded := coalesce.DrainLatestByType(b.eventChan, eventType, b.dispatch)
-		if latest == nil {
-			return
-		}
-		if superseded > 0 {
-			b.logger.Debug(b.name+" coalesced events",
-				"event_type", eventType,
-				"superseded_count", superseded)
-		}
-		b.dispatch(latest)
-	}
+	coalesce.DrainLatestByType(b.eventChan, eventType, b.dispatch,
+		func(latest busevents.Event, superseded int) {
+			if superseded > 0 {
+				b.logger.Debug(b.name+" coalesced events",
+					"event_type", eventType,
+					"superseded_count", superseded)
+			}
+			b.dispatch(latest)
+		})
 }
 
 // dispatch forwards event to the handler, recovering panics so a single bad
