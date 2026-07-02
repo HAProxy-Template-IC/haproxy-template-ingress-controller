@@ -26,10 +26,11 @@
 # (Same / All / Selector), parentRef sectionName + port. TCP has no
 # hostname, so there is no hostname-intersection step.
 #
-# Single-backendRef routing is implemented. Weighted multi-backendRef
-# TCP splitting and full TCPRoute status conditions are DEFERRED (see the
-# repo task notes) — the first valid backendRef of the first attached
-# rule wins per listener port.
+# Single- and weighted multi-backendRef routing are implemented: one
+# routable backendRef forwards the whole port; several become a `balance
+# roundrobin` mode-tcp backend, each Service in a disjoint slot range
+# (SRV<i>_) carrying its weight (weight 0 → no traffic). When several
+# TCPRoutes claim the same port, the oldest (creationTimestamp) wins.
 templateSnippets:
   # util-gateway-tcproute-analysis
   #
@@ -45,9 +46,10 @@ templateSnippets:
   #          "routeNs":     <route namespace>,
   #          "routeName":   <route name>,
   #          "ruleIdx":     <int>,
-  #          "refName":     <Service name>,
-  #          "refPort":     <Service port int>,
-  #          "refNs":       <Service namespace>,
+  #          "refName":     <first Service name>,
+  #          "refPort":     <first Service port int>,
+  #          "refNs":       <first Service namespace>,
+  #          "refs":        [ {name, port, ns, weight}, … ],  # all valid refs
   #        }
   #     }
   #   }
@@ -108,9 +110,17 @@ templateSnippets:
               // no backend — the listener port stays unclaimed and its
               // frontend rejects, mirroring the TLSRoute invalid-ref
               // contract).
+              // Collect EVERY valid backendRef with its weight. A single
+              // routable ref forwards the whole port; several weighted refs
+              // become a `balance roundrobin` mode-tcp backend (weighted
+              // TCPRoute). Weight defaults to 1 (Gateway API); weight 0 stays
+              // in the backend but is emitted with `weight 0` so it takes no
+              // traffic. refName/refPort/refNs keep the FIRST ref for the
+              // existing byPort fields.
               var refName = ""
               var refPort = 0
               var refNs = ""
+              var refs = []any{}
               for _, br := range rule.BackendRefs {
                 var brGroup = br.Group
                 var brKind = br.Kind
@@ -123,11 +133,18 @@ templateSnippets:
                 if resources.services.GetSingle(brNs, br.Name) == nil {
                   continue
                 }
-                refName = br.Name
-                refPort = toint(br.Port)
-                if refPort == 0 { refPort = 80 }
-                refNs = brNs
-                break
+                var brPort = toint(br.Port)
+                if brPort == 0 { brPort = 80 }
+                var brWeight = 1
+                if br.Weight != nil { brWeight = toint(br.Weight) }
+                refs = append(refs, map[string]any{
+                  "name": br.Name, "port": brPort, "ns": brNs, "weight": brWeight,
+                })
+                if refName == "" {
+                  refName = br.Name
+                  refPort = brPort
+                  refNs = brNs
+                }
               }
               if refName == "" {
                 continue
@@ -227,6 +244,7 @@ templateSnippets:
                     "refName":     refName,
                     "refPort":     refPort,
                     "refNs":       refNs,
+                    "refs":        refs,
                   }
                 }
               }
@@ -275,12 +293,26 @@ templateSnippets:
           {%- var refName = tostring(info["refName"]) %}
           {%- var refPort = toint(info["refPort"]) %}
           {%- var refNs = tostring(info["refNs"]) %}
+          {%- var refs = info["refs"].([]any) %}
       # gateway/backends-502-gateway-tcproute: {{ info["routeNs"] }}/{{ info["routeName"] }} rule {{ info["ruleIdx"] }} (port {{ port }})
 
       backend {{ beName }}
           guid {{ make_guid("be", beName) }}
           mode tcp
+          {%- if len(refs) <= 1 %}
           {{ BackendServers(refName, 10, refPort, nil, nil, beName, refNs) | indent(4, false) }}
+          {%- else %}
+          {#- Weighted TCPRoute: several routable backendRefs. `balance
+              roundrobin` honours per-server weights; each Service gets its
+              own slotPrefix so the reload-free slot preservation tracks each
+              independently within the one backend. A weight-0 ref stays in
+              the config (emitted `weight 0`) so it takes no traffic. -#}
+          balance roundrobin
+          {%- for ri, r := range refs %}
+          {%- var rm = r.(map[string]any) %}
+          {{ BackendServers(tostring(rm["name"]), 10, toint(rm["port"]), map[string]any{"slotPrefix": "SRV" + tostring(ri) + "_", "weight": toint(rm["weight"])}, nil, beName, tostring(rm["ns"])) | indent(4, false) }}
+          {%- end %}
+          {%- end %}
           {%- end %}
         {%- end %}
       {%- end %}
@@ -510,6 +542,121 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: 'default_backend gtw_tcp_default_tcp-a-newer_0'
+
+  test-tcproute-weighted-routing:
+    description: >
+      A TCPRoute rule with multiple weighted backendRefs becomes one
+      mode-tcp backend with `balance roundrobin`, each Service's servers in
+      a disjoint slot range (SRV0_/SRV1_/SRV2_) carrying its weight; a
+      weight-0 backend is emitted with `weight 0` (no traffic). Mirrors the
+      TCPRouteWeightedRouting conformance test.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tcp
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tcp
+                protocol: TCP
+                port: 9100
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TCPRoute
+      tcproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TCPRoute
+          metadata:
+            name: tcp-weighted
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-tcp
+            rules:
+              - backendRefs:
+                  - name: tcp-v1
+                    port: 9100
+                    weight: 70
+                  - name: tcp-v2
+                    port: 9100
+                    weight: 30
+                  - name: tcp-v3
+                    port: 9100
+                    weight: 0
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: tcp-v1, namespace: default }
+          spec:
+            ports: [ { port: 9100, targetPort: 9100 } ]
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: tcp-v2, namespace: default }
+          spec:
+            ports: [ { port: 9100, targetPort: 9100 } ]
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: tcp-v3, namespace: default }
+          spec:
+            ports: [ { port: 9100, targetPort: 9100 } ]
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-v1-a
+            namespace: default
+            labels: { kubernetes.io/service-name: tcp-v1 }
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+              targetRef: { kind: Pod, name: tcp-v1-pod }
+          ports: [ { port: 9100, protocol: TCP } ]
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-v2-a
+            namespace: default
+            labels: { kubernetes.io/service-name: tcp-v2 }
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+              targetRef: { kind: Pod, name: tcp-v2-pod }
+          ports: [ { port: 9100, protocol: TCP } ]
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-v3-a
+            namespace: default
+            labels: { kubernetes.io/service-name: tcp-v3 }
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.3"]
+              targetRef: { kind: Pod, name: tcp-v3-pod }
+          ports: [ { port: 9100, protocol: TCP } ]
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+balance roundrobin$'
+      # v1 weight 70 in slot range SRV0_
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+server SRV0_1 10\.0\.0\.1:9100 .*enabled weight 70'
+      # v2 weight 30 in slot range SRV1_
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+server SRV1_1 10\.0\.0\.2:9100 .*enabled weight 30'
+      # v3 weight 0 in slot range SRV2_
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+server SRV2_1 10\.0\.0\.3:9100 .*enabled weight 0'
 
   test-tcproute-multi-listener-single-backend:
     description: "A TCPRoute with a no-sectionName parentRef attaches to EVERY TCP listener on the Gateway (here ports 9100 and 9101). Both listener ports resolve to the same (route, rule) backend name gtw_tcp_default_tcp-multi_0. The chart must emit that backend exactly ONCE (a per-port frontend each, both forwarding to the shared backend) — emitting it per-port would declare a duplicate `backend` name, which HAProxy 3.3+ rejects as a fatal parse error."
