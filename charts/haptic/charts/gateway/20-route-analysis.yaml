@@ -130,35 +130,29 @@ templateSnippets:
               }
               attachedSets = append(attachedSets, ls)
             }
-            // Bubble-sort: O(n^2) but ListenerSet counts per Gateway are
-            // tiny (<10 typical, hundreds in pathological cases). Avoids
-            // pulling in a Scriggo sort helper.
-            for i := 0; i < len(attachedSets); i++ {
-              for j := i + 1; j < len(attachedSets); j++ {
-                var a = attachedSets[i]
-                var b = attachedSets[j]
-                var aTs = a.Metadata.CreationTimestamp
-                var bTs = b.Metadata.CreationTimestamp
-                var aKey = a.Metadata.Namespace + "/" + a.Metadata.Name
-                var bKey = b.Metadata.Namespace + "/" + b.Metadata.Name
-                var swap = false
-                if aTs == bTs {
-                  if aKey > bKey {
-                    swap = true
-                  }
-                } else if aTs == "" {
-                  // Empty creationTimestamp sorts last so resources without
-                  // an explicit timestamp (test fixtures) don't displace
-                  // real ListenerSets in production.
-                  swap = true
-                } else if bTs != "" && aTs > bTs {
-                  swap = true
-                }
-                if swap {
-                  attachedSets[i] = b
-                  attachedSets[j] = a
-                }
-              }
+            // Deterministic precedence: sort by (creationTimestamp asc, then
+            // namespace/name asc) using the engine's sort_by (Go sort.Stable,
+            // O(n log n)) — the same helper the rest of this file already uses
+            // for route ordering. A hand-rolled bubble-sort was previously
+            // used here; besides being O(n^2), nested-loop sorts mis-lower
+            // under Scriggo and can silently drop elements (the exact footgun
+            // that dropped TCPRoutes in 90-tcproute.yaml). Empty
+            // creationTimestamp (test fixtures) maps to a high sentinel so it
+            // sorts LAST, never displacing real ListenerSets.
+            var lsSortItems = []any{}
+            for _, ls := range attachedSets {
+              var lsTs = ls.Metadata.CreationTimestamp
+              if lsTs == "" { lsTs = "9999-12-31T23:59:59Z" }
+              lsSortItems = append(lsSortItems, map[string]any{
+                "ts":  lsTs,
+                "key": ls.Metadata.Namespace + "/" + ls.Metadata.Name,
+                "ls":  ls,
+              })
+            }
+            var lsSorted, _ = sort_by(lsSortItems, []string{"$.ts", "$.key"})
+            attachedSets = []*resources.listenersets.T{}
+            for _, lsItem := range lsSorted {
+              attachedSets = append(attachedSets, lsItem.(map[string]any)["ls"].(*resources.listenersets.T))
             }
 
             // Build the candidate listener list for conflict detection.
