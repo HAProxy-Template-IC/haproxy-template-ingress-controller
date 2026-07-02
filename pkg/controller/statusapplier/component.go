@@ -88,7 +88,12 @@ const (
 	// EventBufferSize is the size of the event subscription buffer.
 	// Moderate volume: receives template rendered, reconciliation completed/failed,
 	// and leadership events.
-	EventBufferSize = busevents.StandardSubscriberBuffer
+	// High volume: template.rendered fires on every reconcile. Even with the
+	// coordinator coalescing renders, an occasional slow SSA apply can briefly
+	// back this up, so use a Publishing-tier buffer to avoid dropping the
+	// (coalescible) template.rendered / deployment.completed events — a dropped
+	// deployment.completed leaves Programmed=True unapplied until the next deploy.
+	EventBufferSize = busevents.PublishingSubscriberBuffer
 
 	// fieldManagerPrefix is the SSA field manager prefix for status patches.
 	// The full manager name is suffixed with the phase (e.g. "haptic-rendered",

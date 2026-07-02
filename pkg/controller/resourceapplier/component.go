@@ -85,7 +85,10 @@ const (
 	ComponentName = "resource-applier"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	EventBufferSize = busevents.StandardSubscriberBuffer
+	// High volume: reconciliation.completed fires on every reconcile. Use a
+	// Publishing-tier buffer so churn bursts don't drop these (coalescible)
+	// events before this applier drains them.
+	EventBufferSize = busevents.PublishingSubscriberBuffer
 
 	// fieldManager is the SSA field manager name. Same value as
 	// statusapplier deliberately — both subsystems are part of the same
