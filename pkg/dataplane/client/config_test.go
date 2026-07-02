@@ -381,3 +381,54 @@ func TestReloadStatusConstants(t *testing.T) {
 	assert.Equal(t, ReloadStatus("succeeded"), ReloadStatusSucceeded)
 	assert.Equal(t, ReloadStatus("failed"), ReloadStatusFailed)
 }
+
+// TestPushRawConfigurationSkipReload_OmitsEmptyRuntimeActions pins the fix for
+// HAProxy 3.4's Dataplane API, which rejects an empty X-Runtime-Actions header
+// value ("empty value is not allowed") where ≤3.3 accepted it. A reload-free
+// push with no runtime server actions (a map-only or cert-only change, whose
+// content was already written via the Storage API) carries an empty actions
+// list and must omit the header entirely rather than send it empty.
+func TestPushRawConfigurationSkipReload_OmitsEmptyRuntimeActions(t *testing.T) {
+	tests := []struct {
+		name           string
+		runtimeActions string
+		wantHeader     bool
+	}{
+		{name: "empty actions omit the header", runtimeActions: "", wantHeader: false},
+		{name: "non-empty actions send the header", runtimeActions: "set server be/srv addr 10.0.0.1 port 8080", wantHeader: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotValues []string
+			handler := func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v3/info" {
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprintln(w, `{"api":{"version":"v3.2.6 87ad0bcf"}}`)
+					return
+				}
+				if r.URL.Path == "/services/haproxy/configuration/raw" && r.Method == http.MethodPost {
+					gotValues = r.Header.Values("X-Runtime-Actions")
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusNotFound)
+			}
+
+			client, cleanup := newTestClientWithHandler(t, handler)
+			defer cleanup()
+
+			err := client.PushRawConfigurationSkipReload(context.Background(), "global\n  daemon\n", 1, tt.runtimeActions)
+			require.NoError(t, err)
+
+			if tt.wantHeader {
+				require.Len(t, gotValues, 1)
+				assert.Equal(t, tt.runtimeActions, gotValues[0])
+			} else {
+				assert.Empty(t, gotValues,
+					"a reload-free push with no runtime actions must omit the X-Runtime-Actions "+
+						"header; HAProxy 3.4 rejects an empty header value")
+			}
+		})
+	}
+}

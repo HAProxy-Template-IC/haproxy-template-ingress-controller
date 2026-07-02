@@ -48,6 +48,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Fixed
 
+- Reload-free map-only and certificate-only updates no longer fail on HAProxy 3.4: a skip-reload config push with no runtime server actions previously sent an empty `X-Runtime-Actions` header, which HAProxy 3.4's DataPlane API rejects (`empty value is not allowed`); the header is now omitted when there are no actions to apply.
 - A failed deployment to a pod no longer records the new config checksum on `HAProxyCfg.status.deployedToPods[].checksum`, which previously made a partial/failed rollout read as fully converged (the checksum matched `spec.checksum` even though the pod was serving stale config). The pod now keeps its last successfully-deployed checksum plus a `lastError`, so checksum-equality consumers correctly see it as not-yet-converged.
 - A partial or failed deployment is no longer cached as the "last deployed" config hash, so the controller re-attempts it on the next reconcile instead of suppressing the retry until the config changes or the drift-prevention timer fires (previously up to `driftPreventionInterval` of delayed self-heal).
 - DataPlane API minor versions newer than the newest bundled client (v3.3) now clamp down to it instead of selecting the oldest, most-restrictive v3.0 client; the client-selection and schema-validator version-resolution paths now agree.
