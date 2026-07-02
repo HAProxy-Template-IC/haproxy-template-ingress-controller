@@ -2187,6 +2187,14 @@ templateSnippets:
             })
             deployedListeners = append(deployedListeners, map[string]any{
               "name": listenerName,
+              // attachedRoutes is REQUIRED on every ListenerSet listener status
+              // entry (same as Gateway ListenerStatus). If this deployed /
+              // deployFailed variant applies a listener entry before the
+              // rendered variant creates it, an entry without attachedRoutes is
+              // rejected by the API server and the apply retries forever,
+              // flooding the status applier. Emit the same count the rendered
+              // variant does so any apply order is valid.
+              "attachedRoutes": lsAttachedRoutes[listenerName],
               "conditions": []any{
                 condition("Programmed",
                   listenerProgrammedStatus, listenerProgrammedReason, listenerProgrammedMessage,
