@@ -498,6 +498,22 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 				statusKey,
 			)
 			if err != nil {
+				// The resource was deleted between render and apply — a benign
+				// race that is common under churn (the store snapshot still had
+				// it when we rendered, but it has since been deleted, e.g. by a
+				// conformance test's per-test cleanup). There is no status to
+				// write, so this is NOT a failure. Skip it silently: at volume
+				// (hundreds of stale patches per run under heavy churn) logging
+				// an error and publishing a StatusUpdateFailedEvent for each
+				// would flood the event bus and the commentator/metrics
+				// subscribers, degrading the very pipeline whose status we are
+				// applying. The next render (with the delete propagated) drops
+				// the patch. Do NOT cache the checksum — a same-name resource
+				// recreated with identical status content must still be applied.
+				if apierrors.IsNotFound(err) {
+					skipped.Add(1)
+					return nil
+				}
 				c.Logger().Error("Failed to apply status patch",
 					"namespace", patch.Namespace,
 					"name", patch.Name,
