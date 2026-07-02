@@ -15,6 +15,7 @@
 package component
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -187,4 +188,97 @@ func TestBase_MailboxNeverDropsUnderBurst(t *testing.T) {
 		events.EventTypeBecameLeader,
 		events.EventTypeReconciliationTriggered,
 	}, types, "non-coalescible boundaries must be preserved in arrival order")
+}
+
+// TestBase_MailboxDoesNotReplayAcrossRestarts pins the leadership-term
+// boundary contract for mailbox components: events the intake goroutine
+// already moved into the mailbox queue during a previous Start (leadership
+// term) must NOT be dispatched after the component is stopped and started
+// again — they describe the previous term's state, exactly like the buffered
+// channel events FlushPending discards. Regression test for the stale-replay
+// gap where startMailbox reused the old queue.
+func TestBase_MailboxDoesNotReplayAcrossRestarts(t *testing.T) {
+	bus := busevents.NewEventBus(16)
+
+	h := &blockingRecorder{
+		gate:    make(chan struct{}),
+		started: make(chan struct{}, 1),
+	}
+
+	base := New(&Config{
+		EventBus:   bus,
+		Logger:     discardLogger(),
+		Name:       "mailbox-restart",
+		BufferSize: 16,
+		Handler:    h,
+		EventTypes: []string{events.EventTypeReconciliationTriggered, events.EventTypeBecameLeader},
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		_ = base.Start(ctx)
+		close(done)
+	}()
+	bus.Start()
+
+	// Occupy the handler, then queue events that land in the mailbox.
+	bus.Publish(events.NewReconciliationTriggeredEvent("term1-dispatched", true))
+	select {
+	case <-h.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first event never started processing")
+	}
+	bus.Publish(events.NewBecameLeaderEvent("term1-queued-a"))
+	bus.Publish(events.NewBecameLeaderEvent("term1-queued-b"))
+	require.Eventually(t, func() bool { return base.mailboxAbsorbed() == 2 },
+		2*time.Second, time.Millisecond, "intake must absorb the term-1 events")
+
+	// End term 1: cancel first, then release the in-flight handler — the
+	// worker must exit at its shutdown check instead of grinding the queue.
+	cancel()
+	go func() { h.gate <- struct{}{} }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("base failed to shut down")
+	}
+
+	// Term 2: flush (as leader-only components do) and start again with a
+	// fresh context — mirroring lifecycle.Registry, which re-calls Start on
+	// the same instance and shuts down via context cancellation (stopCh is
+	// only for explicit Stop and stays untouched across terms).
+	base.FlushPending()
+	done2 := make(chan struct{})
+	go func() {
+		_ = base.Start(t.Context())
+		close(done2)
+	}()
+	bus.Publish(events.NewReconciliationTriggeredEvent("term2", true))
+
+	// Only the term-2 event may arrive; the two term-1 queued events must not.
+	go func() {
+		for {
+			select {
+			case h.gate <- struct{}{}:
+			case <-done2:
+				return
+			}
+		}
+	}()
+	require.Eventually(t, func() bool { return len(h.snapshot()) >= 2 },
+		3*time.Second, 10*time.Millisecond)
+	base.Stop()
+	select {
+	case <-done2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("base failed to shut down after term 2")
+	}
+
+	got := h.snapshot()
+	for _, e := range got {
+		if e.EventType() == events.EventTypeBecameLeader {
+			t.Fatalf("term-1 mailbox event replayed into term 2: %v", e)
+		}
+	}
 }

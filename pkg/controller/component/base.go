@@ -144,6 +144,11 @@ func New(cfg *Config) *Base {
 		name:      cfg.Name,
 		handler:   cfg.Handler,
 		stopCh:    make(chan struct{}),
+		// Allocated unconditionally (not in startMailbox): a component
+		// restarted across leadership terms would otherwise race the new
+		// term's channel assignment against the previous term's intake
+		// goroutine still notifying on the old one.
+		mbNotify: make(chan struct{}, 1),
 	}
 }
 
@@ -187,7 +192,16 @@ const mailboxBacklogWarnFloor = 256
 // goroutine dispatches from the queue head. Consecutive coalescible events
 // of eventType collapse at the tail; everything else keeps arrival order.
 func (b *Base) startMailbox(ctx context.Context, eventTypes []string) error {
-	b.mbNotify = make(chan struct{}, 1)
+	// A restarted component (leadership regained on the same instance) must
+	// not resurrect the previous term's queue: those events describe state
+	// from before the restart and FlushPending callers already expect a
+	// clean slate (it clears this queue too; this covers non-flushing users).
+	b.mbMu.Lock()
+	if n := len(b.mbQueue); n > 0 {
+		b.logger.Debug(b.name+" discarded stale mailbox events at start", "count", n)
+		b.mbQueue = nil
+	}
+	b.mbMu.Unlock()
 	coalesced := make(map[string]struct{}, len(eventTypes))
 	for _, t := range eventTypes {
 		coalesced[t] = struct{}{}
@@ -216,6 +230,20 @@ func (b *Base) startMailbox(ctx context.Context, eventTypes []string) error {
 			return nil
 		case <-b.mbNotify:
 			for {
+				// Honor shutdown between dispatches: with a slow handler and
+				// a deep queue, draining to empty first would delay shutdown
+				// by the whole backlog. Undispatched entries stay queued and
+				// are discarded at the next Start (term boundary), matching
+				// FlushPending semantics.
+				select {
+				case <-ctx.Done():
+					b.logger.Info(b.name+" shutting down", "reason", ctx.Err())
+					return nil
+				case <-b.stopCh:
+					b.logger.Info(b.name + " shutting down")
+					return nil
+				default:
+				}
 				entry, ok := b.mailboxPop()
 				if !ok {
 					break
@@ -351,6 +379,16 @@ func SafeDispatch(logger *slog.Logger, name string, event busevents.Event, handl
 // new term. Events that arrive after the flush are dispatched normally.
 func (b *Base) FlushPending() {
 	flushed := 0
+	// The mailbox queue holds events the intake goroutine already moved off
+	// the channel; they are exactly as stale as buffered channel events, so
+	// a flush must clear both. Without this, a leader-only mailbox component
+	// restarted on leadership re-acquisition would replay the PREVIOUS
+	// term's queued events ahead of the fresh term's (the channel flush
+	// below can't see them).
+	b.mbMu.Lock()
+	flushed += len(b.mbQueue)
+	b.mbQueue = nil
+	b.mbMu.Unlock()
 	for {
 		select {
 		case <-b.eventChan:
