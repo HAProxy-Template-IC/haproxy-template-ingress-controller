@@ -176,16 +176,10 @@ basic/external auth, client-mTLS, and WAF annotations are supported. Full
 reference:
 [haproxy-ingress library docs](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/haptic/docs/libraries/haproxy-ingress.md).
 
-!!! warning "Accepted but silently does nothing"
-    These annotations are read without error but emit **no** HAProxy config —
-    behaviour they controlled is lost on migration:
-
-    | Dropped annotation | Use instead |
-    |--------------------|-------------|
-    | `maxconn-server` | `haproxy.org/pod-maxconn` (haproxytech library) |
-    | `backend-check-interval`, `health-check-fall-count`, `health-check-rise-count`, `health-check-port` | `haproxy.org/check-*` (haproxytech library) |
-    | `initial-weight` | `weight N` in a `haproxy.org/backend-config-snippet` |
-    | `maxqueue-server`, `auth-tls-strict` | (no equivalent — `auth-tls-strict` → `auth-tls-verify-client: optional`) |
+!!! note "One annotation is accepted but not wired"
+    `auth-tls-strict` is read without error but has no separate effect. For "soft"
+    client-certificate verification (accept connections without a cert, defer to
+    the backend), use `auth-tls-verify-client: optional` instead.
 
 !!! warning "Behaviour changes to check"
     - External-auth (`auth-url`) and client-mTLS (`auth-tls-secret`) annotations **fail the render** on a rule with no `host:`.

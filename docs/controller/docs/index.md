@@ -1,5 +1,7 @@
 ---
 description: "HAPTIC (HAProxy Template Ingress Controller) is a template-driven HAProxy ingress controller for Kubernetes. Watch any resource, render templates, and deploy to HAProxy via Dataplane API."
+hide:
+  - navigation
 ---
 
 # HAPTIC
