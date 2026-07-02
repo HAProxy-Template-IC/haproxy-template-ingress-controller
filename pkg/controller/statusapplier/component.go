@@ -210,6 +210,18 @@ func New(cfg *Config) *Component {
 	return c
 }
 
+// CoalescesOn opts this applier into component.Base's type-aware coalescing:
+// under churn the Coordinator publishes a burst of template.rendered events and
+// only the LATEST rendered status matters (it supersedes earlier ones), so Base
+// drains superseded template.rendered events and applies the latest once. This
+// keeps the subscriber buffer drained so it never overflows and drops the
+// INTERLEAVED deployment.completed events — which are NOT coalesced (a different
+// type) and carry Programmed=True. Losing one of those was the root of the
+// Programmed-lag stall.
+func (c *Component) CoalescesOn() string {
+	return events.EventTypeTemplateRendered
+}
+
 // HealthCheck returns nil if the component is healthy.
 func (c *Component) HealthCheck() error {
 	return c.healthTracker.Check()

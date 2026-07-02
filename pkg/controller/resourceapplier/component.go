@@ -285,6 +285,15 @@ func New(cfg *Config) *Component {
 	return c
 }
 
+// CoalescesOn opts this applier into component.Base's type-aware coalescing:
+// under churn only the LATEST reconciliation.completed matters (it carries the
+// latest rendered resources, superseding earlier ones), so Base drains
+// superseded events and applies the latest once — keeping the subscriber buffer
+// drained so it never overflows and drops these (coalescible) events.
+func (c *Component) CoalescesOn() string {
+	return events.EventTypeReconciliationCompleted
+}
+
 // HealthCheck returns nil if the component is healthy.
 func (c *Component) HealthCheck() error { return c.healthTracker.Check() }
 
