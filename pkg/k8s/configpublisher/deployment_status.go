@@ -17,6 +17,7 @@ package configpublisher
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,6 +26,16 @@ import (
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 )
+
+// ErrRuntimeConfigNotPublished reports that the target HAProxyCfg does not
+// exist in the API (yet). At startup the first deployment to the HAProxy pods
+// races the initial HAProxyCfg publish: the per-pod status SSA can land a few
+// hundred milliseconds BEFORE the publisher creates the resource. Callers must
+// retry the update once the resource exists — swallowing this case silently
+// loses the pod's deployedToPods entry until the next config change or drift
+// check (up to driftPreventionInterval), which reads as a never-converging pod
+// to checksum-equality consumers.
+var ErrRuntimeConfigNotPublished = errors.New("HAProxyCfg not published yet")
 
 // apiVersionV1Alpha1 is the CRD API version used in SSA payloads. Hard-coded
 // rather than derived because v1alpha1 is the only version we serve and a
@@ -196,8 +207,11 @@ func (p *Publisher) applyPodStatusToRuntimeConfig(ctx context.Context, update *D
 		)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// Resource not published yet; the next reconcile will retry.
-			return nil
+			// Surface the miss so the caller retries once the resource is
+			// published. This was previously swallowed as success, which
+			// permanently lost the pod's entry (see ErrRuntimeConfigNotPublished).
+			return fmt.Errorf("%w: %s/%s", ErrRuntimeConfigNotPublished,
+				update.RuntimeConfigNamespace, update.RuntimeConfigName)
 		}
 		return fmt.Errorf("ssa pod status on HAProxyCfg: %w", err)
 	}

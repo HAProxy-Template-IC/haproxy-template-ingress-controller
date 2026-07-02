@@ -87,6 +87,10 @@ type validationFailedWorkItem struct {
 // statusWorkItem represents a pod status update task for the async worker.
 type statusWorkItem struct {
 	event *events.ConfigAppliedToPodEvent
+	// retries counts requeues of this item while its HAProxyCfg wasn't
+	// published yet (see requeueStatusWork). Only touched by the status
+	// worker goroutines after the item leaves the pending map.
+	retries int
 }
 
 // Component is the event adapter for the config publisher.
