@@ -272,6 +272,16 @@ func (c *DataplaneClient) postHAProxyConfiguration(ctx context.Context, config s
 	// confusing in API traces).
 	skipVer := skipVersion != nil && *skipVersion
 
+	// A reload-free push with no runtime server actions (e.g. a map-only or
+	// cert-only change, whose content was already written via the Storage API)
+	// carries an empty runtime-actions list. HAProxy 3.4's Dataplane API rejects
+	// an empty X-Runtime-Actions header value ("empty value is not allowed"),
+	// while ≤3.3 accepted it — so omit the header entirely when there is nothing
+	// to apply. skip_reload alone (write config, don't reload) is still valid.
+	if runtimeActions != nil && *runtimeActions == "" {
+		runtimeActions = nil
+	}
+
 	v33Ver := v33.Version(version)
 	v32Ver := v32.Version(version)
 	v31Ver := v31.Version(version)
