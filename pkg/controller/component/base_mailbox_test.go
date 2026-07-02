@@ -32,11 +32,15 @@ import (
 type blockingRecorder struct {
 	mu       sync.Mutex
 	received []busevents.Event
+	entered  int
 	gate     chan struct{} // one receive per HandleEvent call
 	started  chan struct{} // signalled once per HandleEvent entry
 }
 
 func (h *blockingRecorder) HandleEvent(event busevents.Event) {
+	h.mu.Lock()
+	h.entered++
+	h.mu.Unlock()
 	select {
 	case h.started <- struct{}{}:
 	default:
@@ -45,6 +49,14 @@ func (h *blockingRecorder) HandleEvent(event busevents.Event) {
 	h.mu.Lock()
 	h.received = append(h.received, event)
 	h.mu.Unlock()
+}
+
+// startedCount returns how many events have entered the handler (including
+// the one currently blocked on the gate).
+func (h *blockingRecorder) startedCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.entered
 }
 
 func (h *blockingRecorder) CoalescesOn() []string {
@@ -105,18 +117,30 @@ func TestBase_MailboxNeverDropsUnderBurst(t *testing.T) {
 
 	// Burst: 3× the buffer size in coalescible triggers, with two
 	// non-coalescible BecameLeader events as run boundaries. Pre-mailbox,
-	// most of this overflowed the 8-slot buffer and was dropped.
+	// most of this overflowed the 8-slot buffer and was dropped. The
+	// publisher waits for the intake goroutine to absorb each event before
+	// sending the next: the property under test is "the intake drains the
+	// channel while the handler is blocked", NOT "the intake goroutine wins
+	// every scheduling race against a tight publish loop" — on contended CI
+	// runners the latter is not guaranteed and made the unpaced version of
+	// this test flaky.
 	const burst = 3 * bufferSize
+	published := 1 // the "first" event above
+	publish := func(e busevents.Event) {
+		bus.Publish(e)
+		published++
+		require.Eventually(t, func() bool {
+			return h.startedCount()+base.mailboxAbsorbed() >= published
+		}, 2*time.Second, time.Millisecond,
+			"intake must absorb event %d while the handler is blocked", published)
+	}
 	for i := 0; i < burst; i++ {
-		bus.Publish(events.NewReconciliationTriggeredEvent("burst", true))
+		publish(events.NewReconciliationTriggeredEvent("burst", true))
 		if i == burst/3 || i == 2*burst/3 {
-			bus.Publish(events.NewBecameLeaderEvent("test"))
+			publish(events.NewBecameLeaderEvent("test"))
 		}
 	}
 
-	// Drops happen synchronously inside Publish when the subscriber buffer
-	// is full, so the counter is final once the burst loop returns: the
-	// intake goroutine must have swallowed the whole burst.
 	require.Equal(t, uint64(0), bus.DroppedEventsCritical(),
 		"intake must drain the channel while the handler is blocked")
 
