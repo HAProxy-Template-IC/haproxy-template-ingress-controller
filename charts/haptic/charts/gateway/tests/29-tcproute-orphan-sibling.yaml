@@ -1,0 +1,49 @@
+validationTests:
+  test-tcproute-orphan-sibling-does-not-drop-others:
+    description: An orphaned TCPRoute (parentRef Gateway deleted) must NOT drop sibling routes from rendering. Regression for the Scriggo bubble-sort mis-lowering that dropped every route after an orphan.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: { name: tcp-weighted-gateway, namespace: gci }
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tcp
+                protocol: TCP
+                port: 9300
+      tcproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TCPRoute
+          metadata: { name: tcproute-attach-newer, namespace: gci, creationTimestamp: "2026-07-02T09:00:00Z" }
+          spec:
+            parentRefs: [ { name: gone-gateway, sectionName: tcp } ]
+            rules: [ { backendRefs: [ { name: tcp-backend-v1, port: 3000 } ] } ]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TCPRoute
+          metadata: { name: tcp-weighted-route, namespace: gci, creationTimestamp: "2026-07-02T12:00:00Z" }
+          spec:
+            parentRefs: [ { name: tcp-weighted-gateway, sectionName: tcp } ]
+            rules:
+              - backendRefs:
+                  - { name: tcp-backend-v1, port: 3000, weight: 70 }
+                  - { name: tcp-backend-v2, port: 3000, weight: 30 }
+                  - { name: tcp-backend-v3, port: 3000, weight: 0 }
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: tcp-backend-v1, namespace: gci }
+          spec: { ports: [ { port: 3000, targetPort: 3000 } ] }
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: tcp-backend-v2, namespace: gci }
+          spec: { ports: [ { port: 3000, targetPort: 3000 } ] }
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: tcp-backend-v3, namespace: gci }
+          spec: { ports: [ { port: 3000, targetPort: 3000 } ] }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'frontend gateway-tcp-port-9300'

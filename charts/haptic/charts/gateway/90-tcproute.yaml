@@ -68,40 +68,19 @@ templateSnippets:
           // Gateway API conflict resolution: when several TCPRoutes claim
           // the same listener port, the OLDEST (earliest creationTimestamp,
           // then namespace/name) is bound; the port can't be multiplexed by
-          // any L7 key. List() order is store-stable but NOT creation-
-          // ordered, so sort first — then "first-claim wins" below == oldest
-          // wins. Bubble-sort mirrors 20-route-analysis.yaml: O(n^2) but
-          // TCPRoute counts per render are tiny.
-          var sortedTCPRoutes = []*resources.tcproutes.T{}
-          for _, r := range resources.tcproutes.List() {
-            sortedTCPRoutes = append(sortedTCPRoutes, r)
-          }
-          for i := 0; i < len(sortedTCPRoutes); i++ {
-            for j := i + 1; j < len(sortedTCPRoutes); j++ {
-              var a = sortedTCPRoutes[i]
-              var b = sortedTCPRoutes[j]
-              var aTs = a.Metadata.CreationTimestamp
-              var bTs = b.Metadata.CreationTimestamp
-              var aKey = a.Metadata.Namespace + "/" + a.Metadata.Name
-              var bKey = b.Metadata.Namespace + "/" + b.Metadata.Name
-              var swap = false
-              if aTs == bTs {
-                if aKey > bKey { swap = true }
-              } else if aTs == "" {
-                swap = true
-              } else if bTs != "" && aTs > bTs {
-                swap = true
-              }
-              if swap {
-                sortedTCPRoutes[i] = b
-                sortedTCPRoutes[j] = a
-              }
-            }
-          }
+          // any L7 key. Rather than pre-sort the routes (a hand-rolled
+          // bubble-sort over the typed slice mis-lowered under Scriggo and
+          // silently dropped later routes when an orphaned route sorted
+          // first), we walk List() in store order and resolve the winner AT
+          // CLAIM TIME: a contested port keeps whichever claimant is older
+          // (ts asc, empty ts last, then namespace/name asc). Each byPort
+          // entry carries "ts"/"key" so a later claimant can compare.
 
-          for _, route := range sortedTCPRoutes {
+          for _, route := range resources.tcproutes.List() {
             var nsStr = route.Metadata.Namespace
             var nameStr = route.Metadata.Name
+            var routeTs = route.Metadata.CreationTimestamp
+            var routeKey = nsStr + "/" + nameStr
 
             for ruleIdx, rule := range route.Spec.Rules {
               // First valid backendRef of the rule wins. Per Gateway API
@@ -166,10 +145,17 @@ templateSnippets:
                 var prPort = toint(parentRef.Port)
 
                 var gw = resources.gateways.GetSingle(prNs, prName)
-                if gw == nil {
-                  continue
-                }
-
+                // NOTE: a nested-if guard (NOT `if gw == nil { continue }`).
+                // Scriggo mis-lowers a `continue` inside this deep nested-if/
+                // for structure so it terminates the OUTER route loop, not
+                // just this parentRef iteration (same footgun documented in
+                // 20-route-analysis.yaml's conflict detection). An orphaned
+                // TCPRoute whose parentRef Gateway was deleted hits the nil
+                // branch; a `continue` there dropped EVERY later TCPRoute
+                // from routing (TCPRouteWeightedRouting / ParentRefPortAnd-
+                // SectionName / ReferenceGrant all fail once a stale route
+                // co-resides). Guard with `if gw != nil { … }` instead.
+                if gw != nil {
                 for _, listener := range gw.Spec.Listeners {
                   var lName = ListenerName(listener)
                   var lProto = ListenerProtocol(listener)
@@ -230,22 +216,40 @@ templateSnippets:
                     continue
                   }
 
-                  // First-claim wins: TCP forwards a whole port to one
-                  // backend, so a second route claiming the same port is
-                  // ignored (no L7 key to disambiguate by).
-                  if _, taken := byPort[lPort]; taken {
-                    continue
+                  // Oldest-wins at claim time: TCP forwards a whole port to
+                  // one backend, so a contested port keeps the older route
+                  // (ts asc, empty-ts last, then namespace/name asc). No
+                  // `continue` here — a skipped claim must not disturb the
+                  // outer route walk.
+                  var winThisPort = true
+                  var existing, taken = byPort[lPort]
+                  if taken {
+                    var em = existing.(map[string]any)
+                    var eTs = tostring(em["ts"])
+                    var eKey = tostring(em["key"])
+                    if eTs == routeTs {
+                      winThisPort = routeKey < eKey
+                    } else if routeTs == "" {
+                      winThisPort = false
+                    } else if eTs != "" && routeTs > eTs {
+                      winThisPort = false
+                    }
                   }
-                  byPort[lPort] = map[string]any{
-                    "backendName": "gtw_tcp_" + nsStr + "_" + nameStr + "_" + sprintf("%d", ruleIdx),
-                    "routeNs":     nsStr,
-                    "routeName":   nameStr,
-                    "ruleIdx":     ruleIdx,
-                    "refName":     refName,
-                    "refPort":     refPort,
-                    "refNs":       refNs,
-                    "refs":        refs,
+                  if winThisPort {
+                    byPort[lPort] = map[string]any{
+                      "backendName": "gtw_tcp_" + nsStr + "_" + nameStr + "_" + sprintf("%d", ruleIdx),
+                      "routeNs":     nsStr,
+                      "routeName":   nameStr,
+                      "ruleIdx":     ruleIdx,
+                      "refName":     refName,
+                      "refPort":     refPort,
+                      "refNs":       refNs,
+                      "refs":        refs,
+                      "ts":          routeTs,
+                      "key":         routeKey,
+                    }
                   }
+                }
                 }
               }
             }
