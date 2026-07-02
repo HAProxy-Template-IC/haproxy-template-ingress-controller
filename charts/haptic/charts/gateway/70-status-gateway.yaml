@@ -1034,12 +1034,11 @@ templateSnippets:
                 listenerAcceptedMessage = feFailMessage
               }
 
-              // Count attached routes: routes with sectionName matching
-              // this listener + wildcard routes (no sectionName) on the
-              // same gateway.
-              var specificKey = nsStr + "/" + nameStr + "/" + listenerName
-              var wildcardKey = nsStr + "/" + nameStr + "/*"
-              var attached = routeCounts[specificKey] + routeCounts[wildcardKey]
+              // Count attached routes for this listener. The counting pass
+              // above resolves sectionless routes to every listener they
+              // actually attach to, so routeCounts is keyed purely by
+              // gateway/listener — no "*" wildcard bucket exists anymore.
+              var attached = routeCounts[nsStr + "/" + nameStr + "/" + listenerName]
 
               // Per Gateway API spec, when a listener's references are
               // unresolvable (cert invalid, kind unsupported, …) the

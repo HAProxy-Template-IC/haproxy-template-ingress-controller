@@ -73,3 +73,16 @@ validationTests:
       - type: contains
         target: "status:default/ls-host-gw:rendered"
         pattern: '"type":"Accepted"'
+      # attachedRoutes is REQUIRED by the Gateway CRD on every ListenerStatus
+      # entry (required = [attachedRoutes, conditions, name]). The deployed
+      # and deployFailed variants may apply a listener entry BEFORE the
+      # rendered variant creates it; an entry without attachedRoutes is then
+      # rejected by the API server and the apply retries forever, flooding
+      # the status applier (the exact production incident these assertions
+      # pin — see the variant builders in 70-status-gateway.yaml).
+      - type: contains
+        target: "status:default/ls-host-gw:deployed"
+        pattern: '"attachedRoutes":\d+,"conditions":\[[^]]*"type":"Programmed"'
+      - type: contains
+        target: "status:default/ls-host-gw:deployFailed"
+        pattern: '"attachedRoutes":\d+,"conditions":\[[^]]*"type":"Programmed"'
