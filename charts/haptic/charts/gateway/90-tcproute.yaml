@@ -63,7 +63,41 @@ templateSnippets:
         var _, _ = shared.ComputeIfAbsent("gateway_tcproute", func() any {
           var byPort = map[int]any{}
 
-          for _, route := range resources.tcproutes.List() {
+          // Gateway API conflict resolution: when several TCPRoutes claim
+          // the same listener port, the OLDEST (earliest creationTimestamp,
+          // then namespace/name) is bound; the port can't be multiplexed by
+          // any L7 key. List() order is store-stable but NOT creation-
+          // ordered, so sort first — then "first-claim wins" below == oldest
+          // wins. Bubble-sort mirrors 20-route-analysis.yaml: O(n^2) but
+          // TCPRoute counts per render are tiny.
+          var sortedTCPRoutes = []*resources.tcproutes.T{}
+          for _, r := range resources.tcproutes.List() {
+            sortedTCPRoutes = append(sortedTCPRoutes, r)
+          }
+          for i := 0; i < len(sortedTCPRoutes); i++ {
+            for j := i + 1; j < len(sortedTCPRoutes); j++ {
+              var a = sortedTCPRoutes[i]
+              var b = sortedTCPRoutes[j]
+              var aTs = a.Metadata.CreationTimestamp
+              var bTs = b.Metadata.CreationTimestamp
+              var aKey = a.Metadata.Namespace + "/" + a.Metadata.Name
+              var bKey = b.Metadata.Namespace + "/" + b.Metadata.Name
+              var swap = false
+              if aTs == bTs {
+                if aKey > bKey { swap = true }
+              } else if aTs == "" {
+                swap = true
+              } else if bTs != "" && aTs > bTs {
+                swap = true
+              }
+              if swap {
+                sortedTCPRoutes[i] = b
+                sortedTCPRoutes[j] = a
+              }
+            }
+          }
+
+          for _, route := range sortedTCPRoutes {
             var nsStr = route.Metadata.Namespace
             var nameStr = route.Metadata.Name
 
@@ -380,6 +414,102 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'server SRV_1 10\.0\.0\.42:9100'
+
+  test-tcproute-oldest-route-wins-port:
+    description: >
+      When two TCPRoutes claim the same listener port, Gateway API conflict
+      resolution binds the OLDEST (earliest creationTimestamp) route. The
+      newer route is named alphabetically first (tcp-a-newer) so a naive
+      List()-order first-claim would pick it; the sort must instead bind
+      tcp-b-older. Mirrors the TCPRouteMultipleRoutesAttachment conformance
+      test's traffic-binding assertion.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tcp
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tcp
+                protocol: TCP
+                port: 9100
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TCPRoute
+      tcproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TCPRoute
+          metadata:
+            name: tcp-a-newer
+            namespace: default
+            generation: 1
+            creationTimestamp: "2026-02-01T00:00:00Z"
+          spec:
+            parentRefs:
+              - name: gw-tcp
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 9100
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TCPRoute
+          metadata:
+            name: tcp-b-older
+            namespace: default
+            generation: 1
+            creationTimestamp: "2026-01-01T00:00:00Z"
+          spec:
+            parentRefs:
+              - name: gw-tcp
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 9100
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 9100
+                targetPort: 9100
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.42"]
+              targetRef:
+                kind: Pod
+                name: tcp-backend-pod-1
+          ports:
+            - port: 9100
+              protocol: TCP
+    assertions:
+      - type: haproxy_valid
+      # The older route is bound as the port's default_backend.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+default_backend gtw_tcp_default_tcp-b-older_0$'
+      # The newer route is NOT bound to the port.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'default_backend gtw_tcp_default_tcp-a-newer_0'
 
   test-tcproute-multi-listener-single-backend:
     description: "A TCPRoute with a no-sectionName parentRef attaches to EVERY TCP listener on the Gateway (here ports 9100 and 9101). Both listener ports resolve to the same (route, rule) backend name gtw_tcp_default_tcp-multi_0. The chart must emit that backend exactly ONCE (a per-port frontend each, both forwarding to the shared backend) — emitting it per-port would declare a duplicate `backend` name, which HAProxy 3.3+ rejects as a fatal parse error."
