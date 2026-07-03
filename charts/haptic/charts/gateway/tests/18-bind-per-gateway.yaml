@@ -123,20 +123,21 @@ validationTests:
               -----END CERTIFICATE-----
     assertions:
       - type: haproxy_valid
-      # Allocations sort alphabetically:
-      #   default/gw-blocked:https:443 → 18000 (allocated, but bind skipped — mTLS-blocked)
-      #   default/gw-mixed:https-default:443 → 18001
-      #   default/gw-mixed:https-perport:8443 → 18002
+      # Allocations are the allocator's sha256-derived slots (see
+      # tests/15-pod-port-allocator.yaml for the recompute one-liner):
+      #   default/gw-blocked:443 → 18746 (allocated, but bind skipped — mTLS-blocked)
+      #   default/gw-mixed:443   → 18975
+      #   default/gw-mixed:8443  → 18126
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:18001 ssl crt-list \S+/gw-default-gw-mixed-https-default-crtlist\.txt alpn h2,http/1\.1$'
+        pattern: '(?m)^\s+bind \*:18975 ssl crt-list \S+/gw-default-gw-mixed-https-default-crtlist\.txt alpn h2,http/1\.1$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:18002 ssl crt-list \S+/gw-default-gw-mixed-https-perport-crtlist\.txt alpn h2,http/1\.1 ca-ignore-err all crt-ignore-err all$'
-      # gw-blocked: mTLS-blocked → NO bind emitted at port 18000.
+        pattern: '(?m)^\s+bind \*:18126 ssl crt-list \S+/gw-default-gw-mixed-https-perport-crtlist\.txt alpn h2,http/1\.1 ca-ignore-err all crt-ignore-err all$'
+      # gw-blocked: mTLS-blocked → NO bind emitted at its allocated port.
       - type: not_contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:18000 ssl crt-list \S+/gw-default-gw-blocked-https-crtlist\.txt'
+        pattern: '(?m)^\s+bind \*:18746 ssl crt-list \S+/gw-default-gw-blocked-https-crtlist\.txt'
       # Sanity: the existing chart-static `bind *:443` is still present.
       # Phase 4 ADDS per-Gateway binds; it doesn't remove the chart-static
       # path used by Ingress TLS and pinned-IP Gateways.

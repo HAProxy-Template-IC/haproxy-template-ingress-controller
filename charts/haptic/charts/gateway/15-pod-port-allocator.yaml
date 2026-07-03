@@ -16,33 +16,50 @@ templateSnippets:
   # `<lb-ip>:<listener-port>` → `<pod-ip>:<unique-pod-port>` and HAProxy
   # binds on `<unique-pod-port>` with isolated SSL config.
   #
-  # Allocation strategy: two-pass, stable across renders.
+  # Allocation strategy: PURE hash-and-probe over the current Gateway set.
   #
-  # Pass 1 — preserve existing allocations. Walk every (Gateway, HTTPS
-  # listener) tuple. For each one, look up the per-Gateway Service in
-  # the cluster cache by its `gw-<bounded-hash>` name and, if a
-  # `spec.ports[].targetPort >= basePort` is already set for the
-  # listener's port, lock that port in. This is what makes the
-  # allocation stable across renders: an existing Gateway's
-  # allocation is whatever kube-proxy currently DNATs to, so we
-  # MUST NOT shuffle it when a new alphabetically-earlier Gateway
-  # joins the set.
+  # Each (Gateway, port) key hashes to a slot in
+  # [basePort, basePort+rangeSize); same-slot collisions between current
+  # keys are resolved by linear probing in sorted-key order. The result
+  # is a pure function of the current Gateway set: the same key always
+  # maps to the same port no matter what order Gateways were created in,
+  # what the cluster cache currently contains, or which render computes
+  # it.
   #
-  # Pass 2 — assign free ports for new tuples. Tuples whose Service
-  # didn't yield a reusable allocation get the next-available pod
-  # port from `basePort` upward, skipping any port that pass 1 locked
-  # in. Sort by stable key (`<gwNs>/<gwName>:<listenerName>:<port>`)
-  # before assignment so two renders with the same NEW tuples produce
-  # the same NEW allocations.
+  # DO NOT "improve" this by reading committed Services back from the
+  # cluster cache to stabilise allocations. A previous version did
+  # exactly that (lock in any existing Service's targetPort, assign
+  # sequential free ports to the rest) and it failed in two proven ways
+  # under parallel Gateway churn, because the read-back state lags the
+  # allocator's own output:
+  #   * Permanent collision lock-in: render R1 allocates B=18000; R2's
+  #     snapshot doesn't include B's Service yet, so B is reallocated to
+  #     18001 while new Gateway A takes 18000; R3's snapshot has A=18000
+  #     committed but B's update still in flight (old 18000) — read-back
+  #     "locks" BOTH at 18000 and reverts B. Every later render agrees,
+  #     HAProxy binds two Gateways on one pod port (plaintext requests
+  #     answered with TLS alerts by the neighbour's ssl bind), and the
+  #     state is self-sustaining.
+  #   * Read-back oscillation: with several Services' visibility
+  #     alternating across snapshots, consecutive renders keep
+  #     "correcting" each other's targetPorts — observed as ~50
+  #     Service-update flips per second, sustained, each flip
+  #     re-triggering a render. (Gateway-API conformance CI, 2026-07-03.)
   #
-  # The cache is initialised once per render via `shared.ComputeIfAbsent`
+  # Hash+probe trades those failure modes for one small, bounded one: a
+  # key whose slot probe-chains through another key's slot shifts by one
+  # when that neighbour appears/disappears (likelihood ~keys/rangeSize
+  # per churn event, i.e. ~3% at 30 concurrent Gateway-ports over a
+  # 1000-port range — and the shifted Gateway's Service targetPort and
+  # bind move in the SAME render, so the exposure is one kube-proxy
+  # sync, not a persistent break).
+  #
+  # The map is initialised once per render via `shared.ComputeIfAbsent`
   # so concurrent map renderers see a consistent view.
   # ============================================================================
 
   util-gateway-pod-port-allocator:
     template: |
-      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol %}
-      {%- import "util-bounded-k8s-name" for BoundedK8sName %}
       {#- Initialise the per-Gateway-listener pod-port allocation map.
           Idempotent — multiple snippets render this; only the first
           actually computes. Downstream consumers should `{{ render
@@ -54,9 +71,9 @@ templateSnippets:
             values:  int (the allocated container port)
 
           Allocation rules:
-            * Only HTTPS Gateway listeners get an allocation. TLS-Terminate
-              listeners on non-default ports already render via
-              `frontends-600-gateway-tls-listener` (per-port mode-tcp
+            * Only HTTP and HTTPS Gateway listeners get an allocation.
+              TLS-Terminate listeners on non-default ports already render
+              via `frontends-600-gateway-tls-listener` (per-port mode-tcp
               frontend) and don't need per-Gateway pod ports.
               TLS-Passthrough listeners flow through chart-static
               `frontend ssl-tcp` and don't need pod-port allocation either.
@@ -65,29 +82,11 @@ templateSnippets:
               allocator, just leave them out).
       -#}
       {%- var _, _ = shared.ComputeIfAbsent("gatewayPodPortAllocations", func() any {
-        {#- Two-pass allocator with stability across renders.
-
-            Pass 1: walk every (Gateway, HTTPS listener) tuple AND read
-            back the per-Gateway Service from the cluster cache. If the
-            Service already exists with a non-default targetPort for
-            this listener's port, REUSE that targetPort as the pod-port
-            allocation. This is what gives allocations
-            within-conformance-suite stability: when a new Gateway is
-            applied alongside an existing one, the existing one's
-            allocations stay put (its Service was emitted by a prior
-            render and is what kube-proxy currently DNATs to), and
-            only the new Gateway gets fresh allocations from the free
-            pool.
-
-            Pass 2: for tuples without an existing Service allocation,
-            assign the lowest free pod port (basePort + i, skipping
-            ports already locked in by pass 1). Sort the new tuples
-            alphabetically so within a single render the assignment
-            order is deterministic — but only NEW tuples ever pick
-            from the free pool, so an existing Gateway's allocations
-            don't shift when a new alphabetically-earlier Gateway
-            arrives. -#}
         var basePort = toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000))
+        var rangeSize = toint(extraContext | dig("perGatewayPodPortRange") | fallback(1000))
+        if rangeSize < 1 {
+          rangeSize = 1000
+        }
         var allTuples = []any{}
         for _, gw := range resources.gateways.List() {
           var gwNs = gw.Metadata.Namespace
@@ -122,101 +121,46 @@ templateSnippets:
             host-disambiguated downstream. Then expand to the
             per-(Gateway,listener) keys consumers look up.
 
-            TWO-PASS, STABLE-UNDER-CHURN allocation.
+            PURE HASH-AND-PROBE allocation (see the header comment for
+            why this must NOT read committed Services back from the
+            cluster cache): each key's home slot is derived from a
+            sha256 of the key itself, so the same key lands on the same
+            pod port in every render, on every replica, regardless of
+            snapshot staleness. Only genuine slot collisions between
+            keys present in THIS render probe forward, in sorted-key
+            order so the assignment is deterministic.
 
-            Pass 1 — preserve committed allocations. For each distinct
-            (Gateway, port) key, read back the per-Gateway Service
-            (name `gw-<bounded-hash>` in the controller namespace) from
-            the cluster cache. If it already publishes a `targetPort >=
-            basePort` for this listener port, LOCK that port in. This is
-            what makes the allocation stable: an existing Gateway keeps
-            whatever kube-proxy currently DNATs to, even as other
-            Gateways join or leave the set.
-
-            Pass 2 — assign fresh ports to the remaining keys from the
-            lowest free pod port upward (basePort, skipping locked
-            ports), in sorted-key order for determinism.
-
-            Why this is required (not just nicer than sort-and-index):
-            the conformance suite creates and deletes Gateways
-            continuously and in parallel. A pure sort-and-index allocator
-            (`basePort + i`) reshuffles EVERY later key's pod port each
-            time an alphabetically-earlier Gateway is added or removed —
-            so a Gateway's `bind`, its Service `targetPort`, and its
-            host/path map keys all move mid-suite, transiently colliding
-            two distinct Gateways onto one pod port and bleeding one
-            Gateway's routes into another's `:<podPort>` catch-all
-            (observed: `same-namespace` and `certificate-malformed` both
-            landing on 18010, requests to one served by the other's
-            backend). Read-back pins existing Gateways so only genuinely
-            new keys draw from the free pool.
-
-            Split-render-pass safety: k8sResources (Service) and
-            haproxyConfig (bind) render from the SAME store snapshot
-            within a reconcile, so both passes read back the same
-            committed Services and compute the same fresh allocations —
-            Service `targetPort` == `bind` port holds. A brand-new
-            Gateway (no Service yet in the snapshot) gets the same
-            deterministic fresh port in both passes; once its Service is
-            committed, read-back pins it. Collision-free by construction
-            (locked ports are excluded from the free pool). -#}
-        var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
+            7 hex chars (28 bits) keeps parseInt inside int32 range on
+            any platform; 268M values over a ~1000-slot range is
+            uniform enough. -#}
         var portKeys = []any{}
-        var portKeyMeta = map[string]any{}
+        var seenKeys = map[string]bool{}
         for _, tAny := range allTuples {
           var t = tAny.(map[string]any)
           var pk = tostring(t["gwNs"]) + "/" + tostring(t["gwName"]) + ":" + tostring(toint(t["lPort"]))
-          if _, seen := portKeyMeta[pk]; !seen {
-            portKeyMeta[pk] = map[string]any{
-              "gwNs":   tostring(t["gwNs"]),
-              "gwName": tostring(t["gwName"]),
-              "lPort":  toint(t["lPort"]),
-            }
+          if !seenKeys[pk] {
+            seenKeys[pk] = true
             portKeys = append(portKeys, pk)
           }
         }
 
-        {#- Pass 1: lock committed allocations from existing per-Gateway Services. -#}
+        var sortedKeys = sort_strings(portKeys)
         var portPod = map[string]any{}
-        var usedPorts = map[int]bool{}
-        var pendingKeys = []any{}
-        for _, pkAny := range portKeys {
+        var usedSlots = map[int]bool{}
+        for _, pkAny := range sortedKeys {
           var pk = tostring(pkAny)
-          var meta = portKeyMeta[pk].(map[string]any)
-          var committed = 0
-          if ctrlNs != "" {
-            var svcName = BoundedK8sName("gw", tostring(meta["gwNs"]), tostring(meta["gwName"]), "")
-            var svc = resources.services.GetSingle(ctrlNs, svcName)
-            if svc != nil {
-              for _, p := range svc.Spec.Ports {
-                if toint(p.Port) == toint(meta["lPort"]) {
-                  var tp = toint(p.TargetPort)
-                  if tp >= basePort {
-                    committed = tp
-                  }
-                }
-              }
-            }
+          var hashVal, hashErr = parseInt(sha256(pk)[0:7], 16)
+          if hashErr != nil {
+            {#- Unreachable — sha256 output is always valid hex — but
+                failing loudly beats allocating garbage. -#}
+            fail("pod-port allocator: hash parse failed for key " + pk)
           }
-          if committed > 0 {
-            portPod[pk] = committed
-            usedPorts[committed] = true
-          } else {
-            pendingKeys = append(pendingKeys, pk)
+          var slot = hashVal % rangeSize
+          for usedSlots[slot] {
+            slot = (slot + 1) % rangeSize
           }
-        }
-
-        {#- Pass 2: assign lowest free ports to the remaining keys,
-            sorted for deterministic assignment, skipping locked ports. -#}
-        var sortedPending = sort_strings(pendingKeys)
-        var nextPort = basePort
-        for _, pkAny := range sortedPending {
-          for usedPorts[nextPort] {
-            nextPort = nextPort + 1
-          }
-          portPod[tostring(pkAny)] = nextPort
-          usedPorts[nextPort] = true
-          nextPort = nextPort + 1
+          usedSlots[slot] = true
+          portPod[pk] = basePort + slot
         }
 
         {#- Expand to per-(Gateway,listener) keys, all pointing at their
