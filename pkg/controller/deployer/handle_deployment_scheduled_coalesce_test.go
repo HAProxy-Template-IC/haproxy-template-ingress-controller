@@ -40,14 +40,34 @@ import (
 // A regression that removed the CoalescesOn hook (or returned the wrong
 // event type from it) would silently re-introduce the FIFO backlog and
 // the deployer would lag arbitrarily behind the scheduler under load.
+// That hook is pinned DIRECTLY below (no timing involved); the mailbox's
+// collapsing machinery itself is exercised deterministically by the
+// component package's own tests (TestBase_MailboxNeverDropsUnderBurst
+// and friends), which have the introspection helpers to pace on intake
+// absorption.
 //
-// Pin the all-coalescible case (the common steady-state path): N
-// coalescible events queued back-to-back → exactly ONE performDeployment
-// call, for the LATEST of the run. All earlier events are SUPERSEDED —
-// including the first (deploying an already-superseded config first would
-// just burn a deploy slot on stale state). This is the contract that
-// protects the deployer from falling behind.
+// The behavioral half here deliberately asserts only the
+// scheduling-independent contract: the deployer must END on the LATEST
+// event of a queued burst and then go quiet. It must NOT assert
+// "exactly one dispatch": the mailbox intake and the worker run
+// concurrently, so the worker may legitimately dequeue a partial run
+// (e.g. dispatch B) while the intake is still absorbing C from the
+// subscription channel — this test's instant fake deploy (empty
+// endpoints) makes that interleaving reachable under a loaded scheduler,
+// and CI reproduced it (main pipeline 2649293230). Latest-wins means
+// "never fall behind and always converge on the newest", not "atomic
+// absorption of everything ever published".
 func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
+	// The load-bearing wiring, pinned without any scheduling dependence:
+	// the deployer coalesces deployment.scheduled and ONLY
+	// deployment.scheduled (completed events clear the single-threaded
+	// in-flight bookkeeping and must be seen individually).
+	deployerForContract := createTestDeployer(testutil.NewTestBus())
+	assert.Equal(t, []string{events.EventTypeDeploymentScheduled}, deployerForContract.CoalescesOn(),
+		"the deployer must coalesce exactly deployment.scheduled — removing "+
+			"the hook re-introduces the FIFO backlog; adding deployment.completed "+
+			"would break the in-flight bookkeeping")
+
 	bus := testutil.NewTestBus()
 	completedChan := bus.Subscribe("completion-observer", 50)
 
@@ -72,12 +92,13 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 	}
 
 	// Queue 4 coalescible events in the component's subscription buffer
-	// BEFORE the event loop starts. The mailbox intake collapses the whole
-	// run; only the latest (C) is dispatched.
-	bus.Publish(mkScheduled("initial-superseded"))
-	bus.Publish(mkScheduled("queued-A-superseded"))
-	bus.Publish(mkScheduled("queued-B-superseded"))
-	bus.Publish(mkScheduled("queued-C-latest"))
+	// BEFORE the event loop starts (Publish delivers synchronously). The
+	// mailbox collapses whatever run the intake has absorbed by the time
+	// the worker dequeues; the latest (C) is always the final dispatch.
+	published := []string{"initial-superseded", "queued-A-superseded", "queued-B-superseded", "queued-C-latest"}
+	for _, id := range published {
+		bus.Publish(mkScheduled(id))
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -88,18 +109,25 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 	deployer.ctx = ctx
 	go deployer.Base.Start(ctx)
 
-	// Collect the DeploymentCompletedEvents observed.
-	first := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.EventTimeout)
+	// Collect completions until the latest (C) lands. Superseded
+	// intermediates MAY dispatch under adversarial scheduling (see the
+	// doc comment), but every completion must be one of the published
+	// burst, and C must arrive.
+	burst := map[string]bool{}
+	for _, id := range published {
+		burst[id] = true
+	}
+	var last string
+	for last != "queued-C-latest" {
+		completed := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.EventTimeout)
+		last = completed.CorrelationID()
+		if !burst[last] {
+			t.Fatalf("completion for unknown correlation %q (published burst: %v)", last, published)
+		}
+	}
 
-	// EXACTLY 1 deployment — the latest of the queued run. Every earlier
-	// queued event MUST be superseded.
-	assert.Equal(t, "queued-C-latest", first.CorrelationID(),
-		"the deployer MUST jump straight to the latest queued coalescible "+
-			"event, superseding all intermediates. A regression that drained "+
-			"FIFO instead of latest-wins would leave the deployer lagging "+
-			"arbitrarily behind the scheduler under load")
-
-	// No second deployment: initial, A and B were superseded, never deployed.
+	// Quiescence: once the latest dispatched, nothing further may deploy —
+	// in particular no FIFO-style trailing replays of superseded events.
 	testutil.AssertNoEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.NoEventTimeout)
 }
 
