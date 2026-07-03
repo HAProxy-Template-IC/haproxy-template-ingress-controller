@@ -159,7 +159,7 @@ func (r *Request) Do(ctx context.Context) (*Response, error) {
 
 	transport := r.client.transport
 	if r.mtls != nil {
-		t, err := transportForClientCert(r.client.nodeIP, defaultHTTPSPort, r.mtls.cert, r.mtls.ca)
+		t, err := transportForClientCert(r.client.nodeIP, r.client.httpsPort, r.mtls.cert, r.mtls.ca)
 		if err != nil {
 			return nil, fmt.Errorf("build mTLS transport: %w", err)
 		}
@@ -202,7 +202,7 @@ func (r *Request) url() string {
 	case "https":
 		return "https://" + r.host + r.path
 	default:
-		return "http://" + r.client.nodeIP + ":" + strconv.Itoa(defaultHTTPPort) + r.path
+		return "http://" + r.client.nodeIP + ":" + strconv.Itoa(r.client.httpPort) + r.path
 	}
 }
 

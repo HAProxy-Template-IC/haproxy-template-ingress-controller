@@ -33,6 +33,7 @@ import (
 func TestHTTPRoutePaths(t *testing.T) {
 	t.Parallel()
 	host := "httproute-paths.localdev.me"
+	var fwd GatewayForward
 
 	feature := features.New("HTTPRoute: path matching variants").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -44,6 +45,7 @@ func TestHTTPRoutePaths(t *testing.T) {
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "test-gateway")
+			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-paths",
@@ -61,15 +63,15 @@ func TestHTTPRoutePaths(t *testing.T) {
 			return ctx
 		}).
 		Assess("Exact /exact matches", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/exact").ExpectOK(t)
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/exact").ExpectOK(t)
 			return ctx
 		}).
 		Assess("PathPrefix /api matches", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api/test").ExpectOK(t)
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api/test").ExpectOK(t)
 			return ctx
 		}).
 		Assess("Catch-all / matches", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/").ExpectOK(t)
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectOK(t)
 			return ctx
 		}).
 		Feature()
@@ -91,6 +93,7 @@ func TestHTTPRoutePaths(t *testing.T) {
 func TestHTTPRouteMethods(t *testing.T) {
 	t.Parallel()
 	host := "httproute-methods.localdev.me"
+	var fwd GatewayForward
 
 	feature := features.New("HTTPRoute: method matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -103,6 +106,7 @@ func TestHTTPRouteMethods(t *testing.T) {
 			defaultBackend := NewEchoServerBackend(ctx, t, client, ns)
 			v2Backend := NewEchoServerV2Backend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "test-gateway")
+			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-methods",
@@ -120,11 +124,11 @@ func TestHTTPRouteMethods(t *testing.T) {
 			return ctx
 		}).
 		Assess("GET /api routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api").ExpectEchoEnvironment(t, "v2")
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("POST /api routes to default backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api").WithMethod("POST").ExpectEchoEnvironment(t, "")
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api").WithMethod("POST").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()
@@ -137,6 +141,7 @@ func TestHTTPRouteMethods(t *testing.T) {
 func TestHTTPRouteHeaders(t *testing.T) {
 	t.Parallel()
 	host := "httproute-headers.localdev.me"
+	var fwd GatewayForward
 
 	feature := features.New("HTTPRoute: header matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -149,6 +154,7 @@ func TestHTTPRouteHeaders(t *testing.T) {
 			defaultBackend := NewEchoServerBackend(ctx, t, client, ns)
 			v2Backend := NewEchoServerV2Backend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "test-gateway")
+			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-headers",
@@ -165,12 +171,12 @@ func TestHTTPRouteHeaders(t *testing.T) {
 			return ctx
 		}).
 		Assess("Request with X-Api-Version: v2 routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api").
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api").
 				WithHeader("X-Api-Version", "v2").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("Request without header falls through to default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/").ExpectEchoEnvironment(t, "")
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()
@@ -181,6 +187,7 @@ func TestHTTPRouteHeaders(t *testing.T) {
 func TestHTTPRouteQuery(t *testing.T) {
 	t.Parallel()
 	host := "httproute-query.localdev.me"
+	var fwd GatewayForward
 
 	feature := features.New("HTTPRoute: query parameter matching").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -193,6 +200,7 @@ func TestHTTPRouteQuery(t *testing.T) {
 			defaultBackend := NewEchoServerBackend(ctx, t, client, ns)
 			v2Backend := NewEchoServerV2Backend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "test-gateway")
+			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-query",
@@ -209,11 +217,11 @@ func TestHTTPRouteQuery(t *testing.T) {
 			return ctx
 		}).
 		Assess("Request with ?version=beta routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api?version=beta").ExpectEchoEnvironment(t, "v2")
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api?version=beta").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("Request without query falls through to default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/").ExpectEchoEnvironment(t, "")
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()

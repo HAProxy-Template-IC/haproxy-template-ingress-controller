@@ -65,6 +65,15 @@ func New(t *testing.T) *Client {
 	return &Client{t: t, httpsPort: DefaultHTTPSNodePort, nodeIP: ip}
 }
 
+// ForForwarded returns a Client targeting a local kubectl port-forward
+// tunnel (127.0.0.1:<httpsPort>) instead of the shared kind NodePort.
+// Per-Gateway Services aren't reachable via the shared NodePorts — see
+// tests/e2e.ForwardGateway for the tunnel side.
+func ForForwarded(t *testing.T, httpsPort int) *Client {
+	t.Helper()
+	return &Client{t: t, httpsPort: httpsPort, nodeIP: "127.0.0.1"}
+}
+
 // Dial opens a TLS-protected gRPC connection to the kind NodePort whose
 // TLS handshake carries `host` as both SNI and HTTP/2 :authority. The
 // caller owns the *grpc.ClientConn and is responsible for Close().
