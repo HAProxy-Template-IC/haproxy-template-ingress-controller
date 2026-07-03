@@ -55,7 +55,7 @@ spec:
       containers:
         # HAProxy container
         - name: haproxy
-          image: haproxytech/haproxy-debian:3.2.20
+          image: haproxytech/haproxy-debian:3.2.21
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
@@ -106,7 +106,7 @@ spec:
 
         # Dataplane API sidecar
         - name: dataplane
-          image: haproxytech/haproxy-debian:3.2.20
+          image: haproxytech/haproxy-debian:3.2.21
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
