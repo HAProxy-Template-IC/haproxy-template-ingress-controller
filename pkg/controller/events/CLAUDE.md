@@ -271,12 +271,14 @@ ReconciliationCompletedEvent{
 
 ### Status-patch carriage (deployment + failure events)
 
-Four events carry a `StatusPatches []templating.StatusPatch` payload so the
+Six events carry a `StatusPatches []templating.StatusPatch` payload so the
 `StatusApplier` is stateless — it reads patches directly from the event
 that triggers the apply, with no side-channel cache:
 
 | Event | Patches describe | Who populates | Applier writes variant |
 |---|---|---|---|
+| `ReconciliationCompletedEvent` | the just-completed render's patches | `Coordinator` from `PipelineResult.StatusPatches` | (forwarded only — the ResourceApplier consumes and re-publishes) |
+| `ResourcesAppliedEvent` | the just-applied render's patches | `ResourceApplier.handleReconciliationCompleted` (forwarded from `ReconciliationCompletedEvent` AFTER the apply pass) | `rendered` (ordering guarantee: resources exist before their conditions) |
 | `DeploymentScheduledEvent` | the config this deploy will push | `DeploymentScheduler.scheduleOrQueue` from cached `lastValidatedStatusPatches` | (forwarded only — applier doesn't subscribe) |
 | `DeploymentCompletedEvent` | the config this deploy just pushed | `Deployer.deployToEndpoints` (forwarded unchanged from the scheduled event) | `deployed` (if Total>0 && Succeeded>0) |
 | `DeploymentSkippedEvent` | the config the data plane is already at | `DeploymentScheduler.handleValidationCompleted` (skip branch) | `deployed` (if Total>0) |

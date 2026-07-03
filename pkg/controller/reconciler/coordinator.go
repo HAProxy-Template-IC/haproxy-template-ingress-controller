@@ -39,7 +39,14 @@ const (
 	CoordinatorComponentName = "reconciliation-coordinator"
 
 	// CoordinatorEventBufferSize is the size of the event subscription buffer.
-	CoordinatorEventBufferSize = busevents.StandardSubscriberBuffer
+	// ReconciliationTriggeredEvents are tiny (a reason string + correlation),
+	// so a large buffer is cheap, and it must be large: under churn the
+	// Reconciler fires one trigger per resource change and a StandardSubscriber-
+	// Buffer (50) overflows, dropping triggers (and thus renders). The Start
+	// loop drains this buffer to a single trigger per render (coalesceQueuedTriggers),
+	// so it only ever needs to hold the triggers that arrive during one
+	// render+validate cycle.
+	CoordinatorEventBufferSize = busevents.DebugSubscriberBuffer
 )
 
 // Coordinator orchestrates reconciliation by calling the Pipeline directly.
@@ -153,12 +160,65 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		select {
 		case event := <-c.eventChan:
 			if triggered, ok := event.(*events.ReconciliationTriggeredEvent); ok {
+				triggered = c.coalesceQueuedTriggers(triggered)
 				c.handleReconciliationTriggered(ctx, triggered)
 			}
 
 		case <-ctx.Done():
 			c.logger.Info("Reconciliation coordinator shutting down", "reason", ctx.Err())
 			return nil
+		}
+	}
+}
+
+// coalesceQueuedTriggers drains any reconciliation triggers already queued
+//
+// NOTE: deliberately NOT pkg/controller/coalesce.DrainLatest and not
+// component.Base's mailbox — those preserve per-event dispatch with
+// arrival ordering, while this merges the whole drained run into ONE
+// re-render (correct here because a render always reads current store
+// state, so intermediate triggers carry no information of their own).
+// behind `first` and returns a single representative to render. A render reads
+// the LATEST store state, so ONE render after draining N triggers is equivalent
+// to N serial renders — but it collapses a churn burst into O(1) renders
+// instead of O(N). This bounds the render rate and, with it, the downstream
+// template.rendered / reconciliation.completed event volume: without it, a
+// conformance-scale burst floods the status-applier and resource-applier
+// subscriber buffers, their (coalescible) events get dropped, and a dropped
+// deployment.completed leaves a Gateway's Programmed=True unapplied for tens of
+// seconds (the Programmed-lag stall). Draining is non-blocking, so it never
+// waits: it stops the instant the queue is empty.
+//
+// If the first trigger or any drained trigger is non-coalescible, the returned
+// trigger is non-coalescible too, so the downstream deploy scheduler does not
+// skip the resulting deployment.
+func (c *Coordinator) coalesceQueuedTriggers(first *events.ReconciliationTriggeredEvent) *events.ReconciliationTriggeredEvent {
+	latest := first
+	var forced *events.ReconciliationTriggeredEvent // first non-coalescible seen, if any
+	if !first.Coalescible() {
+		forced = first
+	}
+	drained := 0
+	for {
+		select {
+		case ev := <-c.eventChan:
+			t, ok := ev.(*events.ReconciliationTriggeredEvent)
+			if !ok {
+				continue
+			}
+			drained++
+			latest = t
+			if forced == nil && !t.Coalescible() {
+				forced = t
+			}
+		default:
+			if drained > 0 {
+				c.logger.Debug("coalesced queued reconciliation triggers", "drained", drained)
+			}
+			if forced != nil {
+				return forced
+			}
+			return latest
 		}
 	}
 }
@@ -235,6 +295,7 @@ func (c *Coordinator) handlePipelineSuccess(
 	c.eventBus.Publish(events.NewReconciliationCompletedEvent(
 		totalDuration,
 		result.RenderedResources,
+		result.StatusPatches,
 		events.PropagateCorrelation(triggerEvent),
 	))
 

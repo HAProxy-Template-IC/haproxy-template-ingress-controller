@@ -44,6 +44,7 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 	t.Parallel()
 
 	host := "httproute-precedence.localdev.me"
+	var fwd GatewayForward
 
 	feature := features.New("HTTPRoute: match precedence").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -56,6 +57,7 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 			defaultBackend := NewEchoServerBackend(ctx, t, client, ns)
 			v2Backend := NewEchoServerV2Backend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "test-gateway")
+			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-precedence",
@@ -90,24 +92,24 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 		// hit) but the rule under test hasn't, so the response identifies a
 		// different backend than expected.
 		Assess("highest-precedence rule wins (GET + 2 headers + query)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/?debug=true").
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/?debug=true").
 				WithHeader("X-Version", "v2").
 				WithHeader("X-Environment", "prod").
 				ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("medium rule (GET + X-Version=v1) wins over catch-all", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/").
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").
 				WithHeader("X-Version", "v1").
 				ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Assess("plain GET routes to v2 (rule 3, low specificity)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/").ExpectEchoEnvironment(t, "v2")
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("POST falls all the way through to catch-all", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/").WithMethod("POST").ExpectEchoEnvironment(t, "")
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").WithMethod("POST").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()
@@ -121,6 +123,7 @@ func TestHTTPRouteCombined(t *testing.T) {
 	t.Parallel()
 
 	host := "httproute-combined.localdev.me"
+	var fwd GatewayForward
 
 	feature := features.New("HTTPRoute: combined matchers (path + method + header + query regex)").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -133,6 +136,7 @@ func TestHTTPRouteCombined(t *testing.T) {
 			defaultBackend := NewEchoServerBackend(ctx, t, client, ns)
 			v2Backend := NewEchoServerV2Backend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "test-gateway")
+			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-combined",
@@ -151,28 +155,28 @@ func TestHTTPRouteCombined(t *testing.T) {
 			return ctx
 		}).
 		Assess("all matchers satisfied → v2", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api?token=secret123").
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api?token=secret123").
 				WithMethod("POST").
 				WithHeader("Content-Type", "application/json").
 				ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("token regex mismatch → catch-all default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api?token=wrongtoken").
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api?token=wrongtoken").
 				WithMethod("POST").
 				WithHeader("Content-Type", "application/json").
 				ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Assess("wrong content-type → catch-all default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api?token=secret123").
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api?token=secret123").
 				WithMethod("POST").
 				WithHeader("Content-Type", "text/plain").
 				ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Assess("wrong method → catch-all default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/api?token=secret123").
+			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/api?token=secret123").
 				WithHeader("Content-Type", "application/json").
 				ExpectEchoEnvironment(t, "")
 			return ctx

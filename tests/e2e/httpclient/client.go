@@ -60,6 +60,13 @@ type Client struct {
 	// the docker hostname's IPv4 address; locally it's 127.0.0.1.
 	nodeIP string
 
+	// httpPort/httpsPort are the wire ports requests dial. New() sets the
+	// shared kind NodePorts; ForForwarded() sets a kubectl port-forward
+	// tunnel's local ports (per-Gateway Services aren't reachable via the
+	// shared NodePorts — see tests/e2e ForwardGateway).
+	httpPort  int
+	httpsPort int
+
 	// waitCfg is the retry/backoff policy applied to Expect* sinks.
 	waitCfg testutil.WaitConfig
 
@@ -133,7 +140,9 @@ func New(t *testing.T) *Client {
 	t.Logf("httpclient: NodePort host = %s", nodeIP)
 
 	return &Client{
-		nodeIP: nodeIP,
+		nodeIP:    nodeIP,
+		httpPort:  defaultHTTPPort,
+		httpsPort: defaultHTTPSPort,
 		waitCfg: testutil.WaitConfig{
 			InitialInterval: 100 * time.Millisecond,
 			MaxInterval:     2 * time.Second,
@@ -150,6 +159,28 @@ func New(t *testing.T) *Client {
 		transport:     newSharedTransport(nodeIP, defaultHTTPSPort),
 		onPollTimeout: defaultPollTimeoutSnapshot,
 	}
+}
+
+// ForForwarded constructs a Client whose wire target is a local kubectl
+// port-forward tunnel (127.0.0.1:<port>) instead of the shared kind
+// NodePorts. Gateway API listeners are exposed via per-Gateway Services
+// that the shared NodePorts deliberately do NOT serve; tests reach them
+// through tests/e2e.ForwardGateway and hand the returned local ports here.
+// Pass 0 for a port the Gateway has no listener on. Poll budget, transport
+// behavior (SNI-preserving HTTPS dial rewrite) and failure snapshots match
+// New().
+func ForForwarded(t *testing.T, httpPort, httpsPort int) *Client {
+	t.Helper()
+	c := New(t)
+	c.nodeIP = "127.0.0.1"
+	if httpPort > 0 {
+		c.httpPort = httpPort
+	}
+	if httpsPort > 0 {
+		c.httpsPort = httpsPort
+	}
+	c.transport = newSharedTransport(c.nodeIP, c.httpsPort)
+	return c
 }
 
 // CloseIdleConnections drops the shared transport's pooled keepalive

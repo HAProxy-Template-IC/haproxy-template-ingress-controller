@@ -31,7 +31,7 @@ import (
 type coalescingRecorder struct {
 	mu          sync.Mutex
 	received    []busevents.Event
-	coalesceOn  string
+	coalesceOn  []string
 	delay       time.Duration // simulates slow processing for the first event
 	firstEvent  bool
 	firstNotify chan struct{}
@@ -56,7 +56,7 @@ func (h *coalescingRecorder) HandleEvent(event busevents.Event) {
 	h.mu.Unlock()
 }
 
-func (h *coalescingRecorder) CoalescesOn() string { return h.coalesceOn }
+func (h *coalescingRecorder) CoalescesOn() []string { return h.coalesceOn }
 
 func (h *coalescingRecorder) snapshot() []busevents.Event {
 	h.mu.Lock()
@@ -73,7 +73,7 @@ func TestBase_CoalescesIntermediate(t *testing.T) {
 	bus := busevents.NewEventBus(16)
 
 	h := &coalescingRecorder{
-		coalesceOn:  events.EventTypeReconciliationTriggered,
+		coalesceOn:  []string{events.EventTypeReconciliationTriggered},
 		delay:       100 * time.Millisecond,
 		firstNotify: make(chan struct{}),
 	}
@@ -139,7 +139,7 @@ func TestBase_CoalesceOnEmpty(t *testing.T) {
 	bus := busevents.NewEventBus(16)
 
 	h := &coalescingRecorder{
-		coalesceOn:  "", // explicitly disabled
+		coalesceOn:  nil, // explicitly disabled
 		delay:       100 * time.Millisecond,
 		firstNotify: make(chan struct{}),
 	}
@@ -191,7 +191,7 @@ func TestBase_NonCoalescibleEventPassesThrough(t *testing.T) {
 	bus := busevents.NewEventBus(16)
 
 	h := &coalescingRecorder{
-		coalesceOn:  events.EventTypeReconciliationTriggered,
+		coalesceOn:  []string{events.EventTypeReconciliationTriggered},
 		delay:       100 * time.Millisecond,
 		firstNotify: make(chan struct{}),
 	}
@@ -221,7 +221,8 @@ func TestBase_NonCoalescibleEventPassesThrough(t *testing.T) {
 		t.Fatal("first event never started processing")
 	}
 
-	// One coalescible (would be skipped) and one non-coalescible (must pass through).
+	// One coalescible (flushed at the run boundary the non-coalescible event
+	// creates) and one non-coalescible (must pass through).
 	bus.Publish(events.NewReconciliationTriggeredEvent("skipped", true))
 	bus.Publish(events.NewReconciliationTriggeredEvent("must_arrive", false))
 

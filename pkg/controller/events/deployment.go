@@ -254,6 +254,15 @@ func NewDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOp
 
 func (e *DeploymentCompletedEvent) EventType() string { return EventTypeDeploymentCompleted }
 
+// Coalescible implements busevents.CoalescibleEvent. A completed event is a
+// full-state notification: it carries the complete status patch set of the
+// config the deploy shipped, so for consumers that declare it in their
+// CoalescesOn list (only the status applier) the newest of an uninterrupted
+// run supersedes the older ones. Consumers with per-event bookkeeping (the
+// deployer clears its in-flight flag per completion) must simply not declare
+// this type — coalescing is always per-subscriber opt-in.
+func (e *DeploymentCompletedEvent) Coalescible() bool { return true }
+
 // DeploymentSkippedEvent is published when the deployment scheduler determines
 // that the data plane is already at the just-rendered configuration and no
 // deployment work needs to be performed (typically: rendered config hash and
@@ -344,6 +353,10 @@ func NewDeploymentSkippedEvent(total int, reason, configHash, podSetHash string,
 }
 
 func (e *DeploymentSkippedEvent) EventType() string { return EventTypeDeploymentSkipped }
+
+// Coalescible implements busevents.CoalescibleEvent — same full-state
+// latest-wins rationale as DeploymentCompletedEvent.Coalescible.
+func (e *DeploymentSkippedEvent) Coalescible() bool { return true }
 
 // DeploymentScheduledEvent is published when the deployment scheduler has decided.
 // to execute a deployment. This event contains all necessary data for the deployer

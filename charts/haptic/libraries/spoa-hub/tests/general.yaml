@@ -6,6 +6,7 @@
 # libraries (haproxytech / haproxy-ingress / nginx-ingress).
 
 validationTests:
+
   test-spoa-hub-disabled:
     description: "With extraContext.spoaHub.enabled=false (or missing), the library must not emit the `backend spoa-hub` block, the SPOE filter, or any spoe.conf reference."
     extraContext:
@@ -234,9 +235,13 @@ validationTests:
             messages: ["check-request"]
             timeoutMs: 15
             dependsOn: []
+            # `SecRuleEngine On` deliberately AFTER the include: the
+            # recommended conf sets `SecRuleEngine DetectionOnly`, so an
+            # `On` placed before it is silently overridden (detection-only
+            # WAF). Mirrors the values.yaml default ordering.
             directives: |
-              SecRuleEngine On
               Include @coraza.conf-recommended
+              SecRuleEngine On
             params: |
               request_body_limit = 131072
               detect_only = false
@@ -272,7 +277,7 @@ validationTests:
         pattern: 'timeout_ms = 15'
       - type: contains
         target: file:spoa-hub-config.toml
-        pattern: 'SecRuleEngine On'
+        pattern: 'Include @coraza.conf-recommended\nSecRuleEngine On'
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'request_body_limit = 131072'

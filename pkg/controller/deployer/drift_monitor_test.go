@@ -189,7 +189,7 @@ func TestDriftPreventionMonitor_HandleEvent(t *testing.T) {
 
 	t.Run("ignores unknown events", func(t *testing.T) {
 		// Should not panic
-		otherEvent := events.NewReconciliationCompletedEvent(0, nil)
+		otherEvent := events.NewReconciliationCompletedEvent(0, nil, nil)
 		monitor.handleEvent(otherEvent)
 	})
 }

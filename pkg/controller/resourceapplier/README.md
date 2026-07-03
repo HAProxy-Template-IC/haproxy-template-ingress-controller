@@ -37,9 +37,12 @@ this package or any caller.
 
 **Subscribed events** (the only inputs that lead to API calls):
 
-- `TemplateRenderedEvent` — caches the resource set
-- `ReconciliationCompletedEvent` — applies the cached set
-- `BecameLeaderEvent` — clears checksum cache, re-applies
+- `ReconciliationCompletedEvent` — applies the resources carried ON the
+  event (stateless: no side-channel cache), then publishes
+  `ResourcesAppliedEvent` forwarding the cycle's status patches so the
+  StatusApplier writes the `rendered` variant only after the resources exist
+- `BecameLeaderEvent` — clears checksum cache, rebuilds owned-set from
+  cluster state
 - `LostLeadershipEvent` — pauses applies
 
 **Publishers of those events:**
@@ -239,6 +242,6 @@ namespace.
 - LostLeadershipEvent pauses applies
 - Label injection preserves caller's labels and is non-mutating
 - Start() returns cleanly on context cancellation
-- TemplateRenderedEvent caches resources for later application
+- ReconciliationCompletedEvent carries the resources it applies (stateless)
 
 Total coverage: 79.3% of statements.

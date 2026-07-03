@@ -33,6 +33,7 @@ import (
 func TestGatewayTLSTerminate(t *testing.T) {
 	t.Parallel()
 	host := "gateway-tls-terminate.localdev.me"
+	var fwd GatewayForward
 
 	feature := features.New("Gateway: HTTPS listener with TLS Terminate mode").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -45,6 +46,7 @@ func TestGatewayTLSTerminate(t *testing.T) {
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 			NewTLSSecret(ctx, t, client, ns, "gateway-tls-cert", []string{host})
 			NewHTTPSGateway(ctx, t, ns, "tls-gateway", "gateway-tls-cert")
+			fwd = ForwardGateway(ctx, t, ns, "tls-gateway", 443)
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-gateway-tls",
 				GatewayName: "tls-gateway",
@@ -61,7 +63,7 @@ func TestGatewayTLSTerminate(t *testing.T) {
 			return ctx
 		}).
 		Assess(host+" returns 200 over HTTPS through the gateway", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).HTTPS(host, "/").ExpectOK(t)
+			resp := httpclient.ForForwarded(t, 0, fwd.HTTPSPort).HTTPS(host, "/").ExpectOK(t)
 			if resp.Echo == nil {
 				t.Fatalf("expected echo-server JSON, got %d bytes", len(resp.Body))
 			}

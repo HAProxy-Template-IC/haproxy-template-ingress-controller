@@ -64,6 +64,7 @@ func TestGRPCOverTLS(t *testing.T) {
 		grpcSvc        = "gateway_api_conformance.echo_basic.grpcecho.GrpcEcho"
 		grpcMethodEcho = "Echo"
 	)
+	var fwd GatewayForward
 
 	feature := features.New("GRPCRoute: HTTPS listener with TLS Terminate + ALPN h2").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -76,6 +77,7 @@ func TestGRPCOverTLS(t *testing.T) {
 			backend := NewGRPCEchoBackend(ctx, t, client, ns)
 			NewTLSSecret(ctx, t, client, ns, certName, []string{host})
 			NewHTTPSGateway(ctx, t, ns, gatewayName, certName)
+			fwd = ForwardGateway(ctx, t, ns, gatewayName, 443)
 			NewGRPCRoute(ctx, t, ns, GRPCRouteSpec{
 				Name:        routeName,
 				GatewayName: gatewayName,
@@ -128,7 +130,7 @@ func TestGRPCOverTLS(t *testing.T) {
 				func(ctx context.Context) (bool, error) {
 					dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 					defer cancel()
-					conn, dialErr := grpcclient.New(t).Dial(dialCtx, host)
+					conn, dialErr := grpcclient.ForForwarded(t, fwd.HTTPSPort).Dial(dialCtx, host)
 					if dialErr != nil {
 						lastDialErr = dialErr
 						lastCallErr = nil
@@ -171,7 +173,7 @@ func TestGRPCOverTLS(t *testing.T) {
 				// either the host map / path map never staged, or
 				// there's a different routing bug for this path
 				// shape.
-				h1Resp, h1Err := httpclient.New(t).
+				h1Resp, h1Err := httpclient.ForForwarded(t, 0, fwd.HTTPSPort).
 					HTTPS(host, wantSuffix).
 					WithMethod("POST").
 					WithHeader("Content-Type", "application/grpc").

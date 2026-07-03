@@ -106,21 +106,29 @@ validationTests:
       - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: 'app\.kubernetes\.io/name: haptic'
-      # Both listener ports map to allocated pod ports. With ONE Gateway
-      # producing the only HTTPS allocations, sort order gives:
-      #   default/gw-https:https:443 → 18000
-      #   default/gw-https:https-alt:8443 → 18001
-      # (`https` < `https-alt` because `:` < `-` in ASCII.)
+      # Both listener ports map to allocated pod ports. HTTP and HTTPS
+      # listeners both get allocations (per-Gateway binds for listener
+      # isolation). Ports are the allocator's sha256-derived slots for
+      # each (Gateway, port) key (see tests/15-pod-port-allocator.yaml
+      # for the recompute one-liner):
+      #   default/gw-http-only:80 → 18281
+      #   default/gw-https:8443   → 18074
+      #   default/gw-https:443    → 18747
       - type: contains
         target: "k8s:gateway-static-addresses"
-        pattern: '(?s)name: gw-default-gw-https.*?targetPort: 18000'
+        pattern: '(?s)name: gw-default-gw-https.*?targetPort: 18074'
       - type: contains
         target: "k8s:gateway-static-addresses"
-        pattern: '(?s)name: gw-default-gw-https.*?targetPort: 18001'
-      # gw-http-only: NO per-Gateway Service.
-      - type: not_contains
+        pattern: '(?s)name: gw-default-gw-https.*?targetPort: 18747'
+      # gw-http-only: now gets its OWN per-Gateway Service too (HTTP
+      # listeners are isolated by per-Gateway bind, same as HTTPS), with
+      # its :80 listener DNATed to the allocated pod port 18281.
+      - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: 'name: gw-default-gw-http-only'
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: '(?s)name: gw-default-gw-http-only.*?targetPort: 18281'
       # gw-pinned: NO per-Gateway Service from THIS path. The
       # static-addresses path emits per-IP Services instead.
       - type: not_contains

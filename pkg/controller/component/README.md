@@ -63,6 +63,35 @@ type PanicHandler interface {
 
 The base always logs the panic and keeps the loop alive regardless of whether the component implements `PanicHandler` — the interface is purely an opt-in extension point.
 
+```go
+// Optional: declare event types with latest-wins semantics to run in
+// MAILBOX mode.
+type CoalescingHandler interface {
+    CoalescesOn() []string
+}
+```
+
+Returning a non-empty list switches `Start` into mailbox mode: a dedicated
+intake goroutine moves events off the subscription channel the instant they
+arrive into an internal unbounded queue, so the bus-side buffer can never
+fill and the bus never drops this subscriber's events — no matter how slow
+`HandleEvent` is. Uninterrupted runs of coalescible events (per
+`busevents.CoalescibleEvent`) of a declared type collapse to their latest
+element; everything else preserves arrival order. Backlog growth is
+surfaced via a warning at power-of-two queue lengths from 256.
+
+Two rules, both load-bearing:
+
+1. Declaring a type asserts that ONLY the latest queued event of that type
+   matters to THIS component. Never declare a type whose every instance
+   carries per-event bookkeeping (the deployer must see every
+   `deployment.completed` to clear its in-flight flag, so it declares only
+   `deployment.scheduled`). Coalescing is strictly per-subscriber — your
+   declaration never affects other components' copies.
+2. Across restarts of the same instance (leadership terms), queued mailbox
+   events are discarded at the next `Start` — same semantics as
+   `FlushPending` for buffered channel events.
+
 ## Lifecycle
 
 | Method | Purpose |

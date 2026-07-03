@@ -143,14 +143,39 @@ echo -e "${YELLOW}Rendering Helm chart...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
     --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
-    --api-versions=gateway.networking.k8s.io/v1alpha2/TCPRoute \
+    --api-versions=gateway.networking.k8s.io/v1/TCPRoute \
     $HAPROXY_VERSION_ARG \
     --set controller.templateLibraries.gateway.enabled=true \
+    --set controller.templateLibraries.gateway.experimentalChannel=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
     | yq 'select(.kind == "HAProxyTemplateConfig")' \
     > "$TEMP_CONFIG"; then
     echo -e "${RED}Error: Failed to render Helm chart${NC}" >&2
+    exit 1
+fi
+
+# Guard the CHART-DEFAULT coraza directive ordering. This must live HERE
+# (not in the chart's validationTests): validationTests ship inside the CR
+# and run at config load under WHATEVER values the deployment uses — an
+# assertion about values.yaml defaults would reject perfectly valid configs
+# whose values override the directives (dev-values does). This script always
+# renders chart defaults for the coraza directives, so the check is exact:
+# SecRuleEngine On must come AFTER the includes, because
+# @coraza.conf-recommended itself sets DetectionOnly and a reorder would
+# silently ship a detection-only WAF.
+if ! python3 -c '
+import re, sys
+s = open(sys.argv[1]).read()
+if "@coraza.conf-recommended" in s:
+    if not re.search(r"Include @owasp_crs/\*\.conf\n\s*SecRuleEngine On", s):
+        sys.exit(1)
+sys.exit(0)
+' "$TEMP_CONFIG"; then
+    echo -e "${RED}Error: chart-default coraza directives are mis-ordered:${NC}" >&2
+    echo "  'SecRuleEngine On' must come AFTER 'Include @coraza.conf-recommended'" >&2
+    echo "  (the include sets SecRuleEngine DetectionOnly; a later On is required" >&2
+    echo "  or the default WAF silently becomes detection-only)." >&2
     exit 1
 fi
 

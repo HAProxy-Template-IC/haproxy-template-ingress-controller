@@ -375,12 +375,12 @@ func installCRDs(ctx context.Context) (context.Context, error) {
 // can register watchers and HTTPRoute-based tests can run.
 //
 // Idempotent: if CRDs already exist (KEEP_CLUSTER=true reuse), kubectl apply
-// is a no-op and the wait condition just returns immediately. Pinned to v1.5.1
-// to match scripts/start-dev-env.sh and the vendored
-// sigs.k8s.io/gateway-api/conformance@v1.5.1 module — the conformance suite
+// is a no-op and the wait condition just returns immediately. Pinned to v1.6.0
+// to match scripts/start-dev-env.sh and the
+// sigs.k8s.io/gateway-api/conformance@v1.6.0 module — the conformance suite
 // refuses to run when CRDs and suite disagree on bundle-version.
 func installGatewayAPICRDs(ctx context.Context) (context.Context, error) {
-	const url = "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml"
+	const url = "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml"
 
 	apply := exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", url)
 	if out, err := apply.CombinedOutput(); err != nil {

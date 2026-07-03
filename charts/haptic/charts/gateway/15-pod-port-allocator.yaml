@@ -16,33 +16,50 @@ templateSnippets:
   # `<lb-ip>:<listener-port>` → `<pod-ip>:<unique-pod-port>` and HAProxy
   # binds on `<unique-pod-port>` with isolated SSL config.
   #
-  # Allocation strategy: two-pass, stable across renders.
+  # Allocation strategy: PURE hash-and-probe over the current Gateway set.
   #
-  # Pass 1 — preserve existing allocations. Walk every (Gateway, HTTPS
-  # listener) tuple. For each one, look up the per-Gateway Service in
-  # the cluster cache by its `gw-<bounded-hash>` name and, if a
-  # `spec.ports[].targetPort >= basePort` is already set for the
-  # listener's port, lock that port in. This is what makes the
-  # allocation stable across renders: an existing Gateway's
-  # allocation is whatever kube-proxy currently DNATs to, so we
-  # MUST NOT shuffle it when a new alphabetically-earlier Gateway
-  # joins the set.
+  # Each (Gateway, port) key hashes to a slot in
+  # [basePort, basePort+rangeSize); same-slot collisions between current
+  # keys are resolved by linear probing in sorted-key order. The result
+  # is a pure function of the current Gateway set: the same key always
+  # maps to the same port no matter what order Gateways were created in,
+  # what the cluster cache currently contains, or which render computes
+  # it.
   #
-  # Pass 2 — assign free ports for new tuples. Tuples whose Service
-  # didn't yield a reusable allocation get the next-available pod
-  # port from `basePort` upward, skipping any port that pass 1 locked
-  # in. Sort by stable key (`<gwNs>/<gwName>:<listenerName>:<port>`)
-  # before assignment so two renders with the same NEW tuples produce
-  # the same NEW allocations.
+  # DO NOT "improve" this by reading committed Services back from the
+  # cluster cache to stabilise allocations. A previous version did
+  # exactly that (lock in any existing Service's targetPort, assign
+  # sequential free ports to the rest) and it failed in two proven ways
+  # under parallel Gateway churn, because the read-back state lags the
+  # allocator's own output:
+  #   * Permanent collision lock-in: render R1 allocates B=18000; R2's
+  #     snapshot doesn't include B's Service yet, so B is reallocated to
+  #     18001 while new Gateway A takes 18000; R3's snapshot has A=18000
+  #     committed but B's update still in flight (old 18000) — read-back
+  #     "locks" BOTH at 18000 and reverts B. Every later render agrees,
+  #     HAProxy binds two Gateways on one pod port (plaintext requests
+  #     answered with TLS alerts by the neighbour's ssl bind), and the
+  #     state is self-sustaining.
+  #   * Read-back oscillation: with several Services' visibility
+  #     alternating across snapshots, consecutive renders keep
+  #     "correcting" each other's targetPorts — observed as ~50
+  #     Service-update flips per second, sustained, each flip
+  #     re-triggering a render. (Gateway-API conformance CI, 2026-07-03.)
   #
-  # The cache is initialised once per render via `shared.ComputeIfAbsent`
+  # Hash+probe trades those failure modes for one small, bounded one: a
+  # key whose slot probe-chains through another key's slot shifts by one
+  # when that neighbour appears/disappears (likelihood ~keys/rangeSize
+  # per churn event, i.e. ~3% at 30 concurrent Gateway-ports over a
+  # 1000-port range — and the shifted Gateway's Service targetPort and
+  # bind move in the SAME render, so the exposure is one kube-proxy
+  # sync, not a persistent break).
+  #
+  # The map is initialised once per render via `shared.ComputeIfAbsent`
   # so concurrent map renderers see a consistent view.
   # ============================================================================
 
   util-gateway-pod-port-allocator:
     template: |
-      {%- import "util-bounded-k8s-name" for BoundedK8sName %}
-      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol %}
       {#- Initialise the per-Gateway-listener pod-port allocation map.
           Idempotent — multiple snippets render this; only the first
           actually computes. Downstream consumers should `{{ render
@@ -54,9 +71,9 @@ templateSnippets:
             values:  int (the allocated container port)
 
           Allocation rules:
-            * Only HTTPS Gateway listeners get an allocation. TLS-Terminate
-              listeners on non-default ports already render via
-              `frontends-600-gateway-tls-listener` (per-port mode-tcp
+            * Only HTTP and HTTPS Gateway listeners get an allocation.
+              TLS-Terminate listeners on non-default ports already render
+              via `frontends-600-gateway-tls-listener` (per-port mode-tcp
               frontend) and don't need per-Gateway pod ports.
               TLS-Passthrough listeners flow through chart-static
               `frontend ssl-tcp` and don't need pod-port allocation either.
@@ -65,36 +82,24 @@ templateSnippets:
               allocator, just leave them out).
       -#}
       {%- var _, _ = shared.ComputeIfAbsent("gatewayPodPortAllocations", func() any {
-        {#- Two-pass allocator with stability across renders.
-
-            Pass 1: walk every (Gateway, HTTPS listener) tuple AND read
-            back the per-Gateway Service from the cluster cache. If the
-            Service already exists with a non-default targetPort for
-            this listener's port, REUSE that targetPort as the pod-port
-            allocation. This is what gives allocations
-            within-conformance-suite stability: when a new Gateway is
-            applied alongside an existing one, the existing one's
-            allocations stay put (its Service was emitted by a prior
-            render and is what kube-proxy currently DNATs to), and
-            only the new Gateway gets fresh allocations from the free
-            pool.
-
-            Pass 2: for tuples without an existing Service allocation,
-            assign the lowest free pod port (basePort + i, skipping
-            ports already locked in by pass 1). Sort the new tuples
-            alphabetically so within a single render the assignment
-            order is deterministic — but only NEW tuples ever pick
-            from the free pool, so an existing Gateway's allocations
-            don't shift when a new alphabetically-earlier Gateway
-            arrives. -#}
         var basePort = toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000))
-        var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
+        var rangeSize = toint(extraContext | dig("perGatewayPodPortRange") | fallback(1000))
+        if rangeSize < 1 {
+          rangeSize = 1000
+        }
         var allTuples = []any{}
         for _, gw := range resources.gateways.List() {
           var gwNs = gw.Metadata.Namespace
           var gwName = gw.Metadata.Name
           for _, listener := range gw.Spec.Listeners {
-            if listener.Protocol != "HTTPS" {
+            {#- HTTP and HTTPS listeners both get a per-Gateway bind on a
+                unique pod port, so each Gateway's routing is isolated by
+                destination (dst_port) rather than collapsing onto the
+                shared chart-static :80 / :443 binds. TLS listeners are
+                excluded — TLS-Passthrough flows through chart-static
+                `frontend ssl-tcp` and TLS-Terminate (non-default port)
+                renders its own `frontends-600` mode-tcp frontend. -#}
+            if listener.Protocol != "HTTPS" && listener.Protocol != "HTTP" {
               continue
             }
             var lName = listener.Name
@@ -111,53 +116,66 @@ templateSnippets:
           }
         }
 
-        var result = map[string]any{}
-        var usedPorts = map[int]bool{}
-        var newTuples = []any{}
+        {#- Allocate ONE pod port per (Gateway, PORT) — every listener
+            sharing a Gateway+port shares the single bind and is
+            host-disambiguated downstream. Then expand to the
+            per-(Gateway,listener) keys consumers look up.
+
+            PURE HASH-AND-PROBE allocation (see the header comment for
+            why this must NOT read committed Services back from the
+            cluster cache): each key's home slot is derived from a
+            sha256 of the key itself, so the same key lands on the same
+            pod port in every render, on every replica, regardless of
+            snapshot staleness. Only genuine slot collisions between
+            keys present in THIS render probe forward, in sorted-key
+            order so the assignment is deterministic.
+
+            7 hex chars (28 bits) keeps parseInt inside int32 range on
+            any platform; 268M values over a ~1000-slot range is
+            uniform enough. -#}
+        var portKeys = []any{}
+        var seenKeys = map[string]bool{}
         for _, tAny := range allTuples {
           var t = tAny.(map[string]any)
-          var found = false
-          if ctrlNs != "" {
-            var svcName = BoundedK8sName("gw", tostring(t["gwNs"]), tostring(t["gwName"]), "")
-            var svc = resources.services.GetSingle(ctrlNs, svcName)
-            if svc != nil {
-              var lPort = toint(t["lPort"])
-              for _, sp := range svc.Spec.Ports {
-                if toint(sp.Port) == lPort {
-                  var tp = toint(sp.TargetPort)
-                  if tp >= basePort {
-                    result[tostring(t["key"])] = tp
-                    usedPorts[tp] = true
-                    found = true
-                    break
-                  }
-                }
-              }
-            }
-          }
-          if !found {
-            newTuples = append(newTuples, t)
+          var pk = tostring(t["gwNs"]) + "/" + tostring(t["gwName"]) + ":" + tostring(toint(t["lPort"]))
+          if !seenKeys[pk] {
+            seenKeys[pk] = true
+            portKeys = append(portKeys, pk)
           }
         }
 
-        var newKeys = []any{}
-        for _, tAny := range newTuples {
-          newKeys = append(newKeys, tostring(tAny.(map[string]any)["key"]))
+        var sortedKeys = sort_strings(portKeys)
+        {#- More keys than slots means the probe loop below could never
+            find a free slot and would spin forever, hanging the render
+            goroutine — fail loudly with the knob to turn instead. -#}
+        if len(sortedKeys) > rangeSize {
+          fail(sprintf("pod-port allocator: %d (Gateway,port) keys exceed the %d-slot pod-port range; raise perGatewayPodPortRange", len(sortedKeys), rangeSize))
         }
-        var sortedNewKeys = sort_strings(newKeys)
-        var newKeyToTuple = map[string]any{}
-        for _, tAny := range newTuples {
-          newKeyToTuple[tostring(tAny.(map[string]any)["key"])] = tAny
+        var portPod = map[string]any{}
+        var usedSlots = map[int]bool{}
+        for _, pkAny := range sortedKeys {
+          var pk = tostring(pkAny)
+          var hashVal, hashErr = parseInt(sha256(pk)[0:7], 16)
+          if hashErr != nil {
+            {#- Unreachable — sha256 output is always valid hex — but
+                failing loudly beats allocating garbage. -#}
+            fail("pod-port allocator: hash parse failed for key " + pk)
+          }
+          var slot = hashVal % rangeSize
+          for usedSlots[slot] {
+            slot = (slot + 1) % rangeSize
+          }
+          usedSlots[slot] = true
+          portPod[pk] = basePort + slot
         }
 
-        var nextPort = basePort
-        for _, keyAny := range sortedNewKeys {
-          for usedPorts[nextPort] {
-            nextPort++
-          }
-          result[tostring(keyAny)] = nextPort
-          usedPorts[nextPort] = true
-          nextPort++
+        {#- Expand to per-(Gateway,listener) keys, all pointing at their
+            (Gateway,port) pod port. -#}
+        var result = map[string]any{}
+        for _, tAny := range allTuples {
+          var t = tAny.(map[string]any)
+          var pk = tostring(t["gwNs"]) + "/" + tostring(t["gwName"]) + ":" + tostring(toint(t["lPort"]))
+          result[tostring(t["key"])] = portPod[pk]
         }
         return result
       }) %}
@@ -241,16 +259,26 @@ templateSnippets:
         {%- keys = append(keys, k) %}
       {%- end %}
       {%- var sortedKeys = sort_strings(keys) %}
+      {%- var seenPod = map[string]bool{} %}
       {%- var lines = []any{} %}
       {%- for _, key := range sortedKeys %}
-        {#- Allocator key shape: `<gwNs>/<gwName>:<lName>:<port>`.
-            The listener port is the last colon-delimited field. -#}
+        {#- Identity map: `<podPort> <podPort>`. A request landing on a
+            per-Gateway bind (dst_port = the unique pod port) keeps
+            listener_port = pod port, so the host.map / path-map keys —
+            which this refactor scopes by the SAME per-Gateway pod port
+            (util-gateway-port-scope) — resolve to that Gateway only. A
+            no-hostname listener on one Gateway can no longer catch
+            another Gateway's hosts via the shared `:<listenerPort>`
+            fallback (the GatewayHTTPListenerIsolation leak). Pinned /
+            chart-static binds have no allocation, so their dst_port
+            misses this map and falls through to base's default
+            (`listener_port = dst_port = listenerPort`) — correct, since
+            their keys stay listener-port-scoped. -#}
         {%- var keyStr = tostring(key) %}
-        {%- var parts = split(keyStr, ":") %}
-        {%- if len(parts) >= 2 %}
-          {%- var listenerPort = parts[len(parts) - 1] %}
-          {%- var podPort = tostring(allocations[keyStr]) %}
-          {%- lines = append(lines, podPort + " " + listenerPort) %}
+        {%- var podPort = tostring(allocations[keyStr]) %}
+        {%- if !seenPod[podPort] %}
+          {%- seenPod[podPort] = true %}
+          {%- lines = append(lines, podPort + " " + podPort) %}
         {%- end %}
       {%- end %}
       {#- The DataPlane API rejects empty file uploads with 422
@@ -285,3 +313,129 @@ templateSnippets:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
+      {#- txn.gw_listener_port = the USER-FACING Gateway listener port (e.g. 80 /
+          443) the client connected to, resolved from the pod dst_port via
+          pod-gw-listener-port.map. Consumed by the RequestRedirect filter's
+          port-omit rule. Set here UNCONDITIONALLY (not in the redirect filter
+          snippet) so the map_int converter is present in the startup config and
+          HAProxy loads the map file — a converter that only appears once a
+          redirect route exists is added at runtime by the DataPlane API without
+          the map ever being loaded, so the lookup silently misses and the pod
+          port leaks into Location. map_int (not map): the key is the integer
+          dst_port. Chart-static binds miss the map and fall back to dst_port,
+          which already IS the listener port there. -#}
+      http-request set-var(txn.gw_listener_port) var(txn.dst_port),map_int({{ mapPath("pod-gw-listener-port.map") }}) if { var(txn.dst_port),map_int({{ mapPath("pod-gw-listener-port.map") }}) -m found }
+      http-request set-var(txn.gw_listener_port) var(txn.dst_port) if !{ var(txn.gw_listener_port) -m found }
+
+  # Pod-port → USER-FACING Gateway listener port map. Distinct from
+  # `pod-listener-port.map` (which is an identity `<podPort> <podPort>` map so
+  # host.map / path-map keys stay scoped by the per-Gateway pod port for
+  # GatewayHTTPListenerIsolation). Some sites need the *real* listener port a
+  # client connected to (e.g. 80 / 443), NOT the internal pod port — the
+  # RequestRedirect filter must decide whether to include the port in the
+  # Location header per the Gateway API well-known-port omit rule, which is
+  # defined against the user-facing listener port. `txn.listener_port` can't
+  # serve that (it equals the pod port on the per-Gateway path), so this map
+  # translates dst_port (pod port) → the actual Gateway listener port. Chart-
+  # static binds have no allocation, miss this map, and callers fall back to
+  # dst_port (which already IS the listener port there).
+  #
+  # Schema: `<podPort> <listenerPort>` per line, deduped by podPort. The
+  # allocation key is `<gwNs>/<gwName>:<listenerName>:<listenerPort>`, so the
+  # listener port is the last `:`-separated field.
+  features-171-pod-gateway-listener-port-map:
+    template: |
+      {{ render "util-gateway-pod-port-allocator" -}}
+      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
+      {%- var keys = []any{} %}
+      {%- for k := range allocations %}
+        {%- keys = append(keys, k) %}
+      {%- end %}
+      {%- var sortedKeys = sort_strings(keys) %}
+      {%- var seenPod = map[string]bool{} %}
+      {%- var lines = []any{} %}
+      {%- for _, key := range sortedKeys %}
+        {%- var keyStr = tostring(key) %}
+        {%- var podPort = tostring(allocations[keyStr]) %}
+        {%- if !seenPod[podPort] %}
+          {%- seenPod[podPort] = true %}
+          {%- var parts = split(keyStr, ":") %}
+          {%- var listenerPort = tostring(parts[len(parts)-1]) %}
+          {%- lines = append(lines, podPort + " " + listenerPort) %}
+        {%- end %}
+      {%- end %}
+      {%- var content = "" %}
+      {%- if len(lines) > 0 %}
+        {%- content = (lines | toStringSlice() | join("\n")) + "\n" %}
+      {%- else %}
+        {%- content = "# no per-Gateway pod-port allocations\n" %}
+      {%- end %}
+      {%- var _, regErr = fileRegistry.Register("map", "pod-gw-listener-port.map", content) %}
+      {%- if regErr != nil %}
+        {{ fail("failed to register pod-gw-listener-port.map: " + tostring(regErr)) }}
+      {%- end %}
+
+  # Representative pod port per (Gateway, port): the pod port of the FIRST
+  # allocated listener on that Gateway+port — the one phase-3's Service
+  # DNATs to and phase-4 binds. Host/path map keys are scoped by this so
+  # every listener sharing a Gateway+port lands on the same bind and is
+  # disambiguated by Host, and so a no-hostname listener's catch-all is
+  # scoped to its own Gateway (GatewayHTTPListenerIsolation).
+  util-gateway-port-scope:
+    template: |
+      {{ render "util-gateway-pod-port-allocator" -}}
+      {%- var _, _ = shared.ComputeIfAbsent("gatewayPortScope", func() any {
+        var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any)
+        var scope = map[string]any{}
+        for _, gw := range resources.gateways.List() {
+          var gwNs = gw.Metadata.Namespace
+          var gwName = gw.Metadata.Name
+          var seenPort = map[int]bool{}
+          for _, listener := range gw.Spec.Listeners {
+            var lName = listener.Name
+            var lPort = toint(listener.Port)
+            if lName == "" || lPort <= 0 || seenPort[lPort] {
+              continue
+            }
+            seenPort[lPort] = true
+            var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
+            if val, ok := allocations[allocKey]; ok {
+              scope[gwNs + "/" + gwName + ":" + tostring(lPort)] = toint(val)
+            }
+          }
+        }
+        return scope
+      }) %}
+
+  # Port-scope SUFFIX for a Gateway listener's host/path map keys.
+  #   * catch-all listener (empty hostname): ALWAYS `:<podPort>` — this is
+  #     what closes the no-hostname cross-Gateway leak (base's `:port`
+  #     fallback then resolves to THIS Gateway's pod port only).
+  #   * hostname'd listener on a NON-default port: `:<podPort>` — base's
+  #     `host:port` cascade step carries the port, scoped per Gateway.
+  #   * hostname'd listener on the protocol's DEFAULT port (HTTP:80 /
+  #     HTTPS:443 / TLS:443): "" (bare host) — base's wildcard/host
+  #     cascade steps don't carry a port, so suffixing would break
+  #     wildcard matching; cross-Gateway same-hostname collisions on a
+  #     default port stay possible but are not what the isolation tests
+  #     exercise.
+  # Falls back to the listener port when the Gateway has no allocation
+  # (pinned / chart-static), keeping those keys listener-port-scoped.
+  util-gateway-port-scope-for:
+    template: |
+      {%- macro PortScopeSuffix(gwNs string, gwName string, port int, proto string, hostname string) string %}
+        {{ render "util-gateway-port-scope" -}}
+        {%%
+          var scope = shared.Get("gatewayPortScope").(map[string]any)
+          var scopePort = port
+          if val, ok := scope[gwNs + "/" + gwName + ":" + tostring(port)]; ok {
+            scopePort = toint(val)
+          }
+          var isNonDefault = (proto == "HTTP" && port != 80) || ((proto == "HTTPS" || proto == "TLS") && port != 443)
+          var suffix = ""
+          if hostname == "" || isNonDefault {
+            suffix = ":" + tostring(scopePort)
+          }
+        %%}
+        {{- suffix -}}
+      {%- end macro -%}

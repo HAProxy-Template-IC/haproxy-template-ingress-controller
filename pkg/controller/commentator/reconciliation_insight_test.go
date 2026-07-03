@@ -73,7 +73,7 @@ func TestReconciliationInsight_TriggeredEvent_PriorReconciliationCorrelation(t *
 				// correlation suffix. Time math uses the events'
 				// own timestamps so a freshly-constructed event
 				// will always satisfy the window check.
-				rb.Add(ctlevents.NewReconciliationCompletedEvent(50, nil))
+				rb.Add(ctlevents.NewReconciliationCompletedEvent(50, nil, nil))
 			},
 			reason:      "debounce_timer",
 			wantContain: "(previous reconciliation was",
@@ -183,7 +183,7 @@ func TestReconciliationInsight_CompletedEvent_StartedCorrelationFork(t *testing.
 			ec := rcECommentator()
 			tt.seedBuffer(ec.ringBuffer)
 
-			evt := ctlevents.NewReconciliationCompletedEvent(tt.durationMs, nil)
+			evt := ctlevents.NewReconciliationCompletedEvent(tt.durationMs, nil, nil)
 			insight, attrs := ec.reconciliationInsight(evt, nil)
 
 			require.NotEmpty(t, insight)

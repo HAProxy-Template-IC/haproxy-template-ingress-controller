@@ -49,6 +49,7 @@ import (
 func TestHTTPRouteSplit(t *testing.T) {
 	t.Parallel()
 	host := "httproute-split.localdev.me"
+	var fwd GatewayForward
 
 	const (
 		samples             = 200
@@ -85,6 +86,7 @@ func TestHTTPRouteSplit(t *testing.T) {
 			defaultBackend := NewEchoServerBackend(ctx, t, client, ns)
 			v2Backend := NewEchoServerV2Backend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "test-gateway")
+			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-split",
@@ -110,7 +112,7 @@ func TestHTTPRouteSplit(t *testing.T) {
 			return ctx
 		}).
 		Assess("traffic split converges to the configured 70/30 within ±15pp over 200 samples", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			client := httpclient.New(t)
+			client := httpclient.ForForwarded(t, fwd.HTTPPort, 0)
 
 			// Warmup: wait for N consecutive 200s before starting the
 			// sampling loop. A single warmup request can lull the test

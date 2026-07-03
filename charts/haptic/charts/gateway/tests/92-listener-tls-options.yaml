@@ -46,7 +46,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:18000 ssl crt-list \S+ alpn h2,http/1\.1 ssl-min-ver TLSv1\.2 ssl-max-ver TLSv1\.3 ciphers ECDHE-ECDSA-AES128-GCM-SHA256 ciphersuites TLS_AES_256_GCM_SHA384$'
+        pattern: '(?m)^\s+bind \*:18357 ssl crt-list \S+ alpn h2,http/1\.1 ssl-min-ver TLSv1\.2 ssl-max-ver TLSv1\.3 ciphers ECDHE-ECDSA-AES128-GCM-SHA256 ciphersuites TLS_AES_256_GCM_SHA384$'
 
   test-gateway-listener-tls-options-min-version-only:
     description: "Only tls-min-version set -> only ssl-min-ver appended; no max/ciphers noise."
@@ -93,4 +93,4 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+bind \*:18000 ssl crt-list \S+ alpn h2,http/1\.1 ssl-min-ver TLSv1\.3$'
+        pattern: '(?m)^\s+bind \*:18522 ssl crt-list \S+ alpn h2,http/1\.1 ssl-min-ver TLSv1\.3$'

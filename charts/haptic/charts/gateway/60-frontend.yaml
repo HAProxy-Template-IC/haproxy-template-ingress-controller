@@ -454,7 +454,13 @@ templateSnippets:
             }
           }
         %%}
-        {%- if len(backendRefs) > 0 %}
+        {#- NO `if len(backendRefs) > 0` guard here: a matched rule with ZERO
+            backendRefs (omitted or empty) must ALSO route to the 500 sink, not
+            fall through to 404. With no refs, validRefs below is empty, so the
+            len(validRefs)==0 branch emits BACKEND:gw-invalid-backend (HTTP 500) —
+            per the Gateway API rule that a matched rule with no usable backend
+            returns 500 (conformance HTTPRouteNoBackendRefs). -#}
+        {%- if true %}
           {#- Filter to backendRefs the chart can route to. Per Gateway API
               spec, a backendRef is "valid" only when:
                 - Group is "" or "core" (kept simple, the chart only
@@ -907,6 +913,14 @@ templateSnippets:
          every directive in the block. #}
       http-request set-var(txn.gw_request_scheme) str(http) if !{ ssl_fc }
       http-request set-var(txn.gw_request_scheme) str(https) if { ssl_fc }
+      {#- The port-omit rule below reads txn.gw_listener_port (the USER-FACING
+          Gateway listener port). It is set UNCONDITIONALLY upstream in
+          frontend-routing-listener-port-100-gateway (15-pod-port-allocator.yaml),
+          NOT here, so the pod-gw-listener-port.map converter is in the startup
+          config and HAProxy actually loads the map file. A converter that only
+          appears once a redirect route exists gets added at runtime by the
+          DataPlane API without the map ever being loaded, so the lookup
+          silently misses and the internal pod port leaks into Location. -#}
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {#- Extract rule.Filters via per-Kind type-switch on
             routeInfo["route"]. -#}
@@ -1044,21 +1058,24 @@ templateSnippets:
                     values, threaded through extraContext at chart-
                     render time. Defaults are 80 / 443, matching the
                     Gateway-API-spec well-known port numbers. We use
-                    `txn.listener_port` (set by base.yaml's frontend-
-                    routing-logic) rather than the raw `dst_port`
-                    sample so the per-Gateway-IP path (phase 4 binds
-                    on an allocated pod port like 18000 instead of
-                    the Gateway listener port) still produces the
-                    right Location header: the pod-listener-port.map
-                    translates the pod port back to the user-facing
-                    Gateway listener port, and the omit rule (Gateway
-                    API: omit port from Location when the resulting
-                    (scheme, port) is (http, 80) or (https, 443))
-                    therefore tests the listener-side value, not the
-                    Service-NAT-internal one. For chart-static binds
-                    the map lookup misses and `listener_port` ==
-                    `dst_port`, so the rule still works on operator-
-                    chosen httpPort / httpsPort overrides. -#}
+                    `txn.gw_listener_port` (set at the top of this
+                    snippet from pod-gw-listener-port.map) rather than
+                    the raw `dst_port` sample so the per-Gateway-IP path
+                    (phase 4 binds on an allocated pod port like 18000
+                    instead of the Gateway listener port) still produces
+                    the right Location header: that map translates the
+                    pod port back to the user-facing Gateway listener
+                    port, and the omit rule (Gateway API: omit port from
+                    Location when the resulting (scheme, port) is
+                    (http, 80) or (https, 443)) therefore tests the
+                    listener-side value, not the Service-NAT-internal
+                    one. NOTE: `txn.listener_port` can't be used here —
+                    on the per-Gateway path it equals the pod port
+                    (identity pod-listener-port.map, for host-key
+                    isolation), so it would leak :18000 into Location.
+                    For chart-static binds the map lookup misses and
+                    `gw_listener_port` == `dst_port`, so the rule still
+                    works on operator-chosen httpPort / httpsPort. -#}
                 {#- Fallbacks match every other site in the chart
                     (10-features.yaml, 50-binds.yaml, ssl.yaml,
                     base.yaml): defaults are the dataplane-API-internal
@@ -1070,9 +1087,9 @@ templateSnippets:
                     fallback effectively never fires in production. -#}
                 {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
                 {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
-      http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.listener_port) -m int {{ httpPort }} } !{ ssl_fc }
-      http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.listener_port) -m int {{ httpsPort }} } { ssl_fc }
-      http-request set-var(txn.gw_redir_port_part) str(:),concat(,txn.listener_port,) if {{ cond }} !{ var(txn.gw_redir_port_part) -m found }
+      http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.gw_listener_port) -m int {{ httpPort }} } !{ ssl_fc }
+      http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.gw_listener_port) -m int {{ httpsPort }} } { ssl_fc }
+      http-request set-var(txn.gw_redir_port_part) str(:),concat(,txn.gw_listener_port,) if {{ cond }} !{ var(txn.gw_redir_port_part) -m found }
                 {%- loc = loc + "%[var(txn.gw_redir_port_part)]" %}
               {%- end %}
               {%- loc = loc + pathExpr %}

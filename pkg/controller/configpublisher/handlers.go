@@ -266,6 +266,12 @@ func queueWithCoalesce[T any](
 	}
 }
 
+// statusWorkKey returns the coalescing key for a pod status update.
+// Format: namespace/runtimeConfigName/podName.
+func statusWorkKey(event *events.ConfigAppliedToPodEvent) string {
+	return fmt.Sprintf("%s/%s/%s", event.RuntimeConfigNamespace, event.RuntimeConfigName, event.PodName)
+}
+
 // handleConfigAppliedToPod queues a pod status update for async processing with coalescing.
 //
 // This method is non-blocking - it stores work in a map for the statusWorker instead of
@@ -282,9 +288,7 @@ func (c *Component) handleConfigAppliedToPod(event *events.ConfigAppliedToPodEve
 		"is_drift_check", event.IsDriftCheck,
 	)
 
-	// Build a unique key for this pod's status update.
-	// Format: namespace/runtimeConfigName/podName
-	key := fmt.Sprintf("%s/%s/%s", event.RuntimeConfigNamespace, event.RuntimeConfigName, event.PodName)
+	key := statusWorkKey(event)
 
 	workItem := &statusWorkItem{
 		event: event,

@@ -248,6 +248,41 @@ validationTests:
       - type: contains
         target: "status:default/my-gateway:rendered"
         pattern: '"observedGeneration":3'
+  test-gateway-mixed-unsupported-protocol:
+    description: >
+      A Gateway with one supported (HTTP) and one unsupported-protocol
+      listener stays Accepted=True but reports reason ListenersNotValid; the
+      bad listener is Accepted=False/UnsupportedProtocol with empty
+      supportedKinds. Mirrors the GatewayListenerUnsupportedProtocol
+      conformance test's mixed case.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: mixed-gw
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+              - name: invalid
+                protocol: FOO
+                port: 9999
+    assertions:
+      - type: haproxy_valid
+      # Gateway stays Accepted=True but flags ListenersNotValid.
+      - type: contains
+        target: "status:default/mixed-gw:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"True","type":"Accepted"'
+      # The unsupported listener is rejected with UnsupportedProtocol.
+      - type: contains
+        target: "status:default/mixed-gw:rendered"
+        pattern: '"reason":"UnsupportedProtocol","status":"False","type":"Accepted"'
+
   test-httproute-status-patches:
     description: HTTPRoute status patches register parent conditions with ResolvedRefs
     extraContext:

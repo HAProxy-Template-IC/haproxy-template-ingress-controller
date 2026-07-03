@@ -16,7 +16,7 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// Six concrete event types in this package implement the
+// Ten concrete event types in this package implement the
 // CoalescibleEvent interface from pkg/events. The coalesce package
 // (pkg/controller/coalesce) tests its drain logic with a mock event
 // type but never against the real production events — so a refactor
@@ -31,9 +31,13 @@ import (
 //
 // Pin the contract:
 //
-//   - The two ALWAYS-true events (HAProxyPodsDiscoveredEvent,
-//     HTTPResourceUpdatedEvent) hard-code true. They are pure state
-//     updates: only the latest pod list / latest HTTP content matters.
+//   - The ALWAYS-true events (HAProxyPodsDiscoveredEvent,
+//     HTTPResourceUpdatedEvent, ReconciliationCompletedEvent,
+//     ResourcesAppliedEvent, DeploymentCompletedEvent,
+//     DeploymentSkippedEvent) hard-code true. They are full-state
+//     notifications: only the latest matters to any consumer that opts
+//     into coalescing them (mailbox coalescing is per-subscriber; see
+//     component.CoalescingHandler).
 //   - The four CONFIGURABLE events take a coalescible bool in their
 //     constructor and Coalescible() must return that exact value.
 //     This is the bool the Reconciler / pipeline use to mark commands
@@ -57,6 +61,26 @@ func TestCoalescibleContract(t *testing.T) {
 		{
 			name:    "HTTPResourceUpdatedEvent always coalescible (pure state, only latest content matters)",
 			event:   NewHTTPResourceUpdatedEvent("http://example.com", "checksum-x", 0),
+			wantVal: true,
+		},
+		{
+			name:    "ReconciliationCompletedEvent always coalescible (full state: complete rendered resources + status patches)",
+			event:   NewReconciliationCompletedEvent(0, nil, nil),
+			wantVal: true,
+		},
+		{
+			name:    "ResourcesAppliedEvent always coalescible (full state: complete status patch set of an applied render)",
+			event:   NewResourcesAppliedEvent(nil),
+			wantVal: true,
+		},
+		{
+			name:    "DeploymentCompletedEvent always coalescible (full state: complete patch set of the shipped config)",
+			event:   NewDeploymentCompletedEvent(&DeploymentResult{}),
+			wantVal: true,
+		},
+		{
+			name:    "DeploymentSkippedEvent always coalescible (full state: same deployed-variant semantics as completed)",
+			event:   NewDeploymentSkippedEvent(0, "", "", "", nil),
 			wantVal: true,
 		},
 

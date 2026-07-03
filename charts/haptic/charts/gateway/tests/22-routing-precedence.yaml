@@ -783,7 +783,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^/empty-hostname/ GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
+        pattern: "(?m)^:[0-9]+/empty-hostname/ GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
 
       - type: contains
         target: map:path-prefix.map
@@ -817,7 +817,7 @@ validationTests:
       #      the catch-all listener)
       - type: contains
         target: map:path-prefix-exact.map
-        pattern: "(?m)^/empty-hostname GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
+        pattern: "(?m)^:[0-9]+/empty-hostname GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
       # Cases targeting the wildcard-example-com listener
       # (Host=bar.example.com):
       #   5: /empty-hostname            → 404
@@ -919,7 +919,7 @@ validationTests:
 
       - type: contains
         target: map:path-prefix.map
-        pattern: "(?m)^bar\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        pattern: "(?m)^bar\\.com:[0-9]+/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
 
       - type: not_contains
         target: map:path-prefix.map
