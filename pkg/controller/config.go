@@ -126,6 +126,19 @@ func fetchAndValidateInitialConfig(
 	return bundle, nil
 }
 
+// initialValidationTestsRunTimeout is the suite budget for the LOAD-path
+// validationTests gate below. It is deliberately much larger than the live
+// change gate's default (validator.validationTestsRunTimeout, 25s): the live
+// gate answers a scatter-gather aggregation and must self-report before the
+// coordinator's configValidationTimeout, while the load gate runs once at
+// startup where the only outer bound is the startup probe's 300s budget.
+// On a cold, contended node (CI runners provisioning a whole cluster at
+// once) the engine compile plus dozens of `haproxy -c` checks legitimately
+// exceed 25s — observed as "validationTests did not complete within the
+// suite timeout" crash-looping an otherwise healthy install. 120s leaves
+// room for one retry iteration inside the startup probe window.
+const initialValidationTestsRunTimeout = 120 * time.Second
+
 // validateInitialConfigValidationTests runs the initial config's embedded
 // validationTests synchronously and returns an error if the suite fails, runs
 // incomplete, or cannot be set up. runIteration calls this on load so a restart
@@ -144,7 +157,7 @@ func validateInitialConfigValidationTests(
 	bootstrap validator.TypeBootstrapper,
 	logger *slog.Logger,
 ) error {
-	result, err := validator.RunValidationTestsSync(ctx, cfg, bootstrap, 0, logger)
+	result, err := validator.RunValidationTestsSync(ctx, cfg, bootstrap, initialValidationTestsRunTimeout, logger)
 	if err != nil {
 		return fmt.Errorf("running validationTests: %w", err)
 	}

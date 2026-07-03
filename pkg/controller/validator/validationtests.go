@@ -48,6 +48,12 @@ const validationTestsBootstrapTimeout = 5 * time.Second
 // suite stops cleanly at the boundary. Note: a single `haproxy -c` is not itself
 // cancellable (the shared dataplane validation path takes no context), but those
 // checks are sub-second, so the bound holds in practice.
+//
+// This default binds only the LIVE change gate. The load-path gate
+// (controller.validateInitialConfigValidationTests) passes its own, much
+// larger budget: at startup there is no scatter-gather deadline, the outer
+// bound is the startup probe, and a cold contended node legitimately needs
+// more than 25s for engine compile + the haproxy -c sweep.
 const validationTestsRunTimeout = 25 * time.Second
 
 // ValidationTestsValidator runs the config's embedded validationTests — the
