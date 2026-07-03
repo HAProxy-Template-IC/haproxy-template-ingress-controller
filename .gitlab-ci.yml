@@ -1692,6 +1692,19 @@ test-gateway-conformance:
         kubectl -n metallb-system get pods -o yaml > "$LOG_DIR/metallb-pods.yaml" 2>&1 || true
         kubectl get ipaddresspool,l2advertisement -A -o yaml > "$LOG_DIR/metallb-config.yaml" 2>&1 || true
 
+        # MetalLB speaker/controller and kube-proxy logs — the two
+        # dataplane programmers for LoadBalancer VIPs. A test failing
+        # with "connect: no route to host" toward a fresh VIP means a
+        # SYN reached the node before kube-proxy programmed the
+        # service's DNAT rules (MetalLB announces the VIP immediately;
+        # the un-DNAT'ed packet is re-forwarded and the node answers
+        # with ICMP host-unreachable). The speaker log timestamps the
+        # announcement, kube-proxy's log timestamps its sync activity —
+        # together they attribute such a failure to the lagging side.
+        kubectl -n metallb-system logs -l component=speaker --prefix --tail=-1 > "$LOG_DIR/metallb-speaker.log" 2>&1 || true
+        kubectl -n metallb-system logs -l component=controller --prefix --tail=-1 > "$LOG_DIR/metallb-controller.log" 2>&1 || true
+        kubectl -n kube-system logs -l k8s-app=kube-proxy --prefix --tail=-1 > "$LOG_DIR/kube-proxy.log" 2>&1 || true
+
         # Per-failure HAProxy snapshots collected by the conformance
         # test binary's snapshotting RoundTripper (see
         # tests/conformance/snapshotter.go). Each ConfigMap holds a
