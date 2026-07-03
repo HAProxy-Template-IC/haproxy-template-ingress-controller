@@ -209,6 +209,32 @@ func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
 	assert.Equal(t, "abc123", runtimeConfig.Status.DeployedToPods[0].Checksum)
 }
 
+// TestUpdateDeploymentStatus_NotPublishedYetReturnsSentinel is the regression
+// test for the startup race where the first deployment's per-pod status SSA
+// lands before the initial HAProxyCfg publish. The old code swallowed the
+// NotFound as success, permanently losing the pod's deployedToPods entry
+// (observed as an e2e initial-sync timeout with 1/2 pods reported). The
+// caller needs the sentinel to requeue the update.
+func TestUpdateDeploymentStatus_NotPublishedYetReturnsSentinel(t *testing.T) {
+	ctx := context.Background()
+	k8sClient := k8sfake.NewClientset()
+	crdClient := fake.NewSimpleClientset()
+
+	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
+
+	// No PublishConfig first — the HAProxyCfg does not exist.
+	update := DeploymentStatusUpdate{
+		RuntimeConfigName:      "test-config-haproxycfg",
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		Checksum:               "abc123",
+	}
+
+	err := publisher.UpdateDeploymentStatus(ctx, &update)
+
+	require.ErrorIs(t, err, ErrRuntimeConfigNotPublished)
+}
+
 func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
@@ -460,28 +486,6 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, runtimeConfig.Status.DeployedToPods, 0)
-}
-
-func TestUpdateDeploymentStatus_RuntimeConfigNotFound(t *testing.T) {
-	ctx := context.Background()
-	k8sClient := k8sfake.NewClientset()
-	crdClient := fake.NewSimpleClientset()
-	installSSAListMapMergeReactor(crdClient)
-
-	publisher := NewWithListers(k8sClient, crdClient, nil, testLogger())
-
-	// Try to update deployment status without creating runtime config first
-	update := DeploymentStatusUpdate{
-		RuntimeConfigName:      "nonexistent-runtime",
-		RuntimeConfigNamespace: "default",
-		PodName:                "haproxy-0",
-		Checksum:               "abc123",
-	}
-
-	err := publisher.UpdateDeploymentStatus(ctx, &update)
-
-	// Should not error - gracefully handles missing runtime config
-	require.NoError(t, err)
 }
 
 func TestPublishConfig_GeneralFiles(t *testing.T) {

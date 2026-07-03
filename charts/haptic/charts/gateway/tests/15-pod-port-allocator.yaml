@@ -1,6 +1,6 @@
 validationTests:
   test-gateway-pod-port-allocator-multi-gateway:
-    description: "Phase 1 of the per-Gateway-IP refactor. Verifies that the pod-port allocator (`util-gateway-pod-port-allocator`) assigns a unique container port to each (Gateway, HTTPS listener) tuple via deterministic alphabetical sort. Activated via `extraContext.dumpPodPortAllocations=true` so the allocator emits debug comments into `frontend-extra-*` for assertion without requiring the (not-yet-built) consumer snippets in phases 2-5. Allocation contract:   * Sort all `<gwNs>/<gwName>:<listenerName>:<port>` keys     alphabetically.   * Assign sequential container ports starting at base 18000     (or `extraContext.perGatewayPodPortBase` if set).   * Only HTTPS Gateway listeners receive an allocation —     HTTP / TLS-Passthrough / TLS-Terminate listeners use     existing chart-static or per-port routing paths."
+    description: "Verifies that the pod-port allocator (`util-gateway-pod-port-allocator`) assigns a unique, deterministic container port to each (Gateway, port) tuple. Activated via `extraContext.dumpPodPortAllocations=true` so the allocator emits debug comments into `frontend-extra-*` for assertion. Allocation contract (pure hash-and-probe — see 15-pod-port-allocator.yaml header for why read-back designs are forbidden):   * slot = parseInt(sha256(\"<gwNs>/<gwName>:<port>\")[0:7], 16) mod range     (range default 1000), linear probing on collision in sorted-key order.   * port = base + slot, base 18000     (or `extraContext.perGatewayPodPortBase` if set).   * Only HTTP/HTTPS Gateway listeners receive an allocation —     TLS-Passthrough / TLS-Terminate listeners use     existing chart-static or per-port routing paths. The expected ports below are the sha256-derived slots for these exact keys — recompute via `python3 -c 'import hashlib; print(18000 + int(hashlib.sha256(b\"default/gw-alpha:443\").hexdigest()[:7], 16) % 1000)'` when touching fixtures."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       dumpPodPortAllocations: "true"
@@ -86,29 +86,32 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      # gw-alpha sorts BEFORE gw-zulu alphabetically. Among gw-zulu's
-      # two HTTPS listeners, the listener-name part of the key drives
-      # the sort: `https-alt` < `https` because `-` (0x2D) < `:` (0x3A)
-      # in ASCII (`https:443` ends a 5-char prefix at `:`, while
-      # `https-alt:8443` continues with `-`). Sorted keys:
-      #   1. default/gw-alpha:https:443
-      #   2. default/gw-zulu:https-alt:8443
-      #   3. default/gw-zulu:https:443
-      # → ports 18000, 18001, 18002.
+      # One pod port is allocated per (Gateway, PORT) — HTTP and HTTPS
+      # listeners both get a per-Gateway bind for listener isolation;
+      # only TLS listeners are excluded. Each (Gateway, port) key hashes
+      # to its own slot (sha256-derived, see description); the values
+      # below are those hashes — deterministic and order-independent,
+      # NOT sequential. Keys here (the per-listener key maps to its
+      # (Gateway, port) pod port):
+      #   default/gw-alpha:443  → 18049
+      #   default/gw-alpha:80   → 18400
+      #   default/gw-zulu:443   → 18968
+      #   default/gw-zulu:8443  → 18418
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+# gw-pod-port: default/gw-alpha:https:443 = 18000$'
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-alpha:https:443 = 18049$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-alpha:http:80 = 18400$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https:443 = 18968$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https-alt:8443 = 18418$'
 
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https-alt:8443 = 18001$'
-      - type: contains
-        target: haproxy.cfg
-        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https:443 = 18002$'
-
-      - type: not_contains
-        target: haproxy.cfg
-        pattern: 'gw-pod-port: default/gw-alpha:http:80'
+      # TLS-Passthrough listeners are still excluded — they flow through
+      # the chart-static `frontend ssl-tcp`, not a per-Gateway bind.
       - type: not_contains
         target: haproxy.cfg
         pattern: 'gw-pod-port: default/gw-alpha:tls-pass:9443'
@@ -154,7 +157,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+# gw-pod-port: default/gw-only:https:443 = 25000$'
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-only:https:443 = 25302$'
 
   test-gateway-listener-port-override-stands-alone:
     description: "Regression: base.yaml's `frontend-routing-listener-port-*` extension point must place the gateway override's first directive on its own line. The Scriggo `{{- … }}` form strips ALL adjacent whitespace INCLUDING newlines (see `charts/CLAUDE.md` \"Whitespace Control\"), which fuses the preceding comment with the rendered snippet's first output line — HAProxy then parses the directive as part of the comment and silently drops it. Symptom: `txn.listener_port` never gets remapped from pod port (e.g. 18003) back to the user-facing listener port (e.g. 443), and Gateway-API HTTPRoute RequestRedirect filters emit Location headers with the pod port. Caught in conformance shard 2/4 (HTTPRouteRedirectPortAndScheme). This test asserts both:   - the override directive appears on a line by itself (not fused)   - no comment line ends with the directive (the fused form)"

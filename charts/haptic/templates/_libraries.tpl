@@ -68,20 +68,24 @@ absent from the bundle.
 {{- end -}}
 
 {{/*
-Returns "true" when the Gateway API *experimental* channel is absent (empty
-string otherwise). Detected via the TCPRoute GVK, which the experimental
-channel ships but the standard channel does not (the same marker
-libraries/gateway/_index.yaml uses to gate TCPRoute wiring). Experimental-only
-HTTPRoute/GRPCRoute fields (sessionPersistence, retry) only exist when this
-channel is installed, so validationTests asserting the directives those fields
-drive use this in their `_helm_skip_test` predicate — otherwise they fail (and,
-with the fatal load gate, crash-loop the controller) on a standard-channel
-cluster where the snippets correctly emit nothing. Capabilities reflects the
-live cluster at install/upgrade; offline renders opt in via
-`--api-versions .../v1alpha2/TCPRoute` (CI and scripts/test-templates.sh do).
+Returns "true" when the Gateway API *experimental* channel is NOT in use (empty
+string otherwise), driven by the explicit `templateLibraries.gateway.experimentalChannel`
+value. Experimental-only HTTPRoute fields (sessionPersistence / GEP-1619, retry /
+GEP-1731) only exist when experimental-install.yaml is applied, so validationTests
+asserting the directives those fields drive use this in their `_helm_skip_test`
+predicate — otherwise they fail (and, with the fatal load gate, crash-loop the
+controller) on a standard-channel cluster where the snippets correctly emit nothing.
+
+Why a value and not Helm .Capabilities: as of Gateway API v1.6 the Standard and
+Experimental installs ship an IDENTICAL CRD set (TCPRoute, ListenerSet, UDPRoute
+et al. all graduated to Standard). The only difference is field-level additions
+to HTTPRoute, and .Capabilities exposes GVKs, not fields — so no APIVersions.Has
+check can tell the channels apart anymore. The operator declares which channel
+they installed; offline renders (CI, scripts/test-templates.sh) set the flag true
+to exercise these tests against the experimental schemas in tests/schemas.
 */}}
 {{- define "haptic.gatewayExperimental.disabled" -}}
-{{- if not (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1alpha2/TCPRoute") -}}true{{- end -}}
+{{- if not .Values.controller.templateLibraries.gateway.experimentalChannel -}}true{{- end -}}
 {{- end -}}
 
 {{/*

@@ -19,18 +19,30 @@
 // queue backlog when events arrive faster than they can be processed.
 //
 // Only events that implement CoalescibleEvent and return Coalescible() == true
-// are coalesced. Other events are passed to the handleOther callback.
+// are coalesced, and only within an uninterrupted run of such events. Any other
+// event (different type, or same type but not coalescible) is a run boundary:
+// the held latest event of the current run is flushed FIRST, then the boundary
+// event is passed to handleOther. This preserves arrival order across event
+// types and guarantees the coalesced type cannot be starved: an earlier
+// design held the run's latest back until the channel drained empty, and under
+// sustained mixed traffic (e.g. deployment-completed status applies each taking
+// longer than the event arrival gap) that point never came — rendered status
+// patches were starved for the entire burst (54s observed in gateway-api
+// conformance) while newer other-type events were dispatched ahead of the older
+// held event.
 package coalesce
 
 import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// DrainLatest drains the event channel and returns the latest coalescible event
-// of type T. Non-coalescible events and events of other types are passed to handleOther.
-// Returns the zero value of T and 0 if no coalescible events were found.
+// DrainLatest drains the event channel until it is momentarily empty.
+// Uninterrupted runs of coalescible events of type T collapse to their latest
+// element, delivered via flush together with the count of superseded events.
+// Every other event is a run boundary: the held run is flushed first, then the
+// event is passed to handleOther, preserving arrival order.
 //
-// An event is coalescible if:
+// An event joins the current run if:
 //  1. It matches type T
 //  2. It implements CoalescibleEvent interface
 //  3. Its Coalescible() method returns true
@@ -40,87 +52,94 @@ import (
 //	func (c *Component) handleSomeEvent(event *events.SomeEvent) {
 //	    c.performWork(event)
 //
-//	    // After work completes, drain for latest coalescible event
-//	    for {
-//	        latest, superseded := coalesce.DrainLatest[*events.SomeEvent](
-//	            c.eventChan,
-//	            c.handleEvent, // Handle non-coalescible and other event types
-//	        )
-//	        if latest == nil {
-//	            return
-//	        }
-//	        c.logger.Debug("Processing coalesced event",
-//	            "superseded_count", superseded)
-//	        c.performWork(latest)
-//	    }
+//	    // After work completes, drain queued events: consecutive coalescible
+//	    // SomeEvents collapse to their latest, everything else is handled in
+//	    // arrival order.
+//	    coalesce.DrainLatest(
+//	        c.eventChan,
+//	        c.handleEvent, // Handle non-coalescible and other event types
+//	        func(latest *events.SomeEvent, superseded int) {
+//	            c.performWork(latest)
+//	        },
+//	    )
 //	}
 func DrainLatest[T busevents.Event](
 	eventChan <-chan busevents.Event,
 	handleOther func(busevents.Event),
-) (latest T, supersededCount int) {
-	winner, superseded := drainLatest(eventChan, handleOther, func(event busevents.Event) bool {
+	flush func(latest T, supersededCount int),
+) {
+	drainLatest(eventChan, handleOther, func(event busevents.Event) bool {
 		_, matchesType := event.(T)
 		return matchesType
+	}, func(latest busevents.Event, supersededCount int) {
+		flush(latest.(T), supersededCount)
 	})
-	if winner == nil {
-		return latest, superseded // zero value of T, 0
-	}
-	return winner.(T), superseded
 }
 
 // DrainLatestByType is the runtime-typed sibling of DrainLatest. Instead of a
 // compile-time type parameter it matches events whose EventType() equals
-// eventType, returning the latest coalescible match as a busevents.Event (nil
-// when none was found). All other events are passed to handleOther. Components
-// that select on a dynamic event-type string (e.g. component.Base's coalescing
-// loop, which reads the type from a CoalescingHandler) use this; consumers with
-// a static type use the generic DrainLatest.
+// eventType. Components that select on a dynamic event-type string (e.g.
+// component.Base's coalescing loop, which reads the type from a
+// CoalescingHandler) use this; consumers with a static type use the generic
+// DrainLatest.
 func DrainLatestByType(
 	eventChan <-chan busevents.Event,
 	eventType string,
 	handleOther func(busevents.Event),
-) (latest busevents.Event, supersededCount int) {
-	return drainLatest(eventChan, handleOther, func(event busevents.Event) bool {
+	flush func(latest busevents.Event, supersededCount int),
+) {
+	drainLatest(eventChan, handleOther, func(event busevents.Event) bool {
 		return event.EventType() == eventType
-	})
+	}, flush)
 }
 
-// drainLatest is the shared "latest coalescible wins" drain loop behind
-// DrainLatest and DrainLatestByType. It non-blockingly pulls events off
-// eventChan; an event is a candidate when match(event) is true AND it is a
-// coalescible CoalescibleEvent. Candidates supersede earlier candidates;
-// every non-candidate (wrong match or not coalescible) is passed to
-// handleOther as it arrives. Returns the latest candidate (nil when none) and
-// the count of superseded earlier candidates.
+// drainLatest is the shared coalescing drain loop behind DrainLatest and
+// DrainLatestByType. It non-blockingly pulls events off eventChan; an event
+// joins the current run when match(event) is true AND it is a coalescible
+// CoalescibleEvent, superseding the run's earlier events. Any other event is a
+// run boundary: the held run is flushed BEFORE the event goes to handleOther,
+// so cross-type arrival order is preserved and sustained other-type traffic
+// cannot starve the coalesced type. The trailing run is flushed before
+// returning when the channel is empty.
+//
+// NOTE: reconciler.Coordinator.coalesceQueuedTriggers is a deliberately
+// DIFFERENT hand-rolled drain, not an accidental duplicate — it merges an
+// entire drained run (coalescible or not) into a single re-render,
+// exploiting the fact that a render always reads current store state; this
+// one preserves per-event dispatch with arrival ordering.
 func drainLatest(
 	eventChan <-chan busevents.Event,
 	handleOther func(busevents.Event),
 	match func(busevents.Event) bool,
-) (latest busevents.Event, supersededCount int) {
+	flush func(latest busevents.Event, supersededCount int),
+) {
+	var latest busevents.Event
+	superseded := 0
+	emit := func() {
+		if latest == nil {
+			return
+		}
+		event, count := latest, superseded
+		latest, superseded = nil, 0
+		flush(event, count)
+	}
 	for {
 		select {
 		case event := <-eventChan:
-			if !match(event) {
-				handleOther(event)
-				continue
+			if match(event) {
+				if coalescible, ok := event.(busevents.CoalescibleEvent); ok && coalescible.Coalescible() {
+					if latest != nil {
+						superseded++
+					}
+					latest = event
+					continue
+				}
 			}
-
-			// Check if event implements CoalescibleEvent and is coalescible
-			coalescible, ok := event.(busevents.CoalescibleEvent)
-			if !ok || !coalescible.Coalescible() {
-				// Matches but not coalescible - must process
-				handleOther(event)
-				continue
-			}
-
-			// Coalescible - supersede previous
-			if latest != nil {
-				supersededCount++
-			}
-			latest = event
+			emit()
+			handleOther(event)
 		default:
-			// No more events in channel
-			return latest, supersededCount
+			emit()
+			return
 		}
 	}
 }

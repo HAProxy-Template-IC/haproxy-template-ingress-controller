@@ -16,10 +16,12 @@ package configpublisher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"sync"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -429,6 +431,22 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 	defer cancel()
 
 	if err := c.publisher.UpdateDeploymentStatus(updateCtx, &update); err != nil {
+		if errors.Is(err, configpublisher.ErrRuntimeConfigNotPublished) {
+			// Startup race: the first deployment to the pods completes a few
+			// hundred milliseconds before the initial HAProxyCfg publish
+			// lands, so this pod's status SSA found no resource. Dropping the
+			// update here loses the pod's deployedToPods entry until the next
+			// config change or drift check (deduped no-op deploys never
+			// re-queue it) — observed as an e2e initial-sync timeout with one
+			// of two pods permanently missing. Requeue and retry shortly.
+			c.logger.Debug("HAProxyCfg not published yet, requeuing pod status update",
+				"runtime_config_name", event.RuntimeConfigName,
+				"pod_name", event.PodName,
+				"retries", work.retries,
+			)
+			c.requeueStatusWork(work)
+			return
+		}
 		c.logger.Warn("Failed to update deployment status",
 			"error", err,
 			"runtime_config_name", event.RuntimeConfigName,
@@ -441,4 +459,47 @@ func (c *Component) processStatusWork(ctx context.Context, work *statusWorkItem)
 		"runtime_config_name", event.RuntimeConfigName,
 		"pod_name", event.PodName,
 	)
+}
+
+// statusWorkRetryDelay paces requeued status updates whose target HAProxyCfg
+// wasn't published yet. The publish normally lands within milliseconds of the
+// first deployment, so the first retry succeeds; the delay only bounds the
+// spin when it doesn't.
+const statusWorkRetryDelay = time.Second
+
+// statusWorkMaxRetries caps requeues for one work item. 30 × 1s covers any
+// realistic publish latency; past that the HAProxyCfg is gone for good (e.g.
+// the config was deleted mid-flight) and the update is moot.
+const statusWorkMaxRetries = 30
+
+// requeueStatusWork puts a not-yet-appliable status update back into the
+// pending map — unless a newer update for the same pod arrived meanwhile —
+// and arms a short timer to wake the status worker again.
+func (c *Component) requeueStatusWork(work *statusWorkItem) {
+	if work.retries >= statusWorkMaxRetries {
+		c.logger.Warn("Dropping pod status update after max retries, HAProxyCfg still not published",
+			"runtime_config_name", work.event.RuntimeConfigName,
+			"pod_name", work.event.PodName,
+			"retries", work.retries,
+		)
+		return
+	}
+	work.retries++
+
+	key := statusWorkKey(work.event)
+	c.statusWorkPendingMu.Lock()
+	if _, exists := c.statusWorkPending[key]; exists {
+		// A newer update for this pod is already pending; it supersedes this one.
+		c.statusWorkPendingMu.Unlock()
+		return
+	}
+	c.statusWorkPending[key] = work
+	c.statusWorkPendingMu.Unlock()
+
+	time.AfterFunc(statusWorkRetryDelay, func() {
+		select {
+		case c.statusWorkTrigger <- struct{}{}:
+		default:
+		}
+	})
 }

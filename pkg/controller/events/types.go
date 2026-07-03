@@ -78,7 +78,13 @@ const (
 	EventTypeReconciliationTriggered = "reconciliation.triggered"
 	EventTypeReconciliationStarted   = "reconciliation.started"
 	EventTypeReconciliationCompleted = "reconciliation.completed"
-	EventTypeReconciliationFailed    = "reconciliation.failed"
+
+	// EventTypeResourcesApplied is published by the ResourceApplier after a
+	// cycle's rendered resources are applied; carries the cycle's status
+	// patches forward so the rendered status variant applies after the
+	// resources exist.
+	EventTypeResourcesApplied     = "resources.applied"
+	EventTypeReconciliationFailed = "reconciliation.failed"
 
 	// Template event types.
 	EventTypeTemplateRendered     = "template.rendered"

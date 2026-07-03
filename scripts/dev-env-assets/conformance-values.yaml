@@ -67,6 +67,17 @@ controller:
     # tight polling cadence.
     dataplane:
       driftPreventionInterval: 10m
+      # The chart default minDeploymentInterval (5s) throttles STRUCTURAL
+      # reloads. Programmed=True lands only after a deploy, so a 5s throttle
+      # puts convergence at ~5-9s under the suite's churn — right at the
+      # conformance MaxTimeToConsistency (10s), which flakes ObservedGeneration/
+      # readiness tests. Reloads here are hitless (~130ms) and the render→
+      # apply pipeline is now coalesced (no event-bus drops), so a tight
+      # interval no longer risks a reload/apply storm. 1s brings convergence
+      # to ~1-2s, comfortably inside the 10s window. (An EARLIER 250ms attempt
+      # regressed things ONLY because the status applier was still serial and
+      # dropped events under the extra deploys — both since fixed.)
+      minDeploymentInterval: 1s
 
     templatingSettings:
       extraContext:

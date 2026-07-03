@@ -38,6 +38,7 @@ func TestHTTPRouteBasic(t *testing.T) {
 	t.Parallel()
 
 	host := "httproute-basic.localdev.me"
+	var fwd GatewayForward
 
 	feature := features.New("HTTPRoute: basic routing").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -49,6 +50,7 @@ func TestHTTPRouteBasic(t *testing.T) {
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
 			NewGateway(ctx, t, ns, "test-gateway")
+			fwd = ForwardGateway(ctx, t, ns, "test-gateway", 80)
 			NewHTTPRoute(ctx, t, ns, HTTPRouteSpec{
 				Name:        "echo-basic",
 				GatewayName: "test-gateway",
@@ -65,7 +67,7 @@ func TestHTTPRouteBasic(t *testing.T) {
 			return ctx
 		}).
 		Assess(host+" returns 200 from echo-server", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
+			resp := httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, "/").ExpectOK(t)
 			if resp.Echo == nil {
 				t.Fatalf("expected echo-server JSON, got %d bytes", len(resp.Body))
 			}

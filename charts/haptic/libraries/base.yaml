@@ -110,20 +110,27 @@ templateSnippets:
       http-request set-var(txn.path) path
       http-request set-var(txn.host_full) req.hdr(Host),lower
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      # host_match cascade: full-host (port-pinned) > host > wildcard > regex
-      http-request set-var(txn.host_match) str()
-      http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }},'') if { var(txn.host_full) -m sub : } { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.dst_port) dst_port
       http-request set-var(txn.listener_port) var(txn.dst_port)
       {#- Extension point: libraries may remap txn.listener_port from bind metadata.
           The blank line before render_glob is load-bearing (charts/CLAUDE.md → Whitespace Control). -#}
 
       {{ render_glob "frontend-routing-listener-port-*" }}
-      # listener-port fallback (host:port / :port keys) when no host matched
+      # host_match cascade: full-host (port-pinned) > host:listener_port
+      # (per-Gateway / per-listener-port scope) > host > wildcard > regex >
+      # :listener_port catch-all. The port-scoped exact lookup MUST precede
+      # the bare-host lookup: a hostname that appears on several listener
+      # ports (e.g. foo.com on :80, :8080, :8090) has a distinct
+      # `host:<podPort>` key for each non-default port plus a bare key for
+      # the default port. Trying bare first would shadow the port-specific
+      # backends with the default-port one (HTTPRouteListenerPortMatching).
+      http-request set-var(txn.host_match) str()
+      http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }},'') if { var(txn.host_full) -m sub : } { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
+      # listener-port catch-all (:port keys) when no host matched
       http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
   util-routing-suffix:
@@ -437,6 +444,24 @@ templateSnippets:
             slots = toint(v)
           }
 
+          // ── 1b. Optional slot prefix + weight ─────────────────────────────
+          // slotPrefix (default "SRV_") lets ONE backend host servers from
+          // several Services in disjoint, independently-preserved slot ranges
+          // (weighted TCPRoute: `balance roundrobin` across backendRefs). Each
+          // Service is emitted with its own prefix so the reload-free slot
+          // preservation reads back only its own slots. weight (optional)
+          // appends ` weight N` for proportional load-balancing. Both default
+          // to the current behaviour, so existing single-Service callers are
+          // byte-for-byte unchanged.
+          var slotPrefix = "SRV_"
+          if v := serverOpts | dig("slotPrefix"); v != nil && tostring(v) != "" {
+            slotPrefix = tostring(v)
+          }
+          var weightSuffix = ""
+          if v := serverOpts | dig("weight"); v != nil {
+            weightSuffix = " weight " + tostring(toint(v))
+          }
+
           // ── 2. Get port name for targetPort resolution ────────────────────
           // If provided as parameter, use it. Otherwise, look it up below.
           var pn = ""
@@ -549,8 +574,8 @@ templateSnippets:
             if bkServers != nil {
               for serverName, server := range bkServers {
                 // Extract slot number from server name (e.g., "SRV_1" → 1)
-                if hasPrefix(serverName, "SRV_") {
-                  var slotStr = serverName[4:]
+                if hasPrefix(serverName, slotPrefix) {
+                  var slotStr = serverName[len(slotPrefix):]
                   var slotNum = toint(slotStr)
                   if slotNum > 0 && slotNum <= slots {
                     // Skip placeholders (the unroutable sentinel on port 1) and
@@ -647,9 +672,9 @@ templateSnippets:
         `option redispatch` failover instead of an unbounded self-loop. -#}
       {%- for i := 1; i <= slots; i++ %}
       {%- if ep := slotAssignments[i]; ep != nil %}
-      server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{% if bkName != "" %} guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}{% end %} enabled  # Pod: {{ ep["name"] }}
+      server {{ slotPrefix }}{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{% if bkName != "" %} guid {{ make_guid("srv", bkName, slotPrefix + tostring(i)) }}{% end %} enabled{{ weightSuffix }}  # Pod: {{ ep["name"] }}
       {% else %}
-      server SRV_{{ i }} 192.0.2.1:1{% if bkName != "" %} guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}{% end %} disabled  # Placeholder
+      server {{ slotPrefix }}{{ i }} 192.0.2.1:1{% if bkName != "" %} guid {{ make_guid("srv", bkName, slotPrefix + tostring(i)) }}{% end %} disabled{{ weightSuffix }}  # Placeholder
       {% end %}
       {% end %}
       {% end %}

@@ -32,7 +32,7 @@ go applier.Start(ctx)
 
 | Event | Action |
 |-------|--------|
-| `TemplateRenderedEvent` | Cache the patches (registered by templates during rendering); apply the `rendered` variant if leader |
+| `ResourcesAppliedEvent` | Apply the `rendered` variant directly from the event payload if leader (published by the ResourceApplier after the same render's resources exist — no caching, stateless) |
 | `DeploymentCompletedEvent` | Apply the `deployed` variant if leader |
 | `DeploymentSkippedEvent` | Apply the `deployed` variant if leader (deployment skipped because config unchanged) |
 | `ReconciliationFailedEvent` | Apply `renderFailed` or `deployFailed` variant (depending on which phase failed) if leader |

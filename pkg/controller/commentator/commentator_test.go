@@ -274,7 +274,7 @@ func TestEventCommentator_GenerateInsight_ReconciliationEvents(t *testing.T) {
 	})
 
 	t.Run("ReconciliationCompletedEvent", func(t *testing.T) {
-		event := events.NewReconciliationCompletedEvent(123, nil)
+		event := events.NewReconciliationCompletedEvent(123, nil, nil)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -782,7 +782,7 @@ func TestEventCommentator_ReconciliationCorrelation(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	// Pre-populate with a completed reconciliation
-	completedEvent := events.NewReconciliationCompletedEvent(100, nil)
+	completedEvent := events.NewReconciliationCompletedEvent(100, nil, nil)
 	ec.ringBuffer.Add(completedEvent)
 
 	// Small delay

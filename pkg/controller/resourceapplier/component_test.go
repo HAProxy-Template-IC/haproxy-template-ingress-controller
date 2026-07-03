@@ -112,7 +112,7 @@ func setLeader(c *Component) {
 // these events directly (mirrors how the Coordinator publishes them in
 // production) — there is no side-channel cache to seed.
 func reconciliationCompletedEvent(resources []templating.RenderedResource) *events.ReconciliationCompletedEvent {
-	return events.NewReconciliationCompletedEvent(0, resources)
+	return events.NewReconciliationCompletedEvent(0, resources, nil)
 }
 
 func sampleResource(ns, name string, port int) templating.RenderedResource {
@@ -643,4 +643,54 @@ func TestRecoverManagedResources_SkipsForbiddenTypes(t *testing.T) {
 	keys := len(comp.lastAppliedKeys)
 	comp.mu.RUnlock()
 	assert.Equal(t, 0, keys, "Forbidden lists must not populate lastAppliedKeys")
+}
+
+// TestHandleReconciliationCompleted_PublishesResourcesApplied pins the
+// producer side of the rendered-status ordering contract: AFTER the apply
+// pass the applier must publish a ResourcesAppliedEvent forwarding the
+// cycle's StatusPatches (and correlation), because the StatusApplier writes
+// the "rendered" variant on that event — conditions like Accepted=True must
+// never precede the infrastructure they describe. A regression that stops
+// publishing, or drops the patches, silently strands every resource at its
+// CRD-default status.
+func TestHandleReconciliationCompleted_PublishesResourcesApplied(t *testing.T) {
+	comp, bus, _ := newTestComp(t, false)
+	setLeader(comp)
+	observer := bus.Subscribe("resources-applied-observer", 10)
+	bus.Start()
+
+	patches := []templating.StatusPatch{{
+		Namespace:  "default",
+		Name:       "gw-1",
+		APIVersion: "gateway.networking.k8s.io/v1",
+		Kind:       "Gateway",
+		Variants:   map[string]map[string]any{"rendered": {"conditions": []any{}}},
+	}}
+	evt := events.NewReconciliationCompletedEvent(
+		0,
+		[]templating.RenderedResource{sampleResource("default", "svc-1", 80)},
+		patches,
+		events.WithCorrelation("corr-1", "cause-1"),
+	)
+	comp.handleReconciliationCompleted(context.Background(), evt)
+
+	applied := testutil.WaitForEvent[*events.ResourcesAppliedEvent](t, observer, testutil.EventTimeout)
+	require.Len(t, applied.StatusPatches, 1, "the cycle's status patches must be forwarded")
+	assert.Equal(t, "gw-1", applied.StatusPatches[0].Name)
+	assert.Equal(t, "corr-1", applied.CorrelationID(), "correlation must propagate for tracing")
+}
+
+// TestHandleReconciliationCompleted_NoPublishWhenNotLeader: a follower must
+// not publish ResourcesAppliedEvent — it didn't apply anything, and the
+// (leader-gated) StatusApplier acting on a follower-published event would
+// break the resources-before-status ordering the event exists to guarantee.
+func TestHandleReconciliationCompleted_NoPublishWhenNotLeader(t *testing.T) {
+	comp, bus, _ := newTestComp(t, false)
+	observer := bus.Subscribe("resources-applied-observer", 10)
+	bus.Start()
+
+	comp.handleReconciliationCompleted(context.Background(),
+		events.NewReconciliationCompletedEvent(0, nil, nil))
+
+	testutil.AssertNoEvent[*events.ResourcesAppliedEvent](t, observer, testutil.NoEventTimeout)
 }

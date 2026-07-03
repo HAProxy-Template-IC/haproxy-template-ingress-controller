@@ -2,14 +2,18 @@ templateSnippets:
   # ============================================================================
   # Per-Gateway LoadBalancer Service emission
   #
-  # Each Gateway with HTTPS listeners and NO spec.addresses set gets its own
-  # LoadBalancer Service in the controller namespace. MetalLB (or whatever
-  # cluster IPAM is in use) allocates a unique LB IP for each Service, which
-  # the chart's status patcher writes back into Gateway.Status.Addresses.
+  # Each Gateway with HTTP or HTTPS listeners and NO spec.addresses set gets
+  # its own LoadBalancer Service in the controller namespace. MetalLB (or
+  # whatever cluster IPAM is in use) allocates a unique LB IP for each Service,
+  # which the chart's status patcher writes back into Gateway.Status.Addresses.
   # The Service's port → targetPort mapping uses phase 1's pod-port allocator,
   # so each (Gateway, listener) bind ends up on a unique container port — that
-  # lets phase 4 emit one HAProxy bind per Gateway with isolated SSL config
-  # (cert, verify mode, ca-ignore-err) on the same logical 443.
+  # lets phase 4 emit one HAProxy bind per Gateway with isolated routing.
+  # HTTPS binds carry isolated SSL config (cert, verify mode, ca-ignore-err)
+  # on the same logical 443; HTTP binds isolate host/path routing so a
+  # no-hostname listener on one Gateway can't catch another Gateway's hosts
+  # (the GatewayHTTPListenerIsolation contract). TLS listeners are excluded —
+  # they flow through chart-static ssl-tcp / frontends-600.
   #
   # Re-uses the existing `k8sResources.gateway-static-addresses` template by
   # writing entries into the same `shared.gatewayStaticAddressServices` map
@@ -70,7 +74,7 @@ templateSnippets:
               // SNI / Host, not via duplicate Service ports).
               var ports = []any{}
               var seenPort = map[int]bool{}
-              var hasHTTPS = false
+              var hasIsolated = false
               for _, listener := range gw.Spec.Listeners {
                 var lName = listener.Name
                 var lPort = toint(listener.Port)
@@ -80,8 +84,16 @@ templateSnippets:
                 }
                 seenPort[lPort] = true
                 var targetPort = lPort
-                if lProto == "HTTPS" {
-                  hasHTTPS = true
+                {#- HTTP and HTTPS listeners both bind on a per-Gateway pod
+                    port (phase 1's allocator), so the Service must DNAT
+                    <lb-ip>:<listenerPort> → <pod-ip>:<podPort> for each.
+                    This is what isolates each Gateway's routing by
+                    destination instead of collapsing onto the shared
+                    chart-static :80 / :443 binds — a no-hostname listener
+                    on one Gateway can no longer catch another Gateway's
+                    hosts (GatewayHTTPListenerIsolation). -#}
+                if lProto == "HTTPS" || lProto == "HTTP" {
+                  hasIsolated = true
                   var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
                   if val, ok := allocations[allocKey]; ok {
                     targetPort = toint(val)
@@ -94,7 +106,7 @@ templateSnippets:
                   "protocol":   "TCP",
                 })
               }
-              if hasHTTPS && len(ports) > 0 {
+              if hasIsolated && len(ports) > 0 {
                 var svcName = BoundedK8sName("gw", gwNs, gwName, "")
                 // Carry the gateway-name + gateway-namespace labels so the
                 // status read-back path (and the conformance test's

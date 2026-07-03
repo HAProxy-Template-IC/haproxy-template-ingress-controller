@@ -21,16 +21,13 @@ import (
 )
 
 // The deployer coalesces DeploymentScheduledEvents via component.Base's
-// CoalescingHandler hook (CoalescesOn in component.go). The flow is:
+// CoalescingHandler hook (CoalescesOn in component.go). Base runs the
+// component in mailbox mode: an intake goroutine drains the subscription
+// channel immediately, collapsing uninterrupted runs of coalescible
+// DeploymentScheduledEvents to their latest element; the worker then
+// dispatches from the queue.
 //
-//  1. The event loop dispatches one event (performDeployment).
-//  2. After the dispatch returns, Base drains the subscription channel:
-//     for runs of all-coalescible DeploymentScheduledEvents, only the
-//     latest survives — older ones are superseded.
-//  3. The latest coalescible event found is dispatched.
-//  4. Loop until the channel is empty.
-//
-// The drain path is load-bearing because deployment is single-threaded
+// The coalescing is load-bearing because deployment is single-threaded
 // (deploymentInProgress flag) but the validator + scheduler upstream
 // can fire many DeploymentScheduledEvents during a single deployment.
 // Without coalescing, the deployer would process every queued event in
@@ -44,11 +41,12 @@ import (
 // event type from it) would silently re-introduce the FIFO backlog and
 // the deployer would lag arbitrarily behind the scheduler under load.
 //
-// Pin the all-coalescible case (the common steady-state path): one event
-// dispatched + N coalescible events queued → exactly TWO
-// performDeployment calls (initial + latest queued). The intermediate
-// queued events must be SUPERSEDED. This is the contract that protects
-// the deployer from falling behind.
+// Pin the all-coalescible case (the common steady-state path): N
+// coalescible events queued back-to-back → exactly ONE performDeployment
+// call, for the LATEST of the run. All earlier events are SUPERSEDED —
+// including the first (deploying an already-superseded config first would
+// just burn a deploy slot on stale state). This is the contract that
+// protects the deployer from falling behind.
 func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 	bus := testutil.NewTestBus()
 	completedChan := bus.Subscribe("completion-observer", 50)
@@ -74,9 +72,9 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 	}
 
 	// Queue 4 coalescible events in the component's subscription buffer
-	// BEFORE the event loop starts. The loop dispatches the first, then
-	// Base's coalescing drain supersedes A & B and dispatches only C.
-	bus.Publish(mkScheduled("initial"))
+	// BEFORE the event loop starts. The mailbox intake collapses the whole
+	// run; only the latest (C) is dispatched.
+	bus.Publish(mkScheduled("initial-superseded"))
 	bus.Publish(mkScheduled("queued-A-superseded"))
 	bus.Publish(mkScheduled("queued-B-superseded"))
 	bus.Publish(mkScheduled("queued-C-latest"))
@@ -92,19 +90,16 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 
 	// Collect the DeploymentCompletedEvents observed.
 	first := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.EventTimeout)
-	second := testutil.WaitForEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.EventTimeout)
 
-	// EXACTLY 2 deployments — the initial one + the latest of the
-	// drained queue. The intermediate queued events MUST be superseded.
-	assert.Equal(t, []string{"initial", "queued-C-latest"},
-		[]string{first.CorrelationID(), second.CorrelationID()},
-		"the deployer MUST process the first dispatched event and then "+
-			"jump straight to the latest queued coalescible event, "+
-			"superseding the intermediates. A regression that drained FIFO "+
-			"instead of latest-wins would leave the deployer lagging "+
+	// EXACTLY 1 deployment — the latest of the queued run. Every earlier
+	// queued event MUST be superseded.
+	assert.Equal(t, "queued-C-latest", first.CorrelationID(),
+		"the deployer MUST jump straight to the latest queued coalescible "+
+			"event, superseding all intermediates. A regression that drained "+
+			"FIFO instead of latest-wins would leave the deployer lagging "+
 			"arbitrarily behind the scheduler under load")
 
-	// No third deployment: A and B were superseded, never deployed.
+	// No second deployment: initial, A and B were superseded, never deployed.
 	testutil.AssertNoEvent[*events.DeploymentCompletedEvent](t, completedChan, testutil.NoEventTimeout)
 }
 

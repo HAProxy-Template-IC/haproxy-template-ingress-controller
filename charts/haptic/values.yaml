@@ -106,6 +106,17 @@ controller:
     # for a leaner install.
     gateway:
       enabled: true
+      # Set true only when the Gateway API *Experimental* channel is installed
+      # (experimental-install.yaml). As of v1.6 the Standard and Experimental
+      # installs ship an IDENTICAL set of CRDs — the difference is field-level
+      # additions to HTTPRoute (retry / GEP-1731, sessionPersistence / GEP-1619),
+      # which Helm .Capabilities cannot detect (it sees GVKs, not fields). The
+      # validationTests that assert those directives can only pass when the
+      # fields exist, so they are skipped unless this flag opts in. The route
+      # snippets themselves emit the directives only when the typed field is
+      # present, so leaving this false on a Standard-channel cluster is safe —
+      # it just skips the experimental-field self-tests.
+      experimentalChannel: false
     # Shared Ingress-scoped macros for the vendor annotation libraries
     # below (level 2.5). See docs/adr/0003-annotation-compat-scaffold-level-2-5.md.
     ingressAnnotationsCompat:
@@ -623,7 +634,7 @@ ingressClass:
 # Creates a GatewayClass resource for Gateway API
 # Only created when gateway library is enabled and Gateway API CRDs are installed
 # Prerequisites: Gateway API CRDs must be installed first:
-#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
 gatewayClass:
   # Enable GatewayClass creation
   enabled: true
@@ -772,8 +783,18 @@ sidecars: []
 #       mountPath: /var/log
 # Startup probe (useful for slow-starting containers)
 # When enabled, liveness and readiness probes are disabled until startup succeeds
+#
+# Enabled by default and load-bearing: controller startup includes loading
+# the HAProxyTemplateConfig and running its embedded validationTests -
+# dozens of `haproxy -c` checks plus a full template-engine compile - so
+# time-to-first-healthy scales with the config and exceeds the bare
+# liveness budget on slow or contended nodes. Without this probe the
+# liveness probe kills the controller mid-initialization and the pod
+# crash-loops forever (observed as every CI e2e job failing setup with
+# 'Liveness probe failed: 503'). 30 x 10s gives startup a 300s budget;
+# liveness/readiness only engage after /healthz first returns 200.
 startupProbe:
-  enabled: false
+  enabled: true
   httpGet:
     path: /healthz
     port: healthz
@@ -1487,11 +1508,19 @@ spoaHub:
       # Do NOT also set `directives = "..."` inside `params:` below —
       # the chart emits its own `directives = """..."""` line, so a
       # duplicate would produce a coraza parse error.
+      #
+      # `SecRuleEngine On` MUST come AFTER the includes: directives are
+      # processed sequentially and `@coraza.conf-recommended` itself sets
+      # `SecRuleEngine DetectionOnly`, so an `On` placed before the include
+      # is silently overridden — rules still match and log, but
+      # interruptions (deny/403) are suppressed and the WAF becomes
+      # detection-only. Custom rules appended below the includes (and the
+      # per-Ingress modsecurity-snippet appends) then never block.
       directives: |
-        SecRuleEngine On
         Include @coraza.conf-recommended
         Include @crs-setup.conf.example
         Include @owasp_crs/*.conf
+        SecRuleEngine On
       params: |
         request_body_limit = 131072
         request_body_in_memory_limit = 131072

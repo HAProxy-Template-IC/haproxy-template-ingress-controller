@@ -111,7 +111,7 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 	@echo "Running kubeconform..."
 	helm template charts/haptic \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
-		--api-versions=gateway.networking.k8s.io/v1alpha2/TCPRoute \
+		--api-versions=gateway.networking.k8s.io/v1/TCPRoute \
 		| docker run --rm -i ghcr.io/yannh/kubeconform:$(KUBECONFORM_VERSION) \
 			-kubernetes-version $(KUBE_VERSION) \
 			-schema-location default \
@@ -135,7 +135,7 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 	@echo "Running kubeconform..."
 	helm template charts/haptic \
 		--api-versions=gateway.networking.k8s.io/v1/GatewayClass \
-		--api-versions=gateway.networking.k8s.io/v1alpha2/TCPRoute \
+		--api-versions=gateway.networking.k8s.io/v1/TCPRoute \
 		| kubeconform \
 			-kubernetes-version $(KUBE_VERSION) \
 			-schema-location default \
@@ -212,6 +212,20 @@ CONFORMANCE_IMAGE ?= haptic-conformance-test:latest
 CONFORMANCE_KIND_NETWORK ?= kind
 CONFORMANCE_KIND_CLUSTER ?= haptic-e2e
 CONFORMANCE_TIMEOUT ?= 30m
+# Cap on concurrently running conformance tests (forwarded as
+# -test.parallel). Without it Go defaults to GOMAXPROCS — 16 on the CI
+# runners — and the suite's parallel tests all start within milliseconds,
+# creating ~6 Gateways (= per-Gateway LoadBalancer Services) in one burst.
+# MetalLB announces each VIP immediately, but kube-proxy programs the
+# service DNAT rules asynchronously; under the burst its sync lags behind
+# and a SYN arriving at the node before the rules exist is answered with
+# ICMP host-unreachable ("connect: no route to host" — mechanism verified
+# by freezing kube-proxy and dialing a fresh VIP from a sibling container).
+# The first test-created VIP consistently ate >10s of that lag in CI,
+# exhausting the suite's MaxTimeToConsistency budget. Capping concurrency
+# spreads Gateway creation out so kube-proxy keeps up; 4 matches the
+# acceptance suite's default and costs ~1-2 min of shard wall-clock.
+CONFORMANCE_PARALLEL ?= 4
 # Container name used when CONFORMANCE_KEEP_CONTAINER is set (the report job
 # keeps the stopped container so it can `docker cp` the written report out).
 CONFORMANCE_CONTAINER ?= haptic-conformance-run
@@ -237,6 +251,8 @@ test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sib
 	@echo "                             (default: $(CONFORMANCE_KIND_NETWORK) — kind's default)"
 	@echo "  CONFORMANCE_KIND_CLUSTER - kind cluster name (default: $(CONFORMANCE_KIND_CLUSTER))"
 	@echo "  CONFORMANCE_DEBUG - non-empty for upstream RoundTripper debug logging"
+	@echo "  CONFORMANCE_PARALLEL - Max concurrently running tests (default: $(CONFORMANCE_PARALLEL));"
+	@echo "                         see the variable's comment for why this is capped"
 	@# Architecture: the conformance test binary is built statically here on
 	@# the host (CGO_ENABLED=0), packaged into a tiny distroless image, and
 	@# run as a sibling container on the kind docker network. From that
@@ -284,7 +300,7 @@ test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sib
 		$(if $(CONFORMANCE_REPORT_OUTPUT),-e CONFORMANCE_REPORT_OUTPUT=$(CONFORMANCE_REPORT_OUTPUT)) \
 		$(if $(CONFORMANCE_IMPL_VERSION),-e CONFORMANCE_IMPL_VERSION=$(CONFORMANCE_IMPL_VERSION)) \
 		$(CONFORMANCE_IMAGE) \
-		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
+		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) -test.parallel=$(CONFORMANCE_PARALLEL) \
 		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")
 
 build-ingress-conformance-image: ## Build the ingress-conformance test image (clone upstream, apply patches, compile, docker build)

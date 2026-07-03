@@ -25,6 +25,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- macro GenerateHTTPRouteHostMap(routes []*resources.httproutes.T) -%}
+      {{ render "util-gateway-port-scope" -}}
       {%- for _, route := range routes %}
       {%%
         var routeHostnames = route.Spec.Hostnames
@@ -116,13 +117,26 @@ templateSnippets:
             }
             var listenerProto = listener.Protocol
             if listenerProto == "" { listenerProto = "HTTP" }
+            var listenerHostname = listener.Hostname
+            // Per-Gateway port scope: a catch-all (no-hostname) listener,
+            // and any listener on a non-default port, keys by the Gateway's
+            // representative pod port so its routes are reachable only via
+            // this Gateway's bind (GatewayHTTPListenerIsolation). Default-
+            // port hostname'd listeners keep the bare-host key (base's
+            // wildcard cascade doesn't carry a port). Falls back to the
+            // listener port for pinned / chart-static Gateways.
             var portSuffix = ""
             if listenerPort > 0 {
-              if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
-                portSuffix = ":" + tostring(listenerPort)
+              var portScope = shared.Get("gatewayPortScope").(map[string]any)
+              var scopePort = listenerPort
+              if val, ok := portScope[gwNs + "/" + gwName + ":" + tostring(listenerPort)]; ok {
+                scopePort = toint(val)
+              }
+              var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443)
+              if listenerHostname == "" || isNonDefault {
+                portSuffix = ":" + tostring(scopePort)
               }
             }
-            var listenerHostname = listener.Hostname
             // Listener isolation (catch-all only — see analyze_routes for
             // the rationale): drop a route hostname when a sibling listener
             // on the same Gateway claims it more specifically.
@@ -203,6 +217,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- macro GenerateGRPCRouteHostMap(routes []*resources.grpcroutes.T) -%}
+      {{ render "util-gateway-port-scope" -}}
       {%- for _, route := range routes %}
       {%%
         var routeHostnames = route.Spec.Hostnames
@@ -294,13 +309,29 @@ templateSnippets:
             }
             var listenerProto = listener.Protocol
             if listenerProto == "" { listenerProto = "HTTP" }
+            var listenerHostname = listener.Hostname
+            // Per-Gateway port scope: a catch-all (no-hostname) listener, and
+            // any listener on a non-default port, keys by the Gateway's
+            // representative pod port so its routes are reachable only via this
+            // Gateway's bind (GatewayHTTPListenerIsolation). Must mirror
+            // GenerateHTTPRouteHostMap exactly — a GRPCRoute on a default-port
+            // catch-all listener (the conformance shape) otherwise gets an empty
+            // portSuffix, so its only "host" is "" which the emit loop skips,
+            // leaving no `:<podPort>` host.map entry. host_match then stays empty,
+            // the path key never forms, and the request falls to default_backend
+            // (grpc-status 12 Unimplemented) instead of the matched route.
             var portSuffix = ""
             if listenerPort > 0 {
-              if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
-                portSuffix = ":" + tostring(listenerPort)
+              var portScope = shared.Get("gatewayPortScope").(map[string]any)
+              var scopePort = listenerPort
+              if val, ok := portScope[gwNs + "/" + gwName + ":" + tostring(listenerPort)]; ok {
+                scopePort = toint(val)
+              }
+              var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443)
+              if listenerHostname == "" || isNonDefault {
+                portSuffix = ":" + tostring(scopePort)
               }
             }
-            var listenerHostname = listener.Hostname
             var currentRank = toint(HostnameRank(listenerHostname))
             if len(routeHostnames) == 0 {
               effectiveHosts[listenerHostname + portSuffix] = true

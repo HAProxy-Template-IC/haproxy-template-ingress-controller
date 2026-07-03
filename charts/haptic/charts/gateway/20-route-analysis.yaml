@@ -130,35 +130,29 @@ templateSnippets:
               }
               attachedSets = append(attachedSets, ls)
             }
-            // Bubble-sort: O(n^2) but ListenerSet counts per Gateway are
-            // tiny (<10 typical, hundreds in pathological cases). Avoids
-            // pulling in a Scriggo sort helper.
-            for i := 0; i < len(attachedSets); i++ {
-              for j := i + 1; j < len(attachedSets); j++ {
-                var a = attachedSets[i]
-                var b = attachedSets[j]
-                var aTs = a.Metadata.CreationTimestamp
-                var bTs = b.Metadata.CreationTimestamp
-                var aKey = a.Metadata.Namespace + "/" + a.Metadata.Name
-                var bKey = b.Metadata.Namespace + "/" + b.Metadata.Name
-                var swap = false
-                if aTs == bTs {
-                  if aKey > bKey {
-                    swap = true
-                  }
-                } else if aTs == "" {
-                  // Empty creationTimestamp sorts last so resources without
-                  // an explicit timestamp (test fixtures) don't displace
-                  // real ListenerSets in production.
-                  swap = true
-                } else if bTs != "" && aTs > bTs {
-                  swap = true
-                }
-                if swap {
-                  attachedSets[i] = b
-                  attachedSets[j] = a
-                }
-              }
+            // Deterministic precedence: sort by (creationTimestamp asc, then
+            // namespace/name asc) using the engine's sort_by (Go sort.Stable,
+            // O(n log n)) — the same helper the rest of this file already uses
+            // for route ordering. A hand-rolled bubble-sort was previously
+            // used here; besides being O(n^2), nested-loop sorts mis-lower
+            // under Scriggo and can silently drop elements (the exact footgun
+            // that dropped TCPRoutes in 90-tcproute.yaml). Empty
+            // creationTimestamp (test fixtures) maps to a high sentinel so it
+            // sorts LAST, never displacing real ListenerSets.
+            var lsSortItems = []any{}
+            for _, ls := range attachedSets {
+              var lsTs = ls.Metadata.CreationTimestamp
+              if lsTs == "" { lsTs = "9999-12-31T23:59:59Z" }
+              lsSortItems = append(lsSortItems, map[string]any{
+                "ts":  lsTs,
+                "key": ls.Metadata.Namespace + "/" + ls.Metadata.Name,
+                "ls":  ls,
+              })
+            }
+            var lsSorted, _ = sort_by(lsSortItems, []string{"$.ts", "$.key"})
+            attachedSets = []*resources.listenersets.T{}
+            for _, lsItem := range lsSorted {
+              attachedSets = append(attachedSets, lsItem.(map[string]any)["ls"].(*resources.listenersets.T))
             }
 
             // Build the candidate listener list for conflict detection.
@@ -557,6 +551,7 @@ templateSnippets:
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocolOr, ListenerHostname %}
       {%- import "util-gw-mtls-blocked" for ComputeGwMtlsBlocked %}
       {%- macro AnalyzeRoutes(result map[string]any) %}
+        {{ render "util-gateway-port-scope" -}}
         {%- var allRoutes = []any{} %}
 
         {#- Process HTTPRoutes #}
@@ -632,13 +627,27 @@ templateSnippets:
                           non-default ports, so the host-map lookup with
                           un-stripped Host directly matches `<host>:<port>`. -#}
                       {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
+                      {%- var listenerHostname = ListenerHostname(listener) %}
+                      {#- Per-Gateway port scope (mirrors 40-maps-host): a
+                          catch-all (no-hostname) listener, and any listener on
+                          a non-default port, keys by the Gateway's
+                          representative pod port so its routes resolve only via
+                          this Gateway's bind (GatewayHTTPListenerIsolation).
+                          Default-port hostname'd listeners keep the bare-host
+                          key (base's wildcard cascade carries no port). Falls
+                          back to the listener port for pinned / chart-static. -#}
                       {%- var portSuffix = "" %}
                       {%- if listenerPort > 0 %}
-                        {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
-                          {%- portSuffix = ":" + tostring(listenerPort) %}
+                        {%- var portScope = shared.Get("gatewayPortScope").(map[string]any) %}
+                        {%- var scopePort = listenerPort %}
+                        {%- if val, ok := portScope[gwNs + "/" + gwName + ":" + tostring(listenerPort)]; ok %}
+                          {%- scopePort = toint(val) %}
+                        {%- end %}
+                        {%- var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443) %}
+                        {%- if listenerHostname == "" || isNonDefault %}
+                          {%- portSuffix = ":" + tostring(scopePort) %}
                         {%- end %}
                       {%- end %}
-                      {%- var listenerHostname = ListenerHostname(listener) %}
                       {#- Listener isolation: per Gateway API spec, when a
                           route on a less-specific listener (e.g. catch-all)
                           declares a hostname that's more-specifically owned
@@ -941,13 +950,27 @@ templateSnippets:
                           non-default ports, so the host-map lookup with
                           un-stripped Host directly matches `<host>:<port>`. -#}
                       {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
+                      {%- var listenerHostname = ListenerHostname(listener) %}
+                      {#- Per-Gateway port scope (mirrors 40-maps-host): a
+                          catch-all (no-hostname) listener, and any listener on
+                          a non-default port, keys by the Gateway's
+                          representative pod port so its routes resolve only via
+                          this Gateway's bind (GatewayHTTPListenerIsolation).
+                          Default-port hostname'd listeners keep the bare-host
+                          key (base's wildcard cascade carries no port). Falls
+                          back to the listener port for pinned / chart-static. -#}
                       {%- var portSuffix = "" %}
                       {%- if listenerPort > 0 %}
-                        {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
-                          {%- portSuffix = ":" + tostring(listenerPort) %}
+                        {%- var portScope = shared.Get("gatewayPortScope").(map[string]any) %}
+                        {%- var scopePort = listenerPort %}
+                        {%- if val, ok := portScope[gwNs + "/" + gwName + ":" + tostring(listenerPort)]; ok %}
+                          {%- scopePort = toint(val) %}
+                        {%- end %}
+                        {%- var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443) %}
+                        {%- if listenerHostname == "" || isNonDefault %}
+                          {%- portSuffix = ":" + tostring(scopePort) %}
                         {%- end %}
                       {%- end %}
-                      {%- var listenerHostname = ListenerHostname(listener) %}
                       {#- Listener isolation: per Gateway API spec, when a
                           route on a less-specific listener (e.g. catch-all)
                           declares a hostname that's more-specifically owned

@@ -546,12 +546,20 @@ validationTests:
 
       - type: contains
         target: map:host.map
-        pattern: "(?m)^foo\\.com:8080 foo\\.com:8080$"
+        pattern: "(?m)^foo\\.com:180[0-9][0-9] foo\\.com:180[0-9][0-9]$"
 
       - type: contains
         target: map:host.map
-        pattern: "(?m)^foo\\.com:8090 foo\\.com:8090$"
+        pattern: "(?m)^foo\\.com:180[0-9][0-9] foo\\.com:180[0-9][0-9]$"
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.host_full\\) req\\.hdr\\(Host\\),lower"
+
+      # The port-scoped exact lookup (host:listener_port) MUST precede the
+      # bare-host lookup, else a hostname present on several listener ports
+      # (foo.com on :80/:8080/:8090) resolves every request to the bare
+      # default-port backend (HTTPRouteListenerPortMatching regression).
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?s)set-var\\(txn\\.host_match\\) var\\(txn\\.host\\),concat\\(:,txn\\.listener_port,\\),map\\(.*?set-var\\(txn\\.host_match\\) var\\(txn\\.host\\),map\\("

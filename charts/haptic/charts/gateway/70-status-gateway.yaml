@@ -80,6 +80,7 @@ templateSnippets:
               "kind":  "HTTPRoute",
               "route": r,
               "needsTLSProtocol": false,
+              "needsTCPProtocol": false,
             })
           }
           for _, r := range resources.grpcroutes.List() {
@@ -87,6 +88,7 @@ templateSnippets:
               "kind":  "GRPCRoute",
               "route": r,
               "needsTLSProtocol": false,
+              "needsTCPProtocol": false,
             })
           }
           for _, r := range resources.tlsroutes.List() {
@@ -94,6 +96,21 @@ templateSnippets:
               "kind":  "TLSRoute",
               "route": r,
               "needsTLSProtocol": true,
+              "needsTCPProtocol": false,
+            })
+          }
+          // TCPRoute counts toward TCP listeners only (needsTCPProtocol gate
+          // below). Without this, a Gateway's TCP listener reported
+          // attachedRoutes=0 because the count only walked HTTP/GRPC/TLS routes
+          // (GatewayAPI TCPRouteMultipleRoutesAttachment expects the count to
+          // reflect attached TCPRoutes). resources.tcproutes is already
+          // referenced elsewhere in this file (ShardedTCPRouteStatusPatches).
+          for _, r := range resources.tcproutes.List() {
+            allRoutesForCount = append(allRoutesForCount, map[string]any{
+              "kind":  "TCPRoute",
+              "route": r,
+              "needsTLSProtocol": false,
+              "needsTCPProtocol": true,
             })
           }
 
@@ -102,6 +119,7 @@ templateSnippets:
             var routeKind = em["kind"].(string)
             var route = em["route"]
             var needsTLSProtocol = em["needsTLSProtocol"].(bool)
+            var needsTCPProtocol = em["needsTCPProtocol"].(bool)
             var routeNs = ResourceNamespace(route)
             var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
@@ -177,6 +195,12 @@ templateSnippets:
                 //       even without explicit allowedRoutes.kinds.
                 var listenerProtoCount = ListenerProtocolOr(listener, "HTTP")
                 if needsTLSProtocol && listenerProtoCount != "TLS" {
+                  continue
+                }
+                // TCPRoute counts only toward TCP listeners — a no-sectionName
+                // TCPRoute parented to a Gateway would otherwise be counted
+                // against every listener (HTTP/HTTPS/TLS) too.
+                if needsTCPProtocol && listenerProtoCount != "TCP" {
                   continue
                 }
 
@@ -389,6 +413,17 @@ templateSnippets:
             var gwAcceptedStatus = "True"
             var gwAcceptedReason = "Accepted"
             var gwAcceptedMessage = "Gateway accepted"
+            // spec.infrastructure.parametersRef: HAPTIC implements no
+            // implementation-specific infrastructure parameters, so ANY
+            // parametersRef references an unsupported resource →
+            // Accepted=False/InvalidParameters (GatewayInvalidParametersRef).
+            // The address checks below may further refine to
+            // UnsupportedAddress/AddressNotUsable if spec.addresses is also bad.
+            if dig(gateway, "spec", "infrastructure", "parametersRef") != nil {
+              gwAcceptedStatus = "False"
+              gwAcceptedReason = "InvalidParameters"
+              gwAcceptedMessage = "spec.infrastructure.parametersRef references an unsupported resource"
+            }
             var gwEffectiveAddresses []any = gatewayAddresses
             var hasUnsupportedAddrType = false
             var hasUnusableAddr = false
@@ -568,16 +603,20 @@ templateSnippets:
 
             // Per-Gateway LB IP read-back (phase 5 of the per-Gateway-IP
             // refactor). When the Gateway has NO spec.addresses but DOES
-            // have at least one HTTPS listener, phase 3 emitted a
+            // have at least one HTTP or HTTPS listener, phase 3 emitted a
             // per-Gateway LoadBalancer Service named
             // `gw-<gwNs>-<gwName>` in the controller namespace. Read its
             // realized LB IP back into status.addresses so clients
             // (including the conformance suite's RoundTripper) connect
             // to the per-Gateway IP — that's what makes the per-Gateway
-            // bind on the allocated pod port reachable.
+            // bind on the allocated pod port reachable. Without this the
+            // Gateway would report the shared chart-static LB IP, whose
+            // :80 bind isn't scoped to this Gateway's routes, so the
+            // pod-port-keyed host/path maps would 404 (over-isolation).
             //
             // Falls through silently when:
-            //   - No HTTPS listener (phase 3 didn't emit a Service)
+            //   - No HTTP/HTTPS listener (phase 3 didn't emit a Service —
+            //     e.g. TLS-only Gateways use the chart-static path)
             //   - Service hasn't been allocated an IP yet (MetalLB
             //     reconciliation lag — gwEffectiveAddresses stays at
             //     the chart's main LB IP from gatewayAddresses, which
@@ -585,14 +624,14 @@ templateSnippets:
             //   - ctrlNs / podSelector unset (chart-static deployment)
             var phase5CtrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
             if len(gwSpecAddrs) == 0 && phase5CtrlNs != "" {
-              var hasHTTPSListener = false
+              var hasIsolatedListener = false
               for _, listener := range gateway.Spec.Listeners {
-                if listener.Protocol == "HTTPS" {
-                  hasHTTPSListener = true
+                if listener.Protocol == "HTTPS" || listener.Protocol == "HTTP" {
+                  hasIsolatedListener = true
                   break
                 }
               }
-              if hasHTTPSListener {
+              if hasIsolatedListener {
                 // Per-Gateway IP path takes ownership of status.addresses
                 // here, REPLACING the chart-static fallback. Reset
                 // upfront so a not-yet-realized Service leaves
@@ -851,7 +890,22 @@ templateSnippets:
               var listenerAcceptedStatus = "True"
               var listenerAcceptedReason = "Accepted"
               var listenerAcceptedMessage = "Listener accepted"
-              if protocol == "HTTPS" && resolvedRefsStatus == "True" {
+              // Supported-protocol gate (Gateway API core): the chart routes
+              // HTTP, HTTPS, TLS and TCP listeners. Any other protocol (UDP,
+              // or a bogus value like INVALID) makes the listener
+              // Accepted=False with reason UnsupportedProtocol, and the
+              // listener contributes no bind (the allocator / bind snippets
+              // already ignore non-HTTP/HTTPS/TLS/TCP). A Gateway whose
+              // listeners are ALL unsupported ends up with zero accepted
+              // listeners and is not Accepted (handled by the gateway-level
+              // aggregation); a mix keeps the Gateway Accepted with only the
+              // unsupported listener rejected (GatewayListenerUnsupportedProtocol).
+              if protocol != "HTTP" && protocol != "HTTPS" && protocol != "TLS" && protocol != "TCP" {
+                listenerAcceptedStatus = "False"
+                listenerAcceptedReason = "UnsupportedProtocol"
+                listenerAcceptedMessage = "Protocol " + protocol + " is not supported"
+              }
+              if listenerAcceptedStatus == "True" && protocol == "HTTPS" && resolvedRefsStatus == "True" {
                 var listenerPort = toint(listener.Port)
                 var feValidation any = nil
                 // dig() outer presence check distinguishes "TLS frontend
@@ -980,12 +1034,11 @@ templateSnippets:
                 listenerAcceptedMessage = feFailMessage
               }
 
-              // Count attached routes: routes with sectionName matching
-              // this listener + wildcard routes (no sectionName) on the
-              // same gateway.
-              var specificKey = nsStr + "/" + nameStr + "/" + listenerName
-              var wildcardKey = nsStr + "/" + nameStr + "/*"
-              var attached = routeCounts[specificKey] + routeCounts[wildcardKey]
+              // Count attached routes for this listener. The counting pass
+              // above resolves sectionless routes to every listener they
+              // actually attach to, so routeCounts is keyed purely by
+              // gateway/listener — no "*" wildcard bucket exists anymore.
+              var attached = routeCounts[nsStr + "/" + nameStr + "/" + listenerName]
 
               // Per Gateway API spec, when a listener's references are
               // unresolvable (cert invalid, kind unsupported, …) the
@@ -1098,6 +1151,38 @@ templateSnippets:
                 gwResolvedRefsReason = tostring(ldm["resolvedRefsReason"])
                 gwResolvedRefsMessage = "Listener " + tostring(ldm["name"]) + ": " + tostring(ldm["resolvedRefsMessage"])
                 break
+              }
+            }
+            // A Gateway with listeners but NONE accepted (e.g. every listener
+            // uses an unsupported protocol) is itself Accepted=False. One or
+            // more accepted listeners keeps it Accepted (GatewayListenerUnsupported
+            // Protocol: the all-unsupported Gateway is not accepted; the mixed
+            // HTTP+unsupported Gateway stays accepted with only the bad listener
+            // rejected). Only override the default Accepted=True — never revive a
+            // Gateway already False for another reason (e.g. UnsupportedAddress).
+            if gwAcceptedStatus == "True" && len(listenerData) > 0 {
+              var anyListenerAccepted = false
+              var anyListenerRejected = false
+              for _, ld := range listenerData {
+                if tostring(ld.(map[string]any)["acceptedStatus"]) == "True" {
+                  anyListenerAccepted = true
+                } else {
+                  anyListenerRejected = true
+                }
+              }
+              if !anyListenerAccepted {
+                gwAcceptedStatus = "False"
+                gwAcceptedReason = "ListenersNotValid"
+                gwAcceptedMessage = "No listeners are accepted"
+              } else if anyListenerRejected {
+                // Mixed: at least one listener accepted, at least one rejected.
+                // The Gateway stays Accepted=True (it can serve the good
+                // listeners) but reports ListenersNotValid so consumers see
+                // that not every listener is valid. The conformance test
+                // GatewayListenerUnsupportedProtocol pins exactly
+                // Accepted=True / Reason=ListenersNotValid for this shape.
+                gwAcceptedReason = "ListenersNotValid"
+                gwAcceptedMessage = "One or more listeners are not accepted"
               }
             }
             // Validate spec.tls.backend.clientCertificateRef when set.
@@ -1313,11 +1398,22 @@ templateSnippets:
             // Previously the chart shipped byte-identical rendered+deployed
             // payloads (commit 83671a40), which flipped Programmed=True
             // before HAProxy reload — racing the conformance suite's
-            // poll-then-dial loop. With Programmed isolated to the deployed
-            // variant, tests waiting for Programmed=True correctly block
-            // until reload is verified, while Accepted/ResolvedRefs (which
-            // don't depend on HAProxy state) are still surfaced immediately.
-
+            // poll-then-dial loop. With Programmed=True isolated to the
+            // deployed variant, tests waiting for Programmed=True correctly
+            // block until reload is verified, while Accepted/ResolvedRefs
+            // (which don't depend on HAProxy state) are surfaced immediately.
+            //
+            // NOTE: the rendered variant must NOT emit Programmed at all. The
+            // Gateway CRD pre-seeds Programmed=Unknown at observedGeneration=0,
+            // which looks stale to the conformance obsGen helper until the
+            // deployed variant lands — but emitting Programmed=Unknown here to
+            // bump observedGeneration is worse: the rendered phase would then
+            // Force-own Programmed and every re-render (constant on the shared
+            // all-namespaces gateway as routes attach/detach) resets it to
+            // Unknown, flickering the deployed Programmed=True back down so it
+            // never stabilises under churn. The real remedy for the stale
+            // gen-0 window is deploy-pipeline throughput (land the deployed
+            // Programmed=True/gen sooner), not a rendered-phase placeholder.
             var renderedTopConditions = []any{gwAcceptedCond, gwResolvedRefsCond}
             if gwInsecureFrontendCond != nil {
               renderedTopConditions = append(renderedTopConditions, gwInsecureFrontendCond)
@@ -1367,6 +1463,16 @@ templateSnippets:
               var lname = tostring(ldm["name"])
               deployedListenerEntries = append(deployedListenerEntries, map[string]any{
                 "name": ldm["name"],
+                // attachedRoutes is REQUIRED on every listener status entry
+                // (Gateway CRD ListenerStatus.required = [attachedRoutes,
+                // conditions, name]). If this deployed variant applies a
+                // listener entry before the rendered variant creates it (e.g.
+                // an all-invalid Gateway that fails/deploys before its first
+                // rendered status lands), an entry without attachedRoutes is
+                // rejected by the API server — and that apply then fails and
+                // retries forever, flooding the status applier. Emit the same
+                // count as the rendered variant so any apply order is valid.
+                "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
                   condition("Programmed",
                     tostring(ldm["programmedStatus"]),
@@ -1390,6 +1496,11 @@ templateSnippets:
               }
               failedListenerEntries = append(failedListenerEntries, map[string]any{
                 "name": ldm["name"],
+                // Required field — see the deployed variant above. A failed
+                // deploy is the MOST likely path to apply a listener entry
+                // before the rendered variant (an all-invalid Gateway), so
+                // this variant must carry attachedRoutes too.
+                "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
                   condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
                     generation, ListenerTransitionTime(gateway, lname, "Programmed", failProgrammedStatus)),
@@ -1458,6 +1569,7 @@ templateSnippets:
       {%- import "util-sharded-gateway-status-patches" for ShardedGatewayStatusPatches -%}
       {%- import "util-sharded-route-status-patches" for ShardedHTTPRouteStatusPatches, ShardedGRPCRouteStatusPatches -%}
       {%- import "util-sharded-tlsroute-status-patches" for ShardedTLSRouteStatusPatches -%}
+      {%- import "util-sharded-tcproute-status-patches" for ShardedTCPRouteStatusPatches -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- if gf["addresses"] != nil %}
         {%- var allGateways = resources.gateways.List() -%}
@@ -1483,6 +1595,10 @@ templateSnippets:
       {%- var allTLSRoutes = resources.tlsroutes.List() -%}
       {%- if len(allTLSRoutes) > 0 -%}
         {{- ShardedTLSRouteStatusPatches(allTLSRoutes) -}}
+      {%- end -%}
+      {%- var allTCPRoutes = resources.tcproutes.List() -%}
+      {%- if len(allTCPRoutes) > 0 -%}
+        {{- ShardedTCPRouteStatusPatches(allTCPRoutes) -}}
       {%- end -%}
 
   status-patches-220-listenerset:
@@ -2070,6 +2186,14 @@ templateSnippets:
             })
             deployedListeners = append(deployedListeners, map[string]any{
               "name": listenerName,
+              // attachedRoutes is REQUIRED on every ListenerSet listener status
+              // entry (same as Gateway ListenerStatus). If this deployed /
+              // deployFailed variant applies a listener entry before the
+              // rendered variant creates it, an entry without attachedRoutes is
+              // rejected by the API server and the apply retries forever,
+              // flooding the status applier. Emit the same count the rendered
+              // variant does so any apply order is valid.
+              "attachedRoutes": lsAttachedRoutes[listenerName],
               "conditions": []any{
                 condition("Programmed",
                   listenerProgrammedStatus, listenerProgrammedReason, listenerProgrammedMessage,
