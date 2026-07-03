@@ -145,6 +145,12 @@ templateSnippets:
         }
 
         var sortedKeys = sort_strings(portKeys)
+        {#- More keys than slots means the probe loop below could never
+            find a free slot and would spin forever, hanging the render
+            goroutine — fail loudly with the knob to turn instead. -#}
+        if len(sortedKeys) > rangeSize {
+          fail(sprintf("pod-port allocator: %d (Gateway,port) keys exceed the %d-slot pod-port range; raise perGatewayPodPortRange", len(sortedKeys), rangeSize))
+        }
         var portPod = map[string]any{}
         var usedSlots = map[int]bool{}
         for _, pkAny := range sortedKeys {
