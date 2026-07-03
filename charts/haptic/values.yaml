@@ -783,8 +783,18 @@ sidecars: []
 #       mountPath: /var/log
 # Startup probe (useful for slow-starting containers)
 # When enabled, liveness and readiness probes are disabled until startup succeeds
+#
+# Enabled by default and load-bearing: controller startup includes loading
+# the HAProxyTemplateConfig and running its embedded validationTests -
+# dozens of `haproxy -c` checks plus a full template-engine compile - so
+# time-to-first-healthy scales with the config and exceeds the bare
+# liveness budget on slow or contended nodes. Without this probe the
+# liveness probe kills the controller mid-initialization and the pod
+# crash-loops forever (observed as every CI e2e job failing setup with
+# 'Liveness probe failed: 503'). 30 x 10s gives startup a 300s budget;
+# liveness/readiness only engage after /healthz first returns 200.
 startupProbe:
-  enabled: false
+  enabled: true
   httpGet:
     path: /healthz
     port: healthz

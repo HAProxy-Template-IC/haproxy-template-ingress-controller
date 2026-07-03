@@ -212,7 +212,16 @@ tests:
             image: fluent/fluent-bit:latest
 
   # Startup probe
-  - it: should not include startup probe by default
+  # Enabled by default and load-bearing (see values.yaml): without it the
+  # liveness probe kills the controller during validationTests startup.
+  - it: should include startup probe by default
+    asserts:
+      - exists:
+          path: spec.template.spec.containers[0].startupProbe
+
+  - it: should omit startup probe when disabled
+    set:
+      startupProbe.enabled: false
     asserts:
       - notExists:
           path: spec.template.spec.containers[0].startupProbe
