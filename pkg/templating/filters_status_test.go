@@ -15,11 +15,15 @@
 package templating
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/kube-openapi/pkg/validation/spec"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
 )
 
 func TestScriggoCondition(t *testing.T) {
@@ -184,6 +188,137 @@ func TestScriggoTransitionTime(t *testing.T) {
 
 		result := scriggoTransitionTime(conditions, "Accepted", "True")
 		assert.Equal(t, "2025-01-15T10:30:00Z", result)
+	})
+}
+
+// buildConditionedResourceType produces a typegen reflect.Type mirroring
+// the minimal shape every Gateway API status carries: `.status.conditions[]`
+// of metav1.Condition. Property names and required flags mirror the real
+// GatewayClass CRD schema (tests/schemas/gateway.networking.k8s.io_gatewayclasses.yaml)
+// so the generated struct matches what production hands to templates when
+// schemas are loaded live from the kube-apiserver.
+func buildConditionedResourceType(t *testing.T) reflect.Type {
+	t.Helper()
+	stringType := spec.StringProperty()
+	intType := spec.Int64Property()
+	conditionSchema := spec.Schema{
+		SchemaProps: spec.SchemaProps{
+			Type:     spec.StringOrArray{"object"},
+			Required: []string{"lastTransitionTime", "message", "reason", "status", "type"},
+			Properties: map[string]spec.Schema{
+				"type":               *stringType,
+				"status":             *stringType,
+				"reason":             *stringType,
+				"message":            *stringType,
+				"observedGeneration": *intType,
+				"lastTransitionTime": *stringType,
+			},
+		},
+	}
+	statusSchema := spec.Schema{
+		SchemaProps: spec.SchemaProps{
+			Type: spec.StringOrArray{"object"},
+			Properties: map[string]spec.Schema{
+				"conditions": {
+					SchemaProps: spec.SchemaProps{
+						Type:  spec.StringOrArray{"array"},
+						Items: &spec.SchemaOrArray{Schema: &conditionSchema},
+					},
+				},
+			},
+		},
+	}
+	resourceSchema := spec.Schema{
+		SchemaProps: spec.SchemaProps{
+			Type: spec.StringOrArray{"object"},
+			Properties: map[string]spec.Schema{
+				"status": statusSchema,
+			},
+		},
+	}
+	converter := typegen.NewConverter(nil)
+	rt, err := converter.Convert(&resourceSchema)
+	require.NoError(t, err, "typegen.Convert must succeed for the synthetic conditioned-resource schema")
+	return rt
+}
+
+// TestScriggoTransitionTime_TypedConditions is the reproduction for issue
+// #63: in production, watched resources arrive as typegen-built typed
+// structs, so `dig(resource, "status", "conditions")` returns a typed
+// struct slice — not the `[]any` of `map[string]any` the fixture-only
+// offline path produces. scriggoTransitionTime must preserve the existing
+// lastTransitionTime against BOTH shapes; when it only handled the map
+// shape it silently returned `now` on every render, re-stamping the
+// GatewayClass Accepted condition ~1/s (each SSA write bumped
+// resourceVersion, fed a watch event back in, and re-triggered
+// reconciliation).
+func TestScriggoTransitionTime_TypedConditions(t *testing.T) {
+	rt := buildConditionedResourceType(t)
+	obj := map[string]any{
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"type":               "Ready",
+					"status":             "True",
+					"reason":             "Ready",
+					"message":            "ready",
+					"observedGeneration": int64(1),
+					"lastTransitionTime": "2019-06-01T00:00:00Z",
+				},
+				map[string]any{
+					"type":               "Accepted",
+					"status":             "True",
+					"reason":             "Accepted",
+					"message":            "accepted",
+					"observedGeneration": int64(1),
+					"lastTransitionTime": "2020-01-01T00:00:00Z",
+				},
+			},
+		},
+	}
+	v, err := typegen.WrapInto(obj, rt)
+	require.NoError(t, err, "typegen.WrapInto must succeed for the sample resource")
+	ptr := reflect.New(rt)
+	ptr.Elem().Set(v)
+	typed := ptr.Interface() // *T — the shape production hands to templates
+
+	// This is exactly what the chart's TopLevelTransitionTime macro passes:
+	// dig(resource, "status", "conditions"). Against a typed struct the
+	// result is the typegen struct slice, NOT []any.
+	conds := scriggoDig(typed, "status", "conditions")
+	require.NotNil(t, conds, "dig must navigate the typed struct to the conditions slice")
+	_, isAnySlice := conds.([]any)
+	require.False(t, isAnySlice,
+		"precondition: dig on the typed struct must yield a typed slice — otherwise this test is not exercising the production shape")
+
+	t.Run("typed conditions slice preserves existing time when status unchanged", func(t *testing.T) {
+		got := scriggoTransitionTime(conds, "Accepted", "True")
+		assert.Equal(t, "2020-01-01T00:00:00Z", got,
+			"transitionTime must preserve the existing lastTransitionTime for an unchanged status on the typed shape (TopLevelTransitionTime path)")
+	})
+
+	t.Run("toSlice-wrapped typed elements preserve existing time", func(t *testing.T) {
+		// The chart's ListenerTransitionTime / RouteParentTransitionTime
+		// macros pipe through toSlice(), producing []any whose elements
+		// are still typed structs.
+		got := scriggoTransitionTime(scriggoToSlice(conds), "Accepted", "True")
+		assert.Equal(t, "2020-01-01T00:00:00Z", got,
+			"transitionTime must preserve the existing lastTransitionTime when the conditions arrive as []any of typed structs (listener / route-parent path)")
+	})
+
+	t.Run("typed conditions status changed returns now", func(t *testing.T) {
+		got := scriggoTransitionTime(conds, "Accepted", "False")
+		assert.NotEqual(t, "2020-01-01T00:00:00Z", got)
+		_, err := time.Parse(time.RFC3339, got)
+		require.NoError(t, err)
+	})
+
+	t.Run("typed conditions type not found returns now", func(t *testing.T) {
+		got := scriggoTransitionTime(conds, "Programmed", "True")
+		assert.NotEqual(t, "2020-01-01T00:00:00Z", got)
+		assert.NotEqual(t, "2019-06-01T00:00:00Z", got)
+		_, err := time.Parse(time.RFC3339, got)
+		require.NoError(t, err)
 	})
 }
 

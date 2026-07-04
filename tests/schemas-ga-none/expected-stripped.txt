@@ -18,8 +18,10 @@ test-backendtlspolicy-compiles
 test-backendtlspolicy-invalid-ca-cert-ref-rejects
 test-backendtlspolicy-no-san-hostname-drives-both
 test-backendtlspolicy-san-hostname-drives-verifyhost
+test-backendtlspolicy-status-transition-time-preserved
 test-gateway-backend-client-cert-shape
 test-gateway-bind-per-gateway-shape
+test-gatewayclass-status-transition-time-preserved
 test-gateway-crtlist-per-listener-shapes
 test-gateway-frontend-client-cert-default-line-verify
 test-gateway-frontend-client-cert-insecure-fallback-default-line

@@ -126,9 +126,20 @@ func scriggoCondition(condType, status, reason, message string, observedGenerati
 //     is new, or the resource has no prior conditions).
 //
 // existingConditions is typed as `any` for caller ergonomics — Scriggo's
-// `dig` returns `any`, and the helper accepts both `nil` (no prior
-// conditions) and `[]any` (the conventional shape for unstructured
-// metav1.Condition lists).
+// `dig` returns `any`, and the helper accepts every shape a conditions
+// list arrives in:
+//   - nil (no prior conditions)
+//   - `[]any` of `map[string]any` (the unstructured / fixture shape)
+//   - a typegen-built typed struct slice, or `[]any` whose elements are
+//     typed structs (the production shape — `dig` on a typed watched
+//     resource returns the typed slice, and the chart's `| toSlice()`
+//     wrapping keeps the elements typed). Navigation into the entries
+//     goes through the same dig contract as everywhere else (JSON-tag
+//     field lookup on structs, key lookup on maps), so both shapes
+//     behave identically. Type-asserting `map[string]any` here instead
+//     silently returned `now` on every render for typed resources,
+//     re-stamping lastTransitionTime and feeding a status-write →
+//     watch-event → re-render loop (issue #63).
 //
 // Usage in Scriggo templates:
 //
@@ -142,23 +153,19 @@ func scriggoCondition(condType, status, reason, message string, observedGenerati
 func scriggoTransitionTime(existingConditions any, conditionType, newStatus string) string {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	condSlice, ok := existingConditions.([]any)
+	condSlice, ok := toSlice(existingConditions)
 	if !ok {
 		return now
 	}
 
 	for _, c := range condSlice {
-		condMap, ok := c.(map[string]any)
-		if !ok {
-			continue
-		}
-		ct, _ := condMap["type"].(string)
+		ct, _ := scriggoDig(c, "type").(string)
 		if ct != conditionType {
 			continue
 		}
-		existingStatus, _ := condMap["status"].(string)
+		existingStatus, _ := scriggoDig(c, "status").(string)
 		if existingStatus == newStatus {
-			if existingTime, ok := condMap["lastTransitionTime"].(string); ok && existingTime != "" {
+			if existingTime, ok := scriggoDig(c, "lastTransitionTime").(string); ok && existingTime != "" {
 				return existingTime
 			}
 		}

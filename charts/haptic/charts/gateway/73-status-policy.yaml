@@ -2,7 +2,7 @@ templateSnippets:
   util-generate-backendtlspolicy-status-patches:
     requires: [backendtlspolicies, httproutes]
     template: |
-      {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {%- import "util-condition-transition-time" for AncestorTransitionTime -%}
       {%- import "util-resource-helpers" for ResourceNamespace -%}
       {% macro GenerateBackendTLSPolicyStatusPatches(policies []*resources.backendtlspolicies.T, controllerName string) %}
         {%- for _, policy := range policies %}
@@ -236,9 +236,9 @@ templateSnippets:
                     "controllerName": controllerName,
                     "conditions": []any{
                       condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                        generation, RouteParentTransitionTime(policy, len(ancestors), "Accepted", acceptedStatus)),
+                        generation, AncestorTransitionTime(policy, aref, controllerName, "Accepted", acceptedStatus)),
                       condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
-                        generation, RouteParentTransitionTime(policy, len(ancestors), "ResolvedRefs", resolvedStatus)),
+                        generation, AncestorTransitionTime(policy, aref, controllerName, "ResolvedRefs", resolvedStatus)),
                     },
                   })
                 }
@@ -249,19 +249,20 @@ templateSnippets:
                 var trGroup = tr.Group
                 var trKind = tr.Kind
                 var trName = tr.Name
+                var targetRefAncestor = map[string]any{
+                  "group":     trGroup,
+                  "kind":      trKind,
+                  "name":      trName,
+                  "namespace": policyNs,
+                }
                 ancestors = append(ancestors, map[string]any{
-                  "ancestorRef": map[string]any{
-                    "group":     trGroup,
-                    "kind":      trKind,
-                    "name":      trName,
-                    "namespace": policyNs,
-                  },
+                  "ancestorRef":    targetRefAncestor,
                   "controllerName": controllerName,
                   "conditions": []any{
                     condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                      generation, RouteParentTransitionTime(policy, len(ancestors), "Accepted", acceptedStatus)),
+                      generation, AncestorTransitionTime(policy, targetRefAncestor, controllerName, "Accepted", acceptedStatus)),
                     condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
-                      generation, RouteParentTransitionTime(policy, len(ancestors), "ResolvedRefs", resolvedStatus)),
+                      generation, AncestorTransitionTime(policy, targetRefAncestor, controllerName, "ResolvedRefs", resolvedStatus)),
                   },
                 })
               }
