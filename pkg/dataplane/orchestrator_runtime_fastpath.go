@@ -83,11 +83,20 @@ func ComputeRuntimeServerUpdates(prev, current *parser.StructuredConfig) (*Runti
 // the live worker is updated by the actions; the disk gains the desired config
 // body without a reload. When body also carries structural changes (the
 // scheduler's pre-interval apply of a structural render's runtime subset), those
-// land on disk un-activated until the scheduler's structural deploy force-reloads
-// on the deployment interval — they are never hidden from a reload indefinitely.
+// land on disk un-activated — and HEADERLESS, so the next structural sync
+// refuses to trust its empty diff against them and force-reloads (see sync()) —
+// they are never hidden from a reload indefinitely.
 // There is no server-state-file (ADR-0011); the change persists across any later
 // reload because that deploy re-renders the current endpoints.
-func (o *orchestrator) syncRuntimeRawPush(ctx context.Context, body string, updates *RuntimeServerUpdates, startTime time.Time) (*SyncResult, error) {
+//
+// When opts.RestampVersionHeader is set AND the diff carries no structural op,
+// a successful push is followed by one versioned skip_reload push of the same
+// body to restore the `# _version` header — disk and worker are converged on
+// the body at that point, so the header makes the state provable and keeps the
+// next structural sync reload-free. Best-effort: on failure (e.g. a concurrent
+// versioned writer bumped the version) the config stays headerless and the next
+// structural sync converges it with one reload.
+func (o *orchestrator) syncRuntimeRawPush(ctx context.Context, body string, updates *RuntimeServerUpdates, opts *SyncOptions, startTime time.Time) (*SyncResult, error) {
 	actions := buildRuntimeActions(updates.runtimeOps)
 	if actions == "" {
 		return o.createNoChangesResult(startTime, &updates.summary), nil
@@ -97,6 +106,17 @@ func (o *orchestrator) syncRuntimeRawPush(ctx context.Context, body string, upda
 
 	if err := o.client.PushRawConfigurationSkipReloadSkipVersion(ctx, body, actions); err != nil {
 		return nil, wrapApplyError(err)
+	}
+	if opts != nil && opts.RestampVersionHeader && updates.StructuralOpCount() == 0 {
+		// The skip_version push above left the config headerless, which
+		// GetVersion reads as the sentinel 1 — so 1 is the version the
+		// optimistic-locking check must carry. A 409 means another writer
+		// interleaved; leave headerless and let its (or the next) versioned
+		// sync own the state.
+		if err := o.client.PushRawConfigurationSkipReload(ctx, body, headerlessConfigVersion, ""); err != nil {
+			o.logger.Debug("Version-header re-stamp failed; next structural sync converges with a reload",
+				"error", err)
+		}
 	}
 	return &SyncResult{
 		Success:           true,

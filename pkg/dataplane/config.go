@@ -119,6 +119,22 @@ type SyncOptions struct {
 	// LastDeployedChecksum is the content checksum from the last successful
 	// sync to this endpoint. Drift prevention syncs leave this empty.
 	LastDeployedChecksum string
+
+	// RestampVersionHeader (SyncRuntimeFast only) re-writes the pushed body
+	// WITH a `# _version=N` header after a successful pure-runtime apply, via
+	// one versioned skip_reload push. A skip_version push leaves the on-disk
+	// config headerless, and sync() refuses to trust an empty diff against a
+	// headerless config (it forces a reload to activate potentially parked
+	// content). Re-stamping proves "disk == running state" so the next
+	// structural sync stays reload-free.
+	//
+	// Callers must set this ONLY when no structural deploy can be in flight
+	// on the pod (the deployer's authoritative runtime-raw lane dispatch).
+	// A fast-track partial apply racing an in-flight structural reload must
+	// leave the config headerless: its `set server` actions can land on the
+	// worker the reload replaces, and a re-stamped header would let the next
+	// sync trust an empty diff over that lost update.
+	RestampVersionHeader bool
 }
 
 // DefaultSyncOptions returns sensible default sync options.

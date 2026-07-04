@@ -102,6 +102,49 @@ func TestRuntimeBypass_AppliesPerEndpoint(t *testing.T) {
 	assert.Equal(t, int32(3), closes.Load(), "Close shuts down every cached client")
 }
 
+// TestRuntimeBypass_RestampOnlyOnAuthoritativeApply pins the version-header
+// re-stamp gate: only the AUTHORITATIVE runtime-raw lane apply (partial=false,
+// dispatched strictly outside any in-flight structural deploy) may set
+// SyncOptions.RestampVersionHeader. A partial fast-track apply can race an
+// in-flight structural reload, and a re-stamped header would let the next sync
+// trust an empty diff over a `set server` the reload swallowed — so it must
+// leave the pod's config headerless (the structural sync then force-reloads).
+func TestRuntimeBypass_RestampOnlyOnAuthoritativeApply(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		partial     bool
+		wantRestamp bool
+	}{
+		{name: "authoritative apply re-stamps", partial: false, wantRestamp: true},
+		{name: "partial apply stays headerless", partial: true, wantRestamp: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotRestamp atomic.Bool
+			b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+				return &optsRecordingSyncer{onSync: func(opts *dataplane.SyncOptions) {
+					gotRestamp.Store(opts.RestampVersionHeader)
+				}}, nil
+			})
+
+			b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}), tc.partial)
+
+			assert.Equal(t, tc.wantRestamp, gotRestamp.Load())
+		})
+	}
+}
+
+// optsRecordingSyncer records the SyncOptions each SyncRuntimeFast call receives.
+type optsRecordingSyncer struct {
+	onSync func(opts *dataplane.SyncOptions)
+}
+
+func (s *optsRecordingSyncer) SyncRuntimeFast(_ context.Context, _ *dataplane.RuntimeServerUpdates, _ string, opts *dataplane.SyncOptions) (*dataplane.SyncResult, error) {
+	s.onSync(opts)
+	return &dataplane.SyncResult{Success: true}, nil
+}
+
+func (s *optsRecordingSyncer) Close() error { return nil }
+
 // TestRuntimeBypass_BlocksUntilAllEndpointsDone verifies applyRuntimeRaw does not
 // return until every endpoint's apply has completed — the synchronous contract
 // the deploy loop relies on to serialize the runtime-raw apply after the in-flight

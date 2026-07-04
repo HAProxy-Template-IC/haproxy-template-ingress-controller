@@ -17,6 +17,7 @@ package dataplane
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -35,6 +36,44 @@ import (
 // what body is on disk. Version 1 therefore cannot discriminate states:
 // it must never satisfy a version-cache check and never be cached.
 const headerlessConfigVersion = 1
+
+// currentConfigIsHeaderless reports whether the pod's on-disk config lacks the
+// `# _version=N` header — i.e. the last write was a skip_version push (runtime
+// bypass / fast-track subset apply), which parks the body on disk without a
+// reload. sync() must not trust an empty diff against such a config: the
+// running worker may never have loaded it.
+//
+// preCachedVersion carries GetVersion's reading when fetchCurrentConfig made
+// one (1 = headerless sentinel, >1 = real header). When no version check
+// happened (-1), fall back to scanning the fetched config text for the header
+// line. A cache HIT is only possible at a real version >1 (the sentinel forces
+// a full fetch), so the empty-string currentConfigStr of the hit path never
+// reaches the scan.
+func currentConfigIsHeaderless(preCachedVersion int64, currentConfigStr string) bool {
+	if preCachedVersion > 0 {
+		return preCachedVersion == headerlessConfigVersion
+	}
+	return !hasVersionHeader(currentConfigStr)
+}
+
+// hasVersionHeader reports whether the raw config text carries the
+// client-native `# _version=N` header. The dataplane writes it at the top of
+// the file (alongside `# _md5hash=`) on every versioned push; only the first
+// few lines need scanning.
+func hasVersionHeader(config string) bool {
+	const headerPrefix = "# _version="
+	scanned := 0
+	for line := range strings.SplitSeq(config, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), headerPrefix) {
+			return true
+		}
+		if scanned >= 8 {
+			break
+		}
+		scanned++
+	}
+	return false
+}
 
 // fetchCurrentConfig obtains the current HAProxy configuration, either from cache or by fetching.
 //

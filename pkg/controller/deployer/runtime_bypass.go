@@ -156,6 +156,15 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 
 	opts := dataplane.DefaultSyncOptions()
 	opts.Timeout = runtimeBypassTimeout
+	// Only the AUTHORITATIVE runtime-raw lane apply may re-stamp the config's
+	// version header after the skip_version push: the deploy loop dispatches
+	// it strictly outside any in-flight structural deploy, so the re-stamped
+	// header truthfully claims "disk == running state". A partial fast-track
+	// apply can race an in-flight structural reload (its `set server` may land
+	// on the worker the reload replaces) and must leave the config headerless
+	// so the next structural sync force-reloads instead of trusting an empty
+	// diff (see SyncOptions.RestampVersionHeader).
+	opts.RestampVersionHeader = !partial
 
 	result, err := syncer.SyncRuntimeFast(ctx, dep.runtimeUpdates, dep.config, opts)
 	if err != nil {

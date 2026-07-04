@@ -131,6 +131,34 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 	}
 
 	if !auxDiffs.hasChanges {
+		// A headerless on-disk config (no `# _version=N` header) means the
+		// last write was a skip_version push — the runtime bypass, or the
+		// scheduler's fast-track apply of a pending render's runtime subset.
+		// Those pushes write the body VERBATIM without a reload, and the
+		// dataplane writes the file even when the accompanying X-Runtime-
+		// Actions FAIL. So "disk == desired" proves nothing about the
+		// RUNNING worker: structural content can sit parked on disk that no
+		// worker ever loaded, while the diff (desired vs disk) reads empty.
+		// Returning no-changes here reports the deploy as successful and the
+		// parked content stays hidden from a reload indefinitely (observed
+		// in CI job 15180387459: new TCP listeners parked on disk for 90s,
+		// Gateway reported Programmed, every connection refused). An empty
+		// diff is only trustworthy when the config was written by a
+		// versioned, reload-coupled push — otherwise force one reload to
+		// activate whatever is on disk, which also re-stamps the header.
+		if currentConfigIsHeaderless(preCachedVersion, currentConfigStr) {
+			o.logger.Info("No diff against a headerless on-disk config; forcing a reload to activate potentially parked skip_version content")
+			version := o.resolveCurrentVersion(ctx, preCachedVersion)
+			if version <= 0 {
+				return nil, &SyncError{
+					Stage:   "version_resolve",
+					Message: "failed to fetch dataplane config version",
+					Hints:   []string{"Dataplane API unreachable or returned non-integer version"},
+				}
+			}
+			return o.applyWithReload(ctx, desiredConfig, diff, nil, nil, auxDiffs, "", version, opts, startTime)
+		}
+
 		result := o.createNoChangesResult(startTime, &diff.Summary)
 		// Never report the headerless sentinel (1) as a cacheable
 		// version: after a skip_version push (runtime bypass) every
