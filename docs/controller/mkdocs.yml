@@ -104,6 +104,7 @@ nav:
     - Appendices: development/design/appendices.md
     - Linting: development/linting.md
     - Releasing: development/releasing.md
+    - Gateway API Upgrade Playbook: development/gateway-api-upgrade-playbook.md
   - Changelog: changelog.md
 
 extra:

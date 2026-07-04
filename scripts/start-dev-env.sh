@@ -420,7 +420,7 @@ ensure_cluster() {
 	# Install Gateway API CRDs if not already present
 	# This must happen before Helm install so .Capabilities.APIVersions.Has can detect them
 	if ! kubectl get crd gatewayclasses.gateway.networking.k8s.io >/dev/null 2>&1; then
-		log INFO "Installing Gateway API CRDs (standard channel v1.5.1)..."
+		log INFO "Installing Gateway API CRDs (standard channel v1.6.0)..."
 		kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml >/dev/null 2>&1
 
 		# Wait for CRDs to be established

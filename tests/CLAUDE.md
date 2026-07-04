@@ -421,6 +421,24 @@ done
 - "CI is flaky, merge anyway"
 - "We'll fix it later"
 
+### Scheduling Independence for Concurrency Tests
+
+Concurrency tests SHALL assert convergence contracts, never exact interleavings:
+
+- **Assert**: "ends on the latest state, then quiescent" — the outcome every
+  legal schedule converges to
+- **Never assert**: "exactly one dispatch", "N events, in this order" — the Go
+  scheduler is free to interleave goroutines differently on every run
+- **Pace on observable state** via introspection/debug helpers (queue depth,
+  processed counters, drained-channel checks) — never on `time.Sleep()`
+
+Both flaky tests of the gateway-api v1.6.0 campaign (issue #58) violated this
+rule identically before being rewritten scheduling-independent:
+`TestBase_MailboxNeverDropsUnderBurst`
+(`pkg/controller/component/base_mailbox_test.go`) and
+`TestHandleDeploymentScheduled_CoalesceDrain_LatestWins`
+(`pkg/controller/deployer/handle_deployment_scheduled_coalesce_test.go`).
+
 ## Adding New Test Types
 
 ### Checklist
