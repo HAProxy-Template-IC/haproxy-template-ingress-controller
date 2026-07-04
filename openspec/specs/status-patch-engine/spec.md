@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - created by archiving change template-driven-status-patches. Update Purpose after archive.
+Defines template-driven status patching: templates register per-resource status payloads during rendering via the statusPatch function, keyed by outcome-phase variants (rendered, deployed, renderFailed, validateFailed, deployFailed), so the controller writes status for any watched resource without kind-specific Go. The StatusApplier selects the variant matching each pipeline lifecycle event and applies it to the resource's status subresource via Server-Side Apply under phase-scoped field managers. Helper functions (condition, transitionTime, toJSON) let templates build Kubernetes-conventional condition payloads.
 
 ## Requirements
 
@@ -108,37 +108,54 @@ The StatusPatchCollector SHALL be safe for concurrent writes from multiple gorou
 
 ### Requirement: StatusApplier Event Adapter Component
 
-The StatusApplier SHALL be a leader-only event adapter component. It SHALL subscribe to `TemplateRenderedEvent` (to cache latest status patches), `ReconciliationCompletedEvent` (to apply `deployed` variants), `ReconciliationFailedEvent` (to apply failure variants), and `BecameLeaderEvent`/`LostLeadershipEvent` (for leadership transitions). On `ReconciliationCompletedEvent`, it SHALL apply the `deployed` variant for each patch. On render failure (detected from `ReconciliationFailedEvent` phase), it SHALL apply the `renderFailed` variant. On deployment failure, it SHALL apply the `deployFailed` variant. On successful render but before deployment, it SHALL apply the `rendered` variant. It SHALL apply patches via Server-Side Apply to the `/status` subresource using `k8s.io/client-go/dynamic` with `fieldManager: "haptic"`. It SHALL resolve apiVersion+kind to GVR via the REST mapper utility component.
+The StatusApplier SHALL be an all-replica subscriber that applies patches only while leader, and SHALL be STATELESS on the success path: patches ride the event that triggers each apply, and there is no cached-patches side channel (a cache overwritten on every render allowed render N+1's patches to be written for deploy N — the removed race). The event-to-variant mapping SHALL be: `ResourcesAppliedEvent` applies the `rendered` variant (published by the ResourceApplier after the same render's resources exist, so conditions never precede infrastructure); `DeploymentCompletedEvent` applies the `deployed` variant only when Total and Succeeded are both greater than zero; `DeploymentSkippedEvent` applies the `deployed` variant (the data plane already converged on this config); `ReconciliationFailedEvent` applies `renderFailed` for the render phase, `validateFailed` for the validation phase, and `deployFailed` otherwise. Patches for failure events are the last successful render's snapshot forwarded by the Coordinator.
 
-#### Scenario: Apply deployed variants on successful reconciliation
+Each phase SHALL apply to the `/status` subresource via Server-Side Apply with Force under its OWN field manager, `haptic-<phase>` (for example `haptic-rendered`, `haptic-deployed`), so phases own disjoint condition entries under listType=map semantics and never relinquish each other's conditions. Per-event applies SHALL fan out with bounded concurrency of 64. The SSA-skip checksum cache SHALL be keyed by phase plus namespace/name/GVR and bounded at 65536 entries with a wholesale reset when full; a NotFound apply result SHALL be skipped silently without caching (benign delete race under churn). GVRs SHALL resolve via the RESTMapper, with a one-shot reset-and-retry on a no-match so late-registered CRDs resolve without a controller restart. `BecameLeaderEvent` SHALL set the leader flag and clear the checksum cache (no patch replay — the Reconciler's fresh reconciliation supplies current patches); `LostLeadershipEvent` SHALL clear the leader flag.
 
-- **WHEN** a `ReconciliationCompletedEvent` is received and the latest status patches include resources with `deployed` variants
-- **THEN** the StatusApplier SHALL apply each resource's `deployed` variant via SSA to the `/status` subresource
+#### Scenario: Deployed variant applied from the deploy's own patches
 
-#### Scenario: Apply renderFailed variants on render failure
+- **WHEN** a `DeploymentCompletedEvent` with Succeeded > 0 arrives carrying status patches
+- **THEN** the StatusApplier SHALL apply each patch's `deployed` variant from the event payload itself, describing exactly the config that deploy shipped
 
-- **WHEN** a `ReconciliationFailedEvent` with a render phase error is received and cached status patches include `renderFailed` variants
-- **THEN** the StatusApplier SHALL apply each resource's `renderFailed` variant via SSA
+#### Scenario: Zero-success deployment applies nothing
 
-#### Scenario: Apply deployFailed variants on deployment failure
+- **WHEN** a `DeploymentCompletedEvent` arrives with Total 0 or Succeeded 0
+- **THEN** no `deployed` variant SHALL be applied
 
-- **WHEN** a `ReconciliationFailedEvent` with a deployment phase error is received and cached status patches include `deployFailed` variants
-- **THEN** the StatusApplier SHALL apply each resource's `deployFailed` variant via SSA
+#### Scenario: Skipped deployment still marks deployed
 
-#### Scenario: Skip patch when variant is absent
+- **WHEN** a `DeploymentSkippedEvent` arrives because the data plane is already at the rendered config
+- **THEN** the StatusApplier SHALL apply the `deployed` variant so status-only deltas do not stay at CRD defaults forever
 
-- **WHEN** a resource has no `deployFailed` variant registered and a deployment failure occurs
-- **THEN** the StatusApplier SHALL not perform an SSA call for that resource
+#### Scenario: Rendered variant waits for resources
+
+- **WHEN** a render completes
+- **THEN** the `rendered` variant SHALL be applied on the subsequent `ResourcesAppliedEvent`, after the same render's k8sResources were applied
+
+#### Scenario: Failure phase selects the variant
+
+- **WHEN** a `ReconciliationFailedEvent` arrives with phase "validation"
+- **THEN** the StatusApplier SHALL apply the `validateFailed` variant from the event's (last-good-render) patches
+
+#### Scenario: Phase-scoped field managers avoid condition tug-of-war
+
+- **WHEN** the rendered variant writes Accepted and the deployed variant later writes Programmed on the same resource
+- **THEN** the two applies SHALL use the field managers `haptic-rendered` and `haptic-deployed` respectively, and the deployed apply SHALL NOT relinquish the Accepted condition
+
+#### Scenario: Deleted resource skipped silently
+
+- **WHEN** an SSA apply returns NotFound because the resource was deleted between render and apply
+- **THEN** the StatusApplier SHALL treat it as a skip — no error log, no failure event, no checksum cached
 
 #### Scenario: Leadership transition clears checksum cache
 
 - **WHEN** a `BecameLeaderEvent` is received
-- **THEN** the StatusApplier SHALL clear its lastAppliedPatches checksum cache to force re-application on next cycle
+- **THEN** the StatusApplier SHALL clear its checksum cache and rely on the fresh reconciliation for new patches
 
 #### Scenario: Lost leadership stops applying patches
 
 - **WHEN** a `LostLeadershipEvent` is received
-- **THEN** the StatusApplier SHALL stop applying status patches and clear pending state
+- **THEN** the StatusApplier SHALL clear its leader flag and apply no further patches until re-elected
 
 ### Requirement: Checksum-Based Skip Optimization
 

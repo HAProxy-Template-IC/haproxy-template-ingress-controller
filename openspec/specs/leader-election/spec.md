@@ -108,3 +108,68 @@ THEN a standby replica SHALL acquire the Lease within approximately LeaseDuratio
 
 WHEN a standby replica is running
 THEN it SHALL attempt to acquire the Lease at RetryPeriod intervals.
+
+### Requirement: All-Replica and Leader-Only Component Sets
+
+Controller components SHALL be split into two lifecycle sets. The all-replica set — Reconciler, Discovery, HTTPStore, ProposalValidator, StatusApplier, ResourceApplier — SHALL run on every replica. The leader-only set — Coordinator, DriftPreventionMonitor, Deployer, DeploymentScheduler, ConfigPublisher, StatusUpdater — SHALL be started only after leadership is acquired and stopped when leadership is lost or the iteration ends. Stopping leader-only components SHALL cancel their dedicated context and pause briefly (100 ms graceful-stop delay) before returning.
+
+#### Scenario: Followers run only the all-replica set
+
+- **WHEN** a replica has not acquired the Lease
+- **THEN** the leader-only components SHALL not be started on it, and the all-replica components SHALL run normally.
+
+#### Scenario: Leadership loss stops leader-only components
+
+- **WHEN** the leader loses the Lease
+- **THEN** its leader-only components SHALL be stopped via their leader-scoped context.
+
+### Requirement: Pause-Publish-Start Leadership Handoff
+
+The leadership transition SHALL follow a strict ordering to prevent late-subscriber event loss: (1) pause the EventBus so subsequent publishes buffer, (2) publish BecameLeaderEvent (buffered), (3) run the leadership callback, which constructs and starts the leader-only components and blocks until every one of them signals that its event subscription is in place, (4) restart the EventBus, replaying the buffered BecameLeaderEvent (and anything else buffered during the transition) to all subscribers including the newly subscribed leader-only components.
+
+#### Scenario: BecameLeader reaches late-started components
+
+- **WHEN** a replica acquires leadership
+- **THEN** the leader-only components SHALL receive the BecameLeaderEvent even though they subscribed after it was published, because the bus was paused across their startup.
+
+#### Scenario: Handoff blocks on subscription readiness
+
+- **WHEN** the leadership callback starts the leader-only components
+- **THEN** the EventBus SHALL NOT be restarted until all of them have signalled subscription readiness.
+
+### Requirement: Leader-Only Subscription Lifecycle
+
+Leader-only components SHALL subscribe to their input events inside `Start()` — after leadership — using `SubscribeTypesLeaderOnly` (which suppresses the late-subscription warning), and SHALL unsubscribe when their event loop exits. Subscribing at construction would fill follower-side buffers with events published on every replica and log critical drops continuously; skipping the unsubscribe would stack an orphaned subscription on every leadership re-acquisition within the same process, whose full channel logs drops forever. One exception is permitted: a leader-only component whose input events are published only by another leader-only component (the Deployer, fed solely by the DeploymentScheduler) MAY subscribe at construction, because follower buffers for such types stay empty.
+
+#### Scenario: Re-acquisition does not stack subscriptions
+
+- **WHEN** the same replica loses and re-acquires leadership
+- **THEN** the previous term's subscriptions SHALL have been removed on loop exit, leaving exactly one live subscription per leader-only component.
+
+#### Scenario: Deployer construction-time subscription is safe
+
+- **WHEN** a follower replica constructs the Deployer
+- **THEN** its subscription SHALL receive no events, because the DeploymentScheduler publishing its input types runs only on the leader.
+
+### Requirement: State Replay on Leadership Transitions
+
+All-replica components that hold state consumed by leader-only components SHALL cache their latest state event in a StateReplayer and re-publish it on BecameLeaderEvent, so leader-only components that subscribe late still receive current state: Discovery SHALL replay its last HAProxyPodsDiscoveredEvent and the ConfigChangeHandler SHALL replay its last ConfigValidatedEvent. A component with no cached state SHALL skip the replay silently. Leader-only components SHALL clear their in-progress flags and pending work on LostLeadershipEvent so a later term cannot deadlock on stale in-flight state; historical data such as last-completion timestamps MAY be retained for rate limiting.
+
+#### Scenario: New leader receives pre-leadership state
+
+- **WHEN** pods were discovered and a config was validated before this replica acquired leadership
+- **THEN** after BecameLeaderEvent the replayed HAProxyPodsDiscoveredEvent and ConfigValidatedEvent SHALL reach the freshly subscribed leader-only components.
+
+#### Scenario: Lost leadership clears transient state
+
+- **WHEN** a leader with an in-flight deployment loses the Lease
+- **THEN** the deployment scheduler SHALL clear its in-progress and pending state so the next leadership term starts clean.
+
+### Requirement: Disabled-Election Standalone Path
+
+When leader election is disabled in the configuration, the controller SHALL start the leader-only components immediately using the same Pause-Publish-Start pattern: pause the EventBus, publish a BecameLeaderEvent with the identity `standalone`, start the leader-only components (blocking on subscription readiness), then restart the bus. This keeps the replay and subscription contracts identical whether or not an election ran.
+
+#### Scenario: Standalone startup replays BecameLeader
+
+- **WHEN** the controller starts with leader election disabled
+- **THEN** the leader-only components SHALL start immediately and receive a BecameLeaderEvent carrying the identity `standalone` via the paused-bus replay.

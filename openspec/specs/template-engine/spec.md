@@ -153,12 +153,22 @@ THEN the rendered template SHALL have access to that local variable.
 
 ### Requirement: Post-Processing Pipeline
 
-The engine SHALL support per-template post-processor chains configured at construction time. Post-processors SHALL be applied in sequence after rendering completes. The regex_replace post-processor type SHALL apply a compiled regular expression find/replace to the output, processing the output line by line so that line-anchored patterns (such as "^[ ]+" for indentation normalization) behave predictably.
+The engine SHALL support per-template post-processor chains configured at construction time. Post-processors SHALL be applied in sequence after rendering completes. Two post-processor types SHALL exist. The regex_replace type SHALL apply a compiled regular expression find/replace to the output, processing the output line by line so that line-anchored patterns (such as "^[ ]+" for indentation normalization) behave predictably. The template type SHALL run the rendered output through a second Scriggo pass: the post-processor template is compiled at engine construction (fail-fast on syntax errors) with all standard engine globals plus an `input` string variable that receives the prior output at processing time, and the second pass's output becomes the new rendered content. The NewPostProcessor factory SHALL construct only regex_replace processors (erroring on other types); the template type is wired during engine construction because it needs the engine's globals.
 
 #### Scenario: Regex replace post-processor applied
 
 WHEN a template has a regex_replace post-processor configured with pattern "^[ ]+" and replace "  "
 THEN the rendered output SHALL have all leading whitespace on each line normalized to two spaces.
+
+#### Scenario: Template post-processor transforms via input variable
+
+- **WHEN** a template has a template post-processor whose source reads the `input` variable
+- **THEN** the post-processor SHALL receive the previously rendered output as `input` and its own output SHALL replace the rendered content.
+
+#### Scenario: Template post-processor compile error is fail-fast
+
+- **WHEN** a template post-processor source contains a syntax error
+- **THEN** engine construction SHALL fail rather than deferring the error to render time.
 
 ### Requirement: sort_by Filter
 
@@ -209,7 +219,7 @@ THEN the supplied compute function SHALL run exactly once and exactly one caller
 
 ### Requirement: Navigation and Type Functions
 
-The dig function SHALL navigate nested maps using a sequence of string keys, returning nil if any key is missing. The fast path SHALL handle map[string]interface{} without reflection. fallback (alias: coalesce) SHALL return the first non-nil argument. tostring, toint, tofloat, toStringSlice, and toSlice SHALL perform lenient type conversions. isNil SHALL detect typed nil pointers using reflection. keys SHALL return sorted map keys.
+The dig function SHALL navigate nested maps using a sequence of string keys, returning nil if any key is missing. The fast path SHALL handle map[string]interface{} without reflection. dig SHALL also navigate typed structs (the typed-watched-resources shape) by matching each key against the fields' json tags via reflection, and generic string-keyed maps of other value types; an optional (omitempty-tagged) struct field holding its zero value SHALL normalise to nil so dig-plus-fallback behaves identically across typed and untyped shapes. fallback (alias: coalesce) SHALL return the first non-nil argument. tostring, toint, tofloat, toStringSlice, and toSlice SHALL perform lenient type conversions. isNil SHALL detect typed nil pointers using reflection. keys SHALL return sorted map keys.
 
 #### Scenario: dig navigates nested map
 
@@ -220,6 +230,11 @@ THEN dig SHALL return "default".
 
 WHEN dig is called with obj and keys "metadata", "nonexistent"
 THEN dig SHALL return nil.
+
+#### Scenario: dig navigates a typed struct by json tag
+
+- **WHEN** dig is called on a typed watched-resource pointer with keys "metadata", "name"
+- **THEN** it SHALL resolve the fields by their json tags and return the name value, and an unpopulated optional field SHALL yield nil rather than the type's zero value.
 
 #### Scenario: isNil detects typed nil pointer
 
@@ -240,9 +255,61 @@ THEN it SHALL return "Hello World".
 WHEN sanitize_regex is called with "api.example.com"
 THEN it SHALL return "api\\.example\\.com".
 
+### Requirement: String Aliases and Fused Accessors
+
+Alongside the strings_* forms, the engine SHALL register the short aliases strip and trim (whitespace removal), toLower, replace (overriding the builtin to support the three-argument form that replaces all occurrences), hasPrefix, and hasSuffix. The engine SHALL also provide dig_string, fusing the dig-fallback-tostring chain into one call — `value | dig_string(defaultStr, keys...)` SHALL be equivalent to `value | dig(keys...) | fallback(defaultStr) | tostring()` — for string access at polymorphic value boundaries such as annotation lookups.
+
+#### Scenario: replace supports three-argument replace-all
+
+- **WHEN** replace is called with ("a-b-c", "-", "_")
+- **THEN** it SHALL return "a_b_c" with every occurrence replaced.
+
+#### Scenario: dig_string falls back and stringifies
+
+- **WHEN** dig_string is called with a default of "" and keys that do not resolve on the input
+- **THEN** it SHALL return "" as a string rather than nil.
+
+### Requirement: Shape Normalization and Numeric Sorting Functions
+
+The to_str_map function SHALL normalise any string-keyed map — map[string]string (the typed-watched-resources shape for labels, matchLabels, and annotations), map[string]any (the untyped store shape), or a generic string-keyed map — into a uniform map[string]string for template iteration, coercing non-string values via tostring; nil input SHALL return nil. It is the sanctioned replacement for map type assertions on label-shaped fields, which panic against the typed shape. The sort_ints function SHALL sort a []any of integer values numerically (where lexicographic sort_strings would misorder, e.g. "10" before "2"); non-integer entries SHALL be coerced via toint, so unparseable values become 0 and sort to the front. The basename function SHALL return the final element of a path.
+
+#### Scenario: to_str_map handles both map shapes
+
+- **WHEN** to_str_map is called once with a map[string]string and once with a map[string]any holding a non-string value
+- **THEN** both calls SHALL return map[string]string, with the non-string value coerced via tostring.
+
+#### Scenario: sort_ints sorts numerically
+
+- **WHEN** sort_ints is called with the values 10, 2, and 1
+- **THEN** the result order SHALL be 1, 2, 10.
+
+#### Scenario: basename extracts the file name
+
+- **WHEN** basename is called with "maps/host.map"
+- **THEN** it SHALL return "host.map".
+
+### Requirement: GUID and Version Functions
+
+The make_guid function SHALL join its arguments with ":" to build an HAProxy GUID. When the joined result exceeds 127 characters (the hard HAProxy GUID length limit), the function SHALL truncate it and append "." plus the first 8 hex characters of the SHA-256 hash of the full GUID, producing a result of exactly 127 characters that stays unique per input; results at or under the limit SHALL be returned unchanged. The semver_gte function SHALL report whether a version is at least a minimum version, comparing major and minor components only (patch is ignored), tolerating a leading "v", and returning false when either argument is empty or unparseable.
+
+#### Scenario: Over-long GUID truncated with hash suffix
+
+- **WHEN** make_guid produces a joined string longer than 127 characters
+- **THEN** the result SHALL be exactly 127 characters, ending in "." followed by 8 hex characters derived from the full untruncated GUID.
+
+#### Scenario: semver_gte ignores the patch component
+
+- **WHEN** semver_gte is called with version "3.3.9" and minimum "3.3"
+- **THEN** it SHALL return true, and comparing "3.2.99" against "3.3" SHALL return false.
+
+#### Scenario: Unparseable version is false
+
+- **WHEN** semver_gte is called with an empty or non-numeric version string
+- **THEN** it SHALL return false.
+
 ### Requirement: Collection Functions
 
-The engine SHALL provide: append (handling nil slices and interface{} types), merge (returning a new map with updates overriding originals), sort_strings (sorting []interface{} as strings), first_seen (returning true only on the first call for a given composite key within a render, thread-safe via SharedContext), selectattr (filtering items by attribute existence, equality, inequality, or membership), join (joining []string or []interface{} with a separator), join_key (building composite key strings), shard_slice (dividing a slice into N shards returning the portion for a given index), seq (generating integer sequences 0..n-1), ceil, and namespace (creating mutable maps for loop state).
+The engine SHALL provide: append (handling nil slices and interface{} types), merge (returning a new map with updates overriding originals), sort_strings (sorting []interface{} as strings), first_seen (returning true only on the first call for a given composite key within a render, thread-safe via SharedContext), selectattr (filtering items by attribute existence, equality, inequality, or membership), join (joining []string or []interface{} with a separator), join_key (building composite key strings), shard_slice (dividing a slice into N shards returning the portion for a given index), seq (generating integer sequences 0..n-1), ceil, and namespace (creating mutable maps for loop state). shard_slice SHALL be type-preserving: declared as an adaptive native function, its static return type at each call site equals the input slice's static type, so sharding a typed watched-resource slice keeps typed element access through the shard call.
 
 #### Scenario: first_seen deduplicates across parallel renders
 
@@ -253,6 +320,11 @@ THEN exactly one call SHALL return true and the other SHALL return false.
 
 WHEN shard_slice is called with 10 items, shard index 0, and 3 total shards
 THEN it SHALL return the first 4 items (10/3 = 3 with remainder 1, first shard gets the extra).
+
+#### Scenario: shard_slice preserves the input slice type
+
+- **WHEN** shard_slice is called on a slice of typed watched-resource pointers
+- **THEN** the call site's static return type SHALL be the same typed slice, not a slice of any.
 
 #### Scenario: selectattr filters by attribute equality
 

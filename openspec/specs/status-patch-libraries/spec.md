@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - created by archiving change template-driven-status-patches. Update Purpose after archive.
+Chart-side template libraries that declare Kubernetes status updates as template-registered patches: the base library exposes a `status-patches-*` extension point, and the resource libraries register `statusPatch()` entries with `rendered`, `deployed`, and `deployFailed` variants for Ingress, Gateway, HTTPRoute, and GRPCRoute resources, which the controller applies at the matching pipeline phase. A controller-service watch discovers LoadBalancer addresses and shares them via `gf["addresses"]`, so published status (Ingress loadBalancer entries, Gateway addresses and conditions, route parent conditions) reflects real deployment state without any resource-specific controller code.
 
 ## Requirements
 

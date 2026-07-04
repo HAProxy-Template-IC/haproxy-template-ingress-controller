@@ -30,6 +30,25 @@ THEN the gateway library SHALL NOT be merged.
 WHEN a user defines a templateSnippet in values.yaml with the same name as one in a library
 THEN the user's version SHALL take precedence over all library versions.
 
+### Requirement: Release Secret Size Mitigations
+
+The chart SHALL keep the Helm release under the Kubernetes 1 MiB Secret cap through three size reductions. (1) Disabled template-library subcharts SHALL be pruned from the release entirely via subchart conditions, so their source never ships in the release Secret. (2) At merge time, `description` fields SHALL be stripped from every validationTest and from every assertion — documentation-only metadata (~120 KB across the bundled libraries) that the test name and assertion type/target/pattern fully replace. (3) Scriggo documentation comments SHALL be stripped from every templateSnippet in the MERGED output only, via three whole-line-constrained regex passes: the leading `{#- … -#}` doc header, standalone `{# … #}` comment lines, and standalone Go `//` comment lines inside statement blocks. Inline whitespace-control markers that share a line with rendered content SHALL NOT be touched, and library source files SHALL keep their full inline documentation.
+
+#### Scenario: Disabled subchart source pruned from the release
+
+- **WHEN** controller.templateLibraries.gateway.enabled is false
+- **THEN** the gateway subchart's library source SHALL be absent from the Helm release Secret, not merely skipped during merge.
+
+#### Scenario: Doc comments stripped from merged output only
+
+- **WHEN** a library snippet begins with a `{#- … -#}` documentation header
+- **THEN** the rendered HAProxyTemplateConfig's copy of the snippet SHALL omit the header while the library source file keeps it.
+
+#### Scenario: Test descriptions stripped at merge
+
+- **WHEN** a validationTest defines a `description` on itself and on its assertions
+- **THEN** the merged HAProxyTemplateConfig SHALL contain that test without any `description` fields.
+
 ### Requirement: Base Library
 
 The base library SHALL always be enabled and SHALL be completely resource-agnostic (no access to Ingress, HTTPRoute, or any other specific resource fields). It SHALL define the haproxyConfig entry-point template containing the full HAProxy configuration structure: global section with "default-path origin" and crt-base directives, defaults section with error files and `balance roundrobin`, a status frontend on port 8404, an HTTP frontend with routing logic, and a default_backend returning 404. The base library SHALL define all extension points using render_glob and SHALL provide utility macros (CalculateShardCount, HostMatchCondition, BackendServers, BuildServerOptions). It SHALL define map file templates (host.map, path-exact.map, path-prefix-exact.map, path-prefix.map, path-regex.map, weighted-multi-backend.map) and static error page files (400, 403, 408, 500, 502, 503, 504). The haproxyConfig SHALL apply a regex_replace post-processor normalizing indentation to 2 spaces.
@@ -53,6 +72,67 @@ THEN no template content SHALL reference ingress, httproute, grpcroute, or any r
 
 WHEN the host.map template is rendered
 THEN it SHALL execute render_glob "map-host-*" to collect host mappings from all contributing libraries.
+
+### Requirement: Frontend Routing Logic and Runtime Map Strategy
+
+The base library SHALL encode all host/path-to-backend routing in runtime-updatable map files resolved by map converters in a fixed `http-request set-var` cascade, so a route change that only alters map contents applies without an HAProxy reload. The host_match cascade SHALL try, in order: full Host header including port (when the header carries a port), `<host>:<listener_port>`, bare host, single-label wildcard (leading label stripped via regsub), host-regex.map, and finally the `:<listener_port>` catch-all. The port-scoped exact lookup SHALL precede the bare-host lookup: a hostname bound on several listener ports has a distinct `host:<port>` key per non-default port plus a bare key for the default port, and trying bare-host first would shadow the port-specific backends. Map values SHALL carry a qualifier: `BACKEND:<name>` routes directly to the named backend; `MULTIBACKEND:<totalWeight>:<key>` selects a backend by computing `rand() % totalWeight` and looking up `<randomWeight>:<key>` in weighted-multi-backend.map. After backend selection, the owning resource's `<namespace>_<name>` prefix SHALL be decomposed into `txn.resource_namespace`, `txn.resource_name`, and `txn.resource_id` (`<namespace>/<name>`), which key the per-resource feature maps (auth, WAF, body-size, header overrides) so per-route policy changes are also reload-free map updates.
+
+#### Scenario: Port-scoped host lookup precedes bare host
+
+- **WHEN** host.map contains keys for both `foo.example.com:8080` and `foo.example.com` and a request for foo.example.com arrives on listener port 8080
+- **THEN** the routing SHALL resolve the `foo.example.com:8080` entry, not the default-port one.
+
+#### Scenario: Weighted MULTIBACKEND selection
+
+- **WHEN** a path map entry resolves to `MULTIBACKEND:100:<key>`
+- **THEN** the frontend SHALL compute a random weight modulo 100, concatenate it with the key, and resolve the backend from weighted-multi-backend.map.
+
+#### Scenario: Per-route policy keyed by resource identity
+
+- **WHEN** a request resolves to a backend owned by Ingress default/my-ingress
+- **THEN** `txn.resource_id` SHALL be `default/my-ingress` and per-resource feature maps SHALL be consulted with that key.
+
+### Requirement: Peers Section and Stick-Table Persistence
+
+The base library SHALL always emit `localpeer local` in the global section and an always-on `peers localinstance` section containing the single peer `peer local unix@<baseDir>/peers.sock`. Stick-tables opt in to reload persistence by appending `peers localinstance` to their definition (the bundled rate-limit tables do); on a master-worker reload the old worker then teaches the new worker the table contents over the local peer, so per-source counters such as `http_req_rate` survive reloads instead of resetting to zero. The peer name SHALL be the static `local` — not a `$HOSTNAME` expansion — so HAProxy recognises the entry as this process and listens on the socket, and so offline `haproxy -c` validation stays deterministic. The peer listener SHALL be a UNIX socket, not a TCP port, so it can never collide with a frontend or dynamically allocated Gateway listener bind. The single local peer never connects to other replicas; stick-table scope is per-replica.
+
+#### Scenario: Peers section always present
+
+- **WHEN** only the base library is enabled
+- **THEN** the rendered config SHALL contain `localpeer local` in the global section and a `peers localinstance` section with a single UNIX-socket peer named `local`.
+
+#### Scenario: Rate-limit counters survive a reload
+
+- **WHEN** a stick-table declares `peers localinstance` and HAProxy performs a master-worker reload
+- **THEN** the table contents SHALL be replicated from the old worker to the new worker, preserving per-source counters across the reload.
+
+### Requirement: Graceful Reload Cap
+
+The base library SHALL emit `hard-stop-after` in the global section with the value of `extraContext.hardStopAfter`, defaulting to `10s`; an empty-string value SHALL suppress the directive. The cap bounds how long an old worker keeps draining after a reload: without it, a worker pinned by a persistent keep-alive connection survives every reload and accumulates as a stale draining generation, and a request looped through the http-tcp, UNIX-socket, http_frontend path can land on a stale worker mid-reload and be corrupted into a `<BADREQ>` 400. The 10s default is deliberately tighter than the community (10m) and official (30m) HAProxy ingress controllers because structural reload frequency is already throttled by the deployment scheduler's minDeploymentInterval (controller default 2s, chart default 5s) while endpoint changes bypass reloads via the runtime fast path.
+
+#### Scenario: Default cap emitted
+
+- **WHEN** extraContext.hardStopAfter is not set
+- **THEN** the global section SHALL contain `hard-stop-after 10s`.
+
+#### Scenario: Explicit empty value suppresses the directive
+
+- **WHEN** extraContext.hardStopAfter is set to the empty string
+- **THEN** no `hard-stop-after` directive SHALL be emitted.
+
+### Requirement: Version-Gated SHM Stats
+
+When `extraContext.shmStatsEnabled` is true AND the injected haproxyVersion is 3.3 or newer, the base library SHALL emit `expose-experimental-directives`, `shm-stats-file` (default `/dev/shm/haproxy-stats`, overridable via extraContext.shmStatsPath), and `shm-stats-file-max-objects` (default 50000, overridable via extraContext.shmStatsMaxObjects) in the global section. On older HAProxy versions, or when disabled, it SHALL emit none of these directives.
+
+#### Scenario: Enabled on HAProxy 3.3
+
+- **WHEN** shmStatsEnabled is true and haproxyVersion is 3.3
+- **THEN** the global section SHALL contain `shm-stats-file /dev/shm/haproxy-stats` and `shm-stats-file-max-objects 50000`.
+
+#### Scenario: Silently absent on older HAProxy
+
+- **WHEN** shmStatsEnabled is true and haproxyVersion is 3.2
+- **THEN** no shm-stats directives SHALL be emitted.
 
 ### Requirement: Extension Point Pattern
 
@@ -84,7 +164,7 @@ THEN render_glob "features-*" SHALL render features-050-ssl-initialization befor
 
 ### Requirement: SSL Library
 
-The SSL library SHALL watch Secret resources. It SHALL initialize shared state (sslPassthroughBackends and tlsCertificates arrays) in the globalFeatures map via features-050-ssl-initialization using ComputeIfAbsent for atomic initialization. It SHALL generate an HTTPS frontend with SSL termination using a crt-list file. It SHALL generate the crt-list (certificate-list.txt) from registered TLS certificates with per-certificate OCSP stapling configuration ("[ocsp-update on]"). It SHALL include a default certificate entry in the crt-list. It SHALL provide SSL passthrough infrastructure with SNI-based backend routing.
+The SSL library SHALL watch Secret resources. It SHALL initialize shared state (sslPassthroughBackends and tlsCertificates arrays) in the globalFeatures map via features-050-ssl-initialization using ComputeIfAbsent for atomic initialization. It SHALL generate an HTTPS frontend with SSL termination using a crt-list file. It SHALL generate the crt-list (certificate-list.txt) from registered TLS certificates with per-certificate OCSP stapling configuration ("[ocsp-update on]"). It SHALL include a default certificate entry in the crt-list. It SHALL provide SSL passthrough infrastructure with SNI-based backend routing. The crt-list SHALL be byte-deterministic across renders of identical inputs: each certificate's SNIs are grouped by client-cert-verification config and emitted one line per group with group keys sorted (Scriggo map iteration order is unstable, and a reordered crt-list triggers an HAProxy reload even when the inputs are identical); when multiple Gateway default-certificate candidates exist, the winner SHALL be chosen by lexical (namespace, name) order.
 
 #### Scenario: SSL initialization runs exactly once
 
@@ -95,6 +175,11 @@ THEN the globalFeatures map SHALL be initialized exactly once via ComputeIfAbsen
 
 WHEN the ingress library registers a TLS certificate with SNI patterns ["example.com", "www.example.com"]
 THEN the generated crt-list SHALL contain a line with the sanitized certificate filename, "[ocsp-update on]", and the SNI patterns.
+
+#### Scenario: CRT-list is byte-deterministic
+
+- **WHEN** the same certificate registrations are rendered twice
+- **THEN** the generated crt-list SHALL be byte-identical, with per-certificate option groups emitted in sorted key order.
 
 ### Requirement: Ingress Library
 
@@ -153,6 +238,25 @@ The Gateway API library SHALL watch gateway.networking.k8s.io GatewayClass, Gate
 
 - **WHEN** HTTPRoute resolves to v1beta1 on a pre-v1.0 Gateway API install
 - **THEN** HTTPRoute status patches SHALL target gateway.networking.k8s.io/v1beta1.
+
+### Requirement: Per-Gateway Pod-Port Allocation
+
+The gateway library SHALL allocate a unique container pod port to each (Gateway, port) that carries an HTTP or HTTPS listener, so each Gateway's bind carries isolated SSL configuration without OS-level bind collisions; TLS-Passthrough listeners and TLS-Terminate listeners on non-default ports SHALL be excluded (they render through the chart-static ssl-tcp frontend and per-port mode-tcp frontends respectively). Allocation SHALL be a pure hash-and-probe function of the current Gateway set: each key `<gwNs>/<gwName>:<port>` hashes to a slot via the first 7 hex characters of its sha256 modulo the range size, collisions between keys present in the same render are resolved by linear probing in sorted-key order, and the result is the base port plus the slot. Defaults SHALL be perGatewayPodPortBase 18000 and perGatewayPodPortRange 1000. The allocator SHALL NOT read committed Services back from the cluster cache to stabilise allocations — a prior read-back design produced permanent collision lock-in and sustained Service-update oscillation (~50 flips per second) under parallel Gateway churn, because read-back state lags the allocator's own output. The allocator SHALL fail() the render when the key count exceeds the range size, and SHALL be initialised once per render via shared state (ComputeIfAbsent).
+
+#### Scenario: Allocation is deterministic across renders and replicas
+
+- **WHEN** the same set of Gateways is rendered in any order, on any replica, against any cache snapshot
+- **THEN** each (Gateway, port) key SHALL receive the same pod port.
+
+#### Scenario: TLS-Passthrough listener excluded
+
+- **WHEN** a Gateway listener has protocol TLS with passthrough mode
+- **THEN** no pod-port allocation SHALL be made for it.
+
+#### Scenario: Range exhaustion fails loudly
+
+- **WHEN** the number of (Gateway, port) keys exceeds perGatewayPodPortRange
+- **THEN** the render SHALL fail with an error naming the perGatewayPodPortRange knob instead of probing forever.
 
 ### Requirement: HAProxyTech Annotations Library
 
@@ -221,16 +325,26 @@ THEN it SHALL NOT be importable by other snippets.
 
 ### Requirement: Map File Generation
 
-The base library SHALL define map file templates that aggregate entries from all contributing libraries via render_glob. The map files SHALL be: host.map (host to normalized host mapping), path-exact.map (exact path matches using map function), path-prefix-exact.map (prefix boundary matches without trailing slash), path-prefix.map (prefix matches with trailing slash using map_beg), path-regex.map (regex matches using map_reg), and weighted-multi-backend.map (weighted routing entries mapping random_weight:route_key to backend names). Map file paths SHALL be resolved via pathResolver.GetPath with type "map".
+The base library SHALL define map file templates that aggregate entries from all contributing libraries via render_glob. The map files SHALL be: host.map (host to normalized host mapping), path-exact.map (exact path matches using map function), path-prefix-exact.map (prefix boundary matches without trailing slash), path-prefix.map (prefix matches with trailing slash using map_beg), path-regex.map (regex matches using map_reg), and weighted-multi-backend.map (weighted routing entries mapping random_weight:route_key to backend names). Map file paths SHALL be resolved via pathResolver.GetPath with type "map". Every generated map file whose entries aggregate from unordered map state — including the fileRegistry-registered feature maps (ssl-redirect-`<code>`.map, redirect-loc-`<code>`.map, app-root.map, mtls-error.map, hsts.map) — SHALL emit entries in sorted key order with first-writer-wins deduplication per key: Scriggo map iteration order is unstable, and a reordered file is a content change to the sync layer that triggers a spurious HAProxy reload for identical inputs.
 
 #### Scenario: Map file path resolved via PathResolver
 
 WHEN the host.map template is rendered with PathResolver.MapsDir set to "maps"
 THEN references to the map file in haproxyConfig SHALL use the path "maps/host.map".
 
+#### Scenario: Generated map files are byte-deterministic
+
+- **WHEN** the same resources are rendered twice
+- **THEN** every generated map file SHALL be byte-identical, with entries in sorted key order.
+
+#### Scenario: First writer wins on duplicate keys
+
+- **WHEN** two entries register the same host key in a feature map (for example two redirects claiming one host)
+- **THEN** the first registered entry SHALL claim the key and later entries for the same key SHALL be ignored.
+
 ### Requirement: Backend Server Generation
 
-The base library's BackendServers macro SHALL resolve service endpoints from EndpointSlices, perform targetPort resolution via Service port name lookup, assign endpoints to numbered server slots (SRV_1 through SRV_N), and fill unused slots with disabled placeholder servers (192.0.2.1:1, the RFC 5737 TEST-NET-1 sentinel). When currentConfig is available, the macro SHALL preserve existing slot assignments to enable zero-reload updates via HAProxy runtime API. The default slot count SHALL be 10, overridable via macro parameter or serverOpts.serverSlotsValue.
+The base library's BackendServers macro SHALL resolve service endpoints from EndpointSlices, perform targetPort resolution via Service port name lookup, assign endpoints to numbered server slots (SRV_1 through SRV_N by default), and fill unused slots with disabled placeholder servers at 192.0.2.1:1 (the RFC 5737 TEST-NET-1 sentinel). The placeholder address SHALL be unroutable — not 127.0.0.1 — so a slot that ever combined a placeholder address with an active bind port cannot loop requests back through the proxy's own bind; the worst case is a fast connect timeout plus `option redispatch` failover instead of an unbounded self-loop. When currentConfig is available, the macro SHALL preserve existing slot assignments (keyed by address:port) to enable zero-reload updates via the HAProxy runtime API; when reading slots back, placeholder entries — both the current 192.0.2.1:1 sentinel and the legacy 127.0.0.1:1 one — SHALL be skipped so preservation stays correct across a rolling chart upgrade whose live pods still carry legacy placeholders. The default slot count SHALL be 10, overridable via macro parameter or serverOpts.serverSlotsValue.
 
 #### Scenario: Server slots with placeholder padding
 
@@ -241,6 +355,96 @@ THEN the output SHALL contain 2 enabled server lines and 8 disabled placeholder 
 
 WHEN currentConfig contains a backend with SRV_3 assigned to 10.0.0.3:8080 and that endpoint still exists
 THEN the new render SHALL assign the same endpoint to SRV_3 to preserve the slot mapping.
+
+#### Scenario: Legacy placeholders skipped during read-back
+
+- **WHEN** the current config still carries 127.0.0.1:1 placeholder servers from a pre-upgrade chart
+- **THEN** slot preservation SHALL treat those slots as unoccupied rather than preserving the placeholder address.
+
+### Requirement: EndpointSlice Condition Filtering
+
+BackendServers SHALL include an endpoint only when it is actually serving. An endpoint SHALL be skipped when `conditions.ready` is explicitly false — kubelet adds new pods to slices well before the readiness probe passes, and dispatching to them produces 503s. An endpoint SHALL be skipped when `conditions.terminating` is explicitly true — most applications stop accepting connections on SIGTERM, well before the grace period elapses. Nil semantics follow the Kubernetes EndpointSlice contract: a nil `ready` means ready (only explicit false skips), and a nil `terminating` means not terminating (only explicit true skips).
+
+#### Scenario: Explicitly not-ready endpoint excluded
+
+- **WHEN** an EndpointSlice endpoint has conditions.ready set to false
+- **THEN** no server slot SHALL be assigned to it.
+
+#### Scenario: Nil ready condition counts as ready
+
+- **WHEN** an EndpointSlice endpoint has no conditions.ready value
+- **THEN** the endpoint SHALL be included and assigned a slot.
+
+#### Scenario: Terminating endpoint excluded
+
+- **WHEN** an EndpointSlice endpoint has conditions.terminating set to true
+- **THEN** no server slot SHALL be assigned to it.
+
+### Requirement: Fresh-Slot Allocation for New Endpoints
+
+Slot assignment SHALL run in two passes: endpoints already present in the prior config keep their slot, and only genuinely new endpoints consume fresh slots. New endpoints SHALL be allocated strictly after the highest slot still occupied in the prior config, wrapping from the last slot back to slot 1 (skipping occupied slots) when needed. A slot vacated in the same render SHALL NOT be reused for a new endpoint: it renders as a disabled placeholder instead, so when a rolling restart's old-pod-terminating and new-pod-ready EndpointSlice updates merge into a single render, the replacement pod lands on a fresh slot and `option redispatch` has a healthy fallback rather than a just-replaced server (prevents 503 SC-- during merged endpoint churn).
+
+#### Scenario: New endpoint takes a slot after the highest used one
+
+- **WHEN** the prior config occupies SRV_1 through SRV_3 and one new endpoint appears
+- **THEN** the new endpoint SHALL be assigned SRV_4.
+
+#### Scenario: Vacated slot not reused within the same render
+
+- **WHEN** the pod at SRV_2 disappears and a replacement pod becomes ready in the same render
+- **THEN** the replacement SHALL take a slot after the highest used slot, and SRV_2 SHALL render as a disabled placeholder.
+
+#### Scenario: Allocation wraps past the last slot
+
+- **WHEN** the highest used slot equals the slot count and a new endpoint appears
+- **THEN** allocation SHALL wrap to slot 1 and probe forward past occupied slots.
+
+### Requirement: Multi-Service Slot Ranges and Server Identity
+
+BackendServers SHALL accept `serverOpts.slotPrefix` (default `SRV_`) and `serverOpts.weight`. A distinct slotPrefix per Service SHALL let one backend host servers from several Services in disjoint, independently slot-preserved ranges (weighted TCPRoute traffic splitting with `balance roundrobin` across backendRefs): slot preservation reads back only servers whose names carry the caller's own prefix. When `weight` is set, every emitted server line SHALL carry a trailing `weight N` argument. When a backend name is provided, every server line — active and placeholder — SHALL carry a stable GUID derived from make_guid("srv", backend, prefix+slot) for runtime identity. The defaults SHALL keep single-Service output byte-for-byte unchanged.
+
+#### Scenario: Disjoint slot ranges per Service in one backend
+
+- **WHEN** one backend renders two Services with slotPrefixes "A_" and "B_"
+- **THEN** each Service's slot preservation SHALL read back only the slots carrying its own prefix, and the ranges SHALL be preserved independently.
+
+#### Scenario: Per-slot GUIDs emitted
+
+- **WHEN** BackendServers is called with a backend name
+- **THEN** every server line, including placeholders, SHALL carry a guid derived from the backend name and the prefixed slot number.
+
+### Requirement: Service Port Resolution
+
+The ResolveServicePort macro SHALL be the single source of truth for translating an Ingress or Gateway service-port reference into a concrete port number and port name, and all backend-rendering call sites in the bundled resource and annotation libraries SHALL route through it before invoking BackendServers. It SHALL abort the render via fail() when the port reference is nil or carries neither a number nor a name, when the reference is by name but the Service is missing or has no port with that name, or when the resolved port is 0 or negative. It SHALL NOT fall back to port 80 — the previous silent fallback produced syntactically valid configs pointing at ports nothing listened on. When the reference is by number and the Service is absent, resolution SHALL succeed with an empty port name: the numeric port is trusted without Service validation. A failed render surfaces in the controller logs and in the resource's deployFailed status while the last-known-good config keeps serving.
+
+#### Scenario: Named port with missing Service fails the render
+
+- **WHEN** a backend references a Service port by name and the Service does not exist
+- **THEN** the render SHALL fail with an error naming the Service and the port name, and the last-known-good config SHALL keep serving.
+
+#### Scenario: Unknown port name fails with available names listed
+
+- **WHEN** the referenced Service exists but has no port with the referenced name
+- **THEN** the render SHALL fail with an error listing the Service's actual port names.
+
+#### Scenario: Numeric port trusted without the Service
+
+- **WHEN** a backend references a Service port by number and the Service is absent from the store
+- **THEN** resolution SHALL succeed with the numeric port and an empty port name.
+
+### Requirement: Config-Driven Reloads Without Server State File
+
+The chart SHALL NOT emit `server-state-file` or `load-server-state-from-file`, and the HAProxy pod's reload command SHALL be a plain master-socket reload with no server-state dump. HAProxy only restores a server's address from state via the init-addr resolution chain, which runs solely for FQDN and DNS-SRV servers; pod servers are IP literals, so the parsed config address always wins on reload — the state machinery preserved nothing for pod addresses while its port restoration could mint stale-slot hybrids. Endpoint correctness across reloads SHALL rely on the deploy pipeline rendering the current endpoints into every pushed config, plus the runtime fast path for reload-free convergence.
+
+#### Scenario: No server-state directives in rendered config
+
+- **WHEN** the base library renders with any combination of libraries enabled
+- **THEN** the output SHALL contain neither `server-state-file` nor `load-server-state-from-file`.
+
+#### Scenario: Reload takes addresses from the rendered config
+
+- **WHEN** HAProxy reloads
+- **THEN** every server's address SHALL come from the rendered configuration, not from a state file.
 
 ### Requirement: Library Enable/Disable via Values
 
@@ -253,7 +457,7 @@ THEN the merged config SHALL contain only base library content and the HAProxy c
 
 ### Requirement: Embedded Validation Tests
 
-Libraries SHALL support embedded validation tests in a validationTests section. Each test SHALL specify a description, fixtures (Kubernetes resource manifests), and assertions. The _global test SHALL apply to all tests (providing shared fixtures and assertions). The haproxy_valid assertion type SHALL verify the rendered output is valid HAProxy configuration. The deterministic assertion type SHALL verify repeated renders produce identical output. The contains assertion type SHALL verify the rendered output contains a pattern.
+Libraries SHALL support embedded validation tests in a validationTests section. Each test SHALL specify a description, fixtures (Kubernetes resource manifests), and assertions. The _global test SHALL apply to all tests (providing shared fixtures and assertions). The haproxy_valid assertion type SHALL verify the rendered output is valid HAProxy configuration. The deterministic assertion type SHALL verify repeated renders produce identical output. The contains assertion type SHALL verify the rendered output contains a pattern. A test MAY additionally carry a `_helm_skip_test` template expression: at chart render time the merge loader SHALL drop the test when the expression evaluates to "true" and SHALL strip the marker otherwise. Two chart predicates SHALL gate bundled tests: nginx-annotation tests are skipped when the nginx-ingress library is disabled (their fixtures rely on annotations only that library scans), and experimental-channel HTTPRoute field tests (sessionPersistence per GEP-1619, retry per GEP-1731) are skipped unless controller.templateLibraries.gateway.experimentalChannel is true. The channel MUST be operator-declared: as of Gateway API v1.6 the Standard and Experimental installs ship an identical CRD set, so GVK-level Capabilities detection cannot distinguish channels, and an un-skipped experimental-field test on a Standard-channel cluster fails and crash-loops the controller under the fatal load gate.
 
 #### Scenario: Validation test with fixtures and assertions
 
@@ -264,3 +468,13 @@ THEN running the validation suite SHALL render templates with those fixtures and
 
 WHEN the _global test defines a haproxy_valid assertion
 THEN every test in the suite SHALL also verify its output is valid HAProxy configuration.
+
+#### Scenario: Experimental-channel tests skipped on Standard channel
+
+- **WHEN** controller.templateLibraries.gateway.experimentalChannel is false (the default)
+- **THEN** validation tests asserting sessionPersistence or retry directives SHALL be absent from the merged HAProxyTemplateConfig.
+
+#### Scenario: Skip marker stripped from retained tests
+
+- **WHEN** a test's _helm_skip_test expression does not evaluate to "true"
+- **THEN** the merged output SHALL contain the test without the _helm_skip_test key.

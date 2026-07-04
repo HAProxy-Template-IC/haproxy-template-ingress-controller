@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - created by archiving change pluggable-validator-sidecar. Update Purpose after archive.
+Lets operators plug external validation programs into HAPTIC's admission flow: `spec.validators` entries on the HAProxyTemplateConfig declare sidecar validators by Unix socket path and file globs, and the controller routes matching dry-run-rendered files to each validator over a length-prefixed JSON wire protocol with persistent, pooled connections. Validator verdicts map to admission outcomes — valid admits, warning admits with kubectl-visible warnings, error denies — while a content-keyed result cache and parallel dispatch keep the webhook path fast.
 
 ## Requirements
 

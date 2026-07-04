@@ -139,7 +139,7 @@ THEN those inserts SHALL be emitted in ascending index order so that each insert
 
 ### Requirement: DiffSummary
 
-The DiffSummary SHALL track total creates, updates, and deletes; whether global and defaults sections changed; lists of added, modified, and deleted frontends and backends by name; and maps of server changes keyed by backend name. HasChanges SHALL return true when any operation count is positive. TotalOperations SHALL return the sum of creates, updates, and deletes. StructuralOperations SHALL return TotalOperations minus the count of server modifications (which are runtime-eligible).
+The DiffSummary SHALL track total creates, updates, and deletes; whether global and defaults sections changed; lists of added, modified, and deleted frontends and backends by name; and maps of server changes keyed by backend name. HasChanges SHALL return true when any operation count is positive. TotalOperations SHALL return the sum of creates, updates, and deletes. StructuralOperations SHALL return TotalOperations minus the count of server modifications only — it does NOT subtract frontend maxconn-only updates, so a diff whose sole operation is a runtime-applied maxconn change still reports one structural operation in the summary. This asymmetry with the orchestrator's operation partitioning (which admits maxconn-only updates to the runtime path) is intentional as-is; consumers needing exact runtime eligibility use the operation partition, not the summary count.
 
 #### Scenario: HasChanges false when no operations
 
@@ -150,6 +150,11 @@ THEN DiffSummary.HasChanges() SHALL return false.
 
 WHEN the diff contains 10 total operations including 3 server modifications
 THEN StructuralOperations SHALL return 7.
+
+#### Scenario: Maxconn-only update still counts as structural in the summary
+
+- **WHEN** the diff's only operation is a frontend maxconn-only update
+- **THEN** DiffSummary.StructuralOperations() SHALL return 1 even though the orchestrator applies the change via the runtime path.
 
 ### Requirement: Three-Phase Auxiliary File Sync
 
@@ -205,9 +210,9 @@ THEN the orchestrator SHALL return a SyncError indicating the timeout.
 
 ### Requirement: Full-Config Apply
 
-Production configuration changes SHALL be applied by pushing the full rendered configuration to the Dataplane API in a single request; the orchestrator SHALL NOT execute per-operation Dataplane API transactions. From the ConfigDiff the orchestrator SHALL partition changes into runtime-eligible server-field updates and structural changes, and choose one of two apply shapes:
+Production configuration changes SHALL be applied by pushing the full rendered configuration to the Dataplane API in a single request; the orchestrator SHALL NOT execute per-operation Dataplane API transactions. From the ConfigDiff the orchestrator SHALL partition changes into runtime-eligible updates and structural changes. A change is runtime-eligible when it is either a server update whose changed fields are all runtime-supported, OR a frontend update whose only changed attribute is maxconn with the desired value set (applied via the `SetFrontendMaxConn` runtime action). The orchestrator SHALL choose one of two apply shapes:
 
-- Runtime path: when every change is a runtime-eligible server-field update, a single `PushRawConfigurationSkipReload` carrying an `X-Runtime-Actions` header, which writes the new config to disk and applies the server changes to the live worker without a reload.
+- Runtime path: when every configuration change is runtime-eligible and no auxiliary file change forces a reload, a single `PushRawConfigurationSkipReload` carrying an `X-Runtime-Actions` header, which writes the new config to disk and applies the changes to the live worker without a reload.
 - Reload path: otherwise, a `PushRawConfiguration` with `force_reload`; when runtime-eligible changes are also present, a best-effort skip-reload push MAY precede the reload to seed the running worker.
 
 The SyncResult SHALL record the SyncMode as one of `no_changes`, `runtime`, or `reload`, and SHALL include the ReloadID when a reload is triggered.
@@ -217,10 +222,184 @@ The SyncResult SHALL record the SyncMode as one of `no_changes`, `runtime`, or `
 WHEN the diff contains only runtime-eligible server-field updates (e.g. address, port, maintenance, weight)
 THEN the orchestrator SHALL apply them via a single skip-reload push with `X-Runtime-Actions` and SyncMode=runtime, with no reload.
 
+#### Scenario: Frontend maxconn-only change applies without reload
+
+- **WHEN** the diff's only operation is a frontend update whose sole changed attribute is maxconn with a set desired value
+- **THEN** the orchestrator SHALL apply it via the runtime path with a `SetFrontendMaxConn <frontend> <value>` action and no reload.
+
 #### Scenario: Structural change triggers reload
 
 WHEN the diff contains any structural change (server creation/deletion, frontend/backend/bind/rule/filter changes)
 THEN the orchestrator SHALL push the full config with `force_reload`, set SyncMode=reload, and the SyncResult SHALL have a non-empty ReloadID.
+
+### Requirement: Server Runtime Eligibility
+
+The runtime-eligible server field set SHALL be exactly the following models.Server JSON fields: `weight`, `address`, `port`, `maintenance`, `agent-check`, `agent-addr`, `agent-send`, `health_check_port`, and `metadata`. The `metadata` field (the inline `# Pod: <name>` comment) SHALL count as runtime-eligible but SHALL produce no runtime action — it is cosmetic and converges via the on-disk config. `init-addr` SHALL NOT be in the set. Any other differing field (notably `check`) SHALL make the whole server update structural. Server creation and deletion SHALL always be structural; only field updates on existing servers qualify for the runtime path.
+
+Eligibility SHALL be computed by JSON-marshalling the current and desired server models and comparing keys; on a marshal or unmarshal error the computation SHALL be conservative and report the update as ineligible. The comparator SHALL expose the offending (non-eligible) field names for diagnostics.
+
+#### Scenario: Check field change is structural
+
+- **WHEN** a server update changes both address and the `check` field
+- **THEN** the update SHALL be classified structural and the ineligible-field diagnostics SHALL name `check`.
+
+#### Scenario: Metadata-only change is runtime-eligible with zero actions
+
+- **WHEN** a server update changes only the inline metadata comment
+- **THEN** the update SHALL be runtime-eligible and SHALL contribute no `X-Runtime-Actions` entry.
+
+#### Scenario: Server creation is structural
+
+- **WHEN** the desired configuration adds a server to an existing backend
+- **THEN** the operation SHALL be classified structural regardless of the new server's fields.
+
+#### Scenario: Marshal error degrades conservatively
+
+- **WHEN** JSON-marshalling either server model fails during eligibility computation
+- **THEN** the update SHALL be treated as ineligible (structural).
+
+### Requirement: Runtime Action Encoding
+
+The skip-reload push SHALL carry an `X-Runtime-Actions` header containing a semicolon-separated list of runtime action verbs. The verb vocabulary SHALL be: `SetServerState <backend> <server> maint|ready`, `SetServerAddr <backend> <server> <address> <port>`, `SetServerWeight <backend> <server> <weight>`, `SetServerCheckPort <backend> <server> <port>`, `EnableAgentCheck <backend> <server>`, `DisableAgentCheck <backend> <server>`, `SetServerAgentAddr <backend> <server> <addr>`, `SetServerAgentSend <backend> <server> <string>`, and `SetFrontendMaxConn <frontend> <value>`.
+
+Action generation SHALL be a delta: one action per field that actually differs between the current and desired models, never a full re-statement of the server. Ordering within a single server SHALL respect maintenance transitions: entering maintenance emits `SetServerState … maint` FIRST, then address/weight/agent actions (drain before reconfigure); leaving maintenance emits the setup actions first, then `SetServerState … ready` (reconfigure before accepting traffic).
+
+Because the Dataplane API tokenizes the header by splitting the action list on `;` and each action on spaces, an argument value containing a space or semicolon SHALL NOT be emitted as a runtime action (applies to agent-addr/agent-send strings); the value converges via the on-disk config on the next reload.
+
+#### Scenario: Weight-only change emits a single action
+
+- **WHEN** a runtime-eligible server update changes only the weight
+- **THEN** the header SHALL contain exactly one `SetServerWeight` action for that server and no `SetServerAddr` action.
+
+#### Scenario: Entering maintenance drains first
+
+- **WHEN** a server update sets maintenance to enabled and also changes the address
+- **THEN** the `SetServerState … maint` action SHALL precede the `SetServerAddr` action for that server.
+
+#### Scenario: Leaving maintenance configures first
+
+- **WHEN** a server update sets maintenance to disabled and also changes the address
+- **THEN** the `SetServerAddr` action SHALL precede the `SetServerState … ready` action for that server.
+
+#### Scenario: Unsafe argument values are refused
+
+- **WHEN** a desired agent-send string contains a space or a semicolon
+- **THEN** no `SetServerAgentSend` action SHALL be emitted for it and the change SHALL converge on the next reload.
+
+### Requirement: Empty Runtime-Actions Header Omission
+
+A reload-free configuration push with zero runtime actions (for example a map-only content change whose bytes were already written via the Storage API) SHALL omit the `X-Runtime-Actions` header entirely rather than sending an empty header value: HAProxy 3.4's Dataplane API rejects an empty header value, while 3.3 and earlier tolerated it. A skip-reload push with no header SHALL remain valid. When skip_version is set, the version query parameter SHALL also be elided from the request.
+
+#### Scenario: No actions means no header
+
+- **WHEN** a skip-reload push is issued with an empty runtime-actions string
+- **THEN** the request SHALL NOT contain an `X-Runtime-Actions` header.
+
+#### Scenario: Skip-version elides the version parameter
+
+- **WHEN** a push is issued with skip_version set
+- **THEN** the request SHALL NOT carry a version query parameter.
+
+### Requirement: Runtime-Eligible Auxiliary File Updates
+
+Beyond configuration changes, the orchestrator SHALL apply certain auxiliary-file content changes to the live worker without a reload: content updates to an already-existing map file (all Dataplane API versions, via runtime map replacement), content updates to an already-loaded SSL certificate (v3.2+ only, gated on the runtime-SSL-certs capability), and content updates to a general file flagged as a CA file (an mTLS trust bundle, v3.2+ only, gated on the SSL-CA-files capability).
+
+The gate SHALL be all-or-nothing: any auxiliary file creation or deletion, any change in the dedicated SSL-CA-file or CRT-list diffs, any non-CA general-file content update, or an SSL-certificate content update below v3.2 SHALL force the reload path, together with any structural configuration operation.
+
+On the reload-free path the runtime auxiliary updates SHALL be applied first, followed by a single skip-reload push that writes the config to disk and applies the server actions. If any runtime auxiliary apply fails, the orchestrator SHALL fall back to the reload path; this fallback SHALL be convergent because the pre-config phase already wrote the new content to disk (skip-reload), so the forced reload re-reads it.
+
+#### Scenario: Map content update applies without reload
+
+- **WHEN** the only change in a sync is the content of an existing map file
+- **THEN** the orchestrator SHALL update the live map via the runtime API and complete with SyncMode=runtime and no reload.
+
+#### Scenario: Runtime auxiliary failure falls back to reload
+
+- **WHEN** a runtime map, certificate, or CA-file apply fails on the reload-free path
+- **THEN** the orchestrator SHALL fall back to the force-reload push and the sync SHALL converge to the desired content.
+
+#### Scenario: Certificate update below v3.2 forces reload
+
+- **WHEN** an SSL certificate's content changes and the endpoint does not support runtime SSL certificate updates
+- **THEN** the sync SHALL take the reload path.
+
+#### Scenario: File creation forces reload
+
+- **WHEN** the auxiliary diff contains a map file to create alongside content updates
+- **THEN** the sync SHALL take the reload path and no runtime auxiliary updates SHALL be attempted.
+
+### Requirement: Runtime Map Entry Delta
+
+Runtime map replacement SHALL make the live (in-memory) contents of an existing map equal the desired entries by applying a minimal per-entry delta against the current runtime state, never a bulk replace or clear-and-repopulate. A key present on both sides whose single value changed SHALL be updated atomically in place (`set map`, key carried in the id path segment); a key whose value multiset changed in any other way, or that was removed, SHALL be deleted (`del map`, removing all values for the key) and re-added; a new key SHALL be added (`add map`). Unchanged keys SHALL NOT be touched.
+
+A 404 from reading the runtime map (map not loaded yet) SHALL yield an empty current entry set, not an error. The replacement SHALL NOT set force_sync — disk durability is handled by the pre-config skip-reload storage write; the runtime call updates worker memory only. Map-file body parsing SHALL skip blank lines and `#`-comment lines; the key is the first whitespace-delimited token and the value is the trimmed remainder of the line.
+
+#### Scenario: Single-value change uses atomic in-place set
+
+- **WHEN** a map key's single value changes between current and desired
+- **THEN** the delta SHALL contain one in-place set operation for that key and no delete, so the key never transiently loses its mapping.
+
+#### Scenario: Removed key is deleted
+
+- **WHEN** a key present in the runtime map is absent from the desired content
+- **THEN** the delta SHALL delete that key.
+
+#### Scenario: Unloaded map treated as empty
+
+- **WHEN** reading the runtime map returns 404
+- **THEN** the replacement SHALL proceed with an empty current set and add every desired entry.
+
+### Requirement: Runtime SSL Certificate and CA-File Replacement
+
+Runtime SSL certificate and CA-file replacement SHALL be available on Dataplane API v3.2+ only. For a batch of N replacements, the loaded-object list SHALL be fetched exactly once and reused to resolve every identifier. Certificate replacement SHALL use the set-and-commit runtime flow (atomic per certificate), addressed by the exact storage path HAProxy loaded the certificate under. CA-file replacement SHALL deliberately use the add-entry-and-commit runtime flow — which replaces the loaded bundle with the payload — instead of the set flow, because the set flow returns a 500 under the Dataplane API's master-worker socket wrapping.
+
+Identifier resolution SHALL be: an exact storage-path match wins outright; otherwise an UNAMBIGUOUS basename (or description) match is used; if two loaded objects share the matching basename, resolution SHALL fail with an error rather than picking one (the caller falls back to the reload path, which converges via the pre-config disk write); if nothing matches, resolution SHALL fail with a not-loaded error. Disk durability SHALL be left to the pre-config storage write in all cases.
+
+#### Scenario: Exact path match wins
+
+- **WHEN** a certificate's identifier exactly matches a loaded certificate's storage path
+- **THEN** that storage path SHALL be used even if other loaded certificates share its basename.
+
+#### Scenario: Ambiguous basename errors
+
+- **WHEN** two loaded certificates from different directories share the basename being resolved
+- **THEN** resolution SHALL return an error and the caller SHALL converge via a reload instead.
+
+#### Scenario: CA-file uses add, not set
+
+- **WHEN** a CA trust bundle is replaced at runtime
+- **THEN** the client SHALL issue the add-entry-and-commit flow that replaces the loaded bundle, not the set flow.
+
+#### Scenario: One list fetch per batch
+
+- **WHEN** three certificates are replaced in one call
+- **THEN** the loaded-certificate list SHALL be fetched exactly once.
+
+### Requirement: Runtime Fast Path
+
+The package SHALL provide a pod-independent runtime fast path. ComputeRuntimeServerUpdates SHALL diff the previously dispatched render against the current render once per trigger — a pure computation with no client and no per-pod fetch — and return a RuntimeServerUpdates value exposing ServerOpCount (number of runtime-eligible operations), StructuralOpCount (number of reload-inducing operations), and IsRuntimeEligible, which SHALL be true if and only if there is at least one runtime-eligible change AND zero structural operations. All three accessors SHALL be safe on a nil receiver (returning 0 or false).
+
+SyncRuntimeFast SHALL apply the shared precomputed diff to a pod via a single skip-reload skip-version push whose body is the desired render and whose runtime actions come from the shared diff — no per-pod fetch, no per-pod compare, no reload. Callers apply the same RuntimeServerUpdates to every pod. When the pushed body also carries structural changes, those SHALL land on disk un-activated until a later force-reload deploy; only the runtime actions take effect on the live worker.
+
+#### Scenario: Structural operations disqualify the fast path
+
+- **WHEN** the render diff contains one runtime-eligible server change and one structural change
+- **THEN** IsRuntimeEligible SHALL return false.
+
+#### Scenario: Empty diff is not runtime-eligible
+
+- **WHEN** the render diff contains no operations
+- **THEN** IsRuntimeEligible SHALL return false.
+
+#### Scenario: Fast path skips per-pod fetch
+
+- **WHEN** SyncRuntimeFast applies a precomputed diff to a pod
+- **THEN** it SHALL NOT fetch or parse that pod's current configuration.
+
+#### Scenario: Nil-safe accessors
+
+- **WHEN** ServerOpCount, StructuralOpCount, or IsRuntimeEligible is called on a nil RuntimeServerUpdates
+- **THEN** the calls SHALL return 0, 0, and false respectively without panicking.
 
 ### Requirement: Connection-Error Retry
 
@@ -249,6 +428,32 @@ THEN the SyncResult SHALL have ReloadVerified=true and Success=true.
 
 WHEN a reload is triggered, VerifyReload is enabled, and the reload fails
 THEN the SyncResult SHALL have ReloadVerified=false, a non-empty ReloadVerificationError, and Success=false.
+
+### Requirement: Reload Verification Mechanics
+
+Reload verification SHALL poll the reload status endpoint every 500 milliseconds until a terminal state or the verification timeout. The reload status SHALL be modeled as one of three states: `in_progress`, `succeeded`, or `failed` (failed carries the response detail). Transient status-check errors SHALL be logged and the poll SHALL continue. A force-reload push whose response carries an empty Reload-ID SHALL be treated as a reload that already finished — verified without polling.
+
+On the reload path, when runtime actions exist, the orchestrator SHALL first issue a best-effort skip-reload push carrying those actions to seed the old worker before the drain begins; a failure of this seed push SHALL only be logged (the forced reload converges state), while a success SHALL trigger a version refetch before the force-reload push (the seed push bumped the on-disk version). When reload verification fails, the orchestrator SHALL skip post-config orphan auxiliary-file deletion — deleting files while the new worker may still be loading the on-disk config can turn a recoverable failure into a stuck reload loop — and SHALL return a SyncResult with Success=false alongside the reload-verification error.
+
+#### Scenario: Poll cadence and transient errors
+
+- **WHEN** a reload status check fails with a transient error during verification
+- **THEN** the failure SHALL be logged and polling SHALL continue at the 500ms interval until a terminal state or timeout.
+
+#### Scenario: Empty Reload-ID means already done
+
+- **WHEN** a force-reload push returns without a Reload-ID
+- **THEN** the orchestrator SHALL treat the reload as verified without polling.
+
+#### Scenario: Seed push success refetches the version
+
+- **WHEN** the best-effort skip-reload seed push succeeds before a force-reload
+- **THEN** the orchestrator SHALL refetch the configuration version and use the refetched value for the force-reload push.
+
+#### Scenario: Failed verification skips orphan deletion
+
+- **WHEN** reload verification fails after a force-reload push
+- **THEN** the orchestrator SHALL NOT delete orphaned auxiliary files in the post-config phase.
 
 ### Requirement: Retry Logic with Exponential Backoff
 
@@ -282,6 +487,34 @@ THEN the SyncError SHALL contain Stage="apply", a descriptive Message, the under
 
 WHEN a SyncError wraps a ConnectionError
 THEN errors.As with *ConnectionError SHALL return true when applied to the SyncError.
+
+### Requirement: Extended Error Taxonomy
+
+Beyond the four structured error types, the package SHALL define: a sentinel error ErrValidationCacheHit, returned when validation is skipped because the identical configuration already validated successfully (callers obtain the parsed config from the parser cache); a third ValidationError.Phase value `schema` (OpenAPI schema constraint violation) alongside `syntax` and `semantic`; and boundary-simplification helpers. SimplifyValidationError SHALL extract the user-facing detail from semantic validation errors (the text after the HAProxy-validation marker) and from schema validation errors (field, constraint, and offending value), returning the original string when neither pattern matches. SimplifyRenderingError SHALL extract the operator-authored message following the template engine's fail-function marker, returning the original string for other rendering errors.
+
+SyncError.Stage values SHALL identify the failing step, including at least: `connect`, `parse-current`, `parse-desired`, `compare`, the per-type auxiliary comparison stages (`compare_files`, `compare_ssl`, `compare_ssl_ca`, `compare_maps`, `compare_crtlists`), the pre-config sync stages (`sync_ssl_pre`, `sync_ssl_ca_pre`, `sync_files_pre`, `sync_maps_pre`), `apply`, `version_resolve`, `version_refetch`, `reload_verification`, and `auxiliary_reload_verification`.
+
+Schema-phase validation SHALL run through a zero-allocation validator layer: generated validators operating directly on client-native structs (avoiding the JSON marshal overhead of a generic OpenAPI validator), dispatched per HAProxy version via a validator set, with result caching, and reporting failures as field-level errors.
+
+#### Scenario: Schema violation reported with schema phase
+
+- **WHEN** a configuration violates an OpenAPI schema constraint during validation
+- **THEN** the resulting ValidationError SHALL have Phase="schema".
+
+#### Scenario: fail() message simplified at the boundary
+
+- **WHEN** SimplifyRenderingError receives a rendering error produced by a template's fail("Service not found") call
+- **THEN** it SHALL return exactly "Service not found".
+
+#### Scenario: Validation cache hit surfaces the sentinel
+
+- **WHEN** validation is requested for a configuration that already validated successfully
+- **THEN** the call SHALL return ErrValidationCacheHit instead of re-running validation.
+
+#### Scenario: Non-matching error passes through unchanged
+
+- **WHEN** SimplifyValidationError receives an error that is neither a semantic nor a schema validation failure
+- **THEN** it SHALL return the error's original string.
 
 ### Requirement: Dataplane API Multi-Version Support
 
@@ -319,3 +552,24 @@ After a successful sync, the orchestrator SHALL capture the post-sync configurat
 
 WHEN a raw push completes with pre-push version 5
 THEN the SyncResult.PostSyncVersion SHALL be 6.
+
+### Requirement: Headerless Version Sentinel
+
+A skip-version push SHALL write the request body to disk VERBATIM — no version header is stamped and no version counter is incremented — so GetVersion subsequently reads the missing header as version 1. Version 1 SHALL therefore be treated as a sentinel that cannot discriminate configuration states: it SHALL never satisfy a version-cache check (a pod reporting version 1 forces a full configuration fetch and compare), and it SHALL never be reported as a cacheable PostSyncVersion.
+
+The skip-reload skip-version push SHALL apply only its runtime actions to the live worker; the pushed body lands on disk without activation, so any structural change carried in the body takes effect only at the next force-reload deploy. Runtime changes applied this way SHALL persist across later reloads because scheduled deploys re-render the current desired state — there is no HAProxy server-state file.
+
+#### Scenario: Sentinel forces full fetch
+
+- **WHEN** a cached configuration is supplied and the pod reports version 1
+- **THEN** the orchestrator SHALL bypass the cache and fetch the pod's full configuration even if the cached version is also 1.
+
+#### Scenario: Sentinel never cached
+
+- **WHEN** a no-changes sync completes on a pod whose version reads as 1
+- **THEN** the SyncResult SHALL NOT carry 1 as PostSyncVersion.
+
+#### Scenario: Skip-version push does not bump the version
+
+- **WHEN** a skip-reload skip-version push completes
+- **THEN** a subsequent GetVersion SHALL report 1 regardless of the previous on-disk version.
