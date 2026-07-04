@@ -251,6 +251,22 @@ validationTests:
       - type: contains
         target: "status:default/my-gateway:rendered"
         pattern: '"observedGeneration":3'
+      # supportedKinds is REQUIRED on ListenerStatus entries by OLD Gateway
+      # CRD schemas (v1.1/v1.4 list it in required alongside attachedRoutes/
+      # conditions/name; v1.5+ dropped it). The deployed and deployFailed
+      # variants may apply a listener entry BEFORE the rendered variant
+      # creates it — on a live v1.1 cluster the rendered patch was rejected
+      # for carrying attachedListenerSets, so the deployed patch was the
+      # FIRST to create the listener entries and CRD validation rejected
+      # them with "supportedKinds: Required value" (live-matrix finding,
+      # refs #59). Every variant must be self-sufficient regardless of
+      # phase ordering. JSON keys are sorted, so supportedKinds follows name.
+      - type: contains
+        target: "status:default/my-gateway:deployed"
+        pattern: '"name":"http","supportedKinds":\[[^]]*"kind":"HTTPRoute"'
+      - type: contains
+        target: "status:default/my-gateway:deployFailed"
+        pattern: '"name":"http","supportedKinds":\[[^]]*"kind":"HTTPRoute"'
   test-gateway-mixed-unsupported-protocol:
     requires: [gateways]
     description: >

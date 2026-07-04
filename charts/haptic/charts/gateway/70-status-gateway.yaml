@@ -78,6 +78,19 @@ templateSnippets:
             TCPRoute CRD is not served. -#}
         {%- _ = render "util-gateway-tcproute-count-contrib" default "" -%}
         {%- _ = render "util-gateway-tlsroute-count-contrib" default "" -%}
+        {#- ListenerSet seam (same compile-safe pattern): populates
+            shared "listenersetsUntyped" when the listenersets watch is
+            active; a no-op (key stays nil) when the ListenerSets CRD is
+            not served and the contrib snippet is stripped. The per-
+            gateway loop below reads the key both to count attached
+            ListenerSets AND to decide whether the rendered variant may
+            carry the attachedListenerSets status field at all — the
+            field only exists on Gateway CRD schemas that ship GEP-1713
+            (>= v1.5 experimental), and emitting it against an older
+            schema fails the WHOLE rendered patch at SSA typed-patch
+            construction (".status.attachedListenerSets: field not
+            declared in schema"). -#}
+        {%- _ = render "util-listenersets-contrib" default "" -%}
         {%%
           // Gather all routes (HTTPRoute + GRPCRoute + TLSRoute) into a
           // single iteration so the predicate evaluation is uniform.
@@ -1484,14 +1497,19 @@ templateSnippets:
                 "name": ldm["name"],
                 // attachedRoutes is REQUIRED on every listener status entry
                 // (Gateway CRD ListenerStatus.required = [attachedRoutes,
-                // conditions, name]). If this deployed variant applies a
-                // listener entry before the rendered variant creates it (e.g.
-                // an all-invalid Gateway that fails/deploys before its first
-                // rendered status lands), an entry without attachedRoutes is
-                // rejected by the API server — and that apply then fails and
-                // retries forever, flooding the status applier. Emit the same
-                // count as the rendered variant so any apply order is valid.
+                // conditions, name] — and OLD schemas, Gateway API v1.1/v1.4,
+                // additionally list supportedKinds in required). If this
+                // deployed variant applies a listener entry before the
+                // rendered variant creates it (e.g. an all-invalid Gateway
+                // that fails/deploys before its first rendered status lands,
+                // or the rendered patch itself failing to apply), an entry
+                // missing a required field is rejected by the API server —
+                // and that apply then fails and retries forever, flooding
+                // the status applier. Emit the same values as the rendered
+                // variant so any apply order is valid; identical values make
+                // the SSA shared-field co-ownership benign.
                 "attachedRoutes": ldm["attachedRoutes"],
+                "supportedKinds": ldm["supportedKinds"],
                 "conditions": []any{
                   condition("Programmed",
                     tostring(ldm["programmedStatus"]),
@@ -1515,26 +1533,40 @@ templateSnippets:
               }
               failedListenerEntries = append(failedListenerEntries, map[string]any{
                 "name": ldm["name"],
-                // Required field — see the deployed variant above. A failed
+                // Required fields — see the deployed variant above. A failed
                 // deploy is the MOST likely path to apply a listener entry
                 // before the rendered variant (an all-invalid Gateway), so
-                // this variant must carry attachedRoutes too.
+                // this variant must carry attachedRoutes and supportedKinds
+                // too (the latter is required by v1.1/v1.4 Gateway schemas).
                 "attachedRoutes": ldm["attachedRoutes"],
+                "supportedKinds": ldm["supportedKinds"],
                 "conditions": []any{
                   condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
                     generation, ListenerTransitionTime(gateway, lname, "Programmed", failProgrammedStatus)),
                 },
               })
             }
+            // attachedListenerSets only exists on Gateway CRD schemas that
+            // ship GEP-1713 (Gateway API >= v1.5 experimental). Against an
+            // older schema the field makes the WHOLE rendered patch fail at
+            // SSA typed-patch construction (".status.attachedListenerSets:
+            // field not declared in schema") — the Gateway then never gets
+            // its Accepted condition or addresses at all. Gate the key on
+            // the ListenerSet seam: listenersetsUntyped is non-nil exactly
+            // when the listenersets watch is active (the contrib snippet is
+            // stripped together with the watch when the CRD is unserved).
+            var renderedVariant = map[string]interface{}{
+              "addresses":  gwEffectiveAddresses,
+              "conditions": renderedTopConditions,
+              "listeners":  renderedListenerEntries,
+            }
+            if lsSeamRaw != nil {
+              renderedVariant["attachedListenerSets"] = attachedLSCount
+            }
             statusPatch(nsStr, nameStr,
               resources.gateways.APIVersion(), "Gateway",
               map[string]interface{}{
-                "rendered": map[string]interface{}{
-                  "addresses":            gwEffectiveAddresses,
-                  "conditions":           renderedTopConditions,
-                  "listeners":            renderedListenerEntries,
-                  "attachedListenerSets": attachedLSCount,
-                },
+                "rendered": renderedVariant,
                 "deployed": map[string]interface{}{
                   "conditions": deployedTopConditions,
                   "listeners":  deployedListenerEntries,
@@ -2210,8 +2242,13 @@ templateSnippets:
               // rendered variant creates it, an entry without attachedRoutes is
               // rejected by the API server and the apply retries forever,
               // flooding the status applier. Emit the same count the rendered
-              // variant does so any apply order is valid.
+              // variant does so any apply order is valid. supportedKinds rides
+              // along for the same phase-order self-sufficiency (mirroring the
+              // Gateway deployed/deployFailed variants, whose entries old
+              // Gateway schemas reject without it); identical values make the
+              // SSA shared-field co-ownership benign.
               "attachedRoutes": lsAttachedRoutes[listenerName],
+              "supportedKinds": supportedKinds,
               "conditions": []any{
                 condition("Programmed",
                   listenerProgrammedStatus, listenerProgrammedReason, listenerProgrammedMessage,

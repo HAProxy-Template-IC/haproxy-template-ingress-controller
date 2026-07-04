@@ -127,7 +127,7 @@ Only an authoritative NotFound answer from apiserver discovery SHALL count as "u
 
 ### Requirement: CRD-Watch Filtering, Debounce, and Reload Subsumption
 
-The CRD watch SHALL derive its relevant API groups from the RAW configuration's candidate lists, so the groups of currently-unavailable optional resources are watched too — an unavailable resource's CRD appearing is exactly the event the watch exists for. A CRD update SHALL trigger evaluation only when the CRD's spec changed (`metadata.generation` bumped) — covering served-version changes AND in-place schema-content upgrades, which field-level stripping depends on; status and metadata churn SHALL be ignored. Change bursts SHALL be debounced by 2 seconds (an install applies many CRDs at once). After the debounce window, the watch SHALL re-resolve against fresh discovery and a fresh schema fetcher, and request a reload only when the fresh resolution differs from the running iteration's resolution. Reload requests SHALL be posted non-blockingly onto the capacity-1 config-change channel: a reload already queued subsumes further requests.
+The CRD watch SHALL derive its relevant API groups from the RAW configuration's candidate lists, so the groups of currently-unavailable optional resources are watched too — an unavailable resource's CRD appearing is exactly the event the watch exists for. A CRD update SHALL trigger evaluation only when the CRD's spec changed (`metadata.generation` bumped) — covering served-version changes AND in-place schema-content upgrades, which field-level stripping depends on; status and metadata churn SHALL be ignored. Change bursts SHALL be debounced by 2 seconds (an install applies many CRDs at once). After the debounce window, the watch SHALL re-resolve against fresh discovery and a fresh schema fetcher, and request a reload only when the fresh resolution differs from the running iteration's resolution. A single inconclusive re-resolution SHALL NOT be accepted as final: the apiserver's discovery endpoint propagates a CRD apply asynchronously, and the CRD's later Established flip bumps no generation, so no further informer event arrives. The watch SHALL therefore re-check at a bounded cadence (5 seconds) after any re-resolution that yields no change or errors, until EITHER a re-resolution differs from the running one (reload, as above) OR the answer has been stable-equal for 3 consecutive checks since the last observed CRD event (accept "no change" and go quiet). Errored re-resolutions SHALL never trigger a reload or feature stripping directly, SHALL NOT count toward — and SHALL reset — the stability streak, and SHALL schedule the next recheck; a new CRD event SHALL restart the debounce window and both streaks. A PERSISTENT failure SHALL NOT idle in the recheck loop indefinitely: after 6 consecutive failed re-resolutions the watch SHALL escalate by triggering the reload anyway, so the iteration restart re-resolves on the startup path where a genuinely lost required resource fails fast and surfaces through the health endpoint and the iteration retry loop. Reload requests SHALL be posted non-blockingly onto the capacity-1 config-change channel: a reload already queued subsumes further requests.
 
 #### Scenario: Status-only CRD churn ignored
 
@@ -141,8 +141,18 @@ The CRD watch SHALL derive its relevant API groups from the RAW configuration's 
 
 #### Scenario: Equal resolution suppresses the reload
 
-- **WHEN** a relevant CRD changes but re-resolution yields a resolution equal to the running one
-- **THEN** no reload SHALL fire.
+- **WHEN** a relevant CRD changes and re-resolution yields a resolution equal to the running one for 3 consecutive bounded rechecks
+- **THEN** no reload SHALL fire and the watch SHALL go quiet until the next CRD event.
+
+#### Scenario: Recheck catches discovery-propagation lag
+
+- **WHEN** a relevant CRD is re-applied and the first re-resolution races the apiserver's discovery-propagation lag (still seeing the resource unserved), and no further CRD event arrives
+- **THEN** a bounded recheck SHALL observe the propagated resolution difference and trigger the reload without requiring another CRD event; a transient re-resolution error during the cycle SHALL only schedule the next recheck.
+
+#### Scenario: Persistent re-resolution failure escalates
+
+- **WHEN** re-resolution fails on 6 consecutive bounded rechecks after a relevant CRD event (for example a required resource's CRD was genuinely removed)
+- **THEN** the watch SHALL trigger a reload so the fault surfaces through the iteration restart's fail-fast path instead of hiding behind recheck warnings.
 
 #### Scenario: Queued reload subsumes later requests
 
