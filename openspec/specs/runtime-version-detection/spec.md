@@ -76,3 +76,117 @@ The controller SHALL watch CustomResourceDefinitions (apiextensions.k8s.io), fil
 
 - **WHEN** a CRD outside every watched resource's API group changes
 - **THEN** the controller SHALL NOT reinitialize.
+
+### Requirement: Transient Discovery Errors Fail Resolution Instead of Stripping
+
+Only an authoritative NotFound answer from apiserver discovery SHALL count as "unserved". A transient discovery error (apiserver blip, aggregated-API hiccup) SHALL fail the whole resolution with an error instead of being treated as unserved — silently treating it as unserved would strip optional features and bounce the controller through a spurious reinitialization on every blip. At iteration start, a failed resolution retries through the existing iteration retry loop. During CRD-change re-resolution, a resolution error SHALL skip the reload; the debounced watch re-evaluates on subsequent CRD events.
+
+#### Scenario: Discovery blip does not strip optional features
+
+- **WHEN** discovery returns a transient (non-NotFound) error for a group/version during resolution
+- **THEN** resolution SHALL fail with an error naming the group/version, no optional resource SHALL be marked unserved, and no feature SHALL be stripped.
+
+#### Scenario: CRD-change re-resolution failure skips the reload
+
+- **WHEN** a relevant CRD change triggers re-resolution and the re-resolution fails
+- **THEN** no iteration reload SHALL fire; the watch SHALL re-evaluate on the next CRD event.
+
+#### Scenario: Authoritative NotFound is unserved
+
+- **WHEN** discovery authoritatively reports a candidate group/version as NotFound
+- **THEN** that candidate SHALL count as unserved and the existing stripping and fail-fast behavior SHALL apply.
+
+### Requirement: CRD-Watch Filtering, Debounce, and Reload Subsumption
+
+The CRD watch SHALL derive its relevant API groups from the RAW configuration's candidate lists, so the groups of currently-unavailable optional resources are watched too — an unavailable resource's CRD appearing is exactly the event the watch exists for. A CRD update SHALL trigger evaluation only when the CRD's set of served versions changed; status and metadata churn SHALL be ignored. Change bursts SHALL be debounced by 2 seconds (an install applies many CRDs at once). After the debounce window, the watch SHALL re-resolve against fresh discovery and request a reload only when the fresh resolution differs from the running iteration's resolution. Reload requests SHALL be posted non-blockingly onto the capacity-1 config-change channel: a reload already queued subsumes further requests.
+
+#### Scenario: Status-only CRD churn ignored
+
+- **WHEN** a watched-group CRD's status is updated without changing its served versions
+- **THEN** no re-resolution SHALL be scheduled.
+
+#### Scenario: Install burst coalesces into one reload
+
+- **WHEN** a Gateway API install applies its full CRD set within the debounce window
+- **THEN** the watch SHALL re-resolve once after the window and trigger at most one reload.
+
+#### Scenario: Equal resolution suppresses the reload
+
+- **WHEN** a relevant CRD changes but re-resolution yields a resolution equal to the running one
+- **THEN** no reload SHALL fire.
+
+#### Scenario: Queued reload subsumes later requests
+
+- **WHEN** a reload is already queued on the config-change channel and another CRD change requests one
+- **THEN** the later request SHALL be dropped; the queued reload covers it.
+
+### Requirement: Live Config Validation Against the Effective Config
+
+On a live HAProxyTemplateConfig change, the config-change handler SHALL transform the parsed config into the effective config — running the same resolution as iteration start, via the installed effective resolver — BEFORE fanning it out to the scatter-gather validators, so validators judge exactly what a reinitialized iteration would load. A resolution failure (a required resource with no served version, or a transient discovery error) SHALL be published as a ConfigInvalidEvent, and the currently-running configuration SHALL keep serving. The scatter-gather envelope SHALL be 45 seconds. Superseded queued config loads SHALL be coalesced to the latest parsed config before validation.
+
+#### Scenario: Validators see the effective config
+
+- **WHEN** a live config change arrives while an optional watched resource is unserved
+- **THEN** the validators SHALL receive the config with the dependent snippets and tests already stripped, matching what a reinitialized iteration would load.
+
+#### Scenario: Resolution failure reported as invalid, current config keeps running
+
+- **WHEN** effective-config resolution fails for a live config change
+- **THEN** a ConfigInvalidEvent SHALL be published carrying the resolution error and no iteration restart SHALL be signalled.
+
+#### Scenario: Superseded config loads skipped
+
+- **WHEN** several config edits queue while a validation is pending
+- **THEN** the handler SHALL validate only the latest queued config.
+
+### Requirement: Machine-Generated Requires Edges
+
+The gateway library's `requires` annotations SHALL be machine-generated from the merged chart configuration by a regeneration script, never hand-maintained. Per snippet, the requirement set SHALL be the transitive dependency closure over four edge types: direct `resources.<kind>` references restricted to the nine gateway kinds; compile-time `{% import %}` references; `render "<name>"` WITHOUT a default clause — a render carrying `default` is deliberately NOT an edge, because it is the compile-safe seam a surviving snippet uses to reference a strippable one; and fileRegistry producer-consumer edges — a snippet consuming a literal file name that another snippet registers inherits the producer's requirements, because the file reference breaks at `haproxy -c` when the producer strips even though no compile-time edge exists. Validation tests SHALL derive their requires from the gateway kinds among their fixture keys. Regeneration SHALL rewrite only gateway fragment files.
+
+#### Scenario: Render with default is not an edge
+
+- **WHEN** a snippet references a strippable snippet via `render "..." default ""`
+- **THEN** the referencing snippet SHALL NOT inherit the strippable snippet's requirements.
+
+#### Scenario: File registration creates an edge
+
+- **WHEN** snippet A registers a map file via fileRegistry and snippet B references that literal file name
+- **THEN** snippet B SHALL inherit snippet A's requirements, so both strip together.
+
+### Requirement: Degraded-Profile Offline Verification
+
+The template test harness SHALL verify feature stripping against committed old-release Gateway API CRD bundles. After the main pass, it SHALL render the Standard-channel chart once and, for each bundle, build a merged schema directory (the core, discovery, haptic, and networking schemas plus that bundle's gateway CRDs; the "none" bundle contributes no gateway CRDs — the plain-Ingress cluster shape) and run offline validation against it. The set of failing tests SHALL exactly equal the bundle's expected-failures allowlist, with comments and blank lines ignored: a NEW failure and a STALE allowlist entry SHALL both fail the run. Each allowlisted test asserts a field absent from that schema generation — feature absence, not a bug; the controller still becomes Ready. The degraded pass SHALL be skipped when a single test or a custom schema directory is requested.
+
+#### Scenario: Stale allowlist entry fails
+
+- **WHEN** a test listed in a bundle's expected-failures allowlist passes against that bundle
+- **THEN** the harness SHALL fail with a diff of expected versus actual failure sets.
+
+#### Scenario: New failure fails
+
+- **WHEN** a test not listed in the allowlist fails against a bundle
+- **THEN** the harness SHALL fail with a diff of expected versus actual failure sets.
+
+#### Scenario: No-Gateway-API profile leaves the base suite intact
+
+- **WHEN** the Standard-channel chart is validated against the bundle containing no gateway CRDs
+- **THEN** every gateway feature SHALL strip atomically with its tests and the base and ingress suites SHALL pass untouched.
+
+### Requirement: Runtime GatewayClass Creation
+
+The GatewayClass SHALL be created and maintained at runtime through the gateway library's k8sResources (Server-Side Apply by the resource applier) rather than by a Helm template, emitted at the resolved apiVersion from a strippable snippet requiring gatewayclasses behind a render-with-default seam. It therefore exists exactly when the gatewayclasses CRD is served: installing Gateway API after HAPTIC — or upgrading it in place — creates the class with no Helm operation, and on clusters without the CRD the entry renders empty and applies nothing. Consumers that need the class immediately after install (for example the Gateway API conformance suite) SHALL poll for its existence rather than assume install order.
+
+#### Scenario: Late Gateway API install creates the class
+
+- **WHEN** the Gateway API CRDs are installed after the controller started
+- **THEN** the reinitialized iteration SHALL render and apply the GatewayClass without any Helm operation or pod restart.
+
+#### Scenario: No CRD means nothing applied
+
+- **WHEN** the gatewayclasses CRD is not served
+- **THEN** the GatewayClass k8sResources entry SHALL render empty and no apply SHALL be attempted.
+
+#### Scenario: Conformance suite waits for the class
+
+- **WHEN** the conformance suite starts against a fresh install
+- **THEN** it SHALL poll for the controller-created GatewayClass (up to 3 minutes) before invoking the upstream suite, whose setup fails immediately on a missing class.

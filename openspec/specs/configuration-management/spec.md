@@ -150,3 +150,63 @@ TemplateSnippets entries and ValidationTests entries MAY declare `requires`, a l
 
 - **WHEN** a snippet declares `requires: [nonexistent]` and no such WatchedResources key exists
 - **THEN** configuration validation SHALL reject the config with an error naming the snippet and the unknown resource.
+
+### Requirement: Structural Validation Rules
+
+Structural validation, running after defaults are applied, SHALL enforce: the pod selector's match_labels map is non-empty with non-empty keys and non-empty values; at least one watched resource is configured, and each watched resource has a non-empty resources name and at least one non-empty index_by expression (the apiVersion/apiVersions exclusivity rules are specified under WatchedResources Configuration); the dataplane port is between 1 and 65535 and the maps directory, SSL certificates directory, general storage directory, and config file path are all non-empty (a zero port or empty path after defaults indicates defaults were not applied); and the main HAProxy configuration template is non-empty. The log level SHALL be either empty (defer to the LOG_LEVEL environment variable or default) or one of TRACE, DEBUG, INFO, WARN, WARNING, or ERROR, matched case-insensitively, with WARNING accepted as an alias for WARN. Credentials validation SHALL require a non-empty dataplane username and a non-empty dataplane password.
+
+#### Scenario: Empty pod selector rejected
+
+- **WHEN** the pod selector's match_labels map is empty
+- **THEN** structural validation SHALL reject the config.
+
+#### Scenario: Out-of-range dataplane port rejected
+
+- **WHEN** the dataplane port is 0 or greater than 65535
+- **THEN** structural validation SHALL reject the config with an error naming the port field.
+
+#### Scenario: Empty storage directory rejected
+
+- **WHEN** the maps directory is empty after defaults were applied
+- **THEN** structural validation SHALL reject the config.
+
+#### Scenario: Empty main template rejected
+
+- **WHEN** the HAProxy configuration template is empty
+- **THEN** structural validation SHALL reject the config.
+
+#### Scenario: Log level alias accepted case-insensitively
+
+- **WHEN** the log level is set to "warning" in any letter case
+- **THEN** structural validation SHALL accept it as an alias for WARN, while an unknown token SHALL be rejected.
+
+#### Scenario: Empty credentials rejected
+
+- **WHEN** the credentials Secret yields an empty dataplane password
+- **THEN** credentials validation SHALL fail with an error naming the missing field.
+
+### Requirement: Chart RBAC Breadth
+
+The Helm chart's ClusterRole SHALL derive its rules from the merged watched-resource set (template libraries plus user overrides). For each watched resource, it SHALL grant get, list, and watch on the resource with apiGroups equal to the deduplicated union of the API groups across ALL candidate apiVersions of that resource, so a multi-version candidate list is watchable regardless of which version the cluster serves. Each watched resource declaring statusPatch SHALL additionally receive a patch grant on the resource's status subresource with the same group union. The role SHALL grant get, list, and watch on apiextensions.k8s.io customresourcedefinitions: read access powers schema resolution for typed watched resources, and the watch verb powers the runtime CRD watch that re-resolves the effective config when a watched resource's CRD is installed, upgraded, or removed.
+
+When the gateway template library is enabled, the role SHALL additionally grant cluster-wide get, list, watch, create, update, patch, and delete on core Services — Gateway API templates emit per-Gateway marker Services into the Gateway's namespace, outside the controller's own namespace-scoped Role — and create, update, patch, and delete on gatewayclasses, because the GatewayClass is created and maintained at runtime by the resource applier via Server-Side Apply rather than by Helm (read verbs come from the watched-resources rules).
+
+#### Scenario: Group union across candidate versions
+
+- **WHEN** a watched resource declares candidate apiVersions spanning two API groups
+- **THEN** the generated watch rule SHALL list both groups (deduplicated) for that resource.
+
+#### Scenario: statusPatch adds a status patch rule
+
+- **WHEN** a watched resource declares statusPatch true
+- **THEN** the ClusterRole SHALL contain a patch rule on that resource's /status subresource.
+
+#### Scenario: CRD read and watch always granted
+
+- **WHEN** the chart renders with rbac.create enabled
+- **THEN** the ClusterRole SHALL grant get, list, and watch on customresourcedefinitions regardless of which template libraries are enabled.
+
+#### Scenario: Gateway library widens Service and GatewayClass grants
+
+- **WHEN** the gateway template library is enabled
+- **THEN** the ClusterRole SHALL grant cluster-wide Service write verbs and gatewayclasses create/update/patch/delete; when it is disabled, neither grant SHALL be present.

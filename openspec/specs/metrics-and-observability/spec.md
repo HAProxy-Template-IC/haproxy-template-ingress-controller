@@ -67,14 +67,78 @@ THEN the gauge for that resource type SHALL be incremented by 3.
 WHEN a ChangeStats with Deleted=2 is received for a resource type
 THEN the gauge for that resource type SHALL be decremented by 2.
 
+### Requirement: Fleet Discovery Rejection Metric
+
+The controller SHALL expose a counter `haptic_haproxy_pods_rejected_total`, labelled by `reason`, incremented once per HAProxyPodRejectedEvent published by the discovery component. The reason labels SHALL be stable strings: `version_mismatch_older` and `version_mismatch_newer` for permanent major-version rejections, and `version_check_failed` for transient probe failures. Persistent growth of this counter indicates the controller cannot admit its deployed HAProxy pods.
+
+#### Scenario: Rejection increments the counter
+
+- **WHEN** discovery rejects a pod whose Dataplane API major version is newer than the controller's series
+- **THEN** `haptic_haproxy_pods_rejected_total{reason="version_mismatch_newer"}` SHALL be incremented by 1.
+
+#### Scenario: Probe failure counted under its own reason
+
+- **WHEN** a pod's version probe fails transiently during a discovery cycle
+- **THEN** the counter SHALL be incremented with reason `version_check_failed` for that cycle.
+
+### Requirement: Runtime Fast-Path Metrics
+
+The controller SHALL record every runtime-eligible fast-path apply attempt from RuntimeFastPathResultEvent across four counters: `haptic_runtime_fast_path_fires_total` (every attempt, one per pod per reconcile), `haptic_runtime_fast_path_applies_total` (attempts that applied at least one runtime-eligible server update), `haptic_runtime_fast_path_server_updates_total` (total server updates applied via the fast path), and `haptic_runtime_fast_path_failures_total` (attempts that errored — best-effort, since the scheduled deploy remains the correctness floor). A failed attempt SHALL increment only the fires and failures counters; a successful attempt with zero updates SHALL increment only fires.
+
+#### Scenario: Successful apply recorded
+
+- **WHEN** a fast-path attempt applies 3 server updates successfully
+- **THEN** fires SHALL increment by 1, applies by 1, and server updates by 3.
+
+#### Scenario: Failed attempt recorded without applies
+
+- **WHEN** a fast-path attempt errors
+- **THEN** fires and failures SHALL each increment by 1 and the applies and server-update counters SHALL be unchanged.
+
 ### Requirement: Health Endpoint
 
-The controller SHALL expose a `/health` endpoint for Kubernetes liveness probes. The endpoint SHALL return HTTP 200 when the controller process is running.
+The controller SHALL expose a fail-closed health endpoint at `/healthz` (with `/health` as an alias) on the introspection/debug port — there is no separate health listener, so a debug port of 0 (the binary default; the chart sets 8080) disables the endpoint along with the rest of the debug server. The endpoint SHALL return HTTP 503 until BOTH gates pass: the iteration's staged startup has finished (the `initialized` bit set at the very end of the iteration), AND every component in the lifecycle registry has left the transient Pending/Starting states. Both StatusRunning and StatusStandby SHALL count as healthy, so a follower replica reports 200 as soon as its staged startup completes (its leader-only components sit in Standby), while the leader reports 200 only after its leader-only components reach Running.
 
-#### Scenario: Health endpoint returns 200
+The response body SHALL be a JSON object with a `status` field (`ok` or `degraded`) and a `components` map containing one entry per registered component plus an `initialized` entry; when pluggable validators are configured, a `pluggable-validators` entry SHALL summarize them (healthy when all sockets respond; otherwise its error lists every failing `<name>: <reason>` pair semicolon-joined), and the entry SHALL be omitted entirely when none are configured. While `initialized` is unhealthy its error SHALL name the gate — `controller still initializing` during staged startup, or the first still-pending component (for example noting that leader election may not have acquired the lease yet). Before staged startup installs the full checker, an early checker SHALL serve the endpoint reporting `initialized` false plus a `config` entry describing config-load progress.
 
-WHEN a GET request is made to the `/health` endpoint
-THEN the response status code SHALL be 200.
+#### Scenario: 503 until staged startup completes
+
+- **WHEN** a GET request hits `/healthz` before the iteration has finished its staged startup
+- **THEN** the response SHALL be HTTP 503 with an `initialized` entry whose error explains what is still pending.
+
+#### Scenario: Follower reports healthy in standby
+
+- **WHEN** a non-leader replica finishes staged startup and its leader-only components are in Standby
+- **THEN** `/healthz` SHALL return HTTP 200.
+
+#### Scenario: Per-component detail in the body
+
+- **WHEN** one registered component is unhealthy after initialization
+- **THEN** the response SHALL be HTTP 503 with `status` `degraded` and that component's entry carrying `healthy: false` and its error, while healthy components keep their own entries.
+
+#### Scenario: Failing validator socket named
+
+- **WHEN** pluggable validators are configured and one socket is unreachable
+- **THEN** the `pluggable-validators` entry SHALL be unhealthy and its error SHALL name the failing validator and reason.
+
+### Requirement: Reinitialization Grace Window
+
+After the controller has been fully initialized at least once in its process lifetime, a voluntary iteration restart (config, CRD, or credentials change) SHALL enter a 90-second grace window during which the health checker rewrites unhealthy component entries as healthy with the annotation `reinitializing (grace period): <original error>` — softening only the aggregate HTTP status so the kubelet does not kill the pod mid-rebuild, while preserving the underlying detail for operators. The grace SHALL end at the earlier of window expiry or the iteration being observed fully healthy once; after settling, any later unhealthiness SHALL surface immediately for the rest of the iteration. The grace SHALL apply only after a first successful initialization, so a fresh pod with a bad configuration still crash-loops under the fail-closed startup contract.
+
+#### Scenario: Reinit does not flip liveness
+
+- **WHEN** a config change restarts the iteration on a previously initialized controller and components are still rebuilding 30 seconds in
+- **THEN** `/healthz` SHALL return HTTP 200 with the affected entries annotated as reinitializing.
+
+#### Scenario: Settling ends the grace early
+
+- **WHEN** the rebuilt iteration is observed fully healthy once and a component then fails within the original 90-second window
+- **THEN** the failure SHALL surface as HTTP 503 immediately rather than being masked for the remainder of the window.
+
+#### Scenario: Fresh pod stays fail-closed
+
+- **WHEN** a controller pod that has never completed initialization is unhealthy
+- **THEN** no grace SHALL apply and `/healthz` SHALL report HTTP 503.
 
 ### Requirement: Structured JSON Logging
 

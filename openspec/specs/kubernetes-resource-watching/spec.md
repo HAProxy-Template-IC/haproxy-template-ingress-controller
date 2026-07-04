@@ -209,3 +209,55 @@ The SingleWatcher and the Bulk Watcher SHALL register a watch error handler for 
 
 - **WHEN** a watch connection error occurs on a Bulk Watcher (for example because the watched API version stopped being served mid-run)
 - **THEN** the error SHALL be logged at warn level with the watcher's GVR and the last error timestamp SHALL be recorded, instead of the failure being visible only in client-go's internal logging.
+
+### Requirement: Informer Body Projection for On-Demand Stores
+
+For resources backed by the cached (on-demand) store — and only those — the Bulk Watcher SHALL install a transform on the informer, before the informer starts, that strips each unstructured object down to a conservative set of top-level roots: always apiVersion, kind, and metadata, plus the top-level root of every IndexBy expression and the top-level root of the FieldSelector's field path. Retention SHALL be whole top-level blocks, never subtree-trimmed — over-retain, never under-retain — so index-key extraction, field-selector evaluation, and identity handling keep working on the projected copy. The retained metadata block SHALL additionally be passed through the indexer's field filtering so configured IgnoreFields (managedFields, the last-applied-configuration annotation) are stripped from the projected copy too. Non-unstructured inputs (deletion tombstones) SHALL pass through unchanged.
+
+Renders SHALL never read a projected body: the cached store resolves reads through a live API GET of the full, un-projected object, and the store SHALL be constructed in projected mode so informer-delivered stripped bodies are never cached as values. The projection SHALL be resource-agnostic, derived only from the JSONPath configuration, never from a resource kind.
+
+#### Scenario: Secret payload dropped from informer memory
+
+- **WHEN** a Secret-shaped resource is watched with an on-demand store and default index expressions
+- **THEN** the informer's cached copy SHALL NOT contain the data or stringData blocks, while apiVersion, kind, and metadata survive.
+
+#### Scenario: Field-selector root survives projection
+
+- **WHEN** an on-demand resource is configured with a FieldSelector on a spec field
+- **THEN** the spec block SHALL be retained in the projected copy so client-side selector evaluation still works.
+
+#### Scenario: Render reads the full body
+
+- **WHEN** a template reads an on-demand resource whose informer copy was projected
+- **THEN** the read SHALL be served from a live API GET of the full object, never from the projected copy.
+
+#### Scenario: Full-store kinds are not projected
+
+- **WHEN** a resource uses the full in-memory store
+- **THEN** no projection transform SHALL be installed and complete resource bodies SHALL be stored.
+
+### Requirement: Controller Watcher Wiring
+
+For every configured watched resource, plus an auto-injected watcher for the HAProxy pods matching the pod selector, the controller SHALL create one Bulk Watcher wired as follows. The cache TTL for on-demand stores SHALL be 2.2 times the drift-prevention interval (132 seconds at the 60-second default), sized so one failed rendering cycle does not evict cached resources. The per-watcher debounce interval SHALL come from the resource's debounceInterval override; an empty or unparseable value SHALL fall back to the watcher default of 2 seconds. The global ignore-fields list SHALL be deduplicated (preserving first-occurrence order) and applied to every watcher. The store SHALL be the cached store when the resource declares store "on-demand" and the full in-memory store otherwise. CallOnChangeDuringSync SHALL be false, so per-resource change callbacks fire only after initial sync. Resource changes SHALL publish a resource-index-updated event and sync completion SHALL publish a resource-sync-complete event on the event bus.
+
+An index synchronization tracker SHALL consume the per-resource sync-complete events and publish a single IndexSynchronized event exactly once, after every expected resource name — all configured watched-resource names plus the auto-injected haproxy-pods watcher — has completed initial sync.
+
+#### Scenario: Cache TTL derived from drift interval
+
+- **WHEN** the drift-prevention interval is the 60-second default
+- **THEN** on-demand watchers SHALL use a cache TTL of 132 seconds.
+
+#### Scenario: Debounce override falls back to default
+
+- **WHEN** a watched resource declares no debounceInterval
+- **THEN** its watcher SHALL use the 2-second default debounce window.
+
+#### Scenario: IndexSynchronized waits for haproxy-pods
+
+- **WHEN** every user-configured resource has synced but the auto-injected haproxy-pods watcher has not
+- **THEN** the IndexSynchronized event SHALL NOT be published yet.
+
+#### Scenario: IndexSynchronized published once
+
+- **WHEN** all expected resources (including haproxy-pods) complete initial sync and a resource later re-reports sync completion
+- **THEN** exactly one IndexSynchronized event SHALL be published in total.

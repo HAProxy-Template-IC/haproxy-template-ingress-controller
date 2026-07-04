@@ -61,14 +61,20 @@ a reload.
 
 ## Consequences
 
-- The chart-side static floor of 4 mirror message slots in `spoe.conf`
-  is no longer needed. The spoa-hub library now sizes
-  `messages: ["mirror-1"..mirror-<count>]` strictly from
-  `globalFeatures["mirrorRouteMirrorCount"]` (the actual per-cluster
-  maximum), with no minimum. Routes shrinking from 4 to 2 mirror
-  filters now correctly shrink `spoe.conf`; the explicit reload from
-  the guard then loads the new (smaller) `haproxy.cfg` and `spoe.conf`
-  atomically.
+- `skip_reload=true` closes the HAProxy reload-ordering race (race A)
+  only. The chart-side static floor of 4 mirror message slots was
+  removed on that basis, but has since been re-added
+  (`mirrorStaticMinSlots`, default 4): the floor independently masks a
+  second, unrelated race in the SPOA hub's plugin loader (race B,
+  spoa-hub issue #47), where a transient render emitting an empty
+  `messages` list makes the hub unregister the mirror handler on TOML
+  reload and silently drop in-flight NOTIFYs. Do not remove the floor
+  until the upstream plugin loader stops unregistering
+  already-registered messages on reload. Above the floor, slot counts
+  still size dynamically from `globalFeatures["mirrorMaxFanout"]`;
+  shrinkage within the dynamic range correctly shrinks `spoe.conf`,
+  and the guard's explicit reload loads the new (smaller)
+  `haproxy.cfg` and `spoe.conf` atomically.
 - The race generalises away: any future auxiliary file type (crt-list,
   error files, additional map files) inherits the same atomic-swap
   semantics — content lands on disk silently, then exactly one reload

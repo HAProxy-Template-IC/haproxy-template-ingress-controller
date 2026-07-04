@@ -74,7 +74,7 @@ THEN the GVK SHALL be formatted as `"networking.k8s.io/v1.Ingress"`.
 
 ### Requirement: Three-Phase Dry-Run Validation
 
-The DryRunValidator SHALL perform validation in phases: (1) Template rendering using an overlay store that simulates the proposed resource change, (2) HAProxy syntax validation of the rendered configuration, and (3) Embedded test execution if validation tests are configured. A failure in any phase SHALL reject the admission request with a user-readable reason. At admission, the render-validate pipeline (phases 1 and 2) SHALL run synchronously via the DryRunValidator on the caller's context, which the webhook bounds to ~5 seconds. The 30-second `DefaultValidationTimeout` applies only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), which the webhook does NOT use.
+The DryRunValidator SHALL perform validation in phases: (1) Template rendering using an overlay store that simulates the proposed resource change, (2) HAProxy syntax validation of the rendered configuration, and (3) Embedded test execution if validation tests are configured. A failure in any phase SHALL reject the admission request with a user-readable reason. At admission, the render-validate pipeline (phases 1 and 2) SHALL run synchronously via the DryRunValidator on the caller's context, which the webhook bounds to 9 seconds. The 30-second `DefaultValidationTimeout` applies only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), which the webhook does NOT use.
 
 #### Scenario: Rendering failure rejects admission
 
@@ -163,7 +163,7 @@ THEN the webhook SHALL return `Allowed: false` with reason `"metadata.name or me
 
 ### Requirement: Webhook Timeout
 
-The webhook component SHALL enforce a 10-second read/write timeout on the HTTPS server. The dry-run validation call to ValidateDirect SHALL use a 5-second context timeout, and the render-validate pipeline SHALL run synchronously on that ~5-second context at admission. The 30-second `DefaultValidationTimeout` SHALL apply only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), not to admission.
+The webhook component SHALL enforce a 10-second read/write timeout on the HTTPS server. The dry-run validation call to ValidateDirect SHALL use a 9-second context timeout, and the render-validate pipeline SHALL run synchronously on that 9-second context at admission. The 30-second `DefaultValidationTimeout` SHALL apply only to the event-driven proposal path (ProposalValidator's `ProcessProposal`), not to admission.
 
 #### Scenario: Server read/write timeout
 
@@ -172,5 +172,70 @@ THEN the server SHALL terminate the connection.
 
 #### Scenario: Validation timeout
 
-WHEN dry-run validation exceeds 5 seconds
+WHEN dry-run validation exceeds 9 seconds
 THEN the context SHALL be cancelled and the validation SHALL fail.
+
+### Requirement: Cert-Directory Gate
+
+The webhook server SHALL run if and only if a TLS certificate directory is configured (the WEBHOOK_CERT_DIR environment variable or the corresponding flag is non-empty; the chart mounts the cert Secret and sets the variable when webhook support is enabled). The cert directory — not the presence of watched-resource webhook rules — SHALL be the operative gate: the ValidatingWebhookConfiguration may route HAProxyTemplateConfig admission to the controller even when no watched resource enables admission validation. The server port SHALL be 9443.
+
+#### Scenario: Empty cert dir disables the webhook
+
+- **WHEN** WEBHOOK_CERT_DIR is empty
+- **THEN** no webhook server SHALL be started, regardless of the configuration's webhook rules.
+
+#### Scenario: Cert dir without watched-resource rules still serves config admission
+
+- **WHEN** WEBHOOK_CERT_DIR is set and no watched resource enables admission validation
+- **THEN** the webhook server SHALL start on port 9443 serving HAProxyTemplateConfig admission.
+
+### Requirement: Config Validator Always Wired
+
+When webhook validators are constructed, the HAProxyTemplateConfig admission ConfigValidator SHALL ALWAYS be built, independent of watched-resource webhook rules — HAProxyTemplateConfig admission must never fall through the server's fail-open path for unregistered validators. The watched-resource DryRunValidator SHALL be built only when at least one watched resource sets `enableValidationWebhook: true`; without such rules its overlay-store and test-runner setup is skipped.
+
+#### Scenario: Config admission validated with zero watched-resource rules
+
+- **WHEN** no watched resource has enableValidationWebhook enabled and an HAProxyTemplateConfig admission request arrives
+- **THEN** the ConfigValidator SHALL validate it (render, syntax check, embedded tests) rather than admitting via fail-open.
+
+#### Scenario: DryRunValidator built only on demand
+
+- **WHEN** at least one watched resource sets enableValidationWebhook: true
+- **THEN** the DryRunValidator SHALL be constructed and registered for those resources' GVKs.
+
+### Requirement: Internal Admission Deadlines Under the Chart Timeout
+
+Both internal admission deadlines SHALL be 9 seconds: the watched-resource dry-run deadline (schema bootstrap plus render plus `haproxy -c`) and the HAProxyTemplateConfig deadline (per-admission schema bootstrap of at most 2 seconds, render plus `haproxy -c`, and the 5-second embedded validation-test budget). Both SHALL stay under the chart's 10-second `timeoutSeconds` so the controller returns a structured admission decision before the API server gives up and applies the failurePolicy to a transport failure.
+
+#### Scenario: Slow validation produces a structured decision
+
+- **WHEN** an admission validation approaches the internal 9-second deadline
+- **THEN** the controller SHALL return a structured response (deny, or admit-with-warning for an incomplete test run) within the API server's 10-second timeout rather than letting the request fail at the transport level.
+
+### Requirement: Startup Bind Gate
+
+Iteration startup SHALL block for up to 30 seconds on the webhook component's Listening() signal so the controller's readiness does not flip healthy before the TLS listener has bound — otherwise the API server's first AdmissionReview races the listener and bounces with a connection error. If the listener has not bound within 30 seconds, startup SHALL proceed with a warning and the underlying bind error SHALL surface through the component's error group.
+
+#### Scenario: Readiness waits for the TLS bind
+
+- **WHEN** the webhook component is starting
+- **THEN** iteration setup SHALL NOT advance past the webhook stage until the TLS listener is bound, the iteration is cancelled, or 30 seconds elapse.
+
+#### Scenario: Bind timeout does not deadlock startup
+
+- **WHEN** the webhook listener fails to bind within 30 seconds
+- **THEN** startup SHALL proceed and the bind failure SHALL be reported through the error group instead of blocking the iteration forever.
+
+### Requirement: Fixed Fail-Open Policy for Config Admission
+
+The chart SHALL set `failurePolicy: Ignore` on the HAProxyTemplateConfig admission webhook and SHALL NOT expose it as a configurable value: a down controller must never block operators from applying HAProxyTemplateConfig updates (the first-install chicken-and-egg, and any recovery scenario where the fix lives in a CRD update). This upstream admission gate — validating the config with line-numbered `haproxy -c` diagnostics at apply time — is what lets the leader-side reconcile pipeline skip `haproxy -c` on every render (~94 ms saved per render). When the webhook is unreachable, the Dataplane API still runs `haproxy -c` server-side before accepting a raw configuration push, so an invalid config produces a delayed but clear failure through the published config status. Watched-resource admission remains per-resource opt-in via `enableValidationWebhook`.
+
+#### Scenario: Controller down does not block config updates
+
+- **WHEN** the controller is unavailable and an operator applies an HAProxyTemplateConfig update
+- **THEN** the API server SHALL admit the update under failurePolicy Ignore.
+
+#### Scenario: Server-side check backstops an unreachable webhook
+
+- **WHEN** the webhook is unreachable and an invalid config reaches the render pipeline
+- **THEN** the Dataplane API's server-side `haproxy -c` SHALL reject the push and the failure SHALL surface through the published config status.

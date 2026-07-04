@@ -34,6 +34,58 @@ THEN those events SHALL be stored internally and not delivered to subscribers ye
 WHEN Start() is called after events have been buffered
 THEN all buffered events SHALL be delivered to subscribers in the order they were published.
 
+### Requirement: Pause and Resume Buffering
+
+`Pause()` SHALL return a started bus to buffering mode: events published while paused SHALL be buffered instead of delivered, and `Publish` SHALL return 0 for them. A subsequent `Start()` SHALL replay the buffered events to subscribers in publish order. This pause/resume cycle exists so leadership transitions can buffer events while late-subscribing leader-only components register, without those components missing state. Both `Pause()` and `Start()` SHALL be idempotent and safe to call concurrently with `Publish` and `Subscribe`.
+
+The buffer (both pre-start and paused) SHALL be capped at MaxPreStartBufferSize (1000 events); once full, further buffered publishes SHALL be dropped with a WARN log naming the event type.
+
+#### Scenario: Events buffered while paused are replayed on Start
+
+- **WHEN** the bus is paused, three events are published, a new component subscribes, and Start() is called
+- **THEN** the new subscriber SHALL receive all three events in publish order.
+
+#### Scenario: Publish returns zero while buffering
+
+- **WHEN** an event is published on a paused (or not-yet-started) bus
+- **THEN** Publish SHALL return 0.
+
+#### Scenario: Buffer cap drops with warning
+
+- **WHEN** the buffered-event count has reached 1000 and another event is published before Start()
+- **THEN** that event SHALL be dropped and a WARN log SHALL record the capacity and event type.
+
+#### Scenario: Pause is idempotent
+
+- **WHEN** Pause() is called on a bus that is already paused (or never started)
+- **THEN** the call SHALL have no additional effect and previously buffered events SHALL be retained.
+
+### Requirement: Lossy Subscriptions and Drop Accounting
+
+Subscriptions SHALL be either critical (the default `Subscribe` and `SubscribeTypes`) or lossy (`SubscribeLossy` and the lossy typed variant), and the bus SHALL account for buffer-full drops separately per class. A drop from a critical subscription SHALL increment the critical drop counter AND invoke the optional drop callback registered via `SetDropCallback` (receiving the event type, subscriber name, and buffer size). A drop from a lossy subscription SHALL increment the observability drop counter silently — no callback — because drops from observability consumers (commentator, debug taps) are expected under load and must not raise the same alerts as business-critical backpressure. Both counters SHALL be readable at runtime.
+
+Subscribing after `Start()` on a non-suppressed path SHALL log a WARN including the caller's source file and line, since the subscriber may have missed buffered events; the leader-only typed subscription variant SHALL suppress this warning because late subscription is intentional there. Subscriber buffer sizes SHALL be drawn from named tier constants (10, 50, 100, 200, 1000) rather than ad-hoc per-component numbers.
+
+#### Scenario: Critical drop fires callback and counter
+
+- **WHEN** a critical subscriber's buffer is full and an event is published
+- **THEN** the critical drop counter SHALL increment and the drop callback (if set) SHALL be invoked with the drop details.
+
+#### Scenario: Lossy drop is silent
+
+- **WHEN** a lossy subscriber's buffer is full and an event is published
+- **THEN** the observability drop counter SHALL increment and the drop callback SHALL NOT be invoked.
+
+#### Scenario: Late subscription warns with caller location
+
+- **WHEN** a component calls Subscribe after Start() has already run
+- **THEN** a WARN log SHALL be emitted identifying the calling source file and line.
+
+#### Scenario: Leader-only late subscription does not warn
+
+- **WHEN** a leader-only component subscribes via the leader-only typed variant after Start()
+- **THEN** no late-subscription warning SHALL be logged.
+
 ### Requirement: Subscribe with Buffer Size
 
 `Subscribe(name, bufferSize)` SHALL return a channel of events with the specified buffer capacity. The `name` parameter identifies the subscriber for drop accounting and debug logging. The subscriber SHALL receive all events published after subscription.

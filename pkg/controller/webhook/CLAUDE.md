@@ -91,14 +91,14 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
             return true, "", nil
         }
 
-        // 3. Hard internal deadline — the controller imposes 5s here, in
-        //    addition to the API server's `timeoutSeconds` on the
-        //    ValidatingWebhookConfiguration.
+        // 3. Hard internal deadline — the controller imposes 9s here
+        //    (resourceAdmissionTimeout), in addition to the API server's
+        //    `timeoutSeconds` on the ValidatingWebhookConfiguration.
         parent := c.serverCtx  // allows iteration shutdown to cancel in-flight validations
         if parent == nil {
             parent = context.Background()  // nil only in unit tests that skip Start()
         }
-        ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+        ctx, cancel := context.WithTimeout(parent, resourceAdmissionTimeout)
         defer cancel()
 
         // 4. Direct synchronous call into the proposal pipeline.
@@ -117,12 +117,14 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 
 Two deadlines apply, in this order:
 
-1. The component's hard 5-second `context.WithTimeout` around `ValidateDirect`.
+1. The component's hard 9-second `context.WithTimeout` around `ValidateDirect`
+   (`resourceAdmissionTimeout`; HAProxyTemplateConfig admission uses the equally
+   sized `configAdmissionTimeout`).
 2. The API server's `timeoutSeconds` on the `ValidatingWebhookConfiguration`
    (default 10s) cuts the whole HTTP request if either deadline doesn't fire first.
 
-If you change the internal 5s, update both this section and the
-`createResourceValidator` constant — keeping the inner timeout shorter than the
+If you change the internal 9s, update both this section and the
+`resourceAdmissionTimeout` constant — keeping the inner timeout shorter than the
 outer one means the controller can return a structured deny rather than letting
 the API server treat the whole request as a transport failure.
 
