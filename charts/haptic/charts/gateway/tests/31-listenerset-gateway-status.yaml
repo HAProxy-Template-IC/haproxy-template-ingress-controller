@@ -87,3 +87,15 @@ validationTests:
       - type: contains
         target: "status:default/ls-host-gw:deployFailed"
         pattern: '"attachedRoutes":\d+,"conditions":\[[^]]*"type":"Programmed"'
+      # attachedListenerSets must be emitted whenever the listenersets watch
+      # is active (this test requires listenersets, so it only runs against
+      # schema generations that know the field). The field is gated on the
+      # util-listenersets-contrib seam because pre-v1.5 Gateway schemas
+      # don't declare it and the whole rendered patch would fail at SSA
+      # typed-patch construction (live-matrix finding, refs #59) — this
+      # assertion is the regression guard for the field itself surviving
+      # that gate. The ls-set above attaches (allowedListeners from=All,
+      # listeners survive conflict detection), so the count is exactly 1.
+      - type: contains
+        target: "status:default/ls-host-gw:rendered"
+        pattern: '"attachedListenerSets":1'

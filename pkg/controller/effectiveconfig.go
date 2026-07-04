@@ -176,9 +176,9 @@ func installEffectiveConfig(
 // from the RAW config's candidate lists — an unavailable optional resource's
 // CRD appearing is exactly the event this watch exists for. The reload only
 // fires when a fresh resolution differs from this iteration's; a resolution
-// ERROR (a required resource lost its served version) also reloads, so the
-// next iteration fails fast and surfaces the cause in /healthz instead of
-// silently serving from a stale informer cache.
+// ERROR is inconclusive — the watch neither reloads on it (a discovery blip
+// must not bounce the controller) nor accepts it as final (it re-checks on
+// the component's bounded recheck cadence until the answer settles).
 func startCRDWatch(
 	ctx context.Context,
 	setup *componentSetup,
@@ -189,18 +189,20 @@ func startCRDWatch(
 	logger *slog.Logger,
 ) {
 	crdWatch := crdwatch.New(k8sClient, crdwatch.RelevantGroups(rawCfg),
-		func() bool {
+		func() (bool, error) {
 			_, freshResolution, resolveErr := resolveEffectiveConfig(ctx, rawCfg, k8sClient, logger)
 			if resolveErr != nil {
 				// Transient discovery errors surface as resolveErr too — a
 				// reload on a blip would bounce the controller for nothing.
-				// Skip; the debounced watcher re-fires on further CRD events
-				// (and a genuinely lost REQUIRED resource keeps generating
-				// them, or fails the next natural reload fast).
-				logger.Warn("CRD-change re-resolution failed; skipping reload", "error", resolveErr)
-				return false
+				// Report the answer as inconclusive: the watch never reloads
+				// on it directly, but keeps re-checking on its bounded
+				// cadence. A PERSISTENT failure (e.g. a required resource's
+				// CRD genuinely removed) trips the watch's error-streak bound
+				// (DefaultMaxErrorStreak), which escalates to a reload so the
+				// iteration restart fails fast and surfaces via /healthz.
+				return false, resolveErr
 			}
-			return !resolution.Equal(freshResolution)
+			return !resolution.Equal(freshResolution), nil
 		},
 		func() {
 			select {

@@ -50,6 +50,30 @@ const ComponentName = "crdwatch"
 // in quick succession) into one reload decision.
 const DefaultDebounce = 2 * time.Second
 
+// DefaultRecheckInterval is the cadence at which an inconclusive re-resolution
+// (no change yet, or a transient error) is re-checked after a CRD event burst.
+// The apiserver's discovery endpoint propagates a CRD apply asynchronously: a
+// re-resolution racing that lag still sees the OLD state, and the CRD's later
+// Established condition flip bumps no metadata.generation — so no further
+// informer event ever arrives to break the stall. The recheck timer is what
+// closes that window.
+const DefaultRecheckInterval = 5 * time.Second
+
+// DefaultStableChecks is how many CONSECUTIVE equal re-resolutions (since the
+// last observed CRD event) it takes before the watch accepts "no effective
+// change" as final and goes quiet. Errored re-resolutions reset the streak —
+// an error confirms nothing.
+const DefaultStableChecks = 3
+
+// DefaultMaxErrorStreak bounds CONSECUTIVE failed re-resolutions before the
+// component escalates by triggering the reload anyway. A persistently failing
+// resolution (e.g. a required resource's CRD genuinely removed) must not idle
+// in the recheck loop forever with only warnings: escalating hands the fault
+// to the iteration restart path, where resolution failure fails fast and
+// surfaces through /healthz and the iteration retry loop. Transient discovery
+// blips settle long before this bound (~30s at the default cadence) fires.
+const DefaultMaxErrorStreak = 6
+
 var crdGVR = schema.GroupVersionResource{
 	Group:    "apiextensions.k8s.io",
 	Version:  "v1",
@@ -70,16 +94,22 @@ type Component struct {
 	// and reports whether the outcome differs from the running iteration's.
 	// It keeps pointless restarts (e.g. an unrelated CRD added to a watched
 	// group, or a new served version that doesn't win its preference list)
-	// from bouncing the controller.
-	shouldReload func() bool
+	// from bouncing the controller. A non-nil error marks the answer as
+	// INCONCLUSIVE (transient discovery/schema failure): the component never
+	// reloads on it, but also never accepts it as final — it schedules the
+	// next recheck instead.
+	shouldReload func() (bool, error)
 
 	// trigger requests the iteration restart (non-blocking; the reload
 	// channel has capacity 1 and a queued reload subsumes this one).
 	trigger func()
 
-	debounce time.Duration
-	synced   atomic.Bool
-	pending  chan struct{}
+	debounce        time.Duration
+	recheckInterval time.Duration
+	stableChecks    int
+	maxErrorStreak  int
+	synced          atomic.Bool
+	pending         chan struct{}
 }
 
 // New creates the CRD watch component.
@@ -88,15 +118,18 @@ type Component struct {
 //     effective one, so groups of currently-unavailable optional resources
 //     are watched too (their CRD appearing is exactly the event we want).
 //   - shouldReload / trigger: see field docs.
-func New(k8sClient *client.Client, groups map[string]bool, shouldReload func() bool, trigger func(), logger *slog.Logger) *Component {
+func New(k8sClient *client.Client, groups map[string]bool, shouldReload func() (bool, error), trigger func(), logger *slog.Logger) *Component {
 	return &Component{
-		k8sClient:    k8sClient,
-		logger:       logger.With("component", ComponentName),
-		groups:       groups,
-		shouldReload: shouldReload,
-		trigger:      trigger,
-		debounce:     DefaultDebounce,
-		pending:      make(chan struct{}, 1),
+		k8sClient:       k8sClient,
+		logger:          logger.With("component", ComponentName),
+		groups:          groups,
+		shouldReload:    shouldReload,
+		trigger:         trigger,
+		debounce:        DefaultDebounce,
+		recheckInterval: DefaultRecheckInterval,
+		stableChecks:    DefaultStableChecks,
+		maxErrorStreak:  DefaultMaxErrorStreak,
+		pending:         make(chan struct{}, 1),
 	}
 }
 
@@ -200,7 +233,7 @@ func (c *Component) noteChange(what, group string, obj any) {
 }
 
 // runDebounceLoop collapses bursts of CRD changes and, once quiet for the
-// debounce window, re-resolves and triggers the reload if the outcome changed.
+// debounce window, runs one settle cycle per burst (see settle).
 func (c *Component) runDebounceLoop(ctx context.Context) {
 	for {
 		select {
@@ -208,30 +241,91 @@ func (c *Component) runDebounceLoop(ctx context.Context) {
 			return
 		case <-c.pending:
 		}
+		if !c.settle(ctx) {
+			return
+		}
+	}
+}
 
-		timer := time.NewTimer(c.debounce)
-	drain:
-		for {
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-c.pending:
-				if !timer.Stop() {
-					<-timer.C
+// settle runs one decision cycle after a CRD event: debounce the burst, then
+// re-resolve — and do NOT accept a single inconclusive answer as final. The
+// apiserver's discovery endpoint propagates a CRD apply asynchronously, so a
+// re-resolution racing that lag still sees the old state; the CRD's later
+// Established condition flip bumps no metadata.generation, so the UpdateFunc
+// filter drops it and no further informer event arrives (the
+// TestGatewayAPICRDUpgradeInPlace reinstall stall). The cycle therefore
+// re-checks at recheckInterval cadence until EITHER
+//
+//   - a re-resolution differs from the running one → reload (as before), OR
+//   - the answer has been stable-equal for stableChecks CONSECUTIVE checks
+//     since the last observed CRD event → accept "no change" and go quiet.
+//
+// An errored re-resolution is inconclusive: it never reloads (a blip must
+// not bounce the controller) and never counts toward — it resets — the
+// stability streak; it just schedules the next recheck. A new CRD event at
+// any point restarts the debounce window and the streak.
+//
+// Returns false when ctx was cancelled.
+func (c *Component) settle(ctx context.Context) bool {
+	equalStreak := 0
+	errorStreak := 0
+	timer := time.NewTimer(c.debounce)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-c.pending:
+			// The world changed again: restart the debounce window and
+			// invalidate any stability observed so far.
+			equalStreak = 0
+			errorStreak = 0
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
 				}
-				timer.Reset(c.debounce)
-			case <-timer.C:
-				break drain
 			}
+			timer.Reset(c.debounce)
+			continue
+		case <-timer.C:
 		}
 
-		if !c.shouldReload() {
-			c.logger.Debug("CRD change does not alter the effective config; no reload")
-			continue
+		reload, err := c.shouldReload()
+		switch {
+		case err != nil:
+			equalStreak = 0
+			errorStreak++
+			if errorStreak >= c.maxErrorStreak {
+				// Persistent failure, not a blip: escalate instead of idling
+				// in the recheck loop forever. The reload makes the next
+				// iteration re-resolve on the startup path, where a lost
+				// REQUIRED resource fails fast and surfaces through /healthz
+				// and the iteration retry loop instead of hiding behind
+				// warnings while stale informer caches keep serving.
+				c.logger.Error("CRD-change re-resolution failing persistently — escalating to reinitialization",
+					"error", err, "consecutive_errors", errorStreak)
+				c.trigger()
+				return true
+			}
+			c.logger.Warn("CRD-change re-resolution failed; scheduling recheck",
+				"error", err, "recheck_in", c.recheckInterval, "consecutive_errors", errorStreak)
+		case reload:
+			c.logger.Info("CRD change alters the effective config — triggering reinitialization")
+			c.trigger()
+			return true
+		default:
+			errorStreak = 0
+			equalStreak++
+			if equalStreak >= c.stableChecks {
+				c.logger.Debug("CRD change does not alter the effective config; no reload",
+					"stable_checks", equalStreak)
+				return true
+			}
+			c.logger.Debug("CRD change shows no effective-config change yet; scheduling recheck",
+				"stable_checks", equalStreak, "recheck_in", c.recheckInterval)
 		}
-		c.logger.Info("CRD change alters the effective config — triggering reinitialization")
-		c.trigger()
+		timer.Reset(c.recheckInterval)
 	}
 }
 
