@@ -1439,6 +1439,19 @@ test-acceptance:
         kubectl get events -A --sort-by=.lastTimestamp \
           > debug-logs/_suite/events.log 2>&1 || true
 
+        # kube-apiserver log from the kind control-plane. Admission
+        # webhook dispatch failures (apiserver → webhook POST) are only
+        # recorded on the apiserver side: under failurePolicy Ignore a
+        # failed call silently admits the object and the controller log
+        # shows nothing at all (issue #62 — zero AdmissionReviews reached
+        # the controller for the whole suite). Derive the pod name from
+        # the component label rather than hardcoding the kind cluster
+        # name into kube-apiserver-<cluster>-control-plane.
+        for pod in $(kubectl -n kube-system get pods -l component=kube-apiserver -o name 2>/dev/null); do
+          echo "=== ${pod} ===" >> debug-logs/_suite/kube-apiserver.log
+          kubectl -n kube-system logs "$pod" >> debug-logs/_suite/kube-apiserver.log 2>&1 || true
+        done
+
         # Service details — NodePort allocation issues block all tests.
         kubectl get svc -n ${CTRL_NAMESPACE} -o yaml \
           > debug-logs/_suite/services.yaml 2>&1 || true
@@ -1731,6 +1744,14 @@ test-gateway-conformance:
         kubectl -n metallb-system logs -l component=speaker --prefix --tail=-1 > "$LOG_DIR/metallb-speaker.log" 2>&1 || true
         kubectl -n metallb-system logs -l component=controller --prefix --tail=-1 > "$LOG_DIR/metallb-controller.log" 2>&1 || true
         kubectl -n kube-system logs -l k8s-app=kube-proxy --prefix --tail=-1 > "$LOG_DIR/kube-proxy.log" 2>&1 || true
+
+        # kube-apiserver log — admission webhook dispatch failures
+        # (apiserver → webhook POST) are only recorded apiserver-side;
+        # under failurePolicy Ignore the controller log shows nothing at
+        # all (issue #62). Kept in lockstep with the .test-e2e-base and
+        # ingress-conformance after_script blocks. The component label
+        # selects the pod without hardcoding the kind cluster name.
+        kubectl -n kube-system logs -l component=kube-apiserver --prefix --tail=-1 > "$LOG_DIR/kube-apiserver.log" 2>&1 || true
 
         # Per-failure HAProxy snapshots collected by the conformance
         # test binary's snapshotting RoundTripper (see
@@ -2158,6 +2179,15 @@ test-ingress-conformance:
         # the gateway-conformance after_script — kept in lockstep so
         # both flake classes get the same diagnostic.
         kubectl get events -A --sort-by='.lastTimestamp' > "$LOG_DIR/events.log" 2>&1 || true
+
+        # kube-apiserver log — admission webhook dispatch failures
+        # (apiserver → webhook POST) are only recorded apiserver-side;
+        # under failurePolicy Ignore the controller log shows nothing at
+        # all (issue #62). Kept in lockstep with the .test-e2e-base and
+        # gateway-conformance after_script blocks. The component label
+        # selects the pod without hardcoding the kind cluster name.
+        kubectl -n kube-system logs -l component=kube-apiserver --prefix --tail=-1 > "$LOG_DIR/kube-apiserver.log" 2>&1 || true
+
         # kubectl JSONPath has no `=~` regex operator (see comment on
         # the gateway-conformance after_script block for context). Use
         # grep -E for the filter.
