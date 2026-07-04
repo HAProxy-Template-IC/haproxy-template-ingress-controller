@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // TestIngressRateLimit covers test_ingress_rate_limit: HAProxy's
@@ -37,17 +38,24 @@ import (
 // Verification has to come from *inside* the cluster — DinD NAT
 // randomises the source IP for connections originating from the test
 // host, so a parallel burst from the host hits HAProxy with N different
-// src IPs and never trips the limit. We use kubectl exec into a
-// per-test alpine/curl pod (xargs -P10 from inside the pod), where
-// every request shares one cluster-IP and the limit reliably fires.
+// src IPs and never trips the limit. We run the burst in a per-test
+// alpine/curl pod as ONE curl invocation carrying all burstTotal URLs
+// (a single process firing back-to-back keep-alive requests), where
+// every request shares one pod IP and the limit reliably fires.
 func TestIngressRateLimit(t *testing.T) {
 	t.Parallel()
 	host := "ingress-ratelimit.localdev.me"
 
-	// Conservative numbers: rate-limit at 5/period, send 20 requests.
-	// Even with some racing, well above the limit.
+	// Conservative numbers: rate-limit at 5 per 10s, send 20 requests.
+	// The chart's haproxytech rate-limit snippet emits
+	// `stick-table ... store http_req_rate(<period>)` plus
+	// `http-request deny deny_status 429 if { sc_http_req_rate(0) gt <limit> }`,
+	// so the 6th request from one source IP inside a 10s window must be
+	// denied. burstTotal = 4×rateLimit leaves room for a few requests
+	// lost to reload churn while still tripping the limit.
 	const (
 		rateLimit  = 5
+		ratePeriod = 10 * time.Second
 		burstTotal = 20
 	)
 
@@ -68,7 +76,7 @@ func TestIngressRateLimit(t *testing.T) {
 				BackendPort:    backend.Port,
 				Annotations: map[string]string{
 					"haproxy.org/rate-limit-requests":    fmt.Sprintf("%d", rateLimit),
-					"haproxy.org/rate-limit-period":      "10s",
+					"haproxy.org/rate-limit-period":      ratePeriod.String(),
 					"haproxy.org/rate-limit-size":        "100k",
 					"haproxy.org/rate-limit-status-code": "429",
 				},
@@ -82,7 +90,7 @@ func TestIngressRateLimit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get namespace: %v", err)
 			}
-			result := rateLimitBurstFromCluster(ctx, t, ns, host, burstTotal)
+			result := rateLimitBurstFromCluster(ctx, t, ns, host, burstTotal, rateLimit, ratePeriod)
 			t.Logf("rate-limit burst: %s", result)
 			if result.byCode["429"] == 0 {
 				// Expand the failure message with the full status-code
@@ -124,22 +132,27 @@ func GetNamespaceFromContext(ctx context.Context) (string, error) {
 }
 
 // rateLimitBurstResult captures the full outcome of a burst — every
-// status code seen, with counts, plus wall-clock duration. The earlier
-// (ok, blocked int) signature silently dropped non-200/non-429 codes,
-// which made flakes look like "stick-table reset" when they could have
-// been any of: connection drops (000), backend transition (5xx),
-// routing race (404), or admission webhook errors (4xx). The full
-// distribution makes the next flake self-diagnosing.
+// status code seen, with counts, plus two durations: podElapsed is the
+// in-pod window from just before the first request to just after the
+// last (measured via /proc/uptime inside the pod, so pod scheduling and
+// image pull don't inflate it), and duration is the host-side
+// wall-clock for the whole kubectl run. The earlier (ok, blocked int)
+// signature silently dropped non-200/non-429 codes, which made flakes
+// look like "stick-table reset" when they could have been any of:
+// connection drops (000), backend transition (5xx), routing race (404),
+// or admission webhook errors (4xx). The full distribution makes the
+// next flake self-diagnosing.
 //
 // `requested` is what the test asked for; `parsed` is the sum of
-// `byCode`. They can diverge if a curl instance is killed before
-// writing its status to stdout (e.g. xargs -P10 SIGKILL'd by the pod
-// terminating). The failure message shows both so a missing-line
-// gap doesn't masquerade as a status mismatch.
+// `byCode`. They can diverge if curl dies before writing every status
+// line to stdout (e.g. the pod terminating mid-burst). The failure
+// message shows both so a missing-line gap doesn't masquerade as a
+// status mismatch.
 type rateLimitBurstResult struct {
-	requested int
-	duration  time.Duration
-	byCode    map[string]int
+	requested  int
+	duration   time.Duration // host-side: includes pod scheduling + image pull
+	podElapsed time.Duration // in-pod burst window; < 0 when the marker line is missing
+	byCode     map[string]int
 }
 
 // parsed returns the total number of status codes actually captured
@@ -152,9 +165,35 @@ func (r rateLimitBurstResult) parsed() int {
 	return n
 }
 
-// String renders the result as `20 reqs over 0.42s: 5×200 / 0×429 /
-// 15×000`. Codes are sorted by count desc so the dominant bucket
-// appears first.
+// landed returns the number of requests that provably reached the
+// rate-limited backend and moved its stick-table counter: 200 (passed)
+// or 429 (denied). 000 never reached HAProxy; 404/5xx don't prove the
+// backend's rate-limit rules ran.
+func (r rateLimitBurstResult) landed() int {
+	return r.byCode["200"] + r.byCode["429"]
+}
+
+// rateExceeded reports whether the burst provably pushed this source
+// IP's request rate above limit-per-period, making a 0×429 outcome
+// judgeable as a product failure instead of scheduler starvation
+// (issue #60). Two conditions, both with margin:
+//
+//   - at least 2×limit requests landed (the deny fires at limit+1), and
+//   - the whole in-pod burst window fit inside period/2, so every
+//     landed request falls within one sliding stick-table window.
+//
+// Each burst pod is fresh (new source IP → stick-table entry created by
+// the burst's own first request), so "window ≤ period" already puts all
+// landed requests in the entry's first http_req_rate bucket; period/2
+// doubles the margin.
+func (r rateLimitBurstResult) rateExceeded(limit int, period time.Duration) bool {
+	return r.podElapsed >= 0 && r.podElapsed <= period/2 && r.landed() >= 2*limit
+}
+
+// String renders the result as `20 reqs in 0.15s in-pod (4.20s wall):
+// 14×429 / 6×200`. Codes are sorted by count desc so the dominant
+// bucket appears first. When curl died before emitting the timing
+// marker the in-pod window shows as `?`.
 func (r rateLimitBurstResult) String() string {
 	type cc struct {
 		code  string
@@ -174,41 +213,70 @@ func (r rateLimitBurstResult) String() string {
 	for _, p := range pairs {
 		parts = append(parts, fmt.Sprintf("%d×%s", p.count, p.code))
 	}
-	parsed := r.parsed()
-	if parsed == r.requested {
-		return fmt.Sprintf("%d reqs over %.2fs: %s", r.requested, r.duration.Seconds(), strings.Join(parts, " / "))
+	window := "?"
+	if r.podElapsed >= 0 {
+		window = fmt.Sprintf("%.2fs", r.podElapsed.Seconds())
 	}
-	// Missing lines means curls were killed before writing their
-	// status. Report both numbers so the gap is visible.
-	return fmt.Sprintf("%d requested / %d parsed over %.2fs: %s",
-		r.requested, parsed, r.duration.Seconds(), strings.Join(parts, " / "))
+	reqs := fmt.Sprintf("%d reqs", r.requested)
+	if parsed := r.parsed(); parsed != r.requested {
+		// Missing lines means curl died before writing every status.
+		// Report both numbers so the gap is visible.
+		reqs = fmt.Sprintf("%d requested / %d parsed", r.requested, parsed)
+	}
+	return fmt.Sprintf("%s in %s in-pod (%.2fs wall): %s",
+		reqs, window, r.duration.Seconds(), strings.Join(parts, " / "))
 }
 
-// rateLimitBurstFromCluster runs `total` concurrent curls against
-// http://<host>/ from inside a kubectl-run alpine/curl pod, returning
-// the full status-code distribution + duration. curl is invoked with
-// `--max-time 5` so connection failures surface as `000` (curl's
-// own convention) rather than hanging.
+// rateLimitBurstFromCluster fires `total` back-to-back requests at
+// http://<host>/ from inside a kubectl-run alpine/curl pod and returns
+// the full status-code distribution + timing. The burst is ONE curl
+// invocation carrying `total` URLs: a single process reusing one
+// keep-alive connection, so the requests are as tight as the pod can
+// physically issue them — no per-request process spawns to spread the
+// burst out (issue #60: under PARALLEL=8 in-suite contention the old
+// `seq | xargs -P10 curl` burst parsed 1-3 of 20 requests over >3s, a
+// rate that legitimately never trips a 5-per-10s limit). curl runs with
+// `--max-time 5` so per-request connection failures surface as `000`
+// (curl's own convention) rather than hanging the burst, and the burst
+// window is measured inside the pod via /proc/uptime so pod scheduling
+// and image pull don't count against it.
 //
-// The pod is created and deleted per call. We use --restart=Never +
-// --rm so the pod tears down even if the test fails.
-func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, host string, total int) rateLimitBurstResult {
+// The verdict is gated on ACHIEVED rate: a result only settles the
+// caller's ≥1×429 assertion when it contains a 429, or rateExceeded()
+// proves the burst genuinely beat the configured limit and still saw
+// none. Anything else (starved scheduler, reload-window churn) is
+// retried with backoff until the WaitConfig budget runs out, at which
+// point the test fails with an explicit starvation message instead of
+// a misleading "no 429".
+//
+// A fresh pod is created per attempt (--restart=Never + --rm so it
+// tears down even if the test fails), giving every attempt a clean
+// source IP and therefore a fresh stick-table entry.
+func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, host string, total, limit int, period time.Duration) rateLimitBurstResult {
 	t.Helper()
 
-	// alpine/curl includes both `curl` and `xargs`. The HAProxy NodePort
-	// is also reachable via the in-cluster Service (port 80, host
-	// header sets the route), so we go via the chart's haptic-haproxy
-	// Service rather than the host-side NodePort to keep the source
-	// IP consistent.
-	//
-	// `--max-time 5` bounds each curl so reload-window connection
-	// drops produce `000` quickly rather than hanging the whole
-	// burst on the slowest one.
-	runOnce := func() rateLimitBurstResult {
+	runOnce := func(ctx context.Context) rateLimitBurstResult {
+		// The HAProxy NodePort is also reachable via the in-cluster
+		// Service (port 80, host header sets the route), so we go via
+		// the chart's haptic-haproxy Service rather than the host-side
+		// NodePort to keep the source IP consistent.
+		//
+		// Each URL needs its own `-o /dev/null` — a single -o only
+		// applies to the first URL and later bodies would leak into
+		// stdout between the status lines. /proc/uptime gives
+		// 10ms-resolution wall-clock in busybox (which lacks
+		// `date +%N`); the BURST_WINDOW marker carries both readings
+		// back through stdout. The trailing echo also pins the script's
+		// exit status to 0, so individual curl transfer failures show
+		// up only as `000` lines, never as a pod-run error.
+		urls := strings.TrimSpace(strings.Repeat(
+			"-o /dev/null http://haptic-haproxy.haptic.svc/ ", total))
 		cmdScript := fmt.Sprintf(
-			`seq 1 %d | xargs -P 10 -I{} curl -s --max-time 5 -o /dev/null -w "%%{http_code}\n" `+
-				`-H "Host: %s" http://haptic-haproxy.haptic.svc/`,
-			total, host)
+			`t0=$(cut -d" " -f1 /proc/uptime); `+
+				`curl -s --max-time 5 -H "Host: %s" -w "%%{http_code}\n" %s; `+
+				`t1=$(cut -d" " -f1 /proc/uptime); `+
+				`echo "BURST_WINDOW $t0 $t1"`,
+			host, urls)
 
 		podName := fmt.Sprintf("ratelimit-burst-%d", time.Now().UnixNano())
 		cmd := exec.CommandContext(ctx, "kubectl",
@@ -228,55 +296,82 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 		start := time.Now()
 		runErr := cmd.Run()
 		elapsed := time.Since(start)
-		// Don't fatal on non-zero exit. xargs returns 123 whenever any
-		// curl invocation exited non-zero (e.g. 7 on connection refused
-		// or 28 on --max-time hit) — both of which the test wants to
-		// observe as `000` in the byCode distribution, not as a fatal
-		// pod-run error. The byCode-based check in the caller is what
-		// distinguishes "rate-limit not engaging" from "reload-window
-		// connection drops".
+		// Don't fatal on non-zero exit: the script itself always exits
+		// 0, so a failure here is kubectl/pod-level (image pull,
+		// scheduling, attach). The achieved-rate gate in the retry loop
+		// decides what to do with whatever output made it back.
 		if runErr != nil {
-			t.Logf("rate-limit burst pod returned non-zero (individual curls failed): %v\nstderr: %s", runErr, errBuf.String())
+			t.Logf("rate-limit burst pod returned non-zero: %v\nstderr: %s", runErr, errBuf.String())
 		}
 
 		result := rateLimitBurstResult{
-			requested: total,
-			duration:  elapsed,
-			byCode:    map[string]int{},
+			requested:  total,
+			duration:   elapsed,
+			podElapsed: -1,
+			byCode:     map[string]int{},
 		}
-		for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-			code := strings.TrimSpace(line)
-			if code == "" {
+		for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+			line := strings.TrimSpace(raw)
+			if line == "" {
 				continue
 			}
-			result.byCode[code]++
+			if rest, ok := strings.CutPrefix(line, "BURST_WINDOW "); ok {
+				var t0, t1 float64
+				if n, _ := fmt.Sscanf(rest, "%f %f", &t0, &t1); n == 2 && t1 >= t0 {
+					result.podElapsed = time.Duration((t1 - t0) * float64(time.Second))
+				}
+				continue
+			}
+			result.byCode[line]++
 		}
 		return result
 	}
 
-	// Burst once; retry once after a 1s gap if the result looks like
-	// reload-window churn (no 429s, fewer than half the curls landed).
-	// The parallel-test e2e suite drives haproxy reloads every ~1-2s as
-	// other tests create / delete ingresses; a single burst that races a
-	// reload window produces all-000 codes (each curl `--max-time 5`'s
-	// out before the new worker binds the socket). Two bursts with a 1s
-	// gap clear that race for the vast majority of cases without
-	// changing the chart's reload cadence. A sustained 0×429 across both
-	// bursts is a real test failure the caller fatals on.
-	result := runOnce()
-	if result.byCode["429"] > 0 {
-		return result
+	// Retry budget: the parallel-test e2e suite drives haproxy reloads
+	// every ~1-2s as other tests create/delete ingresses, and under
+	// PARALLEL=8 the runner can starve a pod hard enough to spread even
+	// a single-process burst out (issue #60 saw the old single retry
+	// exhausted). Each attempt costs a full pod create/run/delete cycle
+	// (several seconds when healthy), so the budget is sized in
+	// attempts-worth of minutes, not convergence-style seconds. On a
+	// healthy run the first attempt settles the verdict with no waiting.
+	waitCfg := testutil.WaitConfig{
+		InitialInterval: 1 * time.Second,
+		MaxInterval:     10 * time.Second,
+		Timeout:         2 * time.Minute,
+		Multiplier:      2.0,
 	}
-	landed := result.byCode["200"] + result.byCode["429"]
-	if landed > total/2 {
-		// Burst landed cleanly but no 429 — real failure, don't retry.
-		return result
+	var result rateLimitBurstResult
+	attempt := 0
+	err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
+		"rate-limit burst to reach a judgeable request rate",
+		func(ctx context.Context) (bool, error) {
+			attempt++
+			result = runOnce(ctx)
+			t.Logf("rate-limit burst attempt %d: %s", attempt, result)
+			if result.byCode["429"] > 0 {
+				return true, nil // limit tripped — verdict settled
+			}
+			if result.rateExceeded(limit, period) {
+				// The burst provably beat the limit and still saw no
+				// 429 — judgeable; the caller fatals on the result.
+				return true, nil
+			}
+			return false, fmt.Errorf(
+				"burst under-achieved the configured rate (%s): need ≥%d×(200|429) inside %v to judge",
+				result, 2*limit, period/2)
+		})
+	if err != nil {
+		// The wait error already carries the last attempt's distribution
+		// (codes/landed/elapsed). Spell out BOTH readings: chronic
+		// under-achievement is usually infrastructure (issue #60), but a
+		// last attempt with substantial landed 200s and zero 429s can also
+		// mean the rate limit genuinely stopped firing — don't let the
+		// starvation framing send that investigation the wrong way.
+		t.Fatalf("rate-limit burst never achieved a judgeable rate above the %d-per-%v limit "+
+			"(last attempt: %s). Chronic under-achievement = in-suite starvation or sustained "+
+			"reload churn (issue #60); but if landed traffic was substantial with 0×429 across "+
+			"attempts, suspect a real rate-limit regression instead: %v", limit, period, result, err)
 	}
-	t.Logf("rate-limit burst attempt 1 looks like reload-window churn (%s); retrying once after 1s", result)
-	select {
-	case <-time.After(1 * time.Second):
-	case <-ctx.Done():
-		return result
-	}
-	return runOnce()
+	return result
 }
