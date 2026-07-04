@@ -68,6 +68,14 @@ templateSnippets:
             allowedRoutes filters.
         -#}
         {%- var routeCounts = map[string]int{} %}
+        {#- TCPRoute count contribution, via a compile-safe seam: the typed
+            resources.tcproutes access lives in a snippet that is stripped
+            together with the tcproutes watch (see 90-tcproute.yaml and the
+            _helm_load.unset block in _index.yaml); `default ""` makes this
+            render a no-op when the feature is stripped. A direct typed
+            reference here would fail to COMPILE on clusters where the
+            TCPRoute CRD is not served. -#}
+        {%- _ = render "util-gateway-tcproute-count-contrib" default "" -%}
         {%%
           // Gather all routes (HTTPRoute + GRPCRoute + TLSRoute) into a
           // single iteration so the predicate evaluation is uniform.
@@ -103,15 +111,12 @@ templateSnippets:
           // below). Without this, a Gateway's TCP listener reported
           // attachedRoutes=0 because the count only walked HTTP/GRPC/TLS routes
           // (GatewayAPI TCPRouteMultipleRoutesAttachment expects the count to
-          // reflect attached TCPRoutes). resources.tcproutes is already
-          // referenced elsewhere in this file (ShardedTCPRouteStatusPatches).
-          for _, r := range resources.tcproutes.List() {
-            allRoutesForCount = append(allRoutesForCount, map[string]any{
-              "kind":  "TCPRoute",
-              "route": r,
-              "needsTLSProtocol": false,
-              "needsTCPProtocol": true,
-            })
+          // reflect attached TCPRoutes). The entries arrive through the
+          // util-gateway-tcproute-count-contrib seam rendered above — empty
+          // when the TCPRoute feature is stripped.
+          var tcpEntries, _ = shared.Get("tcprouteCountEntries").([]any)
+          for _, e := range tcpEntries {
+            allRoutesForCount = append(allRoutesForCount, e)
           }
 
           for _, entry := range allRoutesForCount {
@@ -1569,7 +1574,6 @@ templateSnippets:
       {%- import "util-sharded-gateway-status-patches" for ShardedGatewayStatusPatches -%}
       {%- import "util-sharded-route-status-patches" for ShardedHTTPRouteStatusPatches, ShardedGRPCRouteStatusPatches -%}
       {%- import "util-sharded-tlsroute-status-patches" for ShardedTLSRouteStatusPatches -%}
-      {%- import "util-sharded-tcproute-status-patches" for ShardedTCPRouteStatusPatches -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- if gf["addresses"] != nil %}
         {%- var allGateways = resources.gateways.List() -%}
@@ -1596,10 +1600,9 @@ templateSnippets:
       {%- if len(allTLSRoutes) > 0 -%}
         {{- ShardedTLSRouteStatusPatches(allTLSRoutes) -}}
       {%- end -%}
-      {%- var allTCPRoutes = resources.tcproutes.List() -%}
-      {%- if len(allTCPRoutes) > 0 -%}
-        {{- ShardedTCPRouteStatusPatches(allTCPRoutes) -}}
-      {%- end -%}
+      {#- TCPRoute status registration lives in its own extension-point
+          snippet (status-patches-210-gateway-tcproute, 90-tcproute.yaml) so
+          the typed import is stripped together with the tcproutes watch. -#}
 
   status-patches-220-listenerset:
     template: |

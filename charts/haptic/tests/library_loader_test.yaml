@@ -69,6 +69,67 @@ tests:
       - exists:
           path: spec.watchedResources.gateways
 
+  # The TCPRoute feature must strip ATOMICALLY when its CRD is served at no
+  # known version (standard-channel Gateway API <= v1.5): the watch, all three
+  # snippets, and ALL of its validationTests. A validationTest that survives
+  # while its snippets/watch are stripped fails the controller's fatal load
+  # gate and crash-loops the deployment.
+  - it: should strip the whole TCPRoute feature when its CRD is not served
+    capabilities:
+      apiVersions:
+        - gateway.networking.k8s.io/v1/GatewayClass
+    asserts:
+      - notExists:
+          path: spec.watchedResources.tcproutes
+      - notExists:
+          path: spec.templateSnippets["util-gateway-tcproute-analysis"]
+      - notExists:
+          path: spec.templateSnippets["util-gateway-tcproute-count-contrib"]
+      - notExists:
+          path: spec.templateSnippets["util-generate-tcproute-status-patches"]
+      - notExists:
+          path: spec.templateSnippets["util-sharded-tcproute-status-patches"]
+      - notExists:
+          path: spec.templateSnippets["status-patches-210-gateway-tcproute"]
+      - notExists:
+          path: spec.templateSnippets["backends-502-gateway-tcproute"]
+      - notExists:
+          path: spec.templateSnippets["frontends-700-gateway-tcp-listener"]
+      - notExists:
+          path: spec.validationTests.test-tcproute-basic-l4-forward
+      - notExists:
+          path: spec.validationTests.test-tcproute-oldest-route-wins-port
+      - notExists:
+          path: spec.validationTests.test-tcproute-weighted-routing
+      - notExists:
+          path: spec.validationTests.test-tcproute-multi-listener-single-backend
+      - notExists:
+          path: spec.validationTests.test-tcproute-unattached-no-frontend
+      - notExists:
+          path: spec.validationTests.test-tcproute-orphan-sibling-does-not-drop-others
+
+  - it: should watch TCPRoute at v1 when the cluster serves it at v1
+    capabilities:
+      apiVersions:
+        - gateway.networking.k8s.io/v1/GatewayClass
+        - gateway.networking.k8s.io/v1/TCPRoute
+    asserts:
+      - equal:
+          path: spec.watchedResources.tcproutes.apiVersion
+          value: gateway.networking.k8s.io/v1
+      - exists:
+          path: spec.validationTests.test-tcproute-basic-l4-forward
+
+  - it: should fall back to TCPRoute v1alpha2 when only v1alpha2 is served
+    capabilities:
+      apiVersions:
+        - gateway.networking.k8s.io/v1/GatewayClass
+        - gateway.networking.k8s.io/v1alpha2/TCPRoute
+    asserts:
+      - equal:
+          path: spec.watchedResources.tcproutes.apiVersion
+          value: gateway.networking.k8s.io/v1alpha2
+
   - it: should load ingress-annotations-compat scaffold by default
     asserts:
       - exists:

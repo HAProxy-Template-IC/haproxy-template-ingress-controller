@@ -49,19 +49,39 @@ _helm_load:
     # the whole entry, so this value is moot in that case.
     - path: watchedResources.tcproutes.apiVersion
       value: '{{ if .Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/TCPRoute" }}gateway.networking.k8s.io/v1{{ else }}gateway.networking.k8s.io/v1alpha2{{ end }}'
-  # TCPRoute is Experimental-channel only — its CRD is absent from the Gateway
-  # API Standard install most clusters use (including CI's). Watching a
-  # non-existent CRD makes the controller's watcher fail to sync so it never
-  # becomes Ready, and the analysis snippet references the typed resources.tcproutes
-  # field which only exists when the resource is watched. So when the TCPRoute CRD
-  # is NOT served at ANY known version, strip the whole TCPRoute feature — the
-  # watch, its snippets, and its tests — together. TCPRoute routing is then simply
-  # inactive (there are no TCPRoutes without the CRD). Offline `helm template`
-  # keeps it via --api-versions.
+  # TCPRoute graduated to Standard only in Gateway API v1.6 — its CRD is absent
+  # from every older Standard install (it was Experimental-channel before).
+  # Watching a non-existent CRD makes the controller's watcher fail to sync so
+  # it never becomes Ready, and typed `resources.tcproutes` references only
+  # COMPILE when the resource is watched. So when the TCPRoute CRD is NOT
+  # served at ANY known version, strip the whole TCPRoute feature ATOMICALLY —
+  # the watch, EVERY snippet that references resources.tcproutes or imports a
+  # typed TCPRoute macro, and EVERY TCPRoute validationTest. TCPRoute routing
+  # is then simply inactive (there are no TCPRoutes without the CRD). Offline
+  # `helm template` keeps it via --api-versions.
+  #
+  # Invariant (pinned by library_loader_test.yaml "should strip the whole
+  # TCPRoute feature..."): a validationTest or snippet that survives while its
+  # watch/snippets are stripped fails template compilation or the fatal
+  # validationTests load gate and CRASH-LOOPS the controller on every
+  # Standard-channel Gateway API <= v1.5 cluster. When adding a TCPRoute
+  # snippet or test, add it here AND to that helm-unittest case. Snippets that
+  # must survive the strip (shared status macros) reach TCPRoute data only
+  # through compile-safe seams: `render "..." default ""` or the
+  # `render_glob "status-patches-*"` extension point — never a direct typed
+  # reference or import.
   unset:
     - path: watchedResources.tcproutes
       when: &noTCPRoute '{{ not (or (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/TCPRoute") (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1alpha2/TCPRoute")) }}'
     - path: templateSnippets.util-gateway-tcproute-analysis
+      when: *noTCPRoute
+    - path: templateSnippets.util-gateway-tcproute-count-contrib
+      when: *noTCPRoute
+    - path: templateSnippets.util-generate-tcproute-status-patches
+      when: *noTCPRoute
+    - path: templateSnippets.util-sharded-tcproute-status-patches
+      when: *noTCPRoute
+    - path: templateSnippets.status-patches-210-gateway-tcproute
       when: *noTCPRoute
     - path: templateSnippets.backends-502-gateway-tcproute
       when: *noTCPRoute
@@ -69,9 +89,15 @@ _helm_load:
       when: *noTCPRoute
     - path: validationTests.test-tcproute-basic-l4-forward
       when: *noTCPRoute
+    - path: validationTests.test-tcproute-oldest-route-wins-port
+      when: *noTCPRoute
+    - path: validationTests.test-tcproute-weighted-routing
+      when: *noTCPRoute
     - path: validationTests.test-tcproute-multi-listener-single-backend
       when: *noTCPRoute
     - path: validationTests.test-tcproute-unattached-no-frontend
+      when: *noTCPRoute
+    - path: validationTests.test-tcproute-orphan-sibling-does-not-drop-others
       when: *noTCPRoute
 
 watchedResources:
