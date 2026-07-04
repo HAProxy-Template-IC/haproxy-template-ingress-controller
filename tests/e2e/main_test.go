@@ -745,6 +745,16 @@ kubeadmConfigPatches:
     apiServer:
       extraArgs:
         enable-admission-plugins: NodeRestriction,MutatingAdmissionWebhook,ValidatingAdmissionWebhook
+  # Raise the kubelet's per-container log rotation cap (default 10Mi).
+  # The controller logs at DEBUG during e2e/conformance runs and the
+  # leader replica exceeds 10Mi well within one suite, after which
+  # "kubectl logs" (used by the CI after_script diagnostics capture)
+  # returns only the newest rotated file — job 15180387459's artifacts
+  # carried just ~7s of leader logs, none covering the failure window
+  # (issue #56). 200Mi keeps the whole suite's window retrievable.
+  - |
+    kind: KubeletConfiguration
+    containerLogMaxSize: 200Mi
 kubeadmConfigPatchesJSON6902:
   # Both kubeadm config versions: kind applies the one matching the node's
   # k8s version (v1beta3 for <= 1.35, v1beta4 for >= 1.36) and skips the other.
