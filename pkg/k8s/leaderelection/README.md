@@ -86,7 +86,8 @@ Event callbacks:
 Main leader election type:
 
 - `New(*Config, kubernetes.Interface, Callbacks, *slog.Logger) (*Elector, error)` — validates inputs and returns an unstarted elector. Returns an error when `Config.Enabled` is `false`, when `Identity`, `LeaseName`, or `LeaseNamespace` is empty, or when the clientset is `nil`.
-- `Start(ctx) error` — runs the lease loop and blocks until `ctx` is cancelled or the underlying client errors. Run on a goroutine. Leadership state is observed through the `Callbacks` (`OnStartedLeading` / `OnStoppedLeading` / `OnNewLeader`); there are no snapshot accessors.
+- `Start(ctx) error` — runs the lease loop and blocks until `ctx` is cancelled, the underlying client errors, or an acquired lease is lost. Run on a goroutine. Leadership state is observed through the `Callbacks` (`OnStartedLeading` / `OnStoppedLeading` / `OnNewLeader`); there are no snapshot accessors.
+- Lost-lease semantics: client-go's `LeaderElector.Run` returns permanently after a lost lease (it does not re-enter the acquire loop), so `Start` returns `nil` with the caller's context still alive. Callers that need re-election must restart `Start` themselves — the controller does this by reinitializing (`pkg/controller/leader.go`, `superviseElection`).
 
 ## Thread Safety
 

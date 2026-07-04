@@ -365,15 +365,28 @@ controller:
         # Defaults to the Helm release fullname if not specified
         # This ensures multiple releases in the same namespace don't conflict
         leaseName: ""
+        # The timing values below are deliberately 2x the client-go
+        # convention (15s/10s/2s). renewDeadline is the leader's budget for
+        # riding out apiserver unavailability or CPU starvation without
+        # losing the lease; on loaded nodes stalls of 10s+ have been
+        # observed, and a lost lease costs a full controller
+        # reinitialization before the replica can lead again. The trade-off
+        # is hard-failover latency: after a leader dies WITHOUT releasing
+        # the lease (node crash, OOM-kill), a standby waits up to
+        # leaseDuration (+ one retryPeriod) before taking over. Voluntary
+        # handoffs (rolling update, graceful shutdown) release the lease
+        # immediately and are unaffected. Tune down for faster
+        # crash-failover, keeping leaseDuration > renewDeadline > retryPeriod.
+        #
         # Duration that non-leader candidates wait to acquire leadership
-        # Default: 15s (failover happens within this time after leader failure)
-        leaseDuration: 15s
+        # Default: 30s (crash failover happens within this time after leader failure)
+        leaseDuration: 30s
         # Duration the leader retries refreshing leadership before giving up
-        # Default: 10s (should be < lease_duration, maintains 1.5x safety ratio)
-        renewDeadline: 10s
+        # Default: 20s (must be < leaseDuration, maintains 1.5x safety ratio)
+        renewDeadline: 20s
         # Interval between leadership refresh attempts
-        # Default: 2s (should be < renew_deadline, typically 1/5 of it)
-        retryPeriod: 2s
+        # Default: 5s (must be < renewDeadline, typically 1/4 of it)
+        retryPeriod: 5s
     dataplane:
       # Port is defined in haproxy.ports.dataplane and referenced here
       port: 5555 # Must match haproxy.ports.dataplane value

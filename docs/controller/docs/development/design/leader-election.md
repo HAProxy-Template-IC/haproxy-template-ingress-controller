@@ -39,18 +39,18 @@ The defaults applied by `pkg/core/config` (used unless the CRD's
 
 ```go
 LeaderElectionConfig{
-    LeaseDuration: 15 * time.Second, // DefaultLeaderElectionLeaseDuration
-    RenewDeadline: 10 * time.Second, // DefaultLeaderElectionRenewDeadline
-    RetryPeriod:   2 * time.Second,  // DefaultLeaderElectionRetryPeriod
+    LeaseDuration: 30 * time.Second, // DefaultLeaderElectionLeaseDuration
+    RenewDeadline: 20 * time.Second, // DefaultLeaderElectionRenewDeadline
+    RetryPeriod:   5 * time.Second,  // DefaultLeaderElectionRetryPeriod
     // ReleaseOnCancel is enabled by the controller during graceful shutdown
 }
 ```
 
-These match the values `kube-controller-manager` and `kube-scheduler` ship with — short enough to fail over quickly when a leader pod is killed, long enough to absorb brief etcd hiccups.
+These are deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (15s/10s/2s). The renew deadline is the leader's budget for riding out apiserver unavailability or CPU starvation without losing the lease; multi-second stalls of 10s+ have been observed on loaded nodes, and a lost lease costs a full controller reinitialization before the replica can lead again (client-go's `LeaderElector.Run` returns permanently on a lost lease). The trade-off is hard-failover latency after a leader crash that never releases the lease: up to `LeaseDuration` (+ one `RetryPeriod`) instead of ~17s. Voluntary handoffs release the lease immediately and are unaffected.
 
 **Tolerance formula**: `LeaseDuration / RenewDeadline = clock skew tolerance ratio`
 
-With 15s/10s the system tolerates nodes progressing 1.5× faster than others. Workloads on hosts with large clock skew should override these via the CRD; controllers that need a longer warm-up after election can raise both numbers proportionally so the ratio stays close to 1.5.
+With 30s/20s the system tolerates nodes progressing 1.5× faster than others. Workloads on hosts with large clock skew should override these via the CRD; controllers that need a longer warm-up after election can raise both numbers proportionally so the ratio stays close to 1.5.
 
 ## Architecture Changes
 
@@ -278,9 +278,9 @@ controller:
   leaderElection:
     enabled: true   # Enable leader election (default: true)
     leaseName: ""   # Empty = controller default "haptic-leader"; Helm rewrites empty to the release fullname
-    leaseDuration: 15s   # chart default; matches client-go's recommended value
-    renewDeadline: 10s   # must be < leaseDuration
-    retryPeriod: 2s      # must be < renewDeadline
+    leaseDuration: 30s   # chart default; 2x client-go's convention for starvation headroom
+    renewDeadline: 20s   # must be < leaseDuration
+    retryPeriod: 5s      # must be < renewDeadline
 ```
 
 **Backwards compatibility**:
@@ -492,13 +492,13 @@ kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
 
 **Behavior**:
 
-1. Leader lease expires (15s after last renewal)
+1. Leader lease expires (30s after last renewal)
 2. Followers detect expired lease
 3. First follower to update lease becomes new leader
 4. New leader starts deployment components
 5. Reconciliation continues from hot cache
 
-**Downtime**: ~15-20 seconds (LeaseDuration + startup time)
+**Downtime**: ~30-35 seconds (LeaseDuration + startup time)
 
 ### Network Partition
 
@@ -507,7 +507,7 @@ kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
 **Behavior**:
 
 1. Leader cannot renew lease
-2. After RenewDeadline (10s), leader voluntarily releases leadership
+2. After RenewDeadline (20s), leader voluntarily releases leadership
 3. Leader stops deployment components
 4. Connected replica acquires lease
 5. System continues with new leader
@@ -520,7 +520,7 @@ kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
 
 **Tolerance**: Configured ratio of LeaseDuration/RenewDeadline
 
-- With the default 15s/10s: Tolerates a 1.5× clock-speed difference between nodes
+- With the default 30s/20s: Tolerates a 1.5× clock-speed difference between nodes
 - If exceeded: May experience frequent leadership changes
 
 **Mitigation**: Run NTP on cluster nodes (Kubernetes best practice)

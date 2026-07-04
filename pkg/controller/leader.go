@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -196,6 +197,42 @@ func makeLeaderCallbacks(deps leaderCallbackDeps) (k8sleaderelection.Callbacks, 
 	return callbacks, state
 }
 
+// superviseElection runs the leader-election loop and converts an unexpected
+// exit into an iteration-fatal error.
+//
+// client-go's LeaderElector.Run returns permanently once an acquired lease is
+// lost (a renewal missed its deadline — e.g. the apiserver or this pod was
+// starved for longer than renewDeadline). It does NOT re-enter the acquire
+// loop. Without supervision the replica would keep running its all-replica
+// components with a dead elector: never re-acquiring leadership, never
+// deploying — a permanent standby zombie (fatal on single-replica
+// deployments, issue #57).
+//
+// Returning an error here cancels the iteration via the errgroup context, and
+// the main run loop reinitializes — restarting the election loop with the
+// same identity. Re-acquisition without an iteration restart is not possible
+// today: the lifecycle registry only starts leader-only components from
+// Pending/Standby status, and a stopped term leaves them Stopped/Failed.
+//
+// A nil return from start with the context still alive is exactly the
+// lost-lease case: for a replica that never acquired the lease, Run blocks in
+// the acquire loop until the context is cancelled.
+func superviseElection(ctx context.Context, start func(context.Context) error, logger *slog.Logger) error {
+	err := start(ctx)
+	select {
+	case <-ctx.Done():
+		// Normal teardown (shutdown or config-change reinitialization);
+		// any error from the elector here is a cancellation artifact.
+		return nil
+	default:
+	}
+	if err == nil {
+		err = errors.New("leader election loop exited: lease lost without shutdown")
+	}
+	logger.Error("Leader election failed, triggering reinitialization to restart election", "error", err)
+	return err
+}
+
 // setupLeaderElection initializes leader election or starts leader-only components immediately.
 //
 // Returns leader callback state for lifecycle management. The state contains a mutex-protected
@@ -259,11 +296,7 @@ func setupLeaderElection(
 		// Start leader election loop in errgroup for graceful shutdown
 		// This ensures the elector can release the lease on context cancellation
 		setup.ErrGroup.Go(func() error {
-			if err := elector.Start(setup.IterCtx); err != nil {
-				logger.Error("Leader election failed", "error", err)
-				return err
-			}
-			return nil
+			return superviseElection(setup.IterCtx, elector.Start, logger)
 		})
 
 		logger.Info("Leader election initialized", "identity", podName, "lease_name", leConfig.LeaseName, "lease_namespace", leConfig.LeaseNamespace)

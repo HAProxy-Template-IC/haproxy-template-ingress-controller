@@ -9,7 +9,7 @@ The controller supports running multiple replicas for high availability using le
 **Benefits of HA deployment:**
 
 - Zero-downtime during controller upgrades (rolling updates)
-- Automatic failover if leader pod crashes (~15-20 seconds)
+- Automatic failover if leader pod crashes (~30-35 seconds; voluntary handoffs like rolling updates release the lease immediately)
 - All replicas ready to take over immediately (hot caches, ready webhooks)
 - Balanced leader distribution across nodes
 
@@ -36,13 +36,13 @@ controller:
       leaderElection:
         enabled: true
         leaseName: ""         # Defaults to the Helm release fullname
-        leaseDuration: 15s    # Max time followers wait before taking over
-        renewDeadline: 10s    # Leader retries renewal for this long
-        retryPeriod: 2s       # Interval between renewal attempts
+        leaseDuration: 30s    # Max time followers wait before taking over
+        renewDeadline: 20s    # Leader retries renewal for this long
+        retryPeriod: 5s       # Interval between renewal attempts
 ```
 
 !!! note
-    These match the controller's built-in defaults (`pkg/core/config/defaults.go`: 15s / 10s / 2s) — the same values `kube-controller-manager` and `kube-scheduler` ship with. Override only if you need slower failover (longer warm-up after election) or have unusual clock-skew requirements.
+    These match the controller's built-in defaults (`pkg/core/config/defaults.go`: 30s / 20s / 5s) — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (15s / 10s / 2s). The extra `renewDeadline` headroom lets the leader ride out multi-second API-server or CPU starvation stalls without losing the lease; losing it costs a full controller reinitialization before the replica can lead again. Tune down toward the client-go convention if you prefer faster crash-failover over starvation headroom.
 
 ### Disable Leader Election
 
@@ -65,24 +65,24 @@ The timing parameters control failover speed and tolerance:
 
 | Parameter | Chart default | Purpose | Recommendations |
 |-----------|---------------|---------|-----------------|
-| `leaseDuration` | 15s | Max time followers wait before taking over | Increase for flaky networks (60s+) |
-| `renewDeadline` | 10s | How long leader retries before giving up | Must be < `leaseDuration` |
-| `retryPeriod` | 2s | Interval between leader renewal attempts | Should be < `renewDeadline` |
+| `leaseDuration` | 30s | Max time followers wait before taking over | Increase for flaky networks (60s+) |
+| `renewDeadline` | 20s | How long leader retries before giving up | Must be < `leaseDuration` |
+| `retryPeriod` | 5s | Interval between leader renewal attempts | Should be < `renewDeadline` |
 
 **Failover time calculation:**
 
 ```
-Worst-case failover = leaseDuration + renewDeadline
-Chart default       = 15s + 10s = 25s (typically faster)
+Worst-case failover = leaseDuration + retryPeriod
+Chart default       = 30s + 5s = ~35s (typically faster)
 ```
 
-When the leader fails, followers must wait for the lease to expire before they can acquire it. During this window, HAProxy continues serving traffic with its last known configuration — no traffic is dropped, but new resource changes are not processed until a new leader is elected.
+When the leader crashes without releasing, followers must wait for the lease to expire (leaseDuration from the last renewal) plus at most one acquire retry (retryPeriod) before one of them takes over; renewDeadline only bounds when the failed leader itself gives up, it does not gate the standby. During this window, HAProxy continues serving traffic with its last known configuration — no traffic is dropped, but new resource changes are not processed until a new leader is elected.
 
 **Clock skew tolerance:**
 
 ```
 Skew tolerance = leaseDuration - renewDeadline
-Chart default  = 15s - 10s = 5s
+Chart default  = 30s - 20s = 10s
 ```
 
 If clock skew exceeds this tolerance, brief split-brain may occur where two replicas both believe they are leader. NTP-synchronized nodes typically have sub-second skew, well within the default tolerance. In environments with looser time sync, raise `leaseDuration` (and `renewDeadline` proportionally).
