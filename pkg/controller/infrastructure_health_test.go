@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,7 @@ func TestCreateEarlyHealthChecker(t *testing.T) {
 		state := &configState{}
 		state.SetWaiting("waiting for HAProxyTemplateConfig CRD in namespace haptic")
 
-		checker := createEarlyHealthChecker(state)
+		checker := createEarlyHealthChecker(state, &persistentInfra{})
 
 		got := checker()
 		require.Contains(t, got, "config",
@@ -68,7 +69,7 @@ func TestCreateEarlyHealthChecker(t *testing.T) {
 		state := &configState{}
 		state.SetLoaded()
 
-		checker := createEarlyHealthChecker(state)
+		checker := createEarlyHealthChecker(state, &persistentInfra{})
 
 		got := checker()
 		entry := got["config"]
@@ -85,7 +86,7 @@ func TestCreateEarlyHealthChecker(t *testing.T) {
 		// fall through the unhealthy branch.
 		state := &configState{}
 
-		checker := createEarlyHealthChecker(state)
+		checker := createEarlyHealthChecker(state, &persistentInfra{})
 
 		got := checker()
 		entry := got["config"]
@@ -104,7 +105,7 @@ func TestCreateEarlyHealthChecker(t *testing.T) {
 		state := &configState{}
 		state.SetWaiting("connecting to apiserver")
 
-		checker := createEarlyHealthChecker(state)
+		checker := createEarlyHealthChecker(state, &persistentInfra{})
 
 		got := checker()
 		assert.False(t, got["config"].Healthy)
@@ -142,7 +143,7 @@ func TestCreateEarlyHealthChecker(t *testing.T) {
 		// "I'm in early-startup mode" by virtue of being installed.
 		state.SetInitialized()
 
-		got := createEarlyHealthChecker(state)()
+		got := createEarlyHealthChecker(state, &persistentInfra{})()
 		entry, ok := got["initialized"]
 		require.True(t, ok,
 			"early checker must always include the 'initialized' entry so /healthz returns 503 during stages 1-7")
@@ -337,5 +338,63 @@ func TestMergePluggableValidatorHealth(t *testing.T) {
 			"any socket failure must mark the validators entry unhealthy")
 		assert.Contains(t, entry.Error, "otel:",
 			"the failing validator's name must surface so operators can identify the broken sidecar")
+	})
+}
+
+// TestApplyReinitGrace pins the reinit-grace contract: unhealthy entries are
+// tolerated (rewritten healthy-with-annotation) only while a VOLUNTARY
+// reinitialization of a previously-initialized controller is within
+// ReinitGraceWindow. Startup (never initialized) and expired grace keep the
+// fail-closed 503 behavior.
+func TestApplyReinitGrace(t *testing.T) {
+	unhealthy := func() map[string]introspection.ComponentHealth {
+		return map[string]introspection.ComponentHealth{
+			"initialized": {Healthy: false, Error: "controller still initializing"},
+			"config":      {Healthy: true},
+		}
+	}
+
+	t.Run("startup: never initialized → no grace", func(t *testing.T) {
+		infra := &persistentInfra{}
+		infra.NoteIterationStart()
+		got := applyReinitGrace(infra, unhealthy())
+		if got["initialized"].Healthy {
+			t.Fatal("grace must not apply before the first successful initialization (fail-closed startup)")
+		}
+	})
+
+	t.Run("reinit within grace → unhealthy entries tolerated with annotation", func(t *testing.T) {
+		infra := &persistentInfra{}
+		infra.NoteIterationStart()
+		infra.NoteInitialized()
+		infra.NoteIterationStart() // the reinit
+		got := applyReinitGrace(infra, unhealthy())
+		if !got["initialized"].Healthy {
+			t.Fatal("grace must tolerate unhealthy entries during a voluntary reinit")
+		}
+		if got["initialized"].Error == "" {
+			t.Fatal("tolerated entries must keep their detail annotated for operators")
+		}
+	})
+
+	t.Run("grace expired → unhealthy again", func(t *testing.T) {
+		infra := &persistentInfra{}
+		infra.everInitialized = true
+		infra.iterationStartedAt = time.Now().Add(-ReinitGraceWindow - time.Second)
+		got := applyReinitGrace(infra, unhealthy())
+		if got["initialized"].Healthy {
+			t.Fatal("a reinit stuck past the grace window must go unhealthy (liveness restart → fail-closed startup path)")
+		}
+	})
+
+	t.Run("all healthy → untouched", func(t *testing.T) {
+		infra := &persistentInfra{}
+		infra.NoteInitialized()
+		infra.NoteIterationStart()
+		entries := map[string]introspection.ComponentHealth{"initialized": {Healthy: true}}
+		got := applyReinitGrace(infra, entries)
+		if !got["initialized"].Healthy || got["initialized"].Error != "" {
+			t.Fatal("healthy entries must pass through unmodified")
+		}
 	})
 }

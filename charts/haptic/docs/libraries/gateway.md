@@ -73,17 +73,33 @@ controller:
 
 The gateway library declares these resources in its `watchedResources`:
 
-| Resource | API Version | Purpose |
-|----------|-------------|---------|
-| Gateways | gateway.networking.k8s.io/v1 | Gateway definitions (filtered by `gatewayClass.name`) |
-| GatewayClasses | gateway.networking.k8s.io/v1 | GatewayClass definitions (field-selector scoped to owned class) |
-| HTTPRoutes | gateway.networking.k8s.io/v1 | HTTP routing rules |
-| GRPCRoutes | gateway.networking.k8s.io/v1 | gRPC routing rules |
-| TLSRoutes | gateway.networking.k8s.io/v1 | TLS passthrough routing rules |
-| ListenerSets | gateway.networking.k8s.io/v1alpha2 | Additional listeners attached to Gateways (GEP-1713) |
-| Namespaces | v1 | Namespace metadata for listener attachment evaluation |
-| Services | v1 | Service discovery |
-| EndpointSlices | discovery.k8s.io/v1 | Backend endpoints |
+Every Gateway API kind is an **optional** watched resource with an ordered
+`apiVersions` candidate list. At startup — and again whenever a relevant CRD
+is installed, upgraded, or removed — the controller resolves each entry to
+the first candidate the cluster serves and strips the features of kinds it
+doesn't serve at any candidate version. You don't redeploy the chart when
+you install or upgrade Gateway API; support activates by itself.
+
+| Resource | API version candidates (preferred first) | Purpose |
+|----------|-------------------------------------------|---------|
+| Gateways | v1, v1beta1 | Gateway definitions (filtered by `gatewayClass.name`) |
+| GatewayClasses | v1, v1beta1 | GatewayClass definitions (field-selector scoped to owned class) |
+| HTTPRoutes | v1, v1beta1 | HTTP routing rules |
+| GRPCRoutes | v1, v1alpha2 | gRPC routing rules |
+| TLSRoutes | v1, v1alpha3, v1alpha2 | TLS passthrough routing rules |
+| TCPRoutes | v1, v1alpha2 | Raw-TCP listener forwarding |
+| ReferenceGrants | v1, v1beta1 | Cross-namespace reference policy |
+| ListenerSets | v1 | Additional listeners attached to Gateways (GEP-1713) |
+| BackendTLSPolicies | v1, v1alpha3 | Backend TLS validation (v1alpha2 is excluded: incompatible shape) |
+| Namespaces | v1 (required) | Namespace metadata for listener attachment evaluation |
+| Services | v1 (required) | Service discovery |
+| EndpointSlices | discovery.k8s.io/v1 (required) | Backend endpoints |
+
+Features whose *fields* don't exist in an older release's schemas (for
+example the HTTPRoute CORS filter before Gateway API v1.6, or Gateway
+frontend mTLS) stay inactive on that release; everything else works. The
+per-release expectations are pinned by `tests/schemas-ga-*` and
+`scripts/test-templates.sh`.
 
 TLS Secrets are watched by the SSL library (not gateway), and controller-service address discovery for status patches is owned by base.yaml. See [SSL Library](ssl.md) and [Base Library](base.md).
 

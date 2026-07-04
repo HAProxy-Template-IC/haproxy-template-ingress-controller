@@ -1,5 +1,6 @@
 validationTests:
   test-tcproute-orphan-sibling-does-not-drop-others:
+    requires: [gateways, tcproutes]
     description: An orphaned TCPRoute (parentRef Gateway deleted) must NOT drop sibling routes from rendering. Regression for the Scriggo bubble-sort mis-lowering that dropped every route after an orphan.
     fixtures:
       gateways:

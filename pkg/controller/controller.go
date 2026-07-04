@@ -185,6 +185,67 @@ type persistentInfra struct {
 	MetricsServer         *pkgmetrics.Server
 	serverStarted         bool // True after first iteration has started the server
 	metricsServerStarted  bool // True after first iteration has started the metrics server
+
+	// Reinitialization grace tracking. A VOLUNTARY iteration restart (config
+	// change, CRD change) tears down and rebuilds every component; during
+	// that window the per-iteration health state reports unhealthy even
+	// though the process is doing exactly what it should. Without a grace
+	// window, any reinit longer than the liveness budget (~30s — and the
+	// config's embedded validationTests alone can take a large share of
+	// that) gets the container killed mid-reinit. The grace applies ONLY
+	// after the controller has been fully initialized at least once, so the
+	// fail-closed startup contract is untouched: a fresh pod with a bad
+	// config still crash-loops, and a reinit that can't complete within the
+	// grace window goes unhealthy and gets restarted into that same
+	// fail-closed startup path.
+	graceMu            sync.Mutex
+	everInitialized    bool
+	iterationStartedAt time.Time
+	settledThisIter    bool
+}
+
+// ReinitGraceWindow is how long after a voluntary iteration restart /healthz
+// keeps reporting healthy while components re-initialize. Sized to cover a
+// slow reinit (embedded validationTests + watcher re-sync + leader
+// re-acquisition) while staying well below the fresh-pod startup budget the
+// liveness restart would fall back to.
+const ReinitGraceWindow = 90 * time.Second
+
+// NoteIterationStart records the beginning of an iteration for reinit-grace
+// accounting.
+func (p *persistentInfra) NoteIterationStart() {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	p.iterationStartedAt = time.Now()
+	p.settledThisIter = false
+}
+
+// NoteInitialized records that an iteration completed its staged startup.
+func (p *persistentInfra) NoteInitialized() {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	p.everInitialized = true
+}
+
+// NoteSettled records that the current iteration has been observed fully
+// healthy at least once. From that point on the grace no longer applies —
+// an unhealthy entry AFTER settling is a genuine failure, not rebuild
+// churn, and must surface immediately instead of being masked for the
+// remainder of the window.
+func (p *persistentInfra) NoteSettled() {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	p.settledThisIter = true
+}
+
+// InReinitGrace reports whether unhealthy health entries should be tolerated
+// because a voluntary reinitialization is (recently) in progress. The grace
+// ends at the EARLIER of: the window expiring, or the iteration settling
+// (fully healthy once — see NoteSettled).
+func (p *persistentInfra) InReinitGrace() bool {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	return p.everInitialized && !p.settledThisIter && time.Since(p.iterationStartedAt) < ReinitGraceWindow
 }
 
 // Run is the main entry point for the controller.

@@ -1,5 +1,6 @@
 validationTests:
   test-gateway-https-listener-with-invalid-cert-no-bind:
+    requires: [gatewayclasses, gateways]
     description: "A Gateway HTTPS listener at the chart's default httpsPort with a malformed cert (Secret exists but tls."
     fixtures:
       gatewayclasses:
@@ -48,6 +49,7 @@ validationTests:
         pattern: "bind .*:443.*ssl crt"
 
   test-gateway-https-listener-mtls-unresolved-ca-no-bind:
+    requires: [gatewayclasses, gateways]
     description: "Closes the GatewayFrontendInvalidDefaultClientCertificateValidation conformance gap on the chart side: a Gateway HTTPS listener with a valid server cert AND `spec.tls.frontend.default."
     fixtures:
       gatewayclasses:
@@ -113,6 +115,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "bind .*:443.*ssl crt"
   test-gateway-https-listener-mtls-unresolved-ca-status-conditions:
+    requires: [gatewayclasses, gateways]
     description: "Status-side companion of test-gateway-https-listener-mtls- unresolved-ca-no-bind. The chart-side fix for GatewayFrontendInvalidDefaultClientCertificateValidation requires BOTH:"
     fixtures:
       gatewayclasses:
@@ -175,6 +178,7 @@ validationTests:
         pattern: '"name":"https"'
 
   test-gateway-https-listener-with-valid-cert-binds:
+    requires: [gatewayclasses, gateways]
     description: "The companion test to the invalid-cert case: a Gateway HTTPS listener at httpsPort with a resolvable cert sets gf [\"bindHTTPSDefault\"]=true via features-150-gateway-bind, the chart-static `bind *:443 ssl crt-list ...` renders normally, and `frontend https` exists."
     fixtures:
       gatewayclasses:
@@ -227,6 +231,7 @@ validationTests:
         pattern: "bind .*:443.*ssl crt-list"
 
   test-gateway-https-misdirected-listener-claim-maps:
+    requires: [gatewayclasses, gateways]
     description: HTTPS listener hostnames are emitted as listener-claim maps and the misdirected directive references them
     fixtures:
       gatewayclasses:
@@ -297,6 +302,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request return status 421 if .* var\\(txn\\.gw_sni_listener\\),strcmp\\(txn\\.gw_host_listener\\) eq 0"
   test-backendtlspolicy-compiles:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
     description: BackendTLSPolicy is watched and the chart compiles when one is present
     fixtures:
       gatewayclasses:
@@ -393,6 +399,7 @@ validationTests:
         pattern: "default-server check ssl ca-file [^\\s]+ verify required sni str\\(backend\\.example\\.com\\) verifyhost backend\\.example\\.com"
 
   test-backendtlspolicy-invalid-ca-cert-ref-rejects:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
     description: "BackendTLSPolicy with caCertificateRefs that don't resolve (no matching ConfigMap or Secret in the cluster) and no wellKnownCACertificates: System fallback marks the targeted backend as broken."
     fixtures:
       gatewayclasses:
@@ -466,6 +473,7 @@ validationTests:
         pattern: "default-server check ssl ca-file"
 
   test-gateway-insecure-frontend-validation-mode-default:
+    requires: [gateways]
     description: Gateway with spec.tls.frontend.default.mode=AllowInsecureFallback compiles cleanly. The status patch (verified end-to-end by the GatewayInsecureFrontendValidationMode conformance test) appends Insecur...
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -494,6 +502,7 @@ validationTests:
       - type: haproxy_valid
 
   test-gateway-insecure-frontend-validation-mode-per-port:
+    requires: [gateways]
     description: "Gateway with spec.tls.frontend.perPort[*].tls.validation.mode=AllowInsecureFallback compiles cleanly (GEP-91 perPort override path)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -527,6 +536,7 @@ validationTests:
       - type: haproxy_valid
 
   test-gateway-frontend-client-cert-default-line-verify:
+    requires: [gatewayclasses, gateways]
     description: "Mirrors the upstream Gateway API GatewayFrontendClientCertificateValidation conformance fixture: a Gateway with two HTTPS listeners on different ports — one with no hostname (port 443, default fronten."
     fixtures:
       gatewayclasses:
@@ -666,6 +676,7 @@ validationTests:
         target: crt-list:certificate-list.txt
         pattern: 'verify required\] second-example\.org'
   test-gateway-frontend-client-cert-insecure-fallback-default-line:
+    requires: [gatewayclasses, gateways]
     description: "Variant of the previous test with mode: AllowInsecureFallback. Same Gateway shape (two listeners, one per port; default vs. perPort validation), but with InsecureFallback set on both."
     fixtures:
       gatewayclasses:
@@ -805,6 +816,7 @@ validationTests:
         target: crt-list:certificate-list.txt
         pattern: 'verify optional\] second-example\.org'
   test-gateway-backend-client-cert-shape:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
     description: "Mirrors the upstream Gateway API GatewayBackendClientCertificateFeature conformance fixture: a Gateway with HTTP listener (port 80), an HTTPRoute pointing at a Service, a BackendTLSPolicy validating t."
     fixtures:
       gatewayclasses:

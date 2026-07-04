@@ -695,7 +695,31 @@ func TestGatewayAPIConformance(t *testing.T) {
 		}
 	}
 
+	// The GatewayClass is created by the CONTROLLER at runtime (SSA on the
+	// first render after the gatewayclasses CRD resolves) — not by Helm —
+	// so a fresh install may not have it the instant the suite starts. The
+	// upstream suite's setup fails immediately on a missing class instead
+	// of polling, so gate here until it exists.
+	waitForGatewayClassExists(t, opts.Client, gatewayClassName)
+
 	gwconformance.RunConformanceWithOptions(t, opts)
+}
+
+// waitForGatewayClassExists polls until the named GatewayClass is present.
+func waitForGatewayClassExists(t *testing.T, c client.Client, name string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		gc := &gatewayv1.GatewayClass{}
+		err := c.Get(context.Background(), client.ObjectKey{Name: name}, gc)
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GatewayClass %q not created by the controller within 3m: %v", name, err)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // discoverStaticAddressPools returns sample Usable and Unusable

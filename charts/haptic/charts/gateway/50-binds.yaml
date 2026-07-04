@@ -18,6 +18,7 @@ templateSnippets:
   # binds match what status-patches-220-listenerset accepts.
   # ----------------------------------------------------------------------------
   util-gateway-extra-port-binds:
+    requires: [gateways, referencegrants]
     template: |
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- macro ExtraPortBinds(protocol string, sslOptionsSuffix string, seenInitial []int) %}
@@ -37,13 +38,20 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-          {%- for _, ls := range resources.listenersets.List() %}
+          {%- _ = render "util-listenersets-contrib" default "" -%}
+          {%- var lsSeamRaw = shared.Get("listenersetsUntyped") %}
+          {%- var lsSeamAll = []any{} %}
+          {%- if lsSeamRaw != nil %}
+            {%- var lsSeamList, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any) %}
+            {%- if lsSeamOk %}{%- lsSeamAll = lsSeamList %}{%- end %}
+          {%- end %}
+          {%- for _, ls := range lsSeamAll %}
             {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-              {%- for _, listener := range ls.Spec.Listeners %}
-                {%- var lProto = listener.Protocol %}
+              {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
+                {%- var lProto = dig_string(listener, "", "protocol") %}
                 {%- if lProto == "" %}{%- lProto = "HTTP" %}{%- end %}
                 {%- if lProto == protocol %}
-                  {%- var port = toint(listener.Port) %}
+                  {%- var port = toint(dig(listener, "port") | fallback(0)) %}
                   {%- if port > 0 && !seen[port] %}
                     {%- seen[port] = true %}
       bind *:{{ port }}{{ sslOptionsSuffix }}
@@ -56,6 +64,7 @@ templateSnippets:
       {%- end %}
 
   http-bind-extra-050-gateway-multi-port-bind:
+    requires: [gateways, referencegrants]
     template: |
       {#- Non-default HTTP ports declared by Gateway listeners or admitted
           ListenerSets land on the http_frontend via this snippet. We seed
@@ -80,6 +89,7 @@ templateSnippets:
   # non-default Gateway HTTPS listener gets the same TLS handshake
   # behaviour without re-deriving the option set.
   https-bind-extra-050-gateway-multi-port-bind:
+    requires: [gateways, referencegrants]
     template: |
       {%- import "util-gateway-extra-port-binds" for ExtraPortBinds %}
       {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
@@ -132,6 +142,7 @@ templateSnippets:
   # arrives at the frontend, fails the allowlist check, and gets
   # rejected.
   frontends-600-gateway-tls-listener:
+    requires: [gateways, httproutes, tlsroutes]
     template: |
       {%- var byPortRaw = shared.Get("gatewayTLSListenersByPort") %}
       {%- if byPortRaw == nil %}

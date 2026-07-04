@@ -1,5 +1,6 @@
 templateSnippets:
   util-generate-httproute-weighted-backend-map-gateway:
+    requires: [httproutes]
     template: |
       {#- Generate weighted backend map entries for HTTPRoute.
           Typed sibling — formerly GenerateWeightedBackendMap with a
@@ -43,6 +44,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-generate-grpcroute-weighted-backend-map-gateway:
+    requires: [grpcroutes]
     template: |
       {#- Generate weighted backend map entries for GRPCRoute.
           Typed sibling of GenerateHTTPRouteWeightedBackendMap; body
@@ -86,6 +88,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-sharded-weighted-backend-map-gateway:
+    requires: [grpcroutes, httproutes]
     template: |
       {#- Per-Kind typed sharded weighted-backend-map wrappers.
           Each calls its Kind-specific Generate macro with the typed
@@ -117,6 +120,7 @@ templateSnippets:
       {%- end macro -%}
 
   map-weighted-backend-500-gateway:
+    requires: [grpcroutes, httproutes]
     template: |
       {#- Generate weighted backend map entries for HTTPRoute and
           GRPCRoute. Both kinds support multi-backendRef rules with

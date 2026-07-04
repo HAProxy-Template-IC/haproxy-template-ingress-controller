@@ -1,5 +1,6 @@
 validationTests:
   test-tlsroute-terminate-on-chart-static-httpsport:
+    requires: [gateways, tlsroutes]
     description: "Mirrors the upstream TLSRouteTerminateSimpleSameNamespace conformance fixture: a Gateway with one TLS-Terminate listener on port 8443 (which is also the chart's default httpsPort) and nothing else com."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -77,6 +78,7 @@ validationTests:
         pattern: '(?m)^\s+bind \*:8443'
         expected: "1"
   test-tlsroute-invalid-backend-rejects-on-frontend:
+    requires: [gateways, tlsroutes]
     description: "Mirror of the upstream TLSRouteInvalidBackendRefUnknownKind conformance fixture's chart-side contract: a TLS Passthrough listener has a TLSRoute attached whose backendRef points at an unknown kind."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -133,6 +135,7 @@ validationTests:
         target: haproxy.cfg
         pattern: '(?m)^\s+tcp-request content reject$'
   test-tlsroute-invalid-backend-rejects-on-chart-static:
+    requires: [gateways, tlsroutes]
     description: "Mirrors the upstream TLSRouteInvalidBackendRefNonexistent / TLSRouteInvalidBackendRefUnknownKind conformance scenario at chart-static httpsPort (443/8443): a TLS Passthrough listener on the chart-static port has a TLSRoute attached whose backendRef points at a non-existent Service. The route is recorded in sslPassthroughBackends with `invalid: true`; this lights bindHTTPSDefault so chart-static `frontend ssl-tcp` renders, and the route's claimed SNI joins listener_sni so connections to that SNI hit the reject path (not the ssl-loopback fallback)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -189,6 +192,7 @@ validationTests:
         target: haproxy.cfg
         pattern: '(?m)^\s+tcp-request content reject if gw_default_gw_tlsroute_invalid_default_invalid_sni$'
   test-tlsroute-hostname-intersection-multi-gateway:
+    requires: [gateways, tlsroutes]
     description: "Mirrors the upstream TLSRouteHostnameIntersection conformance fixture: four Gateways on port 443 (chart-static httpsPort), each with a different listener-hostname pattern (exact / *.example.com / *.com / empty). Each Gateway has TLSRoutes whose hostnames intersect with the parent listener pattern. Per Gateway-API spec, a SNI matching one Gateway's listener pattern but not claimed by any of THAT Gateway's routes must be rejected — even if a sibling Gateway on the same port has routes that would accept the SNI under a wider pattern. Without per-Gateway routing isolation the chart's union-style route_sni ACL would let `non.matching.com` reach G4's `*.com` backend via G3's `*.com` listener, breaking the spec contract."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -371,6 +375,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'tcp-request content reject if !gw_default_gw_tlsroute_empty_hostname_x_4_route_sni'
   test-tlsroute-terminate-nondefault-port-frontend:
+    requires: [gateways, tlsroutes]
     description: TLSRoute attached to a TLS Terminate listener on a non-chart- static port renders a per-port mode-tcp frontend with TLS termination on the bind.
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -452,6 +457,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'use_backend gtw_tls_default_tls-app_0 if .*req_ssl_sni'
   test-tlsroute-passthrough-nondefault-port-frontend:
+    requires: [gateways, tlsroutes]
     description: "TLSRoute attached to a TLS Passthrough listener on a port OTHER than the chart-static httpsPort lands on the new `frontends-600-gateway-tls-listener` per-port frontend, not on the chart's static ssl-t."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -526,6 +532,7 @@ validationTests:
         target: haproxy.cfg
         pattern: '(?m)^\s+tcp-request content reject if !allowed_sni$'
   test-tlsroute-passthrough-basic:
+    requires: [gateways, tlsroutes]
     description: "TLSRoute attached to a TLS Passthrough listener emits a TCP-mode backend named gtw_tls_<ns>_<route>_<rule> and a SNI-keyed use_backend rule on the ssl-tcp frontend."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -592,6 +599,7 @@ validationTests:
         pattern: "use_backend gtw_tls_default_tls-app_0 if .*ssl_fc_sni"
 
   test-tlsroute-no-tls-listener:
+    requires: [gateways, tlsroutes]
     description: "TLSRoute parented to an HTTP-only Gateway (no TLS listener) must NOT produce a TLSRoute backend. Mirrors conformance tlsroute-invalid-no-matching-listener for the HTTP / HTTPS case."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -643,6 +651,7 @@ validationTests:
         pattern: "backend gtw_tls_default_tls-app"
 
   test-tlsroute-hostname-mismatch:
+    requires: [gateways, tlsroutes]
     description: "TLSRoute hostname not intersecting the listener hostname does NOT produce a passthrough backend. Mirrors conformance tlsroute-invalid-no-matching-listener-hostname."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -699,6 +708,7 @@ validationTests:
         pattern: "backend gtw_tls_default_tls-mismatch"
 
   test-tlsroute-wildcard-listener-exact-route:
+    requires: [gateways, tlsroutes]
     description: "Wildcard listener \"*.example.com\" + exact route \"abc.example.com\" produces a backend keyed on the exact route hostname (per Gateway API HostnameSinglePairIntersection)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -755,6 +765,7 @@ validationTests:
         pattern: "use_backend gtw_tls_default_tls-exact_0 if \\{ req_ssl_sni -m str abc\\.example\\.com \\}"
 
   test-tlsroute-section-name-no-match:
+    requires: [gateways, tlsroutes]
     description: "TLSRoute parentRef.sectionName referencing a nonexistent listener must not attach (NoMatchingParent on status side; backend not emitted on data plane). Mirrors conformance test case tlsroute-no-matching-section-name."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -809,6 +820,7 @@ validationTests:
         pattern: "backend gtw_tls_default_tls-bad-section"
 
   test-tlsroute-invalid-backend-kind-no-attach:
+    requires: [gateways, tlsroutes]
     description: "TLSRoute backendRef with non-Service kind must not produce a backend (status side reports ResolvedRefs=False/InvalidKind)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -855,6 +867,7 @@ validationTests:
         pattern: "backend gtw_tls_default_tls-bad-kind"
 
   test-tlsroute-mixed-termination-protocol-conflict:
+    requires: [gatewayclasses, gateways]
     description: "Mirrors the upstream Gateway API TLSRouteListenerMixedTerminationNotSupported conformance fixture: a Gateway with two TLS listeners on the same port, one in `tls."
     fixtures:
       gatewayclasses:

@@ -1,5 +1,6 @@
 validationTests:
   test-gateway-infrastructure-propagation-labels-only:
+    requires: [gateways]
     description: Gateway with spec.infrastructure.labels triggers marker Service emission and renders cleanly
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -65,6 +66,7 @@ validationTests:
         pattern: 'key2: value2'
 
   test-gateway-infrastructure-propagation-annotations-only:
+    requires: [gateways]
     description: Gateway with spec.infrastructure.annotations triggers marker Service emission and renders cleanly
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -124,6 +126,7 @@ validationTests:
         pattern: 'example\.com/managed-by: gateway-controller'
 
   test-gateway-infrastructure-propagation-marker-name-fits-rfc1123-label:
+    requires: [gateways]
     description: "Marker Service emission stays within the 63-char K8s name limit even when the natural `gw-<ns>-<name>` join exceeds it. Regression for the conformance fixture `gateway-with-infrastructure-metadata` in namespace `gateway-conformance-infra` (65 chars unbounded — the API server rejected it as `metadata.name: must be no more than 63 characters`)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -162,6 +165,7 @@ validationTests:
         target: "k8s:gateway-infrastructure-propagation"
         pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-infrastructure-metadata'
   test-gateway-infrastructure-propagation-with-static-addresses:
+    requires: [gateways]
     description: Gateway with both spec.infrastructure and spec.addresses propagates labels/annotations onto the static-addresses Service
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -233,6 +237,7 @@ validationTests:
         target: "k8s:gateway-static-addresses"
         pattern: 'namespace: haptic-system'
   test-gateway-infrastructure-propagation-empty:
+    requires: [gateways]
     description: Gateway without spec.infrastructure or spec.addresses skips marker Service emission and renders cleanly
     extraContext:
       controllerName: "haproxy-haptic.org/controller"

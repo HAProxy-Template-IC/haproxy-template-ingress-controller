@@ -110,6 +110,8 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 
 		watchedResources[name] = config.WatchedResource{
 			APIVersion:              crdRes.APIVersion,
+			APIVersions:             crdRes.APIVersions,
+			Optional:                crdRes.Optional,
 			Resources:               crdRes.Resources,
 			EnableValidationWebhook: crdRes.EnableValidationWebhook,
 			IndexBy:                 crdRes.IndexBy,
@@ -126,6 +128,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		templateSnippets[name] = config.TemplateSnippet{
 			Name:     name, // Name comes from map key
 			Template: crdSnippet.Template,
+			Requires: crdSnippet.Requires,
 		}
 	}
 
@@ -256,6 +259,7 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 			HTTPFixtures:      convertHTTPFixtures(crdTest.HTTPResources),
 			CurrentConfig:     crdTest.CurrentConfig,
 			MinHAProxyVersion: crdTest.MinHAProxyVersion,
+			Requires:          crdTest.Requires,
 			Assertions:        convertAssertions(crdTest.Assertions),
 		}
 		// Parse test-specific extraContext if present

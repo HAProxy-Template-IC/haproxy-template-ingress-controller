@@ -93,3 +93,38 @@ k8sResources:
       {{ doc }}
       {%- end %}
       {%- end %}
+
+  # The GatewayClass this controller serves. Emitted at RUNTIME (SSA via the
+  # resource applier) instead of by a Helm template so it exists exactly when
+  # the gatewayclasses CRD is served: installing Gateway API after HAPTIC (or
+  # upgrading it in place) creates the class without any helm operation. The
+  # emission lives in a strippable snippet (requires: [gatewayclasses]) behind
+  # a `default ""` seam, so this entry renders empty — and applies nothing —
+  # on clusters without the CRD.
+  gateway-class:
+    template: |
+      {{ render "util-emit-gatewayclass" default "" }}
+
+templateSnippets:
+  util-emit-gatewayclass:
+    requires: [gatewayclasses]
+    template: |
+      {%- var gcRaw = extraContext | dig("gatewayClassResource") %}
+      {%- if gcRaw != nil %}
+      {%- var gc = gcRaw.(map[string]any) %}
+      apiVersion: {{ resources.gatewayclasses.APIVersion() }}
+      kind: GatewayClass
+      metadata:
+        name: {{ gc["name"] }}
+        {%- if gc["default"] == true %}
+        annotations:
+          gateway.networking.k8s.io/is-default-class: "true"
+        {%- end %}
+      spec:
+        controllerName: {{ gc["controllerName"] }}
+        parametersRef:
+          group: {{ gc["parametersGroup"] }}
+          kind: {{ gc["parametersKind"] }}
+          name: {{ gc["parametersName"] }}
+          namespace: {{ gc["parametersNamespace"] }}
+      {%- end %}

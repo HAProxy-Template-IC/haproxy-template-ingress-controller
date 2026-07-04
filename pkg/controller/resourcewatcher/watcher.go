@@ -118,7 +118,8 @@ func New(
 		"label_selector", cfg.PodSelector.MatchLabels)
 
 	// Create a watcher for each resource type (including auto-injected haproxy-pods)
-	for resourceTypeName, watchedResource := range resourcesWithHAProxyPods {
+	for resourceTypeName := range resourcesWithHAProxyPods {
+		watchedResource := resourcesWithHAProxyPods[resourceTypeName]
 		// Convert APIVersion/Kind to GVR
 		gvr, err := toGVR(&watchedResource)
 		if err != nil {

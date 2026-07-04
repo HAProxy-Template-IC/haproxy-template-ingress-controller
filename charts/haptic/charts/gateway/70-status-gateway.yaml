@@ -1,5 +1,6 @@
 templateSnippets:
   util-generate-gateway-status-patches:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#-
         Generate Gateway Status Patches
@@ -76,6 +77,7 @@ templateSnippets:
             reference here would fail to COMPILE on clusters where the
             TCPRoute CRD is not served. -#}
         {%- _ = render "util-gateway-tcproute-count-contrib" default "" -%}
+        {%- _ = render "util-gateway-tlsroute-count-contrib" default "" -%}
         {%%
           // Gather all routes (HTTPRoute + GRPCRoute + TLSRoute) into a
           // single iteration so the predicate evaluation is uniform.
@@ -99,13 +101,14 @@ templateSnippets:
               "needsTCPProtocol": false,
             })
           }
-          for _, r := range resources.tlsroutes.List() {
-            allRoutesForCount = append(allRoutesForCount, map[string]any{
-              "kind":  "TLSRoute",
-              "route": r,
-              "needsTLSProtocol": true,
-              "needsTCPProtocol": false,
-            })
+          // TLSRoute entries arrive through the
+          // util-gateway-tlsroute-count-contrib seam (rendered below) —
+          // empty when the TLSRoute feature is stripped. A typed
+          // resources.tlsroutes reference here would fail to COMPILE on
+          // clusters where the CRD is not served.
+          var tlsEntries, _ = shared.Get("tlsrouteCountEntries").([]any)
+          for _, e := range tlsEntries {
+            allRoutesForCount = append(allRoutesForCount, e)
           }
           // TCPRoute counts toward TCP listeners only (needsTCPProtocol gate
           // below). Without this, a Gateway's TCP listener reported
@@ -348,12 +351,15 @@ templateSnippets:
             // knows the shape. Ranging over an absent (nil) typed
             // map[string]string is a no-op, so the chart doesn't
             // need the previous `if infra != nil` guard.
+            // Dig-only: spec.infrastructure is newer than the oldest
+            // schema generation the gateways candidate list can resolve —
+            // typed access fails to COMPILE against pre-v1.1 schemas.
             var infraLabels = map[string]any{}
             var infraAnnotations = map[string]any{}
-            for ilK, ilV := range gateway.Spec.Infrastructure.Labels {
+            for ilK, ilV := range to_str_map(dig(gateway, "spec", "infrastructure", "labels")) {
               infraLabels[ilK] = ilV
             }
-            for iaK, iaV := range gateway.Spec.Infrastructure.Annotations {
+            for iaK, iaV := range to_str_map(dig(gateway, "spec", "infrastructure", "annotations")) {
               infraAnnotations[iaK] = iaV
             }
             // The gateway-name label is the discovery key the conformance
@@ -919,13 +925,15 @@ templateSnippets:
                 // feValidation so downstream validation-resolvability
                 // checks no-op.
                 if dig(gateway, "spec", "tls", "frontend") != nil {
+                  // Dig-only: spec.tls newer than the oldest resolvable
+                  // Gateway schema (typed access would not compile there).
                   if dig(gateway, "spec", "tls", "frontend", "default", "validation") != nil {
-                    feValidation = gateway.Spec.Tls.Frontend.Default.Validation
+                    feValidation = dig(gateway, "spec", "tls", "frontend", "default", "validation")
                   }
-                  for _, pp := range gateway.Spec.Tls.Frontend.PerPort {
-                    if toint(pp.Port) == listenerPort {
+                  for _, pp := range dig(gateway, "spec", "tls", "frontend", "perPort") | toSlice() {
+                    if toint(dig(pp, "port") | fallback(0)) == listenerPort {
                       if dig(pp, "tls", "validation") != nil {
-                        feValidation = pp.Tls.Validation
+                        feValidation = dig(pp, "tls", "validation")
                       }
                       break
                     }
@@ -1195,12 +1203,12 @@ templateSnippets:
             // ref at backend-emit time; we replay the same checks here
             // so the Gateway status reflects the same resolution.
             if dig(gateway, "spec", "tls", "backend", "clientCertificateRef") != nil && gwResolvedRefsStatus == "True" {
-              var ccRef = gateway.Spec.Tls.Backend.ClientCertificateRef
-              var ccGroup = ccRef.Group
-              var ccKind = ccRef.Kind
+              var ccRef = dig(gateway, "spec", "tls", "backend", "clientCertificateRef")
+              var ccGroup = dig_string(ccRef, "", "group")
+              var ccKind = dig_string(ccRef, "", "kind")
               if ccKind == "" { ccKind = "Secret" }
-              var ccName = ccRef.Name
-              var ccNs = ccRef.Namespace
+              var ccName = dig_string(ccRef, "", "name")
+              var ccNs = dig_string(ccRef, "", "namespace")
               if ccNs == "" { ccNs = nsStr }
               if (ccGroup != "" && ccGroup != "core") || ccKind != "Secret" || ccName == "" {
                 gwResolvedRefsStatus = "False"
@@ -1268,12 +1276,12 @@ templateSnippets:
             // panicking (typegen wraps only scalars in pointers), so
             // the guard is performance/style — not a correctness fix.
             if dig(gateway, "spec", "tls", "frontend") != nil {
-              if gateway.Spec.Tls.Frontend.Default.Validation.Mode == "AllowInsecureFallback" {
+              if dig_string(gateway, "", "spec", "tls", "frontend", "default", "validation", "mode") == "AllowInsecureFallback" {
                 insecureFallback = true
               }
               if !insecureFallback {
-                for _, perPort := range gateway.Spec.Tls.Frontend.PerPort {
-                  if perPort.Tls.Validation.Mode == "AllowInsecureFallback" {
+                for _, perPort := range dig(gateway, "spec", "tls", "frontend", "perPort") | toSlice() {
+                  if dig_string(perPort, "", "tls", "validation", "mode") == "AllowInsecureFallback" {
                     insecureFallback = true
                     break
                   }
@@ -1316,12 +1324,18 @@ templateSnippets:
               }
             }
             var attachedLSCount = 0
-            for _, ls := range resources.listenersets.List() {
-              if ls.Spec.ParentRef.Name != nameStr {
+            var lsSeamRaw = shared.Get("listenersetsUntyped")
+            var lsSeamAll = []any{}
+            if lsSeamRaw != nil {
+              var lsSeamList, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any)
+              if lsSeamOk { lsSeamAll = lsSeamList }
+            }
+            for _, ls := range lsSeamAll {
+              if dig_string(ls, "", "spec", "parentRef", "name") != nameStr {
                 continue
               }
-              var lsNs = ls.Metadata.Namespace
-              var pNs = ls.Spec.ParentRef.Namespace
+              var lsNs = dig_string(ls, "", "metadata", "namespace")
+              var pNs = dig_string(ls, "", "spec", "parentRef", "namespace")
               if pNs == "" { pNs = lsNs }
               if pNs != nsStr {
                 continue
@@ -1343,9 +1357,9 @@ templateSnippets:
               // only when at least one entry is `accepted=true` (i.e.
               // not in conflict and not invalid). LSes with no cache
               // entry fall through to attached (cache miss = optimistic).
-              var lsName = ls.Metadata.Name
+              var lsName = dig_string(ls, "", "metadata", "name")
               var lsKey = lsNs + "/" + lsName
-              var listenersTotal = len(ls.Spec.Listeners)
+              var listenersTotal = len(dig(ls, "spec", "listeners") | toSlice())
               if listenersTotal == 0 {
                 continue
               }
@@ -1513,7 +1527,7 @@ templateSnippets:
               })
             }
             statusPatch(nsStr, nameStr,
-              "gateway.networking.k8s.io/v1", "Gateway",
+              resources.gateways.APIVersion(), "Gateway",
               map[string]interface{}{
                 "rendered": map[string]interface{}{
                   "addresses":            gwEffectiveAddresses,
@@ -1535,6 +1549,7 @@ templateSnippets:
       {% end %}
 
   util-sharded-gateway-status-patches:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#-
         Sharded Gateway Status Patches
@@ -1555,6 +1570,7 @@ templateSnippets:
       {% end %}
 
   status-patches-200-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#-
         Gateway API Status Patch Registration
@@ -1573,7 +1589,6 @@ templateSnippets:
       -#}
       {%- import "util-sharded-gateway-status-patches" for ShardedGatewayStatusPatches -%}
       {%- import "util-sharded-route-status-patches" for ShardedHTTPRouteStatusPatches, ShardedGRPCRouteStatusPatches -%}
-      {%- import "util-sharded-tlsroute-status-patches" for ShardedTLSRouteStatusPatches -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- if gf["addresses"] != nil %}
         {%- var allGateways = resources.gateways.List() -%}
@@ -1596,15 +1611,15 @@ templateSnippets:
       {%- if len(allGRPCRoutes) > 0 -%}
         {{- ShardedGRPCRouteStatusPatches(allGRPCRoutes) -}}
       {%- end -%}
-      {%- var allTLSRoutes = resources.tlsroutes.List() -%}
-      {%- if len(allTLSRoutes) > 0 -%}
-        {{- ShardedTLSRouteStatusPatches(allTLSRoutes) -}}
-      {%- end -%}
+      {#- TLSRoute status registration lives in its own extension-point
+          snippet (status-patches-205-gateway-tlsroute) so the typed import
+          is stripped together with the tlsroutes watch. -#}
       {#- TCPRoute status registration lives in its own extension-point
           snippet (status-patches-210-gateway-tcproute, 90-tcproute.yaml) so
           the typed import is stripped together with the tcproutes watch. -#}
 
   status-patches-220-listenerset:
+    requires: [gateways, grpcroutes, httproutes, listenersets, referencegrants]
     template: |
       {#-
         ListenerSet (GEP-1713) Status Patches
@@ -2226,7 +2241,7 @@ templateSnippets:
           // and the checksum cache skips redundant re-applies, so no flicker.
           var lsRenderedCond = []any{lsAcceptedCond, lsProgrammedCond}
           statusPatch(lsNs, lsName,
-            "gateway.networking.k8s.io/v1", "ListenerSet",
+            resources.listenersets.APIVersion(), "ListenerSet",
             map[string]interface{}{
               "rendered": map[string]interface{}{
                 "conditions": lsRenderedCond,

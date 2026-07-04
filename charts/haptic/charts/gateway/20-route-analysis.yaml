@@ -1,5 +1,6 @@
 templateSnippets:
   util-gateway-analysis:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- Caches route analysis in shared.gatewayAnalysis: {sortedRoutes, pathGroups, allRoutes}
           Uses ComputeIfAbsent for race-free caching across parallel template renders.
@@ -13,7 +14,34 @@ templateSnippets:
         })
       %%}
 
+  # Compile-safe ListenerSet seam. The ONLY shared-pipeline site that touches
+  # `resources.listenersets`: stashes the store content as untyped values in
+  # shared. Shared consumers render this with `default ""` and read the keys
+  # back comma-ok — empty when the listenersets watch is stripped (Gateway
+  # API < v1.5), so Gateway routing keeps working without ListenerSets
+  # instead of the whole pipeline stripping with them.
+  #
+  #   {%- _ = render "util-listenersets-contrib" default "" -%}
+  #   {%- var lsData, _ = shared.Get("listenersetsUntyped").(map[string]any) %}
+  #   {%- var lsAll, _ = lsData["all"].([]any) %}
+  #   {%- var ls = lsData["byKey"] | dig(ns + "/" + name) %}
+  util-listenersets-contrib:
+    requires: [listenersets]
+    template: |
+      {%%
+        var _, _ = shared.ComputeIfAbsent("listenersetsUntyped", func() any {
+          var all = []any{}
+          var byKey = map[string]any{}
+          for _, ls := range resources.listenersets.List() {
+            all = append(all, ls)
+            byKey[ls.Metadata.Namespace + "/" + ls.Metadata.Name] = ls
+          }
+          return map[string]any{"all": all, "byKey": byKey}
+        })
+      %%}
+
   util-effective-listeners:
+    requires: [gateways, referencegrants]
     template: |
       {#-
         Effective listeners per Gateway = the Gateway's own
@@ -64,6 +92,7 @@ templateSnippets:
           but recorded in listenersetStatuses for status emission.
       -#}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- _ = render "util-listenersets-contrib" default "" -%}
       {%%
         var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
           // The cache value is a single map containing two sub-keys:
@@ -117,13 +146,23 @@ templateSnippets:
             // Sort the ListenerSets attached to this Gateway by
             // (creationTimestamp, namespace, name) so precedence is
             // deterministic across renders.
-            var attachedSets = []*resources.listenersets.T{}
-            for _, ls := range resources.listenersets.List() {
-              if ls.Spec.ParentRef.Name != gwName {
+            // Untyped via util-listenersets-contrib (rendered by the
+            // outer snippet): typed resources.listenersets access here
+            // would strip the whole analysis pipeline on clusters
+            // without the ListenerSet CRD.
+            var lsDataRaw = shared.Get("listenersetsUntyped")
+            var lsAll = []any{}
+            if lsDataRaw != nil {
+              var lsUntypedAll, lsOk = lsDataRaw.(map[string]any)["all"].([]any)
+              if lsOk { lsAll = lsUntypedAll }
+            }
+            var attachedSets = []any{}
+            for _, ls := range lsAll {
+              if dig_string(ls, "", "spec", "parentRef", "name") != gwName {
                 continue
               }
-              var lsNs = ls.Metadata.Namespace
-              var pNs = ls.Spec.ParentRef.Namespace
+              var lsNs = dig_string(ls, "", "metadata", "namespace")
+              var pNs = dig_string(ls, "", "spec", "parentRef", "namespace")
               if pNs == "" { pNs = lsNs }
               if pNs != gwNs {
                 continue
@@ -141,18 +180,18 @@ templateSnippets:
             // sorts LAST, never displacing real ListenerSets.
             var lsSortItems = []any{}
             for _, ls := range attachedSets {
-              var lsTs = ls.Metadata.CreationTimestamp
+              var lsTs = dig_string(ls, "", "metadata", "creationTimestamp")
               if lsTs == "" { lsTs = "9999-12-31T23:59:59Z" }
               lsSortItems = append(lsSortItems, map[string]any{
                 "ts":  lsTs,
-                "key": ls.Metadata.Namespace + "/" + ls.Metadata.Name,
+                "key": dig_string(ls, "", "metadata", "namespace") + "/" + dig_string(ls, "", "metadata", "name"),
                 "ls":  ls,
               })
             }
             var lsSorted, _ = sort_by(lsSortItems, []string{"$.ts", "$.key"})
-            attachedSets = []*resources.listenersets.T{}
+            attachedSets = []any{}
             for _, lsItem := range lsSorted {
-              attachedSets = append(attachedSets, lsItem.(map[string]any)["ls"].(*resources.listenersets.T))
+              attachedSets = append(attachedSets, lsItem.(map[string]any)["ls"])
             }
 
             // Build the candidate listener list for conflict detection.
@@ -183,8 +222,8 @@ templateSnippets:
 
             // ListenerSet listeners, in precedence order.
             for _, ls := range attachedSets {
-              var lsNs = ls.Metadata.Namespace
-              var lsName = ls.Metadata.Name
+              var lsNs = dig_string(ls, "", "metadata", "namespace")
+              var lsName = dig_string(ls, "", "metadata", "name")
               var lsKey = lsNs + "/" + lsName
 
               // Parent acceptance gate.
@@ -246,14 +285,14 @@ templateSnippets:
               // for the per-listener status output (Programmed=False/
               // NotAllowed flows via _accepted=false). They are flagged
               // _accepted=false so routing/binding loops skip them.
-              for li, l := range ls.Spec.Listeners {
+              for li, l := range dig(ls, "spec", "listeners") | toSlice() {
                 var lc = map[string]any{
-                  "name":          l.Name,
-                  "hostname":      l.Hostname,
-                  "port":          l.Port,
-                  "protocol":      l.Protocol,
-                  "tls":           l.Tls,
-                  "allowedRoutes": l.AllowedRoutes,
+                  "name":          dig(l, "name"),
+                  "hostname":      dig(l, "hostname"),
+                  "port":          dig(l, "port"),
+                  "protocol":      dig(l, "protocol"),
+                  "tls":           dig(l, "tls"),
+                  "allowedRoutes": dig(l, "allowedRoutes"),
                 }
                 lc["__sourceKind"] = "ListenerSet"
                 lc["__sourceNs"] = lsNs
@@ -374,6 +413,7 @@ templateSnippets:
       %%}
 
   util-listenerset-routing-gate:
+    requires: [gateways, referencegrants]
     template: |
       {#-
         IsListenerSetAdmitted — the routing-layer ListenerSet gate.
@@ -399,24 +439,28 @@ templateSnippets:
              {ListenerSet, lsNs} to {Gateway, gwName}.
       -#}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- macro IsListenerSetAdmitted(gw *resources.gateways.T, ls *resources.listenersets.T) -%}
+      {%- macro IsListenerSetAdmitted(gw *resources.gateways.T, ls any) -%}
+        {#- `ls any`, dig-navigated: a typed *resources.listenersets.T param
+            would make every importer require the listensets CRD. Typed
+            callers keep working — dig() navigates typed structs and
+            untyped maps alike. -#}
         {%- var gwNs = gw.Metadata.Namespace -%}
         {%- var gwName = gw.Metadata.Name -%}
-        {%- var pRef = ls.Spec.ParentRef -%}
         {%- var result = "false" -%}
-        {%- if pRef.Name == gwName -%}
-          {%- var lsNs = ls.Metadata.Namespace -%}
-          {%- var pNs = pRef.Namespace -%}
+        {%- if dig_string(ls, "", "spec", "parentRef", "name") == gwName -%}
+          {%- var lsNs = dig_string(ls, "", "metadata", "namespace") -%}
+          {%- var pNs = dig_string(ls, "", "spec", "parentRef", "namespace") -%}
           {%- if pNs == "" %}{%- pNs = lsNs %}{%- end -%}
           {%- if pNs == gwNs -%}
-            {#- AllowedListeners is optional; an absent block leaves the
-                typed sub-fields at zero values, which we treat as
-                default-deny (`allowedFrom = "None"`). When the user
-                supplies `namespaces` without `from`, the CRD's
-                OpenAPI default ("None") populates From at admission. -#}
-            {%- var allowedFrom = gw.Spec.AllowedListeners.Namespaces.From -%}
+            {#- AllowedListeners is optional AND newer than the oldest
+                schema generation the gateways candidate list can resolve
+                (it arrived with ListenerSets in Gateway API v1.5) — so
+                dig-guarded, never typed: typed access fails to COMPILE
+                against pre-1.5 Gateway schemas. Absent block = default-
+                deny (`allowedFrom = "None"`), matching the CRD default. -#}
+            {%- var allowedFrom = dig_string(gw, "None", "spec", "allowedListeners", "namespaces", "from") -%}
             {%- if allowedFrom == "" %}{%- allowedFrom = "None" %}{%- end -%}
-            {%- var allowedSelector = gw.Spec.AllowedListeners.Namespaces.Selector.MatchLabels -%}
+            {%- var allowedSelector = dig(gw, "spec", "allowedListeners", "namespaces", "selector", "matchLabels") -%}
             {%- var permitted = "false" -%}
             {%- if allowedFrom == "All" -%}
               {%- permitted = "true" -%}
@@ -425,14 +469,15 @@ templateSnippets:
                 {%- permitted = "true" -%}
               {%- end -%}
             {%- else if allowedFrom == "Selector" -%}
-              {%- if len(allowedSelector) > 0 -%}
+              {%- var selMap = to_str_map(allowedSelector) -%}
+              {%- if len(selMap) > 0 -%}
                 {%- var nsObj = resources.namespaces.GetSingle(lsNs) -%}
                 {%- if nsObj != nil -%}
-                  {#- Both nsObj.Metadata.Labels and allowedSelector are
-                      typed map[string]string from typegen — direct
-                      iteration, no to_str_map normalisation needed. -#}
+                  {#- allowedSelector arrives via dig() (any) — normalise
+                      through to_str_map; nsObj.Metadata.Labels is typed
+                      map[string]string from typegen. -#}
                   {%- var allMatch = "true" -%}
-                  {%- for k, v := range allowedSelector -%}
+                  {%- for k, v := range selMap -%}
                     {%- var actual, ok = nsObj.Metadata.Labels[k] -%}
                     {%- if !ok -%}
                       {%- allMatch = "false" -%}
@@ -525,6 +570,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-analyze-routes:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#-
         Analyzes HTTPRoute/GRPCRoute resources and populates result with:
@@ -748,18 +794,20 @@ templateSnippets:
               {%- var lsName = tostring(dig(parentRef, "name") | fallback("")) %}
               {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
               {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
-              {%- var ls = resources.listenersets.GetSingle(lsNs, lsName) %}
+              {%- _ = render "util-listenersets-contrib" default "" -%}
+              {%- var lsData, _ = shared.Get("listenersetsUntyped").(map[string]any) %}
+              {%- var ls = lsData["byKey"] | dig(lsNs + "/" + lsName) %}
               {%- if ls != nil %}
-                {%- var gwName = ls.Spec.ParentRef.Name %}
-                {%- var gwNs = ls.Spec.ParentRef.Namespace %}
+                {%- var gwName = dig_string(ls, "", "spec", "parentRef", "name") %}
+                {%- var gwNs = dig_string(ls, "", "spec", "parentRef", "namespace") %}
                 {%- if gwNs == "" %}{%- gwNs = lsNs %}{%- end %}
                 {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
                 {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
                   {%- resolvedGwCount = resolvedGwCount + 1 %}
-                  {%- for _, listener := range ls.Spec.Listeners %}
-                    {%- var listenerName = listener.Name %}
+                  {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
+                    {%- var listenerName = dig_string(listener, "", "name") %}
                     {%- if section == "" || section == listenerName %}
-                      {%- var listenerPort = toint(listener.Port) %}
+                      {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
                       {#- Listener-level admission gate (LS branch):
                           prPort pin AND allowedRoutes.namespaces.
                           Listener owner is the LS itself, so
@@ -794,11 +842,11 @@ templateSnippets:
                                   spec.listeners, not the parent Gateway. -#}
                               {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
                               {%- var lsOwnedBySibling = false %}
-                              {%- for _, sibling := range ls.Spec.Listeners %}
+                              {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
                                 {%- if !lsOwnedBySibling %}
-                                  {%- var sibName = sibling.Name %}
+                                  {%- var sibName = dig_string(sibling, "", "name") %}
                                   {%- if sibName != listenerName %}
-                                    {%- var sibHost = sibling.Hostname %}
+                                    {%- var sibHost = dig_string(sibling, "", "hostname") %}
                                     {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > lsCurrentRank %}
                                       {%- lsOwnedBySibling = true %}
                                     {%- end %}
@@ -1064,18 +1112,20 @@ templateSnippets:
               {%- var lsName = tostring(dig(parentRef, "name") | fallback("")) %}
               {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
               {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
-              {%- var ls = resources.listenersets.GetSingle(lsNs, lsName) %}
+              {%- _ = render "util-listenersets-contrib" default "" -%}
+              {%- var lsData, _ = shared.Get("listenersetsUntyped").(map[string]any) %}
+              {%- var ls = lsData["byKey"] | dig(lsNs + "/" + lsName) %}
               {%- if ls != nil %}
-                {%- var gwName = ls.Spec.ParentRef.Name %}
-                {%- var gwNs = ls.Spec.ParentRef.Namespace %}
+                {%- var gwName = dig_string(ls, "", "spec", "parentRef", "name") %}
+                {%- var gwNs = dig_string(ls, "", "spec", "parentRef", "namespace") %}
                 {%- if gwNs == "" %}{%- gwNs = lsNs %}{%- end %}
                 {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
                 {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
                   {%- resolvedGwCount = resolvedGwCount + 1 %}
-                  {%- for _, listener := range ls.Spec.Listeners %}
-                    {%- var listenerName = listener.Name %}
+                  {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
+                    {%- var listenerName = dig_string(listener, "", "name") %}
                     {%- if section == "" || section == listenerName %}
-                      {%- var listenerPort = toint(listener.Port) %}
+                      {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
                       {#- Listener-level admission gate (LS branch):
                           prPort pin AND allowedRoutes.namespaces.
                           Listener owner is the LS itself, so
@@ -1110,11 +1160,11 @@ templateSnippets:
                                   spec.listeners, not the parent Gateway. -#}
                               {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
                               {%- var lsOwnedBySibling = false %}
-                              {%- for _, sibling := range ls.Spec.Listeners %}
+                              {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
                                 {%- if !lsOwnedBySibling %}
-                                  {%- var sibName = sibling.Name %}
+                                  {%- var sibName = dig_string(sibling, "", "name") %}
                                   {%- if sibName != listenerName %}
-                                    {%- var sibHost = sibling.Hostname %}
+                                    {%- var sibHost = dig_string(sibling, "", "hostname") %}
                                     {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > lsCurrentRank %}
                                       {%- lsOwnedBySibling = true %}
                                     {%- end %}

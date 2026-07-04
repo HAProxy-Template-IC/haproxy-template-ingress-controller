@@ -192,6 +192,37 @@ watchedResources:
     debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 2s default
 ```
 
+Instead of a single `apiVersion`, an entry can declare an ordered
+`apiVersions` candidate list together with `optional: true`. The controller
+resolves the entry to the first candidate the cluster serves — at startup
+and again whenever a matching CRD is installed, upgraded, or removed — so
+your configuration works across CRD releases without redeployment:
+
+```yaml
+watchedResources:
+  tcproutes:
+    apiVersions:
+      - gateway.networking.k8s.io/v1
+      - gateway.networking.k8s.io/v1alpha2
+    optional: true   # no served candidate → drop the watch, strip dependent features
+    resources: tcproutes
+    indexBy:
+      - metadata.namespace
+      - metadata.name
+```
+
+Rules:
+
+- `apiVersion` and `apiVersions` are mutually exclusive; exactly one must be set.
+- A **required** entry (no `optional`) whose candidates are all unserved fails
+  startup with an error naming the resource — the controller retries and
+  converges when the CRD appears.
+- An **optional** entry whose candidates are all unserved is dropped, and every
+  `templateSnippets` / `validationTests` entry whose `requires` names it is
+  stripped from the effective configuration.
+- Templates read the resolved version via `resources.<name>.APIVersion()`.
+- The current resolution is visible at `/debug/vars/effectiveConfigResolution`.
+
 See [Watching Resources](./watching-resources.md) for detailed configuration.
 
 ### templateSnippets
@@ -201,11 +232,18 @@ Reusable template fragments.
 ```yaml
 templateSnippets:
   backend-name:
+    requires: [ingresses]  # Optional: strip this snippet when the named optional watched resources are unavailable
     template: |
       ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
 ```
 
 Include in templates: `{{ render "backend-name" }}`
+
+`requires` entries must name `watchedResources` keys. A snippet that must
+survive stripping may reach a stripped resource only through compile-safe
+seams — `render "..." default ""`, `render_glob` extension points, or shared
+state — never a direct typed `resources.<name>` reference. `validationTests`
+entries accept the same `requires` field.
 
 ### maps
 

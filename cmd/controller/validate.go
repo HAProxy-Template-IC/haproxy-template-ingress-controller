@@ -192,6 +192,36 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
+	// Load the schema directory once; it doubles as the offline availability
+	// signal for effective-config resolution and as the typebootstrap schema
+	// source below.
+	var dirFetcher *schemafetcher.DirFetcher
+	if validateSchemaDir != "" {
+		dirFetcher, err = schemafetcher.NewDirFetcher(validateSchemaDir)
+		if err != nil {
+			return nil, fmt.Errorf("loading schema directory %q: %w", validateSchemaDir, err)
+		}
+		logger.Info("Offline type bootstrap: loaded schema directory",
+			"path", validateSchemaDir,
+			"schemas", dirFetcher.Len())
+	}
+
+	// Mirror the controller's effective-config resolution offline: resolve
+	// apiVersions candidate lists against the schema directory and strip
+	// features whose optional resources are absent from it. This is what
+	// makes degraded cluster profiles unit-testable — point --schema-dir at
+	// an old-release CRD bundle and the same code path strips the same
+	// features a live cluster of that vintage would.
+	if dirFetcher != nil {
+		plurals := dirFetcher.PluralsFor()
+		conversion.ResolveEffectiveSpec(configSpec, func(apiVersion, resources string) bool {
+			_, ok := plurals[apiVersion][resources]
+			return ok
+		}, logger)
+	} else {
+		conversion.ResolveEffectiveSpec(configSpec, nil, logger)
+	}
+
 	// Check if config has validation tests
 	if len(configSpec.ValidationTests) == 0 {
 		return nil, errNoValidationTests
@@ -211,7 +241,7 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 	// that use the typed shape get a clear engine-compile-time error
 	// pointing at the missing global — surfacing offline-vs-production
 	// drift the validate CLI exists to catch.
-	typedResult, err := runOfflineTypeBootstrap(configSpec, logger)
+	typedResult, err := runOfflineTypeBootstrap(configSpec, dirFetcher, logger)
 	if err != nil {
 		cleanupFunc()
 		return nil, fmt.Errorf("offline type bootstrap: %w", err)
@@ -276,6 +306,7 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 // nil checks.
 func runOfflineTypeBootstrap(
 	configSpec *v1alpha1.HAProxyTemplateConfigSpec,
+	dirFetcher *schemafetcher.DirFetcher,
 	logger *slog.Logger,
 ) (*typebootstrap.Result, error) {
 	resolver := typebootstrap.NewOfflineGVKResolver()
@@ -286,17 +317,9 @@ func runOfflineTypeBootstrap(
 	// don't exercise typed access — the engine will surface a
 	// compile-time error pointing at any unbound typed global the
 	// templates actually reach for.
-	if validateSchemaDir == "" {
+	if dirFetcher == nil {
 		return &typebootstrap.Result{}, nil
 	}
-
-	dirFetcher, err := schemafetcher.NewDirFetcher(validateSchemaDir)
-	if err != nil {
-		return nil, fmt.Errorf("loading schema directory %q: %w", validateSchemaDir, err)
-	}
-	logger.Info("Offline type bootstrap: loaded schema directory",
-		"path", validateSchemaDir,
-		"schemas", dirFetcher.Len())
 
 	// Auto-extend the offline GVK resolver from full CRDs in the dir
 	// (PluralsFor surfaces every CRD's spec.names.plural → GVK and

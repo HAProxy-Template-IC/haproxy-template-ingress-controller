@@ -1,5 +1,6 @@
 validationTests:
   test-gateway-crtlist-per-listener-shapes:
+    requires: [gateways]
     description: "Phase 2 of the per-Gateway-IP refactor. Verifies that every HTTPS Gateway listener gets its OWN crt-list file via fileRegistry, and that the file's single line carries the listener-specific SSL options:   * Catchall + AllowValidOnly default validation → cert line     with `ca-file <path> verify required` and NO SNI filter.   * Hostnamed + AllowInsecureFallback per-port validation →     cert line with `ca-file <path> verify optional     ca-ignore-err all crt-ignore-err all` and the listener's     hostname as the SNI filter.   * Catchall + no mTLS → cert line with just `ocsp-update on`     (no verify clause, no SNI filter).   * mTLS-blocked listener (CA refs unresolvable) → NO crt-list     file emitted (phase 4's bind drops on missing file)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"

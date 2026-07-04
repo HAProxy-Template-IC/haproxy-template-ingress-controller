@@ -1,5 +1,6 @@
 templateSnippets:
   util-path-map-entry-gateway-shard:
+    requires: [grpcroutes]
     template: |
       {#-
         Gateway Path Map Entry Shard Processor
@@ -61,6 +62,7 @@ templateSnippets:
       {% end %}
 
   util-path-map-entry-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- Sharded Gateway Path Map Entry Generator #}
       {%- import "util-path-map-entry-gateway-shard" for PathMapEntryGatewayShard -%}
@@ -87,6 +89,7 @@ templateSnippets:
       {%- end macro %}
 
   util-generate-path-regex-map-gateway:
+    requires: [httproutes]
     template: |
       {#- Generate regex path map entries for HTTPRoute.
 
@@ -144,6 +147,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-sharded-path-regex-map-gateway:
+    requires: [httproutes]
     template: |
       {#- Sharded regex path map generator for HTTPRoute. -#}
       {%- import "util-generate-path-regex-map-gateway" for GeneratePathRegexMap -%}
@@ -160,6 +164,7 @@ templateSnippets:
       {%- end macro -%}
 
   map-path-exact-500-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- Generate exact path map entries for HTTPRoute #}
       {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
@@ -167,6 +172,7 @@ templateSnippets:
       {{ GeneratePathMapEntries("Exact", "") }}
 
   map-pfxexact-500-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- Generate prefix-exact path map entries for HTTPRoute #}
       {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
@@ -174,6 +180,7 @@ templateSnippets:
       {{ GeneratePathMapEntries("PathPrefix", "") }}
 
   map-path-prefix-500-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- Generate prefix path map entries with trailing slash for HTTPRoute #}
       {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
@@ -181,6 +188,7 @@ templateSnippets:
       {{ GeneratePathMapEntries("PathPrefix", "/") }}
 
   map-path-regex-500-gateway:
+    requires: [httproutes]
     template: |
       {#- Generate regex path map entries for HTTPRoute with RegularExpression type -#}
       {%- import "util-sharded-path-regex-map-gateway" for ShardedPathRegexMap %}

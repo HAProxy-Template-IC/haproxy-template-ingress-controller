@@ -400,9 +400,29 @@ type TemplatingSettings struct {
 // WatchedResource configures watching for a specific Kubernetes resource type.
 type WatchedResource struct {
 	// APIVersion is the Kubernetes API version (e.g., "networking.k8s.io/v1").
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	APIVersion string `json:"apiVersion"`
+	//
+	// Mutually exclusive with apiVersions (exactly one must be set; the
+	// controller's config validation enforces this). Equivalent to a
+	// one-element apiVersions list.
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
+
+	// APIVersions is an ordered candidate list of API versions. The
+	// controller resolves the entry to the FIRST candidate the apiserver
+	// serves and watches that version. Mutually exclusive with apiVersion.
+	//
+	// Example: ["gateway.networking.k8s.io/v1", "gateway.networking.k8s.io/v1beta1"]
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	APIVersions []string `json:"apiVersions,omitempty"`
+
+	// Optional marks this resource as non-essential: when NO candidate
+	// version is served by the cluster, the watch is dropped and every
+	// templateSnippet / validationTest whose requires list names this
+	// resource is stripped from the effective config at load time, instead
+	// of failing startup.
+	// +optional
+	Optional bool `json:"optional,omitempty"`
 
 	// Resources is the plural form of the Kubernetes resource type (e.g., "ingresses", "services").
 	//
@@ -474,6 +494,13 @@ type TemplateSnippet struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Template string `json:"template"`
+
+	// Requires lists watched-resource names this snippet depends on. When an
+	// optional watched resource has no served candidate version, every
+	// snippet requiring it is stripped from the effective config at load
+	// time. Each entry must name a key of watchedResources.
+	// +optional
+	Requires []string `json:"requires,omitempty"`
 }
 
 // PostProcessorConfig defines a post-processor to apply to rendered template output.
@@ -675,6 +702,13 @@ type ValidationTest struct {
 	// Format: "major.minor" (e.g., "3.3")
 	// +optional
 	MinHAProxyVersion string `json:"minHAProxyVersion,omitempty"`
+
+	// Requires lists watched-resource names this test depends on. When an
+	// optional watched resource has no served candidate version, every test
+	// requiring it is stripped from the effective config at load time.
+	// Each entry must name a key of watchedResources.
+	// +optional
+	Requires []string `json:"requires,omitempty"`
 
 	// Assertions defines the validation checks to perform.
 	// +kubebuilder:validation:Required

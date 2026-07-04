@@ -42,11 +42,38 @@ func ValidateStructure(cfg *Config) error {
 		return fmt.Errorf("watched_resources: %w", err)
 	}
 
+	// Validate requires references (snippets/tests → watched resources)
+	if err := validateRequires(cfg); err != nil {
+		return err
+	}
+
 	// Validate HAProxyConfig
 	if err := validateHAProxyConfig(&cfg.HAProxyConfig); err != nil {
 		return fmt.Errorf("haproxy_config: %w", err)
 	}
 
+	return nil
+}
+
+// validateRequires checks that every `requires` entry on templateSnippets and
+// validationTests names an existing watchedResources key. A dangling entry
+// would silently never strip (the availability check could not match it), so
+// it is rejected at load time instead.
+func validateRequires(cfg *Config) error {
+	for name, snippet := range cfg.TemplateSnippets {
+		for _, req := range snippet.Requires {
+			if _, ok := cfg.WatchedResources[req]; !ok {
+				return fmt.Errorf("template_snippets.%s: requires %q does not name a watched resource", name, req)
+			}
+		}
+	}
+	for name := range cfg.ValidationTests {
+		for _, req := range cfg.ValidationTests[name].Requires {
+			if _, ok := cfg.WatchedResources[req]; !ok {
+				return fmt.Errorf("validation_tests.%s: requires %q does not name a watched resource", name, req)
+			}
+		}
+	}
 	return nil
 }
 
@@ -116,7 +143,8 @@ func validateWatchedResources(resources map[string]WatchedResource) error {
 		return errors.New("at least one resource must be configured")
 	}
 
-	for name, resource := range resources {
+	for name := range resources {
+		resource := resources[name]
 		if err := validateWatchedResource(name, &resource); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
@@ -127,8 +155,16 @@ func validateWatchedResources(resources map[string]WatchedResource) error {
 
 // validateWatchedResource validates a single watched resource configuration.
 func validateWatchedResource(name string, resource *WatchedResource) error {
-	if resource.APIVersion == "" {
-		return fmt.Errorf("resource %q: api_version cannot be empty", name)
+	if resource.APIVersion == "" && len(resource.APIVersions) == 0 {
+		return fmt.Errorf("resource %q: one of api_version or api_versions must be set", name)
+	}
+	if resource.APIVersion != "" && len(resource.APIVersions) > 0 {
+		return fmt.Errorf("resource %q: api_version and api_versions are mutually exclusive", name)
+	}
+	for i, v := range resource.APIVersions {
+		if v == "" {
+			return fmt.Errorf("resource %q: api_versions[%d] cannot be empty", name, i)
+		}
 	}
 
 	if resource.Resources == "" {

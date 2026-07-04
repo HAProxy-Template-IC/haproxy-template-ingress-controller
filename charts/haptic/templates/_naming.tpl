@@ -156,6 +156,17 @@ piping through `quote`.
 {{- end -}}
 
 {{/*
+Return the candidate apiVersion list of a watchedResources entry as a JSON
+array string (parse with fromJsonArray). Entries declare either a singular
+`apiVersion` or an ordered `apiVersions` candidate list (the controller
+resolves the served one at runtime); helm-side consumers (RBAC rules,
+webhook rules) must cover every candidate.
+*/}}
+{{- define "haptic.candidateVersionsOf" -}}
+{{- if .apiVersions -}}{{ .apiVersions | toJson }}{{- else -}}{{ list .apiVersion | toJson }}{{- end -}}
+{{- end -}}
+
+{{/*
 Extract the API version from a Kubernetes apiVersion string.
 Returns the part after the slash, or the whole input when there is no
 group (e.g. "v1" -> "v1", "networking.k8s.io/v1" -> "v1").

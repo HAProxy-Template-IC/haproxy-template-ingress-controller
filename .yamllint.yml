@@ -18,6 +18,7 @@ rules:
 
 ignore:
   - charts/haptic/templates/  # Helm templates contain Go template syntax
+  - tests/schemas-ga-*/       # Vendored upstream Gateway API release CRDs (scripts/fetch-gateway-api-schemas.sh)
   - .claude/worktrees/        # Worktrees may contain Helm templates
   - pkg/generated/
   - node_modules/

@@ -142,6 +142,12 @@ type ValidationTest struct {
 	// HAProxy version is below this threshold.
 	MinHAProxyVersion string `yaml:"minHAProxyVersion,omitempty"`
 
+	// Requires lists watched-resource names this test depends on. When an
+	// optional watched resource has no served candidate version, every test
+	// requiring it is stripped from the effective config at load time.
+	// Each entry must name a key of WatchedResources.
+	Requires []string `yaml:"requires,omitempty"`
+
 	// Assertions contains validation checks to run against the rendered config.
 	Assertions []ValidationAssertion `yaml:"assertions"`
 }
@@ -325,7 +331,26 @@ type DataplaneConfig struct {
 // WatchedResource configures watching for a specific Kubernetes resource type.
 type WatchedResource struct {
 	// APIVersion is the Kubernetes API version (e.g., "networking.k8s.io/v1").
+	// Mutually exclusive with APIVersions; equivalent to a one-element list.
 	APIVersion string `yaml:"api_version"`
+
+	// APIVersions is an ordered candidate list of API versions. At iteration
+	// start the controller resolves the entry to the FIRST candidate the
+	// apiserver serves, and that resolved version is used everywhere the
+	// literal APIVersion would be (informer GVR, stores, schema fetch,
+	// webhook registration, fixture defaulting). Mutually exclusive with
+	// APIVersion.
+	//
+	// Example: ["gateway.networking.k8s.io/v1", "gateway.networking.k8s.io/v1beta1"]
+	APIVersions []string `yaml:"api_versions,omitempty"`
+
+	// Optional marks this resource as non-essential: when NO candidate
+	// version is served by the cluster, the watch is dropped and every
+	// TemplateSnippet / ValidationTest whose Requires names this resource is
+	// stripped from the effective config at load time, instead of failing
+	// startup. When false (default), an unserved resource fails the
+	// iteration fast with a named error.
+	Optional bool `yaml:"optional,omitempty"`
 
 	// Resources is the plural form of the Kubernetes resource type (e.g., "ingresses", "services").
 	// This is the name used in RBAC rules and API paths.
@@ -407,6 +432,17 @@ func (r *WatchedResource) GetDebounceInterval() time.Duration {
 	return d
 }
 
+// CandidateVersions returns the ordered API-version candidate list for this
+// resource: APIVersions when set, otherwise the singular APIVersion as a
+// one-element list. Validation guarantees exactly one of the two fields is
+// populated, so callers can treat the result as the single source of truth.
+func (r *WatchedResource) CandidateVersions() []string {
+	if len(r.APIVersions) > 0 {
+		return r.APIVersions
+	}
+	return []string{r.APIVersion}
+}
+
 // DebounceImmediate mirrors pkg/k8s/types.DebounceImmediate (-1) — the
 // sentinel value for "no debounce, fire on every event." arch-go.yml
 // forbids pkg/core/config from importing pkg/k8s/types, so the constant
@@ -422,6 +458,14 @@ type TemplateSnippet struct {
 
 	// Template is the template content.
 	Template string `yaml:"template"`
+
+	// Requires lists watched-resource names this snippet depends on. When an
+	// optional watched resource has no served candidate version, every
+	// snippet requiring it is stripped from the effective config at load
+	// time (surviving snippets must reach stripped resources only through
+	// compile-safe seams such as `render "..." default ""`).
+	// Each entry must name a key of WatchedResources.
+	Requires []string `yaml:"requires,omitempty"`
 }
 
 // MapFile is a HAProxy map file template.

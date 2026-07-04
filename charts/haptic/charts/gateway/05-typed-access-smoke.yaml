@@ -29,6 +29,7 @@ templateSnippets:
   # production output to one comment per Gateway.
   # ----------------------------------------------------------------------------
   global-settings-001-typed-access-smoke:
+    requires: [gateways]
     template: |
       {%- for _, gw := range resources.gateways.List() %}
       # typed-access-smoke: ns={{ gw.Metadata.Namespace }} name={{ gw.Metadata.Name }}

@@ -192,7 +192,8 @@ func (r *Runner) CreateStoresFromFixtures(fixtures map[string][]any) (map[string
 func (r *Runner) createEmptyStores() map[string]stores.Store {
 	storeMap := make(map[string]stores.Store)
 
-	for resourceType, watchedResource := range r.config.WatchedResources {
+	for resourceType := range r.config.WatchedResources {
+		watchedResource := r.config.WatchedResources[resourceType]
 		r.logger.Log(context.Background(), logging.LevelTrace, "Creating empty store for watched resource",
 			"resource_type", resourceType)
 

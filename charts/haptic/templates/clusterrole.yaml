@@ -11,8 +11,14 @@ metadata:
 rules:
   # Watched resources from configuration and libraries
   {{- range $name, $resource := $allWatchedResources }}
+  {{- $groups := list }}
+  {{- range $v := include "haptic.candidateVersionsOf" $resource | fromJsonArray }}
+  {{- $groups = append $groups (include "haptic.apiGroupOf" $v) }}
+  {{- end }}
   - apiGroups:
-      - {{ include "haptic.apiGroupOf" $resource.apiVersion }}
+      {{- range $g := $groups | uniq }}
+      - {{ $g }}
+      {{- end }}
     resources:
       - {{ $resource.resources }}
     verbs: ["get", "list", "watch"]
@@ -20,8 +26,14 @@ rules:
   # Status subresource patch permissions for resources with statusPatch: true
   {{- range $name, $resource := $allWatchedResources }}
   {{- if $resource.statusPatch }}
+  {{- $groups := list }}
+  {{- range $v := include "haptic.candidateVersionsOf" $resource | fromJsonArray }}
+  {{- $groups = append $groups (include "haptic.apiGroupOf" $v) }}
+  {{- end }}
   - apiGroups:
-      - {{ include "haptic.apiGroupOf" $resource.apiVersion }}
+      {{- range $g := $groups | uniq }}
+      - {{ $g }}
+      {{- end }}
     resources:
       - {{ $resource.resources }}/status
     verbs: ["patch"]
@@ -43,7 +55,11 @@ rules:
   # x-kubernetes-preserve-unknown-fields subtrees and the canonical
   # schema-from-CRD path can't resolve, so the typed view degrades
   # to the generic envelope for those resources. Granting list/get
-  # here keeps typed access at full fidelity in production.
+  # here keeps typed access at full fidelity in production. The watch
+  # verb additionally powers the runtime CRD watch
+  # (pkg/controller/crdwatch): late installation, in-place upgrade, or
+  # removal of a watched resource's CRD re-resolves the effective config
+  # without a helm operation or pod restart.
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
@@ -81,5 +97,14 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The GatewayClass is created and maintained at RUNTIME by the resource
+  # applier (SSA from the gateway library's k8sResources), not by Helm —
+  # so it exists exactly when the gatewayclasses CRD is served and
+  # survives install-order races. SSA needs patch (with create for the
+  # first apply); delete covers orphan cleanup when the emission is
+  # disabled. Read verbs come from the watched-resources rules above.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses"]
+    verbs: ["create", "update", "patch", "delete"]
   {{- end }}
 {{- end }}

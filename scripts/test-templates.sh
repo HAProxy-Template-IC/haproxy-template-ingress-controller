@@ -142,8 +142,6 @@ fi
 echo -e "${YELLOW}Rendering Helm chart...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
-    --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
-    --api-versions=gateway.networking.k8s.io/v1/TCPRoute \
     $HAPROXY_VERSION_ARG \
     --set controller.templateLibraries.gateway.enabled=true \
     --set controller.templateLibraries.gateway.experimentalChannel=true \
@@ -208,4 +206,46 @@ if [[ -d "$SCHEMA_DIR" && -z "${HAPTIC_SCHEMA_DIR:-}" ]] \
 fi
 
 echo -e "${YELLOW}Running validation tests...${NC}" >&2
-"$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@"
+FULL_RC=0
+"$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@" || FULL_RC=$?
+
+# ---------------------------------------------------------------------------
+# Degraded Gateway API profiles (skipped when a single --test is requested or
+# a custom schema dir is in play). For each committed old-release CRD bundle
+# (tests/schemas-ga-*), render the STANDARD-channel chart, resolve against the
+# bundle (the controller strips features whose CRDs the release doesn't
+# serve), and require the failure set to EXACTLY match the bundle's
+# allowlist (tests/schemas-ga-<rel>/expected-failures.txt) — tests that
+# assert fields absent from that schema generation. A new failure OR a
+# stale allowlist entry fails the run.
+# ---------------------------------------------------------------------------
+if [[ $FULL_RC -eq 0 && "$*" != *"--test"* && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]]; then
+    STD_CONFIG=$(mktemp /tmp/haptic-std-config-XXXXXX.yaml)
+    trap 'rm -f "$TEMP_CONFIG" "$STD_CONFIG"' EXIT
+    helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.gateway.enabled=true \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' > "$STD_CONFIG"
+    for BUNDLE in "$PROJECT_ROOT"/tests/schemas-ga-*; do
+        [[ -d "$BUNDLE" ]] || continue
+        REL=$(basename "$BUNDLE")
+        MERGED=$(mktemp -d /tmp/haptic-schemas-XXXXXX)
+        cp "$PROJECT_ROOT"/tests/schemas/core_v1_*.yaml \
+           "$PROJECT_ROOT"/tests/schemas/discovery_*.yaml \
+           "$PROJECT_ROOT"/tests/schemas/haproxy-haptic.org_*.yaml \
+           "$PROJECT_ROOT"/tests/schemas/networking_*.yaml "$MERGED/"
+        # The "none" profile (no Gateway API at all) has no CRDs to add.
+        find "$BUNDLE" -name '*.gateway.networking.k8s.io.yaml' -exec cp {} "$MERGED/" \;
+        echo -e "${YELLOW}Degraded profile ${REL}...${NC}" >&2
+        ACTUAL=$("$CONTROLLER_BIN" validate --file "$STD_CONFIG" --schema-dir "$MERGED" 2>&1 \
+                 | grep '^✗' | awk '{print $2}' | sort || true)
+        EXPECTED=$(grep -v '^#' "$BUNDLE/expected-failures.txt" 2>/dev/null | grep -v '^$' | sort || true)
+        rm -rf "$MERGED"
+        if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo -e "${RED}Degraded profile ${REL}: failure set does not match ${BUNDLE}/expected-failures.txt${NC}" >&2
+            diff <(echo "$EXPECTED") <(echo "$ACTUAL") >&2 || true
+            exit 1
+        fi
+        echo -e "${GREEN}Degraded profile ${REL}: matches expected-failures allowlist${NC}" >&2
+    done
+fi
+exit $FULL_RC

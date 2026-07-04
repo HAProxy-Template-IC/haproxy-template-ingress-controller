@@ -209,10 +209,19 @@ func BuildPerResourceStoreType(elemType reflect.Type) reflect.Type {
 		true,
 	)
 
+	// APIVersion returns the group/version this resource is actually
+	// watched at — the version the effective-config resolution selected
+	// from the entry's candidate list. Generic watch-set metadata: status
+	// macros pass it as the statusPatch apiVersion argument instead of
+	// hardcoding version literals that break when a cluster serves a
+	// different candidate.
+	apiVersionFunc := reflect.FuncOf(nil, []reflect.Type{reflect.TypeOf("")}, false)
+
 	return reflect.StructOf([]reflect.StructField{
 		{Name: "T", Type: tFieldType},
 		{Name: "List", Type: listFunc},
 		{Name: "Fetch", Type: keysVariadic},
 		{Name: "GetSingle", Type: getSingleVariadic},
+		{Name: "APIVersion", Type: apiVersionFunc},
 	})
 }

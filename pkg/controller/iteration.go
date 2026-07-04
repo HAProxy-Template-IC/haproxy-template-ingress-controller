@@ -75,6 +75,26 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 	return mgr
 }
 
+// waitAndLoadInitialConfig polls until the HAProxyTemplateConfig exists (the
+// fresh-install race: the controller pod may start before the CR is applied),
+// then fetches and structurally validates it together with the credentials
+// Secret.
+func waitAndLoadInitialConfig(
+	ctx context.Context,
+	k8sClient *client.Client,
+	crdName, secretName string,
+	state *configState,
+	logger *slog.Logger,
+) (*InitialConfigBundle, error) {
+	if err := waitForInitialConfig(ctx, k8sClient, crdName, crdGVR, state, logger); err != nil {
+		return nil, err
+	}
+	return fetchAndValidateInitialConfig(
+		ctx, k8sClient, crdName, secretName,
+		crdGVR, secretGVR, logger,
+	)
+}
+
 // runIteration runs a single controller iteration.
 //
 // This function orchestrates the initialization sequence:
@@ -102,13 +122,11 @@ func runIteration(
 ) error {
 	logger.Info("Starting controller iteration")
 
-	// Clear the introspection registry to remove stale references from previous iteration
-	// The registry persists across iterations to avoid port rebinding issues
-	infra.IntrospectionRegistry.Clear()
-
-	// Create config state tracker for health checks
-	// This allows the health endpoint to report unhealthy status until config is loaded
-	state := &configState{}
+	// Reinit-grace accounting (a voluntary restart must not flip /healthz
+	// unhealthy for the bounded rebuild window — see InReinitGrace), then
+	// clear the persistent introspection registry of the previous
+	// iteration's entries, then a fresh per-iteration health state.
+	state := beginIteration(infra)
 
 	// 0. Setup components BEFORE fetching config so we can start servers early.
 	// The type bootstrapper is also reused by the step-2.5 startup validationTests
@@ -130,22 +148,30 @@ func runIteration(
 	// We pass the main ctx (not setup.IterCtx) so the server stays alive across iterations
 	startEarlyInfrastructureServers(ctx, debugPort, infra, setup, state, eventBuffer, logger)
 
-	// 1. Wait for HAProxyTemplateConfig to exist (polls every 5s)
-	// This handles the race condition during fresh installs where the controller pod
-	// may start before the HAProxyTemplateConfig CR is fully available
-	if err := waitForInitialConfig(ctx, k8sClient, crdName, crdGVR, state, logger); err != nil {
-		return err
-	}
-
-	// 2. Fetch and validate initial configuration (now guaranteed to exist)
-	bundle, err := fetchAndValidateInitialConfig(
-		ctx, k8sClient, crdName, secretName,
-		crdGVR, secretGVR, logger,
-	)
+	// 1+2. Wait for the HAProxyTemplateConfig to exist (fresh-install race),
+	// then fetch and validate it together with the credentials Secret.
+	bundle, err := waitAndLoadInitialConfig(ctx, k8sClient, crdName, secretName, state, logger)
 	if err != nil {
 		return err
 	}
 	cfg, crd, creds := bundle.Config, bundle.CRD, bundle.Credentials
+
+	// 2.4. Resolve watched-resource candidate versions against live discovery
+	// and derive the EFFECTIVE config: resolved entries carry the served
+	// version in APIVersion, unavailable optional resources are dropped, and
+	// snippets/tests requiring them are stripped. Everything downstream (the
+	// validationTests gate, watchers, typebootstrap, webhook, dry-run,
+	// testrunner, render context) consumes the effective config, so the
+	// literal-APIVersion consumers need no version awareness of their own.
+	// A required-but-unserved resource errors here — failing the iteration
+	// fast (retried by the run loop) instead of hanging in informer sync.
+	// The CRD watch started alongside re-resolves on relevant CRD changes so
+	// late installation, in-place upgrade, and serving removal converge at
+	// runtime (no helm operation, no pod restart).
+	cfg, err = installEffectiveConfig(cfg, k8sClient, setup, infra, logger)
+	if err != nil {
+		return err
+	}
 
 	// 2.5. Fail-closed on the initial config's embedded validationTests. A
 	// running controller already rejects a live CRD change whose tests fail (the
@@ -253,7 +279,7 @@ func runIteration(
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
 	// This call registers debug variables and updates the health checker
-	setupInfrastructureServers(setup.IterCtx, setup, state, stateCache, eventBuffer, pluggableMgr, logger)
+	setupInfrastructureServers(setup.IterCtx, setup, state, infra, stateCache, eventBuffer, pluggableMgr, logger)
 
 	// 10. Enable reinitialization signaling now that startup is complete
 	// This allows future ConfigValidatedEvents to trigger controller reinitialization.
@@ -268,6 +294,7 @@ func runIteration(
 	// "initialized" entry in the full health checker installed by
 	// setupInfrastructureServers.
 	state.SetInitialized()
+	infra.NoteInitialized()
 
 	logger.Info("Controller iteration initialized successfully - entering event loop")
 

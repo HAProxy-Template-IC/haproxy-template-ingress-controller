@@ -1,5 +1,6 @@
 validationTests:
   test-listenerset-default-not-allowed:
+    requires: [gateways, listenersets]
     description: "ListenerSet attached to a Gateway without `spec.allowedListeners` must be rejected with Accepted=False/NotAllowed and Programmed=False/NotAllowed (default-deny per Gateway API spec for SupportListenerSet). Pins the ListenerSetDefaultNotAllowed conformance test's status assertions."
     fixtures:
       gateways:
@@ -39,6 +40,7 @@ validationTests:
       # haproxy_valid).
 
   test-listenerset-allowed-same-namespace:
+    requires: [gateways, listenersets]
     description: ListenerSet in the same namespace as a Gateway that sets `allowedListeners.namespaces.from=Same` must be Accepted=True/Accepted.
     fixtures:
       gateways:
@@ -75,6 +77,7 @@ validationTests:
       - type: haproxy_valid
 
   test-listenerset-allowed-different-namespace-denied:
+    requires: [gateways, listenersets]
     description: "Same=`allowedListeners.namespaces.from=Same` but the ListenerSet lives in a different namespace from the parent Gateway → must be rejected with Accepted=False/NotAllowed."
     fixtures:
       gateways:
@@ -112,6 +115,7 @@ validationTests:
       - type: haproxy_valid
 
   test-listenerset-allowed-namespace-selector:
+    requires: [gateways, listenersets, referencegrants]
     description: "`allowedListeners.namespaces.from=Selector` admits ListenerSets whose namespace's labels match the selector's matchLabels, denies others."
     fixtures:
       referencegrants:
@@ -204,6 +208,7 @@ validationTests:
         pattern: 'bind \*:8083'
 
   test-listenerset-cross-namespace-parentref-allowed-by-from-all:
+    requires: [gateways, listenersets]
     description: ListenerSet in a different namespace from its parent Gateway (with allowedListeners.from=All) is admitted by allowedListeners alone — cross-namespace parentRefs do NOT require a separate ReferenceGran...
     fixtures:
       gateways:
@@ -245,6 +250,7 @@ validationTests:
         pattern: 'bind \*:8090'
 
   test-listenerset-cross-namespace-parentref-with-grant:
+    requires: [gateways, listenersets, referencegrants]
     description: ListenerSet in a different namespace from its parent Gateway (with allowedListeners.from=All) is admitted regardless of ReferenceGrant presence — the cross-ns parentRef is permitted by allowedListener...
     fixtures:
       gateways:
@@ -301,6 +307,7 @@ validationTests:
         pattern: 'bind \*:8091'
 
   test-listenerset-listener-multi-port-bind:
+    requires: [gateways, listenersets]
     description: "Multi-port HTTP bind must include ports declared on accepted ListenerSet listeners (in addition to the Gateway's own listeners). Pins the routing-layer side of F2 listener-merge integration."
     fixtures:
       gateways:
@@ -352,6 +359,7 @@ validationTests:
         pattern: 'bind \*:8086\b'
 
   test-listenerset-hostname-conflict:
+    requires: [gateways, listenersets]
     description: "Two listeners on the same (port, hostname) where one is on the Gateway and one is on a ListenerSet. Gateway wins the conflict (precedence: Gateway > earlier LS > later LS, then index), so the LS's con..."
     fixtures:
       secrets:
@@ -426,6 +434,7 @@ validationTests:
         pattern: '(?m)^ls-only\.example\.com ls-only\.example\.com$'
 
   test-listenerset-protocol-conflict:
+    requires: [gateways, listenersets]
     description: "Two listeners on the same port but different protocols → the later one (LS) loses to the earlier one (Gateway). The conflicting LS listener doesn't bind. Pins ListenerSetProtocolConflict status assertion."
     fixtures:
       gateways:
@@ -471,6 +480,7 @@ validationTests:
         pattern: 'bind \*:9000\b'
 
   test-listenerset-allowed-routes-supported-kinds:
+    requires: [gateways, listenersets]
     description: "ListenerSet listener with `allowedRoutes.kinds: [HTTPRoute]` on a TLS-protocol listener must report `supportedKinds: []` and `ResolvedRefs=False/InvalidRouteKinds` — HTTPRoute is not in the chart's TLS-protocol default route-kinds set ([TLSRoute]), so the requested kind doesn't intersect. Mirrors the upstream ListenerSetAllowedRoutesSupportedKinds conformance fixture (gateway-with-listener-sets-test-supported-route-kinds Gateway + listenerset-test-allowed-routes-supported-kinds ListenerSet)."
     fixtures:
       gateways:
@@ -527,6 +537,7 @@ validationTests:
         target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
         pattern: '"name":"listener-set-listener-allowed-routes-tls-only"[^}]*"TLSRoute"'
   test-listenerset-rendered-variant-includes-programmed-observed-generation:
+    requires: [gateways, listenersets]
     description: "The ListenerSet CRD defaults `status.conditions` to include both Accepted and Programmed entries with `observedGeneration` unset (so it serialises as 0). If the chart's rendered-variant patch only writes Accepted, the API-server-defaulted Programmed entry sticks around with observedGeneration=0 until the deployed-variant patch lands after the data plane reload. The Gateway-API conformance helper `ListenerSetListenersMustHaveConditions` fast-fails (`return false, err`) the first time it observes any top-level condition whose observedGeneration is behind the LS's metadata.generation — so a poll between the rendered and deployed applies sees Programmed (generation 0) and fails the test immediately. The rendered variant must therefore emit lsProgrammedCond too, so the very first apply bumps Programmed's observedGeneration to the current generation. Pinned by the upstream ListenerSetAllowedRoutesNamespaces conformance test — this fixture mirrors the LS shape that test creates so the patch payload is asserted directly here without waiting on a kind run."
     fixtures:
       gateways:

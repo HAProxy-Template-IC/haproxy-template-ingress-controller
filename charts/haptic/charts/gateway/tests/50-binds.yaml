@@ -1,5 +1,6 @@
 validationTests:
   test-gateway-multi-port-listener-bind:
+    requires: [gatewayclasses, gateways]
     description: Gateway with listeners on extra HTTP ports emits additional bind directives
     fixtures:
       gatewayclasses:
@@ -39,6 +40,7 @@ validationTests:
         pattern: "(?m)^\\s*bind \\*:8090$"
 
   test-gateway-https-multi-port-listener-bind:
+    requires: [gatewayclasses, gateways]
     description: "Gateway with HTTPS listeners on non-default ports emits additional `bind *:<port> ssl crt-list ...` directives in the https frontend. Verifies the https-bind-extra-* extension point: gateway."
     fixtures:
       secrets:

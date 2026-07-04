@@ -498,3 +498,127 @@ func TestValidateDataplaneConfig_EmptyPaths(t *testing.T) {
 		})
 	}
 }
+
+// versionFieldsBaseConfig returns a minimal valid config whose single watched
+// resource is overridden per test case.
+func versionFieldsBaseConfig(res *WatchedResource) *Config {
+	return &Config{
+		PodSelector: PodSelector{
+			MatchLabels: map[string]string{"app": "haproxy"},
+		},
+		Dataplane: DataplaneConfig{
+			Port:              5555,
+			MapsDir:           "/etc/haproxy/maps",
+			SSLCertsDir:       "/etc/haproxy/certs",
+			GeneralStorageDir: "/etc/haproxy/general",
+			ConfigFile:        "/etc/haproxy/haproxy.cfg",
+		},
+		WatchedResources: map[string]WatchedResource{"routes": *res},
+		HAProxyConfig:    HAProxyConfig{Template: "global"},
+	}
+}
+
+func TestValidateWatchedResource_VersionFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		resource  WatchedResource
+		errSubstr string // empty = expect success
+	}{
+		{
+			name: "api_versions list alone is valid",
+			resource: WatchedResource{
+				APIVersions: []string{"example.io/v1", "example.io/v1beta1"},
+				Resources:   "routes",
+				IndexBy:     []string{"metadata.name"},
+			},
+		},
+		{
+			name: "api_version and api_versions are mutually exclusive",
+			resource: WatchedResource{
+				APIVersion:  "example.io/v1",
+				APIVersions: []string{"example.io/v1beta1"},
+				Resources:   "routes",
+				IndexBy:     []string{"metadata.name"},
+			},
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "empty api_versions element is rejected",
+			resource: WatchedResource{
+				APIVersions: []string{"example.io/v1", ""},
+				Resources:   "routes",
+				IndexBy:     []string{"metadata.name"},
+			},
+			errSubstr: "api_versions[1] cannot be empty",
+		},
+		{
+			name: "neither field set is rejected",
+			resource: WatchedResource{
+				Resources: "routes",
+				IndexBy:   []string{"metadata.name"},
+			},
+			errSubstr: "one of api_version or api_versions",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStructure(versionFieldsBaseConfig(&tt.resource))
+			if tt.errSubstr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errSubstr)
+		})
+	}
+}
+
+func TestValidateRequires(t *testing.T) {
+	base := func() *Config {
+		return versionFieldsBaseConfig(&WatchedResource{
+			APIVersion: "example.io/v1",
+			Resources:  "routes",
+			IndexBy:    []string{"metadata.name"},
+		})
+	}
+
+	t.Run("requires naming a watched resource is valid", func(t *testing.T) {
+		cfg := base()
+		cfg.TemplateSnippets = map[string]TemplateSnippet{
+			"snippet-a": {Name: "snippet-a", Template: "x", Requires: []string{"routes"}},
+		}
+		cfg.ValidationTests = map[string]ValidationTest{
+			"test-a": {Requires: []string{"routes"}},
+		}
+		assert.NoError(t, ValidateStructure(cfg))
+	})
+
+	t.Run("dangling snippet requires is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.TemplateSnippets = map[string]TemplateSnippet{
+			"snippet-a": {Name: "snippet-a", Template: "x", Requires: []string{"nonexistent"}},
+		}
+		err := ValidateStructure(cfg)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), `template_snippets.snippet-a: requires "nonexistent"`)
+	})
+
+	t.Run("dangling test requires is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.ValidationTests = map[string]ValidationTest{
+			"test-a": {Requires: []string{"nonexistent"}},
+		}
+		err := ValidateStructure(cfg)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), `validation_tests.test-a: requires "nonexistent"`)
+	})
+}
+
+func TestWatchedResource_CandidateVersions(t *testing.T) {
+	list := WatchedResource{APIVersions: []string{"example.io/v1", "example.io/v1beta1"}}
+	assert.Equal(t, []string{"example.io/v1", "example.io/v1beta1"}, list.CandidateVersions())
+
+	single := WatchedResource{APIVersion: "example.io/v1"}
+	assert.Equal(t, []string{"example.io/v1"}, single.CandidateVersions())
+}

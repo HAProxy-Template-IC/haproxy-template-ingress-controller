@@ -26,6 +26,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/flowcontrol"
@@ -116,7 +118,36 @@ func WaitForE2EEnvironmentReady(ctx context.Context, client klient.Client) error
 	// Block here until the cluster's chart-default HAProxy replicas are
 	// all in HAProxyCfg.status.deployedToPods at the current spec.checksum.
 	// After this, per-test reactions are sub-second.
-	return waitForInitialHAProxyDeployment(ctx, client, cfg)
+	if err := waitForInitialHAProxyDeployment(ctx, client, cfg); err != nil {
+		return err
+	}
+
+	// The GatewayClass is created by the CONTROLLER at runtime (SSA via the
+	// gateway library's k8sResources — it exists exactly when the
+	// gatewayclasses CRD is served, surviving install-order races). Test
+	// fixtures reference it by name the moment they create Gateways, so
+	// block until the first render+apply cycle has produced it.
+	return waitForGatewayClass(ctx, client, cfg)
+}
+
+// waitForGatewayClass blocks until the chart's GatewayClass exists. It is
+// created by the controller's resource applier on the first render after
+// the gatewayclasses CRD resolves, not by Helm.
+func waitForGatewayClass(ctx context.Context, client klient.Client, cfg testutil.WaitConfig) error {
+	dyn, err := dynamic.NewForConfig(client.RESTConfig())
+	if err != nil {
+		return fmt.Errorf("build dynamic client: %w", err)
+	}
+	gvr := schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gatewayclasses"}
+	return testutil.WaitForConditionWithDescription(ctx, cfg,
+		"controller-created GatewayClass exists",
+		func(ctx context.Context) (bool, error) {
+			_, err := dyn.Resource(gvr).Get(ctx, gatewayClassName, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			return true, nil
+		})
 }
 
 // waitForInitialHAProxyDeployment blocks until every chart-default HAProxy

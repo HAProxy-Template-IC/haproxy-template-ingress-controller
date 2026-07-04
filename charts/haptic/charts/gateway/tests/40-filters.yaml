@@ -1,5 +1,6 @@
 validationTests:
   test-httproute-request-header-modifier:
+    requires: [httproutes]
     description: HTTPRoute with RequestHeaderModifier filter (add, set, remove headers)
     fixtures:
       services:
@@ -55,6 +56,7 @@ validationTests:
         pattern: 'http-request del-header X-Remove-Header if'
 
   test-httproute-response-header-modifier:
+    requires: [httproutes]
     description: HTTPRoute with ResponseHeaderModifier filter (add, set, remove response headers)
     fixtures:
       services:
@@ -110,6 +112,7 @@ validationTests:
         pattern: 'http-response del-header X-Remove-Response if'
 
   test-httproute-request-redirect:
+    requires: [httproutes]
     description: HTTPRoute with RequestRedirect filter (scheme, path, status code)
     fixtures:
       services:
@@ -159,6 +162,7 @@ validationTests:
         pattern: 'http-request redirect location "https://new\.example\.com%\[var\(txn\.gw_redirect_path\)\]" code 301 if'
 
   test-httproute-request-redirect-default-port-omission:
+    requires: [httproutes]
     description: "RequestRedirect MUST NOT include the port in Location when the resulting (scheme, port) pair is the scheme's default ((http, 80) or (https, 443)) per Gateway API spec."
     fixtures:
       httproutes:
@@ -220,6 +224,7 @@ validationTests:
         pattern: 'http://example\.org:8080'
 
   test-httproute-url-rewrite:
+    requires: [httproutes]
     description: HTTPRoute with URLRewrite filter (hostname and path rewrite)
     fixtures:
       services:
@@ -271,6 +276,7 @@ validationTests:
         pattern: '"/api/v2'
 
   test-httproute-cors-filter:
+    requires: [gatewayclasses, gateways, httproutes]
     description: HTTPRoute CORS filter generates set-var, return 200, and response headers
     fixtures:
       gatewayclasses:
@@ -356,6 +362,7 @@ validationTests:
         pattern: "http-response set-header \"access-control-allow-origin\" \"%\\[var\\(txn\\.gw_cors_origin\\)\\]\""
 
   test-httproute-cors-wildcard-methods-echo:
+    requires: [gatewayclasses, gateways, httproutes]
     description: "Closes the chart-side gap on the HTTPRouteCORS conformance test sub-cases that send `allowMethods: [\"*\"]`."
     fixtures:
       gatewayclasses:
@@ -428,6 +435,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'hdr access-control-allow-methods "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS"'
   test-httproute-backend-request-header-modifier:
+    requires: [gatewayclasses, gateways, httproutes]
     description: HTTPRoute with per-backendRef RequestHeaderModifier emits set-header in correct backend
     fixtures:
       gatewayclasses:
@@ -515,6 +523,7 @@ validationTests:
         pattern: "backend gtw_default_br-route_backend-v1_8080[^a-zA-Z]+[^\\n]*\\n([^\\n]+\\n){0,5}[^\\n]*http-request set-header Backend 'backend-v1'"
 
   test-httproute-cors-no-hostname:
+    requires: [gatewayclasses, gateways, httproutes]
     description: HTTPRoute CORS filter on catch-all route (no hostnames) routes correctly
     fixtures:
       gatewayclasses:
@@ -586,6 +595,7 @@ validationTests:
         pattern: "http-request return status 200 hdr access-control-allow-origin .* if METH_OPTIONS \\{ var\\(txn\\.gw_cors_origin\\) -m found \\}"
 
   test-httproute-redirect-preserves-request-scheme:
+    requires: [gatewayclasses, gateways, httproutes]
     description: RequestRedirect without spec.scheme preserves the request's scheme via txn.gw_request_scheme
     fixtures:
       gatewayclasses:
@@ -677,6 +687,7 @@ validationTests:
         pattern: 'http-request redirect location "https://example\.org%\[path\]" code 302'
 
   test-httproute-request-mirror-single:
+    requires: [httproutes]
     description: "HTTPRoute with a single RequestMirror filter at full traffic (no percent / fraction): emits set-var(gw_mirror_target_1) + send-spoe-group spoa-hub mirror-1-group, plus option http-buffer-request on the frontend (without which req.body would be empty at the plugin)."
     fixtures:
       services:
@@ -757,6 +768,7 @@ validationTests:
         target: file:spoe.conf
         pattern: 'arg_timeout_ms=var\(txn\.gw_mirror_timeout_ms_1\) arg_retries=var\(txn\.gw_mirror_retries_1\)'
   test-httproute-request-mirror-percent:
+    requires: [httproutes]
     description: "HTTPRoute with a RequestMirror filter at 20% sampling: the set-var + send-spoe-group directives are gated by a uniform rand(100) lt 20 ACL on top of the route-id condition."
     fixtures:
       services:
@@ -802,6 +814,7 @@ validationTests:
         pattern: 'http-request send-spoe-group spoa-hub mirror-1-group if .* \{ var\(txn\.gw_mirror_sample_1\) -m int lt 20 \}'
 
   test-httproute-request-mirror-fraction:
+    requires: [httproutes]
     description: "HTTPRoute with a RequestMirror filter using a fraction (numerator=25, denominator=50 — 50%) instead of percent. The chart normalises both forms to a percent-of-100 integer so the rand() ACL shape is uniform across config styles."
     fixtures:
       services:
@@ -845,6 +858,7 @@ validationTests:
         pattern: 'http-request send-spoe-group spoa-hub mirror-1-group if .* \{ var\(txn\.gw_mirror_sample_1\) -m int lt 50 \}'
 
   test-httproute-request-mirror-multiple:
+    requires: [httproutes]
     description: "HTTPRoute with two RequestMirror filters on the same rule (SupportHTTPRouteRequestMultipleMirrors). Each filter emits its own (set-var, send-spoe-group) triple; mirrors fire in sequence so each one's var(txn.gw_mirror_target_<i>) is read by its OWN indexed mirror-<i>-group NOTIFY. Single group name across both calls is a no-op on the second invocation — HAProxy SPOE only processes each group once per stream — so the chart MUST emit distinct group names per mirror index."
     fixtures:
       services:
@@ -907,6 +921,7 @@ validationTests:
         pattern: 'http-request send-spoe-group spoa-hub mirror-2-group if'
 
   test-httproute-request-mirror-https-scheme:
+    requires: [httproutes]
     description: "HTTPRoute with a RequestMirror filter pointing at a Service whose target port carries appProtocol=https. The chart must emit arg_scheme=str(https) (not str(http)) so the mirror plugin dispatches over TLS rather than silently downgrading."
     fixtures:
       services:
@@ -954,6 +969,7 @@ validationTests:
         pattern: 'http-request set-var\(txn\.gw_mirror_target_1\) str\(mirror-tls\.default\.svc\.cluster\.local:443\) if'
 
   test-httproute-request-mirror-dynamic-max:
+    requires: [httproutes]
     description: "Cluster with two routes carrying 1 and 3 mirror filters respectively. The chart's spoa-hub library must register at least the dynamic max (mirror-1..mirror-3) AND the static floor (mirror-1..mirror-mirrorStaticMinSlots, default 4) — so with mirrorFanout=3 and the default floor of 4, slots 1 through 4 are emitted. The floor exists because the SPOA hub reloads plugin handler state on every TOML file change; any transient render that emits messages=[] (between two conformance subtests, mid-reconciliation race, etc.) makes the mirror plugin drop in-flight SPOE NOTIFYs (issue #47). Keeping a static minimum means the empty-messages window never opens. Beyond the floor, the chart still extends dynamically — a route with 12 mirror filters renders mirror-1..mirror-12. The shrink-on-reload race remains for slots beyond mirrorStaticMinSlots until SPOA hub plugin-config reload is reworked to never unregister already-registered messages."
     fixtures:
       services:

@@ -1,5 +1,6 @@
 templateSnippets:
   util-generate-httproute-host-map-gateway:
+    requires: [gateways, httproutes, referencegrants]
     template: |
       {#-
         Generate host map entries for HTTPRoute (typed sibling).
@@ -46,28 +47,34 @@ templateSnippets:
             var lsName = parentRef.Name
             var section = parentRef.SectionName
             var prPort = toint(parentRef.Port)
-            var ls = resources.listenersets.GetSingle(lsNs, lsName)
+            // Untyped via the listensets seam (rendered by callers of
+            // this util; ComputeIfAbsent makes re-render a no-op).
+            var lsSeamRaw = shared.Get("listenersetsUntyped")
+            var ls any = nil
+            if lsSeamRaw != nil {
+              ls = dig(lsSeamRaw.(map[string]any)["byKey"], lsNs + "/" + lsName)
+            }
             if ls == nil {
               continue
             }
-            var gwName = ls.Spec.ParentRef.Name
-            var gwNs = ls.Spec.ParentRef.Namespace
+            var gwName = dig_string(ls, "", "spec", "parentRef", "name")
+            var gwNs = dig_string(ls, "", "spec", "parentRef", "namespace")
             if gwNs == "" { gwNs = lsNs }
             var gw = resources.gateways.GetSingle(gwNs, gwName)
             if gw == nil || !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
               continue
             }
             resolvedGwCount = resolvedGwCount + 1
-            for _, listener := range ls.Spec.Listeners {
-              var listenerName = listener.Name
+            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+              var listenerName = dig_string(listener, "", "name")
               if section != "" && section != listenerName {
                 continue
               }
-              var listenerPort = toint(listener.Port)
+              var listenerPort = toint(dig(listener, "port") | fallback(0))
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
-              var listenerProto = listener.Protocol
+              var listenerProto = dig_string(listener, "", "protocol")
               if listenerProto == "" { listenerProto = "HTTP" }
               var portSuffix = ""
               if listenerPort > 0 {
@@ -75,7 +82,7 @@ templateSnippets:
                   portSuffix = ":" + tostring(listenerPort)
                 }
               }
-              var listenerHostname = listener.Hostname
+              var listenerHostname = dig_string(listener, "", "hostname")
               if len(routeHostnames) == 0 {
                 effectiveHosts[listenerHostname + portSuffix] = true
               } else if listenerHostname == "" {
@@ -203,6 +210,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-generate-grpcroute-host-map-gateway:
+    requires: [gateways, grpcroutes, referencegrants]
     template: |
       {#-
         Generate host map entries for GRPCRoute (typed sibling).
@@ -238,28 +246,34 @@ templateSnippets:
             var lsName = parentRef.Name
             var section = parentRef.SectionName
             var prPort = toint(parentRef.Port)
-            var ls = resources.listenersets.GetSingle(lsNs, lsName)
+            // Untyped via the listensets seam (rendered by callers of
+            // this util; ComputeIfAbsent makes re-render a no-op).
+            var lsSeamRaw = shared.Get("listenersetsUntyped")
+            var ls any = nil
+            if lsSeamRaw != nil {
+              ls = dig(lsSeamRaw.(map[string]any)["byKey"], lsNs + "/" + lsName)
+            }
             if ls == nil {
               continue
             }
-            var gwName = ls.Spec.ParentRef.Name
-            var gwNs = ls.Spec.ParentRef.Namespace
+            var gwName = dig_string(ls, "", "spec", "parentRef", "name")
+            var gwNs = dig_string(ls, "", "spec", "parentRef", "namespace")
             if gwNs == "" { gwNs = lsNs }
             var gw = resources.gateways.GetSingle(gwNs, gwName)
             if gw == nil || !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
               continue
             }
             resolvedGwCount = resolvedGwCount + 1
-            for _, listener := range ls.Spec.Listeners {
-              var listenerName = listener.Name
+            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+              var listenerName = dig_string(listener, "", "name")
               if section != "" && section != listenerName {
                 continue
               }
-              var listenerPort = toint(listener.Port)
+              var listenerPort = toint(dig(listener, "port") | fallback(0))
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
-              var listenerProto = listener.Protocol
+              var listenerProto = dig_string(listener, "", "protocol")
               if listenerProto == "" { listenerProto = "HTTP" }
               var portSuffix = ""
               if listenerPort > 0 {
@@ -267,7 +281,7 @@ templateSnippets:
                   portSuffix = ":" + tostring(listenerPort)
                 }
               }
-              var listenerHostname = listener.Hostname
+              var listenerHostname = dig_string(listener, "", "hostname")
               if len(routeHostnames) == 0 {
                 effectiveHosts[listenerHostname + portSuffix] = true
               } else if listenerHostname == "" {
@@ -390,6 +404,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-sharded-host-map-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- Per-Kind typed sharded host-map wrappers. Each calls its
           Kind-specific Generate macro directly with the typed slice. -#}
@@ -420,6 +435,7 @@ templateSnippets:
       {%- end macro -%}
 
   map-host-500-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- Generate host map entries for Gateway API routes #}
       {%- import "util-sharded-host-map-gateway" for ShardedHTTPRouteHostMap, ShardedGRPCRouteHostMap %}
@@ -428,6 +444,7 @@ templateSnippets:
       {{- ShardedGRPCRouteHostMap(resources.grpcroutes.List()) -}}
 
   map-hostregex-500-gateway:
+    requires: [gateways]
     template: |
       {%- import "util-resource-helpers" for ListenerHostname -%}
       {#-

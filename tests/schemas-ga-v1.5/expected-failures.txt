@@ -1,0 +1,10 @@
+# Tests expected to FAIL against this Gateway API release's standard-channel
+# schemas: they assert features whose FIELDS do not exist in this schema
+# generation (the typed fixture wrap prunes unknown fields, so the feature
+# never activates). This is feature-absence, not a bug — the controller
+# still becomes Ready and everything else routes. The harness in
+# scripts/test-templates.sh requires the actual failure set to match this
+# file EXACTLY (a new failure or a stale entry both fail CI).
+#
+# Empty: every surviving test passes on v1.5 standard (only the TCPRoute
+# feature strips, together with its tests).

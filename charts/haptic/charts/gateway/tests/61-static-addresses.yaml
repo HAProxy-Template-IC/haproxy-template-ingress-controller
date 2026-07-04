@@ -1,5 +1,6 @@
 validationTests:
   test-gateway-static-addresses-per-ip-services:
+    requires: [gateways]
     description: "Mirrors the upstream Gateway-API GatewayStaticAddresses conformance fixture's mid-flight state: a Gateway with TWO IPv4 addresses in spec."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -61,6 +62,7 @@ validationTests:
         target: "k8s:gateway-static-addresses"
         pattern: 'gateway\.networking\.k8s\.io/gateway-name: multi-ip-gw'
   test-gateway-static-addresses-name-fits-rfc1123-label:
+    requires: [gateways]
     description: "Per-IP Service emission stays within the 63-char K8s name limit even when the natural `gw-<ns>-<name>-<ip-with-dashes>` join exceeds it. Regression for the conformance fixture `gateway-static-addresses` in namespace `gateway-conformance-infra` with IP `172.19.255.249` (68 chars unbounded — the API server rejected it as `metadata.name: must be no more than 63 characters`)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"

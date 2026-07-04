@@ -47,8 +47,25 @@ spec:
   {{- end }}
 
   {{- /* Gateway API controllerName for status patches */ -}}
-  {{- if and $controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}
+  {{- if $controller.templateLibraries.gateway.enabled }}
     {{- $_ := set $extraContext "controllerName" .Values.gatewayClass.controllerName }}
+  {{- end }}
+
+  {{- /* GatewayClass shape for the runtime emitter (util-emit-gatewayclass).
+         The GatewayClass is created by the CONTROLLER via k8sResources — not
+         by a Helm template — so it exists exactly when the gatewayclasses CRD
+         is served, surviving install-order races and in-place Gateway API
+         installation without a helm operation. */ -}}
+  {{- if and $controller.templateLibraries.gateway.enabled .Values.gatewayClass.enabled }}
+    {{- $gcParams := .Values.gatewayClass.parametersRef }}
+    {{- $_ := set $extraContext "gatewayClassResource" (dict
+          "name" .Values.gatewayClass.name
+          "default" .Values.gatewayClass.default
+          "controllerName" .Values.gatewayClass.controllerName
+          "parametersGroup" $gcParams.group
+          "parametersKind" $gcParams.kind
+          "parametersName" ($gcParams.name | default $controller.crdName)
+          "parametersNamespace" ($gcParams.namespace | default .Release.Namespace)) }}
   {{- end }}
 
   {{- /* HAProxy version (used by version-gated features such as shm-stats-file) */ -}}

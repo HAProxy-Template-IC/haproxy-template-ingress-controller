@@ -1,5 +1,6 @@
 validationTests:
   test-httproute-header-exact:
+    requires: [httproutes]
     description: HTTPRoute with exact header matching
     fixtures:
       services:
@@ -40,6 +41,7 @@ validationTests:
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_header-route_0\" \\} \\{ req\\.hdr\\(X-Version\\) \"v1\" \\}"
 
   test-httproute-header-regex:
+    requires: [httproutes]
     description: HTTPRoute with regex header matching
     fixtures:
       services:
@@ -80,6 +82,7 @@ validationTests:
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_regex-header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_regex-header-route_0\" \\} \\{ req\\.hdr\\(User-Agent\\) -m reg \"\\^Mozilla\\.\\*\" \\}"
 
   test-httproute-query-params:
+    requires: [httproutes]
     description: HTTPRoute with query parameter matching
     fixtures:
       services:
@@ -123,6 +126,7 @@ validationTests:
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_query-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_query-route_0\" \\} \\{ urlp\\(version\\) \"v2\" \\} \\{ urlp\\(filter\\) -m reg \"\\^active\\.\\*\" \\}"
 
   test-httproute-regex-dollar-escaping:
+    requires: [httproutes]
     description: HTTPRoute with query parameter regex containing dollar signs for anchoring
     fixtures:
       services:
@@ -163,6 +167,7 @@ validationTests:
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_regex-dollar-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_regex-dollar-route_0\" \\} \\{ urlp\\(token\\) -m reg \"\\^secret\\[0-9\\]\\+\\\\\\$\" \\}"
 
   test-grpcroute-headers:
+    requires: [grpcroutes]
     description: GRPCRoute with header matching (Exact and RegularExpression)
     fixtures:
       services:
@@ -207,6 +212,7 @@ validationTests:
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\}.*\\{ req\\.hdr\\(X-API-Version\\) \"v1\" \\} \\{ req\\.hdr\\(User-Agent\\) -m reg \"\\^grpc-\\.\\*\" \\}"
 
   test-grpcroute-method-regex:
+    requires: [grpcroutes]
     description: GRPCRoute with RegularExpression method type
     fixtures:
       services:
@@ -243,6 +249,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-regex-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-regex-route_0\" \\} \\{ path -m reg \"/com\\.example\\.\\*/Get\\.\\*\" \\}"
   test-httproute-all-matchers:
+    requires: [httproutes]
     description: HTTPRoute with all matcher types combined (method + headers + query params)
     fixtures:
       services:
@@ -288,6 +295,7 @@ validationTests:
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_combined-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_combined-route_0\" \\} \\{ method POST \\} \\{ req\\.hdr\\(Content-Type\\) \"application/json\" \\} \\{ urlp\\(version\\) \"v2\" \\}"
 
   test-grpcroute-multiple-headers:
+    requires: [grpcroutes]
     description: GRPCRoute with multiple header matchers of different types
     fixtures:
       services:
@@ -335,6 +343,7 @@ validationTests:
         pattern: "\\{ req\\.hdr\\(X-Tenant-ID\\) \"tenant1\" \\} \\{ req\\.hdr\\(X-Environment\\) \"production\" \\} \\{ req\\.hdr\\(Authorization\\) -m reg \"\\^Bearer \\.\\*\" \\}"
 
   test-httproute-invalid-regex:
+    requires: [httproutes]
     description: HTTPRoute with invalid regex pattern (negative test)
     fixtures:
       services:
@@ -370,6 +379,7 @@ validationTests:
         pattern: "invalid\\.example\\.com"
 
   test-httproute-header-matching-conformance-fixture:
+    requires: [gatewayclasses, gateways, httproutes]
     description: "Mirrors the upstream Gateway-API conformance suite's HTTPRouteHeaderMatching fixture: a Gateway with a wildcard-hostname HTTP listener on port 80, and an HTTPRoute whose rules use ONLY header matchers (no path, no method, no host). This is the scenario that fails in CI shards (404 instead of 200). The chart must emit set-var statements that pick the right backend based on header values, even though the request has no path-or-host specificity that would normally drive map lookups."
     fixtures:
       gatewayclasses:
@@ -455,6 +465,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "\\{ req\\.hdr\\(color\\) \"blue\" \\}"
   test-httproute-header-edge-cases:
+    requires: [httproutes]
     description: HTTPRoute with edge case header matching (special characters)
     fixtures:
       services:

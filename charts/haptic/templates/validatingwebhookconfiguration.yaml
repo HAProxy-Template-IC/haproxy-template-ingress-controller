@@ -47,10 +47,19 @@ webhooks:
         name: {{ $webhookSvcName }}
         path: /validate
     rules:
+      {{- $groups := list }}{{- $versions := list }}
+      {{- range $v := include "haptic.candidateVersionsOf" $rule.resource | fromJsonArray }}
+      {{- $groups = append $groups (include "haptic.apiGroupOf" $v) }}
+      {{- $versions = append $versions (include "haptic.apiVersionOf" $v) }}
+      {{- end }}
       - apiGroups:
-          - {{ include "haptic.apiGroupOf" $rule.resource.apiVersion }}
+          {{- range $g := $groups | uniq }}
+          - {{ $g }}
+          {{- end }}
         apiVersions:
-          - {{ include "haptic.apiVersionOf" $rule.resource.apiVersion }}
+          {{- range $v := $versions | uniq }}
+          - {{ $v }}
+          {{- end }}
         resources:
           - {{ $rule.resource.resources }}
         operations:

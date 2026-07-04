@@ -49,7 +49,8 @@ type WebhookRule struct {
 func ExtractWebhookRules(cfg *config.Config) []WebhookRule {
 	rules := make([]WebhookRule, 0, len(cfg.WatchedResources))
 
-	for _, resource := range cfg.WatchedResources {
+	for name := range cfg.WatchedResources {
+		resource := cfg.WatchedResources[name]
 		if !resource.EnableValidationWebhook {
 			continue
 		}

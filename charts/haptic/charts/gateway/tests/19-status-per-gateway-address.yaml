@@ -1,5 +1,6 @@
 validationTests:
   test-gateway-status-per-gateway-address:
+    requires: [gateways]
     description: "Phase 5 of the per-Gateway-IP refactor. Verifies that the Gateway status patcher writes the per-Gateway LoadBalancer Service's realized LB IP into Gateway.Status.Addresses instead of the chart's main LB IP. Two Gateway shapes:   * `gw-https-allocated`: HTTPS listener, no spec.addresses,     per-Gateway Service `gw-default-gw-https-allocated`     allocated `203.0.113.50` by MetalLB → status.addresses     MUST contain that IP, NOT the chart's main IP.   * `gw-http-only`: HTTP-only Gateway → no per-Gateway Service     → status.addresses keeps using the chart's main LB IP     (existing behaviour, untouched by phase 5)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
