@@ -11,6 +11,7 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // ServedVersionChecker reports whether the cluster (or an offline schema
@@ -21,6 +22,24 @@ type ServedVersionChecker interface {
 	// IsServed returns true when the plural resource is served at the given
 	// group/version (e.g. "gateway.networking.k8s.io/v1", "tcproutes").
 	IsServed(apiVersion, resources string) bool
+}
+
+// SchemaFieldChecker reports whether the RESOLVED schema of a served
+// resource contains a specific field path. It backs the RequiresFields
+// stripping on validation tests: a cluster may serve a resource at the
+// same version string as newer releases while its schema generation
+// lacks individual fields (e.g. Gateway API v1.1 serves httproutes at
+// "v1" without the CORS filter). Implementations walk the resource's
+// OpenAPI schema (live from the apiserver, or from --schema-dir
+// offline); this package stays free of Kubernetes imports.
+type SchemaFieldChecker interface {
+	// FieldServed returns true when the schema served for the plural
+	// resource at the given group/version contains the dot-separated
+	// field path (descending into array items transparently). Any
+	// error is treated as transient and fails the whole resolution —
+	// silently stripping on a schema-fetch blip would disable features
+	// spuriously.
+	FieldServed(apiVersion, resources, fieldPath string) (bool, error)
 }
 
 // Resolution describes the outcome of ResolveEffective: which version each
@@ -40,6 +59,15 @@ type Resolution struct {
 	// sorted alphabetically.
 	StrippedSnippets []string
 	StrippedTests    []string
+
+	// StrippedFieldTests lists the names of validationTests removed because
+	// a field named in their RequiresFields is absent from the resolved
+	// schema generation, sorted alphabetically. Disjoint from StrippedTests:
+	// resource-level stripping wins when both apply. Unlike the other
+	// stripped lists this is NOT derived from Unavailable — an in-place CRD
+	// upgrade can change it while every resolved version stays the same, so
+	// Equal compares it explicitly (the CRD watch relies on that to reload).
+	StrippedFieldTests []string
 }
 
 // ResolveEffective resolves every watched resource to the first candidate
@@ -53,15 +81,22 @@ type Resolution struct {
 //     the resolved version;
 //   - an optional resource with no served candidate is removed, together with
 //     every TemplateSnippet / ValidationTest whose Requires names it;
+//   - a ValidationTest whose RequiresFields names a field absent from the
+//     resolved schema generation (probed via the SchemaFieldChecker) is
+//     removed — same feature-absence semantics as Requires, one level finer;
 //   - a required resource with no served candidate is an error (fail fast —
 //     the alternative is an informer that never syncs and a controller that
 //     never becomes Ready, with nothing in the logs naming the cause).
 //
+// fields may be nil for callers without a schema source; RequiresFields
+// entries are then not probed and never strip (the offline validate path
+// applies the same leniency when --schema-dir is absent).
+//
 // The input config is not mutated: the returned config shares everything
 // except the three affected maps. The transformation is resource-agnostic —
-// it consumes only candidate lists, plural names, and Requires declarations
-// from the configuration.
-func ResolveEffective(cfg *Config, served ServedVersionChecker) (*Config, *Resolution, error) {
+// it consumes only candidate lists, plural names, and Requires /
+// RequiresFields declarations from the configuration.
+func ResolveEffective(cfg *Config, served ServedVersionChecker, fields SchemaFieldChecker) (*Config, *Resolution, error) {
 	res := &Resolution{ResolvedVersions: make(map[string]string, len(cfg.WatchedResources))}
 	unavailable := make(map[string]bool)
 
@@ -99,7 +134,6 @@ func ResolveEffective(cfg *Config, served ServedVersionChecker) (*Config, *Resol
 	}
 
 	snippets := cfg.TemplateSnippets
-	tests := cfg.ValidationTests
 	if len(unavailable) > 0 {
 		snippets = make(map[string]TemplateSnippet, len(cfg.TemplateSnippets))
 		for name, snippet := range cfg.TemplateSnippets {
@@ -109,16 +143,12 @@ func ResolveEffective(cfg *Config, served ServedVersionChecker) (*Config, *Resol
 			}
 			snippets[name] = snippet
 		}
-		tests = make(map[string]ValidationTest, len(cfg.ValidationTests))
-		for name := range cfg.ValidationTests {
-			if requiresAny(cfg.ValidationTests[name].Requires, unavailable) {
-				res.StrippedTests = append(res.StrippedTests, name)
-				continue
-			}
-			tests[name] = cfg.ValidationTests[name]
-		}
 		sort.Strings(res.StrippedSnippets)
-		sort.Strings(res.StrippedTests)
+	}
+
+	tests, err := stripTests(cfg, watched, unavailable, fields, res)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	effective := *cfg
@@ -126,6 +156,67 @@ func ResolveEffective(cfg *Config, served ServedVersionChecker) (*Config, *Resol
 	effective.TemplateSnippets = snippets
 	effective.ValidationTests = tests
 	return &effective, res, nil
+}
+
+// stripTests applies both stripping levels to the validation tests:
+// resource-level Requires against the unavailable set (wins when both
+// apply), then field-level RequiresFields against the resolved schemas.
+// Stripped names are recorded on the resolution, sorted.
+func stripTests(cfg *Config, watched map[string]WatchedResource, unavailable map[string]bool, fields SchemaFieldChecker, res *Resolution) (map[string]ValidationTest, error) {
+	tests := make(map[string]ValidationTest, len(cfg.ValidationTests))
+	for name := range cfg.ValidationTests {
+		test := cfg.ValidationTests[name]
+		if requiresAny(test.Requires, unavailable) {
+			res.StrippedTests = append(res.StrippedTests, name)
+			continue
+		}
+		missing, err := missingRequiredField(&test, watched, unavailable, fields)
+		if err != nil {
+			return nil, fmt.Errorf("validation test %q: %w", name, err)
+		}
+		if missing != "" {
+			res.StrippedFieldTests = append(res.StrippedFieldTests, name)
+			continue
+		}
+		tests[name] = test
+	}
+	sort.Strings(res.StrippedTests)
+	sort.Strings(res.StrippedFieldTests)
+	return tests, nil
+}
+
+// missingRequiredField probes the test's RequiresFields entries against the
+// resolved schemas and returns the first entry whose field is absent ("" when
+// all are present, or when fields is nil). An entry referencing an
+// unavailable optional resource counts as absent — the field trivially
+// doesn't exist. A dangling first segment is an error; the structural
+// validator rejects it at load time, so hitting it here means the config
+// bypassed validation.
+func missingRequiredField(test *ValidationTest, watched map[string]WatchedResource, unavailable map[string]bool, fields SchemaFieldChecker) (string, error) {
+	if fields == nil {
+		return "", nil
+	}
+	for _, entry := range test.RequiresFields {
+		key, fieldPath, ok := strings.Cut(entry, ".")
+		if !ok || fieldPath == "" {
+			return "", fmt.Errorf("requiresFields entry %q is not of the form \"<watchedResource>.<field.path>\"", entry)
+		}
+		if unavailable[key] {
+			return entry, nil
+		}
+		resource, ok := watched[key]
+		if !ok {
+			return "", fmt.Errorf("requiresFields entry %q does not name a watched resource", entry)
+		}
+		servedField, err := fields.FieldServed(resource.APIVersion, resource.Resources, fieldPath)
+		if err != nil {
+			return "", fmt.Errorf("probing schema field %q: %w", entry, err)
+		}
+		if !servedField {
+			return entry, nil
+		}
+	}
+	return "", nil
 }
 
 func requiresAny(requires []string, set map[string]bool) bool {
@@ -138,10 +229,14 @@ func requiresAny(requires []string, set map[string]bool) bool {
 }
 
 // Equal reports whether two resolutions describe the same outcome — the same
-// resolved version per resource and the same unavailable set. Used by the CRD
-// watch to decide whether a CRD change actually alters the effective config.
-// Stripped-element lists are derived from Unavailable and need no comparison
-// of their own.
+// resolved version per resource, the same unavailable set, and the same
+// field-stripped test set. Used by the CRD watch to decide whether a CRD
+// change actually alters the effective config. StrippedSnippets and
+// StrippedTests are derived from Unavailable and need no comparison of their
+// own; StrippedFieldTests is derived from schema CONTENTS and must be
+// compared — an in-place CRD upgrade that adds the missing fields changes it
+// while every resolved version stays identical, and that difference is what
+// makes the CRD watch reload and un-strip the tests.
 func (r *Resolution) Equal(other *Resolution) bool {
 	if r == nil || other == nil {
 		return r == other
@@ -156,6 +251,14 @@ func (r *Resolution) Equal(other *Resolution) bool {
 	}
 	for i := range r.Unavailable {
 		if r.Unavailable[i] != other.Unavailable[i] {
+			return false
+		}
+	}
+	if len(r.StrippedFieldTests) != len(other.StrippedFieldTests) {
+		return false
+	}
+	for i := range r.StrippedFieldTests {
+		if r.StrippedFieldTests[i] != other.StrippedFieldTests[i] {
 			return false
 		}
 	}

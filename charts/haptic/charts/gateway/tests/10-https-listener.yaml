@@ -50,6 +50,7 @@ validationTests:
 
   test-gateway-https-listener-mtls-unresolved-ca-no-bind:
     requires: [gatewayclasses, gateways]
+    requiresFields: [gateways.spec.tls.frontend]
     description: "Closes the GatewayFrontendInvalidDefaultClientCertificateValidation conformance gap on the chart side: a Gateway HTTPS listener with a valid server cert AND `spec.tls.frontend.default."
     fixtures:
       gatewayclasses:
@@ -116,6 +117,7 @@ validationTests:
         pattern: "bind .*:443.*ssl crt"
   test-gateway-https-listener-mtls-unresolved-ca-status-conditions:
     requires: [gatewayclasses, gateways]
+    requiresFields: [gateways.spec.tls.frontend]
     description: "Status-side companion of test-gateway-https-listener-mtls- unresolved-ca-no-bind. The chart-side fix for GatewayFrontendInvalidDefaultClientCertificateValidation requires BOTH:"
     fixtures:
       gatewayclasses:
@@ -537,6 +539,7 @@ validationTests:
 
   test-gateway-frontend-client-cert-default-line-verify:
     requires: [gatewayclasses, gateways]
+    requiresFields: [gateways.spec.tls.frontend]
     description: "Mirrors the upstream Gateway API GatewayFrontendClientCertificateValidation conformance fixture: a Gateway with two HTTPS listeners on different ports — one with no hostname (port 443, default fronten."
     fixtures:
       gatewayclasses:
@@ -677,6 +680,7 @@ validationTests:
         pattern: 'verify required\] second-example\.org'
   test-gateway-frontend-client-cert-insecure-fallback-default-line:
     requires: [gatewayclasses, gateways]
+    requiresFields: [gateways.spec.tls.frontend]
     description: "Variant of the previous test with mode: AllowInsecureFallback. Same Gateway shape (two listeners, one per port; default vs. perPort validation), but with InsecureFallback set on both."
     fixtures:
       gatewayclasses:
@@ -817,6 +821,7 @@ validationTests:
         pattern: 'verify optional\] second-example\.org'
   test-gateway-backend-client-cert-shape:
     requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
+    requiresFields: [gateways.spec.tls.backend]
     description: "Mirrors the upstream Gateway API GatewayBackendClientCertificateFeature conformance fixture: a Gateway with HTTP listener (port 80), an HTTPRoute pointing at a Service, a BackendTLSPolicy validating t."
     fixtures:
       gatewayclasses:

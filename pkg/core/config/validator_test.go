@@ -613,6 +613,37 @@ func TestValidateRequires(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), `validation_tests.test-a: requires "nonexistent"`)
 	})
+
+	t.Run("requiresFields naming a watched resource field is valid", func(t *testing.T) {
+		cfg := base()
+		cfg.ValidationTests = map[string]ValidationTest{
+			"test-a": {RequiresFields: []string{"routes.spec.rules.filters.cors"}},
+		}
+		assert.NoError(t, ValidateStructure(cfg))
+	})
+
+	t.Run("requiresFields with dangling first segment is rejected", func(t *testing.T) {
+		cfg := base()
+		cfg.ValidationTests = map[string]ValidationTest{
+			"test-a": {RequiresFields: []string{"nonexistent.spec.rules"}},
+		}
+		err := ValidateStructure(cfg)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), `validation_tests.test-a: requiresFields entry "nonexistent.spec.rules"`)
+		assert.Contains(t, err.Error(), `"nonexistent"`)
+	})
+
+	t.Run("requiresFields without a field path is rejected", func(t *testing.T) {
+		for _, entry := range []string{"routes", "routes."} {
+			cfg := base()
+			cfg.ValidationTests = map[string]ValidationTest{
+				"test-a": {RequiresFields: []string{entry}},
+			}
+			err := ValidateStructure(cfg)
+			assert.Error(t, err, "entry %q must be rejected", entry)
+			assert.Contains(t, err.Error(), `must be of the form`)
+		}
+	})
 }
 
 func TestWatchedResource_CandidateVersions(t *testing.T) {

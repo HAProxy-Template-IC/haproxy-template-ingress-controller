@@ -710,6 +710,18 @@ type ValidationTest struct {
 	// +optional
 	Requires []string `json:"requires,omitempty"`
 
+	// RequiresFields lists schema field paths this test depends on, each in
+	// the form "<watchedResourceKey>.<field.path>" (e.g.
+	// "httproutes.spec.rules.filters.cors"). When any referenced field is
+	// absent from the resolved schema generation of its watched resource,
+	// the test is stripped from the effective config at load time. This
+	// covers clusters that serve the resource at the same API version as
+	// newer releases but with an older schema generation lacking the field.
+	// The first dot-segment of each entry must name a key of
+	// watchedResources.
+	// +optional
+	RequiresFields []string `json:"requiresFields,omitempty"`
+
 	// Assertions defines the validation checks to perform.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1

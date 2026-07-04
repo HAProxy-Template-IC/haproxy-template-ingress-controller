@@ -1,6 +1,7 @@
 validationTests:
   test-gateway-infrastructure-propagation-labels-only:
     requires: [gateways]
+    requiresFields: [gateways.spec.infrastructure]
     description: Gateway with spec.infrastructure.labels triggers marker Service emission and renders cleanly
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -67,6 +68,7 @@ validationTests:
 
   test-gateway-infrastructure-propagation-annotations-only:
     requires: [gateways]
+    requiresFields: [gateways.spec.infrastructure]
     description: Gateway with spec.infrastructure.annotations triggers marker Service emission and renders cleanly
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -127,6 +129,7 @@ validationTests:
 
   test-gateway-infrastructure-propagation-marker-name-fits-rfc1123-label:
     requires: [gateways]
+    requiresFields: [gateways.spec.infrastructure]
     description: "Marker Service emission stays within the 63-char K8s name limit even when the natural `gw-<ns>-<name>` join exceeds it. Regression for the conformance fixture `gateway-with-infrastructure-metadata` in namespace `gateway-conformance-infra` (65 chars unbounded — the API server rejected it as `metadata.name: must be no more than 63 characters`)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -166,6 +169,7 @@ validationTests:
         pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-infrastructure-metadata'
   test-gateway-infrastructure-propagation-with-static-addresses:
     requires: [gateways]
+    requiresFields: [gateways.spec.infrastructure]
     description: Gateway with both spec.infrastructure and spec.addresses propagates labels/annotations onto the static-addresses Service
     extraContext:
       controllerName: "haproxy-haptic.org/controller"

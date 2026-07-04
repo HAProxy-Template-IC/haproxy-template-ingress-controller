@@ -1024,6 +1024,11 @@ func (in *ValidationTest) DeepCopyInto(out *ValidationTest) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.RequiresFields != nil {
+		in, out := &in.RequiresFields, &out.RequiresFields
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Assertions != nil {
 		in, out := &in.Assertions, &out.Assertions
 		*out = make([]ValidationAssertion, len(*in))

@@ -1,0 +1,56 @@
+# Tests STRIPPED from the effective config when validating against this
+# Gateway API release's schema bundle: the resolution removes every test
+# whose `requires` names an unserved resource and every test whose
+# `requiresFields` names a field this schema generation lacks (the typed
+# fixture wrap would prune the field, the feature would never activate,
+# and the test would fail the fail-closed load gate — issue #59's
+# crash-loop). Stripping is feature-absence, not a bug: the controller
+# becomes Ready and everything else routes. The harness in
+# scripts/test-templates.sh requires ZERO failing tests AND the actual
+# stripped set to match this file EXACTLY (a newly-stripped test or a
+# stale entry both fail CI).
+#
+# Resource strips: listenersets, tcproutes, tlsroutes (absent from v1.4
+# standard). Field strips: HTTPRoute CORS (standard since v1.6) and Gateway
+# spec.tls frontend/backend mTLS (v1.6 experimental).
+test-gateway-backend-client-cert-shape
+test-gateway-bind-per-gateway-shape
+test-gateway-crtlist-per-listener-shapes
+test-gateway-frontend-client-cert-default-line-verify
+test-gateway-frontend-client-cert-insecure-fallback-default-line
+test-gateway-https-listener-mtls-unresolved-ca-no-bind
+test-gateway-https-listener-mtls-unresolved-ca-status-conditions
+test-httproute-cors-filter
+test-httproute-cors-no-hostname
+test-httproute-cors-wildcard-methods-echo
+test-listenerset-allowed-different-namespace-denied
+test-listenerset-allowed-namespace-selector
+test-listenerset-allowed-routes-namespaces
+test-listenerset-allowed-routes-supported-kinds
+test-listenerset-allowed-same-namespace
+test-listenerset-cross-namespace-parentref-allowed-by-from-all
+test-listenerset-cross-namespace-parentref-with-grant
+test-listenerset-default-not-allowed
+test-listenerset-host-gateway-status
+test-listenerset-hostname-conflict
+test-listenerset-listener-multi-port-bind
+test-listenerset-protocol-conflict
+test-listenerset-rendered-variant-includes-programmed-observed-generation
+test-tcproute-basic-l4-forward
+test-tcproute-multi-listener-single-backend
+test-tcproute-oldest-route-wins-port
+test-tcproute-orphan-sibling-does-not-drop-others
+test-tcproute-unattached-no-frontend
+test-tcproute-weighted-routing
+test-tlsroute-hostname-intersection-multi-gateway
+test-tlsroute-hostname-mismatch
+test-tlsroute-invalid-backend-kind-no-attach
+test-tlsroute-invalid-backend-rejects-on-chart-static
+test-tlsroute-invalid-backend-rejects-on-frontend
+test-tlsroute-no-tls-listener
+test-tlsroute-passthrough-basic
+test-tlsroute-passthrough-nondefault-port-frontend
+test-tlsroute-section-name-no-match
+test-tlsroute-terminate-nondefault-port-frontend
+test-tlsroute-terminate-on-chart-static-httpsport
+test-tlsroute-wildcard-listener-exact-route

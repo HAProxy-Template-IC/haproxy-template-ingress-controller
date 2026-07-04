@@ -44,6 +44,35 @@ A watched resource MAY declare `optional: true`. When no candidate version of an
 - **WHEN** a snippet or validation test declares no `requires` list
 - **THEN** it SHALL be retained regardless of resource availability.
 
+### Requirement: Field-Level Validation-Test Stripping
+
+A `validationTests` entry MAY declare `requiresFields`: a list of schema field paths, each in the form `<watchedResourceKey>.<field.path>` whose first dot-segment SHALL name a `watchedResources` key (a dangling or malformed entry SHALL be rejected at structural validation). During effective-config resolution, the controller SHALL probe each referenced field against the RESOLVED schema generation of its watched resource — the CRD's `openAPIV3Schema` or the aggregated OpenAPI v3 schema, fetched live at runtime and from `--schema-dir` offline — and SHALL strip every test with at least one absent field from the effective configuration, reported separately from resource-level stripping. This covers clusters that serve a resource at the same version string as newer releases while its schema generation lacks individual fields (Gateway API v1.1 serves `httproutes` at `v1` without the CORS filter), where resource-level `requires` stripping can never fire and the fail-closed load gate would otherwise crash-loop the controller. The probe SHALL descend into array `items` transparently (`spec.rules.filters.cors` matches the field inside `rules[].filters[]`), SHALL treat `x-kubernetes-preserve-unknown-fields` subtrees as containing any field, and SHALL be generic — paths come from configuration and the walk contains no knowledge of specific kinds. A field referencing an unavailable optional resource counts as absent. A schema-fetch error SHALL fail the whole resolution instead of stripping, mirroring the transient-discovery-error rule. The live config-change validation path SHALL apply the same stripping via the shared effective resolver.
+
+#### Scenario: Absent field strips the test instead of failing the load gate
+
+- **WHEN** a validation test declares `requiresFields: [httproutes.spec.rules.filters.cors]` and the cluster serves `httproutes` at a schema generation without `spec.rules.filters.cors`
+- **THEN** the test SHALL be stripped from the effective configuration at load time, the controller SHALL become Ready, and the stripped test SHALL be reported in the resolution's field-stripped list (visible at `/debug/vars/effectiveConfigResolution`).
+
+#### Scenario: Present field keeps the test
+
+- **WHEN** every field named in a test's `requiresFields` exists in the resolved schema generation
+- **THEN** the test SHALL be retained and SHALL run.
+
+#### Scenario: In-place CRD upgrade adding the fields reloads and un-strips
+
+- **WHEN** a watched resource's CRD is upgraded in place such that its served versions are unchanged but the schema now contains previously-absent `requiresFields` fields
+- **THEN** the CRD watch's re-resolution SHALL produce a resolution that differs from the running iteration's, an iteration reload SHALL fire, and the previously-stripped tests SHALL run in the new iteration.
+
+#### Scenario: Schema-fetch error fails resolution instead of stripping
+
+- **WHEN** probing a `requiresFields` entry fails because the resource's schema cannot be fetched
+- **THEN** the whole resolution SHALL fail with an error naming the field, and no test SHALL be silently stripped.
+
+#### Scenario: Dangling requiresFields entry rejected at load
+
+- **WHEN** a test's `requiresFields` entry's first dot-segment does not name a `watchedResources` key, or the entry carries no field path
+- **THEN** structural validation SHALL reject the configuration with an error naming the test and the entry.
+
 ### Requirement: Fail-Fast on Required Unserved Resource
 
 When a non-optional watched resource has no served candidate version, the controller SHALL fail the startup iteration with an error naming the resource and its candidate versions, instead of blocking indefinitely on informer cache sync. The failure SHALL be surfaced through the health endpoint and logs, and the controller SHALL retry via its existing iteration retry loop.
@@ -98,7 +127,7 @@ Only an authoritative NotFound answer from apiserver discovery SHALL count as "u
 
 ### Requirement: CRD-Watch Filtering, Debounce, and Reload Subsumption
 
-The CRD watch SHALL derive its relevant API groups from the RAW configuration's candidate lists, so the groups of currently-unavailable optional resources are watched too — an unavailable resource's CRD appearing is exactly the event the watch exists for. A CRD update SHALL trigger evaluation only when the CRD's set of served versions changed; status and metadata churn SHALL be ignored. Change bursts SHALL be debounced by 2 seconds (an install applies many CRDs at once). After the debounce window, the watch SHALL re-resolve against fresh discovery and request a reload only when the fresh resolution differs from the running iteration's resolution. Reload requests SHALL be posted non-blockingly onto the capacity-1 config-change channel: a reload already queued subsumes further requests.
+The CRD watch SHALL derive its relevant API groups from the RAW configuration's candidate lists, so the groups of currently-unavailable optional resources are watched too — an unavailable resource's CRD appearing is exactly the event the watch exists for. A CRD update SHALL trigger evaluation only when the CRD's spec changed (`metadata.generation` bumped) — covering served-version changes AND in-place schema-content upgrades, which field-level stripping depends on; status and metadata churn SHALL be ignored. Change bursts SHALL be debounced by 2 seconds (an install applies many CRDs at once). After the debounce window, the watch SHALL re-resolve against fresh discovery and a fresh schema fetcher, and request a reload only when the fresh resolution differs from the running iteration's resolution. Reload requests SHALL be posted non-blockingly onto the capacity-1 config-change channel: a reload already queued subsumes further requests.
 
 #### Scenario: Status-only CRD churn ignored
 
@@ -155,17 +184,22 @@ The gateway library's `requires` annotations SHALL be machine-generated from the
 
 ### Requirement: Degraded-Profile Offline Verification
 
-The template test harness SHALL verify feature stripping against committed old-release Gateway API CRD bundles. After the main pass, it SHALL render the Standard-channel chart once and, for each bundle, build a merged schema directory (the core, discovery, haptic, and networking schemas plus that bundle's gateway CRDs; the "none" bundle contributes no gateway CRDs — the plain-Ingress cluster shape) and run offline validation against it. The set of failing tests SHALL exactly equal the bundle's expected-failures allowlist, with comments and blank lines ignored: a NEW failure and a STALE allowlist entry SHALL both fail the run. Each allowlisted test asserts a field absent from that schema generation — feature absence, not a bug; the controller still becomes Ready. The degraded pass SHALL be skipped when a single test or a custom schema directory is requested.
+The template test harness SHALL verify feature stripping against committed old-release Gateway API CRD bundles. After the main pass, it SHALL render the Standard-channel chart once and, for each bundle, build a merged schema directory (the core, discovery, haptic, and networking schemas plus that bundle's gateway CRDs; the "none" bundle contributes no gateway CRDs — the plain-Ingress cluster shape) and run offline validation against it. Every profile SHALL report ZERO failing tests — with field-level stripping in place, a test that would fail on that schema generation must have been stripped instead (a failure is exactly the load-gate crash-loop the stripping exists to prevent). The set of STRIPPED tests (resource-level and field-level, as listed by the validate CLI's stripped-test output) SHALL exactly equal the bundle's expected-stripped allowlist, with comments and blank lines ignored: a NEWLY-STRIPPED test and a STALE allowlist entry SHALL both fail the run. Each allowlisted test depends on a resource or field absent from that schema generation — feature absence, not a bug; the controller still becomes Ready. The degraded pass SHALL be skipped when a single test or a custom schema directory is requested.
+
+#### Scenario: Any failing test fails the profile
+
+- **WHEN** any test fails offline validation against a bundle
+- **THEN** the harness SHALL fail, naming the failing tests — the test needed a `requires`/`requiresFields` annotation instead.
 
 #### Scenario: Stale allowlist entry fails
 
-- **WHEN** a test listed in a bundle's expected-failures allowlist passes against that bundle
-- **THEN** the harness SHALL fail with a diff of expected versus actual failure sets.
+- **WHEN** a test listed in a bundle's expected-stripped allowlist is not stripped against that bundle
+- **THEN** the harness SHALL fail with a diff of expected versus actual stripped sets.
 
-#### Scenario: New failure fails
+#### Scenario: Newly-stripped test fails
 
-- **WHEN** a test not listed in the allowlist fails against a bundle
-- **THEN** the harness SHALL fail with a diff of expected versus actual failure sets.
+- **WHEN** a test not listed in the allowlist is stripped against a bundle
+- **THEN** the harness SHALL fail with a diff of expected versus actual stripped sets.
 
 #### Scenario: No-Gateway-API profile leaves the base suite intact
 

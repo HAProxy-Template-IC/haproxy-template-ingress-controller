@@ -277,6 +277,7 @@ validationTests:
 
   test-httproute-cors-filter:
     requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.filters.cors]
     description: HTTPRoute CORS filter generates set-var, return 200, and response headers
     fixtures:
       gatewayclasses:
@@ -363,6 +364,7 @@ validationTests:
 
   test-httproute-cors-wildcard-methods-echo:
     requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.filters.cors]
     description: "Closes the chart-side gap on the HTTPRouteCORS conformance test sub-cases that send `allowMethods: [\"*\"]`."
     fixtures:
       gatewayclasses:
@@ -524,6 +526,7 @@ validationTests:
 
   test-httproute-cors-no-hostname:
     requires: [gatewayclasses, gateways, httproutes]
+    requiresFields: [httproutes.spec.rules.filters.cors]
     description: HTTPRoute CORS filter on catch-all route (no hostnames) routes correctly
     fixtures:
       gatewayclasses:
@@ -769,6 +772,7 @@ validationTests:
         pattern: 'arg_timeout_ms=var\(txn\.gw_mirror_timeout_ms_1\) arg_retries=var\(txn\.gw_mirror_retries_1\)'
   test-httproute-request-mirror-percent:
     requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.filters.requestMirror.percent]
     description: "HTTPRoute with a RequestMirror filter at 20% sampling: the set-var + send-spoe-group directives are gated by a uniform rand(100) lt 20 ACL on top of the route-id condition."
     fixtures:
       services:
@@ -815,6 +819,7 @@ validationTests:
 
   test-httproute-request-mirror-fraction:
     requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.filters.requestMirror.fraction]
     description: "HTTPRoute with a RequestMirror filter using a fraction (numerator=25, denominator=50 — 50%) instead of percent. The chart normalises both forms to a percent-of-100 integer so the rand() ACL shape is uniform across config styles."
     fixtures:
       services:

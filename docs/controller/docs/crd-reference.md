@@ -437,6 +437,33 @@ validationTests:
         description: Config must include host
 ```
 
+Tests accept the same `requires` field as [templateSnippets](#templatesnippets):
+when an optional watched resource named there is unavailable, the test is
+stripped from the effective configuration at load time.
+
+Tests additionally accept `requiresFields` — a list of schema field paths in
+the form `<watchedResourceKey>.<field.path>`:
+
+```yaml
+validationTests:
+  test-httproute-cors-filter:
+    requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.filters.cors]
+    # ...
+```
+
+When any listed field is absent from the resolved schema generation of its
+watched resource, the test is stripped at load time. This covers clusters
+that serve the resource at the same API version as newer releases but with
+an older schema generation lacking the field (for example, Gateway API v1.1
+serves `httproutes` at `v1` without the CORS filter — the apiserver prunes
+the field from fixtures, the feature never activates, and without stripping
+the test would fail the fail-closed load gate). The first dot-segment must
+name a `watchedResources` key; array levels in the remaining path are
+descended transparently (`spec.rules.filters.cors` matches the field inside
+the `rules[]` / `filters[]` items). The current stripping outcome is visible
+at `/debug/vars/effectiveConfigResolution`.
+
 See [Validation Tests](./validation-tests.md) for the full test-framework reference (fixtures, assertion types, CLI usage) and [CRD & Validation Design](./development/crd-validation-design.md) for the design rationale.
 
 ### validators

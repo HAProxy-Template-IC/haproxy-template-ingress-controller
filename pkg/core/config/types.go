@@ -148,6 +148,17 @@ type ValidationTest struct {
 	// Each entry must name a key of WatchedResources.
 	Requires []string `yaml:"requires,omitempty"`
 
+	// RequiresFields lists schema field paths this test depends on, each in
+	// the form "<watchedResourceKey>.<field.path>" (e.g.
+	// "httproutes.spec.rules.filters.cors"). When ANY referenced field is
+	// absent from the RESOLVED schema generation of its watched resource,
+	// the test is stripped from the effective config at load time. This
+	// covers clusters that serve the resource at the same version string
+	// as newer releases but with an older schema generation lacking the
+	// field — resource-level Requires stripping cannot fire there. The
+	// first dot-segment of each entry must name a key of WatchedResources.
+	RequiresFields []string `yaml:"requiresFields,omitempty"`
+
 	// Assertions contains validation checks to run against the rendered config.
 	Assertions []ValidationAssertion `yaml:"assertions"`
 }

@@ -61,7 +61,7 @@ func TestResolveEffective(t *testing.T) {
 			// tcproutes served at no candidate
 		}
 
-		effective, res, err := ResolveEffective(cfg, served)
+		effective, res, err := ResolveEffective(cfg, served, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, "example.io/v1beta1", effective.WatchedResources["httproutes"].APIVersion)
@@ -100,7 +100,7 @@ func TestResolveEffective(t *testing.T) {
 			"v1|services":                   true,
 		}
 
-		effective, res, err := ResolveEffective(cfg, served)
+		effective, res, err := ResolveEffective(cfg, served, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "example.io/v1", effective.WatchedResources["httproutes"].APIVersion)
 		assert.Equal(t, "example.io/v1", effective.WatchedResources["tcproutes"].APIVersion)
@@ -115,7 +115,7 @@ func TestResolveEffective(t *testing.T) {
 			// services (required) not served
 		}
 
-		_, _, err := ResolveEffective(cfg, served)
+		_, _, err := ResolveEffective(cfg, served, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), `"services"`)
 		assert.Contains(t, err.Error(), "required but no candidate version is served")
@@ -129,7 +129,7 @@ func TestResolveEffective(t *testing.T) {
 			"v1|services":              true,
 		}
 
-		effective, res, err := ResolveEffective(cfg, served)
+		effective, res, err := ResolveEffective(cfg, served, nil)
 		require.NoError(t, err)
 		assert.Empty(t, res.Unavailable)
 		assert.Empty(t, res.StrippedSnippets)
@@ -137,4 +137,134 @@ func TestResolveEffective(t *testing.T) {
 		assert.Len(t, effective.TemplateSnippets, 3)
 		assert.Len(t, effective.ValidationTests, 2)
 	})
+}
+
+// fieldSet is a SchemaFieldChecker backed by a fixed set of
+// "apiVersion|resources|fieldPath" keys; unknown keys are absent.
+// A non-nil err makes every probe fail (the transient case).
+type fieldSet struct {
+	present map[string]bool
+	err     error
+	probes  []string
+}
+
+func (f *fieldSet) FieldServed(apiVersion, resources, fieldPath string) (bool, error) {
+	key := apiVersion + "|" + resources + "|" + fieldPath
+	f.probes = append(f.probes, key)
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.present[key], nil
+}
+
+// TestResolveEffective_RequiresFields pins the field-level stripping: a test
+// whose requiresFields names a field absent from the RESOLVED schema
+// generation strips even though the resource itself is served — the exact
+// gap that crash-looped the controller on Gateway API v1.1/v1.4 clusters
+// (issue #59), where resource-level requires can never fire.
+func TestResolveEffective_RequiresFields(t *testing.T) {
+	baseCfg := func() *Config {
+		return &Config{
+			WatchedResources: map[string]WatchedResource{
+				"httproutes": {
+					APIVersions: []string{"example.io/v1"},
+					Resources:   "httproutes",
+					IndexBy:     []string{"metadata.name"},
+				},
+				"tcproutes": {
+					APIVersions: []string{"example.io/v1"},
+					Resources:   "tcproutes",
+					Optional:    true,
+					IndexBy:     []string{"metadata.name"},
+				},
+			},
+			ValidationTests: map[string]ValidationTest{
+				"test-plain": {},
+				"test-cors":  {RequiresFields: []string{"httproutes.spec.rules.filters.cors"}},
+				"test-both": {
+					Requires:       []string{"tcproutes"},
+					RequiresFields: []string{"httproutes.spec.rules.filters.cors"},
+				},
+				"test-on-unavailable": {RequiresFields: []string{"tcproutes.spec.rules"}},
+			},
+		}
+	}
+	served := servedSet{"example.io/v1|httproutes": true} // tcproutes unserved
+
+	t.Run("absent field strips the test and reports it separately", func(t *testing.T) {
+		fields := &fieldSet{present: map[string]bool{}}
+		effective, res, err := ResolveEffective(baseCfg(), served, fields)
+		require.NoError(t, err)
+
+		assert.NotContains(t, effective.ValidationTests, "test-cors")
+		assert.Contains(t, effective.ValidationTests, "test-plain")
+		assert.NotContains(t, effective.ValidationTests, "test-on-unavailable",
+			"a field on an unavailable optional resource is trivially absent")
+		assert.Equal(t, []string{"test-cors", "test-on-unavailable"}, res.StrippedFieldTests)
+		assert.Equal(t, []string{"test-both"}, res.StrippedTests,
+			"resource-level requires stripping wins over field stripping")
+	})
+
+	t.Run("present field keeps the test", func(t *testing.T) {
+		fields := &fieldSet{present: map[string]bool{
+			"example.io/v1|httproutes|spec.rules.filters.cors": true,
+		}}
+		effective, res, err := ResolveEffective(baseCfg(), served, fields)
+		require.NoError(t, err)
+		assert.Contains(t, effective.ValidationTests, "test-cors")
+		assert.Equal(t, []string{"test-on-unavailable"}, res.StrippedFieldTests,
+			"only the unavailable-resource field entry strips")
+		assert.Contains(t, fields.probes, "example.io/v1|httproutes|spec.rules.filters.cors",
+			"the probe must run against the RESOLVED version and plural")
+	})
+
+	t.Run("field-checker error fails the whole resolution", func(t *testing.T) {
+		fields := &fieldSet{err: assert.AnError}
+		_, _, err := ResolveEffective(baseCfg(), served, fields)
+		require.Error(t, err, "transient schema-probe failures must not silently strip")
+		assert.ErrorIs(t, err, assert.AnError)
+	})
+
+	t.Run("nil checker skips field probing entirely", func(t *testing.T) {
+		effective, res, err := ResolveEffective(baseCfg(), served, nil)
+		require.NoError(t, err)
+		assert.Contains(t, effective.ValidationTests, "test-cors")
+		assert.Empty(t, res.StrippedFieldTests)
+	})
+
+	t.Run("malformed entry fails resolution", func(t *testing.T) {
+		cfg := baseCfg()
+		cfg.ValidationTests["test-bad"] = ValidationTest{RequiresFields: []string{"httproutes"}}
+		_, _, err := ResolveEffective(cfg, served, &fieldSet{present: map[string]bool{}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requiresFields")
+	})
+}
+
+// TestResolutionEqual_StrippedFieldTests pins that an in-place CRD upgrade
+// which only changes the field-stripped set — every resolved version and the
+// unavailable set identical — produces a DIFFERENT resolution, so the CRD
+// watch reloads and un-strips the tests.
+func TestResolutionEqual_StrippedFieldTests(t *testing.T) {
+	base := &Resolution{
+		ResolvedVersions:   map[string]string{"httproutes": "example.io/v1"},
+		StrippedFieldTests: []string{"test-cors"},
+	}
+	same := &Resolution{
+		ResolvedVersions:   map[string]string{"httproutes": "example.io/v1"},
+		StrippedFieldTests: []string{"test-cors"},
+	}
+	upgraded := &Resolution{
+		ResolvedVersions: map[string]string{"httproutes": "example.io/v1"},
+		// CRD upgraded in place: the field now exists, nothing strips.
+	}
+	renamed := &Resolution{
+		ResolvedVersions:   map[string]string{"httproutes": "example.io/v1"},
+		StrippedFieldTests: []string{"test-other"},
+	}
+
+	assert.True(t, base.Equal(same))
+	assert.False(t, base.Equal(upgraded), "field appearing after CRD upgrade must change the resolution")
+	assert.False(t, upgraded.Equal(base))
+	assert.False(t, base.Equal(renamed))
 }

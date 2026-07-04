@@ -1,0 +1,21 @@
+# Tests STRIPPED from the effective config when validating against this
+# Gateway API release's schema bundle: the resolution removes every test
+# whose `requires` names an unserved resource and every test whose
+# `requiresFields` names a field this schema generation lacks (the typed
+# fixture wrap would prune the field, the feature would never activate,
+# and the test would fail the fail-closed load gate — issue #59's
+# crash-loop). Stripping is feature-absence, not a bug: the controller
+# becomes Ready and everything else routes. The harness in
+# scripts/test-templates.sh requires ZERO failing tests AND the actual
+# stripped set to match this file EXACTLY (a newly-stripped test or a
+# stale entry both fail CI).
+#
+# Resource strips only: tcproutes is absent from this bundle (TCPRoute was
+# removed in v1.5). Every field the annotated tests require exists in this
+# generation, so nothing field-strips.
+test-tcproute-basic-l4-forward
+test-tcproute-multi-listener-single-backend
+test-tcproute-oldest-route-wins-port
+test-tcproute-orphan-sibling-does-not-drop-others
+test-tcproute-unattached-no-frontend
+test-tcproute-weighted-routing

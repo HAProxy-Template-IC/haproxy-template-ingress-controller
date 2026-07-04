@@ -56,9 +56,12 @@ func ValidateStructure(cfg *Config) error {
 }
 
 // validateRequires checks that every `requires` entry on templateSnippets and
-// validationTests names an existing watchedResources key. A dangling entry
-// would silently never strip (the availability check could not match it), so
-// it is rejected at load time instead.
+// validationTests names an existing watchedResources key, and that every
+// `requiresFields` entry on validationTests is of the form
+// "<watchedResource>.<field.path>" with an existing watchedResources key as
+// its first dot-segment. A dangling entry would silently never strip (the
+// availability / schema-field check could not match it), so it is rejected at
+// load time instead.
 func validateRequires(cfg *Config) error {
 	for name, snippet := range cfg.TemplateSnippets {
 		for _, req := range snippet.Requires {
@@ -68,10 +71,29 @@ func validateRequires(cfg *Config) error {
 		}
 	}
 	for name := range cfg.ValidationTests {
-		for _, req := range cfg.ValidationTests[name].Requires {
-			if _, ok := cfg.WatchedResources[req]; !ok {
-				return fmt.Errorf("validation_tests.%s: requires %q does not name a watched resource", name, req)
-			}
+		test := cfg.ValidationTests[name]
+		if err := validateTestRequires(cfg, name, &test); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTestRequires checks one validation test's requires and
+// requiresFields entries against the watchedResources keys.
+func validateTestRequires(cfg *Config, name string, test *ValidationTest) error {
+	for _, req := range test.Requires {
+		if _, ok := cfg.WatchedResources[req]; !ok {
+			return fmt.Errorf("validation_tests.%s: requires %q does not name a watched resource", name, req)
+		}
+	}
+	for _, entry := range test.RequiresFields {
+		key, fieldPath, ok := strings.Cut(entry, ".")
+		if !ok || fieldPath == "" {
+			return fmt.Errorf("validation_tests.%s: requiresFields entry %q must be of the form \"<watchedResource>.<field.path>\"", name, entry)
+		}
+		if _, ok := cfg.WatchedResources[key]; !ok {
+			return fmt.Errorf("validation_tests.%s: requiresFields entry %q does not name a watched resource (first segment %q)", name, entry, key)
 		}
 	}
 	return nil

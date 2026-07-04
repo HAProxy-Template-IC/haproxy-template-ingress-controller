@@ -23,6 +23,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"sort"
 
 	"github.com/spf13/cobra"
 
@@ -208,19 +209,42 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 
 	// Mirror the controller's effective-config resolution offline: resolve
 	// apiVersions candidate lists against the schema directory and strip
-	// features whose optional resources are absent from it. This is what
-	// makes degraded cluster profiles unit-testable — point --schema-dir at
-	// an old-release CRD bundle and the same code path strips the same
-	// features a live cluster of that vintage would.
+	// features whose optional resources are absent from it, plus every
+	// validation test whose requiresFields names a field the resolved
+	// schema generation lacks. This is what makes degraded cluster
+	// profiles unit-testable — point --schema-dir at an old-release CRD
+	// bundle and the same code path strips the same features a live
+	// cluster of that vintage would.
+	var specResolution *conversion.SpecResolution
+	var err2 error
 	if dirFetcher != nil {
 		plurals := dirFetcher.PluralsFor()
-		conversion.ResolveEffectiveSpec(configSpec, func(apiVersion, resources string) bool {
+		served := func(apiVersion, resources string) bool {
 			_, ok := plurals[apiVersion][resources]
 			return ok
-		}, logger)
+		}
+		fieldServed := func(apiVersion, resources, fieldPath string) (bool, error) {
+			gvk, ok := plurals[apiVersion][resources]
+			if !ok {
+				// The schema dir doesn't bundle this resource at all —
+				// same leniency as the untyped fall-through everywhere
+				// else offline: don't judge fields we have no schema for.
+				return true, nil
+			}
+			sch, components, err := dirFetcher.Fetch(context.Background(), gvk)
+			if err != nil {
+				return false, fmt.Errorf("loading schema for %s/%s: %w", apiVersion, resources, err)
+			}
+			return schemafetcher.SchemaHasField(sch, components, fieldPath), nil
+		}
+		specResolution, err2 = conversion.ResolveEffectiveSpec(configSpec, served, fieldServed, logger)
 	} else {
-		conversion.ResolveEffectiveSpec(configSpec, nil, logger)
+		specResolution, err2 = conversion.ResolveEffectiveSpec(configSpec, nil, nil, logger)
 	}
+	if err2 != nil {
+		return nil, fmt.Errorf("resolving effective config: %w", err2)
+	}
+	printStrippedTests(specResolution)
 
 	// Check if config has validation tests
 	if len(configSpec.ValidationTests) == 0 {
@@ -273,6 +297,25 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 		TypedResourceTypes: typedResult.Types,
 		Cleanup:            cleanupFunc,
 	}, nil
+}
+
+// printStrippedTests lists every validation test the effective-config
+// resolution stripped, one "⊘ <name> stripped: <reason>" line each, sorted
+// by name. The degraded-profile harness (scripts/test-templates.sh) greps
+// these lines and asserts the exact set against a per-bundle allowlist —
+// the symmetric counterpart of the "✗ <name>" failure lines.
+func printStrippedTests(res *conversion.SpecResolution) {
+	if res == nil || len(res.StrippedTests) == 0 {
+		return
+	}
+	testNames := make([]string, 0, len(res.StrippedTests))
+	for name := range res.StrippedTests {
+		testNames = append(testNames, name)
+	}
+	sort.Strings(testNames)
+	for _, name := range testNames {
+		fmt.Printf("⊘ %s stripped: %s\n", name, res.StrippedTests[name])
+	}
 }
 
 // runOfflineTypeBootstrap drives the type-bootstrap pipeline against
