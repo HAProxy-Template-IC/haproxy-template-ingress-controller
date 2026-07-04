@@ -365,6 +365,57 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  # util-gateway-tcproute-count-contrib
+  #
+  # TCPRoute contribution to the Gateway listener attachedRoutes count.
+  #
+  # Compile-safe seam: util-generate-gateway-status-patches (a snippet that
+  # SURVIVES when the TCPRoute feature is stripped) renders this snippet
+  # with `default ""` and reads the entries back from the shared key below.
+  # The typed resources.tcproutes access must live HERE — in a snippet
+  # stripped together with the tcproutes watch — because on a cluster where
+  # the TCPRoute CRD is not served the resources struct has no tcproutes
+  # field and a direct reference fails to COMPILE (crash-looping the
+  # controller), regardless of any runtime `if`.
+  #
+  # needsTCPProtocol tags the entries so the listener loop counts them only
+  # toward `protocol: TCP` listeners.
+  util-gateway-tcproute-count-contrib:
+    template: |
+      {%%
+        var _, _ = shared.ComputeIfAbsent("tcprouteCountEntries", func() any {
+          var entries = []any{}
+          for _, r := range resources.tcproutes.List() {
+            entries = append(entries, map[string]any{
+              "kind":  "TCPRoute",
+              "route": r,
+              "needsTLSProtocol": false,
+              "needsTCPProtocol": true,
+            })
+          }
+          return entries
+        })
+      %%}
+
+  # status-patches-210-gateway-tcproute
+  #
+  # TCPRoute status patch registration. Hooks into base.yaml's
+  # `render_glob "status-patches-*"` extension point (same point
+  # status-patches-200-gateway uses).
+  #
+  # Lives apart from status-patches-200-gateway ONLY because the import of
+  # the typed TCPRoute macros must not appear in a snippet that survives
+  # when the TCPRoute feature is stripped — `import` has no `default`
+  # clause, so the whole registration sits in this strippable snippet.
+  # render_glob tolerates its absence.
+  status-patches-210-gateway-tcproute:
+    template: |
+      {%- import "util-sharded-tcproute-status-patches" for ShardedTCPRouteStatusPatches -%}
+      {%- var allTCPRoutes = resources.tcproutes.List() -%}
+      {%- if len(allTCPRoutes) > 0 -%}
+        {{- ShardedTCPRouteStatusPatches(allTCPRoutes) -}}
+      {%- end -%}
+
 validationTests:
   test-tcproute-basic-l4-forward:
     description: "Gateway API TCPRoute (L4): a Gateway listener with protocol TCP on port 9100 has a TCPRoute attached whose single backendRef points at a Service. The chart must emit a mode-tcp frontend bound to 9100 with default_backend to a mode-tcp backend carrying the Service's endpoint as a server line."
