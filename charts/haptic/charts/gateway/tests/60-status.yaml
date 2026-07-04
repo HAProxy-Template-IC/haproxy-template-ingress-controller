@@ -507,5 +507,55 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: contains
-        target: status-patches
-        pattern: "typed-status-gw"
+        target: "status:default/typed-status-gw:rendered"
+        pattern: '"type":"Accepted"'
+        description: "Rendered status patch must exist and carry the Accepted condition"
+      # Transition-time stickiness through the typed shape (issue #63):
+      # the fixture's pre-populated conditions carry an old timestamp;
+      # for every condition whose status is unchanged the patch must
+      # keep that timestamp instead of re-stamping `now` — top-level
+      # Accepted plus listener Accepted/ResolvedRefs in rendered,
+      # listener Programmed in deployed.
+      - type: contains
+        target: "status:default/typed-status-gw:rendered"
+        pattern: '"lastTransitionTime":"2026-05-24T00:00:00Z"'
+        description: "Unchanged conditions in the rendered patch must preserve the pre-existing lastTransitionTime (typed .status.conditions / .status.listeners path)"
+      - type: contains
+        target: "status:default/typed-status-gw:deployed"
+        pattern: '"lastTransitionTime":"2026-05-24T00:00:00Z"'
+        description: "Unchanged listener Programmed condition in the deployed patch must preserve the pre-existing lastTransitionTime"
+
+  test-gatewayclass-status-transition-time-preserved:
+    requires: [gatewayclasses]
+    description: "Reproduction for issue #63: the controller-created GatewayClass got an SSA status update ~1/s under e2e load because the Accepted condition's lastTransitionTime was re-stamped on every render while type/status/reason/message stayed identical. Each write bumped resourceVersion, produced a watch event on the watched gatewayclasses resource, and re-triggered reconciliation — a self-feeding loop. Root cause: transitionTime() only handled []any-of-map conditions; in production (schemas loaded) dig(gc, 'status', 'conditions') returns a typegen-built typed slice, so the helper silently fell back to `now`. This test runs with --schema-dir (typed fixtures, same shape as production) and pins that an unchanged Accepted=True keeps its original timestamp, which lets the statusapplier checksum dedup absorb the loop."
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haproxy
+            generation: 3
+          spec:
+            controllerName: "haproxy.org/haptic"
+          status:
+            conditions:
+              - type: Accepted
+                status: "True"
+                reason: Accepted
+                message: GatewayClass accepted by haproxy-haptic controller
+                observedGeneration: 2
+                lastTransitionTime: "2020-01-01T00:00:00Z"
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "status:/haproxy:rendered"
+        pattern: '"type":"Accepted"'
+        description: "GatewayClass rendered status patch must carry the Accepted condition"
+      - type: contains
+        target: "status:/haproxy:rendered"
+        pattern: '"status":"True"'
+        description: "Accepted stays True for a valid GatewayClass"
+      - type: contains
+        target: "status:/haproxy:rendered"
+        pattern: '"lastTransitionTime":"2020-01-01T00:00:00Z"'
+        description: "Unchanged Accepted=True must keep the pre-existing lastTransitionTime — re-stamping it is the #63 churn"

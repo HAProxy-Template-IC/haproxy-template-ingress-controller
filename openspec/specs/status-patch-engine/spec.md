@@ -46,27 +46,29 @@ The `condition` function SHALL construct a map[string]interface{} matching the m
 
 ### Requirement: transitionTime Template Helper Function
 
-The `transitionTime` function SHALL determine the correct `lastTransitionTime` for a condition by comparing the new status value against the resource's current condition status. It SHALL accept a resource (interface{}, the full Kubernetes resource object), a conditionType (string), and a newStatus (string). It SHALL search the resource's `.status.conditions` array (accessed via dig-style traversal) for a condition matching the given type. If a matching condition exists and its `.status` field equals newStatus, the function SHALL return the existing condition's `lastTransitionTime` value. If no matching condition exists, or the status has changed, the function SHALL return the current time in RFC 3339 format. The function SHALL also support searching in `.status.parents[].conditions` for route resources by accepting an optional parentIndex (int) parameter.
+The `transitionTime` function SHALL determine the correct `lastTransitionTime` for a condition by comparing the proposed status value against the resource's current condition of the same type. It SHALL accept an existing-conditions list (interface{}), a conditionType (string), and a newStatus (string). The caller (a template macro) SHALL be responsible for navigating the resource to the correct conditions list (e.g. `.status.conditions` for top-level conditions, `.status.listeners[].conditions` for Gateway listeners, `.status.parents[].conditions` for routes, `.status.ancestors[].conditions` for policy resources) — the function itself SHALL remain resource-agnostic and know nothing about these paths. If the supplied list contains a condition whose `type` matches conditionType and whose `status` equals newStatus, the function SHALL return that condition's existing `lastTransitionTime` value. If no matching condition exists, the status has changed, or the matching entry carries no `lastTransitionTime`, the function SHALL return the current time in RFC 3339 format.
+
+The function SHALL handle every shape a conditions list arrives in: nil (no prior conditions), a `[]interface{}` of `map[string]interface{}` entries (the unstructured / fixture shape), a typed struct slice produced by the schema-driven type generator (the production shape when schemas are loaded), or a `[]interface{}` whose elements are typed structs. Field access on the entries SHALL use dig-style navigation (JSON-tag lookup on typed structs, key lookup on maps) so typed and untyped shapes behave identically. Falling back to the current time for an unchanged status re-stamps the condition on every render, defeats the status applier's checksum deduplication, and feeds a status-write → watch-event → re-render loop.
 
 #### Scenario: Status unchanged preserves existing transition time
 
-- **WHEN** a resource has an existing condition `{type: "Accepted", status: "True", lastTransitionTime: "2025-01-01T00:00:00Z"}` and `transitionTime(resource, "Accepted", "True")` is called
+- **WHEN** the supplied conditions list contains `{type: "Accepted", status: "True", lastTransitionTime: "2025-01-01T00:00:00Z"}` and `transitionTime(conditions, "Accepted", "True")` is called
 - **THEN** the function SHALL return `"2025-01-01T00:00:00Z"`
 
 #### Scenario: Status changed returns current time
 
-- **WHEN** a resource has an existing condition `{type: "Accepted", status: "True", lastTransitionTime: "2025-01-01T00:00:00Z"}` and `transitionTime(resource, "Accepted", "False")` is called
+- **WHEN** the supplied conditions list contains `{type: "Accepted", status: "True", lastTransitionTime: "2025-01-01T00:00:00Z"}` and `transitionTime(conditions, "Accepted", "False")` is called
 - **THEN** the function SHALL return the current time in RFC 3339 format
 
 #### Scenario: No existing condition returns current time
 
-- **WHEN** a resource has no condition with type "Programmed" and `transitionTime(resource, "Programmed", "True")` is called
+- **WHEN** the supplied conditions list contains no condition with type "Programmed" and `transitionTime(conditions, "Programmed", "True")` is called
 - **THEN** the function SHALL return the current time in RFC 3339 format
 
-#### Scenario: Search in route parent conditions
+#### Scenario: Typed conditions preserve existing transition time
 
-- **WHEN** a route resource has `.status.parents[0].conditions` containing `{type: "Accepted", status: "True", lastTransitionTime: "2025-06-01T12:00:00Z"}` and `transitionTime(resource, "Accepted", "True", 0)` is called with parentIndex 0
-- **THEN** the function SHALL return `"2025-06-01T12:00:00Z"`
+- **WHEN** the conditions list is a typed struct slice (produced by the schema-driven type generator, as `dig(resource, "status", "conditions")` returns for a schema-loaded watched resource) containing `{type: "Accepted", status: "True", lastTransitionTime: "2020-01-01T00:00:00Z"}` and `transitionTime(conditions, "Accepted", "True")` is called
+- **THEN** the function SHALL return `"2020-01-01T00:00:00Z"`, exactly as it would for the equivalent map-shaped list
 
 ### Requirement: toJSON Template Filter
 

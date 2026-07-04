@@ -147,7 +147,8 @@ templateSnippets:
         macros encode the Gateway-API spec's structure for where conditions
         live (.status.conditions for Gateway/GatewayClass top-level,
         .status.listeners[byName].conditions for Gateway listeners,
-        .status.parents[byIdx].conditions for HTTPRoute/GRPCRoute parents);
+        .status.parents[byIdx].conditions for HTTPRoute/GRPCRoute parents,
+        .status.ancestors[byRef].conditions for policy resources);
         the Go-side filter knows nothing about these paths and just
         compares the supplied conditions list to the proposed status,
         keeping the templating layer resource-agnostic.
@@ -163,10 +164,11 @@ templateSnippets:
         Usage:
           {%- import "util-condition-transition-time" for
                 TopLevelTransitionTime, ListenerTransitionTime,
-                RouteParentTransitionTime -%}
+                RouteParentTransitionTime, AncestorTransitionTime -%}
           {{ TopLevelTransitionTime(gateway, "Programmed", "True") }}
           {{ ListenerTransitionTime(gateway, "https", "Programmed", "True") }}
           {{ RouteParentTransitionTime(route, parentIdx, "Accepted", "True") }}
+          {{ AncestorTransitionTime(policy, ancestorRef, controllerName, "Accepted", "True") }}
       -#}
       {%- macro TopLevelTransitionTime(resource any, conditionType string, newStatus string) string -%}
       {{- transitionTime(dig(resource, "status", "conditions"), conditionType, newStatus) -}}
@@ -198,6 +200,48 @@ templateSnippets:
       {%- if parentIdx >= 0 && parentIdx < len(parents) -%}
         {%- found = dig(parents[parentIdx], "conditions") | toSlice() -%}
       {%- end -%}
+      {{- transitionTime(found, conditionType, newStatus) -}}
+      {%- end macro -%}
+
+      {#-
+        Policy resources (BackendTLSPolicy, GEP-713 PolicyStatus) carry
+        conditions under .status.ancestors[].conditions, NOT
+        .status.parents. Matching is by identity (controllerName +
+        ancestorRef fields), not by index — the ancestors list read back
+        from the apiserver can interleave entries written by other
+        controllers, so a positional lookup against the freshly computed
+        list would pick the wrong entry (or none). ancestorRef fields are
+        compared against exactly the shape we previously wrote (namespace
+        omitted stays omitted → both sides fall back to ""), so a haptic
+        entry always re-matches itself.
+      -#}
+      {%- macro AncestorTransitionTime(policy any, ancestorRef map[string]any, controllerName string, conditionType string, newStatus string) string -%}
+      {%%
+        var found []any = nil
+        var wantGroup = tostring(fallback(ancestorRef["group"], ""))
+        var wantKind = tostring(fallback(ancestorRef["kind"], ""))
+        var wantName = tostring(fallback(ancestorRef["name"], ""))
+        var wantNs = tostring(fallback(ancestorRef["namespace"], ""))
+        for _, a := range dig(policy, "status", "ancestors") | toSlice() {
+          if dig_string(a, "", "controllerName") != controllerName {
+            continue
+          }
+          if dig_string(a, "", "ancestorRef", "group") != wantGroup {
+            continue
+          }
+          if dig_string(a, "", "ancestorRef", "kind") != wantKind {
+            continue
+          }
+          if dig_string(a, "", "ancestorRef", "name") != wantName {
+            continue
+          }
+          if dig_string(a, "", "ancestorRef", "namespace") != wantNs {
+            continue
+          }
+          found = dig(a, "conditions") | toSlice()
+          break
+        }
+      %%}
       {{- transitionTime(found, conditionType, newStatus) -}}
       {%- end macro -%}
 
