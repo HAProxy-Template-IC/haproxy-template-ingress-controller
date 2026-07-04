@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -370,27 +371,57 @@ func installCRDs(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
 
+// defaultGatewayAPIVersion is the Gateway API release whose standard-channel
+// CRDs the suite installs by default. Pinned to match
+// scripts/start-dev-env.sh and the sigs.k8s.io/gateway-api/conformance
+// module version in go.mod — the conformance suite refuses to run when CRDs
+// and suite disagree on bundle-version.
+const defaultGatewayAPIVersion = "v1.6.0"
+
 // installGatewayAPICRDs installs the upstream Gateway API standard-channel
 // CRDs (Gateway, HTTPRoute, GRPCRoute, etc.) so the chart's gateway library
 // can register watchers and HTTPRoute-based tests can run.
 //
+// HAPTIC_E2E_GWAPI_VERSION overrides the installed release — the nightly
+// gwapi-matrix CI job sets an old release tag (e.g. v1.1.0) to verify
+// runtime version detection against a live old cluster, and the nightly
+// canary job sets a git ref ("main") to test against unreleased upstream
+// CRDs. TestGatewayAPIReleaseMatrix only runs under an override.
+//
 // Idempotent: if CRDs already exist (KEEP_CLUSTER=true reuse), kubectl apply
-// is a no-op and the wait condition just returns immediately. Pinned to v1.6.0
-// to match scripts/start-dev-env.sh and the
-// sigs.k8s.io/gateway-api/conformance@v1.6.0 module — the conformance suite
-// refuses to run when CRDs and suite disagree on bundle-version.
+// is a no-op and the wait condition just returns immediately.
 func installGatewayAPICRDs(ctx context.Context) (context.Context, error) {
-	const url = "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml"
+	version := os.Getenv("HAPTIC_E2E_GWAPI_VERSION")
+	if version == "" {
+		version = defaultGatewayAPIVersion
+	}
+	return ctx, applyGatewayAPICRDs(ctx, version)
+}
 
-	apply := exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", url)
+// applyGatewayAPICRDs applies the standard-channel CRD bundle of the given
+// Gateway API version and waits for the core CRDs to be Established.
+// A version starting with "v" resolves to that release's standard-install
+// manifest; anything else is treated as a git ref of the upstream repo and
+// applied via kustomize (config/crd, the standard-channel base), which is
+// how unreleased refs like "main" ship their CRDs.
+func applyGatewayAPICRDs(ctx context.Context, version string) error {
+	var apply *exec.Cmd
+	if strings.HasPrefix(version, "v") {
+		url := fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/standard-install.yaml", version)
+		apply = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", url)
+	} else {
+		ref := fmt.Sprintf("github.com/kubernetes-sigs/gateway-api/config/crd?ref=%s", version)
+		apply = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-k", ref)
+	}
 	if out, err := apply.CombinedOutput(); err != nil {
-		return ctx, fmt.Errorf("install Gateway API CRDs: %w (output: %s)", err, out)
+		return fmt.Errorf("install Gateway API CRDs (%s): %w (output: %s)", version, err, out)
 	}
 
 	// Single multi-arg `kubectl wait` — kubectl waits on all four CRDs in
 	// parallel, so we don't pay the sequential per-CRD shell-out overhead.
 	// The Established check guards against the chart's helm install racing
-	// the watcher's CRD lookup.
+	// the watcher's CRD lookup. These four exist in the standard channel of
+	// every release the suite targets (GRPCRoute is standard since v1.1).
 	wait := exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
 		"--for=condition=Established", "--timeout=60s",
 		"crd/gatewayclasses.gateway.networking.k8s.io",
@@ -399,9 +430,9 @@ func installGatewayAPICRDs(ctx context.Context) (context.Context, error) {
 		"crd/grpcroutes.gateway.networking.k8s.io",
 	)
 	if out, err := wait.CombinedOutput(); err != nil {
-		return ctx, fmt.Errorf("wait for Gateway API CRDs established: %w (output: %s)", err, out)
+		return fmt.Errorf("wait for Gateway API CRDs established (%s): %w (output: %s)", version, err, out)
 	}
-	return ctx, nil
+	return nil
 }
 
 // ensureNamespaces idempotently creates the controller and shared-fixture

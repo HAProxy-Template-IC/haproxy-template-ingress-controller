@@ -14,6 +14,11 @@ stages:
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Manually/API-triggered nightly test runs (SCHEDULE_KIND=nightly) may
+    # target a branch that has an open MR — exempt them from the
+    # duplicate-pipeline suppression below so the nightly jobs can be
+    # exercised before the schedule fires.
+    - if: $SCHEDULE_KIND == "nightly"
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
     - if: $CI_COMMIT_BRANCH
@@ -417,8 +422,8 @@ test:
     - compute-ci-image-tag
     - job: build-ci
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
+    # Runs post-merge on the default branch too — see .test-e2e-base for
+    # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -576,8 +581,8 @@ build-ingress-conformance-image:
     - compute-ci-image-tag
     - job: build-ci
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
+    # Runs post-merge on the default branch too — see .test-e2e-base for
+    # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -608,6 +613,10 @@ build-ingress-conformance-image:
 publish-main-snapshot:
   extends: .snapshot-build-base
   rules:
+    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
+    # publishing, image pushes, pages deploys, or release tagging from cron.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -625,6 +634,10 @@ publish-chart-snapshot:
     - compute-ci-image-tag
     - job: build-ci
   rules:
+    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
+    # publishing, image pushes, pages deploys, or release tagging from cron.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -928,6 +941,10 @@ build-spoa-image-snapshot:
 build-spoa-image-main:
   extends: .build-spoa-image-base
   rules:
+    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
+    # publishing, image pushes, pages deploys, or release tagging from cron.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -1187,8 +1204,8 @@ test-acceptance:
   extends:
     - .docker-dind
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
+    # Runs post-merge on the default branch too — see .test-e2e-base for
+    # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-code, rules]
@@ -1308,8 +1325,14 @@ test-acceptance:
     # registry image instead.
     SKIP_DOCKER_BUILD: "1"
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
+    # Runs on the default branch too (post-merge). MR pipelines test the
+    # SOURCE branch, not the merge result, so semantic conflicts between two
+    # independently-green MRs land unverified without this. On main-branch
+    # pipelines `changes:` evaluates against the merge commit's diff, so
+    # trigger decisions (and the needs-lockstep with
+    # build-spoa-image-snapshot) match what the MR pipeline decided. On
+    # scheduled pipelines `changes:` is always true — the nightly heartbeat
+    # that keeps full-stack coverage alive through merge-quiet weeks.
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -1508,14 +1531,18 @@ test-gateway-conformance:
     # Pin to the most-recent supported HAProxy version. Matches the
     # default in versions.env / charts/haptic/values.yaml.
     HAPROXY_VERSION: "3.4"
+    # Suite-internal test parallelism, pinned per runner class as policy
+    # (issue #58) — matches the Makefile default; kept explicit here so the
+    # knob is visible where the runner class is chosen.
+    CONFORMANCE_PARALLEL: "4"
   needs:
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
     - job: build-spoa-image-snapshot
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
+    # Runs post-merge on the default branch too — see .test-e2e-base for
+    # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -1770,6 +1797,81 @@ test-gateway-conformance:
 # implementations-list submission. The report YAML is uploaded as an artifact
 # (download it, commit it under conformance/reports/, then open the
 # kubernetes-sigs/gateway-api PR — that PR is a deliberate, separate step).
+
+# =============================================================================
+# Nightly-schedule jobs (SCHEDULE_KIND == "nightly")
+# =============================================================================
+#
+# The nightly scheduled pipeline (cron on main, sets SCHEDULE_KIND=nightly)
+# serves three purposes:
+#   1. Heartbeat — on scheduled pipelines `rules:changes` is always true, so
+#      the ordinary full stack (unit, integration, e2e matrix, conformance
+#      shards) runs even through merge-quiet weeks and environment bit-rot
+#      (kind/node images, upstream URLs, runner changes) surfaces the day it
+#      happens instead of inside the next feature MR.
+#   2. Live old-release Gateway API matrix (nightly-gwapi-matrix): the
+#      runtime-version-detection contract against REAL old CRD releases —
+#      the live counterpart of the offline schemas-ga-* harness.
+#   3. Upstream canary (nightly-gwapi-canary): conformance from gateway-api's
+#      main branch, so the next release's breakage arrives months before the
+#      Renovate bump MR.
+#
+# Nightly verifies, it never ships: publish/tag/pages jobs carry a
+# schedule-source exclusion. Failures land as `needs-triage` issues via
+# report-pipeline-failure — never as unread red pipelines.
+#
+# To exercise these jobs without waiting for the schedule, trigger a branch
+# pipeline with the variable set:
+#   glab api --method POST projects/:id/pipeline \
+#     -f ref=<branch> -f "variables[][key]=SCHEDULE_KIND" \
+#     -f "variables[][value]=nightly"
+
+nightly-gwapi-matrix:
+  extends: .test-e2e-base
+  rules:
+    - if: $SCHEDULE_KIND == "nightly"
+  # One fresh kind cluster per old release. The releases mirror the offline
+  # schema bundles (tests/schemas-ga-*); bundle-version annotations there are
+  # the source of truth for these tags.
+  parallel:
+    matrix:
+      - GWAPI_RELEASE: ["v1.1.0", "v1.4.0", "v1.5.1"]
+  variables:
+    HAPROXY_VERSION: "3.4"
+    # TestMain installs THIS release's standard-channel CRDs instead of the
+    # suite default; TestGatewayAPIReleaseMatrix then verifies degraded
+    # startup + core HTTPRoute routing on the old release and upgrades the
+    # CRDs in place to the default, asserting convergence with zero
+    # controller pod restarts.
+    HAPTIC_E2E_GWAPI_VERSION: $GWAPI_RELEASE
+    TEST_RUN_PATTERN: TestGatewayAPIReleaseMatrix
+
+nightly-gwapi-canary:
+  extends: .test-e2e-base
+  timeout: 60 minutes
+  # Early-warning radar, not a gate: upstream main is EXPECTED to break us
+  # occasionally — that is the signal. The failure still files an issue
+  # (flagged as canary) via report-pipeline-failure.
+  allow_failure: true
+  rules:
+    - if: $SCHEDULE_KIND == "nightly"
+  variables:
+    HAPROXY_VERSION: "3.4"
+    # CRDs from the upstream main branch (kustomize ref install), suite from
+    # the same ref via `go get` below — bundle-version stays consistent.
+    HAPTIC_E2E_GWAPI_VERSION: "main"
+    HAPTIC_E2E_PROFILE: conformance
+  script:
+    # Boot the conformance-profile cluster only (TEST_RUN_PATTERN=^$ short-
+    # circuits the e2e tests, mirroring test-gateway-conformance's setup).
+    - TEST_RUN_PATTERN="^$" make test-e2e
+    # Move the conformance suite to upstream main and run it unsharded.
+    # Builds use -mod=mod, so the vendor/ tree staying at the pinned release
+    # is irrelevant here; nothing is committed from CI.
+    - go get sigs.k8s.io/gateway-api@main
+    - go mod tidy
+    - make test-gateway-conformance
+
 gateway-conformance-report:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
@@ -1900,8 +2002,8 @@ test-ingress-conformance:
     - job: build-spoa-image-snapshot
     - job: build-ingress-conformance-image
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
+    # Runs post-merge on the default branch too — see .test-e2e-base for
+    # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -2090,8 +2192,8 @@ test-helm-defaults:
   extends:
     - .docker-dind
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
+    # Runs post-merge on the default branch too — see .test-e2e-base for
+    # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
     # Was `.rules-helm` (charts/**/*); narrowed to .rules-spoa-chart so
@@ -2429,6 +2531,10 @@ trigger-pages:
   stage: deploy
   needs: []
   rules:
+    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
+    # publishing, image pushes, pages deploys, or release tagging from cron.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   inherit:
     variables: false
@@ -2465,10 +2571,16 @@ create-controller-release-tag:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
-  needs:
+  # No `needs:` — stage ordering makes this wait for the WHOLE pipeline,
+  # so the full post-merge stack (unit, e2e matrix, conformance) gates every
+  # release tag. `dependencies` still fetches the CI image tag dotenv.
+  dependencies:
     - compute-ci-image-tag
-    - job: build-ci
   rules:
+    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
+    # publishing, image pushes, pages deploys, or release tagging from cron.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_TAG
       when: never  # Don't run on tag pipelines
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -2500,10 +2612,16 @@ create-chart-release-tag:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
     - saas-linux-small-amd64
-  needs:
+  # No `needs:` — stage ordering makes this wait for the WHOLE pipeline,
+  # so the full post-merge stack (unit, e2e matrix, conformance) gates every
+  # release tag. `dependencies` still fetches the CI image tag dotenv.
+  dependencies:
     - compute-ci-image-tag
-    - job: build-ci
   rules:
+    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
+    # publishing, image pushes, pages deploys, or release tagging from cron.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_TAG
       when: never  # Don't run on tag pipelines
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -2528,3 +2646,27 @@ create-chart-release-tag:
         --form "ref=${TAG}" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/trigger/pipeline"
     - echo "Created and pushed tag ${TAG}, release pipeline triggered"
+
+
+# =============================================================================
+# Failure reporting (.post)
+# =============================================================================
+#
+# Turns any failed default-branch or scheduled pipeline into a tracked
+# `needs-triage` + `ci-failure` issue (fingerprint-deduplicated: recurrences
+# comment on the existing issue instead of spamming new ones). See
+# scripts/ci-report-failure.sh. Requires the HAPTIC_CI_ISSUE_TOKEN protected
+# CI/CD variable; degrades to a warning when absent.
+report-pipeline-failure:
+  stage: .post
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
+  tags:
+    - saas-linux-small-amd64
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_failure
+  script:
+    - ./scripts/ci-report-failure.sh

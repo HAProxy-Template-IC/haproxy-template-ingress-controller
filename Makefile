@@ -58,6 +58,8 @@ version: ## Display version information
 ## Linting targets
 
 lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
+	@echo "Checking test inventory (every test must run somewhere)..."
+	./scripts/check-test-inventory.sh
 	@echo "Linting YAML files..."
 	yamllint -c .yamllint.yml .
 	@echo "Linting JSON files..."
