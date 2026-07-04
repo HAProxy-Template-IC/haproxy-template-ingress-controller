@@ -260,6 +260,7 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 			CurrentConfig:     crdTest.CurrentConfig,
 			MinHAProxyVersion: crdTest.MinHAProxyVersion,
 			Requires:          crdTest.Requires,
+			RequiresFields:    crdTest.RequiresFields,
 			Assertions:        convertAssertions(crdTest.Assertions),
 		}
 		// Parse test-specific extraContext if present

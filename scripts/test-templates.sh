@@ -213,11 +213,17 @@ FULL_RC=0
 # Degraded Gateway API profiles (skipped when a single --test is requested or
 # a custom schema dir is in play). For each committed old-release CRD bundle
 # (tests/schemas-ga-*), render the STANDARD-channel chart, resolve against the
-# bundle (the controller strips features whose CRDs the release doesn't
-# serve), and require the failure set to EXACTLY match the bundle's
-# allowlist (tests/schemas-ga-<rel>/expected-failures.txt) — tests that
-# assert fields absent from that schema generation. A new failure OR a
-# stale allowlist entry fails the run.
+# bundle (the controller strips features whose CRDs the release doesn't serve
+# AND tests whose requiresFields name schema fields the release's generation
+# lacks), and require:
+#   (a) ZERO failing tests — with field-level stripping in place, every test
+#       that would fail on that schema generation must have been stripped
+#       instead (a failure here is exactly the load-gate crash-loop of
+#       issue #59); and
+#   (b) the set of STRIPPED tests (the validate CLI's "⊘ <name> stripped:"
+#       lines) to EXACTLY match the bundle's allowlist
+#       (tests/schemas-ga-<rel>/expected-stripped.txt). A newly-stripped
+#       test OR a stale allowlist entry both fail the run.
 # ---------------------------------------------------------------------------
 if [[ $FULL_RC -eq 0 && "$*" != *"--test"* && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]]; then
     STD_CONFIG=$(mktemp /tmp/haptic-std-config-XXXXXX.yaml)
@@ -236,16 +242,30 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]]; t
         # The "none" profile (no Gateway API at all) has no CRDs to add.
         find "$BUNDLE" -name '*.gateway.networking.k8s.io.yaml' -exec cp {} "$MERGED/" \;
         echo -e "${YELLOW}Degraded profile ${REL}...${NC}" >&2
-        ACTUAL=$("$CONTROLLER_BIN" validate --file "$STD_CONFIG" --schema-dir "$MERGED" 2>&1 \
-                 | grep '^✗' | awk '{print $2}' | sort || true)
-        EXPECTED=$(grep -v '^#' "$BUNDLE/expected-failures.txt" 2>/dev/null | grep -v '^$' | sort || true)
+        DEGRADED_RC=0
+        DEGRADED_OUT=$("$CONTROLLER_BIN" validate --file "$STD_CONFIG" --schema-dir "$MERGED" 2>&1) || DEGRADED_RC=$?
         rm -rf "$MERGED"
+        FAILED=$(printf '%s\n' "$DEGRADED_OUT" | grep '^✗' | awk '{print $2}' | sort || true)
+        if [[ $DEGRADED_RC -ne 0 || -n "$FAILED" ]]; then
+            echo -e "${RED}Degraded profile ${REL}: expected ZERO failing tests (rc=${DEGRADED_RC})${NC}" >&2
+            echo -e "${RED}Failing tests must be stripped via requires/requiresFields, not fail the run:${NC}" >&2
+            printf '%s\n' "$FAILED" >&2
+            printf '%s\n' "$DEGRADED_OUT" | tail -30 >&2
+            exit 1
+        fi
+        # Match only schema-strip lines ("⊘ <name> stripped: <reason>").
+        # The test runner separately prints "⊘ <name> [skipped]" for
+        # minHAProxyVersion skips, which vary with the HAProxy version of
+        # the validating binary (this script runs per version in CI) and
+        # must not perturb the schema-generation allowlist.
+        ACTUAL=$(printf '%s\n' "$DEGRADED_OUT" | grep '^⊘ .* stripped: ' | awk '{print $2}' | sort || true)
+        EXPECTED=$(grep -v '^#' "$BUNDLE/expected-stripped.txt" 2>/dev/null | grep -v '^$' | sort || true)
         if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo -e "${RED}Degraded profile ${REL}: failure set does not match ${BUNDLE}/expected-failures.txt${NC}" >&2
+            echo -e "${RED}Degraded profile ${REL}: stripped-test set does not match ${BUNDLE}/expected-stripped.txt${NC}" >&2
             diff <(echo "$EXPECTED") <(echo "$ACTUAL") >&2 || true
             exit 1
         fi
-        echo -e "${GREEN}Degraded profile ${REL}: matches expected-failures allowlist${NC}" >&2
+        echo -e "${GREEN}Degraded profile ${REL}: zero failures, stripped set matches allowlist${NC}" >&2
     done
 fi
 exit $FULL_RC

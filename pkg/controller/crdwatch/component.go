@@ -29,7 +29,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -148,10 +147,14 @@ func (c *Component) Start(ctx context.Context) error {
 			if !ok {
 				return
 			}
-			// Only served-version changes matter for resolution; ignore
-			// status-only and metadata churn.
-			if !equalStringSlices(servedVersions(oldObj), servedVersions(newObj)) {
-				c.noteChange("served versions changed", group, newObj)
+			// Only spec changes matter for resolution: served-version
+			// changes AND in-place schema-content upgrades (same served
+			// versions, new field set — the RequiresFields stripping
+			// depends on schema contents). metadata.generation bumps on
+			// every spec change and nothing else, so it covers both while
+			// still ignoring status-only and metadata churn.
+			if generation(oldObj) != generation(newObj) {
+				c.noteChange("spec changed", group, newObj)
 			}
 		},
 		DeleteFunc: func(obj any) {
@@ -242,37 +245,13 @@ func (c *Component) relevantGroup(obj any) (string, bool) {
 	return group, c.groups[group]
 }
 
-// servedVersions returns the CRD's served version names, sorted.
-func servedVersions(obj any) []string {
+// generation returns the CRD's metadata.generation (0 when unreadable).
+// The apiserver bumps it on every spec change — served-version edits and
+// in-place schema upgrades alike — and never on status/metadata churn.
+func generation(obj any) int64 {
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
-		return nil
+		return 0
 	}
-	versions, _, _ := unstructured.NestedSlice(u.Object, "spec", "versions")
-	var served []string
-	for _, v := range versions {
-		vm, ok := v.(map[string]any)
-		if !ok {
-			continue
-		}
-		isServed, _, _ := unstructured.NestedBool(vm, "served")
-		name, _, _ := unstructured.NestedString(vm, "name")
-		if isServed && name != "" {
-			served = append(served, name)
-		}
-	}
-	sort.Strings(served)
-	return served
-}
-
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return u.GetGeneration()
 }

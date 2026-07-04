@@ -22,10 +22,10 @@ import (
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
 
-func crdObj(name, group string, versions ...map[string]any) *unstructured.Unstructured {
-	vs := make([]any, len(versions))
-	for i, v := range versions {
-		vs[i] = v
+func crdObj(name, group string, servedVersions ...string) *unstructured.Unstructured {
+	vs := make([]any, len(servedVersions))
+	for i, v := range servedVersions {
+		vs[i] = map[string]any{"name": v, "served": true}
 	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apiextensions.k8s.io/v1",
@@ -36,10 +36,6 @@ func crdObj(name, group string, versions ...map[string]any) *unstructured.Unstru
 			"versions": vs,
 		},
 	}}
-}
-
-func version(name string, served bool) map[string]any {
-	return map[string]any{"name": name, "served": served}
 }
 
 func TestRelevantGroups(t *testing.T) {
@@ -58,14 +54,19 @@ func TestRelevantGroups(t *testing.T) {
 	}, groups)
 }
 
-func TestServedVersions(t *testing.T) {
-	crd := crdObj("tcproutes.g.io", "g.io",
-		version("v1", true),
-		version("v1alpha2", false),
-		version("v1beta1", true),
-	)
-	assert.Equal(t, []string{"v1", "v1beta1"}, servedVersions(crd), "unserved versions excluded, sorted")
-	assert.Nil(t, servedVersions(&unstructured.Unstructured{Object: map[string]any{}}))
+// TestGeneration pins the spec-change signal: metadata.generation is read
+// from the unstructured CRD (0 when absent/unreadable). The apiserver bumps
+// it on every spec change — served-version edits AND in-place schema-content
+// upgrades — but never on status/metadata churn, so comparing it in
+// UpdateFunc catches schema upgrades that keep the served-version set
+// identical (the RequiresFields re-resolution trigger) while still ignoring
+// status-only updates.
+func TestGeneration(t *testing.T) {
+	crd := crdObj("tcproutes.g.io", "g.io", "v1")
+	crd.SetGeneration(3)
+	assert.Equal(t, int64(3), generation(crd))
+	assert.Equal(t, int64(0), generation(&unstructured.Unstructured{Object: map[string]any{}}))
+	assert.Equal(t, int64(0), generation("not an unstructured"))
 }
 
 // TestComponent_ReloadDecision drives the debounce loop directly: a relevant
@@ -96,7 +97,7 @@ func TestComponent_ReloadDecision(t *testing.T) {
 			done := make(chan struct{})
 			go func() { c.runDebounceLoop(ctx); close(done) }()
 
-			c.noteChange("added", "g.io", crdObj("tcproutes.g.io", "g.io", version("v1", true)))
+			c.noteChange("added", "g.io", crdObj("tcproutes.g.io", "g.io", "v1"))
 
 			require.Eventually(t, func() bool {
 				return triggered.Load() == tt.wantTrigger
@@ -127,7 +128,7 @@ func TestComponent_InitialSyncBaselineIgnored(t *testing.T) {
 	defer cancel()
 	go c.runDebounceLoop(ctx)
 
-	c.noteChange("added", "g.io", crdObj("tcproutes.g.io", "g.io", version("v1", true)))
+	c.noteChange("added", "g.io", crdObj("tcproutes.g.io", "g.io", "v1"))
 
 	time.Sleep(50 * time.Millisecond)
 	assert.False(t, triggered.Load(), "pre-sync baseline adds must not trigger a reload")
@@ -137,10 +138,10 @@ func TestComponent_InitialSyncBaselineIgnored(t *testing.T) {
 func TestComponent_IrrelevantGroupIgnored(t *testing.T) {
 	c := New(nil, map[string]bool{"g.io": true}, func() bool { return true }, func() {}, slog.Default())
 
-	_, relevant := c.relevantGroup(crdObj("others.other.io", "other.io", version("v1", true)))
+	_, relevant := c.relevantGroup(crdObj("others.other.io", "other.io", "v1"))
 	assert.False(t, relevant)
 
-	group, relevant := c.relevantGroup(crdObj("tcproutes.g.io", "g.io", version("v1", true)))
+	group, relevant := c.relevantGroup(crdObj("tcproutes.g.io", "g.io", "v1"))
 	assert.True(t, relevant)
 	assert.Equal(t, "g.io", group)
 }

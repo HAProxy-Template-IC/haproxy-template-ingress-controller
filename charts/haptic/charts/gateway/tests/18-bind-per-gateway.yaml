@@ -1,6 +1,7 @@
 validationTests:
   test-gateway-bind-per-gateway-shape:
     requires: [gateways]
+    requiresFields: [gateways.spec.tls.frontend]
     description: "Phase 4 of the per-Gateway-IP refactor. Verifies that `https-bind-extra-100-per-gateway` emits one `bind *:<allocated-pod-port> ssl crt-list <per-listener-crt-list> alpn h2,http/1.1` line per HTTPS Gateway listener in the chart's `frontend https`, and SKIPS the bind when the listener's mTLS CA refs are unresolvable. Three listener shapes in one render:   * `gw-mixed/https-default` — catchall, AllowValidOnly default     validation → bind on allocated pod port, crt-list with     `verify required`.   * `gw-mixed/https-perport` — hostnamed, AllowInsecureFallback     per-port → bind on a different allocated pod port, crt-list     with `verify optional + ca-ignore-err all crt-ignore-err     all`.   * `gw-blocked/https` — catchall, mTLS CA ref points at a     non-existent ConfigMap → mTLS-blocked → NO bind emitted     (phase 2 didn't emit a crt-list for it either, so the     reference would fail HAProxy parse if we did)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"

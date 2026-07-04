@@ -11,6 +11,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Added
 
+- Field-level validation-test stripping: `validationTests` accept `requiresFields` (`<watchedResource>.<field.path>` entries); tests whose fields are absent from the resolved schema generation are stripped at config load. Fixes the controller crash-loop on clusters serving older Gateway API releases (v1.1/v1.4) whose schemas lack fields the chart's tests exercise (#59).
 - Runtime API-version detection for watched resources: `watchedResources` entries accept an ordered `apiVersions` candidate list and an `optional` flag, resolved against live apiserver discovery at startup. `templateSnippets`/`validationTests` accept `requires` — features whose optional resources aren't served are stripped at config load instead of failing startup.
 - A CRD watch reinitializes the controller when a watched resource's CRD is installed, upgraded in place, or removed — Gateway API support activates or re-resolves at runtime with no Helm operation and no pod restart. Reloads fire only when the resolution outcome actually changes.
 - A required watched resource with no served candidate version now fails startup fast with an error naming the resource and candidates (previously: silent infinite informer-sync hang with `/healthz` stuck at 503).

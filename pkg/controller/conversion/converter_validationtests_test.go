@@ -53,6 +53,8 @@ func TestConvertValidationTests(t *testing.T) {
 				Description:       "smoke test",
 				CurrentConfig:     "global\n  daemon\n",
 				MinHAProxyVersion: "3.0",
+				Requires:          []string{"httproutes"},
+				RequiresFields:    []string{"httproutes.spec.rules.filters.cors"},
 				Fixtures:          map[string][]runtime.RawExtension{},
 			},
 		}
@@ -64,6 +66,8 @@ func TestConvertValidationTests(t *testing.T) {
 		assert.Equal(t, "smoke test", test.Description)
 		assert.Equal(t, "global\n  daemon\n", test.CurrentConfig)
 		assert.Equal(t, "3.0", test.MinHAProxyVersion)
+		assert.Equal(t, []string{"httproutes"}, test.Requires)
+		assert.Equal(t, []string{"httproutes.spec.rules.filters.cors"}, test.RequiresFields)
 		assert.Nil(t, test.ExtraContext, "ExtraContext must remain unset when absent in input")
 	})
 

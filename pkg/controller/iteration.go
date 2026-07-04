@@ -168,7 +168,7 @@ func runIteration(
 	// The CRD watch started alongside re-resolves on relevant CRD changes so
 	// late installation, in-place upgrade, and serving removal converge at
 	// runtime (no helm operation, no pod restart).
-	cfg, err = installEffectiveConfig(cfg, k8sClient, setup, infra, logger)
+	cfg, err = installEffectiveConfig(ctx, cfg, k8sClient, setup, infra, logger)
 	if err != nil {
 		return err
 	}
