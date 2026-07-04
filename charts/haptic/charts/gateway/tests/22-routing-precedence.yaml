@@ -1,5 +1,6 @@
 validationTests:
   test-httproute-weight-two-backends:
+    requires: [httproutes]
     description: HTTPRoute with two weighted backends (70/30 split)
     fixtures:
       services:
@@ -112,6 +113,7 @@ validationTests:
         pattern: "(?m)^\\d+:default_split-route_0 gtw_"
 
   test-httproute-weight-no-matches:
+    requires: [httproutes]
     description: HTTPRoute with no matches block defaults to PathPrefix /
     fixtures:
       services:
@@ -163,6 +165,7 @@ validationTests:
         pattern: "default.example.com/ GW_ROUTE_ID:http:default_default-path_0"
 
   test-httproute-weight-default:
+    requires: [httproutes]
     description: HTTPRoute with default weights (omitted weight defaults to 1)
     fixtures:
       services:
@@ -224,6 +227,7 @@ validationTests:
         pattern: "1:default_default-weight_0 gtw_default_default-weight_app-v2_80"
 
   test-httproute-precedence:
+    requires: [httproutes]
     description: Complex precedence ordering with multiple conflicting routes
     fixtures:
       services:
@@ -304,6 +308,7 @@ validationTests:
           - "/api/ .*default_route1_2"           # Least specific: shortest path, no extra matchers
 
   test-httproute-same-path-matcher-precedence:
+    requires: [httproutes]
     description: Routes with SAME path sorted by matcher specificity (method/headers/query)
     fixtures:
       services:
@@ -409,6 +414,7 @@ validationTests:
         pattern: 'gw_rule_id.*precedence-test_3'
 
   test-httproute-weighted-with-matchers:
+    requires: [httproutes]
     description: Weighted routing combined with method/header matchers
     fixtures:
       services:
@@ -470,6 +476,7 @@ validationTests:
         pattern: "90:default_canary-route_0 gtw_default_canary-route_canary-v2_80"
 
   test-httproute-same-route-conflicts:
+    requires: [httproutes]
     description: Multiple rules in same HTTPRoute with path conflicts
     fixtures:
       services:
@@ -535,6 +542,7 @@ validationTests:
         pattern: "http-request set-var\\(txn\\.path_match\\) str\\(BACKEND:gtw_default_multi-rule_public-service_80\\) if \\{ var\\(txn\\.gw_rule_id\\) -m str \"default_multi-rule_1\" \\}"
 
   test-httproute-cross-route-conflicts:
+    requires: [httproutes]
     description: Multiple separate HTTPRoutes with conflicting paths (different matchers)
     fixtures:
       services:
@@ -597,6 +605,7 @@ validationTests:
         pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_route-get_0__default_route-post_0"
 
   test-httproute-grpcroute-precedence:
+    requires: [grpcroutes, httproutes]
     description: Mixed HTTPRoute and GRPCRoute on same hostname (precedence validation)
     fixtures:
       services:
@@ -666,6 +675,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-route_0\" \\} \\{ path \"/com\\.example\\.Service/GetData\" \\}"
   test-gateway-http-listener-isolation:
+    requires: [gatewayclasses, gateways, httproutes]
     description: Multi-listener Gateway routes are isolated per-listener (mirrors GatewayHTTPListenerIsolation)
     fixtures:
       gatewayclasses:
@@ -853,6 +863,7 @@ validationTests:
         target: map:path-prefix-exact.map
         pattern: "(?m)^abc\\.foo\\.example\\.com/empty-hostname GW_ROUTE_ID"
   test-gateway-listener-isolation-hostname-intersection:
+    requires: [gatewayclasses, gateways, httproutes]
     description: Catch-all listener routes drop hostnames more-specifically claimed by sibling listeners
     fixtures:
       gatewayclasses:
@@ -947,6 +958,7 @@ validationTests:
   # / conformance suite.
 
   test-httproute-weight-zero-explicit-excludes:
+    requires: [httproutes]
     description: "Regression test for issue #52 (typegen tristate): a backendRef with explicit weight=0 means \"exclude this backend\" per the Gateway-API spec, NOT \"default to 1\". Pipeline 2549047264's gateway-conformance 3/4 HTTPRouteWeight test failed because the typed Gateway struct couldn't distinguish \"weight absent\" (defaults to 1) from \"weight explicitly 0\" (excluded) — both read back as int64(0) from the typed struct, the chart's `dig(backendRef, \"weight\") | fallback(1)` defaulted both to 1, and the weighted-multi-backend.map ended up with one entry for the should-be-excluded backend. Fix: typegen now emits `*int64` for optional integer fields (typebootstrap.needsTristatePointer). json.Unmarshal stores nil for missing keys and a non-nil pointer to the explicit value otherwise; digStructField dereferences transparently so chart code keeps reading plain int64 via dig(). Fixture: weights 70 / 30 / 0 — the third backend MUST NOT appear in the rendered weighted-multi-backend.map."
     fixtures:
       services:

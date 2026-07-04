@@ -38,6 +38,7 @@ templateSnippets:
       {%- end %}
 
   features-160-gateway-crtlist-per-listener:
+    requires: [gateways]
     template: |
       {#- Per-(Gateway, HTTPS listener) crt-list file emission.
           Reads back the shared cert registry (`gf.tlsCertificates`)
@@ -95,8 +96,11 @@ templateSnippets:
           the second Gateway's mTLS config would silently apply to
           the first. Per-listener keying scopes resolution
           unambiguously. -#}
-      {%- var perListenerMTLS = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
-      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {#- comma-ok: the producer (features-110-gateway-frontend-mtls) may be
+          stripped on clusters without its required kinds; nil map reads are
+          safe and mean "no mTLS config resolved". -#}
+      {%- var perListenerMTLS, _ = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
+      {%- var mtlsBlocked, _ = gf["mtlsBlockedListeners"].(map[string]any) %}
       {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
 
       {#- Typed iteration via `resources.gateways.List()`: the closure

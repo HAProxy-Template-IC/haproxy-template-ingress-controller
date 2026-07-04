@@ -1,5 +1,6 @@
 templateSnippets:
   util-gateway-ssl-passthrough:
+    requires: [gateways, httproutes, tlsroutes]
     template: |
       {#- Caches SSL passthrough backends in shared["gateway_ssl_passthrough"].backends
           Uses ComputeIfAbsent for race-free caching across parallel template renders.
@@ -15,6 +16,7 @@ templateSnippets:
       %%}
 
   util-build-ssl-passthrough:
+    requires: [gateways, httproutes, tlsroutes]
     template: |
       {#- Macro to populate SSL passthrough backend data.
           Called from ComputeIfAbsent to enable use of template functions (dig, toSlice, etc.). -#}
@@ -320,3 +322,45 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end macro %}
+
+  # util-gateway-tlsroute-count-contrib
+  #
+  # TLSRoute contribution to the Gateway listener attachedRoutes count.
+  # Compile-safe seam: util-generate-gateway-status-patches renders this with
+  # `default ""` and reads the entries back from the shared key — the typed
+  # resources.tlsroutes access lives HERE, in a snippet stripped together
+  # with the tlsroutes watch. needsTLSProtocol tags the entries so the
+  # listener loop counts them only toward TLS-protocol listeners.
+  util-gateway-tlsroute-count-contrib:
+    requires: [tlsroutes]
+    template: |
+      {%%
+        var _, _ = shared.ComputeIfAbsent("tlsrouteCountEntries", func() any {
+          var entries = []any{}
+          for _, r := range resources.tlsroutes.List() {
+            entries = append(entries, map[string]any{
+              "kind":  "TLSRoute",
+              "route": r,
+              "needsTLSProtocol": true,
+              "needsTCPProtocol": false,
+            })
+          }
+          return entries
+        })
+      %%}
+
+  # status-patches-205-gateway-tlsroute
+  #
+  # TLSRoute status patch registration. Hooks into base.yaml's
+  # `render_glob "status-patches-*"` extension point. Lives apart from
+  # status-patches-200-gateway ONLY because the typed import must not appear
+  # in a snippet that survives when the TLSRoute feature is stripped —
+  # `import` has no `default` clause. render_glob tolerates its absence.
+  status-patches-205-gateway-tlsroute:
+    requires: [gateways, referencegrants, tlsroutes]
+    template: |
+      {%- import "util-sharded-tlsroute-status-patches" for ShardedTLSRouteStatusPatches -%}
+      {%- var allTLSRoutes = resources.tlsroutes.List() -%}
+      {%- if len(allTLSRoutes) > 0 -%}
+        {{- ShardedTLSRouteStatusPatches(allTLSRoutes) -}}
+      {%- end -%}

@@ -57,6 +57,7 @@ templateSnippets:
   # ============================================================================
 
   https-bind-extra-100-per-gateway:
+    requires: [gateways]
     template: |
       {%- import "util-ssl-bind-options-for-crtlist" for SSLBindOptionsForCrtlist %}
       {%- import "util-gateway-listener-tls-options" for TLSOptionsSuffix %}
@@ -69,8 +70,11 @@ templateSnippets:
       {{ render "util-tls-cert-by-secret" -}}
       {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
-      {%- var perListenerMTLS = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
+      {#- comma-ok: the producer (features-110-gateway-frontend-mtls) may be
+          stripped on clusters without its required kinds; nil map reads are
+          safe and mean "no mTLS config resolved". -#}
+      {%- var mtlsBlocked, _ = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {%- var perListenerMTLS, _ = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
       {#- Same cert-resolvability gate phase 2 (16-crtlist-per-listener)
           uses: drop the bind when the listener's cert ref didn't
           resolve. Without this gate, the bind references a crt-list
@@ -176,6 +180,7 @@ templateSnippets:
   # binds non-default HTTP *listener* ports for pinned/static paths).
   # ============================================================================
   http-bind-extra-100-per-gateway:
+    requires: [gateways]
     template: |
       {{ render "util-gateway-pod-port-allocator" -}}
       {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}

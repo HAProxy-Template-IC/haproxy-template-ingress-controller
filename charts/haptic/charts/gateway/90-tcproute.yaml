@@ -59,6 +59,7 @@ templateSnippets:
   # any L7 selector). Routes are walked in resources.tcproutes.List()
   # order, which the store keeps stable.
   util-gateway-tcproute-analysis:
+    requires: [gateways, tcproutes]
     template: |
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocol %}
       {%%
@@ -266,6 +267,7 @@ templateSnippets:
   # `502` ordinal keeps it after the ssl-passthrough TCP backends (501)
   # for stable output ordering.
   backends-502-gateway-tcproute:
+    requires: [gateways, tcproutes]
     template: |
       {%- import "util-backend-servers" for BackendServers %}
       {{ render "util-gateway-tcproute-analysis" }}
@@ -337,6 +339,7 @@ templateSnippets:
   # (frontends-600) cannot collide because a port is single-protocol in
   # a Gateway, so a TCP listener and a TLS listener never share a port.
   frontends-700-gateway-tcp-listener:
+    requires: [gateways, tcproutes]
     template: |
       {{ render "util-gateway-tcproute-analysis" }}
       {%- var dataRaw = shared.Get("gateway_tcproute") %}
@@ -381,6 +384,7 @@ templateSnippets:
   # needsTCPProtocol tags the entries so the listener loop counts them only
   # toward `protocol: TCP` listeners.
   util-gateway-tcproute-count-contrib:
+    requires: [tcproutes]
     template: |
       {%%
         var _, _ = shared.ComputeIfAbsent("tcprouteCountEntries", func() any {
@@ -409,6 +413,7 @@ templateSnippets:
   # clause, so the whole registration sits in this strippable snippet.
   # render_glob tolerates its absence.
   status-patches-210-gateway-tcproute:
+    requires: [gateways, referencegrants, tcproutes]
     template: |
       {%- import "util-sharded-tcproute-status-patches" for ShardedTCPRouteStatusPatches -%}
       {%- var allTCPRoutes = resources.tcproutes.List() -%}
@@ -418,6 +423,7 @@ templateSnippets:
 
 validationTests:
   test-tcproute-basic-l4-forward:
+    requires: [gateways, tcproutes]
     description: "Gateway API TCPRoute (L4): a Gateway listener with protocol TCP on port 9100 has a TCPRoute attached whose single backendRef points at a Service. The chart must emit a mode-tcp frontend bound to 9100 with default_backend to a mode-tcp backend carrying the Service's endpoint as a server line."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -503,6 +509,7 @@ validationTests:
         pattern: 'server SRV_1 10\.0\.0\.42:9100'
 
   test-tcproute-oldest-route-wins-port:
+    requires: [gateways, tcproutes]
     description: >
       When two TCPRoutes claim the same listener port, Gateway API conflict
       resolution binds the OLDEST (earliest creationTimestamp) route. The
@@ -599,6 +606,7 @@ validationTests:
         pattern: 'default_backend gtw_tcp_default_tcp-a-newer_0'
 
   test-tcproute-weighted-routing:
+    requires: [gateways, tcproutes]
     description: >
       A TCPRoute rule with multiple weighted backendRefs becomes one
       mode-tcp backend with `balance roundrobin`, each Service's servers in
@@ -714,6 +722,7 @@ validationTests:
         pattern: '(?m)^\s+server SRV2_1 10\.0\.0\.3:9100 .*enabled weight 0'
 
   test-tcproute-multi-listener-single-backend:
+    requires: [gateways, tcproutes]
     description: "A TCPRoute with a no-sectionName parentRef attaches to EVERY TCP listener on the Gateway (here ports 9100 and 9101). Both listener ports resolve to the same (route, rule) backend name gtw_tcp_default_tcp-multi_0. The chart must emit that backend exactly ONCE (a per-port frontend each, both forwarding to the shared backend) — emitting it per-port would declare a duplicate `backend` name, which HAProxy 3.3+ rejects as a fatal parse error."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -803,6 +812,7 @@ validationTests:
         expected: "1"
 
   test-tcproute-unattached-no-frontend:
+    requires: [gateways, tcproutes]
     description: "A TCPRoute whose parentRef points at a Gateway with no matching TCP listener (wrong port) produces no tcp frontend/backend — attachment gating must hold."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"

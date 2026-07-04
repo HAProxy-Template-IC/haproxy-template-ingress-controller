@@ -38,6 +38,7 @@ templateSnippets:
   # ============================================================================
 
   features-090-gateway-per-gateway-services:
+    requires: [gateways]
     template: |
       {%- import "util-bounded-k8s-name" for BoundedK8sName %}
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol %}

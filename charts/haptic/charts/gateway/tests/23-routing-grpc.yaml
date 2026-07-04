@@ -1,5 +1,6 @@
 validationTests:
   test-grpcroute-h2c-on-port-80:
+    requires: [gatewayclasses, gateways, grpcroutes]
     description: "Pins the chart's plaintext h2c multiplexing on port 80: the new tcp inspector + dual-loopback architecture (libraries/base."
     fixtures:
       gatewayclasses:
@@ -98,6 +99,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'default-server check proto h2'
   test-grpcroute-https-listener-alpn-h2:
+    requires: [gatewayclasses, gateways, grpcroutes]
     description: "Pins the chart's gRPC-over-TLS+ALPN-h2 emission contract for the production-relevant scenario where a Gateway has an HTTPS listener + GRPCRoute (the upstream conformance suite tests the plaintext h2c ."
     fixtures:
       gatewayclasses:

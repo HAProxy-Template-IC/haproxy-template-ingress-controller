@@ -1,5 +1,6 @@
 validationTests:
   test-gateway-pod-port-allocator-multi-gateway:
+    requires: [gateways]
     description: "Verifies that the pod-port allocator (`util-gateway-pod-port-allocator`) assigns a unique, deterministic container port to each (Gateway, port) tuple. Activated via `extraContext.dumpPodPortAllocations=true` so the allocator emits debug comments into `frontend-extra-*` for assertion. Allocation contract (pure hash-and-probe — see 15-pod-port-allocator.yaml header for why read-back designs are forbidden):   * slot = parseInt(sha256(\"<gwNs>/<gwName>:<port>\")[0:7], 16) mod range     (range default 1000), linear probing on collision in sorted-key order.   * port = base + slot, base 18000     (or `extraContext.perGatewayPodPortBase` if set).   * Only HTTP/HTTPS Gateway listeners receive an allocation —     TLS-Passthrough / TLS-Terminate listeners use     existing chart-static or per-port routing paths. The expected ports below are the sha256-derived slots for these exact keys — recompute via `python3 -c 'import hashlib; print(18000 + int(hashlib.sha256(b\"default/gw-alpha:443\").hexdigest()[:7], 16) % 1000)'` when touching fixtures."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -116,6 +117,7 @@ validationTests:
         target: haproxy.cfg
         pattern: 'gw-pod-port: default/gw-alpha:tls-pass:9443'
   test-gateway-pod-port-allocator-custom-base:
+    requires: [gateways]
     description: "`extraContext.perGatewayPodPortBase` overrides the default 18000 base. Useful for operators whose port budget is constrained or who run HAProxy alongside other pod processes that already claim 18xxx."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -160,6 +162,7 @@ validationTests:
         pattern: '(?m)^\s+# gw-pod-port: default/gw-only:https:443 = 25302$'
 
   test-gateway-listener-port-override-stands-alone:
+    requires: [gatewayclasses, gateways]
     description: "Regression: base.yaml's `frontend-routing-listener-port-*` extension point must place the gateway override's first directive on its own line. The Scriggo `{{- … }}` form strips ALL adjacent whitespace INCLUDING newlines (see `charts/CLAUDE.md` \"Whitespace Control\"), which fuses the preceding comment with the rendered snippet's first output line — HAProxy then parses the directive as part of the comment and silently drops it. Symptom: `txn.listener_port` never gets remapped from pod port (e.g. 18003) back to the user-facing listener port (e.g. 443), and Gateway-API HTTPRoute RequestRedirect filters emit Location headers with the pod port. Caught in conformance shard 2/4 (HTTPRouteRedirectPortAndScheme). This test asserts both:   - the override directive appears on a line by itself (not fused)   - no comment line ends with the directive (the fused form)"
     fixtures:
       gatewayclasses:

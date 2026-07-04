@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
@@ -45,7 +47,8 @@ type Watcher struct {
 	stopOnce             sync.Once // guards stopCh close so Stop() is idempotent
 	synced               bool      // True after initial sync completes
 	syncMu               sync.RWMutex
-	initialCount         int // Number of resources loaded during initial sync
+	initialCount         int          // Number of resources loaded during initial sync
+	lastWatchErrNanos    atomic.Int64 // observability: most recent watch-connection error
 	logger               *slog.Logger
 }
 
@@ -217,6 +220,16 @@ func (w *Watcher) createInformer() error {
 		}
 	}
 
+	// Surface watch-connection errors instead of leaving them to client-go's
+	// internal logging only. The Reflector retries with exponential backoff
+	// on its own; without this handler a watch that starts failing mid-run —
+	// e.g. because the watched API version stopped being served after an
+	// in-place CRD upgrade — is completely silent while the informer keeps
+	// serving its stale cache.
+	if err := w.informer.SetWatchErrorHandler(w.handleWatchError); err != nil {
+		return fmt.Errorf("setting watch error handler: %w", err)
+	}
+
 	// Add event handlers
 	_, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    w.handleAdd,
@@ -228,6 +241,27 @@ func (w *Watcher) createInformer() error {
 	}
 
 	return nil
+}
+
+// handleWatchError records and logs a dropped watch connection. The Reflector
+// retries automatically with exponential backoff after this handler returns.
+func (w *Watcher) handleWatchError(_ *cache.Reflector, err error) {
+	w.lastWatchErrNanos.Store(time.Now().UnixNano())
+	w.logger.Warn("Watcher watch error (Reflector will retry)",
+		"gvr", w.config.GVR.String(),
+		"namespace", w.config.Namespace,
+		"error", err)
+}
+
+// LastWatchError returns the time of the most recent watch-connection error,
+// or the zero time if none has occurred. Observability only — retry is the
+// Reflector's job.
+func (w *Watcher) LastWatchError() time.Time {
+	ns := w.lastWatchErrNanos.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 // applyListOptions applies label selector to list options.

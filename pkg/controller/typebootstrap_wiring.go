@@ -235,7 +235,8 @@ func buildBootstrapResources(
 	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(d))
 
 	out := make([]typebootstrap.Resource, 0, len(cfg.WatchedResources))
-	for name, wr := range cfg.WatchedResources {
+	for name := range cfg.WatchedResources {
+		wr := cfg.WatchedResources[name]
 		gvk, err := resolveKind(mapper, &wr)
 		if err != nil {
 			logger.Warn("Type bootstrap: skipping resource whose Kind couldn't be resolved",

@@ -93,6 +93,16 @@ type ConfigChangeHandler struct {
 	// Mutex for initialConfigVersion and reinitializationEnabled
 	mu sync.RWMutex
 
+	// effectiveResolver, when set (SetEffectiveResolver), transforms a parsed
+	// config into the EFFECTIVE config before validation: watched-resource
+	// candidate versions resolved against live discovery, features whose
+	// optional resources are unavailable stripped. Validators must judge
+	// exactly what a reinitialized iteration would load — validating the raw
+	// config would reject configs whose stripped snippets reference
+	// unavailable resources. Nil (tests, callers without discovery) means
+	// identity.
+	effectiveResolver func(*coreconfig.Config) (*coreconfig.Config, error)
+
 	// Initial config version tracking to prevent infinite reinitialization loop
 	// When a new iteration starts, CRDWatcher triggers onAdd for the existing CRD,
 	// publishing ConfigValidatedEvent with the same version as the initial config.
@@ -197,6 +207,16 @@ func (h *ConfigChangeHandler) SetInitialCredentialsVersion(version string) {
 		"version", version)
 }
 
+// SetEffectiveResolver installs the effective-config transformation applied
+// to every parsed config before validation (see the field doc). Like
+// SetInitialConfigVersion, this must be called after construction and before
+// the CRD watcher starts delivering events.
+func (h *ConfigChangeHandler) SetEffectiveResolver(resolve func(*coreconfig.Config) (*coreconfig.Config, error)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.effectiveResolver = resolve
+}
+
 // EnableReinitialization enables the reinitialization signaling mechanism.
 //
 // This must be called after controller startup is complete to allow config changes
@@ -261,6 +281,28 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	// be queued. Validating a config that's already been replaced wastes that run
 	// and delays the config the operator actually wants — skip ahead to the latest.
 	event = h.coalesceToLatestParsed(event)
+
+	// Resolve the effective config BEFORE validation so the validators judge
+	// exactly what a reinitialized iteration would load. A resolution failure
+	// (a required resource with no served version) is reported like any other
+	// validation failure — the current config keeps running.
+	h.mu.RLock()
+	resolve := h.effectiveResolver
+	h.mu.RUnlock()
+	if parsed, ok := event.Config.(*coreconfig.Config); resolve != nil && ok {
+		effective, err := resolve(parsed)
+		if err != nil {
+			h.logger.Error("Effective-config resolution failed for parsed config",
+				"error", err, "version", event.Version)
+			h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, map[string][]string{
+				"effective-config": {err.Error()},
+			}))
+			return
+		}
+		resolvedEvent := *event
+		resolvedEvent.Config = effective
+		event = &resolvedEvent
+	}
 
 	// If no validators are configured, skip validation and immediately publish validated event
 	if len(h.validators) == 0 {

@@ -318,6 +318,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-reference-grant-permitted:
+    requires: [referencegrants]
     template: |
       {#-
         ReferenceGrantPermitted — cross-namespace ref check.
@@ -374,6 +375,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-gw-mtls-blocked:
+    requires: [gateways]
     template: |
       {#-
         ComputeGwMtlsBlocked — populate the set of mTLS-blocked listener
@@ -428,15 +430,14 @@ templateSnippets:
             return blocked
           }
           var gwNs = gw.Metadata.Namespace
-          var defaultValidation any = nil
-          if dig(gw, "spec", "tls", "frontend", "default", "validation") != nil {
-            defaultValidation = gw.Spec.Tls.Frontend.Default.Validation
-          }
+          // Dig-only: spec.tls is newer than the oldest schema generation
+          // the gateways candidate list can resolve.
+          var defaultValidation = dig(gw, "spec", "tls", "frontend", "default", "validation")
           var perPortValidations = map[int]any{}
-          for _, pp := range gw.Spec.Tls.Frontend.PerPort {
-            var p = toint(pp.Port)
+          for _, pp := range dig(gw, "spec", "tls", "frontend", "perPort") | toSlice() {
+            var p = toint(dig(pp, "port") | fallback(0))
             if p > 0 && dig(pp, "tls", "validation") != nil {
-              perPortValidations[p] = pp.Tls.Validation
+              perPortValidations[p] = dig(pp, "tls", "validation")
             }
           }
           var resolveValidation = func(validation any) bool {

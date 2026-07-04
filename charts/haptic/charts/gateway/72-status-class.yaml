@@ -1,5 +1,6 @@
 templateSnippets:
   util-generate-gatewayclass-status-patches:
+    requires: [gatewayclasses]
     template: |
       {#-
         Generate GatewayClass Status Patches
@@ -72,7 +73,7 @@ templateSnippets:
 
             // GatewayClass is cluster-scoped; pass empty namespace.
             statusPatch("", nameStr,
-              "gateway.networking.k8s.io/v1", "GatewayClass",
+              resources.gatewayclasses.APIVersion(), "GatewayClass",
               map[string]interface{}{
                 "rendered": map[string]interface{}{
                   "conditions": []any{acceptedCondition},
@@ -83,6 +84,7 @@ templateSnippets:
       {% end %}
 
   status-patches-100-gatewayclass:
+    requires: [gatewayclasses]
     template: |
       {#-
         GatewayClass Status Patch Registration

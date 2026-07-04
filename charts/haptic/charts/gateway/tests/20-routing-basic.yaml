@@ -1,5 +1,6 @@
 validationTests:
   test-httproute-duplicate-backend-different-ports:
+    requires: [httproutes]
     description: HTTPRoute with multiple rules to same service but different ports (tests deduplication)
     fixtures:
       services:
@@ -96,6 +97,7 @@ validationTests:
         pattern: "10.0.0.1:8081"
 
   test-grpcroute-duplicate-backend-different-ports:
+    requires: [grpcroutes]
     description: GRPCRoute with multiple rules to same service but different ports (tests deduplication)
     fixtures:
       services:
@@ -166,6 +168,7 @@ validationTests:
         expected: "2"
 
   test-httproute-single-backend:
+    requires: [httproutes]
     description: HTTPRoute with single backend uses BACKEND qualifier
     fixtures:
       services:
@@ -215,6 +218,7 @@ validationTests:
         pattern: "default_single-backend"
 
   test-httproute-method-matching:
+    requires: [httproutes]
     description: HTTPRoute with method matching (GET vs POST to same path)
     fixtures:
       services:
@@ -280,6 +284,7 @@ validationTests:
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_method-route_1\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_method-route_0__default_method-route_1\" \\} \\{ method POST \\}"
 
   test-httproute-multi-hostname-map-newlines:
+    requires: [httproutes]
     description: HTTPRoute with 3 hostnames must generate separate map file lines
     fixtures:
       services:
@@ -328,6 +333,7 @@ validationTests:
         expected: "3"
 
   test-grpcroute-multi-hostname-map-newlines:
+    requires: [grpcroutes]
     description: GRPCRoute with 3 hostnames must generate separate map file lines
     fixtures:
       services:
@@ -377,6 +383,7 @@ validationTests:
         expected: "3"
 
   test-httproute-path-exact:
+    requires: [httproutes]
     description: HTTPRoute with Exact path type (no prefix matching)
     fixtures:
       services:
@@ -417,6 +424,7 @@ validationTests:
         pattern: "api.example.com/api/users"
 
   test-httproute-path-regex:
+    requires: [httproutes]
     description: HTTPRoute with RegularExpression path type
     fixtures:
       services:
@@ -457,6 +465,7 @@ validationTests:
         pattern: "api.example.com/.*users"
 
   test-httproute-listener-port-matching:
+    requires: [gatewayclasses, gateways, httproutes]
     description: Routes attached to listeners on different ports get port-suffixed host map entries
     fixtures:
       gatewayclasses:

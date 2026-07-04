@@ -357,6 +357,17 @@ func (b *Builder) addTypedResources(ctx map[string]any) {
 			}
 			return false
 		},
+		func(name string) string {
+			if b.config == nil {
+				return ""
+			}
+			// The effective config's APIVersion IS the resolved version
+			// (candidate lists are collapsed at iteration start).
+			if wr, ok := b.config.WatchedResources[name]; ok {
+				return wr.APIVersion
+			}
+			return ""
+		},
 		b.logger,
 	)
 }
@@ -425,6 +436,7 @@ func BuildResourcesValue(
 	watchedNames []string,
 	indexByFor func(name string) []string,
 	lazyFor func(name string) bool,
+	apiVersionFor func(name string) string,
 	logger *slog.Logger,
 ) any {
 	if indexByFor == nil {
@@ -432,6 +444,9 @@ func BuildResourcesValue(
 	}
 	if lazyFor == nil {
 		lazyFor = func(string) bool { return false }
+	}
+	if apiVersionFor == nil {
+		apiVersionFor = func(string) string { return "" }
 	}
 	// watchedNames is the SOLE iteration source — it must mirror what
 	// typebootstrap.BuildEngineDeclarations iterated when it built the
@@ -472,7 +487,7 @@ func BuildResourcesValue(
 			}
 		}
 		innerType := typebootstrap.BuildPerResourceStoreType(elemType)
-		innerValue := buildPerResourceStoreValue(innerType, wrapper, elemType, name, logger)
+		innerValue := buildPerResourceStoreValue(innerType, wrapper, elemType, name, apiVersionFor(name), logger)
 		fields = append(fields, reflect.StructField{
 			Name: typegen.GoFieldName(name),
 			Type: reflect.PointerTo(innerType),
@@ -508,6 +523,7 @@ func buildPerResourceStoreValue(
 	wrapper *StoreWrapper,
 	elemType reflect.Type,
 	resourceName string,
+	apiVersion string,
 	logger *slog.Logger,
 ) reflect.Value {
 	ptr := reflect.New(innerType)
@@ -516,6 +532,12 @@ func buildPerResourceStoreValue(
 	listField := elem.FieldByName("List")
 	fetchField := elem.FieldByName("Fetch")
 	getSingleField := elem.FieldByName("GetSingle")
+
+	// Resolved watch-set metadata (see BuildPerResourceStoreType).
+	apiVersionField := elem.FieldByName("APIVersion")
+	apiVersionField.Set(reflect.MakeFunc(apiVersionField.Type(), func(_ []reflect.Value) []reflect.Value {
+		return []reflect.Value{reflect.ValueOf(apiVersion)}
+	}))
 
 	listReturnType := listField.Type().Out(0)
 	fetchReturnType := fetchField.Type().Out(0)

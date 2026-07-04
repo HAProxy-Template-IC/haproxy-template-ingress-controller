@@ -1,5 +1,6 @@
 validationTests:
   test-listenerset-host-gateway-status:
+    requires: [gateways, listenersets]
     description: >
       A Gateway with allowedListeners plus an attached ListenerSet (multiple
       listeners sharing port 80 with different hostnames/allowedRoutes — the

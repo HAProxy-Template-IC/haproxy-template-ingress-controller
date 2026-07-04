@@ -1,5 +1,6 @@
 templateSnippets:
   util-generate-backendtlspolicy-status-patches:
+    requires: [backendtlspolicies, httproutes]
     template: |
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {%- import "util-resource-helpers" for ResourceNamespace -%}
@@ -9,7 +10,7 @@ templateSnippets:
             var policyNs = policy.Metadata.Namespace
             var policyName = policy.Metadata.Name
             var generation = policy.Metadata.Generation
-            var apiVersion = "gateway.networking.k8s.io/v1"
+            var apiVersion = resources.backendtlspolicies.APIVersion()
             var kind = "BackendTLSPolicy"
 
             // Validate caCertificateRefs / wellKnownCACertificates.
@@ -284,6 +285,7 @@ templateSnippets:
       {% end %}
 
   status-patches-300-backendtlspolicy:
+    requires: [backendtlspolicies, httproutes]
     template: |
       {%- import "util-generate-backendtlspolicy-status-patches" for GenerateBackendTLSPolicyStatusPatches %}
       {%- var allPolicies = resources.backendtlspolicies.List() -%}
@@ -291,3 +293,22 @@ templateSnippets:
         {%- var controllerName = extraContext | dig_string("haproxy.org/haptic", "controllerName") -%}
         {{- GenerateBackendTLSPolicyStatusPatches(allPolicies, controllerName) -}}
       {%- end -%}
+
+  # util-backendtlspolicies-contrib
+  #
+  # Compile-safe BackendTLSPolicy seam (same pattern as
+  # util-listenersets-contrib): the shared backend pipeline reads the policy
+  # list untyped from shared, so backends keep rendering on clusters without
+  # the BackendTLSPolicy CRD (Gateway API < v1.4 standard).
+  util-backendtlspolicies-contrib:
+    requires: [backendtlspolicies]
+    template: |
+      {%%
+        var _, _ = shared.ComputeIfAbsent("backendtlspoliciesUntyped", func() any {
+          var all = []any{}
+          for _, pol := range resources.backendtlspolicies.List() {
+            all = append(all, pol)
+          }
+          return map[string]any{"all": all}
+        })
+      %%}

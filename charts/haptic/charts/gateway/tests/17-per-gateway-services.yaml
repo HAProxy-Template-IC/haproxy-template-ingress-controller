@@ -1,5 +1,6 @@
 validationTests:
   test-gateway-per-gateway-services-shape:
+    requires: [gateways]
     description: "Phase 3 of the per-Gateway-IP refactor. Verifies that `features-090-gateway-per-gateway-services` emits one LoadBalancer Service per HTTPS Gateway in the controller namespace, with port→targetPort mappings drawn from phase 1's pod-port allocator. Three Gateways exercise the gating logic:   * `gw-https`: HTTPS listener on 443, no spec.addresses → MUST     get a per-Gateway Service.   * `gw-http-only`: HTTP listener only → MUST NOT get one     (no consumer for the per-Gateway bind).   * `gw-pinned`: HTTPS listener + spec.addresses set → MUST     NOT get one from this path; the existing     `gateway-static-addresses` path handles per-IP emission."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
@@ -141,6 +142,7 @@ validationTests:
         target: "k8s:gateway-static-addresses"
         pattern: 'name: gw-default-gw-pinned-192-0-2-10'
   test-k8s-haproxy-service-gateway-listener-ports:
+    requires: [gatewayclasses, gateways]
     description: "Gateway listeners on non-default ports must add corresponding `gw-<port>-<proto>` port entries to the haproxy-service Service. Without these, kube-proxy doesn't route LoadBalancer-IP traffic on those ports to the haproxy pod — the upstream `HTTPRouteListenerPortMatching` conformance test failed in CI precisely because port 80 worked (default Service port) but 8080/8090 timed out (no Service port → no kube-proxy DNAT). Lives in the gateway library (not base) because the assertion fixtures reference Gateway / GatewayClass watchedResources — those only exist when the gateway library is loaded. base.yaml's `k8sResources.haproxy-service` template is what produces the rendered Service; this test exercises the cross-library interaction with gateway-supplied listener metadata."
     fixtures:
       gatewayclasses:

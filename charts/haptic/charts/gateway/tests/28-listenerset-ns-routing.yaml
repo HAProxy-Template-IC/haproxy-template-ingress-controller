@@ -1,5 +1,6 @@
 validationTests:
   test-listenerset-allowed-routes-namespaces:
+    requires: [gatewayclasses, gateways, httproutes, listenersets]
     description: >
       ListenerSet listener allowedRoutes.namespaces (Same vs All) gating:
       a route in the LS namespace attaches to the from:Same listener; a

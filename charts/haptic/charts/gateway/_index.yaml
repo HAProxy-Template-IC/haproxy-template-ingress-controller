@@ -33,76 +33,36 @@
 #   - Extension points: frontend-matchers-advanced-*, frontend-filters-*
 
 # Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
-# Loaded only when Gateway API CRDs are detected on the cluster (via Capabilities).
+#
+# The library loads whenever the operator enables it — there is NO
+# .Capabilities gate anymore. Availability of the Gateway API CRDs is a
+# RUNTIME question: every gateway watchedResources entry below is
+# `optional: true` with an ordered `apiVersions` candidate list, and the
+# controller resolves each entry against live apiserver discovery at
+# iteration start. Kinds whose CRD is not served (at any candidate version)
+# are dropped together with every templateSnippet / validationTest whose
+# `requires` names them; a CRD watch re-resolves on install/upgrade/removal,
+# so features activate or retire at runtime with no helm operation.
+#
+# Snippet/test discipline: a snippet that references `resources.<kind>`
+# (typed access or List()) or imports a typed <kind> macro MUST declare
+# `requires: [<kind>, ...]` — its transitive imports/renders included.
+# Snippets that must survive a strip reach stripped kinds only through
+# compile-safe seams: `render "..." default ""`, `render_glob` extension
+# points, or shared-state read-backs. Never a direct typed reference.
 _helm_load:
-  enable: '{{ and .Values.controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}'
+  enable: '{{ .Values.controller.templateLibraries.gateway.enabled }}'
   inject:
     - path: watchedResources.gateways.fieldSelector
       value: 'spec.gatewayClassName={{ .Values.gatewayClass.name }}'
     - path: watchedResources.gatewayclasses.fieldSelector
       value: 'spec.controllerName={{ .Values.gatewayClass.controllerName }}'
-    # TCPRoute served version is version-adaptive: v1.6+ serves it at v1 (v1alpha2
-    # retired), older Gateway API releases serve it only at v1alpha2. The schema
-    # resolver keys typed access on (apiVersion, plural) → GVK, so the watch MUST
-    # name the version the cluster actually serves. Prefer v1; fall back to
-    # v1alpha2 for pre-1.6 clusters. When neither is served the unset below strips
-    # the whole entry, so this value is moot in that case.
-    - path: watchedResources.tcproutes.apiVersion
-      value: '{{ if .Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/TCPRoute" }}gateway.networking.k8s.io/v1{{ else }}gateway.networking.k8s.io/v1alpha2{{ end }}'
-  # TCPRoute graduated to Standard only in Gateway API v1.6 — its CRD is absent
-  # from every older Standard install (it was Experimental-channel before).
-  # Watching a non-existent CRD makes the controller's watcher fail to sync so
-  # it never becomes Ready, and typed `resources.tcproutes` references only
-  # COMPILE when the resource is watched. So when the TCPRoute CRD is NOT
-  # served at ANY known version, strip the whole TCPRoute feature ATOMICALLY —
-  # the watch, EVERY snippet that references resources.tcproutes or imports a
-  # typed TCPRoute macro, and EVERY TCPRoute validationTest. TCPRoute routing
-  # is then simply inactive (there are no TCPRoutes without the CRD). Offline
-  # `helm template` keeps it via --api-versions.
-  #
-  # Invariant (pinned by library_loader_test.yaml "should strip the whole
-  # TCPRoute feature..."): a validationTest or snippet that survives while its
-  # watch/snippets are stripped fails template compilation or the fatal
-  # validationTests load gate and CRASH-LOOPS the controller on every
-  # Standard-channel Gateway API <= v1.5 cluster. When adding a TCPRoute
-  # snippet or test, add it here AND to that helm-unittest case. Snippets that
-  # must survive the strip (shared status macros) reach TCPRoute data only
-  # through compile-safe seams: `render "..." default ""` or the
-  # `render_glob "status-patches-*"` extension point — never a direct typed
-  # reference or import.
-  unset:
-    - path: watchedResources.tcproutes
-      when: &noTCPRoute '{{ not (or (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/TCPRoute") (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1alpha2/TCPRoute")) }}'
-    - path: templateSnippets.util-gateway-tcproute-analysis
-      when: *noTCPRoute
-    - path: templateSnippets.util-gateway-tcproute-count-contrib
-      when: *noTCPRoute
-    - path: templateSnippets.util-generate-tcproute-status-patches
-      when: *noTCPRoute
-    - path: templateSnippets.util-sharded-tcproute-status-patches
-      when: *noTCPRoute
-    - path: templateSnippets.status-patches-210-gateway-tcproute
-      when: *noTCPRoute
-    - path: templateSnippets.backends-502-gateway-tcproute
-      when: *noTCPRoute
-    - path: templateSnippets.frontends-700-gateway-tcp-listener
-      when: *noTCPRoute
-    - path: validationTests.test-tcproute-basic-l4-forward
-      when: *noTCPRoute
-    - path: validationTests.test-tcproute-oldest-route-wins-port
-      when: *noTCPRoute
-    - path: validationTests.test-tcproute-weighted-routing
-      when: *noTCPRoute
-    - path: validationTests.test-tcproute-multi-listener-single-backend
-      when: *noTCPRoute
-    - path: validationTests.test-tcproute-unattached-no-frontend
-      when: *noTCPRoute
-    - path: validationTests.test-tcproute-orphan-sibling-does-not-drop-others
-      when: *noTCPRoute
 
 watchedResources:
   gatewayclasses:
-    apiVersion: gateway.networking.k8s.io/v1
+    # v1 since Gateway API v1.0; v1beta1 served continuously since v0.5.
+    apiVersions: [gateway.networking.k8s.io/v1, gateway.networking.k8s.io/v1beta1]
+    optional: true
     resources: gatewayclasses
     # GatewayClass is cluster-scoped, so no namespace key. metadata.name is
     # globally unique already; indexing by name lets the templates look up
@@ -114,7 +74,8 @@ watchedResources:
     # (spec.controllerName == .Values.gatewayClass.controllerName).
 
   gateways:
-    apiVersion: gateway.networking.k8s.io/v1
+    apiVersions: [gateway.networking.k8s.io/v1, gateway.networking.k8s.io/v1beta1]
+    optional: true
     resources: gateways
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: false
@@ -122,7 +83,8 @@ watchedResources:
     # fieldSelector: injected by Helm from gatewayClass.name
 
   httproutes:
-    apiVersion: gateway.networking.k8s.io/v1
+    apiVersions: [gateway.networking.k8s.io/v1, gateway.networking.k8s.io/v1beta1]
+    optional: true
     resources: httproutes
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
@@ -132,34 +94,29 @@ watchedResources:
     # Example: kubectl label httproute my-route gateway=haproxy
 
   grpcroutes:
-    apiVersion: gateway.networking.k8s.io/v1
+    # v1 standard since Gateway API v1.1; v1alpha2 (experimental channel)
+    # before — schema-compatible, served until v1.2 removed it.
+    apiVersions: [gateway.networking.k8s.io/v1, gateway.networking.k8s.io/v1alpha2]
+    optional: true
     resources: grpcroutes
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
     statusPatch: true
 
   tlsroutes:
-    # Gateway API v1.5 ships TLSRoute on the Standard channel with v1
-    # served+storage (v1alpha2 / v1alpha3 are still served for backwards
-    # compatibility). The conformance fixtures use the v1 apiVersion.
-    apiVersion: gateway.networking.k8s.io/v1
+    # v1 standard since Gateway API v1.5; experimental v1alpha3 (v1.4+) and
+    # v1alpha2 (v0.5+) before — validation-tightening deltas only, field
+    # names identical across all three.
+    apiVersions: [gateway.networking.k8s.io/v1, gateway.networking.k8s.io/v1alpha3, gateway.networking.k8s.io/v1alpha2]
+    optional: true
     resources: tlsroutes
     indexBy: ["metadata.namespace", "metadata.name"]
     statusPatch: true
 
   tcproutes:
-    # TCPRoute is on the Gateway API *Experimental* channel. As of v1.6 it
-    # graduated to v1 (v1 served+storage; v1alpha2 retired); pre-1.6 releases
-    # serve it only at v1alpha2. The schema resolver keys typed access on
-    # (apiVersion, plural) → GVK, so this MUST name the served version or
-    # `resources.tcproutes` is undefined and typed TCPRoute snippets fail to
-    # compile. The _helm_load.inject above overwrites this with the version the
-    # cluster actually serves (v1 preferred, else v1alpha2); the literal below is
-    # just the fallback for the moot no-CRD case.
-    # NOTE: this whole entry (plus the TCPRoute snippets/tests) is stripped by
-    # _helm_load.unset when the cluster serves TCPRoute at no known version, so a
-    # Standard-channel install never tries to watch a non-existent resource.
-    apiVersion: gateway.networking.k8s.io/v1
+    # v1 standard since Gateway API v1.6; experimental v1alpha2 before.
+    apiVersions: [gateway.networking.k8s.io/v1, gateway.networking.k8s.io/v1alpha2]
+    optional: true
     resources: tcproutes
     indexBy: ["metadata.namespace", "metadata.name"]
     statusPatch: true
@@ -188,7 +145,10 @@ watchedResources:
     indexBy: ["metadata.name"]
 
   referencegrants:
-    apiVersion: gateway.networking.k8s.io/v1beta1
+    # v1 served since Gateway API v1.5; v1beta1 continuously since v0.6
+    # (storage version to this day — no retirement scheduled).
+    apiVersions: [gateway.networking.k8s.io/v1, gateway.networking.k8s.io/v1beta1]
+    optional: true
     resources: referencegrants
     # ReferenceGrant lives in the namespace that GRANTS access. Index by
     # namespace+name so the cert/backend-ref validators can list grants
@@ -200,7 +160,11 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
 
   listenersets:
-    apiVersion: gateway.networking.k8s.io/v1
+    # v1 since Gateway API v1.5 (its predecessor XListenerSet lived in the
+    # gateway.networking.x-k8s.io group with a different plural — deliberately
+    # out of scope).
+    apiVersions: [gateway.networking.k8s.io/v1]
+    optional: true
     resources: listenersets
     # ListenerSet (GEP-1713) lets users add listeners to a Gateway from
     # a separate resource — designed for shared-frontend dataplanes
@@ -214,7 +178,11 @@ watchedResources:
     statusPatch: true
 
   backendtlspolicies:
-    apiVersion: gateway.networking.k8s.io/v1
+    # v1 standard since Gateway API v1.4; experimental v1alpha3 (v1.1-1.3)
+    # before. v1alpha2 (v1.0) is DELIBERATELY excluded: incompatible shape
+    # (targetRef->targetRefs, tls->validation renames), never co-served.
+    apiVersions: [gateway.networking.k8s.io/v1, gateway.networking.k8s.io/v1alpha3]
+    optional: true
     resources: backendtlspolicies
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: false

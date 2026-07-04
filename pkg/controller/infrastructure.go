@@ -38,10 +38,61 @@ import (
 // Operators (and the e2e suite) get a single signal — /healthz 200 —
 // for "controller is ready to accept work" regardless of which checker
 // happens to be installed at the moment of the request.
-func createEarlyHealthChecker(state *configState) func() map[string]introspection.ComponentHealth {
+// msgStillInitializing is the shared "initialized" gate message and
+// healthKeyInitialized its entry key (goconst).
+const (
+	msgStillInitializing = "controller still initializing"
+	healthKeyInitialized = "initialized"
+)
+
+// beginIteration performs the per-iteration bookkeeping runIteration starts
+// with: reinit-grace accounting (a voluntary restart must not flip /healthz
+// unhealthy for the bounded rebuild window — see InReinitGrace), clearing
+// the persistent introspection registry of the previous iteration's
+// entries, and a fresh per-iteration health state.
+func beginIteration(infra *persistentInfra) *configState {
+	infra.NoteIterationStart()
+	infra.IntrospectionRegistry.Clear()
+	return &configState{}
+}
+
+// applyReinitGrace rewrites unhealthy entries as healthy-with-annotation
+// while a voluntary reinitialization is within persistentInfra's grace
+// window (see ReinitGraceWindow). The entry detail is preserved so
+// operators can still see what is re-initializing; only the aggregate
+// HTTP status (and thus the liveness/readiness verdict) is softened.
+func applyReinitGrace(infra *persistentInfra, entries map[string]introspection.ComponentHealth) map[string]introspection.ComponentHealth {
+	allHealthy := true
+	for _, e := range entries {
+		if !e.Healthy {
+			allHealthy = false
+			break
+		}
+	}
+	if allHealthy {
+		// Fully healthy = the iteration has settled; end the grace so any
+		// LATER unhealthiness in this iteration surfaces immediately.
+		infra.NoteSettled()
+		return entries
+	}
+	if !infra.InReinitGrace() {
+		return entries
+	}
+	for name, e := range entries {
+		if !e.Healthy {
+			entries[name] = introspection.ComponentHealth{
+				Healthy: true,
+				Error:   "reinitializing (grace period): " + e.Error,
+			}
+		}
+	}
+	return entries
+}
+
+func createEarlyHealthChecker(state *configState, infra *persistentInfra) func() map[string]introspection.ComponentHealth {
 	return func() map[string]introspection.ComponentHealth {
 		result := map[string]introspection.ComponentHealth{
-			"initialized": {Healthy: false, Error: "controller still initializing"},
+			healthKeyInitialized: {Healthy: false, Error: msgStillInitializing},
 		}
 		if !state.IsLoaded() {
 			result["config"] = introspection.ComponentHealth{
@@ -51,7 +102,7 @@ func createEarlyHealthChecker(state *configState) func() map[string]introspectio
 		} else {
 			result["config"] = introspection.ComponentHealth{Healthy: true}
 		}
-		return result
+		return applyReinitGrace(infra, result)
 	}
 }
 
@@ -86,7 +137,7 @@ func startEarlyInfrastructureServers(
 	setup.IntrospectionServer = infra.IntrospectionServer
 
 	// Set health checker to use this iteration's state
-	infra.IntrospectionServer.SetHealthChecker(createEarlyHealthChecker(state))
+	infra.IntrospectionServer.SetHealthChecker(createEarlyHealthChecker(state, infra))
 
 	if !infra.serverStarted {
 		// First iteration: set up and start the introspection server
@@ -153,6 +204,7 @@ func setupInfrastructureServers(
 	ctx context.Context,
 	setup *componentSetup,
 	state *configState,
+	infra *persistentInfra,
 	stateCache *StateCache,
 	eventBuffer *debug.EventBuffer, // Pre-created buffer (created before EventBus.Start())
 	pluggableMgr *pluggablevalidator.Manager,
@@ -174,7 +226,7 @@ func setupInfrastructureServers(
 	// This replaces the initial simple health checker set in
 	// startEarlyInfrastructureServers. See buildFullHealthChecker for
 	// the readiness contract.
-	setup.IntrospectionServer.SetHealthChecker(buildFullHealthChecker(setup.Registry, state, pluggableMgr))
+	setup.IntrospectionServer.SetHealthChecker(buildFullHealthChecker(setup.Registry, state, infra, pluggableMgr))
 
 	logger.Info("Debug variables registered and health checker updated",
 		"endpoints", "/debug/vars, /debug/pprof, /healthz")
@@ -203,6 +255,7 @@ func setupInfrastructureServers(
 func buildFullHealthChecker(
 	registry *lifecycle.Registry,
 	state *configState,
+	infra *persistentInfra,
 	pluggableMgr *pluggablevalidator.Manager,
 ) func() map[string]introspection.ComponentHealth {
 	return func() map[string]introspection.ComponentHealth {
@@ -210,8 +263,8 @@ func buildFullHealthChecker(
 		result := make(map[string]introspection.ComponentHealth, len(status)+2)
 		firstPending := collectComponentHealth(status, result)
 		mergePluggableValidatorHealth(result, pluggableMgr)
-		result["initialized"] = computeInitializedHealth(state.IsInitialized(), firstPending)
-		return result
+		result[healthKeyInitialized] = computeInitializedHealth(state.IsInitialized(), firstPending)
+		return applyReinitGrace(infra, result)
 	}
 }
 
@@ -258,7 +311,7 @@ func computeInitializedHealth(initialized bool, firstPending string) introspecti
 	}
 	switch {
 	case !initialized:
-		return introspection.ComponentHealth{Healthy: false, Error: "controller still initializing"}
+		return introspection.ComponentHealth{Healthy: false, Error: msgStillInitializing}
 	default:
 		return introspection.ComponentHealth{
 			Healthy: false,

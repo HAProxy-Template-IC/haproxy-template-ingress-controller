@@ -103,7 +103,8 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	// Calculate metrics
 	duration := time.Since(start)
 	expressionCount := len(cfg.WatchedResourcesIgnoreFields)
-	for _, resource := range cfg.WatchedResources {
+	for name := range cfg.WatchedResources {
+		resource := cfg.WatchedResources[name]
 		expressionCount += len(resource.IndexBy)
 		if resource.FieldSelector != "" {
 			expressionCount++

@@ -1,5 +1,6 @@
 templateSnippets:
   frontend-extra-100-gateway-misdirected:
+    requires: [gateways, referencegrants]
     template: |
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- var exactEntries = []any{} %}
@@ -55,13 +56,20 @@ templateSnippets:
         {#- Walk accepted ListenerSet listeners on this Gateway too so
             the misdirected-listener detection covers ListenerSet-claimed
             HTTPS hostnames. -#}
-        {%- for _, ls := range resources.listenersets.List() %}
+        {%- _ = render "util-listenersets-contrib" default "" -%}
+        {%- var lsSeamRaw = shared.Get("listenersetsUntyped") %}
+        {%- var lsSeamAll = []any{} %}
+        {%- if lsSeamRaw != nil %}
+          {%- var lsSeamList, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any) %}
+          {%- if lsSeamOk %}{%- lsSeamAll = lsSeamList %}{%- end %}
+        {%- end %}
+        {%- for _, ls := range lsSeamAll %}
           {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-            {%- for _, listener := range ls.Spec.Listeners %}
-              {%- var protocol = listener.Protocol %}
+            {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
+              {%- var protocol = dig_string(listener, "", "protocol") %}
               {%- if protocol == "" %}{%- protocol = "HTTP" %}{%- end %}
               {%- if protocol == "HTTPS" || protocol == "TLS" %}
-                {%- var lh = listener.Hostname %}
+                {%- var lh = dig_string(listener, "", "hostname") %}
                 {%- if classifyHostname(lh) %}
                   {%- gwHasCatchall = true %}
                 {%- end %}
@@ -113,6 +121,7 @@ templateSnippets:
   # Advanced matcher generator - creates http-request statements for method/header/query matching
   # Named with 500- prefix so alphabetical sort matches intended execution order (runs after 010-)
   frontend-matchers-advanced-500-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {{- "" }}
       {# Generate http-request statements for routes with advanced matchers
@@ -412,6 +421,7 @@ templateSnippets:
   # Path match setting - sets txn.path_match based on winning rule ID
   # Named with 900- prefix so alphabetical sort matches intended execution order (runs last)
   frontend-matchers-advanced-900-path-match:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {{- "" }}
@@ -545,6 +555,7 @@ templateSnippets:
       {% end %}
   # Filter: RequestHeaderModifier - modifies request headers before backend selection
   frontend-filters-450-gateway-cors:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
@@ -745,6 +756,7 @@ templateSnippets:
       {%- end %}
   # Filter: RequestRedirect - redirects requests to different locations
   frontend-filters-500-gateway-request-header:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- RequestHeaderModifier: set, add, or remove request headers -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
@@ -807,6 +819,7 @@ templateSnippets:
   # gates set-timeout on that variable.
   # Filter: ResponseHeaderModifier - modifies response headers before sending to client
   frontend-filters-500-gateway-response-header:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- ResponseHeaderModifier: set, add, or remove response headers -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
@@ -894,6 +907,7 @@ templateSnippets:
   # ("https://*.foo.com") become "^https://[^.]+(?:\.[^.]+)*\.foo\.com\$";
   # the lone "*" means "match any origin".
   frontend-filters-500-gateway-redirect:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- RequestRedirect: redirect to different scheme, host, port, or path -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
@@ -1105,6 +1119,7 @@ templateSnippets:
       {%- end %}
   # Filter: URLRewrite - rewrites request URLs before sending to backend
   frontend-filters-500-gateway-urlrewrite:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- URLRewrite: rewrite hostname or path before backend -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
@@ -1197,6 +1212,7 @@ templateSnippets:
   # in frontend-extra-* so it lands BEFORE any http-request directive
   # the mirror filter (or any other filter) might add.
   frontend-extra-200-gateway-mirror-buffer:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
@@ -1260,6 +1276,7 @@ templateSnippets:
   # condition surfaces `ResolvedRefs=False/RefNotPermitted` via the
   # existing status-side path.
   frontend-filters-550-gateway-mirror:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}

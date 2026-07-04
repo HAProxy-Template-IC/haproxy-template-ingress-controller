@@ -1,5 +1,6 @@
 templateSnippets:
   util-generate-httproute-backends-gateway:
+    requires: [gateways, httproutes]
     template: |
       {#- Generate backends for HTTPRoute resources.
           Typed sibling of the original polymorphic
@@ -12,6 +13,7 @@ templateSnippets:
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- macro GenerateHTTPRouteBackends(routes []*resources.httproutes.T, dedupCategory string) -%}
+        {%- _ = render "util-backendtlspolicies-contrib" default "" -%}
       {%- for _, route := range routes -%}
       {%- var routeNs = route.Metadata.Namespace -%}
       {%- var routeName = route.Metadata.Name -%}
@@ -112,19 +114,28 @@ templateSnippets:
             }
           }
         }
-        var winningPolicy *resources.backendtlspolicies.T = nil
+        // Untyped via the backendtlspolicies contrib seam: typed access
+        // here would strip ALL gateway backends on clusters without the
+        // BackendTLSPolicy CRD (Gateway API < v1.4 standard).
+        var btpSeamRaw = shared.Get("backendtlspoliciesUntyped")
+        var btpAll = []any{}
+        if btpSeamRaw != nil {
+          var btpSeamAll, btpSeamOk = btpSeamRaw.(map[string]any)["all"].([]any)
+          if btpSeamOk { btpAll = btpSeamAll }
+        }
+        var winningPolicy any = nil
         var winningPolicyTs = ""
         var winningPolicyKey = ""
-        for _, pol := range resources.backendtlspolicies.List() {
-          var polNs = pol.Metadata.Namespace
+        for _, pol := range btpAll {
+          var polNs = dig_string(pol, "", "metadata", "namespace")
           if polNs != tostring(backendNs) {
             continue
           }
-          for _, tr := range pol.Spec.TargetRefs {
-            var trGroup = tr.Group
-            var trKind = tr.Kind
-            var trName = tr.Name
-            var trSec = tr.SectionName
+          for _, tr := range dig(pol, "spec", "targetRefs") | toSlice() {
+            var trGroup = dig_string(tr, "", "group")
+            var trKind = dig_string(tr, "", "kind")
+            var trName = dig_string(tr, "", "name")
+            var trSec = dig_string(tr, "", "sectionName")
             if (trGroup != "" && trGroup != "core") || trKind != "Service" {
               continue
             }
@@ -135,8 +146,8 @@ templateSnippets:
               continue
             }
             // Conflict tiebreak — earliest creationTimestamp wins.
-            var polTs = pol.Metadata.CreationTimestamp
-            var polKey = polNs + "/" + pol.Metadata.Name
+            var polTs = dig_string(pol, "", "metadata", "creationTimestamp")
+            var polKey = polNs + "/" + dig_string(pol, "", "metadata", "name")
             if winningPolicy == nil {
               winningPolicy = pol
               winningPolicyTs = polTs
@@ -154,26 +165,26 @@ templateSnippets:
           }
         }
         if winningPolicy != nil {
-          var validation = winningPolicy.Spec.Validation
-          btlsHostname = validation.Hostname
+          var validation any = dig(winningPolicy, "spec", "validation")
+          btlsHostname = dig_string(validation, "", "hostname")
           // Default verifyhost to hostname (pre-SAN behaviour). When
           // subjectAltNames carries a Hostname-type entry, that entry
           // drives the cert-identity check instead. HAProxy `verifyhost`
           // is single-valued, so we take the FIRST Hostname SAN; a
           // multi-Hostname OR-list and URI-type SANs are deferred (no
           // HAProxy verifyhost equivalent — see the snippet comment).
-          btlsVerifyHost = validation.Hostname
-          for _, san := range validation.SubjectAltNames {
-            if san.Type == "Hostname" && san.Hostname != "" {
-              btlsVerifyHost = san.Hostname
+          btlsVerifyHost = dig_string(validation, "", "hostname")
+          for _, san := range dig(validation, "subjectAltNames") | toSlice() {
+            if dig_string(san, "", "type") == "Hostname" && dig_string(san, "", "hostname") != "" {
+              btlsVerifyHost = dig_string(san, "", "hostname")
               break
             }
           }
           var caBundleParts = []any{}
-          for _, ref := range validation.CaCertificateRefs {
-            var refGroup = ref.Group
-            var refKind = ref.Kind
-            var refName = ref.Name
+          for _, ref := range dig(validation, "caCertificateRefs") | toSlice() {
+            var refGroup = dig_string(ref, "", "group")
+            var refKind = dig_string(ref, "", "kind")
+            var refName = dig_string(ref, "", "name")
               if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
                 var cm = resources.configmaps.GetSingle(tostring(backendNs), refName)
                 if cm != nil {
@@ -211,10 +222,10 @@ templateSnippets:
                 }
               }
             }
-          var wkca = validation.WellKnownCACertificates
+          var wkca = dig_string(validation, "", "wellKnownCACertificates")
           if len(caBundleParts) > 0 {
             var caBundle = join(caBundleParts, "\n")
-            var policyName = winningPolicy.Metadata.Name
+            var policyName = dig_string(winningPolicy, "", "metadata", "name")
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
             {#- "ca-file": delivered as a general file (same disk path) but
                 flagged so a content-only trust-bundle rotation applies via the
@@ -258,19 +269,20 @@ templateSnippets:
           if gw == nil {
             continue
           }
-          var ccRef = gw.Spec.Tls.Backend.ClientCertificateRef
-          if ccRef.Name == "" {
+          // Dig-only: spec.tls newer than the oldest resolvable Gateway schema.
+          var ccRef = dig(gw, "spec", "tls", "backend", "clientCertificateRef")
+          if dig_string(ccRef, "", "name") == "" {
             // Optional struct fields default to the zero value;
             // an empty Name is the clearest "no ref configured"
             // signal. (Same proxy used by ingress.yaml's
             // defaultBackend block.)
             continue
           }
-          var refGroup = ccRef.Group
-          var refKind = ccRef.Kind
+          var refGroup = dig_string(ccRef, "", "group")
+          var refKind = dig_string(ccRef, "", "kind")
           if refKind == "" { refKind = "Secret" }
-          var refName = ccRef.Name
-          var refNs = ccRef.Namespace
+          var refName = dig_string(ccRef, "", "name")
+          var refNs = dig_string(ccRef, "", "namespace")
           if refNs == "" { refNs = gwNs }
           if (refGroup != "" && refGroup != "core") || refKind != "Secret" || refName == "" {
             continue
@@ -451,8 +463,10 @@ templateSnippets:
       {%- if protoFlag == "" %}
         {%- var ruleIdxLocal = 0 %}
         {%- for _, rl := range route.Spec.Rules %}
-          {%- var rlReq = rl.Timeouts.Request %}
-          {%- var rlBeReq = rl.Timeouts.BackendRequest %}
+          {#- Dig-only: rules[].timeouts is newer than the oldest schema
+              generation the httproutes candidate list can resolve. -#}
+          {%- var rlReq = dig_string(rl, "", "timeouts", "request") %}
+          {%- var rlBeReq = dig_string(rl, "", "timeouts", "backendRequest") %}
           {%- var tval = rlReq %}
           {%- if tval == "" || tval == "0s" %}{%- tval = rlBeReq %}{%- end %}
           {%- if tval != "" && tval != "0s" %}
@@ -515,6 +529,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-generate-grpcroute-backends-gateway:
+    requires: [gateways, grpcroutes]
     template: |
       {#- Generate backends for GRPCRoute resources.
           Typed sibling of the original polymorphic
@@ -527,6 +542,7 @@ templateSnippets:
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- macro GenerateGRPCRouteBackends(routes []*resources.grpcroutes.T, dedupCategory string) -%}
+        {%- _ = render "util-backendtlspolicies-contrib" default "" -%}
       {%- for _, route := range routes -%}
       {%- var routeNs = route.Metadata.Namespace -%}
       {%- var routeName = route.Metadata.Name -%}
@@ -605,19 +621,28 @@ templateSnippets:
       {%- var gwClientCertPath = "" -%}
       {%%
         var portNameForBackend = ""
-        var winningPolicy *resources.backendtlspolicies.T = nil
+        // Untyped via the backendtlspolicies contrib seam: typed access
+        // here would strip ALL gateway backends on clusters without the
+        // BackendTLSPolicy CRD (Gateway API < v1.4 standard).
+        var btpSeamRaw = shared.Get("backendtlspoliciesUntyped")
+        var btpAll = []any{}
+        if btpSeamRaw != nil {
+          var btpSeamAll, btpSeamOk = btpSeamRaw.(map[string]any)["all"].([]any)
+          if btpSeamOk { btpAll = btpSeamAll }
+        }
+        var winningPolicy any = nil
         var winningPolicyTs = ""
         var winningPolicyKey = ""
-        for _, pol := range resources.backendtlspolicies.List() {
-          var polNs = pol.Metadata.Namespace
+        for _, pol := range btpAll {
+          var polNs = dig_string(pol, "", "metadata", "namespace")
           if polNs != tostring(backendNs) {
             continue
           }
-          for _, tr := range pol.Spec.TargetRefs {
-            var trGroup = tr.Group
-            var trKind = tr.Kind
-            var trName = tr.Name
-            var trSec = tr.SectionName
+          for _, tr := range dig(pol, "spec", "targetRefs") | toSlice() {
+            var trGroup = dig_string(tr, "", "group")
+            var trKind = dig_string(tr, "", "kind")
+            var trName = dig_string(tr, "", "name")
+            var trSec = dig_string(tr, "", "sectionName")
             if (trGroup != "" && trGroup != "core") || trKind != "Service" {
               continue
             }
@@ -628,8 +653,8 @@ templateSnippets:
               continue
             }
             // Conflict tiebreak — earliest creationTimestamp wins.
-            var polTs = pol.Metadata.CreationTimestamp
-            var polKey = polNs + "/" + pol.Metadata.Name
+            var polTs = dig_string(pol, "", "metadata", "creationTimestamp")
+            var polKey = polNs + "/" + dig_string(pol, "", "metadata", "name")
             if winningPolicy == nil {
               winningPolicy = pol
               winningPolicyTs = polTs
@@ -647,26 +672,26 @@ templateSnippets:
           }
         }
         if winningPolicy != nil {
-          var validation = winningPolicy.Spec.Validation
-          btlsHostname = validation.Hostname
+          var validation any = dig(winningPolicy, "spec", "validation")
+          btlsHostname = dig_string(validation, "", "hostname")
           // Default verifyhost to hostname (pre-SAN behaviour). When
           // subjectAltNames carries a Hostname-type entry, that entry
           // drives the cert-identity check instead. HAProxy `verifyhost`
           // is single-valued, so we take the FIRST Hostname SAN; a
           // multi-Hostname OR-list and URI-type SANs are deferred (no
           // HAProxy verifyhost equivalent — see the snippet comment).
-          btlsVerifyHost = validation.Hostname
-          for _, san := range validation.SubjectAltNames {
-            if san.Type == "Hostname" && san.Hostname != "" {
-              btlsVerifyHost = san.Hostname
+          btlsVerifyHost = dig_string(validation, "", "hostname")
+          for _, san := range dig(validation, "subjectAltNames") | toSlice() {
+            if dig_string(san, "", "type") == "Hostname" && dig_string(san, "", "hostname") != "" {
+              btlsVerifyHost = dig_string(san, "", "hostname")
               break
             }
           }
           var caBundleParts = []any{}
-          for _, ref := range validation.CaCertificateRefs {
-            var refGroup = ref.Group
-            var refKind = ref.Kind
-            var refName = ref.Name
+          for _, ref := range dig(validation, "caCertificateRefs") | toSlice() {
+            var refGroup = dig_string(ref, "", "group")
+            var refKind = dig_string(ref, "", "kind")
+            var refName = dig_string(ref, "", "name")
               if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
                 var cm = resources.configmaps.GetSingle(tostring(backendNs), refName)
                 if cm != nil {
@@ -704,10 +729,10 @@ templateSnippets:
                 }
               }
             }
-          var wkca = validation.WellKnownCACertificates
+          var wkca = dig_string(validation, "", "wellKnownCACertificates")
           if len(caBundleParts) > 0 {
             var caBundle = join(caBundleParts, "\n")
-            var policyName = winningPolicy.Metadata.Name
+            var policyName = dig_string(winningPolicy, "", "metadata", "name")
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
             {#- "ca-file": delivered as a general file (same disk path) but
                 flagged so a content-only trust-bundle rotation applies via the
@@ -751,19 +776,20 @@ templateSnippets:
           if gw == nil {
             continue
           }
-          var ccRef = gw.Spec.Tls.Backend.ClientCertificateRef
-          if ccRef.Name == "" {
+          // Dig-only: spec.tls newer than the oldest resolvable Gateway schema.
+          var ccRef = dig(gw, "spec", "tls", "backend", "clientCertificateRef")
+          if dig_string(ccRef, "", "name") == "" {
             // Optional struct fields default to the zero value;
             // an empty Name is the clearest "no ref configured"
             // signal. (Same proxy used by ingress.yaml's
             // defaultBackend block.)
             continue
           }
-          var refGroup = ccRef.Group
-          var refKind = ccRef.Kind
+          var refGroup = dig_string(ccRef, "", "group")
+          var refKind = dig_string(ccRef, "", "kind")
           if refKind == "" { refKind = "Secret" }
-          var refName = ccRef.Name
-          var refNs = ccRef.Namespace
+          var refName = dig_string(ccRef, "", "name")
+          var refNs = dig_string(ccRef, "", "namespace")
           if refNs == "" { refNs = gwNs }
           if (refGroup != "" && refGroup != "core") || refKind != "Secret" || refName == "" {
             continue
@@ -865,6 +891,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-sharded-gateway-backends:
+    requires: [gateways, grpcroutes, httproutes]
     template: |
       {#-
         Per-Kind typed sharded Gateway backend wrappers.
@@ -902,6 +929,7 @@ templateSnippets:
       {%- end macro -%}
 
   backends-500-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#- Generate backend definitions from HTTPRoute and GRPCRoute resources -#}
       {%- import "util-sharded-gateway-backends" for ShardedHTTPRouteBackends, ShardedGRPCRouteBackends -%}
@@ -936,6 +964,7 @@ templateSnippets:
           http-request return status 500
 
   backends-501-gateway-ssl-passthrough:
+    requires: [gateways, httproutes, tlsroutes]
     template: |
       {#-
         Gateway API SSL Passthrough Backends

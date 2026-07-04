@@ -1,5 +1,6 @@
 validationTests:
   test-backendtlspolicy-san-hostname-drives-verifyhost:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
     description: "BackendTLSPolicy spec.validation.subjectAltNames: a Hostname-type SAN drives HAProxy `verifyhost` (cert-identity check), while spec.validation.hostname still drives `sni`. This mirrors the Gateway API rule that when SANs are present the cert must match a SAN, and hostname is used only for SNI / cert selection. URI-type SANs and a multi-Hostname OR-list are DEFERRED (HAProxy verifyhost is single-valued)."
     fixtures:
       gatewayclasses:
@@ -100,6 +101,7 @@ validationTests:
         pattern: 'default-server check ssl ca-file [^\s]+ verify required sni str\(sni\.example\.com\) verifyhost san\.example\.com'
 
   test-backendtlspolicy-no-san-hostname-drives-both:
+    requires: [backendtlspolicies, gatewayclasses, gateways, httproutes]
     description: "Regression: with no subjectAltNames, validation.hostname still drives BOTH sni and verifyhost (pre-SAN behaviour unchanged)."
     fixtures:
       gatewayclasses:

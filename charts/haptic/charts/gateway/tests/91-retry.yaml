@@ -1,5 +1,6 @@
 validationTests:
   test-httproute-retry-attempts-and-codes:
+    requires: [httproutes]
     # spec.rules[].retry is an experimental-channel HTTPRoute field; skip when
     # that channel is absent (the snippet correctly emits no retry directive,
     # so the assertion can't pass). test-httproute-no-retry-no-directive below
@@ -75,6 +76,7 @@ validationTests:
         pattern: '(?m)^\s+retry-on 503 500$'
 
   test-httproute-retry-attempts-only-default-codes:
+    requires: [httproutes]
     _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
     description: "retry.attempts set but no codes -> emit `retries N` and a `retry-on` covering the spec-mandated retriable 5xx defaults (500 502 503 504)."
     extraContext:
@@ -142,6 +144,7 @@ validationTests:
         pattern: '(?m)^\s+retry-on 500 502 503 504$'
 
   test-httproute-no-retry-no-directive:
+    requires: [httproutes]
     description: "A route rule without retry must NOT emit retries/retry-on (no regression for the common case)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"

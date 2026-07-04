@@ -1,5 +1,6 @@
 templateSnippets:
   util-sharded-route-status-patches:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {#-
         Sharded Route Status Patches — per-Kind typed wrappers.
@@ -38,6 +39,7 @@ templateSnippets:
       {%- end macro -%}
 
   util-generate-httproute-status-patches:
+    requires: [gateways, httproutes, referencegrants]
     template: |
       {#-
         Generate HTTPRoute Status Patches
@@ -64,7 +66,10 @@ templateSnippets:
       {%- import "util-resource-helpers" for GatewayKey -%}
       {% macro GenerateHTTPRouteStatusPatches(routes []*resources.httproutes.T) %}
         {%- var controllerName = extraContext | dig_string("", "controllerName") %}
-        {%- var apiVersion = "gateway.networking.k8s.io/v1" %}
+        {#- Resolved at runtime: the version the controller actually
+            watches, so status SSA always targets a served version
+            (v1beta1 on pre-1.0 Gateway API installs). -#}
+        {%- var apiVersion = resources.httproutes.APIVersion() %}
         {%- var kind = "HTTPRoute" %}
 
         {%- var ourGateways = map[string]bool{} %}
@@ -142,10 +147,16 @@ templateSnippets:
               // readers see the route as attached to the LS.
               var lsResolvedGw *resources.gateways.T = nil
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
-                var lsObj = resources.listenersets.GetSingle(gwNamespace, gwName)
+                // Untyped via the listensets seam (nil when the CRD
+                // is not served — the parentRef then stays unresolved).
+                var lsSeamRaw = shared.Get("listenersetsUntyped")
+                var lsObj any = nil
+                if lsSeamRaw != nil {
+                  lsObj = dig(lsSeamRaw.(map[string]any)["byKey"], gwNamespace + "/" + gwName)
+                }
                 if lsObj != nil {
-                  var pName = lsObj.Spec.ParentRef.Name
-                  var pNs = lsObj.Spec.ParentRef.Namespace
+                  var pName = dig_string(lsObj, "", "spec", "parentRef", "name")
+                  var pNs = dig_string(lsObj, "", "spec", "parentRef", "namespace")
                   if pNs == "" { pNs = gwNamespace }
                   lsResolvedGw = resources.gateways.GetSingle(pNs, pName)
                 }
@@ -182,7 +193,11 @@ templateSnippets:
                   // walks both shapes via JSON-tag lookup.
                   var listenerOwner any = gw
                   if gwKind == "ListenerSet" {
-                    listenerOwner = resources.listenersets.GetSingle(gwNamespace, gwName)
+                    var lsOwnerRaw = shared.Get("listenersetsUntyped")
+                    listenerOwner = nil
+                    if lsOwnerRaw != nil {
+                      listenerOwner = dig(lsOwnerRaw.(map[string]any)["byKey"], gwNamespace + "/" + gwName)
+                    }
                   }
                   var acceptedStatus = "False"
                   var acceptedReason = "NotAllowedByListeners"
@@ -326,6 +341,7 @@ templateSnippets:
       {% end %}
 
   util-generate-grpcroute-status-patches:
+    requires: [gateways, grpcroutes, referencegrants]
     template: |
       {#-
         Generate GRPCRoute Status Patches
@@ -343,7 +359,7 @@ templateSnippets:
       {%- import "util-resource-helpers" for GatewayKey -%}
       {% macro GenerateGRPCRouteStatusPatches(routes []*resources.grpcroutes.T) %}
         {%- var controllerName = extraContext | dig_string("", "controllerName") %}
-        {%- var apiVersion = "gateway.networking.k8s.io/v1" %}
+        {%- var apiVersion = resources.grpcroutes.APIVersion() %}
         {%- var kind = "GRPCRoute" %}
 
         {%- var ourGateways = map[string]bool{} %}
@@ -410,10 +426,16 @@ templateSnippets:
 
               var lsResolvedGw *resources.gateways.T = nil
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
-                var lsObj = resources.listenersets.GetSingle(gwNamespace, gwName)
+                // Untyped via the listensets seam (nil when the CRD
+                // is not served — the parentRef then stays unresolved).
+                var lsSeamRaw = shared.Get("listenersetsUntyped")
+                var lsObj any = nil
+                if lsSeamRaw != nil {
+                  lsObj = dig(lsSeamRaw.(map[string]any)["byKey"], gwNamespace + "/" + gwName)
+                }
                 if lsObj != nil {
-                  var pName = lsObj.Spec.ParentRef.Name
-                  var pNs = lsObj.Spec.ParentRef.Namespace
+                  var pName = dig_string(lsObj, "", "spec", "parentRef", "name")
+                  var pNs = dig_string(lsObj, "", "spec", "parentRef", "namespace")
                   if pNs == "" { pNs = gwNamespace }
                   lsResolvedGw = resources.gateways.GetSingle(pNs, pName)
                 }
@@ -442,7 +464,11 @@ templateSnippets:
                   var gw = resources.gateways.GetSingle(gwNamespace, gwName)
                   var listenerOwner any = gw
                   if gwKind == "ListenerSet" {
-                    listenerOwner = resources.listenersets.GetSingle(gwNamespace, gwName)
+                    var lsOwnerRaw = shared.Get("listenersetsUntyped")
+                    listenerOwner = nil
+                    if lsOwnerRaw != nil {
+                      listenerOwner = dig(lsOwnerRaw.(map[string]any)["byKey"], gwNamespace + "/" + gwName)
+                    }
                   }
                   var acceptedStatus = "False"
                   var acceptedReason = "NotAllowedByListeners"
@@ -579,6 +605,7 @@ templateSnippets:
       {% end %}
 
   util-generate-tlsroute-status-patches:
+    requires: [gateways, referencegrants, tlsroutes]
     template: |
       {#-
         Generate TLSRoute Status Patches
@@ -624,7 +651,7 @@ templateSnippets:
             was retired and the API server returns 404 on patch attempts to
             gateway.networking.k8s.io/v1alpha2. Use v1 to match the
             current CRD storageVersion. -#}
-        {%- var apiVersion = "gateway.networking.k8s.io/v1" %}
+        {%- var apiVersion = resources.tlsroutes.APIVersion() %}
         {%- var kind = "TLSRoute" %}
 
         {%- var ourGateways = map[string]bool{} %}
@@ -946,6 +973,7 @@ templateSnippets:
       {% end %}
 
   util-sharded-tlsroute-status-patches:
+    requires: [gateways, referencegrants, tlsroutes]
     template: |
       {#-
         Sharded TLSRoute Status Patches
@@ -967,6 +995,7 @@ templateSnippets:
       {% end %}
 
   util-generate-tcproute-status-patches:
+    requires: [gateways, referencegrants, tcproutes]
     template: |
       {#-
         Generate TCPRoute Status Patches
@@ -991,7 +1020,7 @@ templateSnippets:
       {%- import "util-resource-helpers" for GatewayKey, ListenerProtocolOr -%}
       {% macro GenerateTCPRouteStatusPatches(routes []*resources.tcproutes.T) %}
         {%- var controllerName = extraContext | dig_string("", "controllerName") %}
-        {%- var apiVersion = "gateway.networking.k8s.io/v1" %}
+        {%- var apiVersion = resources.tcproutes.APIVersion() %}
         {%- var kind = "TCPRoute" %}
 
         {%- var ourGateways = map[string]bool{} %}
@@ -1195,6 +1224,7 @@ templateSnippets:
       {% end %}
 
   util-sharded-tcproute-status-patches:
+    requires: [gateways, referencegrants, tcproutes]
     template: |
       {%- import "util-generate-tcproute-status-patches" for GenerateTCPRouteStatusPatches -%}
       {%- import "util-macros" for CalculateShardCount -%}

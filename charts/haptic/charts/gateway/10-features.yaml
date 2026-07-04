@@ -31,6 +31,7 @@ templateSnippets:
       }) %}
 
   features-100-gateway-ssl-passthrough:
+    requires: [gateways, httproutes, tlsroutes]
     template: |
       {#- Register SSL passthrough backends with global feature registry. -#}
       {{ render "util-gateway-ssl-passthrough" }}
@@ -55,6 +56,7 @@ templateSnippets:
   # the emission (Pass 2) — and so the aggregation runs once per render
   # via shared.ComputeIfAbsent even if other snippets read the result.
   util-aggregate-gateway-cert-metadata:
+    requires: [gateways, referencegrants]
     template: |
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-resource-helpers" for ResourceNamespace, ListenerHostname -%}
@@ -133,6 +135,7 @@ templateSnippets:
       %%}
 
   features-100-gateway-tls:
+    requires: [gateways, referencegrants]
     template: |
       {#- Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
       {#- Dynamically generates certificate files using fileRegistry.Register() #}
@@ -229,8 +232,10 @@ templateSnippets:
       {%- end %}
 
   features-110-gateway-frontend-mtls:
+    requires: [gateways, referencegrants]
     template: |
       {%- import "util-resource-helpers" for ListenerKey -%}
+      {%- _ = render "util-listenersets-contrib" default "" -%}
       {{ render "util-effective-listeners" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {#- Self-seed the two gateway-owned mTLS shared-state keys before the
@@ -280,15 +285,15 @@ templateSnippets:
           if dig(gateway, "spec", "tls", "frontend") == nil {
             continue
           }
-          var defaultValidation any = nil
-          if dig(gateway, "spec", "tls", "frontend", "default", "validation") != nil {
-            defaultValidation = gateway.Spec.Tls.Frontend.Default.Validation
-          }
+          // Dig-only: spec.tls is newer than the oldest schema generation
+          // the gateways candidate list can resolve — typed access would
+          // fail to COMPILE against pre-1.4 Gateway schemas.
+          var defaultValidation = dig(gateway, "spec", "tls", "frontend", "default", "validation")
           var perPortValidations = map[int]any{}
-          for _, pp := range gateway.Spec.Tls.Frontend.PerPort {
-            var p = toint(pp.Port)
+          for _, pp := range dig(gateway, "spec", "tls", "frontend", "perPort") | toSlice() {
+            var p = toint(dig(pp, "port") | fallback(0))
             if p > 0 && dig(pp, "tls", "validation") != nil {
-              perPortValidations[p] = pp.Tls.Validation
+              perPortValidations[p] = dig(pp, "tls", "validation")
             }
           }
 
@@ -400,17 +405,23 @@ templateSnippets:
               }
             }
           }
-          for _, ls := range resources.listenersets.List() {
-            if ls.Spec.ParentRef.Name != gwName {
+          var lsSeamRaw = shared.Get("listenersetsUntyped")
+          var lsAll = []any{}
+          if lsSeamRaw != nil {
+            var lsSeamAll, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any)
+            if lsSeamOk { lsAll = lsSeamAll }
+          }
+          for _, ls := range lsAll {
+            if dig_string(ls, "", "spec", "parentRef", "name") != gwName {
               continue
             }
-            var lsNs = ls.Metadata.Namespace
-            var pNs = ls.Spec.ParentRef.Namespace
+            var lsNs = dig_string(ls, "", "metadata", "namespace")
+            var pNs = dig_string(ls, "", "spec", "parentRef", "namespace")
             if pNs == "" { pNs = lsNs }
             if pNs != gwNs {
               continue
             }
-            var lsName = ls.Metadata.Name
+            var lsName = dig_string(ls, "", "metadata", "name")
             var lsKey = lsNs + "/" + lsName
             var permitted = false
             var entryAny, hasEntry = lsStatuses[lsKey]
@@ -420,7 +431,7 @@ templateSnippets:
             if !permitted {
               continue
             }
-            for _, l := range ls.Spec.Listeners {
+            for _, l := range dig(ls, "spec", "listeners") | toSlice() {
               allListeners = append(allListeners, l)
             }
           }
@@ -509,7 +520,9 @@ templateSnippets:
   # via the gateway-static-addresses k8sResources template — skip
   # them here so we don't double-count.
   features-140-gateway-service-extra-ports:
+    requires: [gateways]
     template: |
+      {%- _ = render "util-listenersets-contrib" default "" -%}
       {%%
         var _, _ = shared.ComputeIfAbsent("extraServicePorts", func() any {
           var ports = []any{}
@@ -534,13 +547,19 @@ templateSnippets:
               })
             }
           }
-          for _, ls := range resources.listenersets.List() {
+          var lsSeamRaw = shared.Get("listenersetsUntyped")
+          var lsAll = []any{}
+          if lsSeamRaw != nil {
+            var lsSeamAll, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any)
+            if lsSeamOk { lsAll = lsSeamAll }
+          }
+          for _, ls := range lsAll {
             // Conservative: all declared listenersets contribute their
             // ports to the Service surface; the routing-layer
             // admission gate still applies separately.
-            for _, listener := range ls.Spec.Listeners {
-              var port = toint(listener.Port)
-              var protocol = listener.Protocol
+            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+              var port = toint(dig(listener, "port") | fallback(0))
+              var protocol = dig_string(listener, "", "protocol")
               if protocol == "" { protocol = "HTTP" }
               if port <= 0 { continue }
               var key = tostring(port) + "-" + toLower(protocol[0:1])
@@ -563,8 +582,10 @@ templateSnippets:
   # ============================================================================
 
   features-150-gateway-bind:
+    requires: [gateways, grpcroutes, httproutes]
     template: |
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol, ListenerHostname, ListenerKey -%}
+      {%- _ = render "util-listenersets-contrib" default "" -%}
       {#-
         Gateway / ListenerSet contribution to the chart-static bind decision.
 
@@ -616,7 +637,9 @@ templateSnippets:
                           CertificateValidation. -#}
       {{ render "util-tls-cert-by-secret" -}}
       {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
-      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {#- comma-ok: features-110-gateway-frontend-mtls may be stripped on
+          clusters without its required kinds. -#}
+      {%- var mtlsBlocked, _ = gf["mtlsBlockedListeners"].(map[string]any) %}
       {#- Walk every Gateway listener and decide its contribution to the
           four bind-decision flags.
 
@@ -741,18 +764,25 @@ templateSnippets:
       {{ applyListener(gwNs, gwName, listener) }}
       {%- end %}
       {%- end %}
-      {%- for _, ls := range resources.listenersets.List() %}
+      {%- var lsSeamRaw = shared.Get("listenersetsUntyped") %}
+      {%- var lsAll150 = []any{} %}
+      {%- if lsSeamRaw != nil %}
+        {%- var lsSeamAll, lsSeamOk = lsSeamRaw.(map[string]any)["all"].([]any) %}
+        {%- if lsSeamOk %}{%- lsAll150 = lsSeamAll %}{%- end %}
+      {%- end %}
+      {%- for _, ls := range lsAll150 %}
       {%%
         // ListenerSets attach to a parent Gateway via spec.parentRef.
         // Inherit the parent's namespace + name so mTLS blocking
         // (keyed under the Gateway's identity in
         // features-110-gateway-frontend-mtls) applies consistently.
-        var lsNs = ls.Metadata.Namespace
-        var parentName = ls.Spec.ParentRef.Name
-        var parentNs = ls.Spec.ParentRef.Namespace
+        // Untyped via util-listenersets-contrib (rendered above).
+        var lsNs = dig_string(ls, "", "metadata", "namespace")
+        var parentName = dig_string(ls, "", "spec", "parentRef", "name")
+        var parentNs = dig_string(ls, "", "spec", "parentRef", "namespace")
         if parentNs == "" { parentNs = lsNs }
       %%}
-      {%- for _, listener := range ls.Spec.Listeners %}
+      {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
       {{ applyListener(parentNs, parentName, listener) }}
       {%- end %}
       {%- end %}
