@@ -54,14 +54,37 @@ const (
 	// DefaultLeaderElectionLeaseName is the default name for the leader election lease.
 	DefaultLeaderElectionLeaseName = "haptic-leader"
 
+	// Leader-election timing defaults.
+	//
+	// These are deliberately 2x the client-go/kube-controller-manager
+	// convention (15s/10s/2s). The renew deadline is the leader's budget for
+	// riding out apiserver unavailability or CPU starvation without losing
+	// the lease: on loaded nodes (CI runners, but also busy production
+	// clusters) multi-second scheduler/apiserver stalls of 10s+ have been
+	// observed (issue #57), and a renewal miss doesn't just cost leadership —
+	// client-go's LeaderElector.Run returns permanently on a lost lease, so
+	// the replica must go through a full controller reinitialization before
+	// it can lead again (see pkg/controller/leader.go). 20s rides out any
+	// stall shorter than 20s, with renewal attempts every 5s.
+	//
+	// The trade-off is hard-failover latency: when a leader dies WITHOUT
+	// releasing the lease (node crash, OOM-kill), a standby waits up to
+	// LeaseDuration (+ one RetryPeriod) ≈ 35s before taking over, vs ~17s at
+	// the client-go convention. Voluntary handoffs (rolling update, graceful
+	// shutdown, config-change reinitialization) are unaffected: the elector
+	// runs with ReleaseOnCancel, so the lease is released immediately and a
+	// standby can acquire it on its next retry. HA operators who prefer
+	// faster crash-failover over starvation headroom can tune these down via
+	// spec.controller.leaderElection.
+
 	// DefaultLeaderElectionLeaseDuration is the default lease duration.
-	DefaultLeaderElectionLeaseDuration = 15 * time.Second
+	DefaultLeaderElectionLeaseDuration = 30 * time.Second
 
 	// DefaultLeaderElectionRenewDeadline is the default renew deadline.
-	DefaultLeaderElectionRenewDeadline = 10 * time.Second
+	DefaultLeaderElectionRenewDeadline = 20 * time.Second
 
 	// DefaultLeaderElectionRetryPeriod is the default retry period.
-	DefaultLeaderElectionRetryPeriod = 2 * time.Second
+	DefaultLeaderElectionRetryPeriod = 5 * time.Second
 
 	// DefaultReloadVerificationTimeout is the default maximum time the Dataplane
 	// sync waits for a graceful HAProxy reload to be reported as completed.

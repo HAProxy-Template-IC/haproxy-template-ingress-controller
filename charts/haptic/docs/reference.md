@@ -83,9 +83,9 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 |-----------|------|---------|-------------|
 | `controller.config.controller.leaderElection.enabled` | bool | `true` | Enable leader election (recommended for HA) |
 | `controller.config.controller.leaderElection.leaseName` | string | `""` | Lease resource name (defaults to release fullname) |
-| `controller.config.controller.leaderElection.leaseDuration` | duration | `15s` | Failover timeout duration |
-| `controller.config.controller.leaderElection.renewDeadline` | duration | `10s` | Leader renewal timeout |
-| `controller.config.controller.leaderElection.retryPeriod` | duration | `2s` | Retry interval between attempts |
+| `controller.config.controller.leaderElection.leaseDuration` | duration | `30s` | Failover timeout duration |
+| `controller.config.controller.leaderElection.renewDeadline` | duration | `20s` | Leader renewal timeout |
+| `controller.config.controller.leaderElection.retryPeriod` | duration | `5s` | Retry interval between attempts |
 
 ## Dataplane Configuration
 

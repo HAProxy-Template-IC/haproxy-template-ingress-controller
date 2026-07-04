@@ -22,12 +22,12 @@ THEN exactly one replica SHALL hold the Lease at any given time.
 
 ### Requirement: Configurable Timing Parameters
 
-Leader election SHALL support configurable timing parameters: LeaseDuration (default 15s), RenewDeadline (default 10s), and RetryPeriod (default 2s). LeaseDuration controls how long a non-leader waits before attempting to acquire the Lease. RenewDeadline controls how long the leader retries renewing. RetryPeriod controls the interval between acquisition/renewal attempts.
+Leader election SHALL support configurable timing parameters: LeaseDuration (default 30s), RenewDeadline (default 20s), and RetryPeriod (default 5s). LeaseDuration controls how long a non-leader waits before attempting to acquire the Lease. RenewDeadline controls how long the leader retries renewing. RetryPeriod controls the interval between acquisition/renewal attempts. The defaults are deliberately 2x the client-go convention so that the leader rides out multi-second apiserver or CPU starvation stalls (observed at 10s+ on loaded nodes) without losing the Lease, at the cost of slower failover after a leader crash that does not release the Lease.
 
 #### Scenario: Default timing parameters applied
 
 WHEN leader election is started without explicit timing configuration
-THEN LeaseDuration SHALL be 15 seconds, RenewDeadline SHALL be 10 seconds, and RetryPeriod SHALL be 2 seconds.
+THEN LeaseDuration SHALL be 30 seconds, RenewDeadline SHALL be 20 seconds, and RetryPeriod SHALL be 5 seconds.
 
 #### Scenario: Custom timing parameters override defaults
 
@@ -67,6 +67,20 @@ THEN leader-scoped work SHALL derive its lifetime from the context passed to OnS
 WHEN a caller needs to know whether this replica is the leader
 THEN the component SHALL NOT provide an IsLeader() or GetLeader() method, and the caller SHALL rely on the leadership callbacks and their context instead.
 
+### Requirement: Re-Election After Lost Lease
+
+The controller SHALL treat an election loop that exits while the controller is still running as a fatal iteration error and SHALL reinitialize, restarting the election loop, so the replica can re-acquire leadership. The election loop (client-go's `LeaderElector.Run`) returns permanently once an acquired Lease is lost; without this supervision the replica would remain a follower with a dead elector until the next configuration change or pod restart — a permanent deployment stall on single-replica deployments.
+
+#### Scenario: Lost lease triggers reinitialization
+
+- **WHEN** the leader misses its Lease renewal (e.g. apiserver unavailability or CPU starvation longer than RenewDeadline) and the election loop exits
+- **THEN** the controller SHALL reinitialize and start a new election loop with the same identity rather than continuing without an elector.
+
+#### Scenario: Graceful shutdown does not trigger reinitialization
+
+- **WHEN** the election loop exits because the controller's context was cancelled (shutdown or configuration-change reinitialization)
+- **THEN** the exit SHALL NOT be treated as an error.
+
 ### Requirement: Graceful Release on Context Cancellation
 
 Leader election SHALL be configured with ReleaseOnCancel set to true. When the context is cancelled (e.g., during graceful shutdown), the leader SHALL release the Lease immediately rather than waiting for it to expire.
@@ -97,7 +111,7 @@ THEN construction SHALL fail with a validation error.
 
 ### Requirement: Automatic Failover
 
-When the current leader becomes unavailable (crash, network partition), a standby replica SHALL acquire the Lease after approximately 15-20 seconds (LeaseDuration + RetryPeriod). Standby replicas SHALL maintain a ready state by continuously attempting to acquire the Lease at RetryPeriod intervals.
+When the current leader becomes unavailable (crash, network partition), a standby replica SHALL acquire the Lease after approximately 30-35 seconds (LeaseDuration + RetryPeriod). Standby replicas SHALL maintain a ready state by continuously attempting to acquire the Lease at RetryPeriod intervals.
 
 #### Scenario: Standby replica acquires Lease after leader failure
 

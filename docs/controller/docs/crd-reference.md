@@ -83,16 +83,16 @@ controller:
   leaderElection:
     enabled: true
     leaseName: ""        # empty = defaults to "haptic-leader"; the Helm chart sets this to the release fullname
-    leaseDuration: 15s   # default (DefaultLeaderElectionLeaseDuration)
-    renewDeadline: 10s   # default (DefaultLeaderElectionRenewDeadline)
-    retryPeriod: 2s      # default (DefaultLeaderElectionRetryPeriod)
+    leaseDuration: 30s   # default (DefaultLeaderElectionLeaseDuration)
+    renewDeadline: 20s   # default (DefaultLeaderElectionRenewDeadline)
+    retryPeriod: 5s      # default (DefaultLeaderElectionRetryPeriod)
 ```
 
 !!! note
     There is no reconciler-level debounce knob. The Reconciler fires immediately on every resource/HTTP event; batching is per-watcher (`spec.watchedResources.<name>.debounceInterval`, default 2s) and reload throttling is the deployer's `spec.dataplane.minDeploymentInterval`.
 
 !!! note
-    These are the controller's built-in defaults from `pkg/core/config/defaults.go` — the same values `kube-controller-manager` and `kube-scheduler` ship with. The Helm chart does not override them; setting any of these fields on the CRD only matters if you need different values (e.g. for clusters with significant clock skew or that need slower failover).
+    These are the controller's built-in defaults from `pkg/core/config/defaults.go` — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (15s/10s/2s), so the leader rides out multi-second API-server or CPU starvation stalls without losing the lease. The Helm chart sets the same values; setting any of these fields on the CRD only matters if you need different values (e.g. faster crash-failover, or clusters with significant clock skew).
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 

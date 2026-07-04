@@ -218,7 +218,7 @@ type LeaderElectionConfig struct {
 	// to force acquire leadership (measured against time of last observed ack).
 	//
 	// Format: Go duration string (e.g., "15s", "30s")
-	// Default: 15s (DefaultLeaderElectionLeaseDuration in pkg/core/config/defaults.go;
+	// Default: 30s (DefaultLeaderElectionLeaseDuration in pkg/core/config/defaults.go;
 	// the Helm chart's values.yaml sets the same value at controller.config.controller.leaderElection.leaseDuration)
 	// +optional
 	LeaseDuration string `json:"leaseDuration,omitempty"`
@@ -226,8 +226,8 @@ type LeaderElectionConfig struct {
 	// RenewDeadline is the duration that the acting leader will retry
 	// refreshing leadership before giving up.
 	//
-	// Format: Go duration string (e.g., "10s")
-	// Default: 10s (DefaultLeaderElectionRenewDeadline)
+	// Format: Go duration string (e.g., "20s")
+	// Default: 20s (DefaultLeaderElectionRenewDeadline)
 	// Must be less than LeaseDuration
 	// +optional
 	RenewDeadline string `json:"renewDeadline,omitempty"`
@@ -235,8 +235,8 @@ type LeaderElectionConfig struct {
 	// RetryPeriod is the duration the LeaderElector clients should wait
 	// between tries of actions.
 	//
-	// Format: Go duration string (e.g., "2s")
-	// Default: 2s (DefaultLeaderElectionRetryPeriod)
+	// Format: Go duration string (e.g., "5s")
+	// Default: 5s (DefaultLeaderElectionRetryPeriod)
 	// Must be less than RenewDeadline
 	// +optional
 	RetryPeriod string `json:"retryPeriod,omitempty"`

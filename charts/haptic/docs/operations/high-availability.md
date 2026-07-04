@@ -19,19 +19,21 @@ controller:
       leaderElection:
         enabled: true  # Enabled by default
         leaseName: ""  # Defaults to Helm release fullname
-        leaseDuration: 15s
-        renewDeadline: 10s
-        retryPeriod: 2s
+        leaseDuration: 30s
+        renewDeadline: 20s
+        retryPeriod: 5s
 ```
 
 **How it works:**
 
 - All replicas watch resources, render templates, and validate configs
 - Only the elected leader deploys configurations to HAProxy instances
-- Automatic failover if leader fails (within leaseDuration, default 15s)
+- Automatic failover if leader fails (within leaseDuration, default 30s)
 - Leadership transitions are logged and tracked via Prometheus metrics
 
-During a failover, the standby replica acquires the lease and resumes deploying within the `leaseDuration` window (default ~15s). HAProxy continues serving traffic throughout — no config pushes happen during this window, but the load balancers are unaffected.
+During a failover, the standby replica acquires the lease and resumes deploying within the `leaseDuration` window (default ~30s). HAProxy continues serving traffic throughout — no config pushes happen during this window, but the load balancers are unaffected.
+
+The `leaseDuration` window only applies when the leader dies without releasing the lease (node crash, OOM-kill). Voluntary handoffs — rolling updates, graceful shutdown — release the lease immediately, so a standby takes over within one `retryPeriod`. The defaults are 2x the client-go convention (15s/10s/2s) so the leader rides out multi-second API-server or CPU starvation stalls without losing the lease; tune them down if you prefer faster crash-failover over starvation headroom.
 
 **Why 2 replicas by default?** Two replicas provide failover without requiring a quorum majority. Either replica can take over immediately, which is sufficient for an ingress controller that serves as a stateless configuration manager.
 
