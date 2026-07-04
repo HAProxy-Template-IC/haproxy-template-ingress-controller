@@ -18,9 +18,12 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -28,6 +31,7 @@ import (
 
 	v1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // TestHAProxyTemplateConfigAdmission_AcceptsValid is the happy-path for the
@@ -96,17 +100,14 @@ defaults
   mode http
 `
 
-			_, err = hc.HaproxyTemplateICV1alpha1().HAProxyTemplateConfigs(ns).Create(ctx, crd, metav1.CreateOptions{})
-			if err == nil {
-				t.Fatalf("expected admission to deny CRD with invalid HAProxy directive, but Create succeeded")
-			}
+			denial := createConfigExpectDenied(ctx, t, hc, crd)
 
 			// The denial reason should include enough text to point an
 			// operator at the typo. We accept either the directive name
 			// itself or a parser-shaped error string ("unknown keyword",
 			// "parsing", "unrecognized") — match conservatively so the
 			// test doesn't pin a specific HAProxy version's exact phrasing.
-			msg := err.Error()
+			msg := denial.Error()
 			matched := strings.Contains(msg, "defraultserver") ||
 				strings.Contains(msg, "unknown keyword") ||
 				strings.Contains(msg, "parsing") ||
@@ -154,11 +155,8 @@ func TestHAProxyTemplateConfigAdmission_RejectsFailingValidationTests(t *testing
 				},
 			}
 
-			_, err = hc.HaproxyTemplateICV1alpha1().HAProxyTemplateConfigs(ns).Create(ctx, crd, metav1.CreateOptions{})
-			if err == nil {
-				t.Fatalf("expected admission to deny a config whose validationTests fail, but Create succeeded")
-			}
-			msg := err.Error()
+			denial := createConfigExpectDenied(ctx, t, hc, crd)
+			msg := denial.Error()
 			if !strings.Contains(msg, "validationTests") && !strings.Contains(msg, "test-gate-canary-must-fail") {
 				t.Fatalf("admission denial reason did not reference the failing validationTest.\nfull error: %s", msg)
 			}
@@ -166,6 +164,92 @@ func TestHAProxyTemplateConfigAdmission_RejectsFailingValidationTests(t *testing
 		})
 
 	testEnv.Test(t, feature.Feature())
+}
+
+// createConfigExpectDenied creates the (invalid) HAProxyTemplateConfig and
+// returns the admission denial error, retrying through webhook fail-open
+// windows. It fails the test only if denial never happens within the budget.
+//
+// The HAProxyTemplateConfig webhook rule carries failurePolicy: Ignore by
+// design (openspec/specs/validating-webhook/spec.md, "Fixed Fail-Open Policy
+// for Config Admission"): a down controller must never block operators from
+// applying config fixes. The flip side is that ANY apiserver→webhook delivery
+// failure silently ADMITS the create — issue #62 hit exactly that in a
+// nightly run (the invalid CR was admitted; zero HAProxyTemplateConfig
+// AdmissionReviews reached the controller for the whole suite). A single
+// Create is therefore not a reliable probe of the deny path. This helper
+// treats an admitted create as a fail-open window: it deletes the CR, waits
+// until it is fully gone (the retry must not hit AlreadyExists, and the
+// invalid config must not linger in etcd), then retries with backoff inside
+// a bounded budget.
+//
+// The watched-resource webhook rules (Ingress etc.) use failurePolicy: Fail
+// (charts/haptic/templates/validatingwebhookconfiguration.yaml), so
+// NewIngressExpectDenied does NOT need this treatment — a delivery failure
+// there surfaces as a Create error, never as a silent admit.
+func createConfigExpectDenied(ctx context.Context, t *testing.T, hc hapticclient.Interface, crd *v1alpha1.HAProxyTemplateConfig) error {
+	t.Helper()
+
+	configs := hc.HaproxyTemplateICV1alpha1().HAProxyTemplateConfigs(crd.Namespace)
+
+	// Final safety net: if the budget expires right after a fail-open admit
+	// (or the in-loop delete itself failed), the invalid CR must not outlive
+	// the test.
+	t.Cleanup(func() {
+		if err := configs.Delete(context.Background(), crd.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			t.Logf("cleanup HAProxyTemplateConfig %s/%s: %v (best-effort)", crd.Namespace, crd.Name, err)
+		}
+	})
+
+	var denial error
+	waitCfg := testutil.WaitConfig{
+		InitialInterval: 500 * time.Millisecond,
+		MaxInterval:     5 * time.Second,
+		Timeout:         60 * time.Second,
+		Multiplier:      2.0,
+	}
+	err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
+		fmt.Sprintf("admission webhook denies HAProxyTemplateConfig %s/%s", crd.Namespace, crd.Name),
+		func(ctx context.Context) (bool, error) {
+			_, createErr := configs.Create(ctx, crd, metav1.CreateOptions{})
+			if createErr != nil {
+				// Only a genuine admission rejection counts as the denial
+				// this helper probes for. Webhook denials surface as
+				// Forbidden/Invalid/BadRequest status errors; anything else
+				// (transient apiserver blip, AlreadyExists from a cleanup
+				// still settling) is retryable within the budget — treating
+				// it as the denial would fail the substring assertions with
+				// a misleading message.
+				if apierrors.IsForbidden(createErr) || apierrors.IsInvalid(createErr) || apierrors.IsBadRequest(createErr) {
+					denial = createErr
+					return true, nil
+				}
+				return false, createErr
+			}
+
+			// Fail-open window: the apiserver admitted the CR without a
+			// webhook verdict. Remove it and confirm it is gone before the
+			// next attempt.
+			if delErr := configs.Delete(ctx, crd.Name, metav1.DeleteOptions{}); delErr != nil && !apierrors.IsNotFound(delErr) {
+				return false, fmt.Errorf("delete fail-open-admitted HAProxyTemplateConfig %s/%s: %w", crd.Namespace, crd.Name, delErr)
+			}
+			if goneErr := testutil.WaitForConditionWithDescription(ctx, testutil.FastWaitConfig(),
+				fmt.Sprintf("fail-open-admitted HAProxyTemplateConfig %s/%s deleted", crd.Namespace, crd.Name),
+				func(ctx context.Context) (bool, error) {
+					_, getErr := configs.Get(ctx, crd.Name, metav1.GetOptions{})
+					if apierrors.IsNotFound(getErr) {
+						return true, nil
+					}
+					return false, getErr
+				}); goneErr != nil {
+				return false, goneErr
+			}
+			return false, fmt.Errorf("create was admitted (webhook fail-open window, failurePolicy=Ignore)")
+		})
+	if err != nil {
+		t.Fatalf("admission never denied HAProxyTemplateConfig %s/%s within the fail-open retry budget: %v", crd.Namespace, crd.Name, err)
+	}
+	return denial
 }
 
 // minimalValidHAProxyTemplateConfig returns the smallest HAProxyTemplateConfig
