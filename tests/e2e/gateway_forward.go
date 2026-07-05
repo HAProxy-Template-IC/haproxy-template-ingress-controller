@@ -42,9 +42,15 @@ import (
 // job container in DinD where the MetalLB IPs are unroutable), so tests
 // reach the Service through `kubectl port-forward`, which tunnels via the
 // apiserver and works identically in both environments.
-// ponytail: the tunnel is not restarted if it dies mid-test; each test's
-// tunnel lives for seconds — add auto-restart only if SPDY flakiness
-// actually shows up in CI.
+//
+// The tunnel self-heals: kubectl port-forward exits with "lost connection
+// to pod" when a forwarded upstream connection errors hard — observed in
+// issue #48, where HAProxy answers a gRPC request via the default_backend's
+// `http-request return` catch-all and tears the h2 connection down with a
+// TCP RST that kubectl treats as fatal. A dead tunnel would fail every
+// remaining attempt of a poll loop with "connection refused" on the local
+// port, so ForwardGateway restarts the tunnel (pinned to the same local
+// ports) until the test's cleanup runs.
 type GatewayForward struct {
 	HTTPPort  int
 	HTTPSPort int
@@ -107,52 +113,130 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 		}
 	}
 
-	args := []string{"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace, "port-forward", "service/" + svc}
-	for _, p := range servicePorts {
-		args = append(args, ":"+strconv.Itoa(p)) // random local port
-	}
 	// Deliberately context.Background(): the tunnel must outlive the Setup
 	// phase's ctx and is torn down via t.Cleanup below.
 	fwdCtx, stop := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(fwdCtx, "kubectl", args...)
+
+	portArgs := make([]string, len(servicePorts))
+	for i, p := range servicePorts {
+		portArgs[i] = ":" + strconv.Itoa(p) // random local port
+	}
+	cmd, locals, err := startForwardTunnel(fwdCtx, svc, portArgs, len(servicePorts))
+	if err != nil {
+		stop()
+		t.Fatalf("kubectl port-forward %s: %v", svc, err)
+	}
+
+	var fwd GatewayForward
+	for i, p := range servicePorts {
+		switch p {
+		case 80:
+			fwd.HTTPPort = locals[i]
+		case 443:
+			fwd.HTTPSPort = locals[i]
+		default:
+			stop()
+			t.Fatalf("ForwardGateway: unsupported service port %d (only 80/443)", p)
+		}
+	}
+
+	// Supervisor: restart the tunnel on the SAME local ports when kubectl
+	// exits mid-test (e.g. "lost connection to pod" after an upstream RST —
+	// issue #48). Poll loops using fwd's ports see at most a brief
+	// connection-refused window and then recover.
+	pinned := make([]string, len(servicePorts))
+	for i, p := range servicePorts {
+		pinned[i] = strconv.Itoa(locals[i]) + ":" + strconv.Itoa(p)
+	}
+	supervisorDone := make(chan struct{})
+	go func() {
+		defer close(supervisorDone)
+		current := cmd
+		for {
+			waitErr := current.Wait()
+			if fwdCtx.Err() != nil {
+				return // torn down via t.Cleanup
+			}
+			t.Logf("ForwardGateway %s: tunnel exited unexpectedly (%v); restarting on pinned ports %v", svc, waitErr, pinned)
+			for {
+				next, _, restartErr := startForwardTunnel(fwdCtx, svc, pinned, len(servicePorts))
+				if restartErr == nil {
+					current = next
+					// Cooldown so a forward-then-immediately-die loop
+					// can't churn kubectl processes for the whole budget.
+					select {
+					case <-fwdCtx.Done():
+						return
+					case <-time.After(500 * time.Millisecond):
+					}
+					break
+				}
+				if fwdCtx.Err() != nil {
+					return
+				}
+				t.Logf("ForwardGateway %s: tunnel restart failed (%v); retrying", svc, restartErr)
+				select {
+				case <-fwdCtx.Done():
+					return
+				case <-time.After(500 * time.Millisecond):
+				}
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		stop()
+		<-supervisorDone // the supervisor reaps the current kubectl process
+	})
+	return fwd
+}
+
+// startForwardTunnel starts one `kubectl port-forward service/<svc>` process
+// and parses the local ports from its "Forwarding from 127.0.0.1:<local> ->
+// <target>" lines. kubectl reports the resolved TARGET port (the pod's
+// per-Gateway bind port, chart-allocated), not the Service port asked for —
+// so local ports are matched to the requested ports by ORDER, which is the
+// order kubectl emits them. The IPv6 twin lines ("[::1]:...") repeat the
+// same local port and are deduplicated. On error the started process is
+// killed; on success the caller owns reaping it via Wait.
+func startForwardTunnel(ctx context.Context, svc string, portArgs []string, wantPorts int) (*exec.Cmd, []int, error) {
+	args := []string{"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace, "port-forward", "service/" + svc}
+	args = append(args, portArgs...)
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	cmd.Stderr = os.Stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		stop()
-		t.Fatalf("port-forward stdout pipe: %v", err)
+		return nil, nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		stop()
-		t.Fatalf("start kubectl port-forward %s: %v", svc, err)
+		return nil, nil, fmt.Errorf("start: %w", err)
 	}
-	t.Cleanup(func() {
-		stop()
+	fail := func(cause error) (*exec.Cmd, []int, error) {
+		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-	})
+		return nil, nil, cause
+	}
 
-	// Parse the "Forwarding from 127.0.0.1:<local> -> <target>" lines.
-	// kubectl reports the resolved TARGET port (the pod's per-Gateway bind
-	// port, chart-allocated), not the Service port we asked for — so local
-	// ports are assigned to the requested servicePorts by ORDER, which is
-	// the order kubectl emits them. The IPv6 twin lines ("[::1]:...") repeat
-	// the same local port and are deduplicated.
-	var fwd GatewayForward
-	scanner := bufio.NewScanner(stdout)
-	deadline := time.After(20 * time.Second)
-	seen := map[int]bool{}
-	parsed := 0
 	lines := make(chan string, 8)
 	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			lines <- scanner.Text()
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
 		}
-		close(lines)
 	}()
-	for parsed < len(servicePorts) {
+
+	deadline := time.After(20 * time.Second)
+	seen := map[int]bool{}
+	var locals []int
+	for len(locals) < wantPorts {
 		select {
 		case line, ok := <-lines:
 			if !ok {
-				t.Fatalf("kubectl port-forward %s exited before forwarding (parsed %d/%d ports)", svc, parsed, len(servicePorts))
+				return fail(fmt.Errorf("exited before forwarding (parsed %d/%d ports)", len(locals), wantPorts))
 			}
 			m := forwardLineRe.FindStringSubmatch(line)
 			if m == nil {
@@ -163,18 +247,17 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 				continue
 			}
 			seen[local] = true
-			switch servicePorts[parsed] {
-			case 80:
-				fwd.HTTPPort = local
-			case 443:
-				fwd.HTTPSPort = local
-			default:
-				t.Fatalf("ForwardGateway: unsupported service port %d (only 80/443)", servicePorts[parsed])
-			}
-			parsed++
+			locals = append(locals, local)
 		case <-deadline:
-			t.Fatalf("kubectl port-forward %s: timed out waiting for forwarding lines (parsed %d/%d)", svc, parsed, len(servicePorts))
+			return fail(fmt.Errorf("timed out waiting for forwarding lines (parsed %d/%d)", len(locals), wantPorts))
 		}
 	}
-	return fwd
+	// Keep draining stdout ("Handling connection for ..." chatter) so the
+	// pipe can never fill up and stall kubectl's forwarding loop.
+	go func() {
+		for range lines {
+			continue // discard until the process exits and the channel closes
+		}
+	}()
+	return cmd, locals, nil
 }

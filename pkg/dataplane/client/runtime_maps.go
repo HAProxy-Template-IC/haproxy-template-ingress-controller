@@ -80,6 +80,23 @@ func (c *DataplaneClient) ReplaceRuntimeMap(ctx context.Context, name, desiredCo
 	return nil
 }
 
+// VerifyRuntimeMap re-reads the live runtime map and reports how many
+// per-entry mutations would still be needed to make it match desiredContent
+// (0 = converged). The orchestrator's pure-runtime lane calls this right
+// after ReplaceRuntimeMap as a read-back check: runtime map mutations are
+// acknowledged by the Dataplane API even when the underlying master-socket
+// command was lost in flight (observed on the haproxytech 3.1 image under
+// reload churn — issue #48), and without a read-back the divergence latches —
+// the on-disk file already matches desired, so no later deploy re-runs
+// ReplaceRuntimeMap for the map and only an unrelated reload heals it.
+func (c *DataplaneClient) VerifyRuntimeMap(ctx context.Context, name, desiredContent string) (int, error) {
+	current, err := c.showRuntimeMapEntries(ctx, name)
+	if err != nil {
+		return 0, fmt.Errorf("verify runtime map %s: %w", name, err)
+	}
+	return len(mapEntryDelta(current, parseMapEntries(desiredContent))), nil
+}
+
 // mapEntryDelta computes the minimal per-entry mutations to make the current
 // runtime map equal desired. A key whose single value changed becomes one
 // in-place `set map` (atomic — no window where the key is unmapped); a key
