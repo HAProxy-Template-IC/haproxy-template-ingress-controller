@@ -225,8 +225,8 @@ compute-ci-image-tag:
     BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
   tags:
     - saas-linux-medium-amd64
-  # NOTE: build-ci runs unconditionally (except on tags). Two earlier failure
-  # modes forced this:
+  # NOTE: build-ci runs unconditionally — including on release-tag pipelines.
+  # Three earlier failure modes forced this:
   #   1. Main-branch merge commits blending concurrent Dockerfile edits produced
   #      a content hash present in no feature branch, so no image was pushed
   #      for it and subsequent branches failed on manifest-unknown.
@@ -234,12 +234,14 @@ compute-ci-image-tag:
   #      skipped build-ci due to how `changes:` resolves in MR context (see the
   #      MR !530 / pipeline 2478325374 incident), leaving downstream jobs to
   #      race an unbuilt image tag.
+  #   3. Tag pipelines used to exclude build-ci while the release jobs need it
+  #      non-optionally, so no v* tag pipeline could even be created. A release
+  #      tag points at a main commit whose pipeline already pushed the image,
+  #      so the tag-pipeline rebuild is a cache-hit no-op.
   # Downstream jobs depend on build-ci non-optionally, so the CI image is
   # guaranteed present. --import-cache + inline cache export in the script
   # below keeps unchanged rebuilds fast (cache hit on every layer, no-op push).
   rules:
-    - if: $CI_COMMIT_TAG
-      when: never
     - when: on_success
   before_script:
     - mkdir -p ~/.docker
@@ -288,6 +290,12 @@ build-ci:
 
 build-python-docs:
   extends: .build-ci-image
+  # Nothing on a tag pipeline consumes the docs-builder image, so keep the
+  # tag exclusion that used to live in .build-ci-image here.
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
   script:
     - |
       buildctl-daemonless.sh build \
@@ -2356,10 +2364,15 @@ test-helm-defaults:
 # =============================================================================
 
 # =============================================================================
-# Controller Release (triggered by v* tags)
+# Release (triggered by v* tags)
 # =============================================================================
+# One tag releases everything: controller binaries + images (release-controller),
+# the Helm chart (release-chart), the SPOA hub image (build-spoa-image-release,
+# build stage), and versioned docs (trigger-docs-release).
 
-# Build binaries and Docker images with GoReleaser, create GitLab release
+# Build binaries and Docker images with GoReleaser, create the GitLab release.
+# The release notes come from the version's section in CHANGELOG.md, which
+# covers the controller and the chart (the "Helm chart" subsection).
 release-controller:
   stage: deploy
   extends:
@@ -2415,10 +2428,9 @@ release-controller:
         done
       fi
 
-# =============================================================================
-# Chart Release (triggered by haptic-chart-v* tags)
-# =============================================================================
-
+# Package, push, and sign the Helm chart. The GitLab release for the tag is
+# created by release-controller (GoReleaser) — creating a second release for
+# the same tag would fail, so this job only publishes the chart artifact.
 release-chart:
   stage: deploy
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
@@ -2431,21 +2443,26 @@ release-chart:
     - compute-ci-image-tag
     - job: build-ci
   rules:
-    - if: $CI_COMMIT_TAG =~ /^haptic-chart-v.*/
+    - if: $CI_COMMIT_TAG =~ /^v.*/
   before_script:
     - helm registry login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     # Docker login needed for cosign to push signatures to OCI registry
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
-    # Extract version from tag (haptic-chart-v0.1.0 -> v0.1.0)
-    - export VERSION=${CI_COMMIT_TAG#haptic-chart-}
     # Strip v prefix for chart version (Helm best practice: use pure SemVer)
-    - export CHART_VERSION=${VERSION#v}
-    # Extract release notes from chart CHANGELOG.md
+    - export CHART_VERSION=${CI_COMMIT_TAG#v}
+    # One release unit: VERSION and Chart.yaml must all carry the tag's version.
     - |
-      awk -v ver="${CHART_VERSION}" '/^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found=1 } found { print }' charts/haptic/CHANGELOG.md > .release-notes.md
-      if [ ! -s .release-notes.md ]; then
-        echo "Helm Chart Release ${VERSION}" > .release-notes.md
+      VERSION_FILE=$(cat VERSION)
+      CHART_YAML_VERSION=$(yq '.version' charts/haptic/Chart.yaml)
+      APP_VERSION=$(yq '.appVersion' charts/haptic/Chart.yaml)
+      if [ "${VERSION_FILE}" != "${CHART_VERSION}" ] || [ "${CHART_YAML_VERSION}" != "${CHART_VERSION}" ] || [ "${APP_VERSION}" != "${CHART_VERSION}" ]; then
+        echo "ERROR: tag ${CI_COMMIT_TAG} does not match the release files:"
+        echo "  VERSION:            ${VERSION_FILE}"
+        echo "  Chart.yaml version: ${CHART_YAML_VERSION}"
+        echo "  Chart.yaml appVersion: ${APP_VERSION}"
+        echo "Run ./scripts/release.sh <version> so all release files move together."
+        exit 1
       fi
     # Package and push chart to OCI registry
     - helm package charts/haptic --version $CHART_VERSION
@@ -2454,53 +2471,22 @@ release-chart:
       CHART_DIGEST=$(grep 'Digest:' push-output.txt | awk '{print $2}')
       # Sign the OCI artifact using digest (cosign doesn't support oci:// prefix)
       cosign sign --yes ${CI_REGISTRY}/haproxy-haptic/haptic/charts/haptic@${CHART_DIGEST}
-    # Create GitLab release
-    - |
-      RELEASE_NAME="Helm Chart ${VERSION}"
-      if echo "$VERSION" | grep -qE '-(alpha|beta|rc)\.'; then
-        RELEASE_NAME="Helm Chart ${VERSION} (Pre-release)"
-      fi
-      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-           --header "Content-Type: application/json" \
-           --data "{
-             \"name\": \"${RELEASE_NAME}\",
-             \"tag_name\": \"${CI_COMMIT_TAG}\",
-             \"description\": $(cat .release-notes.md | jq -Rs .)
-           }" \
-           --request POST \
-           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
 
-# =============================================================================
-# Release Documentation (triggered by release tags)
-# =============================================================================
-
-# Trigger versioned documentation build for controller releases
-trigger-docs-controller-release:
+# Trigger the versioned documentation build. One trigger covers both doc
+# sites: the downstream deploy script builds the controller AND helm-chart
+# docs from a single DOC_VERSION. Gated on both release jobs so docs never
+# advertise a version whose artifacts failed to publish.
+trigger-docs-release:
   stage: deploy
   needs:
     - release-controller
+    - release-chart
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
   inherit:
     variables: false
   variables:
     DOC_VERSION: ${CI_COMMIT_TAG}
-  trigger:
-    project: haproxy-haptic/haproxy-haptic.gitlab.io
-    branch: main
-    strategy: depend
-
-# Trigger versioned documentation build for chart releases
-trigger-docs-chart-release:
-  stage: deploy
-  needs:
-    - release-chart
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^haptic-chart-v.*/
-  inherit:
-    variables: false
-  variables:
-    DOC_VERSION: ${CI_COMMIT_TAG#haptic-chart-}
   trigger:
     project: haproxy-haptic/haproxy-haptic.gitlab.io
     branch: main
@@ -2600,30 +2586,17 @@ trigger-pages:
     branch: main
     strategy: depend
 
-# Trigger pages project to build versioned docs on controller release tags
-trigger-pages-release:
-  stage: deploy
-  needs: []
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^v[0-9]/
-  inherit:
-    variables: false
-  variables:
-    DOC_VERSION: $CI_COMMIT_TAG
-  trigger:
-    project: haproxy-haptic/haproxy-haptic.gitlab.io
-    branch: main
-    strategy: depend
-
 # =============================================================================
-# Automatic Release Tagging (triggered when VERSION or Chart.yaml changes)
+# Automatic Release Tagging (triggered when VERSION changes)
 # =============================================================================
-# These jobs automatically create release tags when version files change on main.
-# This eliminates manual tagging after MR merge - just update VERSION or Chart.yaml,
+# This job automatically creates the release tag when VERSION changes on main.
+# This eliminates manual tagging after MR merge - run ./scripts/release.sh,
 # merge to main, and CI creates the tag and triggers the release pipeline.
 
-# Create controller release tag when VERSION file changes on main
-create-controller-release-tag:
+# Create the release tag when the VERSION file changes on main. One tag
+# releases the controller AND the Helm chart (Chart.yaml version/appVersion
+# must match VERSION — checked below before tagging).
+create-release-tag:
   stage: deploy
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   tags:
@@ -2644,57 +2617,27 @@ create-controller-release-tag:
   script:
     - VERSION=$(cat VERSION)
     - TAG="v${VERSION}"
-    # Check if tag already exists (idempotency)
+    # Check if tag already exists (idempotency — this is the normal exit on
+    # every main commit that doesn't change VERSION)
     - |
       if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
         echo "Tag ${TAG} already exists, skipping"
         exit 0
       fi
-    # Create and push the tag
-    - git config user.email "ci@gitlab.com"
-    - git config user.name "GitLab CI"
-    - git tag -a "${TAG}" -m "Controller release ${VERSION}"
-    - git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "${TAG}"
-    # Trigger release pipeline for the new tag
+    # About to tag a release: VERSION and Chart.yaml must agree.
     - |
-      curl --fail-with-body --request POST \
-        --form "token=${CI_JOB_TOKEN}" \
-        --form "ref=${TAG}" \
-        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/trigger/pipeline"
-    - echo "Created and pushed tag ${TAG}, release pipeline triggered"
-
-# Create chart release tag when Chart.yaml version changes on main
-create-chart-release-tag:
-  stage: deploy
-  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
-  tags:
-    - saas-linux-small-amd64
-  # No `needs:` — stage ordering makes this wait for the WHOLE pipeline,
-  # so the full post-merge stack (unit, e2e matrix, conformance) gates every
-  # release tag. `dependencies` still fetches the CI image tag dotenv.
-  dependencies:
-    - compute-ci-image-tag
-  rules:
-    # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
-    # publishing, image pushes, pages deploys, or release tagging from cron.
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_TAG
-      when: never  # Don't run on tag pipelines
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-  script:
-    - VERSION=$(yq '.version' charts/haptic/Chart.yaml)
-    - TAG="haptic-chart-v${VERSION}"
-    # Check if tag already exists (idempotency)
-    - |
-      if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
-        echo "Tag ${TAG} already exists, skipping"
-        exit 0
+      CHART_YAML_VERSION=$(yq '.version' charts/haptic/Chart.yaml)
+      APP_VERSION=$(yq '.appVersion' charts/haptic/Chart.yaml)
+      if [ "${CHART_YAML_VERSION}" != "${VERSION}" ] || [ "${APP_VERSION}" != "${VERSION}" ]; then
+        echo "ERROR: VERSION (${VERSION}), Chart.yaml version (${CHART_YAML_VERSION}), and"
+        echo "Chart.yaml appVersion (${APP_VERSION}) must all match before a release is tagged."
+        echo "Run ./scripts/release.sh <version> so all release files move together."
+        exit 1
       fi
     # Create and push the tag
     - git config user.email "ci@gitlab.com"
     - git config user.name "GitLab CI"
-    - git tag -a "${TAG}" -m "Chart release v${VERSION}"
+    - git tag -a "${TAG}" -m "Release ${VERSION}"
     - git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "${TAG}"
     # Trigger release pipeline for the new tag
     - |

@@ -838,7 +838,7 @@ Full guides: [Google](https://developers.google.com/style),
 
 ## Changelog Guidelines
 
-The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the controller software.
+There is ONE changelog: the root `CHANGELOG.md`. It documents user-facing changes to the controller and the Helm chart. Chart changes (values, templates, chart defaults, values migrations) go under a `### Helm chart` subsection of each release (with `#### Added`/`#### Changed`/… sub-headings); controller changes go in the release's top-level `### Added`/`### Changed`/… sections. `charts/haptic/CHANGELOG.md` is only a pointer to the root changelog.
 
 **Every notable change must have a changelog entry.** Keep entries concise - one line per change, focus on what changed, not implementation details. Avoid verbose justifications or explanations in parentheses.
 
@@ -849,29 +849,29 @@ The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the c
 - Behavior changes and bug fixes
 - Metrics and observability features
 - Security-related changes
+- Helm chart values, defaults, and template library changes (in the `### Helm chart` subsection)
 
 **Exclude (not notable):**
 
 - Test additions or fixes
 - Lint fixes
 - CI/CD pipeline fixes
-- Helm chart value names and paths (belong in chart CHANGELOG)
-- Default values and replica counts (belong in chart CHANGELOG)
 - Development scripts and tooling
 - Internal testing infrastructure
 
 **Don't call changes "BREAKING" when the feature being broken was itself introduced after the last release.** The CHANGELOG is read by operators upgrading between released versions; if the affected behavior never shipped to a real release, the only people impacted are snapshot/main consumers — note the change but don't tag it as a `BREAKING` migration. Check `git tag -l | sort -V | tail` for the latest released version and `git log <last-tag>..HEAD -- <files>` to see what's actually post-release.
 
-For Helm chart changes, see `charts/haptic/CHANGELOG.md`.
-
 ## Release Process
 
-To prepare a new release for controller and chart:
+The controller and the Helm chart are released together: one version, one `v<version>` tag, one changelog. `VERSION` is the single source of truth; `charts/haptic/Chart.yaml` `version` and `appVersion` must equal it (CI refuses to tag otherwise).
 
-1. **Update VERSION file** - Contains the controller version (e.g., `0.1.0-alpha.6`)
-2. **Update Chart.yaml** - Bump both `version` and `appVersion` in `charts/haptic/Chart.yaml`
-3. **Update CHANGELOG.md** - Move [Unreleased] entries to new version section with date
-4. **Update charts/haptic/CHANGELOG.md** - Move [Unreleased] entries to new version section
+To prepare a release:
+
+1. **Curate `CHANGELOG.md` [Unreleased]** - Rewrite the accumulated entries into user-facing release notes (merge related entries, drop items that never shipped in a release); also update the hand-curated `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml`
+2. **Run `./scripts/release.sh <version>`** - Promotes `[Unreleased]` to the version section and updates every version-bearing file (VERSION, Chart.yaml, install examples, docs-site changelog copies) in one commit
+3. **Merge the release MR to main** - CI creates the `v<version>` tag after the full post-merge pipeline passes; the tag pipeline publishes binaries, images, the chart, and versioned docs
+
+See `docs/controller/docs/development/releasing.md` for the full process.
 
 ## Package-Specific Context
 

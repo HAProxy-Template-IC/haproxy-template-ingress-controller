@@ -2,9 +2,9 @@
 
 ## Overview
 
-The HAProxy Template Ingress Controller uses a dual-release model where the controller and Helm chart have independent version numbers. This allows chart-only releases (e.g., documentation fixes) without requiring a new controller version.
+The controller and the Helm chart are released together: one version number, one `v<version>` git tag, one changelog, one release pipeline. The `VERSION` file is the single source of truth; `charts/haptic/Chart.yaml` carries the same value in both `version` and `appVersion`, and CI refuses to tag a release when they disagree.
 
-Both use [Semantic Versioning](https://semver.org/) with support for pre-release suffixes.
+Versions follow [Semantic Versioning](https://semver.org/) with support for pre-release suffixes.
 
 ## Version Numbering
 
@@ -19,74 +19,65 @@ Both use [Semantic Versioning](https://semver.org/) with support for pre-release
 
 ## CHANGELOG Conventions
 
-There are two separate changelog files, one per release artifact:
+There is one changelog file, `CHANGELOG.md` at the repository root, covering the controller and the Helm chart. It follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format with an `## [Unreleased]` header at the top.
 
-| File | Covers |
-|------|--------|
-| `CHANGELOG.md` | Controller-facing changes (CLI, metrics, CRD behaviour, controller bug fixes) |
-| `charts/haptic/CHANGELOG.md` | Helm chart changes (values, templates, chart defaults) |
+- Controller changes go in a release's top-level `### Added`/`### Changed`/`### Fixed`/… sections.
+- Helm chart changes (values, templates, chart defaults, values migrations) go under the release's `### Helm chart` subsection, with `#### Added`/`#### Changed`/… sub-headings.
 
-Changes that touch both belong in both files. Each file follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format with an `## [Unreleased]` header at the top. The release scripts do **not** rewrite the changelog for you — you rename `[Unreleased]` to `[<version>] - <date>` and add a fresh empty `[Unreleased]` above it manually, and the script aborts if it doesn't find an entry for the version you're releasing.
+`charts/haptic/CHANGELOG.md` is a pointer to the root changelog and doesn't take entries.
 
 ## Prerequisites
 
 Before releasing:
 
 1. **Clean working directory** - All changes committed
-2. **Relevant changelog updated** - `CHANGELOG.md` for controller releases, `charts/haptic/CHANGELOG.md` for chart-only releases
-3. **All tests passing** - CI pipeline green on main branch
-4. **Documentation updated** - Any new features documented
+2. **All tests passing** - CI pipeline green on main branch
+3. **Documentation updated** - Any new features documented
 
-## Controller Release Process
+## Release Process
 
-The main branch is protected, so releases are made via merge requests. CI automatically creates tags when the VERSION file changes on main.
+The main branch is protected, so releases are made via merge requests. CI automatically creates the tag when the `VERSION` file changes on main.
 
-### Step 1: Update CHANGELOG.md
+### Step 1: Curate the changelog
 
-Promote the existing `[Unreleased]` block to a versioned entry, then leave a fresh empty `[Unreleased]` above it. The order matters — `[Unreleased]` must stay at the top:
+Rewrite the accumulated `## [Unreleased]` entries in `CHANGELOG.md` into user-facing release notes: merge related entries, and drop items that never shipped in a release. Update the hand-curated `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml` with summary bullets for the new release.
 
-```markdown
-## [Unreleased]
-
-## [0.1.0-alpha.1] - 2026-04-25
-
-### Added
-
-- New feature X
-```
+Don't rename `[Unreleased]` yourself — the release script does the mechanical promotion.
 
 ### Step 2: Cut a Release Branch
 
 `main` is protected, so the release commit lands via merge request. Branch first; the script commits to whatever branch is currently checked out.
 
 ```bash
-git checkout -b release/controller-v<version>
+git checkout -b release/v<version>
 ```
 
 ### Step 3: Run the Release Script
 
 ```bash
-make release-controller VERSION=<version>
-# or directly: ./scripts/release.sh controller <version>
+make release RELEASE_VERSION=<version>
+# or directly: ./scripts/release.sh <version>
 ```
 
 The script:
 
 - Validates the version format (`X.Y.Z` or `X.Y.Z-suffix.N`)
-- Aborts unless `CHANGELOG.md` already contains a `## [<version>]` entry from Step 1
+- Promotes `CHANGELOG.md` `[Unreleased]` to `[<version>] - <date>` and leaves a fresh empty `[Unreleased]` above it (skipped when a `[<version>]` section already exists)
 - Writes `<version>` to the `VERSION` file
-- Updates `Chart.yaml` `appVersion` and the `artifacthub.io/images` annotation (the latter is rewritten to `haptic:<version>-haproxy<DEFAULT_HAPROXY>` from `versions.env`)
-- Stages and commits those two files as `release: haptic-controller v<version>`
+- Updates `Chart.yaml` `version`, `appVersion`, and the `artifacthub.io/images` annotation (controller and spoa-hub image tags)
+- Updates the `helm install ... --version <version>` examples in the READMEs and docs, and the landing page's fallback version
+- Regenerates the docs-site changelog copies (`docs/controller/docs/changelog.md`, `charts/haptic/docs/changelog.md`) from `CHANGELOG.md`
+- Stages and commits everything as `release: haptic v<version>`
 
 The script does **not** create a tag — that happens in CI after the MR merges.
 
 ### Step 4: Push and Open the MR
 
 ```bash
-git push -u origin release/controller-v<version>
+git push -u origin release/v<version>
 
-glab mr create --title "release: haptic-controller v<version>" \
-  --description "Release haptic-controller v<version>" \
+glab mr create --title "release: haptic v<version>" \
+  --description "Release haptic v<version>" \
   --target-branch main
 ```
 
@@ -96,9 +87,10 @@ Review and merge through GitLab.
 
 After the MR is merged, CI automatically:
 
-1. Detects the VERSION file change on main
-2. Creates and pushes the `v<version>` tag
-3. Triggers the release pipeline (binaries, images, GitLab release)
+1. Runs the full post-merge pipeline (unit, e2e matrix, conformance) — the tag job waits for all of it
+2. Verifies `VERSION`, `Chart.yaml` `version`, and `appVersion` agree
+3. Creates and pushes the `v<version>` tag
+4. Triggers the release pipeline
 
 No manual tagging is required.
 
@@ -108,7 +100,7 @@ No manual tagging is required.
     ```bash
     git checkout main
     git pull origin main
-    git tag -a v<version> -m "Controller release <version>"
+    git tag -a v<version> -m "Release <version>"
     git push origin v<version>
     ```
 
@@ -117,108 +109,21 @@ No manual tagging is required.
 When a `v*` tag is pushed, CI will:
 
 1. **Build binaries** for linux/amd64, linux/arm64, linux/arm/v7
-2. **Create GitLab release** with:
+2. **Create the GitLab release** with:
    - Signed binaries
    - SHA256 checksums
-   - Release notes from CHANGELOG.md
+   - Release notes from the version's `CHANGELOG.md` section (controller + chart)
    - Pre-release flag (for alpha/beta/rc versions)
-3. **Build Docker images** for HAProxy 3.0, 3.1, 3.2, 3.3
-4. **Sign all artifacts** with Cosign (keyless OIDC)
-5. **Generate SBOM** (Software Bill of Materials) for each image
-6. **Attach SBOM attestation** to images via Cosign
-7. **Trigger documentation build** with version tag
-
-## Chart Release Process
-
-!!! note "When to Release Chart Separately"
-    Only release the chart separately when:
-
-    - Chart-only changes (values, templates, docs)
-    - Breaking Helm value changes
-    - Chart bug fixes independent of controller
-
-    Controller releases automatically update the chart's `appVersion`.
-
-### Step 1: Update the chart CHANGELOG
-
-Same shape as the controller changelog — keep `[Unreleased]` at the top and add the versioned entry below it in `charts/haptic/CHANGELOG.md`:
-
-```markdown
-## [Unreleased]
-
-## [0.2.0] - 2026-04-25
-
-### Changed
-
-- Updated default resource limits
-```
-
-### Step 2: Cut a Release Branch
-
-```bash
-git checkout -b release/haptic-chart-v<version>
-```
-
-### Step 3: Run the Release Script
-
-```bash
-make release-chart CHART_VERSION=<version>
-# or directly: ./scripts/release.sh chart <version>
-```
-
-The script:
-
-- Validates the version format
-- Aborts unless `charts/haptic/CHANGELOG.md` already contains a `## [<version>]` entry from Step 1
-- Updates `Chart.yaml` `version`
-- Updates the `helm install ... --version <version>` examples in the root and chart `README.md`
-- Commits those changes as `release: chart v<version>`
-
-### Step 4: Push and Open the MR
-
-```bash
-git push -u origin release/haptic-chart-v<version>
-
-glab mr create --title "release: chart v<version>" \
-  --description "Release chart v<version>" \
-  --target-branch main
-```
-
-Review and merge through GitLab.
-
-### Automatic Tag Creation
-
-After the MR is merged, CI automatically:
-
-1. Detects the Chart.yaml version change on main
-2. Creates and pushes the `haptic-chart-v<version>` tag
-3. Triggers the release pipeline (OCI registry, GitLab release)
-
-No manual tagging is required.
-
-??? note "Manual Tagging (Fallback)"
-    If automatic tagging fails, you can create the tag manually:
-
-    ```bash
-    git checkout main
-    git pull origin main
-    git tag -a haptic-chart-v<version> -m "Chart release v<version>"
-    git push origin haptic-chart-v<version>
-    ```
-
-### What CI Does Automatically
-
-When a `haptic-chart-v*` tag is pushed, CI will:
-
-1. **Package Helm chart** as OCI artifact
-2. **Push to GitLab registry** at `registry.gitlab.com/haproxy-haptic/haptic/charts`
-3. **Sign with Cosign** (keyless)
-4. **Create GitLab release** with release notes from CHANGELOG.md
-5. **Trigger documentation build** with version tag
+3. **Build Docker images** for every supported HAProxy series (3.0-3.4)
+4. **Build the spoa-hub image** (`spoa-hub:<version>`)
+5. **Package the Helm chart** and push it as a signed OCI artifact to `registry.gitlab.com/haproxy-haptic/haptic/charts`
+6. **Sign all artifacts** with Cosign (keyless OIDC)
+7. **Generate SBOM** (Software Bill of Materials) for each image and attach it as a Cosign attestation
+8. **Trigger the versioned documentation build** (controller and helm-chart doc sites)
 
 ## Documentation Versioning
 
-Each release creates a versioned documentation snapshot:
+Each release creates a versioned documentation snapshot of both doc sites (controller and helm-chart):
 
 | Release Type | Docs Behavior |
 |--------------|---------------|
@@ -259,7 +164,7 @@ Final releases (no suffix):
 | Error | Solution |
 |-------|----------|
 | "Working directory is not clean" | Commit or stash changes |
-| "CHANGELOG.md has no entry" | Add `## [version]` section |
+| "CHANGELOG.md has no [Unreleased] section" | Restore the `## [Unreleased]` header |
 | "Invalid version format" | Use `X.Y.Z` or `X.Y.Z-suffix.N` |
 
 ### CI Pipeline Fails
@@ -272,7 +177,7 @@ Final releases (no suffix):
 
 If images don't appear after release:
 
-1. Check `release-controller-images` job completed
+1. Check the `release-controller` job completed
 2. Verify registry authentication succeeded
 3. Check for build errors in job logs
 
@@ -320,7 +225,8 @@ The SBOM lists all packages, libraries, and dependencies in the container image.
 
 | File | Content | Updated By |
 |------|---------|------------|
-| `VERSION` | Controller version | Release script |
-| `Chart.yaml:version` | Chart version | Chart release script |
-| `Chart.yaml:appVersion` | Controller version | Controller release script |
-| `Chart.yaml` annotation | Image version | Controller release script |
+| `VERSION` | Release version (single source of truth) | Release script |
+| `Chart.yaml:version` | Same value as `VERSION` | Release script |
+| `Chart.yaml:appVersion` | Same value as `VERSION` | Release script |
+| `Chart.yaml` `artifacthub.io/images` | Controller and spoa-hub image tags | Release script |
+| `Chart.yaml` `artifacthub.io/changes` | Release summary bullets | By hand (Step 1) |

@@ -12,7 +12,7 @@ Shell helpers used by developers and by `Makefile` targets. Everything here is m
 | [`source-hash.sh`](#source-hashsh) | Hash of `pkg/**/*.go` + `cmd/**/*.go` (dev-env sync check) | `start-dev-env.sh status` |
 | [`extract-dataplane-spec.sh`](#extract-dataplane-specsh) | Download Dataplane API OpenAPI spec for a given HAProxy version | code generation |
 | [`fetch-k8s-openapi-schemas.sh`](#fetch-k8s-openapi-schemassh) | Fetch K8s built-in resource schemas (Namespace, Service, Secret, EndpointSlice, Ingress) from a running cluster's OpenAPI v3 endpoint and emit CRD-wrapped YAML under `tests/schemas/` | developers, schema refresh |
-| [`release.sh`](#releasesh) | Controller and chart release automation | `make release-controller` / `make release-chart` |
+| [`release.sh`](#releasesh) | Release automation (controller + chart, one version) | `make release` |
 | `dev-env-assets/` | Static files (CRD, kind config, manifests) used by `start-dev-env.sh` | `start-dev-env.sh` |
 
 ---
@@ -97,7 +97,7 @@ Requirements: a kube context with the resources installed (kind clusters are fin
 
 ## release.sh
 
-Invoked by `make release-controller VERSION=...` (which runs `release.sh controller <version>`) and `make release-chart CHART_VERSION=...` (which runs `release.sh chart <version>`). It validates that the release notes already contain an entry for the target version, bumps `VERSION` / `Chart.yaml`, and creates the release commit. Do **not** call it directly in normal workflows — go through the Makefile target so you get the arg validation for free. See [`docs/controller/docs/development/releasing.md`](../docs/controller/docs/development/releasing.md) for the end-to-end release process.
+Invoked by `make release RELEASE_VERSION=...` (which runs `release.sh <version>`). One invocation prepares the whole release (controller + chart share one version): it promotes the `CHANGELOG.md` `[Unreleased]` section, bumps `VERSION` and `Chart.yaml` (`version`, `appVersion`, image annotations), updates the `helm install --version` examples and the docs-site changelog copies, and creates the release commit. Do **not** call it directly in normal workflows — go through the Makefile target so you get the arg validation for free. See [`docs/controller/docs/development/releasing.md`](../docs/controller/docs/development/releasing.md) for the end-to-end release process.
 
 ## See Also
 

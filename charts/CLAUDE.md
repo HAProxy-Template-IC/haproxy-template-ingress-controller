@@ -2195,9 +2195,9 @@ helm template charts/haptic \
 
 ## Changelog Guidelines
 
-The chart CHANGELOG (`charts/haptic/CHANGELOG.md`) documents Helm chart configuration changes. Keep entries concise - one line per change, focus on what changed. Avoid verbose justifications or explanations in parentheses.
+Helm chart changes are documented in the root `CHANGELOG.md`, under the `### Helm chart` subsection of each release (with `#### Added`/`#### Changed`/… sub-headings). `charts/haptic/CHANGELOG.md` is only a pointer to the root changelog. Keep entries concise - one line per change, focus on what changed. Avoid verbose justifications or explanations in parentheses.
 
-**Include:**
+**Belongs in the `### Helm chart` subsection:**
 
 - New Helm values and configuration options
 - Changes to default values (replicas, resources, etc.)
@@ -2206,12 +2206,13 @@ The chart CHANGELOG (`charts/haptic/CHANGELOG.md`) documents Helm chart configur
 - Template library additions/changes
 - CRD updates
 
-**Exclude:**
+**Belongs in the release's top-level sections instead:**
 
-- Controller behavior and features (belong in controller CHANGELOG)
+- Controller behavior and features
+
+**Exclude entirely:**
+
 - Internal implementation details
 - Development workflow changes
 
-**Don't call changes "BREAKING" when the feature being broken was itself introduced after the last released chart version.** The CHANGELOG is read by operators upgrading between released chart versions; if the affected behavior never shipped to a real release, the only people impacted are snapshot/main consumers — note the change but don't tag it as a `BREAKING` migration. Check `git tag -l 'haptic-chart-v*' | sort -V | tail` for the latest released chart and `git log <last-tag>..HEAD -- charts/haptic/` for post-release chart changes.
-
-For controller changes, see the root `CHANGELOG.md`.
+**Don't call changes "BREAKING" when the feature being broken was itself introduced after the last released chart version.** The CHANGELOG is read by operators upgrading between released chart versions; if the affected behavior never shipped to a real release, the only people impacted are snapshot/main consumers — note the change but don't tag it as a `BREAKING` migration. Check `git tag -l 'v*' | sort -V | tail` for the latest release (chart releases up to 0.1.0 used `haptic-chart-v*` tags) and `git log <last-tag>..HEAD -- charts/haptic/` for post-release chart changes.
