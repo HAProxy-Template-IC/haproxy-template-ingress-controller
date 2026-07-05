@@ -159,6 +159,77 @@ type HAProxyTemplateConfigSpec struct {
 	// Tests ensure templates generate valid HAProxy configurations before deployment.
 	// +optional
 	ValidationTests map[string]ValidationTest `json:"validationTests,omitempty"`
+
+	// MigrationCoverage declares, per migration source (another ingress
+	// controller whose annotations a template library emulates), how each
+	// of the source's annotations is handled. The controller treats this
+	// as opaque data: it is contributed by template libraries, merged by
+	// the Helm chart, and consumed by tooling such as `migrate-check` —
+	// no entry influences rendering or reconciliation.
+	// +optional
+	// +listType=map
+	// +listMapKey=source
+	MigrationCoverage []MigrationCoverageSource `json:"migrationCoverage,omitempty"`
+}
+
+// MigrationCoverageSource documents one migration source: how to detect
+// resources managed by that source controller and how each of its
+// annotations is handled by the template libraries.
+//
+// IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+//   - The internal config type: pkg/core/config/types.go (MigrationCoverageSource)
+//   - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function)
+type MigrationCoverageSource struct {
+	// Source names the migration source controller (e.g. as printed by
+	// migration tooling). Unique across the list.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Source string `json:"source"`
+
+	// Detect describes how to recognise resources managed by the source.
+	// +optional
+	Detect MigrationDetect `json:"detect,omitempty"`
+
+	// Annotations maps each full annotation key of the source controller
+	// to its migration classification.
+	// +optional
+	Annotations map[string]AnnotationCoverage `json:"annotations,omitempty"`
+}
+
+// MigrationDetect describes how migration tooling recognises resources
+// managed by a migration source controller.
+type MigrationDetect struct {
+	// IngressClasses lists spec.ingressClassName values the source
+	// controller conventionally serves (e.g. "nginx").
+	// +optional
+	IngressClasses []string `json:"ingressClasses,omitempty"`
+
+	// AnnotationPrefixes lists annotation key prefixes owned by the
+	// source controller (e.g. "nginx.ingress.kubernetes.io/").
+	// +optional
+	AnnotationPrefixes []string `json:"annotationPrefixes,omitempty"`
+}
+
+// AnnotationCoverage classifies how one source-controller annotation is
+// handled by the template libraries.
+type AnnotationCoverage struct {
+	// Status classifies the annotation:
+	//   - supported: semantics carried over.
+	//   - different: acted on, but with behaviour differences to check.
+	//   - dropped: accepted with no effect.
+	//   - fails: setting it fails the render with an error.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=supported;different;dropped;fails
+	Status string `json:"status"`
+
+	// Note explains the classification in plain language.
+	// +optional
+	Note string `json:"note,omitempty"`
+
+	// Doc is an anchor into the migration guide (docs/controller/docs/
+	// migrating.md) with more detail, e.g. "annotation-support".
+	// +optional
+	Doc string `json:"doc,omitempty"`
 }
 
 // SecretReference references a Secret by name and optional namespace.

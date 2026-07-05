@@ -212,9 +212,43 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		K8sResources:                 k8sResources,
 		HAProxyConfig:                haproxyConfig,
 		ValidationTests:              validationTests,
+		MigrationCoverage:            convertMigrationCoverage(spec.MigrationCoverage),
 	}
 
 	return cfg, nil
+}
+
+// convertMigrationCoverage copies the CRD migration-coverage declarations
+// into the internal core-config representation. The shapes are identical;
+// the copy is defensive (slices and maps are re-allocated) so later CRD
+// mutations can't alias into the parsed config.
+func convertMigrationCoverage(crdCoverage []v1alpha1.MigrationCoverageSource) []config.MigrationCoverageSource {
+	if len(crdCoverage) == 0 {
+		return nil
+	}
+	out := make([]config.MigrationCoverageSource, 0, len(crdCoverage))
+	for i := range crdCoverage {
+		src := &crdCoverage[i]
+		entry := config.MigrationCoverageSource{
+			Source: src.Source,
+			Detect: config.MigrationDetect{
+				IngressClasses:     append([]string(nil), src.Detect.IngressClasses...),
+				AnnotationPrefixes: append([]string(nil), src.Detect.AnnotationPrefixes...),
+			},
+		}
+		if len(src.Annotations) > 0 {
+			entry.Annotations = make(map[string]config.AnnotationCoverage, len(src.Annotations))
+			for key, ann := range src.Annotations {
+				entry.Annotations[key] = config.AnnotationCoverage{
+					Status: ann.Status,
+					Note:   ann.Note,
+					Doc:    ann.Doc,
+				}
+			}
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // convertValidators copies the CRD validators array into the

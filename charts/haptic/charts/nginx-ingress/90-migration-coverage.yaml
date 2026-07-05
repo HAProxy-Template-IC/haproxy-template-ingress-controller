@@ -1,0 +1,396 @@
+# nginx-ingress library — migration coverage declaration.
+#
+# Machine-readable classification of every nginx.ingress.kubernetes.io/*
+# annotation this library reads (plus the known-unsupported ones), consumed
+# by `haptic-controller migrate-check` and by the generated annotation-support
+# tables in docs/controller/docs/migrating.md.
+#
+# Status vocabulary:
+#   supported — semantics carried over from ingress-nginx.
+#   different — acted on, but with behaviour differences to check (the note
+#               says which); includes annotations whose render can fail where
+#               ingress-nginx accepted the value.
+#   dropped   — accepted with no effect (silently or with a rendered warning).
+#   fails     — setting the annotation fails the render.
+#
+# Drift pinning: scripts/check-migration-coverage.sh diffs the annotation
+# keys the library templates actually read against this map (both ways).
+# Adding an annotation handler without declaring it here — or declaring a
+# supported/different/fails annotation nothing reads — fails `make lint`.
+migrationCoverage:
+  - source: ingress-nginx
+    detect:
+      ingressClasses: ["nginx"]
+      annotationPrefixes: ["nginx.ingress.kubernetes.io/"]
+    annotations:
+      # --- Backend configuration ---
+      nginx.ingress.kubernetes.io/proxy-connect-timeout:
+        status: supported
+        note: Plain seconds, mapped to HAProxy's timeout connect.
+      nginx.ingress.kubernetes.io/proxy-read-timeout:
+        status: different
+        note: Collapses with proxy-send-timeout into HAProxy's single timeout server — the larger value wins, asymmetric read/send timeouts are lost.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/proxy-send-timeout:
+        status: different
+        note: Collapses with proxy-read-timeout into HAProxy's single timeout server — the larger value wins, asymmetric read/send timeouts are lost.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/load-balance:
+        status: supported
+        note: round_robin, least_conn, ip_hash and random map directly; ewma maps to leastconn (closest equivalent); other values fail the render.
+      nginx.ingress.kubernetes.io/proxy-body-size:
+        status: supported
+        note: Enforced as a 413 via a reload-free map entry; "0" disables the limit.
+      nginx.ingress.kubernetes.io/backend-protocol:
+        status: different
+        note: HTTP, HTTPS, GRPC and GRPCS map to HAProxy server options; AJP and FCGI have no HAProxy equivalent and fail the render with an error.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/use-proxy-protocol:
+        status: supported
+        note: Sends PROXY protocol v2 to the backend.
+      nginx.ingress.kubernetes.io/configuration-snippet:
+        status: different
+        note: Injected verbatim into the backend section — the value must contain HAProxy directives, not nginx configuration; existing nginx snippets need rewriting.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/upstream-hash-by:
+        status: supported
+        note: $request_uri, $remote_addr, $cookie_*, $http_* and $arg_* translate to HAProxy fetches with consistent hashing; other $variables fail the render; non-$ values pass through as HAProxy fetch expressions.
+      nginx.ingress.kubernetes.io/proxy-next-upstream:
+        status: different
+        note: Maps to HAProxy retry-on (error→conn-failure, timeout→response-timeout, invalid_header→junk-response, http_NNN→NNN); non_idempotent has no equivalent and is ignored; "off" emits retries 0.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/proxy-next-upstream-tries:
+        status: supported
+        note: Maps to HAProxy retries; "0" (nginx meaning unlimited) falls back to HAProxy's default retry count.
+      nginx.ingress.kubernetes.io/upstream-vhost:
+        status: supported
+        note: Sets the Host header toward the backend via a reload-free map.
+      nginx.ingress.kubernetes.io/x-forwarded-prefix:
+        status: supported
+        note: Sets the X-Forwarded-Prefix request header via a reload-free map.
+      nginx.ingress.kubernetes.io/connection-proxy-header:
+        status: supported
+        note: Sets the Connection header toward the backend via a reload-free map.
+      # --- Rate limiting ---
+      nginx.ingress.kubernetes.io/limit-rps:
+        status: different
+        note: Hard per-source-IP cap rejecting with 429 — ingress-nginx allows a 5x burst and rejects with 503.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/limit-rpm:
+        status: different
+        note: Same hard-cap/429 semantics as limit-rps, and ignored when limit-rps is also set (HAProxy stores one request-rate counter per backend).
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/limit-connections:
+        status: different
+        note: Rejects with 429, and ignored when limit-rps or limit-rpm is set (one stick-table per backend).
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/limit-whitelist:
+        status: supported
+        note: Listed CIDRs are exempt from the rate limits; invalid CIDRs fail the render.
+      nginx.ingress.kubernetes.io/limit-rate:
+        status: supported
+        note: Per-connection download throttle via an outbound bandwidth-limit filter.
+      nginx.ingress.kubernetes.io/limit-rate-after:
+        status: supported
+        note: Bytes transferred before the limit-rate throttle kicks in.
+      # --- Session affinity ---
+      nginx.ingress.kubernetes.io/affinity:
+        status: supported
+        note: '"cookie" enables dynamic cookie-based stickiness (the only affinity mode, matching ingress-nginx).'
+      nginx.ingress.kubernetes.io/session-cookie-name:
+        status: supported
+        note: Default INGRESSCOOKIE.
+      nginx.ingress.kubernetes.io/session-cookie-path:
+        status: supported
+        note: Emitted as a Path cookie attribute.
+      nginx.ingress.kubernetes.io/session-cookie-domain:
+        status: supported
+        note: Emitted via HAProxy's domain cookie keyword.
+      nginx.ingress.kubernetes.io/session-cookie-secure:
+        status: supported
+        note: Adds the Secure cookie attribute when "true".
+      nginx.ingress.kubernetes.io/session-cookie-samesite:
+        status: supported
+        note: Strict, Lax or None; other values fail the render.
+      nginx.ingress.kubernetes.io/session-cookie-max-age:
+        status: supported
+        note: Emitted as a Max-Age cookie attribute.
+      nginx.ingress.kubernetes.io/session-cookie-expires:
+        status: different
+        note: Emitted as a Max-Age attribute — HAProxy can't compute an absolute Expires date; browsers treat both equivalently.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/session-cookie-hash:
+        status: dropped
+        note: HAProxy's dynamic-cookie hashing is not selectable; the value is ignored and a warning comment is rendered.
+        doc: annotation-support
+      # --- URL rewriting / redirects ---
+      nginx.ingress.kubernetes.io/rewrite-target:
+        status: supported
+        note: $N capture groups are translated to HAProxy backreferences; literal rewrites are applied reload-free via a map.
+      nginx.ingress.kubernetes.io/app-root:
+        status: supported
+        note: Redirects "/" to the given path for each rule host.
+      nginx.ingress.kubernetes.io/permanent-redirect:
+        status: supported
+        note: Host-scoped redirect via a reload-free map; rules without a host are skipped.
+      nginx.ingress.kubernetes.io/permanent-redirect-code:
+        status: supported
+        note: Default 301.
+      nginx.ingress.kubernetes.io/temporal-redirect:
+        status: supported
+        note: Host-scoped redirect via a reload-free map; rules without a host are skipped.
+      nginx.ingress.kubernetes.io/temporal-redirect-code:
+        status: supported
+        note: Default 302.
+      nginx.ingress.kubernetes.io/from-to-www-redirect:
+        status: supported
+        note: 301 between the apex host and its www. counterpart, preserving path and scheme.
+      nginx.ingress.kubernetes.io/ssl-redirect:
+        status: different
+        note: Redirects only when explicitly "true" — ingress-nginx redirects TLS-enabled Ingresses by default; the code comes from extraContext.nginxHttpRedirectCode (default 308, matching ingress-nginx's http-redirect-code).
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/force-ssl-redirect:
+        status: supported
+        note: Same redirect as ssl-redirect (code from nginxHttpRedirectCode, default 308).
+      # --- HSTS ---
+      nginx.ingress.kubernetes.io/hsts:
+        status: different
+        note: The header is emitted only when the annotation is explicitly "true" on the Ingress — ingress-nginx enables HSTS globally by default.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/hsts-max-age:
+        status: supported
+        note: Default 15724800, matching ingress-nginx.
+      nginx.ingress.kubernetes.io/hsts-include-subdomains:
+        status: different
+        note: includeSubDomains is added only when explicitly "true" — ingress-nginx defaults it to true.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/hsts-preload:
+        status: supported
+        note: Adds preload when "true".
+      # --- CORS ---
+      nginx.ingress.kubernetes.io/enable-cors:
+        status: different
+        note: Header-injection only — OPTIONS preflights are forwarded to the backend instead of being answered by HAProxy (ingress-nginx answers them with 204), so the backend must accept OPTIONS.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/cors-allow-origin:
+        status: different
+        note: Emitted verbatim into Access-Control-Allow-Origin; ingress-nginx's dynamic multi-origin matching is not performed — use a single origin or "*".
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/cors-allow-methods:
+        status: supported
+        note: Default matches ingress-nginx.
+      nginx.ingress.kubernetes.io/cors-allow-headers:
+        status: supported
+        note: Default matches ingress-nginx.
+      nginx.ingress.kubernetes.io/cors-allow-credentials:
+        status: different
+        note: The header is only sent when explicitly "true" — ingress-nginx defaults it to true.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/cors-expose-headers:
+        status: supported
+        note: Optional Access-Control-Expose-Headers value.
+      nginx.ingress.kubernetes.io/cors-max-age:
+        status: supported
+        note: Default 1728000, matching ingress-nginx.
+      # --- Access control ---
+      nginx.ingress.kubernetes.io/whitelist-source-range:
+        status: different
+        note: Host-scoped — the allowlist only gates rules with an explicit host, so an Ingress without rule hosts gets no filtering; invalid CIDRs fail the render.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/denylist-source-range:
+        status: different
+        note: Host-scoped — the denylist only gates rules with an explicit host, so an Ingress without rule hosts gets no filtering; invalid CIDRs fail the render.
+        doc: annotation-support
+      # --- Custom headers ---
+      nginx.ingress.kubernetes.io/custom-request-headers:
+        status: supported
+        note: Pipe-separated name:value pairs set on requests for the Ingress's hosts (HAPTIC extension — ingress-nginx itself takes custom headers from a ConfigMap).
+      nginx.ingress.kubernetes.io/custom-response-headers:
+        status: supported
+        note: Pipe-separated name:value pairs set on responses for the Ingress's hosts (HAPTIC extension — ingress-nginx itself takes custom headers from a ConfigMap).
+      # --- Basic authentication ---
+      nginx.ingress.kubernetes.io/auth-type:
+        status: different
+        note: Only "basic" is supported; "digest" fails the render.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/auth-secret:
+        status: different
+        note: htpasswd Secret format is unchanged from ingress-nginx, but a missing Secret disables auth for the route until the Secret appears — ingress-nginx serves 503 instead.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/auth-secret-type:
+        status: supported
+        note: Both auth-file (htpasswd in a single "auth" key) and auth-map (one key per user) are supported.
+      nginx.ingress.kubernetes.io/auth-realm:
+        status: supported
+        note: Default "Restricted".
+      nginx.ingress.kubernetes.io/satisfy:
+        status: different
+        note: '"any" OR-combines whitelist-source-range with basic auth only; unlike ingress-nginx it does not extend to external auth (auth-url).'
+        doc: annotation-support
+      # --- External authentication (SPOA hub external-auth plugin) ---
+      nginx.ingress.kubernetes.io/auth-url:
+        status: supported
+        note: External auth via the SPOA hub external-auth plugin (auto-enabled with this library); 2xx allows, otherwise 401 or the auth-signin redirect.
+      nginx.ingress.kubernetes.io/auth-signin:
+        status: different
+        note: nginx variables ($escaped_request_uri, …) are not expanded — the URL is used verbatim.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/auth-method:
+        status: different
+        note: Overrides the auth subrequest method; POST/PUT/PATCH are sent with an empty body.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/auth-response-headers:
+        status: supported
+        note: Listed auth-service response headers are forwarded to the backend on auth success.
+      nginx.ingress.kubernetes.io/auth-snippet:
+        status: dropped
+        note: Freeform nginx configuration can't be translated to HAProxy; the haproxy-ingress library's auth-headers-request annotation covers the common use case.
+        doc: annotation-support
+      # --- Client certificate auth (mTLS) ---
+      nginx.ingress.kubernetes.io/auth-tls-secret:
+        status: different
+        note: Client-CA verification is keyed by SNI — every rule needs an explicit host or the render fails; a missing Secret (or missing ca.crt) skips mTLS for the Ingress with a rendered warning.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/auth-tls-verify-client:
+        status: different
+        note: '"on"→required; "optional" and "optional_no_ca"→optional (HAProxy has no verify-but-accept-invalid mode); other values fail the render.'
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/auth-tls-error-page:
+        status: supported
+        note: 302 redirect on client-certificate verification failure, applied reload-free via a map.
+      nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream:
+        status: different
+        note: Forwards ssl-client-cert (base64 DER — ingress-nginx sends URL-encoded PEM) and ssl-client-subject-dn; ssl-client-verify and ssl-client-issuer-dn are not set.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/auth-tls-verify-depth:
+        status: dropped
+        note: HAProxy has no per-server/per-crt-list chain-depth option; a warning comment is rendered and the CA bundle scope bounds the accepted chain instead.
+        doc: annotation-support
+      # --- Backend TLS (proxy-ssl-*) ---
+      nginx.ingress.kubernetes.io/proxy-ssl-secret:
+        status: supported
+        note: Client certificate (tls.crt/tls.key) and CA (ca.crt) toward the upstream; only takes effect with backend-protocol HTTPS or GRPCS.
+      nginx.ingress.kubernetes.io/proxy-ssl-verify:
+        status: supported
+        note: '"on" requires a resolvable proxy-ssl-secret with ca.crt — the render fails instead of silently skipping verification.'
+      nginx.ingress.kubernetes.io/proxy-ssl-name:
+        status: supported
+        note: Used as SNI and, when verifying, as verifyhost.
+      nginx.ingress.kubernetes.io/proxy-ssl-ciphers:
+        status: supported
+        note: Cipher list for the upstream TLS connection.
+      nginx.ingress.kubernetes.io/proxy-ssl-protocols:
+        status: supported
+        note: The listed versions are collapsed into an ssl-min-ver/ssl-max-ver span; gaps in the list can't be expressed.
+      nginx.ingress.kubernetes.io/proxy-ssl-verify-depth:
+        status: dropped
+        note: HAProxy has no per-server chain-depth option; a warning comment is rendered.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/proxy-ssl-server-name:
+        status: dropped
+        note: Not read; SNI toward the upstream is controlled via proxy-ssl-name instead.
+        doc: annotation-support
+      # --- Upstream cookie / redirect rewriting ---
+      nginx.ingress.kubernetes.io/proxy-cookie-domain:
+        status: different
+        note: Only the "<from> <to>" rewrite form is supported; any other value (including "off") fails the render.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/proxy-cookie-path:
+        status: different
+        note: Only the "<from> <to>" rewrite form is supported; any other value (including "off") fails the render.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/proxy-redirect-from:
+        status: different
+        note: '"default" is not supported (warning comment, no rewrite); requires proxy-redirect-to; values must be space-free.'
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/proxy-redirect-to:
+        status: supported
+        note: Replacement text for the Location/Refresh response headers, together with proxy-redirect-from.
+      # --- Server alias / default backend ---
+      nginx.ingress.kubernetes.io/server-alias:
+        status: supported
+        note: Aliases route exactly like the Ingress's first rule host, without duplicating path entries.
+      nginx.ingress.kubernetes.io/default-backend:
+        status: supported
+        note: Per-host catch-all backend from the named Service (its first port); silently skipped when the Service is missing.
+      # --- SSL passthrough ---
+      nginx.ingress.kubernetes.io/ssl-passthrough:
+        status: supported
+        note: SNI-based TCP passthrough; HTTP-level annotations don't apply to passthrough hosts.
+      # --- Canary ---
+      nginx.ingress.kubernetes.io/canary:
+        status: supported
+        note: The canary Ingress must share a host with the main Ingress; rules without a host are skipped.
+      nginx.ingress.kubernetes.io/canary-by-header:
+        status: supported
+        note: Routes to the canary when the header matches (value/pattern via the companion annotations, default "always").
+      nginx.ingress.kubernetes.io/canary-by-header-value:
+        status: supported
+        note: Exact header value required for canary routing.
+      nginx.ingress.kubernetes.io/canary-by-header-pattern:
+        status: supported
+        note: Regex header match for canary routing.
+      nginx.ingress.kubernetes.io/canary-by-cookie:
+        status: supported
+        note: Routes to the canary when the cookie value is "always".
+      nginx.ingress.kubernetes.io/canary-weight:
+        status: supported
+        note: Percentage 0-100 of traffic routed to the canary.
+      nginx.ingress.kubernetes.io/canary-weight-total:
+        status: dropped
+        note: The weight base is fixed at 100.
+        doc: annotation-support
+      # --- WAF (Coraza / ModSecurity) ---
+      nginx.ingress.kubernetes.io/modsecurity-snippet:
+        status: supported
+        note: SecRule directives are enforced per-Ingress by the bundled Coraza WAF (ModSecurity-compatible) via the SPOA hub; requires the coraza plugin (auto-enabled with this library), otherwise the render fails.
+      nginx.ingress.kubernetes.io/enable-modsecurity:
+        status: different
+        note: '"false" opts the route out of the WAF; "true" is accepted as a no-op (dispatch is default-on when the coraza plugin is enabled); other values fail the render.'
+        doc: annotation-support
+      # --- Request mirroring (SPOA hub mirror plugin) ---
+      nginx.ingress.kubernetes.io/mirror-target:
+        status: different
+        note: Mirrors via the SPOA hub mirror plugin — requires spoaHub.plugins.mirror and a rule host (the render fails otherwise); only the URL's authority is used, the live request path/query is re-attached.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/mirror-host:
+        status: dropped
+        note: The mirror plugin forces the mirrored Host header to the target authority.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/mirror-request-body:
+        status: dropped
+        note: The buffered request body is always forwarded to the mirror target.
+        doc: annotation-support
+      # --- Not carried over ---
+      nginx.ingress.kubernetes.io/server-snippet:
+        status: dropped
+        note: nginx server-level directives have no HAProxy equivalent.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/stream-snippet:
+        status: dropped
+        note: nginx stream directives have no HAProxy equivalent.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/proxy-max-temp-file-size:
+        status: dropped
+        note: HAProxy buffers in memory; there is no temp-file spooling.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/enable-opentelemetry:
+        status: dropped
+        note: Requires the nginx OpenTelemetry module; no HAProxy-side tracing is wired.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/opentelemetry-trust-incoming-span:
+        status: dropped
+        note: Requires the nginx OpenTelemetry module; no HAProxy-side tracing is wired.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/opentelemetry-operation-name:
+        status: dropped
+        note: Requires the nginx OpenTelemetry module; no HAProxy-side tracing is wired.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/enable-opentracing:
+        status: dropped
+        note: Requires the nginx OpenTracing module; no HAProxy-side tracing is wired.
+        doc: annotation-support
+      nginx.ingress.kubernetes.io/opentracing-trust-incoming-span:
+        status: dropped
+        note: Requires the nginx OpenTracing module; no HAProxy-side tracing is wired.
+        doc: annotation-support

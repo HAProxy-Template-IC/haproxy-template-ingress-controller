@@ -297,7 +297,7 @@ spec:
   {{- end }}
   {{- /* Merge template libraries into config */ -}}
   {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-  {{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "k8sResources" "haproxyConfig" "validationTests" }}
+  {{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "k8sResources" "haproxyConfig" "validationTests" "migrationCoverage" }}
     {{- with index $mergedLibraries $key }}
       {{- $_ := set $config $key . }}
     {{- end }}

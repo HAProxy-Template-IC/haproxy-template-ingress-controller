@@ -169,6 +169,7 @@ Each entry in `$libraryFiles` is either:
 */}}
 {{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
+{{- $migrationCoverage := list }}
 {{- $context := . }}
 {{- /* Each entry is a core path under the parent's libraries/ (base, ssl,
        ingress — always present) or "subchart:<name>" — a conditional subchart
@@ -281,6 +282,16 @@ Each entry in `$libraryFiles` is either:
     {{- end }}
     {{- $_ := unset $library "_helm_load" }}
     {{- $library = include "haptic.filterTests" (list $library $context) | fromYaml }}
+    {{- /* migrationCoverage is a LIST of per-source declarations, one entry
+           per contributing library. mustMergeOverwrite would REPLACE the
+           accumulated list with the current library's, so pull it out and
+           concat instead — every enabled library's declaration survives;
+           a disabled library (enable=false or pruned subchart) contributes
+           nothing. */ -}}
+    {{- with $library.migrationCoverage }}
+      {{- $migrationCoverage = concat $migrationCoverage . }}
+      {{- $_ := unset $library "migrationCoverage" }}
+    {{- end }}
     {{- $merged = mustMergeOverwrite $merged $library }}
   {{- end }}
 {{- end }}
@@ -296,6 +307,17 @@ Each entry in `$libraryFiles` is either:
   {{- end }}
 {{- end }}
 {{- $merged = mustMergeOverwrite $merged $userConfig }}
+
+{{- /* Operator-declared migrationCoverage (controller.config.migrationCoverage)
+       is APPENDED after the library entries — an operator shipping a custom
+       annotation library can declare its coverage without erasing the bundled
+       libraries' declarations. */ -}}
+{{- with $context.Values.controller.config.migrationCoverage }}
+  {{- $migrationCoverage = concat $migrationCoverage . }}
+{{- end }}
+{{- if $migrationCoverage }}
+  {{- $_ := set $merged "migrationCoverage" $migrationCoverage }}
+{{- end }}
 
 {{- /* Strip Scriggo-template comments from templateSnippets in the merged
        output. Comments document each snippet for chart authors but
