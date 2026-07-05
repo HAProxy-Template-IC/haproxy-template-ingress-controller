@@ -603,6 +603,22 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		args = append(args, "--set-string",
 			"controller.config.templatingSettings.extraContext.dumpPodPortAllocations=true")
 	}
+	// Scale tier: TestScale measures controller RSS against a 1 GiB budget
+	// and times convergence at 800+ Ingresses. Two deviations from the
+	// dev-oriented e2e profile make those measurements honest:
+	//   - memory limit 2Gi: the profile's 512Mi limit would OOM-kill the
+	//     controller before the RSS budget could ever be observed — the
+	//     budget must be enforced by the test, not masked by the kubelet.
+	//   - INFO logging: the profile's DEBUG level emits per-resource lines;
+	//     at 800+ resources the log volume itself would distort the timing
+	//     measurements, and production runs INFO.
+	if os.Getenv(scaleEnableEnv) == "1" {
+		args = append(args,
+			"--set", "resources.limits.memory=2Gi",
+			"--set", "controller.logLevel=INFO",
+			"--set", "controller.config.logging.level=INFO",
+		)
+	}
 	cmd := exec.CommandContext(ctx, "helm", args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

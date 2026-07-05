@@ -153,6 +153,22 @@ const echoServerImage = "ealen/echo-server:latest"
 // Cleaned up automatically when the test namespace is deleted in t.Cleanup.
 func NewEchoServerBackend(ctx context.Context, t *testing.T, client klient.Client, namespace string) BackendRef {
 	t.Helper()
+	if err := applyEchoServerBackend(ctx, client, namespace); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if err := waitForServiceEndpointReady(ctx, client, namespace, EchoServerBackend.Service); err != nil {
+		t.Fatalf("echo-server endpoint not ready: %v", err)
+	}
+	return EchoServerBackend
+}
+
+// applyEchoServerBackend creates the echo-server Deployment + Service in the
+// given namespace WITHOUT waiting for endpoint readiness and WITHOUT failing
+// the test directly. Split out of NewEchoServerBackend so bulk seeders (the
+// scale tier deploys one backend per namespace across dozens of namespaces)
+// can fan the creates out first and wait for readiness across all namespaces
+// in a single condition instead of paying a sequential per-namespace wait.
+func applyEchoServerBackend(ctx context.Context, client klient.Client, namespace string) error {
 	ref := EchoServerBackend
 	labels := map[string]string{"app": ref.Service}
 	replicas := int32(1)
@@ -227,7 +243,7 @@ func NewEchoServerBackend(ctx context.Context, t *testing.T, client klient.Clien
 		},
 	}
 	if err := client.Resources(namespace).Create(ctx, deployment); err != nil {
-		t.Fatalf("create echo-server Deployment %s/%s: %v", namespace, ref.Service, err)
+		return fmt.Errorf("create echo-server Deployment %s/%s: %w", namespace, ref.Service, err)
 	}
 
 	svc := &corev1.Service{
@@ -247,13 +263,9 @@ func NewEchoServerBackend(ctx context.Context, t *testing.T, client klient.Clien
 		},
 	}
 	if err := client.Resources(namespace).Create(ctx, svc); err != nil {
-		t.Fatalf("create echo-server Service %s/%s: %v", namespace, ref.Service, err)
+		return fmt.Errorf("create echo-server Service %s/%s: %w", namespace, ref.Service, err)
 	}
-
-	if err := waitForServiceEndpointReady(ctx, client, namespace, ref.Service); err != nil {
-		t.Fatalf("echo-server endpoint not ready: %v", err)
-	}
-	return ref
+	return nil
 }
 
 // waitForServiceEndpointReady blocks until the named Service has at least
@@ -265,20 +277,32 @@ func waitForServiceEndpointReady(ctx context.Context, client klient.Client, name
 
 	return testutil.WaitForConditionWithDescription(ctx, cfg, "service "+namespace+"/"+serviceName+" has ready endpoint",
 		func(ctx context.Context) (bool, error) {
-			var slices discoveryv1.EndpointSliceList
-			if err := client.Resources(namespace).List(ctx, &slices,
-				resources.WithLabelSelector("kubernetes.io/service-name="+serviceName)); err != nil {
+			if err := serviceHasReadyEndpoint(ctx, client, namespace, serviceName); err != nil {
 				return false, err
 			}
-			for _, sl := range slices.Items {
-				for _, ep := range sl.Endpoints {
-					if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
-						return true, nil
-					}
-				}
-			}
-			return false, fmt.Errorf("no ready endpoints in %d slices", len(slices.Items))
+			return true, nil
 		})
+}
+
+// serviceHasReadyEndpoint is the one-shot readiness predicate behind
+// waitForServiceEndpointReady: nil when the Service has at least one ready
+// endpoint, an explanatory error otherwise. Exposed separately so bulk
+// waiters (the scale tier checks dozens of namespaces in one condition) can
+// evaluate it without nesting wait loops.
+func serviceHasReadyEndpoint(ctx context.Context, client klient.Client, namespace, serviceName string) error {
+	var slices discoveryv1.EndpointSliceList
+	if err := client.Resources(namespace).List(ctx, &slices,
+		resources.WithLabelSelector("kubernetes.io/service-name="+serviceName)); err != nil {
+		return err
+	}
+	for _, sl := range slices.Items {
+		for _, ep := range sl.Endpoints {
+			if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("no ready endpoints in %d slices", len(slices.Items))
 }
 
 // IngressSpec captures the minimum a routing test needs to declare.

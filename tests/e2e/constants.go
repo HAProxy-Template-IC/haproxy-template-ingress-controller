@@ -72,6 +72,11 @@ const (
 	// chart's controller.debugPort default).
 	DebugPort = 8080
 
+	// ControllerMetricsPort is the controller's Prometheus /metrics port
+	// (matches the chart's controller.ports.metrics default). The scale
+	// tier scrapes it per-pod via the apiserver pod proxy.
+	ControllerMetricsPort = 9090
+
 	// DebugServiceName is the Service the chart provisions for the
 	// controller's debug + metrics endpoints. Named after the helm release
 	// (single multi-port Service rather than separate -debug/-metrics
