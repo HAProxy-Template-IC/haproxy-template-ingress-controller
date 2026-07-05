@@ -250,6 +250,63 @@ func TestDeleteCRTListFile_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestUpdateCRTListFile_SendsSkipReload pins skip_reload=true on crt-list
+// updates, matching the cert create/update/delete pins: the DPAPI must never
+// self-schedule a reload the deploy pipeline doesn't know about.
+func TestUpdateCRTListFile_SendsSkipReload(t *testing.T) {
+	var capturedQuery string
+	server := newMockServer(t, mockServerConfig{
+		handlers: map[string]http.HandlerFunc{
+			"/services/haproxy/storage/ssl_crt_lists/example_com.crtlist": func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPut {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				capturedQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusOK)
+			},
+		},
+	})
+	defer server.Close()
+
+	client := newTestClient(t, server)
+
+	_, err := client.UpdateCRTListFile(context.Background(), "example.com.crtlist", "/etc/haproxy/ssl/cert.pem\n")
+	require.NoError(t, err)
+
+	assert.Contains(t, capturedQuery, "skip_reload=true",
+		"UpdateCRTListFile must always send skip_reload=true; got query %q", capturedQuery)
+}
+
+// TestDeleteCRTListFile_SendsSkipReload pins skip_reload=true on crt-list
+// deletion, same class as TestDeleteSSLCertificate_SendsSkipReload: a bare
+// DELETE makes the DPAPI schedule its own uncoordinated reload (202), which
+// can collide with the deploy pipeline's coordinated reload.
+func TestDeleteCRTListFile_SendsSkipReload(t *testing.T) {
+	var capturedQuery string
+	server := newMockServer(t, mockServerConfig{
+		handlers: map[string]http.HandlerFunc{
+			"/services/haproxy/storage/ssl_crt_lists/example_com.crtlist": func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				capturedQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusNoContent)
+			},
+		},
+	})
+	defer server.Close()
+
+	client := newTestClient(t, server)
+
+	err := client.DeleteCRTListFile(context.Background(), "example.com.crtlist")
+	require.NoError(t, err)
+
+	assert.Contains(t, capturedQuery, "skip_reload=true",
+		"DeleteCRTListFile must always send skip_reload=true; got query %q", capturedQuery)
+}
+
 func TestDeleteCRTListFile_NotFound(t *testing.T) {
 	server := newMockServer(t, mockServerConfig{
 		handlers: map[string]http.HandlerFunc{

@@ -257,3 +257,37 @@ func TestCreateSSLCertificate_SendsSkipReload(t *testing.T) {
 	assert.Contains(t, capturedQuery, "skip_reload=true",
 		"CreateSSLCertificate must always send skip_reload=true; got query %q", capturedQuery)
 }
+
+// TestDeleteSSLCertificate_SendsSkipReload is the DELETE-side companion to the
+// CREATE/UPDATE pins above and the regression pin for issue #67: without
+// skip_reload, DELETE /storage/ssl_certificates answers 202 and the DPAPI
+// reload agent schedules a second, uncoordinated reload right after the
+// deploy's own force_reload push. That stray reload blacks out the master
+// CLI socket, so runtime fast-path `set server` ops fail mid-rollout while
+// the outgoing worker drains with a stale server list — the captured
+// single-replica rolling-restart 503. Deletes run post-config for files the
+// live config no longer references, so no reload is ever needed here.
+func TestDeleteSSLCertificate_SendsSkipReload(t *testing.T) {
+	var capturedQuery string
+	server := newMockServer(t, mockServerConfig{
+		handlers: map[string]http.HandlerFunc{
+			"/services/haproxy/storage/ssl_certificates/old.pem": func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				capturedQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusNoContent)
+			},
+		},
+	})
+	defer server.Close()
+
+	client := newTestClient(t, server)
+
+	err := client.DeleteSSLCertificate(context.Background(), "old.pem")
+	require.NoError(t, err)
+
+	assert.Contains(t, capturedQuery, "skip_reload=true",
+		"DeleteSSLCertificate must always send skip_reload=true; got query %q", capturedQuery)
+}
