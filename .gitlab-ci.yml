@@ -19,6 +19,9 @@ workflow:
     # duplicate-pipeline suppression below so the nightly jobs can be
     # exercised before the schedule fires.
     - if: $SCHEDULE_KIND == "nightly"
+    # Same exemption for standalone scale-tier runs (SCALE_RUN=1 triggers
+    # only the nightly-scale job on top of the ordinary pipeline).
+    - if: $SCALE_RUN == "1"
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
     - if: $CI_COMMIT_BRANCH
@@ -1907,6 +1910,114 @@ nightly-gateway-churn:
     # is readable through /debug/vars/rendered.
     HAPTIC_E2E_CHURN: "1"
     TEST_RUN_PATTERN: TestGatewayChurn
+
+# Scale/performance tier: the project bar is judging config-apply against
+# 10k+ line configs, and per issue #58's budget doctrine every performance
+# claim must be an asserted budget, not a log line someone has to notice.
+# TestScale seeds SCALE_NAMESPACES(20) x SCALE_INGRESSES_PER_NS(40)
+# Ingresses — each its own chart backend stanza (>=14 lines: backend + guid
+# + default-server + 10 server slots) ≈ 11k+ rendered lines — plus
+# SCALE_GATEWAYS(20) Gateways with one HTTPRoute each, waits for full
+# convergence in one batch condition, spot-checks real routing, then
+# measures and asserts (all env-overridable, rationale in
+# tests/e2e/scale_test.go):
+#   - single-change convergence p95 <= 15s at full scale (THE key number)
+#   - seed -> fully-converged <= 600s
+#   - controller container workingSet <= 1 GiB
+#   - HAProxyCfg compression engaged iff content > threshold (invariant)
+# All measurements land in scale-metrics.json (uploaded always, 30d) so
+# runs are comparable across time. The trend check in `script` compares
+# against the previous main-branch artifact: WARN on >20% regression,
+# FAIL on >50% for change-convergence p95 and controller RSS — a soft
+# corridor that surfaces gradual drift in the job log before it ever
+# trips the hard in-test budgets.
+nightly-scale:
+  extends: .test-e2e-base
+  timeout: 45 minutes
+  rules:
+    - if: $SCHEDULE_KIND == "nightly"
+    # Standalone immediate runs without waiting for the schedule:
+    #   glab api --method POST projects/:id/pipeline \
+    #     -f ref=<branch> -f "variables[][key]=SCALE_RUN" \
+    #     -f "variables[][value]=1"
+    - if: $SCALE_RUN == "1"
+  variables:
+    HAPROXY_VERSION: "3.4"
+    # Opt the tier in: gates TestScale itself AND makes TestMain's helm
+    # install raise the controller memory limit (RSS budget must be
+    # measured, not masked by a 512Mi OOM kill) and pin INFO logging.
+    HAPTIC_E2E_SCALE: "1"
+    TEST_RUN_PATTERN: TestScale
+  script:
+    - make test-e2e
+    - |
+      # Trend check vs the previous nightly-scale run on main. A missing
+      # previous artifact (first run, expired 30d retention, or artifact
+      # from a failed run) downgrades to a skip — the hard budgets inside
+      # TestScale already gated this run's absolute numbers.
+      if ! curl -sf --header "JOB-TOKEN: ${CI_JOB_TOKEN}" -o previous-scale-metrics.json \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/artifacts/main/raw/scale-metrics.json?job=nightly-scale"; then
+        echo "No previous scale-metrics.json artifact on main — skipping trend check."
+        exit 0
+      fi
+      python3 - <<'PYEOF'
+      import json, sys
+
+      cur = json.load(open("scale-metrics.json"))
+      prev = json.load(open("previous-scale-metrics.json"))
+
+      # Hard corridor (job FAILS above +50%): the two metrics whose slow
+      # drift hurts operators most — how long a routine change takes to go
+      # live at scale, and the controller's memory footprint.
+      HARD = {"change_convergence_seconds_p95": 0.50, "controller_rss_bytes": 0.50}
+      # Soft corridor (WARN above +20%): context metrics where a jump is
+      # worth eyes but can also follow legitimate changes (e.g. more
+      # rendered lines after a chart feature, different reload batching).
+      SOFT = {
+          "change_convergence_seconds_median": 0.20,
+          "seed_to_converged_seconds": 0.20,
+          "haproxy_reloads_total_delta": 0.20,
+          "config_lines": 0.20,
+      }
+
+      def ratio(key):
+          p, c = prev.get(key), cur.get(key)
+          if not isinstance(p, (int, float)) or not isinstance(c, (int, float)) or p <= 0:
+              return None
+          return c / p
+
+      failed = False
+      for key, frac in HARD.items():
+          r = ratio(key)
+          if r is None:
+              print(f"trend: {key}: no comparable previous value")
+          elif r > 1 + frac:
+              print(f"TREND FAIL: {key}: {prev[key]} -> {cur[key]} (+{(r - 1) * 100:.0f}% > {frac * 100:.0f}%)")
+              failed = True
+          elif r > 1.20:
+              print(f"TREND WARN: {key}: {prev[key]} -> {cur[key]} (+{(r - 1) * 100:.0f}%)")
+          else:
+              print(f"trend ok: {key}: {prev[key]} -> {cur[key]}")
+      for key, frac in SOFT.items():
+          r = ratio(key)
+          if r is None:
+              print(f"trend: {key}: no comparable previous value")
+          elif r > 1 + frac:
+              print(f"TREND WARN: {key}: {prev[key]} -> {cur[key]} (+{(r - 1) * 100:.0f}%)")
+          else:
+              print(f"trend ok: {key}: {prev[key]} -> {cur[key]}")
+      sys.exit(1 if failed else 0)
+      PYEOF
+  artifacts:
+    # `when: always` (unlike the base's on_failure): the metrics JSON is
+    # the artifact the NEXT run's trend check fetches — it must survive
+    # green runs. debug-logs/ only exists on failure; a missing path is a
+    # warning, not an error.
+    when: always
+    expire_in: 30 days
+    paths:
+      - scale-metrics.json
+      - debug-logs/
 
 nightly-gwapi-canary:
   extends: .test-e2e-base
