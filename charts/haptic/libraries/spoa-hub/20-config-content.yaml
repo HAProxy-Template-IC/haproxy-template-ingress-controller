@@ -89,39 +89,58 @@ templateSnippets:
             resource-neutral here — a future CRD-based routing layer
             that produces mirror filters would write into the same key.
 
-            Why the static floor (issue #47): the SPOA hub sidecar
-            reloads its TOML on file change, but plugin handler state
-            is rebuilt from scratch on every reload — so if the
-            controller emits messages=[] at any point (e.g. during a
-            transient render where no HTTPRoute with a mirror filter
-            is observed, between two conformance subtests, etc.), the
-            mirror plugin loses its handler for "mirror-1". Every
-            in-flight SPOE NOTIFY for `send-spoe-group mirror-1-group`
-            then hits the SPOA hub's "no plugins registered for
-            message" path and gets silently dropped. The conformance
-            suite catches this as ~50% mirror-rate flakiness on
-            `test-gateway-conformance` shards — different subtests
-            failing each run depending on which side of a reload the
-            burst lands on.
+            Why the static floor: two consumers depend on slots
+            [1, mirrorStaticMinSlots] existing unconditionally.
 
-            DO NOT REMOVE THE FLOOR. The chart previously carried a
-            mirror-1..mirror-4 static default that was removed in
-            controller commit 77c760c2 (`skip_reload=true` on aux-file
-            UPDATEs) with the rationale "the floor workaround is no
-            longer needed". That rationale was correct for the haproxy
-            reload-ordering race (race A) but missed that the floor was
-            independently masking the SPOA hub plugin-reload race here
-            (race B). `skip_reload=true` addresses race A only. Until
-            the SPOA hub plugin loader is reworked to never unregister
-            an already-registered message on reload (upstream-plugin
-            work, tracked under #47), the floor is the only thing
-            holding race B closed.
+            1. Capacity contract for libraries that don't feed the
+               dynamic fanout. nginx-ingress's mirror-target
+               annotation (frontend-filters-555-nginx-ingress-mirror)
+               allocates one slot per mirror-target Ingress up to
+               this floor and fail()s beyond it, telling the operator
+               to raise mirrorStaticMinSlots. Its send-spoe-group
+               references need the floor-declared groups in
+               spoe.conf, or `haproxy -c` fails on an unknown group.
+
+            2. Shrink-window mirror continuity (issue #47, spoa-hub
+               "race B"). The hub rebuilds plugin handler state from
+               scratch on every TOML reload, and the hub's TOML
+               reloads on file-watch while HAProxy switches configs
+               at the sync's explicit reload — so when the mirror
+               fanout shrinks, the old HAProxy generation keeps
+               firing `send-spoe-group mirror-N-group` for a window
+               after the hub already dropped mirror-N from its
+               message list. Since spoa-hub v0.7.3 this is loud, not
+               silent: reloads quiesce (in-flight NOTIFYs dispatched
+               before the registry swap complete against the
+               pre-swap plugin generation), and post-swap NOTIFYs
+               for unregistered messages log WARN + increment
+               spoa_messages_unhandled_total{message}. But they are
+               still not SERVED — SPOP has no message-level error
+               frame — so a fanout shrink mid-flight loses those
+               mirrors with a warning (mirrors are best-effort by
+               design). The floor keeps handlers for slots
+               [1, floor] permanently registered, so the common
+               small-fanout case never enters that window at all.
+
+            History: the chart's original mirror-1..mirror-4 static
+            default was removed in controller commit 77c760c2
+            (`skip_reload=true` on aux-file UPDATEs closed the
+            HAProxy reload-ordering race, race A) on the rationale
+            that the floor only masked race A; it was re-added when
+            race B surfaced as ~50% mirror-rate conformance
+            flakiness (hub reloads silently dropping in-flight
+            NOTIFYs). Race B's silent drop is fixed upstream in
+            spoa-hub v0.7.3 (`swap → quiesce → drain → shutdown`),
+            which demoted the floor from "the only thing holding
+            race B closed" to the two roles above.
 
             Routes with > 4 mirrors per rule still extend dynamically
-            below — a 12-mirror route allocates 12 slots — but slots
-            5..N are still exposed to race B. Bump
-            mirrorStaticMinSlots if a real workload regularly exceeds
-            4 mirrors per rule and observes the flake. -#}
+            below — a 12-mirror route allocates 12 slots — and slots
+            above the floor shrink dynamically; mirrors fired into
+            the shrink window on those slots are lost loudly. Bump
+            mirrorStaticMinSlots if a workload regularly exceeds 4
+            mirrors per rule (or 4 mirror-target Ingresses) and
+            spoa_messages_unhandled_total moves. -#}
         {%- if pName == "mirror" -%}
           {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
           {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
@@ -240,13 +259,17 @@ templateSnippets:
 
           Floored at `mirrorStaticMinSlots` (default 4) — see the
           parallel logic in `spoa-hub-config-content` above for the
-          full rationale (issue #47): the SPOA hub plugin loses its
-          handler state on every TOML reload, so any transient render
-          that emits an empty messages list collapses in-flight mirror
-          NOTIFY traffic at the hub. Keeping the haproxy-side SPOE
-          group declarations in sync with the plugin-side floor means
-          haproxy can safely fire `send-spoe-group mirror-N-group` for
-          N in [1, mirrorStaticMinSlots] without depending on the
+          full rationale: the floor is the slot-capacity contract for
+          consumers that don't feed the dynamic fanout (nginx-ingress
+          mirror-target), and it keeps hub-side handlers for slots
+          [1, floor] registered across transient fanout shrinks
+          (issue #47; since spoa-hub v0.7.3 an unregistered message
+          is a loud WARN + spoa_messages_unhandled_total instead of
+          a silent drop — but still not served). Keeping the
+          haproxy-side SPOE group declarations in sync with the
+          plugin-side floor means haproxy can safely fire
+          `send-spoe-group mirror-N-group` for N in
+          [1, mirrorStaticMinSlots] without depending on the
           per-render route observation race. -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() %}
