@@ -282,13 +282,25 @@ templateSnippets:
 
         Failure modes (call fail() and abort the render):
           - portRef is nil or has neither number nor name
-          - portRef.name is set but the Service cannot be found (number cannot be derived without the Service)
-          - portRef.name is set but the Service has no port with that name
-          - Resolved port is <= 0 (defensive: e.g. Service port entry has port: 0)
+          - portRef.name is set but the Service EXISTS and has no port with
+            that name (a typo — fail loudly, see below)
+          - Resolved port is <= 0 while the Service exists (defensive: e.g.
+            Service port entry has port: 0)
 
-        Non-failure: when portRef.number is given and the Service does not exist,
-        the macro succeeds with name="" — the numeric port is trusted without
-        Service validation. Name backfill is best-effort in that case.
+        Non-failure (missing Service — Kubernetes eventual consistency):
+          A reference to a Service that is not in the store never aborts the
+          render. An Ingress may legally be created before the Service it
+          references, and the admission webhook's dry-run render can run
+          before a just-created Service reaches the controller's watch cache
+          (issue #50 — hard-failing here flaked ingress-conformance at
+          admission and, worse, blocked the ENTIRE haproxy.cfg render in the
+          reconcile loop until the Service appeared). Behavior:
+          - portRef.number given: the numeric port is trusted without Service
+            validation; name backfill is best-effort (name="" if unknown).
+          - portRef.name given: resolves to "0 <name>". BackendServers skips
+            endpoints without a resolvable port, so the backend renders with
+            placeholder slots only (503 for this route) and converges on a
+            later reconcile once the Service and its EndpointSlices arrive.
 
         Why fail() not silent fallback:
           The previous fallback-to-80 behavior silently produced unusable HAProxy
@@ -328,6 +340,7 @@ templateSnippets:
 
           var resolvedPort = 0
           var resolvedName = ""
+          var serviceMissing = false
 
           if portNumber > 0 {
             // Number given: trust it. Try to backfill name from the Service for the
@@ -344,32 +357,47 @@ templateSnippets:
             }
           } else if portName != "" {
             // Name given, no number: look up the numeric port from the Service.
-            // The Service MUST exist in this case — we cannot resolve the port number without it.
             var svc = resources.services.GetSingle(namespace, serviceName)
             if svc == nil {
-              fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
-                " not found (needed to resolve port name '" + portName + "')")
-            }
-            var found = false
-            for _, sp := range svc.Spec.Ports {
-              if sp.Name == portName {
-                resolvedPort = toint(sp.Port)
-                resolvedName = portName
-                found = true
-                break
-              }
-            }
-            if !found {
-              // Build a list of the Service's actual port names so the operator
-              // can spot typos at a glance in the controller logs.
-              var available = []any{}
+              // Service not in the store (yet). Kubernetes is eventually
+              // consistent: an Ingress may legally be created before the
+              // Service it references (kubectl apply of a directory has no
+              // ordering guarantee), and the admission webhook's dry-run
+              // render can run before a just-created Service reaches the
+              // controller's watch cache (issue #50 — this exact fail()
+              // flaked the ingress-conformance wildcard test with an
+              // admission denial, and in the reconcile loop it blocked the
+              // entire haproxy.cfg render until the Service appeared).
+              // Tolerate: resolve to port 0 with the requested name.
+              // BackendServers skips endpoints without a resolvable port, so
+              // the backend renders with placeholder slots only (503 for this
+              // route) and converges once the Service arrives. A Service that
+              // EXISTS but lacks the named port still fails below — that is a
+              // real config error (typo), not a propagation race.
+              serviceMissing = true
+              resolvedName = portName
+            } else {
+              var found = false
               for _, sp := range svc.Spec.Ports {
-                available = append(available, sp.Name +
-                  "(" + tostring(toint(sp.Port)) + ")")
+                if sp.Name == portName {
+                  resolvedPort = toint(sp.Port)
+                  resolvedName = portName
+                  found = true
+                  break
+                }
               }
-              fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
-                " has no port named '" + portName + "' (available: [" +
-                join(toStringSlice(available), ", ") + "])")
+              if !found {
+                // Build a list of the Service's actual port names so the operator
+                // can spot typos at a glance in the controller logs.
+                var available = []any{}
+                for _, sp := range svc.Spec.Ports {
+                  available = append(available, sp.Name +
+                    "(" + tostring(toint(sp.Port)) + ")")
+                }
+                fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+                  " has no port named '" + portName + "' (available: [" +
+                  join(toStringSlice(available), ", ") + "])")
+              }
             }
           } else {
             var portRefStr = "nil"
@@ -381,7 +409,7 @@ templateSnippets:
               portRefStr + ")")
           }
 
-          if resolvedPort <= 0 {
+          if resolvedPort <= 0 && !serviceMissing {
             fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
               " port resolution yielded 0 (portRef=" + tostring(portRef) + ")")
           }
@@ -511,6 +539,16 @@ templateSnippets:
             }
             // Note: If multiple ports exist but no name available,
             // we use the service port as fallback.
+
+            if resolvedPort <= 0 {
+              // No resolvable port for this slice: the referenced Service is
+              // not in the store yet (ResolveServicePort returned 0 for a
+              // by-name reference) and this slice doesn't carry the named
+              // port either. An `addr:0` server line would be meaningless —
+              // leave the slots as placeholders and let a later reconcile
+              // converge once the Service arrives.
+              continue
+            }
 
             // Collect addresses from this slice. Filter on the
             // EndpointSlice conditions so endpoints whose pods aren't
