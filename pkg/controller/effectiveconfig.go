@@ -35,7 +35,7 @@ import (
 // CRD event).
 const effectiveResolutionTimeout = 10 * time.Second
 
-// discoveryServedChecker answers "is this plural resource served at this
+// DiscoveryServedChecker answers "is this plural resource served at this
 // group/version?" from live apiserver discovery, memoizing one discovery call
 // per distinct group/version. It doubles as the SchemaFieldChecker for
 // RequiresFields stripping: the same discovery answer carries the Kind for
@@ -52,7 +52,7 @@ const effectiveResolutionTimeout = 10 * time.Second
 // resolution, which the iteration retry loop (or the next CRD event)
 // re-attempts safely. Schema-fetch errors during FieldServed fail the
 // resolution directly (the SchemaFieldChecker contract).
-type discoveryServedChecker struct {
+type DiscoveryServedChecker struct {
 	discovery    discovery.DiscoveryInterface
 	fetcher      schemafetcher.Fetcher
 	ctx          context.Context
@@ -61,8 +61,8 @@ type discoveryServedChecker struct {
 	transientErr error
 }
 
-func newDiscoveryServedChecker(ctx context.Context, d discovery.DiscoveryInterface, fetcher schemafetcher.Fetcher, logger *slog.Logger) *discoveryServedChecker {
-	return &discoveryServedChecker{
+func NewDiscoveryServedChecker(ctx context.Context, d discovery.DiscoveryInterface, fetcher schemafetcher.Fetcher, logger *slog.Logger) *DiscoveryServedChecker {
+	return &DiscoveryServedChecker{
 		discovery: d,
 		fetcher:   fetcher,
 		ctx:       ctx,
@@ -72,7 +72,7 @@ func newDiscoveryServedChecker(ctx context.Context, d discovery.DiscoveryInterfa
 }
 
 // IsServed implements coreconfig.ServedVersionChecker.
-func (c *discoveryServedChecker) IsServed(apiVersion, resources string) bool {
+func (c *DiscoveryServedChecker) IsServed(apiVersion, resources string) bool {
 	_, ok := c.servedKinds(apiVersion)[resources]
 	return ok
 }
@@ -83,7 +83,7 @@ func (c *discoveryServedChecker) IsServed(apiVersion, resources string) bool {
 // error — transient fetch failure or a genuinely missing schema for a
 // resource discovery says is served — fails the resolution rather than
 // silently stripping, mirroring the fail-closed type-bootstrap contract.
-func (c *discoveryServedChecker) FieldServed(apiVersion, resources, fieldPath string) (bool, error) {
+func (c *DiscoveryServedChecker) FieldServed(apiVersion, resources, fieldPath string) (bool, error) {
 	kind, ok := c.servedKinds(apiVersion)[resources]
 	if c.transientErr != nil {
 		return false, c.transientErr
@@ -105,7 +105,7 @@ func (c *discoveryServedChecker) FieldServed(apiVersion, resources, fieldPath st
 // servedKinds returns the plural→Kind map for a group/version, querying
 // discovery on first use and memoizing the answer (including the negative
 // one). Transient errors are recorded in transientErr; see the type comment.
-func (c *discoveryServedChecker) servedKinds(apiVersion string) map[string]string {
+func (c *DiscoveryServedChecker) servedKinds(apiVersion string) map[string]string {
 	served, ok := c.cache[apiVersion]
 	if !ok {
 		served = make(map[string]string)
@@ -132,7 +132,7 @@ func (c *discoveryServedChecker) servedKinds(apiVersion string) map[string]strin
 
 // TransientErr returns the first non-NotFound discovery error observed, or
 // nil when every answer was authoritative.
-func (c *discoveryServedChecker) TransientErr() error {
+func (c *DiscoveryServedChecker) TransientErr() error {
 	return c.transientErr
 }
 
@@ -234,7 +234,7 @@ func resolveEffectiveConfig(ctx context.Context, cfg *coreconfig.Config, k8sClie
 	ctx, cancel := context.WithTimeout(ctx, effectiveResolutionTimeout)
 	defer cancel()
 
-	checker := newDiscoveryServedChecker(ctx, k8sClient.Clientset().Discovery(), fetcher, logger)
+	checker := NewDiscoveryServedChecker(ctx, k8sClient.Clientset().Discovery(), fetcher, logger)
 	effective, resolution, err := coreconfig.ResolveEffective(cfg, checker, checker)
 	if err != nil {
 		return nil, nil, err

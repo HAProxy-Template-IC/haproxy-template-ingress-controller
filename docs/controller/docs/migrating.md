@@ -24,6 +24,51 @@ defaults that most often trip up a migration.
 - You have Helm and cluster access. Step 1 below installs HAPTIC with the migration-specific flags. If HAPTIC is *already* installed, that's fine — it adopts nothing until you point Ingresses at its class; just apply the same flags with `helm upgrade` instead.
 - You can edit Ingress manifests (to change `ingressClassName`) or you accept renaming HAPTIC's class to match — see below.
 
+## Step 0: Check what will change
+
+Before you touch a single Ingress, run `migrate-check` to see exactly how your
+current Ingresses fare under HAPTIC. It reads your Ingresses, classifies every
+source-controller annotation as supported, different, dropped, or blocking, and
+renders each Ingress through HAPTIC's real template pipeline to catch anything
+that would be rejected — so you find the surprises now, not mid-cutover.
+
+The controller image carries the tool and the chart, so a read-only audit of the
+live cluster is a single command (it only lists and reads Ingresses — it changes
+nothing):
+
+```bash
+docker run --rm \
+  -v ~/.kube/config:/kube/config:ro -e KUBECONFIG=/kube/config \
+  registry.gitlab.com/haproxy-haptic/haptic:latest migrate-check
+```
+
+Read the verdict on the first line. Exit code `0` means every checked annotation
+is fully supported; `1` means there are differences or unknown annotations to
+review; `2` means there are blockers — annotations HAPTIC rejects, or Ingresses
+that fail to render — fix those before cutover.
+
+To audit without cluster access — in CI, or against manifests you export with
+`kubectl get ingress -A -o yaml > ingresses.yaml` — point the tool at a directory
+of manifests and a directory of Kubernetes schemas instead:
+
+```bash
+haptic-controller migrate-check \
+  --resources ./manifests --schema-dir ./schemas \
+  --output markdown
+```
+
+Useful flags:
+
+- `-n, --namespace <ns>` — audit only one namespace.
+- `-o, --output text|json|markdown` — `text` (default) is the operator report;
+  `json` feeds a script; `markdown` drops into a migration ticket.
+- `-f, --file <config.yaml>` — classify against a specific HAProxyTemplateConfig
+  instead of the image-embedded chart.
+- `--resources <dir>` — read Ingress manifests from a directory instead of the
+  live cluster.
+- `--schema-dir <dir>` — read resource schemas from a directory instead of the
+  live cluster.
+
 ## The cutover, step by step
 
 1. **Install HAPTIC alongside** your existing controller. Give HAProxy a real

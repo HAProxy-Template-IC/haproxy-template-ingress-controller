@@ -215,32 +215,8 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 	// profiles unit-testable — point --schema-dir at an old-release CRD
 	// bundle and the same code path strips the same features a live
 	// cluster of that vintage would.
-	var specResolution *conversion.SpecResolution
-	var err2 error
-	if dirFetcher != nil {
-		plurals := dirFetcher.PluralsFor()
-		served := func(apiVersion, resources string) bool {
-			_, ok := plurals[apiVersion][resources]
-			return ok
-		}
-		fieldServed := func(apiVersion, resources, fieldPath string) (bool, error) {
-			gvk, ok := plurals[apiVersion][resources]
-			if !ok {
-				// The schema dir doesn't bundle this resource at all —
-				// same leniency as the untyped fall-through everywhere
-				// else offline: don't judge fields we have no schema for.
-				return true, nil
-			}
-			sch, components, err := dirFetcher.Fetch(context.Background(), gvk)
-			if err != nil {
-				return false, fmt.Errorf("loading schema for %s/%s: %w", apiVersion, resources, err)
-			}
-			return schemafetcher.SchemaHasField(sch, components, fieldPath), nil
-		}
-		specResolution, err2 = conversion.ResolveEffectiveSpec(configSpec, served, fieldServed, logger)
-	} else {
-		specResolution, err2 = conversion.ResolveEffectiveSpec(configSpec, nil, nil, logger)
-	}
+	served, fieldServed := dirServedCheckers(dirFetcher)
+	specResolution, err2 := conversion.ResolveEffectiveSpec(configSpec, served, fieldServed, logger)
 	if err2 != nil {
 		return nil, fmt.Errorf("resolving effective config: %w", err2)
 	}
@@ -316,6 +292,40 @@ func printStrippedTests(res *conversion.SpecResolution) {
 	for _, name := range testNames {
 		fmt.Printf("⊘ %s stripped: %s\n", name, res.StrippedTests[name])
 	}
+}
+
+// dirServedCheckers builds the served / fieldServed callbacks for
+// conversion.ResolveEffectiveSpec from a --schema-dir fetcher. With a nil
+// fetcher both callbacks are nil, which ResolveEffectiveSpec treats as
+// "everything served" (the lenient offline fall-through). Shared between
+// the validate and migrate-check CLIs.
+func dirServedCheckers(dirFetcher *schemafetcher.DirFetcher) (
+	served func(apiVersion, resources string) bool,
+	fieldServed func(apiVersion, resources, fieldPath string) (bool, error),
+) {
+	if dirFetcher == nil {
+		return nil, nil
+	}
+	plurals := dirFetcher.PluralsFor()
+	served = func(apiVersion, resources string) bool {
+		_, ok := plurals[apiVersion][resources]
+		return ok
+	}
+	fieldServed = func(apiVersion, resources, fieldPath string) (bool, error) {
+		gvk, ok := plurals[apiVersion][resources]
+		if !ok {
+			// The schema dir doesn't bundle this resource at all —
+			// same leniency as the untyped fall-through everywhere
+			// else offline: don't judge fields we have no schema for.
+			return true, nil
+		}
+		sch, components, err := dirFetcher.Fetch(context.Background(), gvk)
+		if err != nil {
+			return false, fmt.Errorf("loading schema for %s/%s: %w", apiVersion, resources, err)
+		}
+		return schemafetcher.SchemaHasField(sch, components, fieldPath), nil
+	}
+	return served, fieldServed
 }
 
 // runOfflineTypeBootstrap drives the type-bootstrap pipeline against
@@ -560,6 +570,13 @@ func loadConfigFromFile(filePath string) (*v1alpha1.HAProxyTemplateConfigSpec, e
 		return nil, fmt.Errorf("reading file: %w", err)
 	}
 
+	return parseConfigSpec(data)
+}
+
+// parseConfigSpec decodes HAProxyTemplateConfig YAML — either the full
+// Kubernetes resource form or a bare spec — into its spec. Shared between
+// loadConfigFromFile and the migrate-check CLI's in-process chart render.
+func parseConfigSpec(data []byte) (*v1alpha1.HAProxyTemplateConfigSpec, error) {
 	// Parse as Kubernetes resource
 	scheme := runtime.NewScheme()
 	_ = v1alpha1.AddToScheme(scheme)

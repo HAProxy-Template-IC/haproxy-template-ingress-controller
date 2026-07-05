@@ -27,6 +27,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -39,10 +40,12 @@ var rootCmd = &cobra.Command{
 	Short: "HAProxy Template Ingress Controller",
 	Long: `HAProxy Template Ingress Controller - Template-driven HAProxy configuration management.
 
-The controller provides two main commands:
+Commands:
 
-  run      - Run the controller (watches CRDs and manages HAProxy)
-  validate - Validate a HAProxyTemplateConfig with embedded tests
+  run           - Run the controller (watches CRDs and manages HAProxy)
+  validate      - Validate a HAProxyTemplateConfig with embedded tests
+  benchmark     - Measure template render performance
+  migrate-check - Audit another controller's Ingresses before migrating to HAPTIC
 
 Use "haptic-controller [command] --help" for more information about a command.`,
 }
@@ -64,10 +67,21 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(benchmarkCmd)
+	rootCmd.AddCommand(migrateCheckCmd)
 }
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
+		// A command may request a specific exit code (e.g. migrate-check's
+		// 0/1/2 contract). A nil wrapped error means the command already
+		// printed everything the user needs — don't echo an empty line.
+		var coded *exitCodeError
+		if errors.As(err, &coded) {
+			if coded.err != nil {
+				fmt.Fprintln(os.Stderr, coded.err)
+			}
+			os.Exit(coded.code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

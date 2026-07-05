@@ -25,6 +25,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -171,6 +172,34 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 		StatusPatches:  statusPatches,
 		IncludeStats:   includeStats,
 	}, nil
+}
+
+// RenderFixtures renders the full artifact set (haproxy.cfg, maps, general
+// files, SSL certificates, k8sResources) against stores built from the
+// supplied fixtures, merged with the config's validationTests._global
+// fixtures exactly like a validation test run. This is the real render
+// pipeline behind the `migrate-check` CLI's per-resource hard-failure
+// probe: a template fail() or any other render error surfaces as the
+// returned error, unchanged from what admission or reconciliation would
+// hit.
+//
+// The render uses the runner's shared engine and validation paths (callers
+// invoke this sequentially; use separate runners for parallel renders).
+func (r *Runner) RenderFixtures(fixtures map[string][]any) (RenderOutput, error) {
+	httpFixtures := []config.HTTPResourceFixture(nil)
+	if globalTest, hasGlobal := r.config.ValidationTests["_global"]; hasGlobal {
+		fixtures = MergeFixtures(globalTest.Fixtures, fixtures)
+		httpFixtures = globalTest.HTTPFixtures
+	}
+
+	fixtureStores, err := r.CreateStoresFromFixtures(fixtures)
+	if err != nil {
+		return RenderOutput{}, fmt.Errorf("creating fixture stores: %w", err)
+	}
+
+	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(httpFixtures, r.logger), r.logger)
+
+	return r.renderWithStores(r.engineTemplate, fixtureStores, r.validationPaths, httpStore, nil, nil)
 }
 
 // mergeTestExtraContext folds a per-test extraContext map into the rendering

@@ -25,16 +25,19 @@ Modify this package when:
 
 ```
 cmd/controller/
-├── main.go              # Cobra root command + init wiring (registers run, validate, benchmark)
-├── run.go               # `run` subcommand (controller daemon)
-├── validate.go          # `validate` subcommand (CLI for embedded tests)
-├── benchmark.go         # `benchmark` subcommand entry point
-├── benchmark_render.go  # benchmark: render-only path
-├── benchmark_output.go  # benchmark output formatting
-├── config.go            # `config view` subcommand + CRD loading helpers shared by run/validate/benchmark
-├── shared.go            # Shared flag definitions and bootstrap helpers
-├── version.go           # `version` subcommand (registers itself in init())
-└── CLAUDE.md            # This file
+├── main.go                    # Cobra root command + init wiring (registers run, validate, benchmark, migrate-check)
+├── run.go                     # `run` subcommand (controller daemon)
+├── validate.go                # `validate` subcommand (CLI for embedded tests)
+├── benchmark.go               # `benchmark` subcommand entry point
+├── benchmark_render.go        # benchmark: render-only path
+├── benchmark_output.go        # benchmark output formatting
+├── migratecheck.go            # `migrate-check` subcommand orchestration
+├── migratecheck_sources.go    # migrate-check input sources (live cluster + manifest dir)
+├── chartrender.go             # in-process Helm chart render (embedded-chart config source)
+├── config.go                  # `config view` subcommand + CRD loading helpers shared by run/validate/benchmark
+├── shared.go                  # Shared flag definitions and bootstrap helpers
+├── version.go                 # `version` subcommand (registers itself in init())
+└── CLAUDE.md                  # This file
 ```
 
 `config.go` and `version.go` register their cobra subcommands via their own `init()` functions, so they don't appear in `main.go`'s `init()` block — grep for `rootCmd.AddCommand` to find every wire-up site.
@@ -52,6 +55,18 @@ CLI tool for validating HAProxyTemplateConfig CRDs with embedded validation test
 ### `benchmark` — Render Performance (benchmark*.go)
 
 Renders the templates in a HAProxyTemplateConfig repeatedly against fixture data and reports timings. Useful for spotting template regressions before they hit reconciliation.
+
+### `migrate-check` — Migration Audit (migratecheck*.go, chartrender.go)
+
+Audits another ingress controller's Ingresses against HAPTIC before a cutover. Data-driven from `spec.migrationCoverage` (declared per source by the template libraries) — **no source controller or annotation name appears in Go** (RULE #1). The one hardcoded resource is the `networking.k8s.io/v1` Ingress kind the tool exists to audit (the operational-identity exception, see `findIngressResourceKey`).
+
+Three input pairs, each with a live default and an offline override:
+
+- **Config**: image-embedded Helm chart rendered in-process via the helm Go SDK with every `controller.templateLibraries.*` enabled (`chartrender.go`); `-f <file>` reads a HAProxyTemplateConfig instead. Chart resolves `--chart` → `$HAPTIC_CHART_DIR` → `/usr/share/haptic/chart` (the Dockerfile `COPY charts/haptic` target).
+- **Schemas**: live apiserver via the cluster fetcher; `--schema-dir` reads a directory (reuses `validate.go`'s `dirServedCheckers` + `runOfflineTypeBootstrap`).
+- **Ingresses**: live cluster across all namespaces (`-n` narrows); `--resources <dir>` reads manifests offline.
+
+Hard failures come from the **real** render pipeline (`testrunner.Runner.RenderFixtures`), never a Go re-implementation — a template `fail()` on an Ingress is a blocker. Classification (`pkg/controller/migratecheck`) is a pure component: it groups Ingresses by each source's `detect` rules and buckets each annotation as supported/different/dropped/fails/unknown. Exit codes: `0` clean, `1` differences/unknowns, `2` blockers (or the check itself failed — surfaced via `exitCodeError` in main.go). Offline integration test: `migratecheck_test.go` against `testdata/migratecheck/`.
 
 ### `config` — Inspect Live HAProxy Config (config.go)
 
