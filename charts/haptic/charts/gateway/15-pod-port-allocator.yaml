@@ -212,17 +212,23 @@ templateSnippets:
   # bytes: only the snippet's `{%- if … %}` predicate runs, which is
   # one map dig + string compare per render — effectively free.
   #
-  # The flag exists for ONE thing: chart-validation tests at
-  # `tests/15-pod-port-allocator.yaml`. Those tests need to assert
-  # the allocator's output without depending on phase-4-and-later
-  # consumers (which transform the allocation into binds). The
-  # debug snippet runs inside `render_glob "frontend-extra-*"`
-  # specifically so the comments appear in haproxy.cfg, where the
-  # test's `contains` assertions can pattern-match them.
+  # The flag exists for TWO consumers, both tests:
+  #   * chart-validation tests at `tests/15-pod-port-allocator.yaml`,
+  #     which assert the allocator's output without depending on
+  #     phase-4-and-later consumers (which transform the allocation
+  #     into binds). The debug snippet runs inside `render_glob
+  #     "frontend-extra-*"` specifically so the comments appear in
+  #     haproxy.cfg, where the test's `contains` assertions can
+  #     pattern-match them.
+  #   * the churn/soak e2e tier (`tests/e2e/gateway_churn_test.go`,
+  #     issue #64), whose TestMain helm-installs with the flag set and
+  #     reads the dump through the controller's /debug/vars/rendered
+  #     to assert zero cross-wiring under sustained parallel churn.
   #
   # If you ever delete this debug emitter, also delete the
-  # `dumpPodPortAllocations` flag and replace the chart tests with
-  # ones that assert phase-4 bind lines directly.
+  # `dumpPodPortAllocations` flag, replace the chart tests with
+  # ones that assert phase-4 bind lines directly, and rework the
+  # churn tier's cross-wiring assertion.
   frontend-extra-099-gateway-pod-port-debug:
     requires: [gateways]
     template: |

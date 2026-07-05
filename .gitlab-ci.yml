@@ -1824,7 +1824,7 @@ test-gateway-conformance:
 # =============================================================================
 #
 # The nightly scheduled pipeline (cron on main, sets SCHEDULE_KIND=nightly)
-# serves three purposes:
+# serves four purposes:
 #   1. Heartbeat — on scheduled pipelines `rules:changes` is always true, so
 #      the ordinary full stack (unit, integration, e2e matrix, conformance
 #      shards) runs even through merge-quiet weeks and environment bit-rot
@@ -1833,7 +1833,10 @@ test-gateway-conformance:
 #   2. Live old-release Gateway API matrix (nightly-gwapi-matrix): the
 #      runtime-version-detection contract against REAL old CRD releases —
 #      the live counterpart of the offline schemas-ga-* harness.
-#   3. Upstream canary (nightly-gwapi-canary): conformance from gateway-api's
+#   3. Churn/soak tier (nightly-gateway-churn): sustained parallel Gateway
+#      create/delete against a live cluster — the only load shape that
+#      reproduced the issue-#58 allocator cross-wiring/oscillation bugs.
+#   4. Upstream canary (nightly-gwapi-canary): conformance from gateway-api's
 #      main branch, so the next release's breakage arrives months before the
 #      Renovate bump MR.
 #
@@ -1866,6 +1869,30 @@ nightly-gwapi-matrix:
     # controller pod restarts.
     HAPTIC_E2E_GWAPI_VERSION: $GWAPI_RELEASE
     TEST_RUN_PATTERN: TestGatewayAPIReleaseMatrix
+
+# Churn/soak tier (issue #64, spun out of #58 item 8): sustained parallel
+# Gateway create/delete against a live kind cluster. The worst bugs of the
+# gateway-api v1.6.0 campaign — the pod-port allocator's read-back collision
+# lock-in and its ~50-Service-flips/second oscillation (see the allocator
+# history in charts/haptic/charts/gateway/15-pod-port-allocator.yaml) — only
+# appeared under sustained parallel churn that MR pipelines never generate.
+# TestGatewayChurn runs 6 worker goroutines churning Gateways+HTTPRoutes for
+# 5 minutes against untouched survivor Gateways, asserting zero pod-port
+# cross-wiring (via the allocator debug dump), zero sustained Service-update
+# oscillation, full convergence afterwards, and idle quiescence (which would
+# also have caught the #63 transitionTime status churn).
+nightly-gateway-churn:
+  extends: .test-e2e-base
+  timeout: 30 minutes
+  rules:
+    - if: $SCHEDULE_KIND == "nightly"
+  variables:
+    HAPROXY_VERSION: "3.4"
+    # Opt the tier in: gates the test itself AND makes TestMain's helm
+    # install set extraContext.dumpPodPortAllocations so the allocator dump
+    # is readable through /debug/vars/rendered.
+    HAPTIC_E2E_CHURN: "1"
+    TEST_RUN_PATTERN: TestGatewayChurn
 
 nightly-gwapi-canary:
   extends: .test-e2e-base

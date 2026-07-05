@@ -588,6 +588,21 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	if spoaTag := os.Getenv("SPOA_TAG"); spoaTag != "" {
 		args = append(args, "--set", "spoaHub.image.tag="+spoaTag)
 	}
+	// Churn tier (issue #64): expose the Gateway pod-port allocator's
+	// assignments as `# gw-pod-port:` comment lines in the rendered config
+	// so TestGatewayChurn can assert zero cross-wiring through the
+	// `rendered` introspection var. The flag only gates debug-comment
+	// emission (see charts/haptic/charts/gateway/15-pod-port-allocator.yaml);
+	// ordinary e2e runs never set it, matching production. --set-string keeps
+	// the value a YAML string — the chart snippet compares against "true".
+	// The value path is controller.config.templatingSettings: the chart's
+	// haproxytemplateconfig.yaml deep-copies `.Values.controller.config`
+	// into the CR spec (a controller.templatingSettings sibling would be
+	// silently ignored).
+	if os.Getenv(churnEnableEnv) == "1" {
+		args = append(args, "--set-string",
+			"controller.config.templatingSettings.extraContext.dumpPodPortAllocations=true")
+	}
 	cmd := exec.CommandContext(ctx, "helm", args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
