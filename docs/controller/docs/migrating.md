@@ -39,8 +39,12 @@ nothing):
 ```bash
 docker run --rm \
   -v ~/.kube/config:/kube/config:ro -e KUBECONFIG=/kube/config \
-  registry.gitlab.com/haproxy-haptic/haptic:latest migrate-check
+  registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4 migrate-check
 ```
+
+The image tag pairs a HAPTIC version with an HAProxy version; `migrate-check`
+behaves the same across HAProxy versions, so any published tag works — pick the
+one matching the version you plan to run.
 
 Read the verdict on the first line. Exit code `0` means every checked annotation
 is fully supported; `1` means there are differences or unknown annotations to
