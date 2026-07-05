@@ -1252,6 +1252,147 @@ validationTests:
         target: rendering_error
         pattern: "https-gui\\(8443\\)"
 
+  test-ingress-named-port-service-not-yet-created:
+    description: |
+      Regression test for issue #50 (ingress-conformance wildcard flake).
+      An Ingress referencing a Service by port NAME while that Service is
+      not in the store MUST still render: Kubernetes is eventually
+      consistent — the Ingress may legally be created before its Service,
+      and the admission webhook's dry-run render can run before a
+      just-created Service reaches the controller's watch cache. The old
+      hard fail() denied the Ingress at admission ("ResolveServicePort:
+      Service ... not found (needed to resolve port name 'http')") and
+      blocked the entire haproxy.cfg render in the reconcile loop. Expected
+      degraded output: the backend and its map entry exist with
+      placeholder-only server slots (503 for this route) until a later
+      reconcile converges.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: wildcard-host
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bar.example.com
+                http:
+                  paths:
+                    - path: /echo
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: foo-bar-com
+                          port:
+                            name: http
+    assertions:
+      - type: haproxy_valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend default_wildcard-host_svc_foo-bar-com_http"
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "bar.example.com/echo/ BACKEND:default_wildcard-host_svc_foo-bar-com_http"
+
+      # Only unroutable placeholder slots — nothing to route to yet.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 192\\.0\\.2\\.1:1 .*disabled"
+
+      # The unresolved port must never leak into a server line as ":0".
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_[0-9]+ \\S+:0"
+
+  test-ingress-named-port-service-missing-slice-resolution:
+    description: |
+      Companion to test-ingress-named-port-service-not-yet-created: the
+      Service is still missing from the store, but its EndpointSlices
+      already arrived (watch events per resource type are independently
+      ordered). The named port MUST resolve from the slice's own ports
+      list, producing real server lines (svc-fast). A slice that does NOT
+      carry the named port (svc-slow) must yield placeholder-only slots —
+      never an "addr:0" server line.
+    fixtures:
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: svc-fast-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: svc-fast
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.9"]
+              conditions: {ready: true, serving: true, terminating: false}
+              targetRef: {kind: Pod, name: fast-pod}
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: svc-slow-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: svc-slow
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.10"]
+              conditions: {ready: true, serving: true, terminating: false}
+              targetRef: {kind: Pod, name: slow-pod}
+          ports:
+            - name: metrics
+              port: 9090
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: race
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: race.example.com
+                http:
+                  paths:
+                    - path: /fast
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-fast
+                          port:
+                            name: http
+                    - path: /slow
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-slow
+                          port:
+                            name: http
+    assertions:
+      - type: haproxy_valid
+
+      # Slice carries port "http" → real server despite the missing Service.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10\\.0\\.0\\.9:8080 .*enabled"
+
+      # Slice lacks port "http" → endpoint skipped, placeholder slots only.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "10\\.0\\.0\\.10"
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_[0-9]+ \\S+:0"
+
   test-ingress-default-backend-rules-less:
     description: "Ingress with only spec.defaultBackend (no rules) emits a \"/\" catch-all entry in path-prefix.map pointing at the default backend pool, and the backend pool itself gets generated. Routes any request that didn't match a more-specific rule to that backend."
     fixtures:
