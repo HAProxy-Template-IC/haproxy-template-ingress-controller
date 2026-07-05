@@ -189,6 +189,25 @@ The Ingress library automatically propagates LoadBalancer addresses to Ingress `
 
 Addresses are discovered from the controller's LoadBalancer Service. Once an address is available, each Ingress processed by the controller receives its `status.loadBalancer.ingress` entries. If deployment fails, the status is cleared to empty.
 
+### Degraded backend Events
+
+An Ingress backend that references its Service port **by name** renders in a degraded shape while that Service is absent from the controller's store: the backend gets placeholder-only server slots and serves 503 until the Service appears (see the [base library's service port resolution](base.md) for why the render doesn't fail). That's correct during a propagation race — but a permanent Service-name typo looks exactly the same.
+
+To make the difference visible, the controller emits a `Warning` Event (reason `BackendUnresolved`) on each affected Ingress, in the Ingress's namespace. The Event names every unresolvable Service and port name, so a typo shows up in:
+
+```bash
+kubectl describe ingress <name>
+kubectl get events --field-selector reason=BackendUnresolved -A
+```
+
+The Event exists only while the backend stays placeholder-only:
+
+- When the Service appears (or an EndpointSlice that carries the named port arrives), the Event is deleted on the next reconcile.
+- Backends that already found real endpoints through an EndpointSlice never get an Event, even if the Service itself hasn't reached the store yet.
+- By-number port references are trusted without Service validation and never produce this Event. Gateway API routes carry the equivalent signal in their own status instead (`ResolvedRefs: False`, reason `BackendNotFound`).
+
+The Event's `metadata.creationTimestamp` tells you when the controller first observed the degradation. Kubernetes expires Events after the apiserver's `--event-ttl` (default 1 hour); the controller periodically refreshes the Event while the degradation persists, but the refresh rides on reconciliations — in a cluster with no resource changes at all for over an hour, the Event can lapse until the next reconcile re-creates it.
+
 ## Watched Resources
 
 | Resource | API Version | Purpose |

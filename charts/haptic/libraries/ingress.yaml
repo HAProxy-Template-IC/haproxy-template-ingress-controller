@@ -620,6 +620,141 @@ templateSnippets:
         {%- end -%}
       {%- end %}
 
+k8sResources:
+  # Warning Events for Ingresses whose by-name backend reference rendered
+  # placeholder-only slots because the Service is absent (issue #66).
+  #
+  # networking.k8s.io/v1 Ingress status has no conditions field (only
+  # loadBalancer), so — unlike Gateway API routes, which get
+  # ResolvedRefs=False/BackendNotFound on their parent status — there is no
+  # status surface to carry "your backend Service doesn't exist". Without a
+  # signal, a permanent Service-name typo is indistinguishable from a
+  # propagation race and serves 503 silently forever (the degraded render is
+  # deliberate, see util-service-port-resolution). A core/v1 Event on the
+  # Ingress is the operator-visible surface: it shows up in
+  # `kubectl describe ingress` and `kubectl get events`.
+  #
+  # Mechanics:
+  #   - BackendServers (base.yaml, step 5b) records every by-name reference
+  #     that ended up placeholder-only under a shared
+  #     "degradedBackendRef:<ns>/<service>/<portName>" key during the
+  #     haproxy.cfg render. k8sResources templates render strictly after the
+  #     config render, so the keys are complete when this template runs.
+  #   - This template walks the watched Ingresses, probes each by-name
+  #     backend reference against those keys, and emits one Event per
+  #     affected Ingress (one message listing all of its degraded refs).
+  #   - The Event's name is deterministic, so the resource applier SSAs the
+  #     same object every cycle and orphan-prunes it as soon as the Service
+  #     appears (brief propagation races thus produce a short-lived Event
+  #     that cleans itself up — no flapping conditions).
+  #   - The apiserver expires Events after --event-ttl (default 1h).
+  #     lastTimestamp is therefore bucketed to 20-minute steps: while the
+  #     degradation persists, any reconcile in a new bucket changes the
+  #     payload, which re-applies the Event and refreshes its TTL — without
+  #     churning the applier on every render. metadata.creationTimestamp
+  #     carries the first-observed time for free.
+  ingress-degraded-backend-events:
+    template: |
+      {%%
+        var docs = []any{}
+        for _, ingress := range resources.ingresses.List() {
+          var ns = ingress.Metadata.Namespace
+          var name = ingress.Metadata.Name
+          if ns == "" || name == "" {
+            continue
+          }
+
+          // Collect this Ingress's by-name service-port references that the
+          // config render recorded as degraded. Spec walk mirrors
+          // GenerateIngressBackends: every rule path plus defaultBackend.
+          var degraded = []any{}
+          var seen = map[string]bool{}
+          var refs = []any{}
+          for _, rule := range ingress.Spec.Rules {
+            for _, path := range rule.Http.Paths {
+              refs = append(refs, map[string]any{
+                "service":  path.Backend.Service.Name,
+                "portName": path.Backend.Service.Port.Name,
+              })
+            }
+          }
+          refs = append(refs, map[string]any{
+            "service":  ingress.Spec.DefaultBackend.Service.Name,
+            "portName": ingress.Spec.DefaultBackend.Service.Port.Name,
+          })
+          for _, rawRef := range refs {
+            var ref = rawRef.(map[string]any)
+            var svcName = tostring(ref["service"])
+            var pn = tostring(ref["portName"])
+            if svcName == "" || pn == "" {
+              continue
+            }
+            var key = ns + "/" + svcName + "/" + pn
+            if seen[key] {
+              continue
+            }
+            seen[key] = true
+            if shared.Get("degradedBackendRef:" + key) != nil {
+              degraded = append(degraded, "Service '" + ns + "/" + svcName +
+                "' (port name '" + pn + "')")
+            }
+          }
+          if len(degraded) == 0 {
+            continue
+          }
+
+          // Deterministic per-Ingress Event name, bounded to the 253-char
+          // limit (Ingress names may themselves be up to 253 chars).
+          var evName = name + ".backend-unresolved"
+          if len(evName) > 253 {
+            // Hash-only overflow name: a byte-truncated prefix can end on a
+            // '.' separator, making the next label start with '-' (invalid
+            // DNS-1123) and failing every SSA of the Event thereafter.
+            evName = "backend-unresolved-" + sha256(name)[:32]
+          }
+
+          // 20-minute lastTimestamp bucket: stable within a bucket (no
+          // apply churn), changes across buckets (refreshes the apiserver's
+          // event TTL while the degradation persists).
+          var bucket = now().UTC().Unix() / 1200 * 1200
+          var lastSeen = unixTime(bucket, 0).UTC().Format("2006-01-02T15:04:05Z07:00")
+
+          var resource = map[string]any{
+            "apiVersion": "v1",
+            "kind":       "Event",
+            "metadata": map[string]any{
+              "name":      evName,
+              "namespace": ns,
+            },
+            "involvedObject": map[string]any{
+              "apiVersion": "networking.k8s.io/v1",
+              "kind":       "Ingress",
+              "namespace":  ns,
+              "name":       name,
+              "uid":        ingress.Metadata.Uid,
+            },
+            "type":   "Warning",
+            "reason": "BackendUnresolved",
+            "message": "Backend " + join(toStringSlice(degraded), ", ") +
+              " not found: a by-name port reference resolves only through the" +
+              " Service, so the backend has no endpoints and serves 503 until" +
+              " the Service appears. If it never appears, check the Ingress" +
+              " backend for a Service-name typo.",
+            "lastTimestamp": lastSeen,
+            "source": map[string]any{
+              "component": "haptic",
+            },
+          }
+          var rendered, _ = marshalYAML(resource)
+          docs = append(docs, rendered)
+        }
+      %%}
+      {%- for i, doc := range docs -%}
+      {%- if i > 0 %}{{ "---" }}
+      {% end %}
+      {{ doc }}
+      {%- end %}
+
 validationTests:
   test-ingress-duplicate-backend-different-ports:
     description: Ingress with multiple paths to same service but different ports (tests deduplication)
@@ -1265,7 +1400,10 @@ validationTests:
       blocked the entire haproxy.cfg render in the reconcile loop. Expected
       degraded output: the backend and its map entry exist with
       placeholder-only server slots (503 for this route) until a later
-      reconcile converges.
+      reconcile converges. Because the degraded state is placeholder-only,
+      the ingress-degraded-backend-events k8sResources template MUST emit a
+      Warning Event on the owning Ingress (issue #66) so a permanent
+      Service-name typo isn't a silent 503.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1273,6 +1411,7 @@ validationTests:
           metadata:
             name: wildcard-host
             namespace: default
+            uid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
           spec:
             ingressClassName: haproxy
             rules:
@@ -1307,6 +1446,41 @@ validationTests:
         target: haproxy.cfg
         pattern: "server SRV_[0-9]+ \\S+:0"
 
+      # Operator visibility (issue #66): the placeholder-only degradation
+      # emits exactly one Warning Event on the owning Ingress.
+      - type: match_count
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "kind: Event"
+        expected: "1"
+      # lastTimestamp carries a (bucketed) RFC3339 value so kubectl's
+      # LAST SEEN column works and re-applies refresh the apiserver's
+      # event TTL while the degradation persists.
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: 'lastTimestamp: .?2[0-9]{3}-[0-9]{2}-[0-9]{2}T'
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "reason: BackendUnresolved"
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "type: Warning"
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "name: wildcard-host\\.backend-unresolved"
+      # involvedObject carries the Ingress identity including uid — kubectl
+      # describe matches events by involvedObject.uid field selector.
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "kind: Ingress"
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "uid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+      # Message names the unresolvable Service (token-only pattern so the
+      # assertion is independent of the YAML marshaller's scalar quoting).
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "default/foo-bar-com"
+
   test-ingress-named-port-service-missing-slice-resolution:
     description: |
       Companion to test-ingress-named-port-service-not-yet-created: the
@@ -1315,7 +1489,9 @@ validationTests:
       ordered). The named port MUST resolve from the slice's own ports
       list, producing real server lines (svc-fast). A slice that does NOT
       carry the named port (svc-slow) must yield placeholder-only slots —
-      never an "addr:0" server line.
+      never an "addr:0" server line. Degraded-backend Events (issue #66)
+      must be precise: svc-fast serves traffic, so it gets NO Event;
+      svc-slow is placeholder-only, so it does.
     fixtures:
       endpoints:
         - apiVersion: discovery.k8s.io/v1
@@ -1392,6 +1568,145 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_[0-9]+ \\S+:0"
+
+      # svc-slow rendered placeholder-only → Warning Event names it.
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "default/svc-slow"
+      # svc-fast resolved real servers through its slice → no false alarm.
+      - type: not_contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "default/svc-fast"
+
+  test-ingress-degraded-backend-event-multiple:
+    description: |
+      Two Ingresses degraded at once (issue #66) emit one Event each, as
+      separate YAML documents. Pins the multi-doc separator: a malformed
+      document stream would fail the production render's k8sResources
+      parsing for every reconcile with two or more degraded Ingresses.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: first-broken
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: first.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: first-ghost
+                          port:
+                            name: http
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: second-broken
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: second.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: second-ghost
+                          port:
+                            name: http
+    assertions:
+      - type: haproxy_valid
+      - type: match_count
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "kind: Event"
+        expected: "2"
+      - type: match_count
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "(?m)^---$"
+        expected: "1"
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "default/first-ghost"
+      - type: contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "default/second-ghost"
+
+  test-ingress-degraded-backend-event-negatives:
+    description: |
+      The degraded-backend Event (issue #66) must stay silent in every
+      non-degraded shape: (1) a by-name reference whose Service exists
+      resolves normally; (2) a by-NUMBER reference to an absent Service is
+      trusted as-is (ResolveServicePort never degrades it to port 0), so it
+      is out of the Event's by-name scope. Neither may produce an Event.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: healthy-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 8080
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: by-name-resolved
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: ok.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: healthy-svc
+                          port:
+                            name: http
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: by-number-absent
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: num.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ghost-svc
+                          port:
+                            number: 8080
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend default_by-name-resolved_svc_healthy-svc_http"
+      # No Event object at all — neither shape is a by-name degradation.
+      - type: not_contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "kind: Event"
+      - type: not_contains
+        target: "k8s:ingress-degraded-backend-events"
+        pattern: "BackendUnresolved"
 
   test-ingress-default-backend-rules-less:
     description: "Ingress with only spec.defaultBackend (no rules) emits a \"/\" catch-all entry in path-prefix.map pointing at the default backend pool, and the backend pool itself gets generated. Routes any request that didn't match a more-specific rule to that backend."

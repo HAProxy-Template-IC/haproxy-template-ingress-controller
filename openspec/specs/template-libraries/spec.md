@@ -432,6 +432,35 @@ The ResolveServicePort macro SHALL be the single source of truth for translating
 - **WHEN** a backend references a Service port by number and the Service is absent from the store
 - **THEN** resolution SHALL succeed with the numeric port and an empty port name.
 
+### Requirement: Degraded Backend Visibility
+
+A degraded by-name resolution that leaves a backend placeholder-only (the Service is absent AND no EndpointSlice carries the named port, so the backend serves 503) SHALL be operator-visible on the owning resource — a permanent Service-name typo must not be distinguishable from a propagation race only by silence. BackendServers SHALL record each such reference in the render's shared context under a `degradedBackendRef:<namespace>/<service>/<portName>` key; it SHALL NOT record references that produced at least one real server (an EndpointSlice can resolve the named port before the Service is cached). Because networking.k8s.io/v1 Ingress status has no conditions field, the ingress library SHALL surface the signal as a core/v1 Warning Event per affected Ingress, emitted via `k8sResources` (template `ingress-degraded-backend-events`): reason `BackendUnresolved`, `involvedObject` carrying the Ingress's apiVersion, kind, namespace, name, and uid (kubectl describe matches events by involvedObject.uid), a message naming every degraded Service/portName reference of that Ingress, and a deterministic Event name so Server-Side Apply updates one object per Ingress and orphan pruning deletes it as soon as the reference resolves. The Event's lastTimestamp SHALL be time-bucketed (not per-render) so ongoing degradation periodically re-applies the Event — refreshing the apiserver's event TTL — without churning the applier on every reconcile. Gateway API routes already carry the spec-correct signal (`ResolvedRefs: False` with reason `BackendNotFound` on the route parent status) when a backendRef Service is absent; no Event SHALL be emitted for them.
+
+#### Scenario: Placeholder-only by-name backend emits a Warning Event
+
+- **WHEN** an Ingress references a Service port by name, the Service is absent from the store, and no EndpointSlice resolves the named port
+- **THEN** the `ingress-degraded-backend-events` template SHALL emit one core/v1 Event with type Warning and reason BackendUnresolved in the Ingress's namespace, whose involvedObject identifies the Ingress (including uid) and whose message names the unresolvable Service and port name.
+
+#### Scenario: EndpointSlice-resolved backend emits no Event
+
+- **WHEN** the Service is absent but an EndpointSlice already carries the named port and yields real servers
+- **THEN** no Event SHALL be emitted for that reference.
+
+#### Scenario: Resolved or by-number references emit no Event
+
+- **WHEN** the referenced Service exists, or the reference is by port number
+- **THEN** no Event SHALL be emitted (by-number references are trusted without Service validation and never degrade to port 0).
+
+#### Scenario: Event disappears when the Service arrives
+
+- **WHEN** a previously degraded reference resolves on a later reconcile
+- **THEN** the Event object SHALL vanish from the rendered k8sResources set, and the resource applier's render-diff orphan pruning SHALL delete it from the cluster.
+
+#### Scenario: HTTPRoute with an absent backend Service carries BackendNotFound
+
+- **WHEN** an HTTPRoute's backendRef names a Service absent from the store
+- **THEN** the route's parent status SHALL contain `ResolvedRefs: False` with reason `BackendNotFound` naming the missing Service.
+
 ### Requirement: Config-Driven Reloads Without Server State File
 
 The chart SHALL NOT emit `server-state-file` or `load-server-state-from-file`, and the HAProxy pod's reload command SHALL be a plain master-socket reload with no server-state dump. HAProxy only restores a server's address from state via the init-addr resolution chain, which runs solely for FQDN and DNS-SRV servers; pod servers are IP literals, so the parsed config address always wins on reload — the state machinery preserved nothing for pod addresses while its port restoration could mint stale-slot hybrids. Endpoint correctness across reloads SHALL rely on the deploy pipeline rendering the current endpoints into every pushed config, plus the runtime fast path for reload-free convergence.
