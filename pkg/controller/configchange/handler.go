@@ -90,6 +90,30 @@ type ConfigChangeHandler struct {
 	debounceTimer    timers.SafeTimer
 	pendingConfig    *coreconfig.Config
 
+	// Async-validation single-flight state, owned by the Start loop goroutine
+	// (validationDone is the only cross-goroutine member and is a channel).
+	//
+	// The validation scatter-gather can take tens of seconds (the
+	// validationtests validator runs the config's entire embedded suite), so
+	// running it inline in the event loop starves every other subscribed
+	// event for its whole duration. The decisive victim is BecameLeaderEvent:
+	// its state replay is what hands the last validated config to leader-only
+	// components (notably the config-publisher, which subscribes only on
+	// leadership). Observed in issue #55: a leadership acquisition landed
+	// while a post-reinitialization validation was in flight, the replay sat
+	// queued behind the blocked loop, and the publisher dropped every
+	// HAProxyCfg publish with "missing cached state" until validation
+	// finished (~15s) — blowing the e2e convergence budget.
+	//
+	// Validation therefore runs in a spawned goroutine while the loop keeps
+	// dispatching side events. Single-flight keeps ConfigValidatedEvents
+	// strictly ordered: at most one validation is in flight, and a parsed
+	// event arriving meanwhile waits in queuedParsed (latest wins — a
+	// superseded config is never validated).
+	validationInFlight bool
+	queuedParsed       *events.ConfigParsedEvent
+	validationDone     chan struct{}
+
 	// Mutex for initialConfigVersion and reinitializationEnabled
 	mu sync.RWMutex
 
@@ -174,6 +198,9 @@ func NewConfigChangeHandler(
 		configReplayer:   leadership.NewStateReplayer[*events.ConfigValidatedEvent](eventBus),
 		debounceInterval: debounceInterval,
 		pendingConfig:    nil,
+		// Capacity 1 suffices: single-flight means at most one validation
+		// goroutine has a completion to signal, so the send never blocks.
+		validationDone: make(chan struct{}, 1),
 	}
 }
 
@@ -249,17 +276,39 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			h.logger.Info("ConfigChangeHandler shutting down", "reason", ctx.Err())
+			// Join an in-flight validation before returning: the goroutine
+			// publishes and caches on completion, and must not outlive the
+			// handler's Start (the canceled ctx makes the scatter-gather
+			// return promptly, so this drain is bounded).
+			if h.validationInFlight {
+				<-h.validationDone
+				h.validationInFlight = false
+			}
 			h.cleanup()
 			return nil
 		case <-h.debounceTimer.Chan():
 			h.debounceTimer.Fired()
 			h.sendPendingConfig()
+		case <-h.validationDone:
+			h.validationInFlight = false
+			if next := h.queuedParsed; next != nil {
+				h.queuedParsed = nil
+				// Skip ahead to the newest parsed event already sitting on
+				// the channel: select may deliver validationDone before a
+				// newer ConfigParsedEvent, and validating the parked config
+				// as-is would spend a full multi-second run on a superseded
+				// version.
+				h.startOrQueueValidation(ctx, h.coalesceToLatestParsed(next))
+			}
 		case event := <-h.eventChan:
-			// ConfigParsedEvent is dispatched here (it coalesces internally);
-			// every other handled type goes through the single dispatchSideEvent
-			// switch, shared with coalesceToLatestParsed so the two can't drift.
+			// ConfigParsedEvent is coalesced against anything newer already
+			// queued, then validated asynchronously (single-flight) so this
+			// loop stays responsive to side events during the multi-second
+			// scatter-gather; every other handled type goes through the single
+			// dispatchSideEvent switch, shared with coalesceToLatestParsed so
+			// the two can't drift.
 			if parsed, ok := event.(*events.ConfigParsedEvent); ok {
-				h.handleConfigParsed(ctx, parsed)
+				h.startOrQueueValidation(ctx, h.coalesceToLatestParsed(parsed))
 			} else {
 				h.dispatchSideEvent(event)
 			}
@@ -273,15 +322,41 @@ func (h *ConfigChangeHandler) cleanup() {
 	h.pendingConfig = nil
 }
 
-// handleConfigParsed coordinates validation for a parsed config using scatter-gather pattern.
-func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *events.ConfigParsedEvent) {
-	// Coalesce superseded config loads. Validation is now multi-second (the
-	// validationtests validator runs the full embedded suite), so if the operator
-	// made several edits in quick succession, newer ConfigParsedEvents may already
-	// be queued. Validating a config that's already been replaced wastes that run
-	// and delays the config the operator actually wants — skip ahead to the latest.
-	event = h.coalesceToLatestParsed(event)
+// startOrQueueValidation runs handleConfigParsed for the given parsed config in
+// a spawned goroutine, or — when a validation is already in flight — parks it in
+// queuedParsed for the loop to start on completion (latest wins: a config
+// superseded while parked is never validated).
+//
+// Loop-owned: must only be called from the Start goroutine. The spawned
+// goroutine signals validationDone when finished; the loop clears
+// validationInFlight and starts the parked config, so at most one validation
+// runs at a time and ConfigValidatedEvents keep their publish order.
+func (h *ConfigChangeHandler) startOrQueueValidation(ctx context.Context, event *events.ConfigParsedEvent) {
+	if h.validationInFlight {
+		if h.queuedParsed != nil {
+			h.logger.Debug("Coalescing superseded config-parsed event",
+				"skipped_version", h.queuedParsed.Version, "newer_version", event.Version)
+		}
+		h.queuedParsed = event
+		return
+	}
+	h.validationInFlight = true
+	go func() {
+		// Buffered cap-1 send: single-flight guarantees at most one
+		// outstanding completion, so this never blocks even when the loop
+		// has already exited on shutdown.
+		defer func() { h.validationDone <- struct{}{} }()
+		h.handleConfigParsed(ctx, event)
+	}()
+}
 
+// handleConfigParsed coordinates validation for a parsed config using the
+// scatter-gather pattern. It blocks for the full validation (up to
+// configValidationTimeout), so it runs OFF the event loop, in the goroutine
+// spawned by startOrQueueValidation. Everything it touches is safe off-loop:
+// effectiveResolver is read under h.mu, configReplayer is internally locked,
+// and EventBus Publish/Request are thread-safe.
+func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *events.ConfigParsedEvent) {
 	// Resolve the effective config BEFORE validation so the validators judge
 	// exactly what a reinitialized iteration would load. A resolution failure
 	// (a required resource with no served version) is reported like any other
@@ -385,6 +460,9 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 // none are lost — this is the same set the Start() loop handles. Because the
 // drain is non-blocking, the common case (no pending events) returns the
 // original event immediately with no added latency.
+//
+// Loop-owned: must only be called from the Start goroutine (it reads
+// h.eventChan and dispatches side events, both loop-exclusive).
 func (h *ConfigChangeHandler) coalesceToLatestParsed(latest *events.ConfigParsedEvent) *events.ConfigParsedEvent {
 	for {
 		select {
