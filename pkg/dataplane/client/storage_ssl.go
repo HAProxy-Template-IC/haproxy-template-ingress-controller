@@ -269,35 +269,48 @@ func (c *DataplaneClient) UpdateSSLCertificate(ctx context.Context, name, conten
 	return checkUpdateResponse(resp, "SSL certificate", name)
 }
 
-// DeleteSSLCertificate deletes an SSL certificate by name.
-// The name parameter can use dots (e.g., "example.com.pem"), which will be sanitized
-// automatically before calling the API.
-// Works with all HAProxy DataPlane API versions (v3.0+).
+// DeleteSSLCertificate deletes an SSL certificate by name, always sending
+// skip_reload=true. This closes the last gap in the skip_reload family
+// (UPDATE got it in 77c760c2, CREATE followed): without it, the DPAPI
+// answers 202 and its reload agent schedules a SECOND, uncoordinated reload
+// shortly after the deploy's own force_reload config push (deletes run
+// post-config, so the deleted cert is already unreferenced by the live
+// config and running workers keep their in-memory copy — nothing needs a
+// reload). That stray reload blacks out the master CLI socket mid-rollout,
+// which is exactly the window issue #67 captured: endpoint fast-path
+// `set server` pushes fail against the re-executing master while the
+// outgoing worker drains with a stale server list, turning a routine
+// single-replica rollout into a 503.
+//
+// The name parameter can use dots (e.g., "example.com.pem"), which will be
+// sanitized automatically before calling the API. Works with all HAProxy
+// DataPlane API versions (v3.0+).
 func (c *DataplaneClient) DeleteSSLCertificate(ctx context.Context, name string) error {
 	// Sanitize the name for the API (e.g., "example.com.pem" -> "example_com.pem")
 	sanitizedName := SanitizeSSLCertName(name)
 
+	skipReload := true
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
+			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, &v33.DeleteStorageSSLCertificateParams{SkipReload: &skipReload})
 		},
 		V32: func(c *v32.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
+			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, &v32.DeleteStorageSSLCertificateParams{SkipReload: &skipReload})
 		},
 		V31: func(c *v31.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
+			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, &v31.DeleteStorageSSLCertificateParams{SkipReload: &skipReload})
 		},
 		V30: func(c *v30.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
+			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, &v30.DeleteStorageSSLCertificateParams{SkipReload: &skipReload})
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
+			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, &v32ee.DeleteStorageSSLCertificateParams{SkipReload: &skipReload})
 		},
 		V31EE: func(c *v31ee.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
+			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, &v31ee.DeleteStorageSSLCertificateParams{SkipReload: &skipReload})
 		},
 		V30EE: func(c *v30ee.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, nil)
+			return c.DeleteStorageSSLCertificate(ctx, sanitizedName, &v30ee.DeleteStorageSSLCertificateParams{SkipReload: &skipReload})
 		},
 	})
 

@@ -107,10 +107,15 @@ func (c *DataplaneClient) CreateCRTListFile(ctx context.Context, name, content s
 	return checkCreateResponse(resp, "crt-list file", name)
 }
 
-// UpdateCRTListFile updates an existing crt-list file using text/plain content-type.
-// Returns the reload ID if a reload was triggered (empty string if not) and any error.
+// UpdateCRTListFile updates an existing crt-list file using text/plain content-type,
+// always sending skip_reload=true (see DeleteSSLCertificate for the rationale —
+// the deploy pipeline's config push is the only coordinated reload trigger).
+// Returns the reload ID if a reload was triggered (always empty under
+// skip_reload=true) and any error.
 // Note: The Dataplane API requires text/plain or application/json for UPDATE operations,
-// while CREATE operations accept multipart/form-data.
+// while CREATE operations accept multipart/form-data. The CREATE endpoint declares
+// no skip_reload parameter at all, which is why production crt-lists are stored
+// as general files instead (see paths.go).
 // The name parameter can use dots (e.g., "example.com.crtlist"), which will be sanitized
 // automatically before calling the API.
 // CRT-list storage is only available in HAProxy DataPlane API v3.2+.
@@ -121,15 +126,16 @@ func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content s
 	// Use text/plain content-type for UPDATE (API v3 requirement)
 	body := bytes.NewReader([]byte(content))
 
+	skipReload := true
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCrtListFileWithBody(ctx, sanitizedName, &v33.ReplaceStorageSSLCrtListFileParams{}, "text/plain", body)
+			return c.ReplaceStorageSSLCrtListFileWithBody(ctx, sanitizedName, &v33.ReplaceStorageSSLCrtListFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V32: func(c *v32.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCrtListFileWithBody(ctx, sanitizedName, &v32.ReplaceStorageSSLCrtListFileParams{}, "text/plain", body)
+			return c.ReplaceStorageSSLCrtListFileWithBody(ctx, sanitizedName, &v32.ReplaceStorageSSLCrtListFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCrtListFileWithBody(ctx, sanitizedName, &v32ee.ReplaceStorageSSLCrtListFileParams{}, "text/plain", body)
+			return c.ReplaceStorageSSLCrtListFileWithBody(ctx, sanitizedName, &v32ee.ReplaceStorageSSLCrtListFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 	}, requireCrtList)
 
@@ -141,7 +147,11 @@ func (c *DataplaneClient) UpdateCRTListFile(ctx context.Context, name, content s
 	return checkUpdateResponse(resp, "crt-list file", name)
 }
 
-// DeleteCRTListFile deletes a crt-list file by name.
+// DeleteCRTListFile deletes a crt-list file by name, always sending
+// skip_reload=true — without it, the DPAPI schedules its own uncoordinated
+// reload (see DeleteSSLCertificate for the full rationale; deletion only
+// runs for files the live config no longer references, so no reload is
+// needed to apply it).
 // The name parameter can use dots (e.g., "example.com.crtlist"), which will be sanitized
 // automatically before calling the API.
 // CRT-list storage is only available in HAProxy DataPlane API v3.2+.
@@ -149,15 +159,16 @@ func (c *DataplaneClient) DeleteCRTListFile(ctx context.Context, name string) er
 	// Sanitize the name for the API (e.g., "example.com.crtlist" -> "example_com.crtlist")
 	sanitizedName := SanitizeStorageName(name)
 
+	skipReload := true
 	resp, err := c.DispatchWithCapability(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCrtListFile(ctx, sanitizedName, &v33.DeleteStorageSSLCrtListFileParams{})
+			return c.DeleteStorageSSLCrtListFile(ctx, sanitizedName, &v33.DeleteStorageSSLCrtListFileParams{SkipReload: &skipReload})
 		},
 		V32: func(c *v32.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCrtListFile(ctx, sanitizedName, &v32.DeleteStorageSSLCrtListFileParams{})
+			return c.DeleteStorageSSLCrtListFile(ctx, sanitizedName, &v32.DeleteStorageSSLCrtListFileParams{SkipReload: &skipReload})
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
-			return c.DeleteStorageSSLCrtListFile(ctx, sanitizedName, &v32ee.DeleteStorageSSLCrtListFileParams{})
+			return c.DeleteStorageSSLCrtListFile(ctx, sanitizedName, &v32ee.DeleteStorageSSLCrtListFileParams{SkipReload: &skipReload})
 		},
 	}, requireCrtList)
 
