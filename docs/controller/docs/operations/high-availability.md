@@ -95,7 +95,7 @@ Deploy with 2-3 replicas (default Helm configuration):
 
 ```bash
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0 --set replicaCount=2
+  --version 0.2.0-alpha.1 --set replicaCount=2
 ```
 
 ### Scaling

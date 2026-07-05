@@ -14,7 +14,7 @@ commonAnnotations: {}
 # config.kubernetes.io/managed-by: helm
 
 # HAProxy version - selects the major.minor series for both controller and HAProxy pod images
-# Controller image suffix: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.4
+# Controller image suffix: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
 # HAProxy pod image: haproxytech/haproxy-debian:<patch from haproxyPatchVersions[<series>]>
 # Must match a version built by CI (see versions.env for supported versions).
 # Not Renovate-managed: cutting over to a new series is an operational decision

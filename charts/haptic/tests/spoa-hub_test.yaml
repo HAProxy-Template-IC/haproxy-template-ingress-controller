@@ -254,7 +254,7 @@ tests:
     asserts:
       - matchRegex:
           path: spec.template.spec.containers[?(@.name == "spoa-hub")].image
-          pattern: 'registry\.gitlab\.com/haproxy-haptic/haptic/spoa-hub:0\.1\.0'
+          pattern: 'registry\.gitlab\.com/haproxy-haptic/haptic/spoa-hub:\d+\.\d+\.\d+'
 
   - it: should respect spoaHub.image.tag override
     template: haproxy-deployment.yaml

@@ -20,7 +20,7 @@ The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local dev
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
 
 # Install the chart - SSL works out of the box
-helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
+helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1
 ```
 
 !!! note

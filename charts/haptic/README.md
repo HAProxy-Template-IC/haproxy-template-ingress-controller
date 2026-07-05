@@ -14,14 +14,14 @@ Full documentation: see [`docs/`](./docs/index.md) in this directory.
 
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0
+  --version 0.2.0-alpha.1
 ```
 
 With custom values:
 
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0 \
+  --version 0.2.0-alpha.1 \
   -f my-values.yaml
 ```
 
@@ -89,7 +89,7 @@ Each library contributes entries under `watchedResources`, `templateSnippets`, `
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0 -f my-values.yaml
+  --version 0.2.0-alpha.1 -f my-values.yaml
 ```
 
 CRDs are not upgraded by `helm upgrade` — see [`docs/operations/`](./docs/operations/) if the CRD schema changed between versions.
