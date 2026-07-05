@@ -507,3 +507,24 @@ THEN every test in the suite SHALL also verify its output is valid HAProxy confi
 
 - **WHEN** a test's _helm_skip_test expression does not evaluate to "true"
 - **THEN** the merged output SHALL contain the test without the _helm_skip_test key.
+
+### Requirement: Migration Coverage Declarations
+
+Each vendor annotation library (nginx-ingress, haproxy-ingress, haproxytech) SHALL declare a top-level `migrationCoverage` list documenting how it handles the annotations of the source controller it emulates. Each list entry SHALL carry a `source` name, a `detect` block (the source's conventional `ingressClasses` and `annotationPrefixes`), and an `annotations` map keyed by full annotation key. Each annotation entry SHALL carry a `status` of `supported`, `different`, `dropped`, or `fails`, a plain-language `note`, and an optional `doc` anchor. The declarations are opaque data consumed by migration tooling; they SHALL NOT influence rendering or reconciliation. The merge loader SHALL concatenate the `migrationCoverage` lists of all ENABLED libraries into the rendered HAProxyTemplateConfig spec (like templateSnippets), and a DISABLED library SHALL contribute nothing. The CRD SHALL expose `spec.migrationCoverage` as structured data (a list keyed by `source`), and the core config loader SHALL carry it through unchanged.
+
+The declared coverage SHALL be kept in lock-step with the templates two ways, enforced at lint time: every annotation key a library's templates READ (as a quoted string literal, plus the CORS suffixes read via the shared macro) SHALL be declared, and every declared non-`dropped` annotation SHALL be read by some template (`dropped` documents annotations that are intentionally inert or unread). The per-source annotation-support tables in the migration guide SHALL be GENERATED from the coverage data between marker comments, and a lint check SHALL fail if regeneration would change the guide.
+
+#### Scenario: Enabled library contributes its migration coverage
+
+- **WHEN** the nginx-ingress library is enabled
+- **THEN** the rendered HAProxyTemplateConfig `spec.migrationCoverage` SHALL contain an entry with `source: ingress-nginx` whose `detect.annotationPrefixes` includes `nginx.ingress.kubernetes.io/`.
+
+#### Scenario: Disabled library contributes nothing
+
+- **WHEN** all three vendor annotation libraries are disabled
+- **THEN** the rendered HAProxyTemplateConfig SHALL NOT contain a `spec.migrationCoverage` field.
+
+#### Scenario: Coverage drift fails the lint gate
+
+- **WHEN** a library template reads an annotation key that its `migrationCoverage` does not declare, or declares a non-`dropped` annotation no template reads
+- **THEN** the migration-coverage drift check SHALL fail with an actionable message naming the offending keys.

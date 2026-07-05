@@ -2306,3 +2306,227 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_6 "
+
+# ============================================================================
+# Migration Coverage
+# ============================================================================
+#
+# Machine-readable classification of every haproxy.org/* annotation this
+# library reads (plus known-unsupported ones), consumed by
+# `haptic-controller migrate-check` and by the generated annotation-support
+# tables in docs/controller/docs/migrating.md. The source controller is
+# haproxytech/kubernetes-ingress.
+#
+# Status vocabulary: supported | different | dropped | fails (see the
+# nginx-ingress coverage file header and scripts/check-migration-coverage.sh
+# for the drift-pinning contract). NOTE: haproxytech/kubernetes-ingress also
+# reads many of these on Service and ConfigMap resources; HAPTIC only reads
+# Ingress annotations, so Service/ConfigMap-level configuration does not carry
+# over.
+migrationCoverage:
+  - source: haproxytech
+    detect:
+      ingressClasses: ["haproxy"]
+      annotationPrefixes: ["haproxy.org/"]
+    annotations:
+      # --- Timeouts ---
+      haproxy.org/timeout-server:
+        status: supported
+        note: Mapped to HAProxy's timeout server.
+      haproxy.org/timeout-connect:
+        status: supported
+        note: Mapped to HAProxy's timeout connect.
+      haproxy.org/timeout-queue:
+        status: supported
+        note: Mapped to HAProxy's timeout queue.
+      haproxy.org/timeout-tunnel:
+        status: supported
+        note: Mapped to HAProxy's timeout tunnel.
+      haproxy.org/timeout-check:
+        status: supported
+        note: Mapped to HAProxy's timeout check.
+      # --- Load balancing / limits ---
+      haproxy.org/load-balance:
+        status: supported
+        note: roundrobin, static-rr, leastconn, first, source and random, plus parameterized uri/url_param/hdr/rdp-cookie, are accepted; other values fail the render.
+      haproxy.org/pod-maxconn:
+        status: different
+        note: Divided across the number of ready HAProxy pods (quantized to a power of two) rather than applied per-server verbatim; must be a positive integer.
+        doc: annotation-support
+      # --- Health checks ---
+      haproxy.org/check:
+        status: supported
+        note: '"true"/"false" toggle health checks; other values fail the render.'
+      haproxy.org/check-http:
+        status: supported
+        note: Emits option httpchk (a bare path becomes GET <path>).
+      haproxy.org/check-interval:
+        status: supported
+        note: Sets the check interval (inter); ignored when check is "false".
+      # --- Rate limiting ---
+      haproxy.org/rate-limit-requests:
+        status: supported
+        note: Deny threshold that enables rate limiting; exceeding it returns the rate-limit-status-code.
+      haproxy.org/rate-limit-period:
+        status: supported
+        note: Stick-table window (default 1s).
+      haproxy.org/rate-limit-size:
+        status: supported
+        note: Stick-table size (default 100k).
+      haproxy.org/rate-limit-status-code:
+        status: supported
+        note: Deny status (default 403).
+      haproxy.org/rate-limit-whitelist:
+        status: supported
+        note: Comma-separated CIDRs never rate-limited; invalid CIDRs fail the render.
+      # --- Redirects ---
+      haproxy.org/ssl-redirect:
+        status: supported
+        note: '"true" redirects HTTP to HTTPS; the default can be flipped via extraContext.ssl_redirect_default.'
+      haproxy.org/ssl-redirect-code:
+        status: supported
+        note: Redirect status code (default 302).
+      haproxy.org/ssl-redirect-port:
+        status: supported
+        note: Redirects to HTTPS on an explicit port, preserving the request URI, via a reload-free map.
+      haproxy.org/request-redirect:
+        status: supported
+        note: Host-scoped redirect to a URL via a reload-free map.
+      haproxy.org/request-redirect-code:
+        status: different
+        note: Default 302; an invalid code fails the render.
+        doc: annotation-support
+      # --- Headers / rewrite / logging ---
+      haproxy.org/set-host:
+        status: supported
+        note: Overrides the upstream Host header via a reload-free map.
+      haproxy.org/request-set-header:
+        status: supported
+        note: Newline-separated "name value" pairs set on requests.
+      haproxy.org/response-set-header:
+        status: supported
+        note: Newline-separated "name value" pairs set on responses.
+      haproxy.org/path-rewrite:
+        status: supported
+        note: A single "<from> <to>" pair maps to replace-path; a bare value rewrites the whole path.
+      haproxy.org/src-ip-header:
+        status: different
+        note: Rewrites the source IP from the named header (set-src), but only for rules with an explicit host.
+        doc: annotation-support
+      haproxy.org/request-capture:
+        status: supported
+        note: Newline-separated fetch expressions captured into the log.
+      haproxy.org/request-capture-len:
+        status: supported
+        note: Capture length for request-capture (default 128).
+      # --- Session persistence ---
+      haproxy.org/cookie-persistence:
+        status: supported
+        note: Dynamic cookie-based stickiness.
+      haproxy.org/cookie-persistence-no-dynamic:
+        status: different
+        note: Static (non-dynamic) cookie stickiness; setting it together with cookie-persistence fails the render.
+        doc: annotation-support
+      # --- Basic authentication ---
+      haproxy.org/auth-type:
+        status: different
+        note: Only "basic-auth" is supported; other values fail the render (note the value differs from ingress-nginx's "basic").
+        doc: annotation-support
+      haproxy.org/auth-secret:
+        status: different
+        note: Secret format is one key per username with a base64(hash) value — different from ingress-nginx's htpasswd; a missing Secret disables auth for the route until it appears.
+        doc: annotation-support
+      haproxy.org/auth-realm:
+        status: different
+        note: Default "RestrictedArea"; a realm containing spaces fails the render unless extraContext.sanitize_auth_realm is set (DataPlane API limitation).
+        doc: annotation-support
+      # --- Backend TLS / server options ---
+      haproxy.org/send-proxy-protocol:
+        status: different
+        note: proxy, proxy-v1, proxy-v2, proxy-v2-ssl and proxy-v2-ssl-cn map to the matching send-proxy flags; any other value is silently ignored.
+        doc: annotation-support
+      haproxy.org/server-ssl:
+        status: supported
+        note: '"true" enables TLS to the upstream (ssl alpn h2,http/1.1 verify none).'
+      haproxy.org/server-proto:
+        status: supported
+        note: Sets the upstream ALPN/proto (e.g. h2).
+      haproxy.org/server-ca:
+        status: different
+        note: Verifies the upstream certificate against the Secret's ca.crt; a missing Secret or missing ca.crt renders a warning comment and silently skips verification instead of failing.
+        doc: annotation-support
+      haproxy.org/server-crt:
+        status: different
+        note: Presents a client certificate to the upstream from the Secret; a missing Secret or missing tls.crt/tls.key renders a warning comment and skips the client cert instead of failing.
+        doc: annotation-support
+      haproxy.org/scale-server-slots:
+        status: supported
+        note: Overrides the pre-allocated server-slot count (positive integer; other values fail the render).
+      haproxy.org/backend-config-snippet:
+        status: supported
+        note: Raw HAProxy directives injected into the backend section.
+      # --- SSL passthrough ---
+      haproxy.org/ssl-passthrough:
+        status: supported
+        note: SNI-based TCP passthrough; HTTP-level annotations don't apply to passthrough hosts.
+      # --- forwarded-for ---
+      haproxy.org/forwarded-for:
+        status: supported
+        note: '"true" enables option forwardfor; "false" disables it; other values fail the render.'
+      # --- Access control (canonical + deprecated aliases) ---
+      haproxy.org/allow-list:
+        status: different
+        note: Host-scoped source-IP allowlist — only gates rules with an explicit host; invalid CIDRs fail the render.
+        doc: annotation-support
+      haproxy.org/deny-list:
+        status: different
+        note: Host-scoped source-IP denylist — only gates rules with an explicit host; invalid CIDRs fail the render.
+        doc: annotation-support
+      haproxy.org/whitelist:
+        status: different
+        note: Deprecated alias of allow-list, honoured only when allow-list is absent; host-scoped.
+        doc: annotation-support
+      haproxy.org/blacklist:
+        status: different
+        note: Deprecated alias of deny-list, honoured only when deny-list is absent; host-scoped.
+        doc: annotation-support
+      # --- CORS (haproxytech's own implementation) ---
+      haproxy.org/cors-enable:
+        status: different
+        note: Header-injection only — OPTIONS preflights are forwarded to the backend rather than answered by HAProxy, so the backend must accept OPTIONS.
+        doc: annotation-support
+      haproxy.org/cors-allow-origin:
+        status: different
+        note: Emitted verbatim into Access-Control-Allow-Origin; combining "*" with cors-allow-credentials "true" fails the render.
+        doc: annotation-support
+      haproxy.org/cors-allow-methods:
+        status: different
+        note: Default is "GET, POST" (narrower than ingress-nginx's default method set).
+        doc: annotation-support
+      haproxy.org/cors-allow-headers:
+        status: supported
+        note: Allowed request headers for preflight responses.
+      haproxy.org/cors-allow-credentials:
+        status: different
+        note: Only emitted when "true"; combining it with cors-allow-origin "*" fails the render.
+        doc: annotation-support
+      haproxy.org/cors-max-age:
+        status: supported
+        note: Default 0 (no Max-Age header emitted).
+      # --- Not carried over ---
+      haproxy.org/timeout-client:
+        status: dropped
+        note: A frontend-level timeout owned by HAPTIC's shared frontend, not settable per Ingress.
+        doc: annotation-support
+      haproxy.org/timeout-http-request:
+        status: dropped
+        note: A frontend-level timeout owned by HAPTIC's shared frontend, not settable per Ingress.
+        doc: annotation-support
+      haproxy.org/timeout-http-keep-alive:
+        status: dropped
+        note: A frontend-level timeout owned by HAPTIC's shared frontend, not settable per Ingress.
+        doc: annotation-support
+      haproxy.org/standalone-backend:
+        status: dropped
+        note: Not implemented; HAPTIC always shares the backend model.
+        doc: annotation-support

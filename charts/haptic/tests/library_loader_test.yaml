@@ -139,3 +139,91 @@ tests:
       - equal:
           path: spec.templatingSettings.extraContext.nginxHttpRedirectCode
           value: "301"
+
+  # migrationCoverage: each enabled vendor annotation library contributes one
+  # source declaration (merged like templateSnippets); disabled libraries
+  # contribute nothing. Drift between the declared coverage and the annotations
+  # the templates actually read is pinned by scripts/check-migration-coverage.sh.
+  - it: should not emit migrationCoverage when no vendor annotation library is enabled
+    set:
+      controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.haproxytech.enabled: false
+    asserts:
+      - notExists:
+          path: spec.migrationCoverage
+
+  - it: should contribute one migrationCoverage source per enabled library
+    set:
+      controller.templateLibraries.nginxIngress.enabled: true
+      controller.templateLibraries.haproxyIngress.enabled: true
+      controller.templateLibraries.haproxytech.enabled: true
+    asserts:
+      - lengthEqual:
+          path: spec.migrationCoverage
+          count: 3
+
+  - it: should declare the ingress-nginx source shape when only nginx-ingress is enabled
+    set:
+      controller.templateLibraries.nginxIngress.enabled: true
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.haproxytech.enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.migrationCoverage
+          count: 1
+      - equal:
+          path: spec.migrationCoverage[0].source
+          value: ingress-nginx
+      - equal:
+          path: spec.migrationCoverage[0].detect.ingressClasses
+          value:
+            - nginx
+      - equal:
+          path: spec.migrationCoverage[0].detect.annotationPrefixes
+          value:
+            - nginx.ingress.kubernetes.io/
+      - equal:
+          path: spec.migrationCoverage[0].annotations["nginx.ingress.kubernetes.io/server-snippet"].status
+          value: dropped
+      - equal:
+          path: spec.migrationCoverage[0].annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"].status
+          value: different
+
+  - it: should declare the haproxy-ingress source shape when only haproxy-ingress is enabled
+    set:
+      controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.haproxyIngress.enabled: true
+      controller.templateLibraries.haproxytech.enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.migrationCoverage
+          count: 1
+      - equal:
+          path: spec.migrationCoverage[0].source
+          value: haproxy-ingress
+      - equal:
+          path: spec.migrationCoverage[0].annotations["haproxy-ingress.github.io/auth-tls-strict"].status
+          value: dropped
+
+  - it: should declare the haproxytech source shape when only haproxytech is enabled
+    set:
+      controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.haproxytech.enabled: true
+    asserts:
+      - lengthEqual:
+          path: spec.migrationCoverage
+          count: 1
+      - equal:
+          path: spec.migrationCoverage[0].source
+          value: haproxytech
+      - equal:
+          path: spec.migrationCoverage[0].detect.annotationPrefixes
+          value:
+            - haproxy.org/
+      # Reconciled discrepancy: the hand-written docs called `whitelist` a
+      # deprecated no-op, but the template reads it as an allow-list alias.
+      - equal:
+          path: spec.migrationCoverage[0].annotations["haproxy.org/whitelist"].status
+          value: different

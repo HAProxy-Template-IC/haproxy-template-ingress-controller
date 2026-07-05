@@ -108,6 +108,52 @@ type Config struct {
 	// These tests are used both in CLI validation and webhook admission validation.
 	// The map key is the test name, which must be unique.
 	ValidationTests map[string]ValidationTest `yaml:"validation_tests"`
+
+	// MigrationCoverage declares, per migration source (another ingress
+	// controller whose annotations a template library emulates), how each
+	// of the source's annotations is handled. Opaque data for tooling
+	// (e.g. `migrate-check`); it never influences rendering.
+	MigrationCoverage []MigrationCoverageSource `yaml:"migration_coverage,omitempty"`
+}
+
+// MigrationCoverageSource documents one migration source: how to detect
+// resources managed by that source controller and how each of its
+// annotations is handled by the template libraries.
+type MigrationCoverageSource struct {
+	// Source names the migration source controller. Unique across the list.
+	Source string `yaml:"source"`
+
+	// Detect describes how to recognise resources managed by the source.
+	Detect MigrationDetect `yaml:"detect,omitempty"`
+
+	// Annotations maps each full annotation key of the source controller
+	// to its migration classification.
+	Annotations map[string]AnnotationCoverage `yaml:"annotations,omitempty"`
+}
+
+// MigrationDetect describes how migration tooling recognises resources
+// managed by a migration source controller.
+type MigrationDetect struct {
+	// IngressClasses lists spec.ingressClassName values the source
+	// controller conventionally serves (e.g. "nginx").
+	IngressClasses []string `yaml:"ingressClasses,omitempty"`
+
+	// AnnotationPrefixes lists annotation key prefixes owned by the
+	// source controller (e.g. "nginx.ingress.kubernetes.io/").
+	AnnotationPrefixes []string `yaml:"annotationPrefixes,omitempty"`
+}
+
+// AnnotationCoverage classifies how one source-controller annotation is
+// handled by the template libraries.
+type AnnotationCoverage struct {
+	// Status is one of: supported, different, dropped, fails.
+	Status string `yaml:"status"`
+
+	// Note explains the classification in plain language.
+	Note string `yaml:"note,omitempty"`
+
+	// Doc is an anchor into docs/controller/docs/migrating.md.
+	Doc string `yaml:"doc,omitempty"`
 }
 
 // ValidationTest defines a single validation test with fixtures and assertions.

@@ -1,0 +1,348 @@
+# haproxy-ingress library — migration coverage declaration.
+#
+# Machine-readable classification of every haproxy-ingress.github.io/*
+# annotation this library reads (plus known-unsupported ones), consumed by
+# `haptic-controller migrate-check` and by the generated annotation-support
+# tables in docs/controller/docs/migrating.md. The source controller is
+# jcmoraisjr/haproxy-ingress.
+#
+# Status vocabulary: supported | different | dropped | fails (see the
+# nginx-ingress coverage file header and scripts/check-migration-coverage.sh
+# for the drift-pinning contract).
+migrationCoverage:
+  - source: haproxy-ingress
+    detect:
+      ingressClasses: ["haproxy"]
+      annotationPrefixes: ["haproxy-ingress.github.io/"]
+    annotations:
+      # --- Backend timeouts ---
+      haproxy-ingress.github.io/timeout-connect:
+        status: supported
+        note: Mapped to HAProxy's timeout connect.
+      haproxy-ingress.github.io/timeout-server:
+        status: supported
+        note: Mapped to HAProxy's timeout server.
+      haproxy-ingress.github.io/timeout-queue:
+        status: supported
+        note: Mapped to HAProxy's timeout queue.
+      haproxy-ingress.github.io/timeout-tunnel:
+        status: supported
+        note: Mapped to HAProxy's timeout tunnel (websockets etc.).
+      haproxy-ingress.github.io/timeout-http-request:
+        status: supported
+        note: Mapped to HAProxy's timeout http-request.
+      haproxy-ingress.github.io/timeout-keep-alive:
+        status: supported
+        note: Mapped to HAProxy's timeout http-keep-alive.
+      # --- Load balancing / connection limits ---
+      haproxy-ingress.github.io/balance-algorithm:
+        status: supported
+        note: roundrobin, leastconn, source, uri, hdr, random and rdp-cookie are accepted; other values fail the render.
+      haproxy-ingress.github.io/maxconn-server:
+        status: supported
+        note: Per-server maxconn; must be a positive integer.
+      haproxy-ingress.github.io/maxqueue-server:
+        status: supported
+        note: Per-server maxqueue; must be a positive integer.
+      haproxy-ingress.github.io/limit-connections:
+        status: different
+        note: Maps to backend fullconn (a soft full-queue threshold) rather than a hard per-server connection cap; must be a positive integer.
+        doc: annotation-support
+      # --- Health / agent checks ---
+      haproxy-ingress.github.io/backend-check-interval:
+        status: supported
+        note: Server check interval (inter).
+      haproxy-ingress.github.io/health-check-uri:
+        status: supported
+        note: Emits option httpchk GET <uri>.
+      haproxy-ingress.github.io/health-check-port:
+        status: supported
+        note: Check port (1-65535); other values fail the render.
+      haproxy-ingress.github.io/health-check-fall-count:
+        status: supported
+        note: Consecutive failures before a server is marked down.
+      haproxy-ingress.github.io/health-check-rise-count:
+        status: supported
+        note: Consecutive successes before a server is marked up.
+      haproxy-ingress.github.io/agent-check-port:
+        status: supported
+        note: Enables the auxiliary agent check; required for the other agent-check-* annotations.
+      haproxy-ingress.github.io/agent-check-addr:
+        status: different
+        note: Has no effect without agent-check-port — and setting it (or -interval/-send) without agent-check-port fails the render.
+        doc: annotation-support
+      haproxy-ingress.github.io/agent-check-interval:
+        status: different
+        note: Has no effect without agent-check-port — and setting it without agent-check-port fails the render.
+        doc: annotation-support
+      haproxy-ingress.github.io/agent-check-send:
+        status: different
+        note: Has no effect without agent-check-port — and setting it without agent-check-port fails the render.
+        doc: annotation-support
+      # --- Proxy protocol / server options ---
+      haproxy-ingress.github.io/proxy-protocol:
+        status: supported
+        note: v1, v2, v2-ssl and v2-ssl-cn map to the matching send-proxy flags; other values fail the render.
+      haproxy-ingress.github.io/initial-weight:
+        status: supported
+        note: Server weight 0-256; other values fail the render.
+      # --- Backend TLS ---
+      haproxy-ingress.github.io/secure-backends:
+        status: supported
+        note: '"true" enables TLS to the upstream (ssl verify none unless a CA is supplied).'
+      haproxy-ingress.github.io/backend-protocol:
+        status: different
+        note: h1, h2, h1-ssl and h2-ssl are accepted (h1-ssl/h2-ssl enable TLS); other values fail the render — note this is a different value set from ingress-nginx's HTTP/HTTPS/GRPC/GRPCS.
+        doc: annotation-support
+      haproxy-ingress.github.io/secure-sni:
+        status: supported
+        note: '"sni"/"host" use the request Host as SNI; any other value is used as a literal SNI.'
+      haproxy-ingress.github.io/secure-verify-hostname:
+        status: supported
+        note: Adds verifyhost for the upstream certificate.
+      haproxy-ingress.github.io/secure-verify-ca-secret:
+        status: different
+        note: Verifies the upstream certificate against the Secret's ca.crt; a missing Secret or missing ca.crt renders a warning comment and silently downgrades to no verification instead of failing.
+        doc: annotation-support
+      haproxy-ingress.github.io/secure-crt-secret:
+        status: different
+        note: Presents a client certificate to the upstream from the Secret; a missing Secret or missing tls.crt/tls.key renders a warning comment and skips the client cert instead of failing.
+        doc: annotation-support
+      haproxy-ingress.github.io/ssl-ciphers-backend:
+        status: different
+        note: Cipher list for upstream TLS — only applied when backend TLS is enabled (secure-backends or an -ssl backend-protocol); otherwise silently ignored.
+        doc: annotation-support
+      haproxy-ingress.github.io/ssl-cipher-suites-backend:
+        status: different
+        note: TLS 1.3 cipher suites for upstream TLS — only applied when backend TLS is enabled; otherwise silently ignored.
+        doc: annotation-support
+      # --- Rate limiting ---
+      haproxy-ingress.github.io/limit-rps:
+        status: different
+        note: Hard per-source-IP cap rejecting with 429 — jcmoraisjr/haproxy-ingress applies a burst allowance.
+        doc: annotation-support
+      haproxy-ingress.github.io/limit-rpm:
+        status: different
+        note: Same hard-cap/429 semantics, and ignored when limit-rps is also set (one stick-table per backend).
+        doc: annotation-support
+      haproxy-ingress.github.io/limit-whitelist:
+        status: supported
+        note: Listed CIDRs are exempt from the rate limit; invalid CIDRs fail the render.
+      # --- Rewrite / body size / snippets ---
+      haproxy-ingress.github.io/rewrite-target:
+        status: supported
+        note: $N capture groups translate to HAProxy backreferences; literal rewrites are applied reload-free via a map.
+      haproxy-ingress.github.io/proxy-body-size:
+        status: supported
+        note: Enforced as a 413 via a reload-free map entry; "0" means unlimited.
+      haproxy-ingress.github.io/config-backend:
+        status: supported
+        note: Raw HAProxy directives injected into the backend section (already HAProxy syntax in this source controller).
+      haproxy-ingress.github.io/config-frontend:
+        status: different
+        note: Injected into HAPTIC's shared HTTP frontend (before routing), not a per-Ingress frontend — directives apply process-wide; deduplication is the operator's responsibility.
+        doc: annotation-support
+      haproxy-ingress.github.io/config-global:
+        status: supported
+        note: Raw HAProxy directives injected into the global section.
+      haproxy-ingress.github.io/config-defaults:
+        status: supported
+        note: Raw HAProxy directives injected into the defaults section.
+      # --- Path type ---
+      haproxy-ingress.github.io/path-type:
+        status: different
+        note: regex, exact, prefix and begin are honoured, but only for paths with pathType ImplementationSpecific — the annotation is ignored on Prefix/Exact-typed paths.
+        doc: annotation-support
+      # --- Session affinity ---
+      haproxy-ingress.github.io/affinity:
+        status: supported
+        note: '"cookie" enables cookie-based stickiness.'
+      haproxy-ingress.github.io/session-cookie-name:
+        status: supported
+        note: Default INGRESSCOOKIE.
+      haproxy-ingress.github.io/session-cookie-strategy:
+        status: supported
+        note: insert, rewrite or prefix; other values fail the render.
+      haproxy-ingress.github.io/session-cookie-dynamic:
+        status: supported
+        note: Default true (dynamic cookies).
+      haproxy-ingress.github.io/session-cookie-keywords:
+        status: supported
+        note: Appended verbatim to the cookie directive.
+      haproxy-ingress.github.io/session-cookie-domain:
+        status: supported
+        note: Emitted as the cookie domain keyword.
+      haproxy-ingress.github.io/session-cookie-same-site:
+        status: supported
+        note: None, Lax or Strict; other values fail the render.
+      haproxy-ingress.github.io/session-cookie-preserve:
+        status: supported
+        note: Adds the preserve keyword when "true".
+      # --- Server alias ---
+      haproxy-ingress.github.io/server-alias:
+        status: supported
+        note: Extra exact hostnames routed to the Ingress's primary host key.
+      haproxy-ingress.github.io/server-alias-regex:
+        status: supported
+        note: A regex matching extra hostnames, routed to the primary host key via host-regex.map.
+      # --- SSL passthrough ---
+      haproxy-ingress.github.io/ssl-passthrough:
+        status: supported
+        note: SNI-based TCP passthrough; HTTP-level annotations don't apply to passthrough hosts.
+      # --- Access control ---
+      haproxy-ingress.github.io/allowlist-source-range:
+        status: different
+        note: Host-scoped — only gates rules with an explicit host; invalid CIDRs fail the render.
+        doc: annotation-support
+      haproxy-ingress.github.io/whitelist-source-range:
+        status: different
+        note: Deprecated alias of allowlist-source-range, honoured only when allowlist-source-range is absent; host-scoped.
+        doc: annotation-support
+      haproxy-ingress.github.io/denylist-source-range:
+        status: different
+        note: Host-scoped — only gates rules with an explicit host; invalid CIDRs fail the render.
+        doc: annotation-support
+      # --- forwardfor / headers ---
+      haproxy-ingress.github.io/forwardfor:
+        status: supported
+        note: add, update and ifmissing map to the matching X-Forwarded-For handling; "ignore" leaves the header untouched.
+      haproxy-ingress.github.io/headers:
+        status: supported
+        note: Pipe-separated name:value request headers set for the Ingress's hosts.
+      # --- Redirects ---
+      haproxy-ingress.github.io/ssl-redirect:
+        status: supported
+        note: Redirects HTTP to HTTPS when "true"; the code comes from ssl-redirect-code (default 302).
+      haproxy-ingress.github.io/ssl-redirect-code:
+        status: different
+        note: Default 302 (jcmoraisjr/haproxy-ingress redirects with 302); an out-of-range code silently falls back to 302 rather than failing.
+        doc: annotation-support
+      haproxy-ingress.github.io/redirect-to:
+        status: supported
+        note: Host-scoped redirect to a URL via a reload-free map.
+      haproxy-ingress.github.io/redirect-to-code:
+        status: different
+        note: Default 302; an out-of-range code silently falls back to 302 rather than failing.
+        doc: annotation-support
+      haproxy-ingress.github.io/default-backend-redirect:
+        status: supported
+        note: Redirects requests matching a host but no path to the given URL.
+      haproxy-ingress.github.io/default-backend-redirect-code:
+        status: different
+        note: Default 302; an invalid code fails the render.
+        doc: annotation-support
+      haproxy-ingress.github.io/app-root:
+        status: supported
+        note: Redirects "/" to the given path for each rule host.
+      # --- HSTS ---
+      haproxy-ingress.github.io/hsts:
+        status: different
+        note: The header is emitted only when the annotation is explicitly "true" on the Ingress — jcmoraisjr/haproxy-ingress enables HSTS globally by default.
+        doc: annotation-support
+      haproxy-ingress.github.io/hsts-max-age:
+        status: supported
+        note: Default 15768000, matching jcmoraisjr/haproxy-ingress.
+      haproxy-ingress.github.io/hsts-include-subdomains:
+        status: supported
+        note: Adds includeSubDomains when "true".
+      haproxy-ingress.github.io/hsts-preload:
+        status: supported
+        note: Adds preload when "true".
+      # --- CORS ---
+      haproxy-ingress.github.io/cors-enable:
+        status: different
+        note: Header-injection only — OPTIONS preflights are forwarded to the backend rather than answered by HAProxy, so the backend must accept OPTIONS.
+        doc: annotation-support
+      haproxy-ingress.github.io/cors-allow-origin:
+        status: different
+        note: Emitted verbatim into Access-Control-Allow-Origin; dynamic multi-origin matching is not performed — use a single origin or "*".
+        doc: annotation-support
+      haproxy-ingress.github.io/cors-allow-methods:
+        status: supported
+        note: Allowed methods for preflight responses.
+      haproxy-ingress.github.io/cors-allow-headers:
+        status: supported
+        note: Allowed headers for preflight responses.
+      haproxy-ingress.github.io/cors-allow-credentials:
+        status: supported
+        note: Adds Access-Control-Allow-Credentials when "true".
+      haproxy-ingress.github.io/cors-expose-headers:
+        status: supported
+        note: Optional Access-Control-Expose-Headers value.
+      haproxy-ingress.github.io/cors-max-age:
+        status: supported
+        note: Default 86400.
+      # --- Basic authentication ---
+      haproxy-ingress.github.io/auth-secret:
+        status: different
+        note: Secret format is one key per username with a base64(bcrypt/apr1 hash) value — different from ingress-nginx's htpasswd; a migrated htpasswd Secret will not authenticate. A missing Secret disables auth for the route until it appears.
+        doc: annotation-support
+      haproxy-ingress.github.io/auth-realm:
+        status: supported
+        note: Default "Restricted".
+      # --- Client certificate auth (mTLS) ---
+      haproxy-ingress.github.io/auth-tls-secret:
+        status: different
+        note: Verification is keyed by SNI — every rule needs an explicit host or the render fails; a missing Secret (or missing ca.crt) skips mTLS for the Ingress with a rendered warning.
+        doc: annotation-support
+      haproxy-ingress.github.io/auth-tls-verify-client:
+        status: different
+        note: '"on"→required; "optional"/"optional_no_ca"→optional (HAProxy has no verify-but-accept-invalid mode); other values fail the render.'
+        doc: annotation-support
+      haproxy-ingress.github.io/auth-tls-error-page:
+        status: supported
+        note: 302 redirect on client-certificate verification failure, applied reload-free via a map.
+      haproxy-ingress.github.io/auth-tls-cert-header:
+        status: different
+        note: Forwards X-SSL-Client-CN, X-SSL-Client-DN and X-SSL-Client-Cert when "true"; jcmoraisjr/haproxy-ingress additionally forwards the SHA1 and serial headers, which are not set.
+        doc: annotation-support
+      haproxy-ingress.github.io/auth-tls-strict:
+        status: dropped
+        note: Accepted for compatibility but has no separate effect; for soft verification use auth-tls-verify-client optional instead.
+        doc: annotation-support
+      # --- External authentication (SPOA hub external-auth plugin) ---
+      haproxy-ingress.github.io/auth-url:
+        status: different
+        note: External auth via the SPOA hub external-auth plugin, which (unlike the nginx-ingress library) is NOT auto-enabled — enable spoaHub.plugins.external-auth, otherwise the auth is silently not enforced.
+        doc: annotation-support
+      haproxy-ingress.github.io/auth-signin:
+        status: supported
+        note: Redirect target when the auth service denies (browser sign-in flow).
+      haproxy-ingress.github.io/auth-method:
+        status: different
+        note: Overrides the auth subrequest method; POST/PUT/PATCH are sent with an empty body.
+        doc: annotation-support
+      haproxy-ingress.github.io/auth-headers-request:
+        status: supported
+        note: Request header names forwarded to the auth service.
+      haproxy-ingress.github.io/auth-headers-succeed:
+        status: supported
+        note: Auth-service response headers forwarded to the backend on success.
+      haproxy-ingress.github.io/auth-headers-fail:
+        status: supported
+        note: Auth-service response headers surfaced to the client on failure (via http-after-response).
+      # --- OAuth2 proxy convenience ---
+      haproxy-ingress.github.io/oauth:
+        status: different
+        note: Only "oauth2_proxy"/"oauth2-proxy" is supported and requires an Ingress path (oauth-uri-prefix, default /oauth2) routing to the oauth2-proxy Service — otherwise the render fails; auth-url takes precedence; needs the external-auth plugin (not auto-enabled) with plaintext allowed.
+        doc: annotation-support
+      haproxy-ingress.github.io/oauth-uri-prefix:
+        status: supported
+        note: The Ingress path the oauth2-proxy Service is routed under (default /oauth2).
+      haproxy-ingress.github.io/oauth-headers:
+        status: supported
+        note: Auth-reply headers forwarded to the backend on success (default X-Auth-Request-Email).
+      # --- WAF (Coraza / ModSecurity) ---
+      haproxy-ingress.github.io/waf:
+        status: different
+        note: Only "modsecurity" is supported (enforced by the bundled Coraza WAF via the SPOA hub); requires the coraza plugin (auto-enabled with this library) or the render fails.
+        doc: annotation-support
+      haproxy-ingress.github.io/waf-mode:
+        status: different
+        note: '"deny" (default) enforces, "detect" runs in shadow mode; other values, or waf-mode without waf, fail the render.'
+        doc: annotation-support
+      # --- Documentation-only annotation ---
+      haproxy-ingress.github.io/docs:
+        status: dropped
+        note: A pointer to jcmoraisjr/haproxy-ingress documentation, not a configuration key; not read.
+        doc: annotation-support
