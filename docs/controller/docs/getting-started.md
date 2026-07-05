@@ -32,7 +32,7 @@ Install the controller and HAProxy using Helm:
 ```bash
 # Install from OCI registry (deploys both controller and HAProxy pods)
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0 \
+  --version 0.2.0-alpha.1 \
   --namespace haptic --create-namespace
 ```
 
@@ -283,7 +283,7 @@ Set up Prometheus monitoring for the controller:
 ```bash
 # Enable ServiceMonitor if using Prometheus Operator
 helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.1.0 --reuse-values -n haptic \
+  --version 0.2.0-alpha.1 --reuse-values -n haptic \
   --set monitoring.serviceMonitor.enabled=true \
   --set monitoring.serviceMonitor.interval=30s
 ```

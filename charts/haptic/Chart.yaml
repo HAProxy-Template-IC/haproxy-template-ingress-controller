@@ -2,8 +2,8 @@ apiVersion: v2
 name: haptic
 description: HAPTIC - HAProxy Template Ingress Controller
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0-alpha.1
+appVersion: "0.2.0-alpha.1"
 # Template libraries are packaged as conditional subcharts so a release only
 # carries the source of the libraries it enables — disabled subcharts are
 # pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
@@ -38,7 +38,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.4
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
       platforms:
         - linux/amd64
         - linux/arm64
@@ -49,7 +49,7 @@ annotations:
         - linux/amd64
         - linux/arm64
     - name: spoa-hub
-      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.1.0
+      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.2.0-alpha.1
       platforms:
         - linux/amd64
         - linux/arm64
@@ -57,17 +57,27 @@ annotations:
   # License
   artifacthub.io/license: Apache-2.0
 
-  # Changelog — summary of the most recently shipped release (0.1.0).
+  # Changelog — summary of the most recently shipped release (0.2.0-alpha.1).
   # See CHANGELOG.md at the repo root for the full record (chart changes live
   # under each release's "Helm chart" subsection), including the [Unreleased]
   # entries that will land in the next release.
   artifacthub.io/changes: |
     - kind: added
-      description: Initial Helm chart deploying the controller and HAProxy pods with leader election and a default NetworkPolicy
+      description: HAProxy 3.4 support; a runtime fast path applies endpoint, map, and TLS-certificate changes to live HAProxy workers without a reload
     - kind: added
-      description: Modular template library system (base / ssl / ingress / gateway / haproxytech / haproxy-ingress / nginx-ingress)
+      description: nginx-ingress template library for nginx.ingress.kubernetes.io annotation compatibility
     - kind: added
-      description: Gateway API and Ingress status reporting (LoadBalancer addresses propagated to .status)
+      description: SPOA hub sidecar with seven plugins (WAF, external auth, request mirroring, fingerprinting, MaxMind, OTel, SSO)
+    - kind: added
+      description: Extended Gateway API support (TLSRoute, TCPRoute, RequestMirror, static addresses, ListenerSet, session persistence)
+    - kind: added
+      description: The config's embedded validationTests are enforced at admission, at startup, and on every config change
+    - kind: changed
+      description: "BREAKING: ingressClass/gatewayClass default names change from haproxy to haptic, pod-spec values move under podSpec blocks, and routing.regexMatchOrder replaces the path-regex-last library"
+    - kind: changed
+      description: The gateway library resolves Gateway API versions at runtime — installing or upgrading Gateway API CRDs activates support without helm upgrade
+    - kind: security
+      description: Annotation values interpolated into the HAProxy config are validated against strict charsets, closing a config-injection vector
 
   # Links
   artifacthub.io/links: |
