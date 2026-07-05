@@ -904,6 +904,7 @@ mirror-ingress-conformance-image:
     # ${CI_COMMIT_TAG#v} convention. Dockerfile ARG substitution can't do
     # the prefix-strip itself (`${VAR#v}` is bash, not Dockerfile syntax),
     # so we strip in CI before passing as a build-arg.
+    - SPOA_TAG="${SPOA_TAG#v}"  # bash context: strip release-tag leading v (no-op for snapshot tags)
     - HUB_TAG="${SPOA_HUB_VERSION#v}"
     - |
       docker buildx build \
@@ -970,7 +971,12 @@ build-spoa-image-release:
     - if: $CI_COMMIT_TAG =~ /^v.*/
   variables:
     PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
-    SPOA_TAG: "${CI_COMMIT_TAG#v}"
+    # Plain expansion only: GitLab does NOT do bash parameter expansion in
+    # variables: blocks — "${CI_COMMIT_TAG#v}" here silently expands EMPTY
+    # (it reads as an unknown variable named CI_COMMIT_TAG#v) and produced
+    # an invalid `spoa-hub:` tag on the first unified release. The leading
+    # "v" is stripped in .build-spoa-image-base's script instead.
+    SPOA_TAG: "$CI_COMMIT_TAG"
   after_script:
     - |
       if ! echo "$CI_COMMIT_TAG" | grep -qE -- '-(alpha|beta|rc)'; then
