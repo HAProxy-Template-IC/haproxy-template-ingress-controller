@@ -100,6 +100,7 @@ test-httproute-response-header-modifier
 test-httproute-same-path-matcher-precedence
 test-httproute-same-route-conflicts
 test-httproute-single-backend
+test-httproute-status-backend-not-found
 test-httproute-status-patches
 test-httproute-url-rewrite
 test-httproute-weight-default

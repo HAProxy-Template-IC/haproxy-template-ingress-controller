@@ -371,6 +371,71 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "backend gtw_default_app-route"
+      # Backend Service exists → ResolvedRefs stays True, no BackendNotFound.
+      - type: contains
+        target: "status:default/app-route:deployed"
+        pattern: "All backend references resolved"
+      - type: not_contains
+        target: "status:default/app-route:deployed"
+        pattern: "BackendNotFound"
+
+  test-httproute-status-backend-not-found:
+    requires: [gateways, httproutes]
+    description: |
+      Companion to the Ingress degraded-backend Event (issue #66), pinning
+      the Gateway API side of the same failure mode: an HTTPRoute whose
+      backendRef Service is absent from the store renders (last-known-good
+      routing stays up) but the parent status carries the spec-correct
+      signal ResolvedRefs=False with reason BackendNotFound, so a
+      Service-name typo is visible in `kubectl describe httproute` instead
+      of serving 503 silently.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: my-gateway
+            namespace: default
+            generation: 2
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: ghost-route
+            namespace: default
+            generation: 3
+          spec:
+            parentRefs:
+              - name: my-gateway
+            hostnames:
+              - ghost.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                backendRefs:
+                  - name: ghost-svc
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "status:default/ghost-route:deployed"
+        pattern: '"type":"ResolvedRefs"'
+      - type: contains
+        target: "status:default/ghost-route:deployed"
+        pattern: '"reason":"BackendNotFound"'
+      - type: contains
+        target: "status:default/ghost-route:deployed"
+        pattern: "Backend not found: default/ghost-svc"
 
   test-grpcroute-status-patches:
     requires: [gateways, grpcroutes]

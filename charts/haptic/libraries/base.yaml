@@ -301,6 +301,11 @@ templateSnippets:
             endpoints without a resolvable port, so the backend renders with
             placeholder slots only (503 for this route) and converges on a
             later reconcile once the Service and its EndpointSlices arrive.
+            When that leaves a backend placeholder-only, BackendServers
+            records the reference under shared "degradedBackendRef:*" keys;
+            the ingress library reads those back to emit Warning Events on
+            the owning Ingresses (issue #66) so a permanent Service-name
+            typo isn't a silent 503.
 
         Why fail() not silent fallback:
           The previous fallback-to-80 behavior silently produced unusable HAProxy
@@ -590,6 +595,24 @@ templateSnippets:
                 })
               }
             }
+          }
+
+          // ── 5b. Record degraded by-name references for visibility ─────────
+          // port <= 0 is only reachable when ResolveServicePort degraded a
+          // by-NAME reference because the Service is absent from the store
+          // (issue #66). If on top of that no EndpointSlice carried the named
+          // port, this backend renders placeholder-only slots and serves 503 —
+          // correct during a propagation race, but a Service-name typo would
+          // stay silent forever. Mark the reference in the shared context so
+          // post-config visibility surfaces (the ingress library's
+          // `ingress-degraded-backend-events` k8sResources template) can map
+          // it back to the owning resources after the render. When a slice
+          // DOES resolve the named port, real servers were emitted and traffic
+          // flows — no signal. ComputeIfAbsent is goroutine-safe (backends
+          // render in shards) and dedups repeated references.
+          if port <= 0 && pn != "" && len(endpoints) == 0 {
+            shared.ComputeIfAbsent("degradedBackendRef:"+namespace+"/"+serviceName+"/"+pn,
+              func() any { return true })
           }
 
           // ── 6. Build slot assignment map from current config ──────────────

@@ -9,6 +9,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- The ingress library now surfaces long-degraded by-name backends (#66): when an Ingress references its backend Service port by **name** and that Service is absent, the backend deliberately renders placeholder-only slots (503, see the eventual-consistency fix below) — but a permanent Service-name typo was indistinguishable from a propagation race and stayed silent. The controller now emits a `Warning` Event (reason `BackendUnresolved`) on each affected Ingress, visible in `kubectl describe ingress`, naming every unresolvable Service/port-name reference. The Event is precise — backends that resolved real endpoints through an already-present EndpointSlice don't alarm — and is deleted automatically once the Service appears. Gateway API routes already carry the equivalent spec-correct signal (`ResolvedRefs: False`/`BackendNotFound` on the route's parent status). The ClusterRole gains cluster-wide Event write verbs when the ingress library is enabled.
+
 ### Fixed
 
 - An Ingress that references its backend Service by port **name** no longer fails rendering when that Service isn't in the controller's store yet. Kubernetes is eventually consistent — an Ingress may legally be created before its Service, and the admission webhook's dry-run render can run before a just-created Service reaches the watch cache — but the old `ResolveServicePort: Service … not found` hard `fail()` denied such Ingresses at admission (flaked ingress-conformance, #50) and blocked the entire haproxy.cfg render in the reconcile loop until the Service appeared. The backend now renders in a degraded shape (placeholder-only server slots → 503 for that route; the named port is resolved from an already-present EndpointSlice when possible) and converges on a later reconcile. A Service that exists but lacks the named port still fails loudly — that's a config error, not a propagation race.
