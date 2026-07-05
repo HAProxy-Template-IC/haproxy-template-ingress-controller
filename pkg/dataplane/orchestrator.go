@@ -226,6 +226,38 @@ func (o *orchestrator) applyChanges(
 	return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, structuralOps, auxDiffs, actions, version, opts, startTime)
 }
 
+// verifyRuntimeMapRecheckDelay is the pause before the single re-check of a
+// runtime-map read-back that reported divergence: long enough for a racy or
+// momentarily-404 read to settle, short enough to keep the runtime lane fast.
+const verifyRuntimeMapRecheckDelay = 200 * time.Millisecond
+
+// verifyRuntimeMaps read-backs each replaced runtime map and reports whether
+// any diverged from its desired content. A divergence is re-checked once
+// after verifyRuntimeMapRecheckDelay before it counts: a single stale/racy
+// read (or a transient 404 before the map loads) must not disrupt the
+// reload-free lane — only a PERSISTENT mismatch (the latching defect from
+// issue #48) makes the caller pay for the reload fallback. The returned
+// error is ctx cancellation only.
+func (o *orchestrator) verifyRuntimeMaps(ctx context.Context, mapUpdates []auxiliaryfiles.MapFile) (bool, error) {
+	for _, m := range mapUpdates {
+		pending, err := o.client.VerifyRuntimeMap(ctx, m.GetIdentifier(), m.GetContent())
+		if err != nil || pending > 0 {
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(verifyRuntimeMapRecheckDelay):
+			}
+			pending, err = o.client.VerifyRuntimeMap(ctx, m.GetIdentifier(), m.GetContent())
+		}
+		if err != nil || pending > 0 {
+			o.logger.Warn("Runtime map diverged from desired state after apply; falling back to reload",
+				"map", m.GetIdentifier(), "pending_ops", pending, "error", err)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // applyRuntimeOnly applies all changes without a reload: runtime-eligible map
 // and SSL-cert content updates go to the live worker via ReplaceRuntimeMap /
 // ReplaceRuntimeSSLCert, then one PushRawConfigurationSkipReload writes the new
@@ -255,6 +287,21 @@ func (o *orchestrator) applyRuntimeOnly(
 				"map", m.GetIdentifier(), "error", err)
 			return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, nil, auxDiffs, actions, version, opts, startTime)
 		}
+	}
+	// Read-back verification: runtime map mutations are acknowledged by the
+	// Dataplane API even when the master-socket command was lost in flight
+	// (observed on the haproxytech 3.1 image under reload churn — issue #48:
+	// the same entries were re-added 201-OK in consecutive deploy cycles with
+	// no reload in between, while the live worker kept missing them). Without
+	// this check the divergence LATCHES: the pre-config phase already wrote
+	// the desired content to the on-disk file, so later deploys see no map
+	// content diff, never re-run ReplaceRuntimeMap, and only an unrelated
+	// reload heals routing. Falling back to a reload is always convergent —
+	// the new worker reads the file this deploy just wrote.
+	if diverged, err := o.verifyRuntimeMaps(ctx, mapUpdates); err != nil {
+		return nil, err
+	} else if diverged {
+		return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, nil, auxDiffs, actions, version, opts, startTime)
 	}
 	if len(certUpdates) > 0 {
 		pemByName := make(map[string]string, len(certUpdates))
