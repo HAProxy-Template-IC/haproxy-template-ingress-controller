@@ -374,6 +374,17 @@ func (o *orchestrator) applyWithReload(
 		// drains it. Failure here doesn't break correctness — force_reload
 		// re-stages the config and the new worker reads it from disk —
 		// but loses the in-flight-drain benefit.
+		//
+		// This seed reaches only the CURRENT worker. A keep-alive request
+		// pinned to the LEAVING worker after an EndpointSlice flip that
+		// races this POST is the bounded residual in issue #70 / ADR-0013.
+		// Do NOT "fix" it by re-collecting `actions` here against live pod
+		// state: `desiredConfig` is the pre-flip render, so a late re-diff
+		// against a post-flip on-disk body (written by a concurrent runtime
+		// bypass) would emit REVERT actions that stomp the fresher state onto
+		// the draining worker. Reaching the leaving worker needs Dataplane API
+		// master-CLI worker routing (`@!<pid>`), which no deployed version
+		// exposes — see ADR-0013.
 		if err := o.client.PushRawConfigurationSkipReload(ctx, desiredConfig, version, actions); err != nil {
 			o.logger.Warn("Skip_reload+actions push failed; force_reload will converge state",
 				"error", err)
