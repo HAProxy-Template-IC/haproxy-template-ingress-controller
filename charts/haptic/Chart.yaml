@@ -57,9 +57,10 @@ annotations:
   # License
   artifacthub.io/license: Apache-2.0
 
-  # Changelog — summary of the most recently shipped chart version (0.1.0).
-  # See charts/haptic/CHANGELOG.md for the full record, including the
-  # [Unreleased] entries that will land in the next release.
+  # Changelog — summary of the most recently shipped release (0.1.0).
+  # See CHANGELOG.md at the repo root for the full record (chart changes live
+  # under each release's "Helm chart" subsection), including the [Unreleased]
+  # entries that will land in the next release.
   artifacthub.io/changes: |
     - kind: added
       description: Initial Helm chart deploying the controller and HAProxy pods with leader election and a default NetworkPolicy

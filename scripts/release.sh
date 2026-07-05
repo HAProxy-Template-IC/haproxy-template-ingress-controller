@@ -1,20 +1,30 @@
 #!/bin/bash
-# Release script for the HAProxy Template Ingress Controller and its Helm Chart
+# Release script for HAPTIC. The controller and the Helm chart are released
+# together: one version, one tag, one changelog.
 #
-# Usage: ./scripts/release.sh <controller|chart> <version>
-# Example: ./scripts/release.sh controller 0.1.0-beta.1
-#          ./scripts/release.sh chart 0.1.0
+# Usage: ./scripts/release.sh <version>
+# Example: ./scripts/release.sh 0.2.0
+#          ./scripts/release.sh 0.2.0-alpha.1
 #
 # This script:
 # 1. Validates the version format (SemVer)
-# 2. Checks that the relevant CHANGELOG has an entry for the version
-# 3. Updates the version-bearing files for the selected release type
-# 4. Commits changes (tag is created automatically by CI after merge)
+# 2. Promotes the CHANGELOG.md [Unreleased] section to [<version>] - <date>
+#    (skipped when a [<version>] section already exists)
+# 3. Writes <version> to the VERSION file
+# 4. Updates charts/haptic/Chart.yaml: version, appVersion, and the
+#    artifacthub.io/images annotation (controller + spoa-hub image tags)
+# 5. Updates the `helm install ... --version` examples in the READMEs and
+#    docs, and the landing page's fallback version
+# 6. Regenerates the docs-site changelog copies from CHANGELOG.md
+# 7. Commits everything (the tag is created automatically by CI after merge)
 #
 # After running this script:
-#   1. Push to a release branch and create an MR
-#   2. Merge the MR to main
-#   3. CI automatically creates the tag and triggers the release pipeline
+#   1. Review the commit — especially the promoted changelog section and the
+#      hand-curated artifacthub.io/changes annotation in Chart.yaml
+#   2. Push to a release branch and create an MR
+#   3. Merge the MR to main
+#   4. CI creates the v<version> tag and the release pipeline publishes
+#      binaries, container images, the Helm chart, and versioned docs
 
 set -euo pipefail
 
@@ -41,9 +51,9 @@ warn() {
 }
 
 usage() {
-    echo "Usage: $0 <controller|chart> <version>"
-    echo "Example: $0 controller 0.1.0-beta.1"
-    echo "         $0 chart 0.1.0"
+    echo "Usage: $0 <version>"
+    echo "Example: $0 0.2.0"
+    echo "         $0 0.2.0-alpha.1"
 }
 
 # Check if we're in the repository root
@@ -52,26 +62,17 @@ if [[ ! -f "go.mod" ]] || [[ ! -d "charts/haptic" ]]; then
 fi
 
 # Validate arguments
-if [[ $# -ne 2 ]]; then
+if [[ $# -ne 1 ]]; then
     usage
     exit 1
 fi
 
-TYPE=$1
-VERSION=$2
-
-case "$TYPE" in
-    controller|chart) ;;
-    *)
-        usage
-        error "Unknown release type '$TYPE' (expected 'controller' or 'chart')"
-        ;;
-esac
+VERSION=$1
 
 # Validate SemVer format (with optional pre-release suffix)
 # Matches: 0.1.0, 1.0.0, 1.2.3-alpha.1, 1.2.3-beta.2, 1.2.3-rc.1
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+\.[0-9]+)?$ ]]; then
-    error "Invalid version format. Use: X.Y.Z or X.Y.Z-suffix.N (e.g., 0.1.0-beta.1)"
+    error "Invalid version format. Use: X.Y.Z or X.Y.Z-suffix.N (e.g., 0.2.0-alpha.1)"
 fi
 
 # Check if working directory is clean
@@ -85,86 +86,112 @@ if [[ -n $(git status --porcelain) ]]; then
     fi
 fi
 
-# Per-type settings
-if [[ "$TYPE" == "controller" ]]; then
-    CHANGELOG="CHANGELOG.md"
+# --- CHANGELOG: promote [Unreleased] to [<version>] - <date> -----------------
+if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+    warn "CHANGELOG.md already has a [$VERSION] section — skipping the [Unreleased] promotion"
 else
-    CHANGELOG="charts/haptic/CHANGELOG.md"
+    grep -q "^## \[Unreleased\]" CHANGELOG.md \
+        || error "CHANGELOG.md has no [Unreleased] section to promote"
+    echo "Promoting CHANGELOG.md [Unreleased] to [$VERSION]..."
+    # Insert the version heading right below [Unreleased]: the unreleased
+    # content ends up under the new version, and [Unreleased] stays empty
+    # at the top.
+    # awk instead of sed: GNU sed renders \n in the replacement as a newline,
+    # BSD/macOS sed emits a literal "n" — silently corrupting the changelog.
+    awk -v ver="$VERSION" -v today="$(date +%Y-%m-%d)" \
+        '{ print; if ($0 == "## [Unreleased]") { print ""; print "## [" ver "] - " today } }' \
+        CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
 fi
 
-# Check CHANGELOG has entry for this version
-if ! grep -q "## \[$VERSION\]" "$CHANGELOG"; then
-    error "$CHANGELOG has no entry for version $VERSION
+# --- VERSION file -------------------------------------------------------------
+echo "Updating VERSION file..."
+echo "$VERSION" > VERSION
 
-Please update $CHANGELOG before releasing:
-1. Rename [Unreleased] section to [$VERSION] - $(date +%Y-%m-%d)
-2. Add a new empty [Unreleased] section at the top
-3. Run this script again"
+# --- Chart.yaml: version, appVersion, image annotations ------------------------
+echo "Updating Chart.yaml version and appVersion..."
+sed -i "s/^version:.*/version: $VERSION/" charts/haptic/Chart.yaml
+sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/haptic/Chart.yaml
+
+echo "Updating Chart.yaml artifacthub.io/images annotation..."
+# shellcheck source=../versions.env
+source versions.env
+sed -i "s|haptic:[0-9a-z.-]*|haptic:$VERSION-haproxy$DEFAULT_HAPROXY|" charts/haptic/Chart.yaml
+sed -i "s|spoa-hub:[0-9a-z.-]*|spoa-hub:$VERSION|" charts/haptic/Chart.yaml
+sed -i "s|most recently shipped release ([^)]*)|most recently shipped release ($VERSION)|" charts/haptic/Chart.yaml
+
+# --- helm install examples (READMEs, docs, landing page) -----------------------
+echo "Updating helm install --version examples..."
+# Only occurrences of the PREVIOUS release version are rewritten: docs that
+# deliberately pin a historical version (upgrade/migration guides) must not
+# be clobbered by a global version rewrite.
+PREV_VERSION=$(git show HEAD:VERSION 2>/dev/null || cat VERSION)
+INSTALL_EXAMPLE_FILES=$(grep -rlF -- "--version $PREV_VERSION" \
+    README.md charts/haptic/README.md docs/controller/docs charts/haptic/docs 2>/dev/null || true)
+for f in $INSTALL_EXAMPLE_FILES; do
+    sed -i "s|--version $PREV_VERSION|--version $VERSION|g" "$f"
+done
+# Landing page fallback (replaced client-side by the published-versions JS)
+sed -i -E "s|(<span id=\"helm-version\" class=\"t-num\">)[^<]*|\1$VERSION|" docs/landing/overrides/home.html
+
+# --- docs-site changelog copies -------------------------------------------------
+# Both doc sites carry a copy of the root CHANGELOG. Repo-relative links don't
+# resolve on the docs site, so they are rewritten to GitLab source URLs.
+sync_changelog_copy() {
+    local target=$1
+    local with_front_matter=$2
+    {
+        if [[ "$with_front_matter" == "yes" ]]; then
+            printf -- '---\nhide:\n  - navigation\n---\n\n'
+        fi
+        printf '# Changelog\n\n'
+        printf 'All notable changes to HAPTIC — the controller and its Helm chart — are\n'
+        printf 'documented in this file. Controller changes are listed first; chart changes\n'
+        printf '(values, templates, chart defaults) follow under each release'\''s "Helm chart"\n'
+        printf 'subsection.\n\n'
+        printf 'The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),\n'
+        printf 'and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n\n'
+        sed -n '/^## \[/,$p' CHANGELOG.md \
+            | sed -e 's|](\./docs/|](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/|g' \
+                  -e 's|](\./charts/|](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/|g'
+    } > "$target"
+}
+echo "Regenerating docs-site changelog copies..."
+sync_changelog_copy docs/controller/docs/changelog.md yes
+sync_changelog_copy charts/haptic/docs/changelog.md no
+
+# --- commit --------------------------------------------------------------------
+git add CHANGELOG.md VERSION charts/haptic/Chart.yaml \
+    docs/controller/docs/changelog.md charts/haptic/docs/changelog.md \
+    docs/landing/overrides/home.html $INSTALL_EXAMPLE_FILES
+
+if git diff --cached --quiet; then
+    warn "Nothing to do — all release files already carry $VERSION"
+    exit 0
 fi
 
-# Update version-bearing files for the selected release type
-if [[ "$TYPE" == "controller" ]]; then
-    # Update VERSION file
-    echo "Updating VERSION file..."
-    echo "$VERSION" > VERSION
-
-    # Update Chart.yaml appVersion
-    echo "Updating Chart.yaml appVersion..."
-    sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/haptic/Chart.yaml
-
-    # Update Chart.yaml artifacthub.io/images annotation
-    echo "Updating Chart.yaml artifacthub.io/images annotation..."
-    # shellcheck source=../versions.env
-    source versions.env
-    sed -i "s|haptic:[0-9a-z.-]*|haptic:$VERSION-haproxy$DEFAULT_HAPROXY|" charts/haptic/Chart.yaml
-
-    COMMIT_FILES=(VERSION charts/haptic/Chart.yaml)
-    COMMIT_MSG="release: haptic-controller v$VERSION"
-    SUCCESS_MSG="Release commit created for v$VERSION"
-    RELEASE_BRANCH="release/controller-v$VERSION"
-    TAG="v$VERSION"
-else
-    # Update Chart.yaml version
-    echo "Updating Chart.yaml version..."
-    sed -i "s/^version:.*/version: $VERSION/" charts/haptic/Chart.yaml
-
-    # Update README helm install version references
-    echo "Updating README.md helm install versions..."
-    sed -i "s|haptic --version [0-9a-z.-]*|haptic --version $VERSION|" README.md
-    sed -i "s|haptic --version [0-9a-z.-]*|haptic --version $VERSION|" charts/haptic/README.md
-
-    COMMIT_FILES=(charts/haptic/Chart.yaml README.md charts/haptic/README.md)
-    COMMIT_MSG="release: chart v$VERSION"
-    SUCCESS_MSG="Release commit created for chart v$VERSION"
-    RELEASE_BRANCH="release/haptic-chart-v$VERSION"
-    TAG="haptic-chart-v$VERSION"
-fi
-
-# Show changes
 echo ""
 echo "Changes to be committed:"
-git diff --stat
+git diff --cached --stat
 
-# Commit changes (tag created automatically by CI after merge)
 echo ""
 echo "Creating commit..."
-git add "${COMMIT_FILES[@]}"
-git commit -m "$COMMIT_MSG"
+git commit -m "release: haptic v$VERSION"
 
 success ""
-success "$SUCCESS_MSG"
+success "Release commit created for v$VERSION"
 success ""
 echo "Next steps:"
 echo "  1. Review the commit: git show HEAD"
-echo "  2. Create release branch: git checkout -b $RELEASE_BRANCH"
-echo "  3. Push and create MR: git push -u origin $RELEASE_BRANCH"
+echo "     - check the promoted [$VERSION] changelog section reads as release notes"
+echo "     - update the hand-curated artifacthub.io/changes annotation in"
+echo "       charts/haptic/Chart.yaml (summary bullets for the new release)"
+echo "  2. Create release branch: git checkout -b release/v$VERSION"
+echo "  3. Push and create MR: git push -u origin release/v$VERSION"
 echo "  4. Merge the MR to main"
 echo ""
 echo "After merge, CI will automatically:"
-echo "  - Create tag $TAG"
-if [[ "$TYPE" == "controller" ]]; then
-    echo "  - Build binaries and Docker images"
-else
-    echo "  - Package and push Helm chart to OCI registry"
-fi
-echo "  - Create GitLab release"
+echo "  - Create tag v$VERSION (after the full post-merge pipeline passes)"
+echo "  - Build binaries and Docker images (controller + spoa-hub)"
+echo "  - Package and push the Helm chart to the OCI registry"
+echo "  - Create the GitLab release with the [$VERSION] changelog section"
+echo "  - Publish versioned documentation"

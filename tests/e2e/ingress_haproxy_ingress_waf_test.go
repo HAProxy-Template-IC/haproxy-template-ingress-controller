@@ -95,7 +95,7 @@ func TestIngressHaproxyIngressWafDeny(t *testing.T) {
 			// the deny-mode probe and pass for the wrong reason.
 			//
 			// Map is keyed by `<ns>/<name>` (resource id), not host+path —
-			// see charts/haptic/CHANGELOG.md.
+			// see the "Helm chart" subsection in CHANGELOG.md.
 			waitForHaproxyIngressWafMap(ctx, t, []string{
 				ns + "/echo-deny deny",
 				ns + "/echo-detect detect",

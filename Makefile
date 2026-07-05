@@ -4,7 +4,7 @@
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
         tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
-        release-controller release-chart goreleaser-snapshot \
+        release goreleaser-snapshot \
         pgo-profile pgo-merge \
         extract-schemas
 
@@ -816,19 +816,15 @@ dev: clean build test lint ## Clean, build, test, and lint (common dev workflow)
 
 ## Release targets
 
-release-controller: ## Create a controller release (usage: make release-controller VERSION=0.1.0)
-	@if [ -z "$(VERSION)" ] || [ "$(VERSION)" = "dev" ]; then \
-		echo "Error: VERSION must be specified (e.g., make release-controller VERSION=0.1.0)"; \
+# RELEASE_VERSION is deliberately its own variable: VERSION defaults to the
+# current VERSION file content, which would silently re-release the current
+# version when the argument is forgotten.
+release: ## Prepare a release of controller + chart (usage: make release RELEASE_VERSION=0.2.0)
+	@if [ -z "$(RELEASE_VERSION)" ]; then \
+		echo "Error: RELEASE_VERSION must be specified (e.g., make release RELEASE_VERSION=0.2.0)"; \
 		exit 1; \
 	fi
-	@./scripts/release.sh controller $(VERSION)
-
-release-chart: ## Create a chart release (usage: make release-chart CHART_VERSION=0.1.0)
-	@if [ -z "$(CHART_VERSION)" ] || [ "$(CHART_VERSION)" = "dev" ]; then \
-		echo "Error: CHART_VERSION must be specified (e.g., make release-chart CHART_VERSION=0.1.0)"; \
-		exit 1; \
-	fi
-	@./scripts/release.sh chart $(CHART_VERSION)
+	@./scripts/release.sh $(RELEASE_VERSION)
 
 goreleaser-snapshot: ## Test GoReleaser locally (no push)
 	goreleaser release --snapshot --clean
