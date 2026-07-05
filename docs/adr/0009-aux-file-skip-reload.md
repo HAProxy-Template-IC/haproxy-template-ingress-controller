@@ -64,17 +64,32 @@ a reload.
 - `skip_reload=true` closes the HAProxy reload-ordering race (race A)
   only. The chart-side static floor of 4 mirror message slots was
   removed on that basis, but has since been re-added
-  (`mirrorStaticMinSlots`, default 4): the floor independently masks a
-  second, unrelated race in the SPOA hub's plugin loader (race B,
+  (`mirrorStaticMinSlots`, default 4): the floor independently masked
+  a second, unrelated race in the SPOA hub's plugin loader (race B,
   spoa-hub issue #47), where a transient render emitting an empty
-  `messages` list makes the hub unregister the mirror handler on TOML
-  reload and silently drop in-flight NOTIFYs. Do not remove the floor
-  until the upstream plugin loader stops unregistering
-  already-registered messages on reload. Above the floor, slot counts
-  still size dynamically from `globalFeatures["mirrorMaxFanout"]`;
-  shrinkage within the dynamic range correctly shrinks `spoe.conf`,
-  and the guard's explicit reload loads the new (smaller)
-  `haproxy.cfg` and `spoe.conf` atomically.
+  `messages` list made the hub unregister the mirror handler on TOML
+  reload and silently drop in-flight NOTIFYs. Race B's silent drop is
+  fixed upstream as of spoa-hub v0.7.3: reloads quiesce
+  (`swap → quiesce → drain → shutdown` — in-flight NOTIFYs complete
+  against the pre-swap plugin generation), and NOTIFYs for messages
+  absent from the hub's current config are loud (WARN +
+  `spoa_messages_unhandled_total{message}`) instead of silent. The
+  floor nevertheless stays, for two reasons that survive the upstream
+  fix: (1) it is the slot-capacity contract for chart consumers that
+  don't participate in dynamic fanout sizing — nginx-ingress's
+  `mirror-target` allocates one slot per mirror-target Ingress up to
+  the floor and `fail()`s beyond it, and its `send-spoe-group`
+  references need the floor-declared groups to pass `haproxy -c`;
+  (2) unhandled messages are still not *served* (SPOP has no
+  message-level error frame), so a fanout shrink mid-flight loses
+  mirrors fired during the hub-TOML-reload-to-HAProxy-reload window —
+  the floor keeps slots [1, floor] permanently registered so the
+  common small-fanout case never enters that window. Above the floor,
+  slot counts still size dynamically from
+  `globalFeatures["mirrorMaxFanout"]`; shrinkage within the dynamic
+  range correctly shrinks `spoe.conf`, and the guard's explicit
+  reload loads the new (smaller) `haproxy.cfg` and `spoe.conf`
+  atomically.
 - The race generalises away: any future auxiliary file type (crt-list,
   error files, additional map files) inherits the same atomic-swap
   semantics — content lands on disk silently, then exactly one reload

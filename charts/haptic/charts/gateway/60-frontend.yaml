@@ -1241,10 +1241,11 @@ templateSnippets:
   # the same group silently no-ops on calls 2..N. Each filter
   # therefore uses a per-index suffix: `gw_mirror_target_<i>`,
   # `gw_mirror_scheme_<i>`, and `mirror-<i>-group` for i in 1..N.
-  # The plugin's spoaHub.plugins.mirror.messages list in values.yaml
-  # enumerates `mirror-1`..`mirror-4` to register matching plugin-side
-  # handlers for each index (bump if any real workload exceeds 4
-  # mirrors per rule — the conformance suite tops out at 2).
+  # The spoa-hub library sizes the plugin-side message list to
+  # max(cluster-wide max fanout, spoaHub.mirrorStaticMinSlots), so a
+  # matching `mirror-<i>` handler exists for every index emitted here
+  # (see libraries/spoa-hub/20-config-content.yaml for the sizing and
+  # floor rationale — the conformance suite tops out at 2 mirrors).
   #
   # The mirror plugin always reads its target from
   # `var(txn.gw_mirror_target_<i>)` via the message body's

@@ -102,7 +102,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - Gateway/Ingress resources whose addition produces no config diff (e.g. a Gateway with no attached routes) now get their `Programmed` status written instead of sticking at `Programmed=Unknown`; status patches travel on the deploy event, fixing a stale-status race under render churn.
 - Status patches, admission overlays, and owned-resource apply now resolve a watched resource's plural via the cluster RESTMapper instead of a built-in pluralization guess, so a CRD with an irregular served plural no longer targets a nonexistent GroupVersionResource.
 - Controller no longer schedules a spurious iteration restart ~1s after every startup.
-- Bundled SPOA hub updated to v0.7.2: reload now drains in-flight mirror/OTLP work before swapping, fixing a use-after-free segfault on plugin reload (v0.6.1) and a config-reload conformance flake (v0.6.2).
+- Bundled SPOA hub updated to v0.7.3: reloads now quiesce in-flight SPOE dispatches before retiring the old plugin set (fixing mirror losses around config reloads, #47), unhandled SPOE messages are surfaced via WARN log and `spoa_messages_unhandled_total`, reload drains in-flight mirror/OTLP work before swapping, and earlier hub fixes are included (use-after-free segfaults on plugin reload, config-reload conformance flake).
 
 ### Removed
 

@@ -1488,9 +1488,12 @@ spoaHub:
 
   # Static floor for the mirror plugin's SPOE message slot count.
   # The rendered slot count is `max(max-mirrors-per-route, this value)`.
-  # Floor exists (issue #47) to keep handler state across SPOA-hub reloads
-  # when transient renders drop slots. Bump if > 4 mirrors per HTTPRoute
-  # and you observe drop-flakes.
+  # The floor is also the slot capacity for nginx-ingress mirror-target
+  # Ingresses (one slot each), and it keeps hub-side handler state
+  # registered across SPOA-hub reloads when transient renders shrink the
+  # slot set (issue #47; hub v0.7.3+ makes such losses loud via
+  # spoa_messages_unhandled_total instead of silent). Bump if > 4 mirrors
+  # per HTTPRoute rule or > 4 mirror-target Ingresses.
   mirrorStaticMinSlots: 4
 
   # Plugins. Each entry has chart-managed lifecycle keys (enabled, timeoutMs,
@@ -1617,9 +1620,10 @@ spoaHub:
       # 20-route-analysis.yaml). Each filter needs its own SPOE
       # message+group pair because HAProxy SPOE processes each group
       # at most once per stream — `mirror-<i>` for i in 1..maxN. No
-      # cap: a route with 12 mirror filters allocates 12 slots; with
-      # 0 mirrors the list expands to empty (plugin loaded but never
-      # invoked).
+      # cap: a route with 12 mirror filters allocates 12 slots; the
+      # list never shrinks below the mirrorStaticMinSlots floor
+      # (default 4, see above), so with 0 mirrors it still covers
+      # mirror-1..mirror-4.
       #
       # Plugin-side these are all routed to the same mirror plugin
       # (the plugin's process() only reads SPOE args, not the message
