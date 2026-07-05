@@ -41,7 +41,7 @@ ARG YAMLLINT_VERSION=1.38.0
 # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
 ARG MARKDOWNLINT_VERSION=0.14.0
 # renovate: datasource=github-releases depName=goreleaser/goreleaser
-ARG GORELEASER_VERSION=2.16.0
+ARG GORELEASER_VERSION=2.17.0
 # renovate: datasource=github-releases depName=sigstore/cosign
 ARG COSIGN_VERSION=3.1.1
 # renovate: datasource=github-releases depName=anchore/syft
