@@ -4,6 +4,8 @@
 
 Validation tests verify that your templates render correctly and produce valid HAProxy configurations. Tests are embedded in the HAProxyTemplateConfig CRD and run locally using the CLI.
 
+The controller binary has three subcommands beyond `run`: `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
+
 ## Quick Start
 
 `haptic-controller validate` is the controller binary running in validation mode. Download it for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) and run it locally:

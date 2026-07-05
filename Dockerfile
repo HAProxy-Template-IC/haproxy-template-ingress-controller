@@ -93,6 +93,13 @@ COPY --from=binary /${TARGETPLATFORM}/haptic-controller /usr/local/bin/haptic-co
 # Ensure binary is executable
 RUN chmod +x /usr/local/bin/haptic-controller
 
+# Bundle the Helm chart so `haptic-controller migrate-check` can render the
+# config in-process with the image's own chart — no cluster or mounted
+# values needed for the zero-argument audit. The path matches
+# embeddedChartPath in cmd/controller/chartrender.go. The chart is source
+# YAML (~3 MB); it adds one layer and no runtime cost for `run`.
+COPY charts/haptic /usr/share/haptic/chart
+
 # Create validation directories for HAProxy configuration validation
 # These directories must be writable by the haproxy user
 RUN mkdir -p /usr/local/etc/haproxy/maps \

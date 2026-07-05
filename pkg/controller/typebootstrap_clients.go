@@ -38,6 +38,17 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
 )
 
+// NewClusterSchemaFetcher composes the apiextensions CRD lister and the
+// discovery-backed OpenAPI v3 provider into the live-cluster schema
+// fetcher. The controller's iteration wiring and the `migrate-check` CLI
+// both build their schema access through this single entry point.
+func NewClusterSchemaFetcher(apiext apiextensionsclientset.Interface, d discovery.DiscoveryInterface) schemafetcher.Fetcher {
+	return schemafetcher.NewClusterFetcher(
+		newAPIExtensionsCRDLister(apiext),
+		newDiscoveryOpenAPIV3Provider(d),
+	)
+}
+
 // apiextensionsCRDLister implements [schemafetcher.CRDLister] by
 // listing CRDs through the apiextensions clientset.
 type apiextensionsCRDLister struct {

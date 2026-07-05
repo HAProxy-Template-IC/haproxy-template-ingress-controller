@@ -1,0 +1,43 @@
+# A `kind: List` wrapper as produced by `kubectl get ingress -A -o yaml`.
+# Exercises the offline loader's List-unwrapping path.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: shop
+      namespace: store
+      annotations:
+        acme.io/ssl-redirect: "true"
+    spec:
+      ingressClassName: acme
+      rules:
+        - host: shop.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: shop-svc
+                    port:
+                      number: 80
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: api
+      namespace: store
+    spec:
+      ingressClassName: acme
+      rules:
+        - host: api.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: api-svc
+                    port:
+                      number: 8080

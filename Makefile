@@ -184,7 +184,15 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 
 test: ## Run tests
 	@echo "Running tests..."
-	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -cover ./...
+	# -coverpkg=./... (rather than a bare -cover) instruments the whole module
+	# for coverage, matching how the CI `test` job invokes gotestsum. Beyond
+	# unifying local and CI runs, it sidesteps a Go toolchain bug: with the
+	# committed cmd/controller/default.pgo, `go test -cover ./...` links the
+	# PGO-built and cover-built variants of a package imported only by the
+	# PGO main under conflicting fingerprints ("fingerprint mismatch" link
+	# error). Whole-module coverage instrumentation makes the variants
+	# consistent.
+	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -cover -coverpkg=./... ./...
 
 test-integration: ## Run integration tests (requires kind cluster)
 	@echo "Running integration tests..."

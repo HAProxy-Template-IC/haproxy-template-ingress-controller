@@ -153,10 +153,31 @@ func runTypeBootstrap(
 		return nil, fmt.Errorf("constructing apiextensions client for type bootstrap: %w", err)
 	}
 
-	fetcher := schemafetcher.NewClusterFetcher(
-		newAPIExtensionsCRDLister(apiextClient),
-		newDiscoveryOpenAPIV3Provider(k8sClient.Clientset().Discovery()),
-	)
+	return RunTypeBootstrap(ctx, cfg,
+		NewClusterSchemaFetcher(apiextClient, k8sClient.Clientset().Discovery()),
+		k8sClient.Clientset().Discovery(),
+		logger)
+}
+
+// RunTypeBootstrap is the schema-source-agnostic core of the live type
+// bootstrap: GVK resolution through the supplied discovery interface,
+// schema acquisition through the supplied fetcher. The controller's
+// iteration startup reaches it via runTypeBootstrap (which builds both
+// from the iteration's K8s client); the `migrate-check` CLI calls it
+// directly with clients built from the operator's kubeconfig.
+func RunTypeBootstrap(
+	ctx context.Context,
+	cfg *config.Config,
+	fetcher schemafetcher.Fetcher,
+	d discovery.DiscoveryInterface,
+	logger *slog.Logger,
+) (*typebootstrap.Result, error) {
+	if cfg == nil || len(cfg.WatchedResources) == 0 {
+		return &typebootstrap.Result{
+			Types:  map[string]reflect.Type{},
+			Errors: map[string]error{},
+		}, nil
+	}
 
 	// Cap the bootstrap's wall-clock cost so a slow apiserver can't
 	// stall Stage 5 indefinitely. discoveryOpenAPIV3Provider.GVSpec
@@ -170,7 +191,7 @@ func runTypeBootstrap(
 	ctx, cancel := context.WithTimeout(ctx, typeBootstrapFetchTimeout)
 	defer cancel()
 
-	resources := buildBootstrapResources(cfg, k8sClient.Clientset().Discovery(), logger)
+	resources := buildBootstrapResources(cfg, d, logger)
 
 	result, err := typebootstrap.Bootstrap(ctx, typebootstrap.Config{
 		Resources:          resources,

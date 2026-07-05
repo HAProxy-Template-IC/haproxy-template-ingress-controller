@@ -59,7 +59,7 @@ func TestDiscoveryServedChecker_TransientVsNotFound(t *testing.T) {
 		"flaky.io/v1":   assert.AnError,
 	}}
 
-	checker := newDiscoveryServedChecker(context.Background(), d, schemafetcher.NewMapFetcher(nil), slog.Default())
+	checker := NewDiscoveryServedChecker(context.Background(), d, schemafetcher.NewMapFetcher(nil), slog.Default())
 
 	assert.True(t, checker.IsServed("example.io/v1", "widgets"))
 	assert.False(t, checker.IsServed("example.io/v1", "gadgets"))
@@ -122,7 +122,7 @@ func TestDiscoveryServedChecker_FieldServed(t *testing.T) {
 	fetcher := schemafetcher.NewMapFetcher(map[schema.GroupVersionKind]*spec.Schema{
 		{Group: "gateway.example.io", Version: "v1", Kind: "HTTPRoute"}: routeSchema,
 	})
-	checker := newDiscoveryServedChecker(context.Background(), fd, fetcher, slog.Default())
+	checker := NewDiscoveryServedChecker(context.Background(), fd, fetcher, slog.Default())
 
 	served, err := checker.FieldServed("gateway.example.io/v1", "httproutes", "spec.rules.filters.requestMirror")
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestDiscoveryServedChecker_FieldServed(t *testing.T) {
 	// Served per discovery but schema missing from the fetcher: fail closed.
 	fd.Resources[0].APIResources = append(fd.Resources[0].APIResources,
 		metav1.APIResource{Name: "gadgets", Kind: "Gadget"})
-	fresh := newDiscoveryServedChecker(context.Background(), fd, fetcher, slog.Default())
+	fresh := NewDiscoveryServedChecker(context.Background(), fd, fetcher, slog.Default())
 	_, err = fresh.FieldServed("gateway.example.io/v1", "gadgets", "spec.rules")
 	require.Error(t, err, "schema-fetch failure must fail the resolution, not silently strip")
 }
