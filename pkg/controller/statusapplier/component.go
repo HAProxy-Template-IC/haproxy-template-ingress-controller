@@ -289,23 +289,41 @@ func (c *Component) handleResourcesApplied(ctx context.Context, event *events.Re
 	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseRendered)
 }
 
-// handleDeploymentCompleted applies the "deployed" variant from the event
-// payload. The Deployer forwards the patches from the DeploymentScheduledEvent
-// that triggered this deploy, so the patches describe exactly the config the
-// deploy shipped — no cache, no LATEST-vs-deployed race.
+// handleDeploymentCompleted applies the status variant that matches the deploy
+// outcome, from the event payload. The Deployer forwards the patches from the
+// DeploymentScheduledEvent that triggered this deploy, so the patches describe
+// exactly the config the deploy shipped — no cache, no LATEST-vs-deployed race.
 //
-// Partial-failure handling: any successful endpoint observed the new config,
-// so applying the "deployed" variant whenever Succeeded > 0 reflects reality
-// for those instances. Per-endpoint failures surface via
-// InstanceDeploymentFailedEvent and feed the "deployFailed" variant through
-// ReconciliationFailedEvent independently.
+// Outcome mapping:
+//   - Total == 0: nothing was deployed (no HAProxy pods yet). No-op — not a
+//     failure; leave the status where it is.
+//   - Succeeded > 0: at least one instance observed the new config, so the
+//     "deployed" variant reflects reality. Per-endpoint failures during a partial
+//     success surface independently via InstanceDeploymentFailedEvent.
+//   - Total > 0 && Succeeded == 0: a full failure — apply the "deployFailed"
+//     (Programmed=False) variant so the status doesn't freeze at its last value.
+//     The per-endpoint deploy path emits no ReconciliationFailedEvent, so this
+//     handler is the only signal for a fully-failed deploy.
 func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events.DeploymentCompletedEvent) {
-	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't
-	// actually put any HAProxy on the new config — don't claim "deployed".
-	if event.Total == 0 || event.Succeeded == 0 {
+	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't actually
+	// put any HAProxy on the new config — that's "nothing deployed", not a
+	// failure, so leave the status where it is.
+	if event.Total == 0 {
 		return
 	}
 	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
+		return
+	}
+	// A fully-failed deploy (endpoints existed, but none took the new config)
+	// must surface Programmed=False with a reason via the "deployFailed" variant.
+	// The per-endpoint deploy path emits no ReconciliationFailedEvent, so without
+	// this the status would freeze at its last value for the whole failure window
+	// (up to the 60s drift backstop). A partial success (Succeeded>0) still
+	// applies the "deployed" variant: at least one instance observed the config,
+	// and per-endpoint failures surface independently via
+	// InstanceDeploymentFailedEvent.
+	if event.Succeeded == 0 {
+		c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployFailed)
 		return
 	}
 	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployed)

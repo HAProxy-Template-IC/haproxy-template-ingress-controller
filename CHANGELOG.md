@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A runtime server update against a backend the loaded config doesn't yet have (`No such backend`/`No such server`) is no longer misclassified as a transient reload and retried futilely for up to 2 seconds per apply; it now fails fast to the scheduled structural deploy that actually creates the backend, so convergence isn't delayed by the retry storm.
+- A retryable deploy failure now self-reschedules with bounded exponential backoff (capped, then handed off to the 60s drift backstop) instead of waiting up to a full minute for the periodic drift check, and a fully-failed deploy now reports `Programmed=False` with a reason instead of freezing the last-known status (#72).
 
 ### Helm chart
 

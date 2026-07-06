@@ -245,6 +245,29 @@ func TestHandleDeploymentCompleted_AppliesDeployedVariant(t *testing.T) {
 	assert.Equal(t, 1, completedEvent.AppliedCount)
 }
 
+// TestHandleDeploymentCompleted_PartialSuccessAppliesDeployedVariant: a partial
+// failure (some pods took the config, some didn't — Succeeded>0 && Failed>0) still
+// applies the "deployed" variant, because at least one instance observed the
+// config; the un-converged pods are re-driven by the deployer's fast retry. Only
+// a FULL failure (Succeeded==0) surfaces the deployFailed variant.
+func TestHandleDeploymentCompleted_PartialSuccessAppliesDeployedVariant(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total: 2, Succeeded: 1, Failed: 1, StatusPatches: deployedPatches(),
+	}))
+
+	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
+}
+
 // TestHandleDeploymentCompleted_SkipsWithoutPatches: an event with no patches
 // is ignored. This used to be "without cached patches"; the cache is gone
 // and the equivalent signal is now "event.StatusPatches is empty".
@@ -282,6 +305,38 @@ func TestHandleDeploymentCompleted_SkipsZeroEndpoints(t *testing.T) {
 	}))
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
+}
+
+// TestHandleDeploymentCompleted_FullFailureAppliesDeployFailedVariant pins that
+// a fully-failed deploy (endpoints existed, but none took the new config:
+// Total>0, Succeeded==0) surfaces the "deployFailed" variant (Programmed=False
+// with a reason) rather than silently freezing the last status. The per-endpoint
+// deploy path emits no ReconciliationFailedEvent, so this handler is the only
+// place that can signal the failure. Distinct from the Total==0 "nothing
+// deployed" case, which stays a no-op.
+func TestHandleDeploymentCompleted_FullFailureAppliesDeployFailedVariant(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	patches := newTestPatches(map[string]map[string]any{
+		"deployFailed": {"conditions": []any{map[string]any{
+			"type": "Programmed", "status": "False", "reason": "DeploymentFailed",
+		}}},
+	})
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total: 2, Succeeded: 0, Failed: 2, StatusPatches: patches,
+	}))
+
+	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, events.StatusPatchPhaseDeployFailed, completedEvent.Phase,
+		"a fully-failed deploy must apply the deployFailed (Programmed=False) variant")
+	assert.Equal(t, 1, completedEvent.AppliedCount)
 }
 
 // TestHandleDeploymentSkipped_AppliesDeployedVariant exercises the converged

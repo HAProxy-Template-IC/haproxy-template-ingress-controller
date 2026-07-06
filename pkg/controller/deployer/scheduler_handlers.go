@@ -24,6 +24,21 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
+const (
+	// maxDeployFailureRetries bounds the fast self-reschedule of a retryable
+	// deploy failure. Beyond this many consecutive fast retries for the SAME
+	// render (checksum), the scheduler stops the hot retry and hands off to the
+	// 60s DriftPreventionMonitor backstop — so a permanently-wedged deploy (e.g. a
+	// config HAProxy keeps rejecting) can't spin. A NEW render resets the budget.
+	maxDeployFailureRetries = 5
+
+	// maxFailureRetryBackoff caps the exponential fast-retry backoff. It matches
+	// config.DefaultDriftPreventionInterval (60s): once a single retry would wait
+	// as long as the drift backstop anyway, there's nothing to gain over letting
+	// drift drive it.
+	maxFailureRetryBackoff = 60 * time.Second
+)
+
 // handleTemplateRendered handles template rendering completion.
 //
 // This caches the rendered configuration and auxiliary files for later deployment
@@ -335,6 +350,138 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	s.schedulerMutex.Unlock()
 
 	s.signalCompleted()
+
+	// Fast self-reschedule: a retryable per-pod failure (e.g. a transient DPA
+	// transaction-version conflict) is otherwise only re-driven by the 60s drift
+	// backstop, so the first retry can wait a full minute — a Gateway can sit
+	// Programmed!=True that whole time. Re-drive it promptly through the SINGLE
+	// coalescing path with bounded backoff. A fully-successful deploy cancels any
+	// armed retry (the config converged). Both branches gate on Total>0 so the
+	// zero-endpoint "nothing deployed" completion is a no-op.
+	switch {
+	case event.Total > 0 && event.Failed > 0:
+		s.scheduleFailureRetry(event)
+	case event.Total > 0 && event.Failed == 0:
+		s.cancelFailureRetry()
+	}
+}
+
+// scheduleFailureRetry arms (or re-arms) the single fast-retry timer after a
+// deploy completed with failures. It re-dispatches the last-validated render
+// through the existing scheduleOrQueue path after a bounded exponential backoff,
+// so a transiently-failed deploy self-heals in seconds instead of waiting up to a
+// full DriftPreventionInterval for the 60s backstop.
+//
+// The ONLY async primitive is one time.AfterFunc timer: its callback
+// (rescheduleLastValidated) writes the single state.pending slot, so all timing
+// stays in the one runDeployLoop and no second scheduling path (the reload-storm
+// regression the handleDeploymentCompleted comment warns about) is created.
+//
+// Budget: a NEW render (different ContentChecksum) earns a fresh budget; the same
+// failing render gets at most maxDeployFailureRetries fast retries, after which
+// the 60s drift backstop takes over — no hot loop on a permanently-wedged deploy.
+func (s *DeploymentScheduler) scheduleFailureRetry(event *events.DeploymentCompletedEvent) {
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+
+	if event.ContentChecksum != s.lastFailedRetryChecksum {
+		// A different render is failing now — start a fresh budget for it.
+		s.lastFailedRetryChecksum = event.ContentChecksum
+		s.deployFailureRetries = 0
+	}
+
+	if s.deployFailureRetries >= maxDeployFailureRetries {
+		s.logger.Warn("Deploy fast-retry budget exhausted; 60s drift backstop continues",
+			"attempts", s.deployFailureRetries,
+			"checksum", event.ContentChecksum)
+		return
+	}
+
+	s.deployFailureRetries++
+	backoff := s.failureRetryBackoff(s.deployFailureRetries)
+	if s.retryTimer != nil {
+		s.retryTimer.Stop()
+	}
+	s.retryTimer = time.AfterFunc(backoff, s.rescheduleLastValidated)
+
+	s.logger.Info("Deploy failed; scheduling fast retry",
+		"attempt", s.deployFailureRetries,
+		"backoff_ms", backoff.Milliseconds(),
+		"checksum", event.ContentChecksum)
+}
+
+// failureRetryBackoff returns the fast-retry backoff for the given 1-based
+// attempt: an exponential base<<(attempt-1) doubling, clamped to
+// maxFailureRetryBackoff. The base is minDeploymentInterval (default 2s), so the
+// sequence is 2s, 4s, 8s, 16s, 32s. The clamp also catches any shift overflow
+// (backoff<=0) defensively.
+func (s *DeploymentScheduler) failureRetryBackoff(attempt int) time.Duration {
+	base := s.minDeploymentInterval
+	if base <= 0 {
+		base = 2 * time.Second
+	}
+	backoff := base << (attempt - 1)
+	if backoff <= 0 || backoff > maxFailureRetryBackoff {
+		backoff = maxFailureRetryBackoff
+	}
+	return backoff
+}
+
+// rescheduleLastValidated is the fast-retry timer callback. It re-dispatches the
+// last-validated render through the existing coalescing path, MIRRORING
+// performPodsDiscovered's snapshot: it never spawns a deploy — it only sets the
+// single state.pending slot, which the one runDeployLoop drains under its own
+// rate limit (waitDeployInterval still enforces minDeploymentInterval between
+// reloads).
+//
+// coalescible=false: when the timer fires this retry IS the newest thing for the
+// slot. A newer real render overwrites state.pending via latest-wins anyway
+// (and, being a fresh ValidationCompleted, resets the failure budget), so the
+// retry never clobbers newer work.
+//
+// Lock ordering: snapshot under s.mu, RELEASE it, then call scheduleOrQueue
+// (which takes schedulerMutex internally). s.mu and schedulerMutex are never held
+// at the same time here.
+func (s *DeploymentScheduler) rescheduleLastValidated() {
+	// If leadership was lost (or we're shutting down) between the timer arming and
+	// firing, s.ctx is cancelled and the deploy loop has exited — don't repopulate
+	// state.pending for a term that's already over. handleLostLeadership stops the
+	// timer, but Stop() can't cancel a callback already running, so this closes
+	// that last window. (s.ctx is nil only in direct-call unit tests that never
+	// call Start; there the hasValidConfig guard below no-ops safely.)
+	if s.ctx != nil && s.ctx.Err() != nil {
+		return
+	}
+	s.mu.Lock()
+	config := s.lastValidatedConfig
+	auxFiles := s.lastValidatedAux
+	parsedConfig := s.lastParsedConfig
+	statusPatches := s.lastValidatedStatusPatches
+	contentChecksum := s.lastValidatedContentChecksum
+	correlationID := s.lastCorrelationID
+	endpoints := s.currentEndpoints
+	hasValidConfig := s.hasValidConfig
+	s.mu.Unlock()
+
+	if !hasValidConfig || len(endpoints) == 0 {
+		s.logger.Debug("Fast retry skipped: no validated config or no endpoints")
+		return
+	}
+
+	s.scheduleOrQueue(s.ctx, config, auxFiles, parsedConfig, endpoints, "deploy_failure_retry", correlationID, statusPatches, false /* coalescible */, contentChecksum)
+}
+
+// cancelFailureRetry stops any armed fast-retry timer and resets the budget.
+// Called when a deploy completes with zero failures (the config converged) so a
+// stale retry from an earlier failure can't fire against an already-good state.
+func (s *DeploymentScheduler) cancelFailureRetry() {
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	if s.retryTimer != nil {
+		s.retryTimer.Stop()
+	}
+	s.deployFailureRetries = 0
+	s.lastFailedRetryChecksum = ""
 }
 
 // handleConfigPublished handles ConfigPublishedEvent by caching runtime config metadata.
@@ -378,6 +525,16 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeCorrelationID = ""
 	s.state.pending = nil
+
+	// Stop any armed fast-retry timer and reset its budget — a new leadership
+	// term must not fire a retry queued by the previous one. Inlined rather than
+	// calling cancelFailureRetry() (which would re-lock the schedulerMutex we
+	// already hold).
+	if s.retryTimer != nil {
+		s.retryTimer.Stop()
+	}
+	s.deployFailureRetries = 0
+	s.lastFailedRetryChecksum = ""
 
 	// Drop the dispatch diff baseline (the new leader hasn't dispatched, so its
 	// first render must be classified structural — nil baseline — and deploy the
