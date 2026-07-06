@@ -42,18 +42,39 @@ import (
 // connection to the post-reload HAProxy succeeds — so the counted
 // distribution stays accurate.
 //
-// Statistical floor: ±15pp tolerance over 200 successful samples has
-// pass-rate >99% by binomial math when weights render correctly. With
-// the retry rescuing reload-window failures, the effective sample
-// count stays near the target even under heavy concurrent test churn.
+// Statistical bound: the 70/30 assertion accepts the observed v2 share
+// within a five-sigma confidence band whose half-width is derived from the
+// ACTUAL successful-sample count, not a fixed tolerance. Its false-failure
+// probability under correct weights is P(|Z| > 5) = 5.7e-7 (normal
+// approximation; see the Assess block). Deriving the band from the real
+// count means churn that thins the sample widens the band rather than
+// flaking it — the retry above keeps the count near the 200 target, and the
+// band absorbs whatever count remains.
 func TestHTTPRouteSplit(t *testing.T) {
 	t.Parallel()
 	host := "httproute-split.localdev.me"
 	var fwd GatewayForward
 
 	const (
-		samples             = 200
-		tolerancePoints     = 15
+		samples = 200
+		// zFiveSigma is the standard-normal quantile for a five-sigma two-sided
+		// bound. Under correct 70/30 weights the observed v2 share is
+		// Binomial(total, 0.30)/total, and P(|Z| > 5) = 5.7e-7 by the normal
+		// approximation — so the 70/30 assertion below falsely fails on
+		// well-formed traffic less than once per ~1.7 million runs. The band's
+		// half-width is derived from the ACTUAL successful-sample count, not a
+		// fixed magic tolerance (see the Assess block).
+		zFiveSigma = 5.0
+		// maxTolerance caps the 5-sigma band's half-width. The band widens as
+		// the sample thins toward the samples/2 floor (±22.9pp at total=100),
+		// which would accept a genuinely broken split — e.g. ignored weights
+		// producing ~50/50 (v2≈0.50, 0.20 from p0). Capping at 0.18 keeps a
+		// ~50/50 regression always failing (0.30+0.18 = 0.48 < 0.50) while the
+		// cap only binds below ~124 samples; at the nominal 200 the 5-sigma
+		// band (±16.2pp) is already tighter, so de-flaking is unaffected. At
+		// the floor the capped false-failure rate is P(|Z| > 0.18/0.0458) =
+		// P(|Z| > 3.93) ≈ 8.5e-5. Minimum detectable effect at the floor: 18pp.
+		maxTolerance        = 0.18
 		v2Weight            = 30
 		defaultWeight       = 70
 		warmupConsecutiveOK = 5
@@ -69,10 +90,10 @@ func TestHTTPRouteSplit(t *testing.T) {
 		// 50 attempts × 50ms (~2.5s) did not, and the warmup timed out before the
 		// route was even deployed. (This is a readiness precondition, not the
 		// 70/30 assertion — that is unchanged.)
-		warmupBudget  = 12 * time.Second
-		warmupBackoff = 50 * time.Millisecond
-		sampleMaxAttempts   = 4
-		sampleRetryBackoff  = 50 * time.Millisecond
+		warmupBudget       = 12 * time.Second
+		warmupBackoff      = 50 * time.Millisecond
+		sampleMaxAttempts  = 4
+		sampleRetryBackoff = 50 * time.Millisecond
 	)
 
 	feature := features.New("HTTPRoute: 70/30 weighted backend split").
@@ -111,7 +132,7 @@ func TestHTTPRouteSplit(t *testing.T) {
 			waitForControllerDeployed(ctx, t, client, ns)
 			return ctx
 		}).
-		Assess("traffic split converges to the configured 70/30 within ±15pp over 200 samples", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("traffic split converges to the configured 70/30 within a five-sigma band over ~200 samples", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client := httpclient.ForForwarded(t, fwd.HTTPPort, 0)
 
 			// Warmup: wait for N consecutive 200s before starting the
@@ -142,18 +163,34 @@ func TestHTTPRouteSplit(t *testing.T) {
 					total, samples, fails)
 			}
 
-			pctV2 := float64(counts["v2"]) / float64(total) * 100
-			pctDefault := float64(counts["default"]) / float64(total) * 100
-			if math.Abs(pctV2-float64(v2Weight)) > tolerancePoints {
-				t.Fatalf("v2 share %.1f%% drifted >%dpp from configured %d%% (counts: %v, fails: %d)",
-					pctV2, tolerancePoints, v2Weight, counts, fails)
+			// Expected share of the v2 (minority) backend under the configured weights.
+			p0 := float64(v2Weight) / float64(v2Weight+defaultWeight) // 0.30
+
+			// Accept the split iff the observed v2 share lies within a five-sigma
+			// confidence band of p0. Each sample is Bernoulli(p0), so the observed
+			// share has standard error sqrt(p0(1-p0)/total). Deriving the band's
+			// half-width from the ACTUAL `total` (not a fixed 200) is the fix for
+			// issue #69: when concurrent-test churn thins the sample toward the
+			// samples/2 floor, the band WIDENS to hold the false-failure rate flat
+			// instead of tightening into a spurious failure. The normal
+			// approximation is valid because total >= samples/2 = 100 keeps both
+			// total*p0 = 30 and total*(1-p0) = 70 well above 5. False-failure
+			// probability P(|Z| > 5) = 5.7e-7 (see zFiveSigma). The band is
+			// capped at maxTolerance so it never widens enough to accept a
+			// broken (~50/50) split when the sample thins toward the floor.
+			se := math.Sqrt(p0 * (1 - p0) / float64(total))
+			tolerance := math.Min(zFiveSigma*se, maxTolerance)
+			observedV2 := float64(counts["v2"]) / float64(total)
+
+			// Checking the v2 share alone also covers the default share: the two are
+			// complementary (observedDefault-0.70 = -(observedV2-0.30)), so their
+			// absolute deviations from the configured weights are identical.
+			if math.Abs(observedV2-p0) > tolerance {
+				t.Fatalf("v2 share %.1f%% drifted >%.1fpp (5σ over %d samples) from configured %d%% (counts: %v, fails: %d)",
+					observedV2*100, tolerance*100, total, v2Weight, counts, fails)
 			}
-			if math.Abs(pctDefault-float64(defaultWeight)) > tolerancePoints {
-				t.Fatalf("default share %.1f%% drifted >%dpp from configured %d%% (counts: %v, fails: %d)",
-					pctDefault, tolerancePoints, defaultWeight, counts, fails)
-			}
-			t.Logf("split converged: default=%.1f%% v2=%.1f%% (configured %d/%d, total=%d, retried_fails=%d)",
-				pctDefault, pctV2, defaultWeight, v2Weight, total, fails)
+			t.Logf("split converged: default=%.1f%% v2=%.1f%% (configured %d/%d, total=%d, 5σ tolerance=±%.1fpp, retried_fails=%d)",
+				(1-observedV2)*100, observedV2*100, defaultWeight, v2Weight, total, tolerance*100, fails)
 			return ctx
 		}).
 		Feature()

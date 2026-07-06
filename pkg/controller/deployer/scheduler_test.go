@@ -628,12 +628,23 @@ func TestDeploymentScheduler_HandleConfigValidated(t *testing.T) {
 	})
 }
 
-// TestDeploymentScheduler_HandleDeploymentCompleted_WithPending verifies that a
-// deployment queued while one was in flight is emitted by the loop AFTER the
-// in-flight one completes. handleDeploymentCompleted no longer re-schedules
-// itself (that second scheduling path was the source of the reload storm); it
-// only clears deployInFlight and signals the loop, which then picks up pending
-// on its next cycle.
+// TestDeploymentScheduler_HandleDeploymentCompleted_WithPending verifies the
+// convergence contract that a deployment queued while another is in flight is
+// dispatched by the loop AFTER the in-flight one completes, then the loop goes
+// quiet. handleDeploymentCompleted no longer re-schedules itself (that second
+// scheduling path was the source of the reload storm); it only clears
+// deployInFlight and signals the loop, which picks up pending on its next cycle.
+//
+// Scheduling-independent by construction: rather than poking schedulerState
+// directly (the old version set deployInFlight + pending under the mutex WITHOUT
+// signalling the loop, so whether the loop's first iteration observed pending
+// before or after the poke — and thus whether it parked on pendingSignal, which
+// handleDeploymentCompleted never signals — was a pure goroutine race that timed
+// out ~intermittently, issue #69), this drives the loop into a GENUINE in-flight
+// deploy via the production scheduleOrQueue path. Every wakeup edge the loop
+// relies on is therefore exercised the way production drives it, and pacing is on
+// the loop's own observable output (the published DeploymentScheduledEvent), never
+// on sleeps or exact interleavings.
 func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -644,33 +655,40 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
 
-	// Simulate a deploy already in flight with a deployment queued behind it.
-	scheduler.schedulerMutex.Lock()
-	scheduler.state.deployInFlight = true
-	scheduler.state.deploymentStartTime = time.Now()
-	scheduler.state.activeCorrelationID = "in-flight-corr"
-	scheduler.state.pending = &scheduledDeployment{
-		config:        "pending-config",
-		auxFiles:      nil,
-		endpoints:     []dataplane.Endpoint{{URL: "http://localhost:5555"}},
-		reason:        "pending-deployment",
-		correlationID: "correlation-123",
-	}
-	scheduler.schedulerMutex.Unlock()
+	// Drive the loop into a real in-flight deploy through the production path: the
+	// loop grabs this pending, dispatches it (publishing its scheduled event), and
+	// parks in awaitCompletion holding deployInFlight — the genuine state this test
+	// needs, reached without touching schedulerState. Observing the published event
+	// is the deterministic signal that the loop is now awaiting completion.
+	scheduler.scheduleOrQueue(ctx, "in-flight-config", nil, nil,
+		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
+		"in-flight-deployment", "in-flight-corr", nil, true, "")
+	inFlight := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
+	require.Equal(t, "in-flight-config", inFlight.Config)
 
-	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+	// Queue a second deploy behind the in-flight one. latest-wins fills the single
+	// pending slot; the loop cannot dispatch it until the in-flight deploy completes.
+	scheduler.scheduleOrQueue(ctx, "pending-config", nil, nil,
+		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
+		"pending-deployment", "correlation-123", nil, true, "")
+
+	// Completing the in-flight deploy releases awaitCompletion; the loop then grabs
+	// the pending deployment and emits its scheduled event. Order of these two
+	// signals is irrelevant — scheduleOrQueue's signalLoop guarantees the loop
+	// re-checks pending regardless of when completion lands.
+	scheduler.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      1,
 		Succeeded:  1,
 		DurationMs: 100,
-	})
-
-	// Completing the in-flight deploy releases the loop's awaitCompletion; it
-	// then grabs the pending deployment and emits exactly one scheduled event.
-	scheduler.handleDeploymentCompleted(event)
+	}))
 
 	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	assert.Equal(t, "pending-config", scheduled.Config)
 	assert.Equal(t, "pending-deployment", scheduled.Reason)
+
+	// Quiescence: with no completion signalled for the pending deploy, the loop is
+	// parked in awaitCompletion. Nothing further may be dispatched.
+	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
 // TestDeploymentScheduler_ScheduleWithRateLimit verifies the loop waits out
