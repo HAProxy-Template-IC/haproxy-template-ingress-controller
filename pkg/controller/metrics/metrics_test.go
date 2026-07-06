@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -279,6 +280,10 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 		"haptic_events_published_total",
 		"haptic_haproxy_pods_rejected_total",
 		"haptic_config_rejected_total",
+		"haptic_haproxy_fleet_size",
+		"haptic_haproxy_fleet_converged",
+		"haptic_last_full_sync_timestamp_seconds",
+		"haptic_deployment_consecutive_failures",
 	}
 
 	// Collect registered metric names
@@ -430,6 +435,110 @@ func TestMetrics_RecordEventDrop(t *testing.T) {
 	reconcilerConfig, err := metrics.EventsDroppedBySubscriber.GetMetricWithLabelValues("reconciler", "ConfigValidatedEvent")
 	require.NoError(t, err)
 	assert.Equal(t, 1.0, testutil.ToFloat64(reconcilerConfig))
+}
+
+func TestMetrics_LastFullSyncInitializedToStartTime(t *testing.T) {
+	before := time.Now().Unix()
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Before any deployment, staleness must read as uptime, not a huge number:
+	// the gauge is seeded to construction time.
+	sync := testutil.ToFloat64(metrics.LastFullSyncTimestamp)
+	assert.GreaterOrEqual(t, sync, float64(before),
+		"last_full_sync must be initialized to construction time")
+	assert.LessOrEqual(t, sync, float64(time.Now().Unix()+1))
+}
+
+func TestMetrics_SetFleetConvergence_FullSuccess(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Park last_full_sync in the distant past so a real update is unambiguous.
+	metrics.LastFullSyncTimestamp.Set(1000)
+
+	before := time.Now().Unix()
+	metrics.SetFleetConvergence(3, 3, 0)
+
+	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.HAProxyFleetSize))
+	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.HAProxyFleetConverged))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
+
+	sync := testutil.ToFloat64(metrics.LastFullSyncTimestamp)
+	assert.GreaterOrEqual(t, sync, float64(before),
+		"a full sync must stamp last_full_sync with ~now")
+	assert.LessOrEqual(t, sync, float64(time.Now().Unix()+1))
+}
+
+func TestMetrics_SetFleetConvergence_PartialFailure(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Sentinel value that a partial failure must NOT overwrite.
+	metrics.LastFullSyncTimestamp.Set(12345)
+
+	metrics.SetFleetConvergence(2, 1, 1)
+
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.HAProxyFleetSize))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.HAProxyFleetConverged))
+	assert.Less(t,
+		testutil.ToFloat64(metrics.HAProxyFleetConverged),
+		testutil.ToFloat64(metrics.HAProxyFleetSize),
+		"converged < fleet_size is the diverged signal operators alert on")
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
+	assert.Equal(t, 12345.0, testutil.ToFloat64(metrics.LastFullSyncTimestamp),
+		"a partial failure must not advance last_full_sync")
+}
+
+func TestMetrics_SetFleetConvergence_ConsecutiveFailures(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	metrics.SetFleetConvergence(2, 1, 1)
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
+
+	// A second, distinct partial failure keeps climbing.
+	metrics.SetFleetConvergence(3, 0, 3)
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
+}
+
+func TestMetrics_SetFleetConvergence_FailureThenSuccessResets(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Park last_full_sync in the past so the later full sync is observably fresh.
+	metrics.LastFullSyncTimestamp.Set(1000)
+
+	metrics.SetFleetConvergence(2, 1, 1)
+	metrics.SetFleetConvergence(2, 1, 1)
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
+
+	before := time.Now().Unix()
+	metrics.SetFleetConvergence(2, 2, 0)
+
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures),
+		"a full sync clears consecutive failures")
+	assert.GreaterOrEqual(t, testutil.ToFloat64(metrics.LastFullSyncTimestamp), float64(before),
+		"a full sync advances last_full_sync to ~now")
+}
+
+func TestMetrics_ResetFleetConvergence(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Establish non-zero leader-only state.
+	metrics.SetFleetConvergence(5, 3, 2)
+	require.Equal(t, 5.0, testutil.ToFloat64(metrics.HAProxyFleetSize))
+	require.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
+
+	before := time.Now().Unix()
+	metrics.ResetFleetConvergence()
+
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.HAProxyFleetSize))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.HAProxyFleetConverged))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
+	// last_full_sync reset to ~now so a former leader doesn't accrue growing staleness.
+	assert.GreaterOrEqual(t, testutil.ToFloat64(metrics.LastFullSyncTimestamp), float64(before))
 }
 
 func TestMetrics_ParserCacheStatsReportLiveCounters(t *testing.T) {

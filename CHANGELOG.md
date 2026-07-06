@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `haptic-controller migrate-check` audits another ingress controller's Ingresses before you switch to HAPTIC: it classifies every source-controller annotation as supported, different, dropped, failing, or unknown, and renders each Ingress through the real template pipeline to catch rejections. With no arguments it uses the image-embedded chart, live-cluster schemas, and live Ingresses; `-f`/`--resources`/`--schema-dir`/`-n`/`--output text|json|markdown` switch inputs offline. Exit codes: `0` clean, `1` differences or unknowns, `2` blockers. Coverage is declared per source by the template libraries (`spec.migrationCoverage`), so no controller or annotation name is hardcoded.
+- Fleet-convergence and config-staleness metrics — `haptic_haproxy_fleet_size`, `haptic_haproxy_fleet_converged`, `haptic_last_full_sync_timestamp_seconds`, and `haptic_deployment_consecutive_failures` — give a noise-free "is the fleet converged, and for how long has it not been" signal to alert on instead of the now-self-healing deploy error counter.
 
 ### Fixed
 
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Helm chart
 
 - Each vendor annotation library (nginx-ingress, haproxy-ingress, haproxytech) now declares machine-readable migration coverage for its source controller's annotations — surfaced on `spec.migrationCoverage` and used to generate the per-source annotation-support tables in the [migration guide](./docs/controller/docs/migrating.md). Only enabled libraries contribute.
+- `HAProxyFleetDiverged` PrometheusRule alert (toggleable) and a Grafana fleet-convergence panel, built on the new fleet-convergence metrics.
 
 ## [0.2.0-alpha.1] - 2026-07-05
 

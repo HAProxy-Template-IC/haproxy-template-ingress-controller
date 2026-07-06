@@ -15,6 +15,8 @@
 package metrics
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
@@ -44,6 +46,26 @@ type Metrics struct {
 	// already carried on the event; these surface it as cumulative counters.
 	HAProxyReloadsTotal         prometheus.Counter
 	DataplaneAPIOperationsTotal prometheus.Counter
+
+	// Fleet-convergence + config-staleness gauges. Populated LEADER-ONLY from
+	// DeploymentCompletedEvent (only the leader deploys), so followers hold the
+	// reset values below and never false-alert. Unlike alerting on
+	// rate(haptic_deployment_errors_total) — which the self-healing scheduler
+	// makes noisy, since transient deploy failures now self-heal — these give a
+	// true "is the fleet converged, and for how long has it not been" signal:
+	//   - FleetSize / FleetConverged: an operator alerts on converged < size.
+	//   - LastFullSyncTimestamp: staleness is time() - this gauge.
+	//   - DeploymentConsecutiveFailures: the noise-free replacement for alerting
+	//     on the error counter (resets to 0 the moment the fleet fully converges).
+	HAProxyFleetSize              prometheus.Gauge
+	HAProxyFleetConverged         prometheus.Gauge
+	LastFullSyncTimestamp         prometheus.Gauge
+	DeploymentConsecutiveFailures prometheus.Gauge
+
+	// consecutiveFailures is the running count backing DeploymentConsecutiveFailures.
+	// Touched only from the metrics component's single-goroutine event loop
+	// (SetFleetConvergence / ResetFleetConvergence), so it needs no lock.
+	consecutiveFailures int
 
 	// Runtime-eligible fast-path metrics. Fires counts every fast-path attempt
 	// (one per pod per reconcile); Applies counts the subset that actually
@@ -125,7 +147,7 @@ type Metrics struct {
 //	// ... use metrics ...
 //	// When iteration ends, both registry and metrics are GC'd
 func NewMetrics(registry prometheus.Registerer) *Metrics {
-	return &Metrics{
+	m := &Metrics{
 		// Reconciliation metrics
 		ReconciliationDuration: pkgmetrics.NewHistogramWithBuckets(
 			registry,
@@ -170,6 +192,28 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_dataplane_api_operations_total",
 			"Total DataPlane API operations issued across config deployments (structural changes applied to HAProxy pods).",
+		),
+
+		// Fleet-convergence + config-staleness gauges (leader-only; see struct docs).
+		HAProxyFleetSize: pkgmetrics.NewGauge(
+			registry,
+			"haptic_haproxy_fleet_size",
+			"Number of HAProxy pods the last deployment targeted (leader-only; 0 on followers).",
+		),
+		HAProxyFleetConverged: pkgmetrics.NewGauge(
+			registry,
+			"haptic_haproxy_fleet_converged",
+			"Number of HAProxy pods now at the desired config after the last deployment. Alert on haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size (leader-only; 0 on followers).",
+		),
+		LastFullSyncTimestamp: pkgmetrics.NewGauge(
+			registry,
+			"haptic_last_full_sync_timestamp_seconds",
+			"Unix timestamp (seconds) of the last time the whole HAProxy fleet converged on the desired config. Query staleness as time() - haptic_last_full_sync_timestamp_seconds. Seeded to controller start time so pre-first-sync staleness reads as uptime.",
+		),
+		DeploymentConsecutiveFailures: pkgmetrics.NewGauge(
+			registry,
+			"haptic_deployment_consecutive_failures",
+			"Count of consecutive deployments that did not fully converge the fleet; resets to 0 on the first full sync. The noise-free replacement for alerting on rate(haptic_deployment_errors_total) now that transient deploy failures self-heal (leader-only; 0 on followers).",
 		),
 
 		// Runtime-eligible fast-path metrics
@@ -330,6 +374,13 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			[]string{"version", "haproxy_version", "go_version"},
 		),
 	}
+
+	// Seed last-full-sync to construction time so that, before the first full
+	// fleet sync, staleness (time() - gauge) reads as uptime rather than the
+	// entire Unix epoch.
+	m.LastFullSyncTimestamp.Set(float64(time.Now().Unix()))
+
+	return m
 }
 
 // RecordReconciliation records a completed reconciliation cycle.
@@ -369,6 +420,47 @@ func (m *Metrics) RecordDeploymentOperations(reloads, apiOperations int) {
 	if apiOperations > 0 {
 		m.DataplaneAPIOperationsTotal.Add(float64(apiOperations))
 	}
+}
+
+// SetFleetConvergence records the outcome of a completed fleet deployment onto
+// the fleet-convergence + config-staleness gauges. It is O(1) and must be
+// called LEADER-ONLY (DeploymentCompletedEvent is leader-only).
+//
+// Given the deploy's total / succeeded / failed instance counts it:
+//   - sets haptic_haproxy_fleet_size      = total
+//   - sets haptic_haproxy_fleet_converged = succeeded
+//   - on a full sync (succeeded == total && total > 0): resets the consecutive-
+//     failure count to 0 and stamps haptic_last_full_sync_timestamp_seconds with now
+//   - otherwise, on any failure (failed > 0): increments the consecutive-failure count
+//
+// A full sync is checked first so that succeeded == total always wins over a
+// stray failed > 0 (the two are mutually exclusive for a well-formed result).
+func (m *Metrics) SetFleetConvergence(total, succeeded, failed int) {
+	m.HAProxyFleetSize.Set(float64(total))
+	m.HAProxyFleetConverged.Set(float64(succeeded))
+
+	switch {
+	case total > 0 && succeeded == total:
+		m.consecutiveFailures = 0
+		m.LastFullSyncTimestamp.Set(float64(time.Now().Unix()))
+	case failed > 0:
+		m.consecutiveFailures++
+	}
+	m.DeploymentConsecutiveFailures.Set(float64(m.consecutiveFailures))
+}
+
+// ResetFleetConvergence clears the fleet-convergence gauges when this replica is
+// no longer the leader. DeploymentCompletedEvent is leader-only, so a follower
+// must not keep reporting the values it set while it was leader:
+//   - fleet_size / fleet_converged / consecutive_failures → 0
+//     (so converged < fleet_size becomes 0 < 0, i.e. false, and can't false-alert)
+//   - last_full_sync → now, so a former leader doesn't accrue growing staleness
+func (m *Metrics) ResetFleetConvergence() {
+	m.consecutiveFailures = 0
+	m.HAProxyFleetSize.Set(0)
+	m.HAProxyFleetConverged.Set(0)
+	m.DeploymentConsecutiveFailures.Set(0)
+	m.LastFullSyncTimestamp.Set(float64(time.Now().Unix()))
 }
 
 // RecordRuntimeFastPath records one runtime-eligible fast-path apply attempt:

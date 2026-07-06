@@ -53,6 +53,30 @@ tests:
               summary: "HAProxy configuration deployment failures"
               description: "Controller {{ $labels.pod }} is failing to deploy configs to HAProxy"
 
+  - it: should include default fleet diverged alert
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyFleetDiverged
+            expr: haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "HAProxy fleet is diverged"
+              description: "Controller {{ $labels.pod }}: {{ $value }} of the fleet's HAProxy pods are at the desired config; the rest have not converged for 5m. Transient deploy failures self-heal, so sustained divergence is a real fault."
+
+  - it: should disable fleet diverged alert when configured
+    set:
+      monitoring.prometheusRule.defaultRules.fleetDiverged: false
+    asserts:
+      - notContains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyFleetDiverged
+          any: true
+
   - it: should include default high queue depth alert
     asserts:
       - contains:

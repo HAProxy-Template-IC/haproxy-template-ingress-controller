@@ -30,6 +30,17 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | `haptic_haproxy_reloads_total` | counter | — | HAProxy reloads triggered by deployments. A reload forks the HAProxy process; reload rate (vs runtime-API updates) is the key capacity/SLO signal |
 | `haptic_dataplane_api_operations_total` | counter | — | DataPlane API operations issued across deployments (structural changes applied to HAProxy) |
 
+### Fleet convergence & config staleness
+
+Leader-only gauges (only the leader deploys). Followers reset them on leadership loss, so `converged < size` is `0 < 0` (false) on followers and never false-alerts. These answer "did my change reach every pod, and for how long has it not?" — the noise-free replacement for alerting on `haptic_deployment_errors_total` now that transient deploy failures self-heal. Fed leader-only from `DeploymentCompletedEvent` (`Total`/`Succeeded`/`Failed`), reset on `LostLeadershipEvent`.
+
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_haproxy_fleet_size` | gauge | — | HAProxy pods the last deployment targeted (`event.Total`) |
+| `haptic_haproxy_fleet_converged` | gauge | — | HAProxy pods now at the desired config (`event.Succeeded`). Alert on `haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size` |
+| `haptic_last_full_sync_timestamp_seconds` | gauge | — | Unix seconds of the last full-fleet sync (`Succeeded == Total > 0`); seeded to controller start time. Staleness = `time() - <this>` |
+| `haptic_deployment_consecutive_failures` | gauge | — | Consecutive deploys that did not fully converge; +1 on any `Failed > 0`, reset to 0 on a full sync |
+
 ### Runtime-eligible fast path
 
 | Metric | Type | Labels | What it tracks |

@@ -150,6 +150,8 @@ func (c *Component) handleEvent(event busevents.Event) {
 	case *events.DeploymentCompletedEvent:
 		c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
 		c.metrics.RecordDeploymentOperations(e.ReloadsTriggered, e.TotalAPIOperations)
+		// Leader-only event: update the fleet-convergence + config-staleness gauges.
+		c.metrics.SetFleetConvergence(e.Total, e.Succeeded, e.Failed)
 	case *events.InstanceDeploymentFailedEvent:
 		c.metrics.RecordDeployment(0, false)
 	case *events.RuntimeFastPathResultEvent:
@@ -216,6 +218,12 @@ func (c *Component) handleLostLeadership(e *events.LostLeadershipEvent) {
 		c.metrics.AddTimeAsLeader(e.Timestamp().Sub(c.becameLeaderAt).Seconds())
 		c.becameLeaderAt = time.Time{}
 	}
+
+	// A follower must not keep reporting the fleet-convergence gauges it set
+	// while leader (DeploymentCompletedEvent is leader-only), so reset them:
+	// converged < fleet_size becomes 0 < 0 (no false alert) and staleness stops
+	// growing.
+	c.metrics.ResetFleetConvergence()
 }
 
 // msToSeconds converts a duration in milliseconds to seconds.
