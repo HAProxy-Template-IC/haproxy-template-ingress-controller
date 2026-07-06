@@ -47,7 +47,8 @@ import (
 //   - Wait for the deployment to settle (new pod Ready, old pod gone).
 //   - Wait an extra grace window for any trailing in-flight responses to
 //     finish racing.
-//   - Stop the prober and assert ZERO non-2xx/3xx responses.
+//   - Stop the prober and assert no non-2xx/3xx responses beyond at most the
+//     single fast-fail 503 that ADR-0013 accepts as a bounded residual.
 //
 // The bug this guards against:
 //   - charts/haptic/libraries/base.yaml builds the HAProxy backend by
@@ -139,7 +140,7 @@ func TestIngressRollingRestartZeroDowntime(t *testing.T) {
 			newContinuousTailer(t, namespace)
 			return ctx
 		}).
-		Assess("zero non-2xx/3xx responses during and after rollout restart",
+		Assess("no non-2xx/3xx beyond the single ADR-0013 bounded residual during and after rollout restart",
 			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 				client, err := cfg.NewClient()
 				if err != nil {
@@ -393,6 +394,28 @@ func assertProbeRunClean(t *testing.T, rec *probeRecorder, baselineCount int64) 
 		t.Logf("clean: %d total probes (%d during rollout window after %d-probe baseline), zero non-2xx/3xx",
 			total, probesDuringRollout, baselineCount)
 		return
+	}
+
+	// ADR-0013 accepts exactly ONE bounded residual: a single fast-fail 503
+	// from a keep-alive request stranded on the leaving worker when an
+	// EndpointSlice flip races a co-batched structural reload. `option
+	// redispatch` + the RFC 5737 192.0.2.1 sentinel bound it to a fast
+	// `timeout connect` failover (~403 ms observed in the ADR), so it surfaces
+	// as a single clean 503 with a short duration — never a connection error,
+	// and never the ~5 s (per-probe budget) context-cancel of a reload-window
+	// drop. Tolerate that one signature and nothing else: two or more failures
+	// is a systematic mis-dispatch (e.g. the base.yaml conditions-filter
+	// regression floods 503s), and a non-503, an errored probe, or a slow 503
+	// is a different, unbounded failure. This encodes the ADR contract exactly
+	// and still fails on any *widening* of the accepted residual.
+	// See docs/adr/0013-rolling-restart-leaving-worker-residual.md.
+	const fastFailMaxDur = 1500 * time.Millisecond
+	if len(failures) == 1 {
+		if f := failures[0]; f.err == nil && f.status == 503 && f.dur <= fastFailMaxDur {
+			t.Logf("tolerated the single ADR-0013 bounded residual: one fast-fail 503 in %s (%d total probes, %d during rollout window). See docs/adr/0013-rolling-restart-leaving-worker-residual.md.",
+				f.dur, total, probesDuringRollout)
+			return
+		}
 	}
 
 	// Build a one-line-per-failure report so the failure mode is
