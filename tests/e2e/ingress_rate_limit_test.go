@@ -144,9 +144,12 @@ func GetNamespaceFromContext(ctx context.Context) (string, error) {
 // next flake self-diagnosing.
 //
 // `requested` is what the test asked for; `parsed` is the sum of
-// `byCode`. They can diverge if curl dies before writing every status
-// line to stdout (e.g. the pod terminating mid-burst). The failure
-// message shows both so a missing-line gap doesn't masquerade as a
+// `byCode`. These no longer diverge in practice now that the status lines
+// are read from the terminated pod's `kubectl logs` (a single,
+// fully-written stream) instead of the `kubectl run -i` attach stream,
+// which under parallel-suite load tore down against the fast-exiting pod
+// before flushing all lines (issue #74). The failure message still shows
+// both so any residual gap stays visible rather than masquerading as a
 // status mismatch.
 type rateLimitBurstResult struct {
 	requested  int
@@ -249,9 +252,12 @@ func (r rateLimitBurstResult) String() string {
 // point the test fails with an explicit starvation message instead of
 // a misleading "no 429".
 //
-// A fresh pod is created per attempt (--restart=Never + --rm so it
-// tears down even if the test fails), giving every attempt a clean
-// source IP and therefore a fresh stick-table entry.
+// A fresh pod is created per attempt (--restart=Never, explicitly
+// deleted after each attempt), giving every attempt a clean source IP
+// and therefore a fresh stick-table entry. The status codes are read
+// from the terminated pod's log via `kubectl logs`, not the
+// `kubectl run -i` attach stream — the attach stream lost lines against
+// the fast-exiting pod under parallel-suite load (issue #74).
 func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, host string, total, limit int, period time.Duration) rateLimitBurstResult {
 	t.Helper()
 
@@ -279,30 +285,67 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 			host, urls)
 
 		podName := fmt.Sprintf("ratelimit-burst-%d", time.Now().UnixNano())
-		cmd := exec.CommandContext(ctx, "kubectl",
-			"--kubeconfig", kubeconfigPath,
-			"-n", namespace,
+		kubectlArgs := func(extra ...string) []string {
+			return append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, extra...)
+		}
+		start := time.Now()
+
+		// Launch the burst pod DETACHED (no --rm/-i). curl fires all `total`
+		// requests and exits in ~50ms; reading its status lines through the
+		// `kubectl run -i` attach stream raced the pod's teardown and dropped
+		// most lines under parallel-suite load, so the verdict was computed
+		// from lost output and no attempt could ever settle (issue #74). Instead
+		// we read the terminated pod's kubelet-buffered log via `kubectl logs`:
+		// a single, fully-written stream with no concurrent producer.
+		runCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
 			"run", podName,
-			"--rm", "-i",
 			"--restart=Never",
 			"--image=alpine/curl:latest",
 			"--quiet",
 			"--command", "--",
 			"sh", "-c", cmdScript,
-		)
-		var out, errBuf bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &errBuf
-		start := time.Now()
-		runErr := cmd.Run()
-		elapsed := time.Since(start)
-		// Don't fatal on non-zero exit: the script itself always exits
-		// 0, so a failure here is kubectl/pod-level (image pull,
-		// scheduling, attach). The achieved-rate gate in the retry loop
-		// decides what to do with whatever output made it back.
-		if runErr != nil {
-			t.Logf("rate-limit burst pod returned non-zero: %v\nstderr: %s", runErr, errBuf.String())
+		)...)
+		var runErrBuf bytes.Buffer
+		runCmd.Stderr = &runErrBuf
+		if err := runCmd.Run(); err != nil {
+			t.Logf("rate-limit burst pod create failed: %v\nstderr: %s", err, runErrBuf.String())
 		}
+		// Explicit cleanup — no --rm to do it for us. A fresh background
+		// context (independent of the possibly-cancelled attempt ctx) so the
+		// pod is still removed after a cancelled attempt, but bounded so an
+		// unreachable API server can't hang the test forever.
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = exec.CommandContext(cleanupCtx, "kubectl", kubectlArgs(
+				"delete", "pod", podName, "--now", "--ignore-not-found")...).Run()
+		}()
+
+		// Block until the container has terminated, so its full stdout is
+		// written before we read it. The script pins exit 0, so a healthy pod
+		// reaches Succeeded within a few seconds (schedule + the ~50ms burst;
+		// alpine/curl is ~10MB and cached after the first attempt on a node).
+		// The 30s ceiling covers a cold pull with margin while keeping ~4
+		// attempts inside the 2m retry budget below. A pod that never reaches
+		// Succeeded (image-pull backoff, eviction, or the PARALLEL=8 starvation
+		// the retry loop tolerates) burns this ceiling, then falls through to an
+		// empty logs read and retries — the same infra transients the budget is
+		// there to absorb.
+		waitCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
+			"wait", "--for=jsonpath={.status.phase}=Succeeded",
+			"pod/"+podName, "--timeout=30s")...)
+		if err := waitCmd.Run(); err != nil {
+			t.Logf("rate-limit burst pod did not reach Succeeded: %v", err)
+		}
+
+		var out, logsErrBuf bytes.Buffer
+		logsCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs("logs", podName)...)
+		logsCmd.Stdout = &out
+		logsCmd.Stderr = &logsErrBuf
+		if err := logsCmd.Run(); err != nil {
+			t.Logf("rate-limit burst logs failed: %v\nstderr: %s", err, logsErrBuf.String())
+		}
+		elapsed := time.Since(start)
 
 		result := rateLimitBurstResult{
 			requested:  total,
