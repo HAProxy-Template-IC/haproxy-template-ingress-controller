@@ -920,6 +920,9 @@ monitoring:
       deploymentFailures: true
       highQueueDepth: true
       leaderElectionLost: true
+      # The fleet is diverged: some HAProxy pods are not at the desired config.
+      # Noise-free replacement for alerting on deployment errors (which now self-heal).
+      fleetDiverged: true
       # A config change refused by the validation gate (latest change is not live)
       configRejected: true
       # Discovered HAProxy pods refused admission (e.g. version mismatch)

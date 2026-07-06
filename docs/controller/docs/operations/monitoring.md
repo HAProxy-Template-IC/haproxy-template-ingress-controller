@@ -137,6 +137,35 @@ histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
 ))
 ```
 
+### Fleet Convergence & Config Staleness
+
+These gauges answer "did my change reach every HAProxy pod, and if not, for how long?" They are the noise-free replacement for alerting on `rate(haptic_deployment_errors_total)`: the deploy scheduler self-heals transient failures, so a nonzero error rate no longer means the fleet is actually broken. These gauges report the *converged state*, not the *attempt outcome*.
+
+They are populated **leader-only** — only the leader deploys. Followers reset them when they lose leadership, so `haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size` is `0 < 0` (false) on followers and never false-alerts.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `haptic_haproxy_fleet_size` | Gauge | HAProxy pods the last deployment targeted |
+| `haptic_haproxy_fleet_converged` | Gauge | HAProxy pods now at the desired config. Alert on `haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size` |
+| `haptic_last_full_sync_timestamp_seconds` | Gauge | Unix timestamp (seconds) of the last time the whole fleet converged. Seeded to controller start time, so before the first full sync staleness reads as uptime rather than the whole epoch. In steady state (no config or pod changes) it advances with the periodic drift-prevention deploy, so any staleness threshold you alert on must exceed `spec.dataplane.driftPreventionInterval` (default 60s) |
+| `haptic_deployment_consecutive_failures` | Gauge | Consecutive deployments that did not fully converge the fleet; resets to 0 on the first full sync |
+
+**Key queries:**
+
+```promql
+# Pods not yet at the desired config right now (0 = fully converged)
+haptic_haproxy_fleet_size - haptic_haproxy_fleet_converged
+
+# How long since the whole fleet last converged (config staleness, seconds)
+time() - haptic_last_full_sync_timestamp_seconds
+
+# Deploys that failed to fully converge, back to back — alert on this instead of
+# the error counter, now that transient deploy failures self-heal
+haptic_deployment_consecutive_failures
+```
+
+The bundled `HAProxyFleetDiverged` alert (see [Alerting Rules](#alerting-rules)) fires when pods stay behind the desired config — the robust, cadence-independent signal. A staleness alert on `time() - haptic_last_full_sync_timestamp_seconds` is left to you: in steady state that value tracks the drift-prevention cadence, so a safe threshold depends on your configured `driftPreventionInterval` (a fixed default would false-fire for operators who raise it).
+
 ### Runtime Fast-Path Metrics
 
 The runtime fast path applies runtime-eligible server changes (address, port, admin state) directly to the running HAProxy worker via the Dataplane API, bypassing a config reload. `applies` stuck at 0 while `fires` climbs means the fast path runs but the render diff never carries a runtime-eligible change.
@@ -404,6 +433,17 @@ groups:
         annotations:
           summary: "95th percentile deployment latency >5s"
           description: "Deploying configs to HAProxy is taking too long"
+
+      # Fleet diverged — some HAProxy pods are not at the desired config.
+      # Prefer this over the deploy error counter: transient failures self-heal.
+      - alert: HAProxyFleetDiverged
+        expr: haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HAProxy fleet is diverged"
+          description: "Some HAProxy pods have not converged on the desired config for 5m"
 
       # Validation failures
       - alert: HAProxyICValidationFailures

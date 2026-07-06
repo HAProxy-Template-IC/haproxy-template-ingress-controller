@@ -42,6 +42,16 @@ spec:
             summary: "HAProxy configuration deployment failures"
             description: "Controller {{ `{{ $labels.pod }}` }} is failing to deploy configs to HAProxy"
         {{- end }}
+        {{- if $defaults.fleetDiverged }}
+        - alert: HAProxyFleetDiverged
+          expr: haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "HAProxy fleet is diverged"
+            description: "Controller {{ `{{ $labels.pod }}` }}: {{ `{{ $value }}` }} of the fleet's HAProxy pods are at the desired config; the rest have not converged for 5m. Transient deploy failures self-heal, so sustained divergence is a real fault."
+        {{- end }}
         {{- if $defaults.highQueueDepth }}
         - alert: HAProxyControllerHighQueueDepth
           expr: histogram_quantile(0.95, sum(rate(haptic_reconciliation_queue_wait_seconds_bucket[5m])) by (le)) > 5

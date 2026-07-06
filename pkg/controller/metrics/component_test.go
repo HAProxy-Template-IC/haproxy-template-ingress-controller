@@ -163,6 +163,91 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	cancel()
 }
 
+func TestComponent_DeploymentCompleted_UpdatesFleetConvergence(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+	eventBus := busevents.NewEventBus(100)
+
+	component := New(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Full-fleet success: size == converged, no consecutive failures.
+	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total:      3,
+		Succeeded:  3,
+		DurationMs: 1000,
+	}))
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.HAProxyFleetSize) == 3.0
+	}, 2*time.Second, 20*time.Millisecond, "fleet_size should reflect the deploy's Total")
+
+	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.HAProxyFleetConverged))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentConsecutiveFailures))
+
+	// Partial failure: converged < size, consecutive failures climbs to 1.
+	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total:      3,
+		Succeeded:  2,
+		Failed:     1,
+		DurationMs: 1000,
+	}))
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.DeploymentConsecutiveFailures) == 1.0
+	}, 2*time.Second, 20*time.Millisecond, "a partial failure must bump consecutive failures")
+
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.HAProxyFleetConverged))
+	assert.Less(t,
+		testutil.ToFloat64(metrics.HAProxyFleetConverged),
+		testutil.ToFloat64(metrics.HAProxyFleetSize),
+		"converged < fleet_size is the diverged signal")
+}
+
+// TestComponent_LostLeadership_ResetsFleetConvergence verifies that a replica
+// which is no longer the leader stops reporting the fleet-convergence values it
+// held while leader. DeploymentCompletedEvent is leader-only, so without the
+// reset a former leader would keep exporting stale size/converged/failures and
+// an ever-growing staleness. After the reset, converged < fleet_size is 0 < 0
+// (false) so followers never false-alert.
+func TestComponent_LostLeadership_ResetsFleetConvergence(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+	eventBus := busevents.NewEventBus(100)
+
+	component := New(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventBus.Start()
+	go component.Start(ctx)
+
+	// Become leader and record a partial-failure deploy → non-zero gauges.
+	eventBus.Publish(events.NewBecameLeaderEvent("pod-1"))
+	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total:      3,
+		Succeeded:  1,
+		Failed:     2,
+		DurationMs: 1000,
+	}))
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.HAProxyFleetSize) == 3.0 &&
+			testutil.ToFloat64(metrics.DeploymentConsecutiveFailures) == 1.0
+	}, 2*time.Second, 20*time.Millisecond)
+
+	// Lose leadership → the fleet gauges reset to non-misleading values.
+	eventBus.Publish(events.NewLostLeadershipEvent("pod-1", "context cancelled"))
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.HAProxyFleetSize) == 0.0 &&
+			testutil.ToFloat64(metrics.HAProxyFleetConverged) == 0.0 &&
+			testutil.ToFloat64(metrics.DeploymentConsecutiveFailures) == 0.0
+	}, 2*time.Second, 20*time.Millisecond, "losing leadership must reset fleet-convergence gauges")
+}
+
 func TestComponent_ValidationEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
