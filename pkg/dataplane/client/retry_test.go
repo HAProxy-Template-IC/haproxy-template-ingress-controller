@@ -405,6 +405,20 @@ func TestIsReloadInProgress(t *testing.T) {
 			expected: false,
 		},
 		{
+			// Structural absence: SetServerAddr against a backend the loaded
+			// config doesn't have. Contains "cannot execute" and "master.sock",
+			// but a runtime retry can never create the backend — only a
+			// structural deploy can — so it must NOT be treated as a reload.
+			name:     "No such backend (SetServerAddr against not-yet-created backend) is NOT a reload signature",
+			err:      errors.New(`cannot execute SetServerAddr: /etc/haproxy/haproxy-master.sock [3]  No such backend. [set server gtw_tcp_gw_route_0/SRV2_1 addr 10.244.0.37 port 3000]`),
+			expected: false,
+		},
+		{
+			name:     "No such server (set server against not-yet-created slot) is NOT a reload signature",
+			err:      errors.New(`cannot execute SetServerState: /etc/haproxy/haproxy-master.sock [3]  No such server.`),
+			expected: false,
+		},
+		{
 			name:     "unrelated sentinel error is NOT a reload signature",
 			err:      errors.New("some unrelated client error"),
 			expected: false,

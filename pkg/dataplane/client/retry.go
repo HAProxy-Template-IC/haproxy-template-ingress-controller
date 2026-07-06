@@ -117,12 +117,27 @@ func IsConnectionError() RetryCondition {
 // produced 503s under parallel-test reload churn. Version conflicts (409) and
 // other genuine 4xx do NOT match these markers, so they fall through to the
 // caller unchanged.
+//
+// Structural absence ("No such backend" / "No such server") is explicitly
+// excluded: it means the target is missing from the LOADED config, so a
+// runtime retry can never make it appear — only a structural deploy (reload)
+// creates it. It arrives as "cannot execute SetServerAddr: ... master.sock ...
+// No such backend" and would otherwise match the broad "cannot execute" /
+// "master.sock" markers and be retried futilely for the whole
+// reloadInProgressTimeout (observed: 922 retries over ~6s against a
+// not-yet-created backend during a gateway-conformance run). Failing fast lets
+// the scheduled structural deploy — which actually creates the backend —
+// converge instead.
 func IsReloadInProgress() RetryCondition {
 	return func(err error) bool {
 		if err == nil {
 			return false
 		}
-		return containsAny(err.Error(),
+		msg := err.Error()
+		if containsAny(msg, "No such backend", "No such server") {
+			return false
+		}
+		return containsAny(msg,
 			"connection refused",
 			"cannot execute",
 			"master.sock",
