@@ -13,8 +13,9 @@
 # 3. Writes <version> to the VERSION file
 # 4. Updates charts/haptic/Chart.yaml: version, appVersion, and the
 #    artifacthub.io/images annotation (controller + spoa-hub image tags)
-# 5. Updates the `helm install ... --version` examples in the READMEs and
-#    docs, and the landing page's fallback version
+# 5. Rewrites every current-version reference across the documentation in one
+#    pass (helm install --version examples, the pinned controller image tag in
+#    migrate-check's docker one-liner) and the landing page's fallback version
 # 6. Regenerates the docs-site changelog copies from CHANGELOG.md
 # 7. Commits everything (the tag is created automatically by CI after merge)
 #
@@ -119,16 +120,37 @@ sed -i "s|haptic:[0-9a-z.-]*|haptic:$VERSION-haproxy$DEFAULT_HAPROXY|" charts/ha
 sed -i "s|spoa-hub:[0-9a-z.-]*|spoa-hub:$VERSION|" charts/haptic/Chart.yaml
 sed -i "s|most recently shipped release ([^)]*)|most recently shipped release ($VERSION)|" charts/haptic/Chart.yaml
 
-# --- helm install examples (READMEs, docs, landing page) -----------------------
-echo "Updating helm install --version examples..."
-# Only occurrences of the PREVIOUS release version are rewritten: docs that
-# deliberately pin a historical version (upgrade/migration guides) must not
-# be clobbered by a global version rewrite.
+# --- documentation version references (single pass) ----------------------------
+echo "Updating documentation version references..."
+# One rewrite pass for the whole documentation — no per-kind duplication. The
+# current release appears in exactly two syntactic forms across the docs:
+#   1. helm `... --version X.Y.Z` install examples
+#   2. the pinned controller image tag in migrate-check's docker one-liner,
+#      `haptic:X.Y.Z-haproxy<series>`
+# Both are rewritten below from the PREVIOUS release's version. The patterns are
+# ANCHORED to those two contexts rather than a bare global substring, so that
+# deliberately-fixed illustrative version strings elsewhere are never clobbered:
+# Prometheus `version="0.1.0"` examples, changelog `## [X.Y.Z]` headings, and the
+# version-scheme tables in releasing.md. The `\b` / `-haproxy` boundaries also
+# stop a version that is a prefix of a longer one (0.2.0-alpha.1 vs .10) from
+# being partially rewritten. The image tag's `-haproxy<series>` suffix is
+# regenerated from versions.env's DEFAULT_HAPROXY (sourced above), so it tracks
+# the default HAProxy series and stays a published tag instead of a stale
+# hardcoded one.
 PREV_VERSION=$(git show HEAD:VERSION 2>/dev/null || cat VERSION)
-INSTALL_EXAMPLE_FILES=$(grep -rlF -- "--version $PREV_VERSION" \
+# Escape the version for a Basic-Regexp (BRE) sed pattern so it matches
+# literally. BRE, not -E: in BRE the only metacharacters are . [ ] \ * ^ $
+# (escaped below), while + ? ( ) { } | are literal — so any future version
+# scheme (e.g. semver build metadata `1.0.0+build.5`) is still matched
+# literally instead of `+` acting as a quantifier.
+PREV_ESC=$(printf '%s' "$PREV_VERSION" | sed 's/[][\.^$*]/\\&/g')
+VERSION_DOC_FILES=$(grep -rlF -- "$PREV_VERSION" \
     README.md charts/haptic/README.md docs/controller/docs charts/haptic/docs 2>/dev/null || true)
-for f in $INSTALL_EXAMPLE_FILES; do
-    sed -i "s|--version $PREV_VERSION|--version $VERSION|g" "$f"
+for f in $VERSION_DOC_FILES; do
+    sed -i \
+        -e "s|\\(--version \\)$PREV_ESC\\b|\\1$VERSION|g" \
+        -e "s|\\(haptic:\\)$PREV_ESC-haproxy[0-9.]*|\\1$VERSION-haproxy$DEFAULT_HAPROXY|g" \
+        "$f"
 done
 # Landing page fallback (replaced client-side by the published-versions JS)
 sed -i -E "s|(<span id=\"helm-version\" class=\"t-num\">)[^<]*|\1$VERSION|" docs/landing/overrides/home.html
@@ -162,7 +184,7 @@ sync_changelog_copy charts/haptic/docs/changelog.md no
 # --- commit --------------------------------------------------------------------
 git add CHANGELOG.md VERSION charts/haptic/Chart.yaml \
     docs/controller/docs/changelog.md charts/haptic/docs/changelog.md \
-    docs/landing/overrides/home.html $INSTALL_EXAMPLE_FILES
+    docs/landing/overrides/home.html $VERSION_DOC_FILES
 
 if git diff --cached --quiet; then
     warn "Nothing to do — all release files already carry $VERSION"
