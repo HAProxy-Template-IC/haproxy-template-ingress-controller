@@ -168,6 +168,25 @@ type DeploymentScheduler struct {
 	state             schedulerState
 	deploymentTimeout time.Duration
 
+	// Fast self-reschedule of a retryable deploy failure. When a completed deploy
+	// reports failures, a single time.AfterFunc timer re-dispatches the
+	// last-validated render through the EXISTING scheduleOrQueue path after a
+	// bounded exponential backoff — so the first retry of a transiently-failed
+	// deploy doesn't wait up to a full DriftPreventionInterval (60s) for the drift
+	// backstop. The ONLY new async primitive is this one timer; its callback
+	// (rescheduleLastValidated) writes the single state.pending slot, so all
+	// timing stays in the one runDeployLoop and no second scheduling path (the
+	// reload-storm regression) is ever created. All three fields are guarded by
+	// schedulerMutex.
+	//   - retryTimer: the pending AfterFunc, nil when none is armed.
+	//   - deployFailureRetries: fast retries spent on the CURRENT failing render;
+	//     reset when a new render's checksum earns a fresh budget, capped at
+	//     maxDeployFailureRetries (beyond which the 60s drift backstop takes over).
+	//   - lastFailedRetryChecksum: the ContentChecksum the current budget tracks.
+	retryTimer              *time.Timer
+	deployFailureRetries    int
+	lastFailedRetryChecksum string
+
 	// lastDispatchedParsed / lastDispatchedConfig are the render that the most
 	// recent DISPATCH committed to (the in-flight/pending deploy's render), used
 	// as the SINGLE diff baseline for classifying the next render's lane
