@@ -18,7 +18,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260625191504-376ce7214b12
 	golang.org/x/sync v0.21.0
-	golang.org/x/text v0.38.0
+	golang.org/x/text v0.39.0
 	golang.org/x/vuln v1.5.0
 	google.golang.org/grpc v1.82.0
 	gopkg.in/yaml.v3 v3.0.1
