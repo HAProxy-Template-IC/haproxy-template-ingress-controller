@@ -151,8 +151,21 @@ func waitForControllerForgetNamespace(ctx context.Context, t *testing.T, client 
 //     when the deployer's per-endpoint Sync returns success (the dataplane API
 //     confirmed reload via VerifyReload polling).
 //
-// The marker is typically the resource's namespace, which the chart embeds in
-// backend names.
+// Choosing the marker. It must appear in spec.Content ONLY once the resource
+// the caller just applied has rendered — otherwise the gate reports
+// convergence off an unrelated, earlier render and the caller races the real
+// deploy. For Ingress tests the namespace is a fine marker: it enters
+// spec.Content only via the Ingress's own backend, so it can't appear before
+// the Ingress renders. For Gateway/HTTPRoute/GRPCRoute tests the namespace is
+// NOT sufficient: the Gateway injects the namespace into spec.Content via the
+// route-independent `# typed-access-smoke: ns=<ns> ...` global comment
+// (charts/haptic/charts/gateway/05-typed-access-smoke.yaml), which renders when
+// the Gateway is created — before the route exists. A namespace marker would
+// then pass off that pre-route render while the route's own (throttled)
+// structural deploy is still in flight (issue #71). Use a route-gated marker
+// instead: the backend-name fragment "gtw_<ns>_<routeName>_" appears only once
+// the route's backends render, and <ns> is unique per test so it can't
+// cross-match a sibling test's route.
 //
 // An initial Get (so an already-converged CR passes instantly) plus a single
 // long-lived watch — no service proxy, no per-tick GET storm — keeps this cheap
