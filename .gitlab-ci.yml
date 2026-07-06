@@ -679,9 +679,17 @@ publish-chart-snapshot:
         # SPOA hub image build inputs.
         - versions-spoa.env
         - Dockerfile.spoa-hub
-        - scripts/prep-spoa-plugins.sh
-        - scripts/smoke-spoa-image.sh
-        - scripts/render-spoa-bundle.sh
+        # ALL scripts, not just the SPOA build scripts. test-ingress-
+        # conformance, build-ingress-conformance-image and .test-e2e-base
+        # trigger on `scripts/**/*` and hard-`needs:` build-spoa-image-
+        # snapshot, so this build MUST match that broad trigger — otherwise
+        # GitLab refuses the whole pipeline ("build-spoa-image-snapshot does
+        # not exist") for any script-only change that isn't one of the SPOA
+        # build scripts (e.g. scripts/release.sh). Narrower per-script lists
+        # here drifted out of lockstep with the tests' `scripts/**/*` and
+        # produced zero-job MR pipelines. The build is a cache-hit no-op when
+        # the SPOA image inputs are unchanged, so the broad trigger is cheap.
+        - scripts/**/*
         - docs/controller/docs/operations/spoa-hub.md
         - .gitlab-ci.yml
         # Go-source paths. `test-e2e` triggers on these (its own
@@ -721,9 +729,9 @@ publish-chart-snapshot:
         - charts/haptic/templates/_helpers.tpl
         - charts/haptic/templates/haproxytemplateconfig.yaml
         - charts/haptic/templates/spoa-hub-configmap.yaml
-        - scripts/start-dev-env.sh
+        # scripts/start-dev-env.sh and scripts/dev-env-assets/** are covered
+        # by the `scripts/**/*` entry above.
         - tests/e2e/**/*
-        - scripts/dev-env-assets/**/*
 
 # Chart-side trigger for the SPOA image-build pipeline. Composed with
 # `.rules-spoa` (via `!reference`) on `prep-spoa-plugins` and
