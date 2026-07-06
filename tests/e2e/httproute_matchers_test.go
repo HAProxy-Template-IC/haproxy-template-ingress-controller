@@ -60,6 +60,16 @@ func TestHTTPRoutePaths(t *testing.T) {
 						BackendRefs: []HTTPRouteBackendRef{{Service: backend.Service, Port: backend.Port}}},
 				},
 			})
+
+			// Gate on the controller deploying THIS route to every HAProxy pod
+			// before asserting. The marker is route-gated (issue #71): the bare
+			// namespace already enters spec.Content via the Gateway's
+			// route-independent typed-access-smoke comment (rendered when the
+			// Gateway is created, before this route), so it would pass off a
+			// pre-route render and race the route's own throttled deploy. The
+			// fragment "gtw_<ns>_echo-paths_" appears only once this route's
+			// backends render; <ns> is unique per test.
+			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-paths_")
 			return ctx
 		}).
 		Assess("Exact /exact matches", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -121,6 +131,16 @@ func TestHTTPRouteMethods(t *testing.T) {
 						BackendRefs: []HTTPRouteBackendRef{{Service: defaultBackend.Service, Port: defaultBackend.Port}}},
 				},
 			})
+
+			// Gate on the controller deploying THIS route to every HAProxy pod
+			// before asserting. The marker is route-gated (issue #71): the bare
+			// namespace already enters spec.Content via the Gateway's
+			// route-independent typed-access-smoke comment (rendered when the
+			// Gateway is created, before this route), so it would pass off a
+			// pre-route render and race the route's own throttled deploy. The
+			// fragment "gtw_<ns>_echo-methods_" appears only once this route's
+			// backends render; <ns> is unique per test.
+			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-methods_")
 			return ctx
 		}).
 		Assess("GET /api routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -168,6 +188,16 @@ func TestHTTPRouteHeaders(t *testing.T) {
 						BackendRefs: []HTTPRouteBackendRef{{Service: defaultBackend.Service, Port: defaultBackend.Port}}},
 				},
 			})
+
+			// Gate on the controller deploying THIS route to every HAProxy pod
+			// before asserting. The marker is route-gated (issue #71): the bare
+			// namespace already enters spec.Content via the Gateway's
+			// route-independent typed-access-smoke comment (rendered when the
+			// Gateway is created, before this route), so it would pass off a
+			// pre-route render and race the route's own throttled deploy. The
+			// fragment "gtw_<ns>_echo-headers_" appears only once this route's
+			// backends render; <ns> is unique per test.
+			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-headers_")
 			return ctx
 		}).
 		Assess("Request with X-Api-Version: v2 routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -214,6 +244,16 @@ func TestHTTPRouteQuery(t *testing.T) {
 						BackendRefs: []HTTPRouteBackendRef{{Service: defaultBackend.Service, Port: defaultBackend.Port}}},
 				},
 			})
+
+			// Gate on the controller deploying THIS route to every HAProxy pod
+			// before asserting. The marker is route-gated (issue #71): the bare
+			// namespace already enters spec.Content via the Gateway's
+			// route-independent typed-access-smoke comment (rendered when the
+			// Gateway is created, before this route), so it would pass off a
+			// pre-route render and race the route's own throttled deploy. The
+			// fragment "gtw_<ns>_echo-query_" appears only once this route's
+			// backends render; <ns> is unique per test.
+			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-query_")
 			return ctx
 		}).
 		Assess("Request with ?version=beta routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

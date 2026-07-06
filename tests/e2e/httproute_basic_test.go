@@ -64,6 +64,16 @@ func TestHTTPRouteBasic(t *testing.T) {
 					}},
 				}},
 			})
+
+			// Gate on the controller deploying THIS route to every HAProxy pod
+			// before asserting. The marker is route-gated (issue #71): the bare
+			// namespace already enters spec.Content via the Gateway's
+			// route-independent typed-access-smoke comment (rendered when the
+			// Gateway is created, before this route), so it would pass off a
+			// pre-route render and race the route's own throttled deploy. The
+			// fragment "gtw_<ns>_echo-basic_" appears only once this route's
+			// backend renders; <ns> is unique per test.
+			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-basic_")
 			return ctx
 		}).
 		Assess(host+" returns 200 from echo-server", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

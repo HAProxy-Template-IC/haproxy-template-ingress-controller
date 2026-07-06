@@ -128,8 +128,14 @@ func TestHTTPRouteSplit(t *testing.T) {
 			// throttling reloads, the initial structural deploy can take a couple
 			// seconds; the 50-attempt warmup alone races it (the b48f3c9d CI run
 			// failed here with "warmup: failed to achieve 5 consecutive 200s").
-			// Same convergence wait the rolling-restart test uses.
-			waitForControllerDeployed(ctx, t, client, ns)
+			// The marker is route-gated (issue #71): gating on the bare
+			// namespace passes off the Gateway's route-independent
+			// typed-access-smoke comment (rendered before this HTTPRoute) and
+			// still races the route's own deploy. The backend-name fragment
+			// "gtw_<ns>_echo-split_" appears only once this route's backends
+			// render, and <ns> is unique per test. Same convergence wait the
+			// rolling-restart test uses.
+			waitForControllerDeployed(ctx, t, client, "gtw_"+ns+"_echo-split_")
 			return ctx
 		}).
 		Assess("traffic split converges to the configured 70/30 within a five-sigma band over ~200 samples", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
