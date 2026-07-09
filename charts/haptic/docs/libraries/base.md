@@ -18,6 +18,81 @@ Every render flows through base — here it is underpinning the Ingress preset l
 <div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="Base library underpinning a render" data-height="440">
 </div>
 
+## Try it: emit a header per map entry
+
+Every base extension point is just a Scriggo snippet that emits HAProxy directives from data. Here is that idea in miniature: iterate an inline map and emit one directive per entry.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11-12" data-title="Challenge: turn a map into response headers" data-difficulty="2">
+
+The `frontend http` section already holds an `extraHeaders` map of header names to values, but emits nothing. Range it with `{% for k, v := range extraHeaders %}` and emit one `http-response set-header` per entry.
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: extra-headers-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind *:80
+      {%- var extraHeaders = map[string]any{
+        "X-Frame-Options": "DENY",
+        "X-Content-Type-Options": "nosniff",
+      } %}
+        # TODO(you): emit one http-response set-header per entry in extraHeaders
+        default_backend app
+      backend app
+        server s1 127.0.0.1:8080 check
+```
+
+<details class="pg-solution" markdown>
+<summary>Peek at the solution</summary>
+
+Loop the map with `{% for k, v := range extraHeaders %}` and show the key and value on an `http-response set-header` line. Go maps have no defined iteration order, so the two headers can render in either order — fine here, since they are independent.
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: extra-headers-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind *:80
+      {%- var extraHeaders = map[string]any{
+        "X-Frame-Options": "DENY",
+        "X-Content-Type-Options": "nosniff",
+      } %}
+      {%- for k, v := range extraHeaders %}
+        http-response set-header {{ k }} {{ v | tostring() }}
+      {%- end %}
+        default_backend app
+      backend app
+        server s1 127.0.0.1:8080 check
+```
+
+</details>
+
+</div>
+
 ## Configuration
 
 The base library has the standard enable/disable flag, but disabling it is rarely useful: every other library plugs into the extension points base provides, so setting it to `false` produces a broken render with no `haproxyConfig` and no extension points.

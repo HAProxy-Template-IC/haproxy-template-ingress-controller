@@ -8,6 +8,49 @@ Watch it end-to-end — a watched Ingress feeding the render:
 
 </div>
 
+Watched resources arrive as loosely-typed data, so a field you expect may be absent on some objects. Navigate with `dig(...)`, then supply a default with `fallback(...)` so a missing field never breaks the render. Try it below.
+
+<div class="pg-embed" markdown data-scriggo data-title="Challenge: default a missing port to 80" data-difficulty="2" data-height="380">
+
+One service omits `spec.port`; give every `server` line a port, defaulting to 80 when the field is absent.
+
+```go
+{%- var services = []any{
+    map[string]any{"name": "api",   "spec": map[string]any{"port": 8080}},
+    map[string]any{"name": "web",   "spec": map[string]any{"port": 3000}},
+    map[string]any{"name": "cache", "spec": map[string]any{}},
+} -%}
+{% for _, svc := range services -%}
+{%- var name = svc | dig("name") | fallback("") -%}
+{#- TODO: cache has no spec.port — dig() returns nil and the port comes out blank -#}
+{%- var port = svc | dig("spec", "port") -%}
+server {{ name }} {{ name }}.svc:{{ port }}
+{% end -%}
+```
+
+<details class="pg-solution" markdown>
+<summary>Peek at the solution</summary>
+
+Keep the raw `dig` result, pipe it through `fallback(80)`, and use a `nil` check to flag the line that was defaulted.
+
+```go
+{%- var services = []any{
+    map[string]any{"name": "api",   "spec": map[string]any{"port": 8080}},
+    map[string]any{"name": "web",   "spec": map[string]any{"port": 3000}},
+    map[string]any{"name": "cache", "spec": map[string]any{}},
+} -%}
+{% for _, svc := range services -%}
+{%- var name = svc | dig("name") | fallback("") -%}
+{%- var portVal = svc | dig("spec", "port") -%}
+{%- var port = portVal | fallback(80) -%}
+server {{ name }} {{ name }}.svc:{{ port }}{% if portVal == nil %}  # default port{% end %}
+{% end -%}
+```
+
+</details>
+
+</div>
+
 ## Anatomy of an Entry
 
 ```yaml

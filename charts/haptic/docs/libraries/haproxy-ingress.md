@@ -8,7 +8,16 @@ This library is enabled by default.
 
 See the `haproxy-ingress.github.io/*` annotations render to HAProxy config live:
 
-<div class="pg-embed" markdown data-scenario="haproxy-ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="haproxy-ingress.github.io/* annotations rendered" data-height="440">
+<div class="pg-embed" markdown data-scenario="haproxy-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy-ingress.github.io/* annotations rendered" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **resources** tab, change the `shop` Ingress's `haproxy-ingress.github.io/health-check-uri` from `/healthz` to `/readyz`, then watch the shop backend's health-check line update in the `haproxy.cfg` tab.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+The `backend storefront_shop_svc_shop_http` section changes `option httpchk GET /healthz` to `option httpchk GET /readyz`, so HAProxy's active health check now probes `/readyz`. The `default-server` line keeps its `check inter 2s` (from `backend-check-interval`) — only the probed URI moves.
+
+</details>
 
 </div>
 

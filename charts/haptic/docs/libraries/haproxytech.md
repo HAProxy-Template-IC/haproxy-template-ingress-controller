@@ -21,7 +21,16 @@ This library is enabled by default.
 
 Watch the `haproxy.org/*` annotations render to HAProxy config live:
 
-<div class="pg-embed" markdown data-scenario="haproxytech" data-tab="haproxy.cfg" data-controls="tabs" data-title="haproxy.org/* annotations rendered" data-height="440">
+<div class="pg-embed" markdown data-scenario="haproxytech" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy.org/* annotations rendered" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **resources** tab, change the `shop` Ingress's `haproxy.org/load-balance` value from `leastconn` to `source`, then watch the shop backend's `balance` line update in the `haproxy.cfg` tab.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+The `backend storefront_shop_svc_shop_http` section swaps `balance leastconn` for `balance source`, so HAProxy pins each client to a server by source-IP hash instead of choosing the least-loaded one. Only `roundrobin`, `static-rr`, `leastconn`, `first`, `source`, `random`, or a parameterized `uri`/`url_param`/`hdr`/`rdp-cookie` are accepted — any other value fails the render.
+
+</details>
 
 </div>
 
