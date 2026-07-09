@@ -77,12 +77,17 @@
   // Build the #s= fragment + query for one run.
   async function buildSrc(el, config, resources) {
     var v = el.dataset.version || '3.4';
-    var state = { c: config, r: resources || '', v: v, s: './schemas.json', p: el.dataset.scenario || '' };
+    var scriggo = 'scriggo' in el.dataset;   // pure-template mode: no schema, no resources
+    var state = { c: config, r: scriggo ? '' : (resources || ''), v: v, s: scriggo ? null : './schemas.json', p: el.dataset.scenario || '' };
     var frag = '#s=' + await gzipB64(JSON.stringify(state));
     var qs = ['embed=1'];
-    if (el.dataset.controls) qs.push('controls=' + encodeURIComponent(el.dataset.controls));
-    if (el.dataset.tab) qs.push('tab=' + encodeURIComponent(el.dataset.tab));
-    if (el.dataset.focus) qs.push('focus=' + encodeURIComponent(el.dataset.focus));
+    if (scriggo) {
+      qs.push('scriggo=1');
+    } else {
+      if (el.dataset.controls) qs.push('controls=' + encodeURIComponent(el.dataset.controls));
+      if (el.dataset.tab) qs.push('tab=' + encodeURIComponent(el.dataset.tab));
+      if (el.dataset.focus) qs.push('focus=' + encodeURIComponent(el.dataset.focus));
+    }
     return embedBase(el) + '?' + qs.join('&') + frag;
   }
 

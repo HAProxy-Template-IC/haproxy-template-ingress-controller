@@ -283,6 +283,23 @@ The most commonly needed helpers when writing HAPTIC templates. All can be calle
 
 For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, `min`, `max`, `sprintf`, `now()`, etc.), see the [Scriggo built-ins reference](https://scriggo.com/templates/builtins).
 
+Try the helpers live in a pure Scriggo scratchpad — no config, no resources, just
+the template language and every function above. Edit it and watch the output.
+
+<div class="pg-embed" markdown data-scriggo data-title="Scriggo scratchpad — try the helpers" data-height="360">
+
+```go
+{# Every helper from the table above is available here. Edit freely. #}
+{%- var envs = []any{"prod", "dev", "staging"} %}
+{%- var sorted = envs | sort_by([]string{"$"}) %}
+{%- for _, e := range sorted %}
+backend {{ e }}
+  server app {{ toLower(tostring(e)) }}.svc:80
+{%- end %}
+```
+
+</div>
+
 ### Path Resolution
 
 `pathResolver` is a helper available in every template. Its `GetPath(filename, type)` method returns the path that HAProxy should use to reference an auxiliary file (map, error file, certificate, crt-list). Use it instead of writing paths by hand so the controller and HAProxy agree on where files live.
