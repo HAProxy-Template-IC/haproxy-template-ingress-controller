@@ -15,6 +15,10 @@ The schema is deliberately resource-agnostic — you template whatever you watch
 
 ## Basic Example
 
+Run the whole custom resource in your browser to watch it render to a minimal haproxy.cfg.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs" data-title="A minimal HAProxyTemplateConfig" data-height="440">
+
 ```yaml
 apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
@@ -46,6 +50,8 @@ spec:
       frontend http
           bind *:80
 ```
+
+</div>
 
 ## Try it: add health checks to the servers
 
