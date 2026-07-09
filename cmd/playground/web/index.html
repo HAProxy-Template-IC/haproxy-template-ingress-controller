@@ -689,12 +689,26 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     // ?tab=<name> opens on that output tab; ?focus=<[file:]start-end | file> highlights
     // and scrolls to the important lines. Non-embed pages ignore all of this.
     const EMBED = new URLSearchParams(location.search);
-    const isEmbed = EMBED.get('embed') === '1';
+    // Pure-Scriggo mode: the left pane is a bare Scriggo template (not a whole
+    // HAProxyTemplateConfig). It's wrapped in a minimal config at render time, so
+    // learners see just template-in -> output-out with every helper function
+    // available. Reuses embed mode's chrome-hiding (no resources pane, no tabs).
+    const isScriggo = EMBED.get('scriggo') === '1';
+    const isEmbed = EMBED.get('embed') === '1' || isScriggo;
     let embedFocusDone = false;
+    if (isScriggo) {
+      document.body.dataset.scriggo = '';
+      const code = document.querySelector('.col.config .bar code');
+      if (code) {
+        code.textContent = 'Scriggo template';
+        if (code.previousSibling && code.previousSibling.nodeType === 3) code.previousSibling.textContent = '';
+      }
+    }
     if (isEmbed) {
       document.body.dataset.embed = '';
       // Opt-in controls: ?controls=tabs,resources,tools,nav,max,reload,provenance,dots
-      document.body.dataset.ctl = (EMBED.get('controls') || '').split(',').map((s) => s.trim()).filter(Boolean).join(' ');
+      // (scriggo shows none — just the template and its output).
+      document.body.dataset.ctl = isScriggo ? '' : (EMBED.get('controls') || '').split(',').map((s) => s.trim()).filter(Boolean).join(' ');
       const res = $('eb-res'), open = $('eb-open');
       res.addEventListener('click', () => {
         const on = document.body.toggleAttribute('data-embed-res');
@@ -704,10 +718,16 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       // falling back to the original scenario hash if the engine isn't ready yet.
       open.addEventListener('click', async (e) => {
         e.preventDefault();
-        let url = location.pathname + location.hash;
-        try { if (editors) url = location.pathname + '#s=' + await gzipB64(JSON.stringify(currentState())); } catch (_) { /* keep fallback */ }
+        const q = isScriggo ? '?scriggo=1' : '';
+        let url = location.pathname + q + location.hash;
+        try { if (editors) url = location.pathname + q + '#s=' + await gzipB64(JSON.stringify(currentState())); } catch (_) { /* keep fallback */ }
         window.open(url, '_blank', 'noopener');
       });
+    }
+    // Wrap a bare Scriggo template into a minimal HAProxyTemplateConfig so the
+    // engine renders it; the single haproxy.cfg output is the rendered template.
+    function scriggoWrap(t) {
+      return 'haproxyConfig:\n  template: |\n' + t.split('\n').map((l) => '    ' + l).join('\n') + '\n';
     }
     // Apply ?tab / ?focus after the first render. focus spec: "start-end" (active tab),
     // "file" (scroll to a maps/files section), or "file:start-end" (both).
@@ -1639,7 +1659,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (configDirty) {
         configDirty = false;
         setChip('compiling…', 'busy');
-        worker.postMessage({ type: 'load', seq: cur, config: editors.config.get(), schemas, haproxyVersion: $('hpver').value, resources: editors.res.get(), resetBaseline: resetBaselineNext });
+        worker.postMessage({ type: 'load', seq: cur, config: isScriggo ? scriggoWrap(editors.config.get()) : editors.config.get(), schemas, haproxyVersion: $('hpver').value, resources: editors.res.get(), resetBaseline: resetBaselineNext });
         resetBaselineNext = false;
       } else {
         setChip('rendering…', 'busy');
@@ -1688,6 +1708,16 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       prevTabs = tabs;             // set after paintOutput so the glow diff compares against the previous render
       if (isEmbed && !embedFocusDone) { embedFocusDone = true; applyEmbedFocus(tabs, counts, drops, migWarn); }
     };
+
+    // Seed template for a bare ?scriggo=1 session (no shared link).
+    const DEFAULT_SCRIGGO = `{# Pure Scriggo — edit freely. Every HAPTIC template function is available
+   (sort_by, dig, fallback, toLower, indent, …). The rendered text is on the right. #}
+{%- var envs = []any{"prod", "dev", "staging"} %}
+{%- var sorted = envs | sort_by([]string{"$"}) %}
+{%- for _, e := range sorted %}
+backend {{ e }}
+  server app {{ toLower(tostring(e)) }}.svc:80
+{%- end %}`;
 
     /* ---------- presets ---------- */
     // Each bundled preset is one `helm template` render enabling a specific set
@@ -1862,7 +1892,10 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       updateResHint(); schedule();
     }
     let saveTimer;
-    function autosave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(currentState())); } catch (e) { /* quota */ } }, 500); }
+    // In ?scriggo=1 the config editor holds a bare template, not a real config, so
+    // it must never touch the shared session key — otherwise the normal playground
+    // would later restore a bare template as its config and break.
+    function autosave() { if (isScriggo) return; clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(currentState())); } catch (e) { /* quota */ } }, 500); }
 
     /* ---------- controller-version selector ----------
        When the site is published per release each bundle lives at
@@ -1909,6 +1942,13 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (wantPreset) {                                      // ?preset=<id> deep-links to a specific example
         const pp = PRESETS.find((x) => x.id === wantPreset);
         if (pp) return loadPreset(pp);
+      }
+      if (isScriggo) {                                       // bare ?scriggo=1: seed a template, not a preset config
+        loadingPreset = true;
+        editors.config.set(DEFAULT_SCRIGGO); editors.res.set('');
+        loadingPreset = false;
+        configDirty = true; fire();
+        return;
       }
       // First-time visitors get the how-to-use modal once; it explains bringing your own inputs.
       try { if (!localStorage.getItem(HELP_SEEN_KEY)) openHelp(); } catch (e) { /* private mode */ }
