@@ -122,6 +122,66 @@ these are all valid:
 
 Supply fewer keys than `indexBy` defines to get a prefix scan — useful for one-to-many relationships. Always returns an empty slice (never `nil`) so templates iterate safely.
 
+Run the prefix scan below: three Ingresses across two namespaces, but `Fetch("shop")` returns only the two in `shop`.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-focus="25" data-title="Prefix scan: Fetch one key of a two-key index" data-height="460">
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: indexby-demo
+spec:
+  watchedResources:
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      indexBy:
+        - metadata.namespace
+        - metadata.name
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind :80
+        default_backend unmatched
+      {%- for _, ing := range resources.ingresses.Fetch("shop") %}
+      backend {{ ing | dig("metadata", "name") | tostring() }}
+        server app {{ ing | dig("metadata", "name") | tostring() }}.svc:80
+      {%- end %}
+      backend unmatched
+        http-request deny deny_status 404
+```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: web
+      namespace: shop
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: api
+      namespace: shop
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: blog
+      namespace: content
+```
+
+</div>
+
 ### Canonical index shapes
 
 | Resource | `indexBy` | Why |
@@ -146,6 +206,66 @@ Three filters narrow what actually lands in the store:
 - `namespace:` — hard pin to a single namespace. Drops the need for `metadata.namespace` in `indexBy`.
 - `labelSelector:` — equality-only label-selector string applied to the resource itself (`"app=myapp"` or `"app=nginx,env=prod"`). Comma-separated `key=value` pairs only; set-based syntax (`"tier in (frontend,api)"`, `"!disabled"`) is **not** supported — `pkg/controller/conversion.parseLabelSelector` splits on `,` and `=`, dropping anything else.
 - `fieldSelector:` — a client-side JSONPath equality filter applied *after* the list is fetched (format `"field.path=value"`, e.g. `"spec.ingressClassName=haproxy"`). Unlike Kubernetes' native field selectors it can target **any** field, not just the server-supported ones, because the watcher evaluates it itself (at the cost of fetching the full list first). A resource that stops matching is handled as a delete; one that starts matching, as an add. This is what the bundled ingress / gateway libraries use to scope by `ingressClassName` / `gatewayClassName`.
+
+Watch the filter in action: two Ingresses reach the playground, but only the `haptic`-class one survives the `fieldSelector` and reaches a backend.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-focus="10" data-title="fieldSelector scopes the watch by ingress class" data-height="460">
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: fieldselector-demo
+spec:
+  watchedResources:
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      fieldSelector: "spec.ingressClassName=haptic"
+      indexBy:
+        - metadata.namespace
+        - metadata.name
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind :80
+        default_backend unmatched
+      {%- for _, ing := range resources.ingresses.List() %}
+      backend {{ ing | dig("metadata", "name") | tostring() }}
+        server app {{ ing | dig("metadata", "name") | tostring() }}.svc:80
+      {%- end %}
+      backend unmatched
+        http-request deny deny_status 404
+```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: shop
+      namespace: default
+    spec:
+      ingressClassName: haptic
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: legacy
+      namespace: default
+    spec:
+      ingressClassName: nginx
+```
+
+</div>
 
 Need to scope by namespace *labels* rather than a single name? Watch the `namespaces` resource and gate inside the template, or run separate controller instances per scope.
 

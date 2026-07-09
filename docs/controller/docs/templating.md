@@ -80,108 +80,321 @@ spec:
 
 ### HAProxy Configuration
 
-The main `haproxyConfig` template generates the complete HAProxy configuration file:
+The main `haproxyConfig` template generates the complete HAProxy configuration file. This one loops over the watched Ingresses and emits a backend for each — run it, then add or edit an Ingress on the right and watch the backends change.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="One backend per Ingress" data-height="480">
 
 ```yaml
-haproxyConfig:
-  template: |
-    global
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: haproxy-config-demo
+spec:
+  watchedResources:
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      indexBy:
+        - metadata.name
+  maps:
+    host.map:
+      template: |
+        {%- for _, ingress := range resources.ingresses.List() %}
+        {%- for _, rule := range ingress | dig("spec", "rules") | toSlice() %}
+        {{ rule | dig("host") | tostring() }} {{ ingress | dig("metadata", "name") | tostring() }}
+        {%- end %}
+        {%- end %}
+  haproxyConfig:
+    template: |
+      global
         log stdout len 4096 local0 info
         daemon
         maxconn 4096
-
-    defaults
+      defaults
         mode http
         timeout connect 5s
         timeout client 50s
         timeout server 50s
-
-    frontend http
+      frontend http
         bind *:80
         use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
-
-    {% for _, ingress := range resources.ingresses.List() %}
-    backend {{ ingress.metadata.name }}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      backend {{ ingress | dig("metadata", "name") | tostring() }}
         balance roundrobin
-    {% end %}
+      {%- end %}
 ```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: shop
+    spec:
+      rules:
+        - host: shop.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: shop
+                    port:
+                      number: 80
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: blog
+    spec:
+      rules:
+        - host: blog.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: blog
+                    port:
+                      number: 80
+```
+
+</div>
 
 !!! important
     Whenever your HAProxy config references a map file, error file, certificate, or crt-list, use `pathResolver.GetPath(filename, type)` instead of a hard-coded path. The controller deploys these files to a configurable directory (set in `spec.dataplane.mapsDir`, `sslCertsDir`, `generalStorageDir`) and `pathResolver` knows where they live, so the path stays correct even if you reconfigure those directories.
 
 ### Map Files
 
-Map files generate HAProxy lookup tables. They are written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod:
+Map files generate HAProxy lookup tables. They are written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod. This template turns each Ingress host into a backend-name entry — switch to the **maps** tab to read the generated `host.map`.
+
+<div class="pg-embed" markdown data-tab="maps" data-controls="tabs,resources" data-title="A host → backend map" data-height="440">
 
 ```yaml
-maps:
-  host.map:
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: map-demo
+spec:
+  watchedResources:
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      indexBy:
+        - metadata.name
+  maps:
+    host.map:
+      template: |
+        {%- for _, ingress := range resources.ingresses.List() %}
+        {%- for _, rule := range ingress | dig("spec", "rules") | toSlice() %}
+        {%- if (rule | dig("http")) != nil %}
+        {{ rule | dig("host") | tostring() }} ing_{{ ingress | dig("metadata", "name") | tostring() }}
+        {%- end %}
+        {%- end %}
+        {%- end %}
+  haproxyConfig:
     template: |
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {%- for _, rule := range fallback(ingress.spec.rules, []any{}) %}
-      {%- if rule.http != nil %}
-      {{ rule.host }} {{ rule.host }}
-      {%- end %}
-      {%- end %}
-      {%- end %}
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind *:80
+        use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
 ```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: shop
+    spec:
+      rules:
+        - host: shop.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: shop
+                    port:
+                      number: 80
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: blog
+    spec:
+      rules:
+        - host: blog.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: blog
+                    port:
+                      number: 80
+```
+
+</div>
 
 ### General Files
 
-Auxiliary files like custom error pages. Written to `spec.dataplane.generalStorageDir` (default `/etc/haproxy/general/`):
+Auxiliary files like custom error pages. Written to `spec.dataplane.generalStorageDir` (default `/etc/haproxy/general/`). The `errorfile` directive points HAProxy at the rendered file — open the **files** tab to see `503.http`.
+
+<div class="pg-embed" markdown data-tab="files" data-controls="tabs" data-title="A custom 503 error page" data-height="440">
 
 ```yaml
-files:
-  503.http:
-    template: |
-      HTTP/1.0 503 Service Unavailable
-      Cache-Control: no-cache
-      Connection: close
-      Content-Type: text/html
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: files-demo
+spec:
+  files:
+    503.http:
+      template: |
+        HTTP/1.0 503 Service Unavailable
+        Cache-Control: no-cache
+        Connection: close
+        Content-Type: text/html
 
-      <html><body><h1>503 Service Unavailable</h1></body></html>
+        <html><body><h1>503 Service Unavailable</h1></body></html>
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind *:80
+        errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}
+        default_backend web
+      backend web
+        server s1 10.0.0.1:8080 check
 ```
+
+</div>
 
 ### SSL Certificates
 
-SSL/TLS certificate files assembled from Kubernetes Secrets. Written to `spec.dataplane.sslCertsDir` (default `/etc/haproxy/ssl/`):
+SSL/TLS certificate files are assembled from Kubernetes Secrets. Written to `spec.dataplane.sslCertsDir` (default `/etc/haproxy/ssl/`). This reads a TLS Secret and concatenates its certificate and key into one PEM — the **certs** tab shows the result.
+
+<div class="pg-embed" markdown data-tab="certs" data-controls="tabs,resources" data-title="A PEM assembled from a Secret" data-height="440">
 
 ```yaml
-sslCertificates:
-  example-com.pem:
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: cert-demo
+spec:
+  watchedResources:
+    secrets:
+      apiVersion: v1
+      resources: secrets
+      indexBy:
+        - metadata.namespace
+        - metadata.name
+  sslCertificates:
+    example-com.pem:
+      template: |
+        {%- var secret = resources.secrets.GetSingle("default", "example-com-tls") %}
+        {%- if secret != nil %}
+        {{ secret | dig("data", "tls.crt") | tostring() | b64decode() }}
+        {{ secret | dig("data", "tls.key") | tostring() | b64decode() }}
+        {%- end %}
+  haproxyConfig:
     template: |
-      {%- var secret = resources.secrets.GetSingle("default", "example-com-tls") %}
-      {%- if secret != nil %}
-      {{ b64decode(secret.data["tls.crt"]) }}
-      {{ b64decode(secret.data["tls.key"]) }}
-      {%- end %}
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend web
+        bind *:443 ssl crt {{ pathResolver.GetPath("example-com.pem", "cert") }}
+        default_backend app
+      backend app
+        server s1 10.0.0.1:8080 check
 ```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: Secret
+    type: kubernetes.io/tls
+    metadata:
+      name: example-com-tls
+      namespace: default
+    data:
+      tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURUekNDQWplZ0F3SUJBZ0lVV3ZyRGg3bVB5ck5rclB2N1FjeWQ1cXBZVFZFd0RRWUpLb1pJaHZjTkFRRUwKQlFBd056RVVNQklHQTFVRUF3d0xaWGhoYlhCc1pTNWpiMjB4SHpBZEJnTlZCQW9NRmtoQlVGUkpReUJRYkdGNQpaM0p2ZFc1a0lFUmxiVzh3SGhjTk1qWXdOekE1TWpNd056QTJXaGNOTXpZd056QTJNak13TnpBMldqQTNNUlF3CkVnWURWUVFEREF0bGVHRnRjR3hsTG1OdmJURWZNQjBHQTFVRUNnd1dTRUZRVkVsRElGQnNZWGxuY205MWJtUWcKUkdWdGJ6Q0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQUxtYXBnQlZTNERmQ29jcApNUk1ocnIxeG42M1RCL3plL2kxT3hQV1k5eUhmc0hOelZPakRUT054elE1SERVMVFBUFZXb2I0YmlKemZWbDF6Cm5qVCs4MkordXVUZWVCbWUxcFJhRUhyNjgvbWxCelAvM3V0NDBDNlJ1Y0xSbzVWYlVvd3d2WnpOVHJGbW1Jdk4KcDdXdVNsWDFhTFBSSENvRE0zYUtndU94MS9MdHl6TGw3eGtPdkRBa0ZoYmNWc0tVSUFzb01KaWliREYrdzBYZApXenJDUmZOSDdzMjNldTBDRDBnZk1lT0lTV3R5MU40SWRUT2NBcGU4aWpMNi80SkJYOG51NmFhOXMwd3JmMXhpCm9yeEhEV2dDMFpva21EMGlvZ0NYaWptNXFJUGZySnZ5NkMyNzgrRnErK2I3ZzR0dzlFdjlmS1YyeGJYUjdNVTQKTTNRaUZpVUNBd0VBQWFOVE1GRXdIUVlEVlIwT0JCWUVGSUQzOG51WmszaklHQVRVZWMzV3pwMi9tNmpxTUI4RwpBMVVkSXdRWU1CYUFGSUQzOG51WmszaklHQVRVZWMzV3pwMi9tNmpxTUE4R0ExVWRFd0VCL3dRRk1BTUJBZjh3CkRRWUpLb1pJaHZjTkFRRUxCUUFEZ2dFQkFHQmFYa1JhcTRReEoxTDl2WHdnemlyWjR1dzltRzBWL1gzVkNtUDUKVXhicnJrQ3JiZzZEYURYRWpUTEk5bm92VVFmK2NaMWhPRDI0TDN4d1dvUHZ2Z25BNlBlR240c2F1Q0Z0WFNrSwp5RzZOemFrWmdjdHY0OHUzQnNLUDRJenZmTVRhZENNWmlyb2xMV0MrWWlDc1doSVRSR1RSd3JnVXlwN3JiTVgzCk9uNXpEYlU3MjU4RXhiN01NYlBvMlpJRWZZcUErKzIzVlZ6alBQamR4Yy81NjhLZTFPZUhKenR3SG5ENmk3WVAKM3NaTyt0dC83OU5TQlBUNk5TcUg2eWdGWUpCMWpYOWhYKzA1VHJzb010UnVUMmFsU1duY2VVOHJRd2dYalFLVQpiZnUrVE4xdnBrVjk0ZFZERnVKRFhhWFIyQ0ptUmVTM1prWDlJYWxNc1cvTHpwWT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+      tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQzVtcVlBVlV1QTN3cUgKS1RFVElhNjljWit0MHdmODN2NHRUc1QxbVBjaDM3QnpjMVRvdzB6amNjME9SdzFOVUFEMVZxRytHNGljMzFaZApjNTQwL3ZOaWZycmszbmdabnRhVVdoQjYrdlA1cFFjei85N3JlTkF1a2JuQzBhT1ZXMUtNTUwyY3pVNnhacGlMCnphZTFya3BWOVdpejBSd3FBek4yaW9ManNkZnk3Y3N5NWU4WkRyd3dKQllXM0ZiQ2xDQUxLRENZb213eGZzTkYKM1ZzNndrWHpSKzdOdDNydEFnOUlIekhqaUVscmN0VGVDSFV6bkFLWHZJb3krditDUVYvSjd1bW12Yk5NSzM5YwpZcUs4Uncxb0F0R2FKSmc5SXFJQWw0bzV1YWlEMzZ5Yjh1Z3R1L1BoYXZ2bSs0T0xjUFJML1h5bGRzVzEwZXpGCk9ETjBJaFlsQWdNQkFBRUNnZ0VBRW4zcmN4WU1ienNKbi96RkpHeFRMaEcvZ0lDSmg3S3A3VmF2UGU3dkZHTm0KZjZJcWdBUlJTVW5oemIzYmYrdnNKSVZzbVBYQ1R5cmJQblZSK21LNldnSlpXWXNtdVJxL3Mwa2o0alRWa1BaVgp1T01SMFRFWXdNTUpHSFZ0a0dob1dZcFRvZWM4bzJVZTVyTG5OaTAydjhpekZWTk10SXpjR0QvbG1ZenpBSU53CkV0UFJRRHdsMks1NDFFckdZTjA1c2RyQmFWNkFFdjRFWHh4cldzVXJCK3k2cW1XQ1kvUDdSUHkwNzFCVHJnTmUKSkhYUnk5NnJOSE9DUHZYK1kzQWRYSGw4T01yMTV0M3IyMVVlMmpqVlltY29UT1pSTTVMSjN2emRRSEFESFV4ZQoyZUFORXJkWGNNdVgyUi9wK0IvNnBtUE1LVTJLT2JJeWlOK1p0Zm9ya3dLQmdRRHFLZ083Z1BqY0RIVGc4bEdaCk14Z282emErL1VaOUN2K2JMTzk2RzBzWlpkUEJpYjR0cStvMXRnSXlqWjZ5SHBzbTBpanRSZHhjZEtuQXlIcUcKNmRwU3pJbXlUQU9DV3JsbkFFY05XQitIeTR1cTVuMUY3M0VrSitiYi9saDRUbm94SmFSeEIweDM3QjJlRVhBcQppUkhjeGdyKzljOTU3ajVuSk5RWnJ2eE1id0tCZ1FESzZXZW9jcEdSeFoxM1ZUYUVrWERFL3ZQaVBpWVJBWEZjCmVQUmVrNnhZbVAxdmxDVUdpK2VPNGgyTW9ycEoxWVBlbDBzcHNDTCs2bk5ZV0Z2K3cyUjlsb0RqY1BOSnY0WGQKdkdGeFRzS0Zkdlp0ZkxodVpqeXljM01FeWRpckt3dmpuK2lieHo2NWZOdWtWcjFhSlExQnUvN2wycmJTSEsxbwpzSERiOENsNHF3S0JnQVhMb0dnRm15TW5FOFYxZWR1R3pqUkZEZ2ZRRU95TFZ5UXFDb3RGSGFpMVFuWnB5RkV0CkRoRGlQayt0L1oxKzhHd1hpM2ZENE41UTdOcWVtNW0zTS9ZVXBkdkowZFJxRm1pY015WDdabHhnQjBibGlYZ3YKb3VjNExaaUlSUHhGUlBUdWI1RjBrc250Q0JhZmE5MUJveldKbVVBU0tWNWxMUm8wYVNOeGwwRDFBb0dCQU1hVgpWV0J5OStwdE42WFJYTEN6VW1WSmkwL1JPUm9OaW05UTVRQW1rRmFKTEFkbU9qSkUrOU5Ia2xuUDdIZFVJbUhYCk9iVkw3NFFCMmU4TlVzTnJZTTdVVzhHOENpNFQ1YVJUdUIzWFVlS2l3WnYzb3R4UTdIaE5LclQyQWpuS3dERCsKai96ZEs1TUhFa0tzclZZcXl1V1pZbVo3L2M1MlNIUWJzZWhlQzRoUEFvR0FDNW9zY2NqQlpiK2xMOW9lMnp1WgpZQ0pDMjNzQnB2bnc2cmFBdXMzZXBFdDVXQnBxL0t0cmhEVjBvL1FaVU1JUEtOM3d3dUxyd01pM0VsMHNLand2CmtHNGxhRThhU1BGek16TjBVdTRXbEhCY01xT2N3UVpVUzIwM2o4eTl3SjVtdVllNU9FMzRUdndOQ3dtVFZXNkcKK3RkNElYaHgvMGpEbXZaSzNjRDd5V3M9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K
+```
+
+</div>
 
 !!! note
     Certificate data in Secrets is base64-encoded. Use the `b64decode` filter to decode it.
 
 ### Template Snippets
 
-Reusable template fragments included via `{{ render "snippet-name" }}`:
+Reusable template fragments are included via `{{ render "snippet-name" }}` — or `{{ render_glob "pattern" }}` to pull in every match at once. This config keeps each backend in its own snippet and stitches them into the config with `render_glob`, which renders matches in alphabetical order.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs" data-title="Snippets assembled with render_glob" data-height="460">
 
 ```yaml
-templateSnippets:
-  backend-name:
-    template: >-
-      ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
-
-  backend-servers:
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: snippet-demo
+spec:
+  templateSnippets:
+    backend-api:
+      template: |
+        backend api
+          server s1 10.0.1.5:9000 check
+    backend-web:
+      template: |
+        backend web
+          server s1 10.0.0.1:8080 check
+  haproxyConfig:
     template: |
-      {%- for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
-      {%- for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
-      {%- for _, address := range fallback(endpoint.addresses, []any{}) %}
-      server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
-      {%- end %}
-      {%- end %}
-      {%- end %}
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind *:80
+        default_backend web
+      {{ render_glob "backend-*" }}
 ```
 
-Include a snippet in a template:
+</div>
+
+Include a single snippet in a template:
 
 ```go
 {{ render "backend-name" }}
@@ -211,26 +424,48 @@ Available types:
 | `regex_replace` | Line-by-line regex find/replace (`pattern` and `replace` params) |
 | `template` | Scriggo template transformation with access to the rendered output via the `input` variable (`source` param) |
 
+The config below renders a `__REGION__` marker, then runs two post-processors in order: a `template` step rewrites the marker to a value, and a `regex_replace` step renames the header. The **haproxy.cfg** tab shows the final, post-processed output.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs" data-title="Rewriting the output after render" data-height="460">
+
 ```yaml
-haproxyConfig:
-  template: |
-    global
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: postproc-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
         daemon
-    # ...
-  postProcessing:
-    - type: template
-      params:
-        source: |
-          {%- if strings_contains(input, "__PLACEHOLDER__") -%}
-          {{ replace(input, "__PLACEHOLDER__", "computed-value") }}
-          {%- else -%}
-          {{ input }}
-          {%- end -%}
-    - type: regex_replace
-      params:
-        pattern: "^[ ]+"
-        replace: "  "
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind *:80
+        http-response set-header X-Region __REGION__
+        default_backend web
+      backend web
+        server s1 10.0.0.1:8080 check
+    postProcessing:
+      - type: template
+        params:
+          source: |
+            {%- if strings_contains(input, "__REGION__") -%}
+            {{ replace(input, "__REGION__", "eu-west-1") }}
+            {%- else -%}
+            {{ input }}
+            {%- end -%}
+      - type: regex_replace
+        params:
+          pattern: "X-Region"
+          replace: "X-Deployment-Region"
 ```
+
+</div>
 
 The `template` post-processor receives the fully rendered output as the `input` variable and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, etc.). Its output becomes the new rendered content.
 
@@ -614,26 +849,20 @@ global
 
 ### Reserved Server Slots (Avoid Reloads)
 
-Pre-allocate server slots to enable runtime API updates without reloads:
+Pre-allocate server slots so endpoint changes update server addresses through the runtime API instead of triggering a reload. Run this to watch the active endpoints fill the low-numbered slots while the spares stay `disabled`:
+
+<div class="pg-embed" markdown data-scriggo data-title="Reserved server slots" data-height="360">
 
 ```go
-{%- var initial_slots = 10 %}
-{%- var active_endpoints = []map[string]any{} %}
-
-{# Collect endpoints #}
-{%- for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
-  {%- for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
-    {%- for _, address := range fallback(endpoint.addresses, []any{}) %}
-      {%- active_endpoints = append(active_endpoints, map[string]any{"address": address, "port": port}) %}
-    {%- end %}
-  {%- end %}
-{%- end %}
-
-{# Per-server options like 'check' belong in the surrounding default-server,
-   NOT on individual server lines — see the tip below for why. #}
+{# Reserved slots: real endpoints fill the low-numbered slots; the spare
+   slots stay `disabled` so HAProxy can enable them at runtime — no reload.
+   Add a third endpoint and re-run to watch a spare slot light up. #}
+{%- var initial_slots = 5 %}
+{%- var active_endpoints = []any{
+    map[string]any{"address": "10.244.1.10", "port": 8080},
+    map[string]any{"address": "10.244.2.11", "port": 8080},
+} %}
 default-server check
-
-{# Fixed slots - active endpoints fill first, rest are disabled #}
 {%- for i := 1; i <= initial_slots; i++ %}
   {%- if i-1 < len(active_endpoints) %}
     {%- var ep = active_endpoints[i-1] %}
@@ -643,6 +872,8 @@ server SRV_{{ i }} 192.0.2.1:1 disabled
   {%- end %}
 {%- end %}
 ```
+
+</div>
 
 **Benefit**: Endpoint changes update server addresses via runtime API without dropping connections.
 
@@ -661,87 +892,194 @@ server SRV_{{ i }} 192.0.2.1:1 disabled
 
 ### Cross-Resource Lookups
 
-Use fields from one resource to query another:
+Use a field from one resource to query another. Each Ingress's backend service name drives a `Fetch()` into the matching EndpointSlices — run it, then edit the Ingress or the endpoints and watch the backend servers change:
 
-```go
-{% for _, ingress := range resources.ingresses.List() %}
-{% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
-{% for _, path := range fallback(rule.http.paths, []any{}) %}
-  {% var service_name = path.backend.service.name %}
-  {% var port = fallback(path.backend.service.port.number, 80) %}
-
-backend ing_{{ ingress.metadata.name }}_{{ service_name }}
-    {%- for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
-    {%- for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
-    {%- for _, address := range fallback(endpoint.addresses, []any{}) %}
-    server {{ endpoint.targetRef.name }} {{ address }}:{{ port }} check
-    {%- end %}
-    {%- end %}
-    {%- end %}
-{% end %}
-{% end %}
-{% end %}
-```
-
-**Required indexing**:
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → EndpointSlice lookup" data-height="460">
 
 ```yaml
-watchedResources:
-  ingresses:
-    indexBy: ["metadata.namespace", "metadata.name"]
-  endpoints:
-    indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: cross-resource-demo
+spec:
+  watchedResources:
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      indexBy: ["metadata.namespace", "metadata.name"]
+    endpoints:
+      apiVersion: discovery.k8s.io/v1
+      resources: endpointslices
+      indexBy: ["metadata.labels.kubernetes\\.io/service-name"]
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      {%- for _, ing := range resources.ingresses.List() %}
+      {%- for _, rule := range ing | dig("spec", "rules") | toSlice() %}
+      {%- for _, path := range rule | dig("http", "paths") | toSlice() %}
+      {%- var svc = path | dig("backend", "service", "name") | tostring() %}
+      {%- var port = path | dig("backend", "service", "port", "number") | fallback(80) %}
+      backend ing_{{ ing | dig("metadata", "name") | tostring() }}_{{ svc }}
+        {%- for _, es := range resources.endpoints.Fetch(svc) %}
+        {%- for _, ep := range es | dig("endpoints") | toSlice() %}
+        {%- for _, addr := range ep | dig("addresses") | toSlice() %}
+        server {{ ep | dig("targetRef", "name") | fallback(addr) | tostring() }} {{ addr | tostring() }}:{{ port | tostring() }} check
+        {%- end %}
+        {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
 ```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: shop
+      namespace: storefront
+    spec:
+      rules:
+        - host: shop.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: shop
+                    port:
+                      number: 80
+  - apiVersion: discovery.k8s.io/v1
+    kind: EndpointSlice
+    metadata:
+      name: shop-a1b2
+      namespace: storefront
+      labels:
+        kubernetes.io/service-name: shop
+    addressType: IPv4
+    endpoints:
+      - addresses: [10.244.1.10]
+        targetRef: {name: shop-pod-1}
+        conditions: {ready: true}
+      - addresses: [10.244.2.11]
+        targetRef: {name: shop-pod-2}
+        conditions: {ready: true}
+```
+
+</div>
+
+The two `indexBy` entries above are what make the lookup work: `ingresses` is indexed by namespace + name, and `endpoints` is indexed by the `kubernetes.io/service-name` label so `Fetch(svc)` returns every EndpointSlice for that service. Escape dots in a label key with `\\.` as shown.
 
 ### Safe Iteration
 
-Use `fallback` function to handle missing fields:
+Wrap every field access in `dig(...) | toSlice()` so a missing field yields an empty range instead of a panic. The second endpoint below has no `addresses`, so it's skipped rather than breaking the render:
+
+<div class="pg-embed" markdown data-scriggo data-title="Safe iteration over missing fields" data-height="320">
 
 ```go
-{% for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
-  {% for _, address := range fallback(endpoint.addresses, []any{}) %}
-    server srv {{ address }}:80
-  {% end %}
-{% end %}
+{# dig()+toSlice() never panics on a missing field, so the endpoint with
+   no addresses is skipped instead of breaking the render. #}
+{%- var endpoints = []any{
+    map[string]any{"addresses": []any{"10.0.0.1"}},
+    map[string]any{},
+} %}
+{%- for _, ep := range endpoints %}
+{%- for _, addr := range ep | dig("addresses") | toSlice() %}
+server srv {{ addr }}:80
+{%- end %}
+{%- end %}
 ```
+
+</div>
 
 ### Filtering with Conditionals
 
-Filter resources by attribute presence:
+Test a field before you use it to skip resources that lack it. Only the rule with an `http` section produces a backend line; the bare TCP host is filtered out:
+
+<div class="pg-embed" markdown data-scriggo data-title="Filter by field presence" data-height="320">
 
 ```go
-{% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
-  {% if rule.http != nil %}
-  {# rule.http is guaranteed to exist #}
-  {% end %}
-{% end %}
+{# Only rules that have an http section become backends. #}
+{%- var rules = []any{
+    map[string]any{"host": "web.example.com", "http": map[string]any{"paths": []any{}}},
+    map[string]any{"host": "tcp.example.com"},
+} %}
+{%- for _, rule := range rules %}
+{%- if dig(rule, "http") != nil %}
+backend {{ dig(rule, "host") | tostring() }}
+{%- end %}
+{%- end %}
 ```
+
+</div>
 
 ### Mutable Variables
 
-Accumulate values across loop iterations using Go-style variable assignment:
+Accumulate values across nested loops with `append`, then emit the collected result. This flattens every endpoint address into one numbered server list:
+
+<div class="pg-embed" markdown data-scriggo data-title="Accumulate with append" data-height="360">
 
 ```go
-{% var active_endpoints = []map[string]any{} %}
-
-{% for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
-  {% for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
-    {% active_endpoints = append(active_endpoints, map[string]any{"address": endpoint.addresses[0]}) %}
-  {% end %}
-{% end %}
-
-{% for i, ep := range active_endpoints %}
-  server srv{{ i + 1 }} {{ ep["address"] }}:80
-{% end %}
+{# Collect every address across nested loops, then emit them with a
+   running index. #}
+{%- var addresses = []any{} %}
+{%- var slices = []any{
+    map[string]any{"endpoints": []any{
+        map[string]any{"addresses": []any{"10.0.0.1"}},
+        map[string]any{"addresses": []any{"10.0.0.2"}},
+    }},
+    map[string]any{"endpoints": []any{
+        map[string]any{"addresses": []any{"10.0.0.3"}},
+    }},
+} %}
+{%- for _, es := range slices %}
+{%- for _, ep := range es | dig("endpoints") | toSlice() %}
+{%- for _, addr := range ep | dig("addresses") | toSlice() %}
+{%- addresses = append(addresses, addr) %}
+{%- end %}
+{%- end %}
+{%- end %}
+{%- for i, addr := range addresses %}
+server srv{{ i + 1 }} {{ addr }}:80
+{%- end %}
 ```
 
+</div>
+
 ### Whitespace Control
+
+Add `-` inside a tag to trim adjacent whitespace: `{%-` strips whitespace before the tag, `-%}` strips whitespace after it.
 
 ```go
 {%- for _, item := range items %}   {# Strip before #}
 {% for _, item := range items -%}   {# Strip after #}
 {%- for _, item := range items -%}  {# Strip both #}
 ```
+
+The stripped loop below renders one clean line per environment. Delete a dash and re-run to see the blank lines it was removing:
+
+<div class="pg-embed" markdown data-scriggo data-title="Whitespace control" data-height="300">
+
+```go
+{# `{%-` strips the newline before the tag and `-%}` strips the one after,
+   so this loop renders tight lines instead of a gap-filled block. #}
+{%- var envs = []any{"prod", "staging", "dev"} %}
+{%- for _, env := range envs %}
+server {{ env }}.svc:80
+{%- end %}
+```
+
+</div>
 
 ## Status Patches
 
@@ -751,23 +1089,19 @@ This allows templates to report processing results back to resources (e.g., sett
 
 ### statusPatch()
 
-Registers a status patch for a Kubernetes resource with outcome-keyed variants:
+Registers a status patch for a Kubernetes resource with outcome-keyed variants. Each variant's value is the resource's `.status` content directly (e.g. `conditions`, `loadBalancer`) — the controller writes it under `.status` via SSA, so don't wrap it in another `status` key:
 
 ```go
 {% statusPatch(namespace, name, apiVersion, kind, map[string]any{
     "deployed": map[string]any{
-        "status": map[string]any{
-            "conditions": []any{
-                condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(resource, "Accepted", "True")),
-            },
+        "conditions": []any{
+            condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(dig(resource, "status", "conditions"), "Accepted", "True")),
         },
     },
     "deployFailed": map[string]any{
-        "status": map[string]any{
-            "conditions": []any{
-                condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(resource, "Accepted", "True")),
-                condition("Programmed", "False", "AddressNotAssigned", "No address available", generation, transitionTime(resource, "Programmed", "False")),
-            },
+        "conditions": []any{
+            condition("Accepted", "True", "Accepted", "Resource accepted", generation, transitionTime(dig(resource, "status", "conditions"), "Accepted", "True")),
+            condition("Programmed", "False", "AddressNotAssigned", "No address available", generation, transitionTime(dig(resource, "status", "conditions"), "Programmed", "False")),
         },
     },
 }) %}
@@ -806,45 +1140,84 @@ Creates a `metav1.Condition`-compatible map:
 
 ### transitionTime()
 
-Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet:
+Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet. The first argument is the resource's existing conditions list — navigate to it yourself with `dig`, so the helper stays agnostic to where a given resource keeps its conditions:
 
 ```go
-{{ transitionTime(resource, "Accepted", "True") }}
+{{ transitionTime(dig(resource, "status", "conditions"), "Accepted", "True") }}
 ```
 
-For resources with nested condition arrays (e.g., Gateway API Route `parents[]`), pass the parent index:
+For resources with nested condition arrays (e.g., Gateway API Route `parents[]`), navigate to the parent's conditions first:
 
 ```go
-{{ transitionTime(resource, "Accepted", "True", parentIndex) }}
+{%- var parents = dig(resource, "status", "parents") | toSlice() %}
+{{ transitionTime(dig(parents[parentIndex], "conditions"), "Accepted", "True") }}
 ```
 
 ### Using Status Patches in Custom Templates
 
-Status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
+In the chart, status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
+
+The embed below is a self-contained version that patches a custom `Widget` resource. Run it and open the **status** tab to see the `.status.conditions` HAPTIC would write back:
+
+<div class="pg-embed" markdown data-tab="status" data-controls="tabs,resources" data-title="Emit a status patch" data-height="440">
 
 ```yaml
-controller:
-  config:
-    templateSnippets:
-      status-patches-200-custom:
-        template: |
-          {%- for _, resource := range resources.myresources.List() %}
-            {%%
-              var ns = resource | dig("metadata", "namespace") | fallback("") | tostring()
-              var name = resource | dig("metadata", "name") | fallback("") | tostring()
-              var gen = resource | dig("metadata", "generation") | fallback(0)
-            %%}
-            {%- statusPatch(ns, name, "example.com/v1", "MyResource", map[string]any{
-                "deployed": map[string]any{
-                    "status": map[string]any{
-                        "conditions": []any{
-                            condition("Ready", "True", "Deployed", "Successfully deployed", gen, transitionTime(resource, "Ready", "True")),
-                        },
-                    },
-                },
-            }) %}
-          {%- end %}
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: status-patch-demo
+spec:
+  watchedResources:
+    widgets:
+      apiVersion: example.com/v1
+      resources: widgets
+      indexBy: ["metadata.namespace", "metadata.name"]
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend web
+        bind :80
+        default_backend app
+      backend app
+        server s1 127.0.0.1:8080 check
+      {%- for _, widget := range resources.widgets.List() %}
+      {%%
+        var ns = tostring(fallback(dig(widget, "metadata", "namespace"), ""))
+        var name = tostring(fallback(dig(widget, "metadata", "name"), ""))
+        var gen = fallback(dig(widget, "metadata", "generation"), 0)
+        var existing = dig(widget, "status", "conditions")
+        statusPatch(ns, name, "example.com/v1", "Widget", map[string]any{
+          "deployed": map[string]any{
+            "conditions": []any{
+              condition("Ready", "True", "Deployed", "Widget programmed into HAProxy", gen, transitionTime(existing, "Ready", "True")),
+            },
+          },
+        })
+      %%}
+      {%- end %}
 ```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: example.com/v1
+    kind: Widget
+    metadata:
+      name: demo
+      namespace: shop
+      generation: 3
+    spec:
+      host: demo.example.com
+```
+
+</div>
 
 The built-in Ingress and Gateway API libraries already include status patch snippets. You only need custom status patches for resources not covered by the default libraries.
 
