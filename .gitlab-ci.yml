@@ -2669,6 +2669,10 @@ trigger-docs-release:
   needs:
     - release-controller
     - release-chart
+    # Also wait for the release bundle so the versioned Pages deploy fetches this
+    # tag's build-playground-wasm artifact.
+    - job: build-playground-wasm
+      optional: true
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
   inherit:
@@ -2760,7 +2764,13 @@ pages-preview-cleanup:
 # so we trigger on every main branch push instead
 trigger-pages:
   stage: deploy
-  needs: []
+  # Wait for the playground bundle so the Pages deploy fetches THIS commit's
+  # build-playground-wasm artifact, not the previous one (optional: docs still
+  # deploy if the bundle job is ever ruled out). Only the bundle is needed —
+  # not the full build/test matrix — so the docs deploy stays fast.
+  needs:
+    - job: build-playground-wasm
+      optional: true
   rules:
     # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
     # publishing, image pushes, pages deploys, or release tagging from cron.
