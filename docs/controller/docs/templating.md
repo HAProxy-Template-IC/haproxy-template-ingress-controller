@@ -6,6 +6,69 @@ The HAProxy Template Ingress Controller uses [Scriggo](https://scriggo.com/), a 
 
 Templates are rendered automatically when any watched resource changes, during initial synchronization, or periodically for drift detection.
 
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-title="See a template render — live" data-controls="tabs,provenance" data-height="480">
+</div>
+
+Hit **Run live** above to render the bundled Ingress example entirely in your browser. Edit the template on the left and watch `haproxy.cfg` update on the right — then switch tabs to see the `maps`, `files`, and `status` it also produces. Click any output line to jump to the template line that produced it, or **Open in full playground** to bring your changes into the full editor.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11" data-title="Your turn: add an HSTS header" data-difficulty="1">
+
+Edit the `frontend web` section so every response carries a `Strict-Transport-Security` header, then hit **Run live** and watch line&nbsp;11 of the output. (Hint: HAProxy's `http-response set-header`.)
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: hsts-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend web
+        bind *:80
+        # TODO(you): add a line so every response carries an HSTS header
+        default_backend app
+      backend app
+        server s1 127.0.0.1:8080 check
+```
+
+<details class="pg-solution" markdown>
+<summary>Peek at the solution</summary>
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: hsts-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend web
+        bind *:80
+        http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        default_backend app
+      backend app
+        server s1 127.0.0.1:8080 check
+```
+
+</details>
+</div>
+
 ## What You Can Template
 
 | Template Type | Use When |

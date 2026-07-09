@@ -1,0 +1,88 @@
+/* Interactive HAPTIC playground embeds for the docs sites.
+ *
+ * A ".pg-embed" block renders as a facade (title + the shown config + a "Run
+ * live" button); clicking swaps in an <iframe> of the playground in ?embed=1
+ * mode, lazy-loaded so the wasm only downloads when the reader engages. Paired
+ * with playground-embed.js. Styling stays theme-aware (mkdocs-material
+ * light/dark) via var(--md-*) tokens with sensible fallbacks. */
+
+.pg-embed {
+  border: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+  border-radius: 8px;
+  margin: 1.2em 0;
+  overflow: hidden;
+  background: var(--md-code-bg-color, #f5f5f5);
+}
+.pg-embed-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+  background: var(--md-default-bg-color, #fff);
+  font-size: 0.8rem;
+}
+.pg-embed-title { font-weight: 700; color: var(--md-default-fg-color, #111); }
+.pg-embed-diff { color: var(--md-accent-fg-color, #e0642e); letter-spacing: 0.05em; font-size: 0.72rem; }
+.pg-embed-spacer { flex: 1; }
+
+/* Run / pop-out buttons */
+.pg-btn {
+  appearance: none;
+  cursor: pointer;
+  border: 1px solid var(--md-primary-fg-color, #3f6ec6);
+  background: var(--md-primary-fg-color, #3f6ec6);
+  color: var(--md-primary-bg-color, #fff);
+  font: 600 0.76rem/1 var(--md-text-font-family, system-ui);
+  padding: 0.4rem 0.7rem;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  text-decoration: none;
+}
+.pg-btn:hover { filter: brightness(1.08); }
+.pg-btn.pg-btn-ghost {
+  background: transparent;
+  color: var(--md-primary-fg-color, #3f6ec6);
+}
+.pg-btn-play { font-size: 0.7rem; }
+
+/* The shown config code block (mkdocs highlight sits here). */
+.pg-embed-code { margin: 0; }
+.pg-embed-code > .highlight,
+.pg-embed-code > pre { margin: 0 !important; border-radius: 0 !important; }
+
+/* Task / challenge prose */
+.pg-task {
+  margin: 0; padding: 0.6rem 0.8rem;
+  background: color-mix(in srgb, var(--md-primary-fg-color, #3f6ec6) 8%, transparent);
+  border-bottom: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+  font-size: 0.84rem;
+}
+.pg-task::before { content: "🎯 "; }
+
+/* Collapsed hint / solution (also works if the author uses a raw <details>) */
+.pg-embed details.pg-hint,
+.pg-embed details.pg-solution {
+  margin: 0; border-top: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+}
+.pg-embed details > summary {
+  cursor: pointer; padding: 0.45rem 0.8rem; font-size: 0.8rem; font-weight: 600;
+  color: var(--md-accent-fg-color, #e0642e); list-style: none;
+}
+.pg-embed details > summary::before { content: "▸ "; }
+.pg-embed details[open] > summary::before { content: "▾ "; }
+.pg-embed details.pg-hint > summary::after { content: " (hint)"; font-weight: 400; opacity: 0.7; }
+
+/* The live iframe (revealed on Run) */
+.pg-frame {
+  display: block; width: 100%; border: 0;
+  background: var(--md-code-bg-color, #0d1117);
+}
+.pg-embed:not(.pg-running) .pg-frame { display: none; }
+.pg-embed.pg-running .pg-embed-code { display: none; }
+.pg-embed .pg-loading {
+  padding: 1.4rem; text-align: center; font-size: 0.8rem;
+  color: var(--md-default-fg-color--light, #666);
+}
