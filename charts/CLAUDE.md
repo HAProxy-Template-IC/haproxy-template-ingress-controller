@@ -312,13 +312,13 @@ In addition to the snippet-based extension points below, libraries may declare f
 
 **Extension Point Variable Passing:**
 
-Extension points pass variables to child snippets via `inherit_context`. Understanding which variables are available is crucial for writing correct snippets.
+Not every extension point inherits the caller's locals — this is the most common source of "why is my variable nil" snippet bugs. Only `backend-directives-*` passes locals via `inherit_context`; the frontend and feature points render in a shared scope where the snippet reads globals (`resources`) or the shared context (`shared.Get(...)`) itself. Check the actual `render_glob` call before assuming a variable is in scope.
 
-| Extension Point | Available Variables | Passed From |
-|-----------------|---------------------|-------------|
-| `backend-directives-*` | `ingress`, `serverOpts`, `serviceName`, `port` | backends-500-ingress |
-| `frontend-filters-*` | `ingress`, `rule`, `path` | ingress.yaml frontend loop |
-| `features-*` | `globalFeatures` (as `gf`) | base.yaml features section |
+| Extension Point | Available variables | How they reach the snippet |
+|-----------------|---------------------|----------------------------|
+| `backend-directives-*` | `ingress`, `serverOpts`, `serviceName`, `port` | `inherit_context`, from the per-backend loop in `backends-500-ingress` (`ingress.yaml`) |
+| `frontend-filters-*` | none inherited — use globals | rendered by a bare `render_glob "frontend-filters-*"` (no `inherit_context`) **once per frontend** (plain HTTP, h2c, and the SSL `https` frontend), after routing and before backend selection. There is no `ingress`/`rule`/`path`; a snippet that needs per-Ingress data iterates `resources.ingresses.List()` itself (see `frontend-filters-300-request-id` in the playground `extend` preset) |
+| `features-*` | `globalFeatures` (conventionally bound to `gf`) | via `shared.Get("globalFeatures")` inside the snippet, **not** `inherit_context` — this glob renders once for side effects (feature registration) |
 
 **Example - backend-directives extension:**
 
