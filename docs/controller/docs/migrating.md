@@ -26,11 +26,21 @@ defaults that most often trip up a migration.
 
 ## Step 0: Check what will change
 
-Before you touch a single Ingress, run `migrate-check` to see exactly how your
-current Ingresses fare under HAPTIC. It reads your Ingresses, classifies every
-source-controller annotation as supported, different, dropped, or blocking, and
-renders each Ingress through HAPTIC's real template pipeline to catch anything
-that would be rejected — so you find the surprises now, not mid-cutover.
+Two ways to see how your current setup fares under HAPTIC, before you change
+anything:
+
+- **Explore one Ingress interactively** in the [playground](/playground/): paste
+  an annotated Ingress and watch it render live in your browser, with an inline
+  migration warning for every annotation HAPTIC treats differently or can't carry
+  over. Best for understanding a specific annotation — or trying a fix on the spot.
+- **Audit the whole cluster** with `migrate-check`: one command classifies every
+  annotation in use and renders each Ingress through the real pipeline, for a
+  go/no-go verdict before cutover. Read on for how to run it.
+
+The `migrate-check` tool reads your Ingresses, classifies every source-controller
+annotation as supported, different, dropped, or blocking, and renders each Ingress
+through HAPTIC's real template pipeline to catch anything that would be rejected —
+so you find the surprises now, not mid-cutover.
 
 The controller image carries the tool and the chart, so a read-only audit of the
 live cluster is a single command (it only lists and reads Ingresses — it changes
@@ -384,5 +394,6 @@ being served" diagnostics.
 ## See also
 
 - [Getting Started](getting-started.md) — install HAPTIC and route your first Ingress.
+- [Playground](/playground/) — render an annotated Ingress live and see per-annotation migration warnings.
 - [Watching Resources](watching-resources.md) — how `ingressClassName` scoping and field selectors work.
 - [Troubleshooting](troubleshooting.md) — "my Ingress isn't being served" diagnostics.

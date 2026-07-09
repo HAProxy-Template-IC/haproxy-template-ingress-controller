@@ -35,7 +35,14 @@
       </p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="./controller/latest/getting-started/">
-          Deploy HAPTIC <span class="arrow" aria-hidden="true">→</span>
+          <svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"></path>
+            <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"></path>
+            <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"></path>
+            <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"></path>
+          </svg>
+          Deploy HAPTIC
         </a>
         <a class="btn btn-ghost" href="https://gitlab.com/haproxy-haptic/haptic">
           <svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -60,7 +67,9 @@
             <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
           </span>
           <span class="term-title">haproxy.cfg.tmpl</span>
-          <span class="term-badge">{{ '{%%}' }}</span>
+          <a class="term-run" href="./playground/?preset=ingress">
+            <span aria-hidden="true">▶</span> Run live
+          </a>
         </div>
         <div class="term-body">
           <div class="code-wrap" tabindex="0">
@@ -292,6 +301,26 @@
         </div>
       </div>
 
+      <div class="doc-card">
+        <div class="doc-bar">
+          <span class="dots" aria-hidden="true">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          </span>
+          <span class="doc-path">~/playground</span>
+        </div>
+        <div class="doc-body">
+          <h2><a href="./playground/">Playground</a></h2>
+          <p>Edit a config and watch HAProxy render in your browser — the same
+             engine the controller runs, no install. Tweak a resource, flip a
+             version, share a link to exactly what you see.</p>
+          <div class="versions">
+            <a class="btn btn-primary" href="./playground/">
+              <span aria-hidden="true">▶</span> Launch playground
+            </a>
+          </div>
+        </div>
+      </div>
+
     </div>
   </section>
 
@@ -302,7 +331,7 @@
       Built for operators who'd rather write a template than file a feature request.
     </p>
     <p class="foot-meta">
-      <a href="https://gitlab.com/haproxy-haptic/haptic/-/blob/main/LICENSE">Apache-2.0</a> · <a href="https://gitlab.com/haproxy-haptic/haptic">Source on GitLab</a>
+      <a href="https://gitlab.com/haproxy-haptic/haptic/-/blob/main/LICENSE">Apache-2.0</a> · <a href="./playground/">Playground</a> · <a href="https://gitlab.com/haproxy-haptic/haptic">Source on GitLab</a>
     </p>
     <p class="foot-note">
       Community project — independent and not affiliated with or endorsed by HAProxy Technologies.

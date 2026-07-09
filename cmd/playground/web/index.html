@@ -444,6 +444,45 @@
     main[data-max="res"] .col:not(.res), main[data-max="res"] .gutter, main[data-max="res"] .rail,
     main[data-max="out"] .col:not(.out), main[data-max="out"] .gutter, main[data-max="out"] .rail { display: none; }
 
+    /* ---- Embed mode (?embed=1): a compact config -> output pane for docs iframes.
+       The header/footer are dropped for a slim embed toolbar; resources are hidden
+       behind a toggle; the reader can pop out to the full playground. ---- */
+    #embed-bar { display: none; }
+    body[data-embed] > header { display: none; }
+    body[data-embed] > footer.privacy { display: none; }
+    body[data-embed] #embed-bar {
+      display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+      padding: 5px 12px; background: var(--surface); border-bottom: 1px solid var(--border-strong);
+      font: 12px/1 var(--sans);
+    }
+    #embed-bar .eb-mark { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--fg); letter-spacing: .02em; }
+    #embed-bar .eb-glyph { font-family: var(--mono); color: var(--accent); }
+    #embed-bar .eb-spacer { flex: 1; }
+    #embed-bar .eb-btn { appearance: none; border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted); cursor: pointer; font: 11px/1 var(--sans); padding: 5px 9px; border-radius: 6px; text-decoration: none; }
+    #embed-bar .eb-btn:hover { color: var(--accent); border-color: var(--accent); }
+    #embed-bar .eb-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+    #embed-bar .eb-open { color: var(--accent); }
+    /* two-pane: config | rail | output. Hide resources + its gutter until toggled. */
+    body[data-embed]:not([data-embed-res]) main { grid-template-columns: 1fr var(--rail-w) minmax(0, 1.1fr); }
+    body[data-embed]:not([data-embed-res]) main > #gutter1,
+    body[data-embed]:not([data-embed-res]) main > .col.res { display: none; }
+    /* Minimal by default: every non-essential control is hidden unless the
+       embedder opts in via ?controls=<comma list> — tokens: tabs, resources,
+       tools (wrap/copy/download), nav, max, reload, provenance, dots. Only
+       config->output and "Open in full playground" show by default. */
+    body[data-embed]:not([data-ctl~="dots"]) .bar .dots { display: none !important; }
+    body[data-embed]:not([data-ctl~="nav"]) .bar .nav-tools { display: none !important; }
+    body[data-embed]:not([data-ctl~="max"]) .bar .maxbtn { display: none !important; }
+    body[data-embed]:not([data-ctl~="tools"]) .bar .out-tools { display: none !important; }
+    body[data-embed]:not([data-ctl~="tabs"]) .tabs { display: none !important; }
+    body[data-embed]:not([data-ctl~="reload"]) #reload { display: none !important; }
+    body[data-embed]:not([data-ctl~="provenance"]) #outhint { display: none !important; }
+    body[data-embed]:not([data-ctl~="resources"]) #eb-res { display: none !important; }
+
+    /* focus highlight: draw the reader's eye to the important output lines */
+    .code .ln.focus { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+    .code .ln.focus .g { color: var(--accent); opacity: 1; }
+
     /* ---- Responsive: stack the panels, drop the resize gutters ---- */
     @media (max-width: 900px) {
       header { flex-wrap: wrap; height: auto; padding: 10px 14px; gap: 10px 14px; }
@@ -490,6 +529,14 @@
     <button id="share" class="btn" title="Copy a shareable link. It embeds your full input, including any secrets you pasted — keep the link private.">Share</button>
     <span class="chip" id="chip" role="status" aria-live="polite"><span class="led"></span><span id="chiptext">booting…</span></span>
   </header>
+
+  <!-- Slim toolbar shown only in ?embed=1 mode (docs iframes) -->
+  <div id="embed-bar">
+    <span class="eb-mark"><span class="eb-glyph">{%%}</span> HAPTIC</span>
+    <button id="eb-res" class="eb-btn" type="button" aria-pressed="false" title="Show the Kubernetes resources this example renders">Resources</button>
+    <span class="eb-spacer"></span>
+    <a id="eb-open" class="eb-btn eb-open" href="./" target="_blank" rel="noopener" title="Open this exact example in the full playground">Open in full playground <span aria-hidden="true">↗</span></a>
+  </div>
 
   <div id="boot" class="boot" role="progressbar" aria-label="Loading engine"><div id="bootfill" class="bootfill"></div></div>
 
@@ -631,6 +678,63 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     import { buildTryoutScript } from './tryout.js';
 
     const $ = (id) => document.getElementById(id);
+
+    // ---- Embed mode (?embed=1): compact config->output view for docs iframes ----
+    // ?tab=<name> opens on that output tab; ?focus=<[file:]start-end | file> highlights
+    // and scrolls to the important lines. Non-embed pages ignore all of this.
+    const EMBED = new URLSearchParams(location.search);
+    const isEmbed = EMBED.get('embed') === '1';
+    let embedFocusDone = false;
+    if (isEmbed) {
+      document.body.dataset.embed = '';
+      // Opt-in controls: ?controls=tabs,resources,tools,nav,max,reload,provenance,dots
+      document.body.dataset.ctl = (EMBED.get('controls') || '').split(',').map((s) => s.trim()).filter(Boolean).join(' ');
+      const res = $('eb-res'), open = $('eb-open');
+      res.addEventListener('click', () => {
+        const on = document.body.toggleAttribute('data-embed-res');
+        res.setAttribute('aria-pressed', String(on));
+      });
+      // Pop out to the full playground carrying the reader's CURRENT edits (fresh #s=),
+      // falling back to the original scenario hash if the engine isn't ready yet.
+      open.addEventListener('click', async (e) => {
+        e.preventDefault();
+        let url = location.pathname + location.hash;
+        try { if (editors) url = location.pathname + '#s=' + await gzipB64(JSON.stringify(currentState())); } catch (_) { /* keep fallback */ }
+        window.open(url, '_blank', 'noopener');
+      });
+    }
+    // Apply ?tab / ?focus after the first render. focus spec: "start-end" (active tab),
+    // "file" (scroll to a maps/files section), or "file:start-end" (both).
+    function applyEmbedFocus(tabs, counts, drops, migWarn) {
+      const wantTab = EMBED.get('tab');
+      if (wantTab && TAB_KEYS.includes(wantTab) && tabEnabled(wantTab, tabs, counts)) {
+        activeTab = wantTab;
+        renderTabs(tabs, counts, drops, migWarn);
+        paintOutput(tabs, false);
+      }
+      const spec = EMBED.get('focus');
+      if (spec) requestAnimationFrame(() => focusOutput(spec));
+    }
+    function focusOutput(spec) {
+      let file = null, range = null;
+      const colon = spec.indexOf(':');
+      if (colon >= 0) { file = spec.slice(0, colon); range = spec.slice(colon + 1); }
+      else if (/^\d+(-\d+)?$/.test(spec)) { range = spec; }
+      else { file = spec; }
+      const out = $('output');
+      let block = out.querySelector('.code');
+      if (file) {
+        const head = [...out.querySelectorAll('.mf-head')].find((h) => h.querySelector('.mf-name')?.textContent === file);
+        if (head) { head.scrollIntoView({ block: 'start' }); block = head.nextElementSibling; }
+      }
+      if (range && block) {
+        const [a, b] = range.split('-').map(Number);
+        const end = b || a, lns = block.querySelectorAll('.ln');
+        let first = null;
+        for (let n = a; n <= end; n++) { const el = lns[n - 1]; if (el) { el.classList.add('focus'); first = first || el; } }
+        (first || block).scrollIntoView({ block: 'center' });
+      }
+    }
 
     /* ---------- line diff (LCS) — bounded so huge configs never freeze the tab ---------- */
     function changedLines(prev, next) {
@@ -1576,6 +1680,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       lastRes = m.res;             // set before paintOutput: buildLineCfg reads lastRes.provenance
       paintOutput(tabs, glow);
       prevTabs = tabs;             // set after paintOutput so the glow diff compares against the previous render
+      if (isEmbed && !embedFocusDone) { embedFocusDone = true; applyEmbedFocus(tabs, counts, drops, migWarn); }
     };
 
     /* ---------- presets ---------- */
@@ -1794,6 +1899,11 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       initVersions();   // fire-and-forget; no-op in local single-version dev
       const shared = await readSharedState();
       if (shared) return applyState(shared);                 // a shared link wins (skip onboarding)
+      const wantPreset = new URLSearchParams(location.search).get('preset');
+      if (wantPreset) {                                      // ?preset=<id> deep-links to a specific example
+        const pp = PRESETS.find((x) => x.id === wantPreset);
+        if (pp) return loadPreset(pp);
+      }
       // First-time visitors get the how-to-use modal once; it explains bringing your own inputs.
       try { if (!localStorage.getItem(HELP_SEEN_KEY)) openHelp(); } catch (e) { /* private mode */ }
       const auto = localStorage.getItem(LS_KEY);             // else restore your last session

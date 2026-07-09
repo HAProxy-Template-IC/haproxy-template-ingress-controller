@@ -44,9 +44,11 @@ theme:
 
 extra_css:
   - stylesheets/extra.css
+  - /shared/playground-embed.css
 
 extra_javascript:
   - javascripts/stable-version.js
+  - /shared/playground-embed.js
 
 markdown_extensions:
   - admonition

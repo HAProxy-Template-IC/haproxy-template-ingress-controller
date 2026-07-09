@@ -16,6 +16,13 @@ This guide walks you through deploying HAPTIC (HAProxy Template Ingress Controll
 
 The entire process takes approximately 15-20 minutes on a local Kubernetes cluster.
 
+Want a taste first? This is HAPTIC rendering an Ingress into an HAProxy config —
+running in your browser, no install. Click **Run live**, then edit the Ingress and
+watch the config change.
+
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="An Ingress becomes an HAProxy config" data-height="440">
+</div>
+
 ## Prerequisites
 
 - Kubernetes cluster (1.21+) - kind, minikube, or cloud provider

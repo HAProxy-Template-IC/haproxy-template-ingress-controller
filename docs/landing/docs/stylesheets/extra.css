@@ -255,7 +255,7 @@
   color: var(--accent);
   background: var(--accent-soft);
 }
-.btn-ghost .btn-ico { width: 1.05rem; height: 1.05rem; }
+.btn .btn-ico { width: 1.05rem; height: 1.05rem; }
 [data-md-color-scheme="slate"] .btn-ghost {
   background: var(--surface);
   border-color: var(--border-strong);
@@ -319,16 +319,27 @@
   color: var(--term-dim);
   letter-spacing: 0.01em;
 }
-.term-badge {
+.term-run {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
   font-size: 0.72rem;
   font-weight: 700;
   color: #9ccbf0;
+  text-decoration: none;
   background: rgba(108, 182, 255, 0.12);
   border: 1px solid rgba(108, 182, 255, 0.28);
   border-radius: 6px;
-  padding: 0.08rem 0.4rem;
-  letter-spacing: 0.04em;
+  padding: 0.12rem 0.5rem;
+  letter-spacing: 0.02em;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.term-run:hover,
+.term-run:focus-visible {
+  background: rgba(108, 182, 255, 0.22);
+  color: #d3e8fb;
+  transform: translateY(-1px);
 }
 
 .term-body { padding: 0.9rem 0.95rem 1rem; }
