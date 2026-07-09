@@ -189,6 +189,43 @@ func (e *ScriggoEngine) compileTemplates(allTemplates map[string]string, entryPo
 	return nil
 }
 
+// SourceSpan / SourceFrame attribute a contiguous run of rendered output to the
+// template include stack that produced it (see RenderWithSourceMap). They are
+// aliases for the engine-level types so callers need not import the Scriggo package.
+type SourceSpan = scriggo.SourceSpan
+type SourceFrame = scriggo.SourceFrame
+
+// RenderWithSourceMap renders a template like Render, but additionally returns a
+// source map: one span per contiguous run of output attributing it to the
+// template source (path + line) that produced it. The returned string is the
+// RAW render output BEFORE post-processors run, so the span Length fields sum to
+// its size exactly; callers that display the post-processed output must align
+// the two (post-processors are whitespace-only for the bundled chart). Output
+// from a parallel "{{ go … }}" render is attributed to the go-render call site.
+func (e *ScriggoEngine) RenderWithSourceMap(ctx context.Context, templateName string, templateContext map[string]any) (raw string, spans []SourceSpan, err error) {
+	template, exists := e.compiledTemplates[templateName]
+	if !exists {
+		return "", nil, e.templateNotFoundError(templateName)
+	}
+	if templateContext == nil {
+		templateContext = make(map[string]any)
+	}
+	if _, ok := templateContext["shared"]; !ok {
+		templateContext["shared"] = NewSharedContext()
+	}
+	ctx = context.WithValue(ctx, RenderContextContextKey, templateContext)
+
+	runOpts := &scriggo.RunOptions{Context: ctx, CollectSourceMap: true}
+	var output strings.Builder
+	if err := template.Run(&output, templateContext, runOpts); err != nil {
+		if ctx.Err() != nil {
+			return "", nil, &RenderTimeoutError{TemplateName: templateName, Cause: ctx.Err()}
+		}
+		return "", nil, NewRenderError(templateName, err)
+	}
+	return output.String(), runOpts.SourceSpans, nil
+}
+
 // Render executes a template with the given context and returns the output.
 func (e *ScriggoEngine) Render(ctx context.Context, templateName string, templateContext map[string]any) (string, error) {
 	template, exists := e.compiledTemplates[templateName]

@@ -453,10 +453,6 @@ controller:
         # Override by setting shardCountOverride to a specific value:
         # shardCountOverride: 8
         # HAProxy bind ports are defined in haproxy.ports (referenced by templates)
-        # Auth realm sanitization: auto-replace spaces with dashes in haproxy.org/auth-realm
-        # The DataPlane API forbids spaces in realm names. By default (false), the controller
-        # fails with a clear error. Set to true to auto-sanitize realm names.
-        # sanitize_auth_realm: false
         # Password hash validation regex - validates password hashes in auth secrets
         # Default "^.*$" allows all hashes for backward compatibility.
         # Example to block bcrypt: "^(?!\$2[ayb]\$).*$"
@@ -464,6 +460,16 @@ controller:
         # Error message shown when password hash validation fails.
         # The actual error will include username, secret name, and pattern.
         password_hash_validation_error_message: "Invalid password hash"
+        # Global HSTS (opt-in; default off). When true, HAProxy sends
+        # Strict-Transport-Security on every TLS response, matching ingress-nginx's
+        # and haproxy-ingress's global HSTS default. A per-Ingress hsts annotation
+        # still overrides the value for its hosts. HSTS only takes effect over
+        # HTTPS, so also configure an HTTP→HTTPS redirect (per-Ingress ssl-redirect
+        # annotation, or your platform's) — the rendered config warns if you don't.
+        # hstsEnabled: true
+        # hstsMaxAge: "31536000"          # one year (default)
+        # hstsIncludeSubdomains: false
+        # hstsPreload: false
         # Coraza WAF dispatch behaviour. Controls which HTTP requests
         # HAPTIC's rendered `frontend-spoe-filters-050-coraza` ships to
         # the SPOA hub for WAF inspection. This is a HAPTIC-side

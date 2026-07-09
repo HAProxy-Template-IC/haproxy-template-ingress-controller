@@ -250,14 +250,17 @@ spec:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-# Capture Origin header
-http-request capture req.hdr(Origin) len 128
+# Capture the request Origin into a transaction variable
+http-request set-var(txn.cors_origin) req.hdr(origin) if { var(txn.host) -m str api.example.com }
 
-# Set CORS headers
-http-response set-header Access-Control-Allow-Origin %[capture.req.hdr(0)]
-http-response set-header Access-Control-Allow-Methods "GET, POST, PUT, DELETE"
-http-response set-header Access-Control-Allow-Headers "Content-Type, Authorization"
+# CORS response headers, added via http-after-response so they apply to backend
+# responses AND to a HAProxy-generated preflight response (see cors-respond-to-options)
+http-after-response set-header Access-Control-Allow-Origin '*' if { var(txn.host) -m str api.example.com } { var(txn.cors_origin) -m found }
+http-after-response set-header Access-Control-Allow-Methods 'GET, POST, PUT, DELETE' if { var(txn.host) -m str api.example.com } { var(txn.cors_origin) -m found }
+http-after-response set-header Access-Control-Allow-Headers 'Content-Type, Authorization' if { var(txn.host) -m str api.example.com } { var(txn.cors_origin) -m found }
 ```
+
+This mirrors the upstream HAProxy Kubernetes Ingress Controller. By default the CORS headers are added to whatever response the backend returns; to have HAProxy answer the preflight itself, set [`cors-respond-to-options`](#haproxyorgcors-respond-to-options).
 
 **Dependencies**: All other `cors-*` annotations require `cors-enable: "true"`
 
@@ -286,10 +289,11 @@ haproxy.org/cors-allow-origin: "^https://(.+\\.)?(example\\.com)(:\\d{1,5})?$"
 
 ```haproxy
 # Wildcard
-http-response set-header Access-Control-Allow-Origin "*"
+http-after-response set-header Access-Control-Allow-Origin '*' if { var(txn.cors_origin) -m found }
 
-# Exact or regex match
-http-response set-header Access-Control-Allow-Origin %[capture.req.hdr(0)] if { capture.req.hdr(0) -m reg ^https://(.+\.)?(example\.com)(:\d{1,5})?$ }
+# Exact or regex match: the annotation value is a regex matched against the
+# request Origin, and the header echoes the matched origin (never the raw regex)
+http-after-response set-header Access-Control-Allow-Origin '%[var(txn.cors_origin)]' if { var(txn.cors_origin) -m reg ^https://(.+\.)?(example\.com)(:\d{1,5})?$ }
 ```
 
 **Dependencies**: Requires `cors-enable: "true"`
@@ -313,7 +317,7 @@ haproxy.org/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-response set-header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+http-after-response set-header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
 ```
 
 **Dependencies**: Requires `cors-enable: "true"`
@@ -335,7 +339,7 @@ haproxy.org/cors-allow-headers: "Content-Type, Authorization, X-Requested-With"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-response set-header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+http-after-response set-header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
 ```
 
 **Dependencies**: Requires `cors-enable: "true"`
@@ -357,7 +361,7 @@ haproxy.org/cors-allow-credentials: "true"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-response set-header Access-Control-Allow-Credentials "true"
+http-after-response set-header Access-Control-Allow-Credentials "true"
 ```
 
 **Dependencies**: Requires `cors-enable: "true"`
@@ -381,7 +385,31 @@ haproxy.org/cors-max-age: "3600"  # 1 hour
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-response set-header Access-Control-Max-Age "3600"
+http-after-response set-header Access-Control-Max-Age "3600"
+```
+
+**Dependencies**: Requires `cors-enable: "true"`
+
+---
+
+### haproxy.org/cors-respond-to-options
+
+**Status**: ✅ Supported
+
+**Description**: When `"true"`, HAProxy answers the CORS preflight (an `OPTIONS` request) itself with a `204 No Content` instead of forwarding it to the backend. The `Access-Control-*` headers are added via `http-after-response`, so they apply to this synthetic response too. This matches the upstream HAProxy Kubernetes Ingress Controller, where preflight answering is opt-in.
+
+**Usage**:
+
+```yaml
+haproxy.org/cors-enable: "true"
+haproxy.org/cors-allow-origin: "https://app.example.com"
+haproxy.org/cors-respond-to-options: "true"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request return status 204 if { var(txn.host) -m str api.example.com } METH_OPTIONS
 ```
 
 **Dependencies**: Requires `cors-enable: "true"`

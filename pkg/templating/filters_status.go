@@ -65,6 +65,9 @@ func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string
 		env.Stop(fmt.Errorf("statusPatch: %w", err))
 		return ""
 	}
+	// Record the call-site template + line for provenance (playground jump-to-source).
+	// Best-effort: CallPath/CallLine are only meaningful on the main render goroutine.
+	collector.SetSource(namespace, name, apiVersion, kind, env.CallPath(), env.CallLine())
 
 	return "" // Side-effect only, no output
 }

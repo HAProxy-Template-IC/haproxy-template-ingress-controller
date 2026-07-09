@@ -62,6 +62,11 @@ type RenderResult struct {
 	// DurationMs is the total render duration in milliseconds.
 	DurationMs int64
 
+	// IncludeStats holds per-snippet render counts/timing for the main template.
+	// Populated only when the engine was built with profiling enabled (nil in
+	// production); consumed by the browser playground's render-trace view.
+	IncludeStats []templating.IncludeStats
+
 	// AuxFileCount is the total number of auxiliary files.
 	AuxFileCount int
 }
@@ -216,10 +221,15 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	}
 
 	// Build rendering context from stores
-	renderContext, fileRegistry, statusPatchCollector, renderedResourceCollector := s.buildRenderingContext(ctx, provider)
+	bctx := s.buildRenderingContext(ctx, provider)
+	renderContext, fileRegistry := bctx.Context, bctx.FileRegistry
+	statusPatchCollector, renderedResourceCollector := bctx.StatusPatchCollector, bctx.RenderedResourceCollector
 
-	// Render main HAProxy config
-	haproxyConfig, err := s.engine.Render(ctx, names.MainTemplateName, renderContext)
+	// Render main HAProxy config. RenderWithProfiling is a superset of Render:
+	// it renders identically and, only when the engine was built with profiling
+	// enabled, additionally returns per-snippet include stats (nil otherwise), so
+	// this is behaviour-neutral in production.
+	haproxyConfig, includeStats, err := s.engine.RenderWithProfiling(ctx, names.MainTemplateName, renderContext)
 	if err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
@@ -274,6 +284,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		RenderedResources: renderedResourceCollector.Resources(),
 		DurationMs:        time.Since(startTime).Milliseconds(),
 		AuxFileCount:      auxFileCount,
+		IncludeStats:      includeStats,
 	}, nil
 }
 
@@ -286,7 +297,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 // StoreProvider, resolving the current deployed config, and wiring the HTTP
 // fetcher (whose overlay depends on the provider type); everything else is the
 // Builder's responsibility.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]any, *rendercontext.FileRegistry, *templating.StatusPatchCollector, *templating.RenderedResourceCollector) {
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) *rendercontext.BuildResult {
 	// Snapshot the live stores off the provider. The haproxy-pods store is
 	// separated out by the Builder (WithHAProxyPodStore) into
 	// controller.haproxy_pods; the rest land in `resources`.
@@ -329,8 +340,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		opts = append(opts, rendercontext.WithHTTPFetcher(httpFetcher))
 	}
 
-	res := rendercontext.NewBuilder(s.config, s.pathResolver, s.logger, opts...).Build()
-	return res.Context, res.FileRegistry, res.StatusPatchCollector, res.RenderedResourceCollector
+	return rendercontext.NewBuilder(s.config, s.pathResolver, s.logger, opts...).Build()
 }
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.
@@ -393,6 +403,56 @@ func (s *RenderService) ClearVMPool() {
 	if s.engine != nil {
 		s.engine.ClearVMPool()
 	}
+}
+
+// sourceMapper is the optional engine capability RenderSourceMaps needs. The
+// production ScriggoEngine implements it; this keeps the templating.Engine
+// interface unchanged (source maps are a playground-only concern).
+type sourceMapper interface {
+	RenderWithSourceMap(ctx context.Context, name string, tctx map[string]any) (string, []templating.SourceSpan, error)
+}
+
+// TemplateSourceMap is the raw (pre-post-processing) render of one template plus
+// its output-to-source spans. Length fields of Spans sum to len(Raw).
+type TemplateSourceMap struct {
+	Raw   string
+	Spans []templating.SourceSpan
+}
+
+// RenderSourceMaps renders the main config and each map/file template a second
+// time with source-map collection, over the same context Render builds, and
+// returns name→source map. It is a playground-only pass (provenance); it returns
+// nil if the engine doesn't support source maps. Names are the template registry
+// keys: names.MainTemplateName for the config, and the map/file key otherwise.
+func (s *RenderService) RenderSourceMaps(ctx context.Context, provider stores.StoreProvider) (map[string]TemplateSourceMap, error) {
+	sm, ok := s.engine.(sourceMapper)
+	if !ok {
+		return map[string]TemplateSourceMap{}, nil
+	}
+	renderCtx := s.buildRenderingContext(ctx, provider).Context
+	out := make(map[string]TemplateSourceMap)
+	add := func(name string) {
+		if raw, spans, err := sm.RenderWithSourceMap(ctx, name, renderCtx); err == nil {
+			out[name] = TemplateSourceMap{Raw: raw, Spans: spans}
+		}
+	}
+	add(names.MainTemplateName)
+	for name := range s.config.Maps {
+		add(name)
+	}
+	for name := range s.config.Files {
+		add(name)
+	}
+	for name := range s.config.SSLCertificates {
+		add(name)
+	}
+	// k8sResources templates back the "applied" tab. Their rendered YAML is
+	// re-marshaled for display (keys reordered), so the playground content-matches
+	// displayed lines against this raw source map to attribute each one.
+	for name := range s.config.K8sResources {
+		add(name)
+	}
+	return out, nil
 }
 
 // renderK8sResources renders every entry in spec.k8sResources in parallel,

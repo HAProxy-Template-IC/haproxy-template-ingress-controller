@@ -448,10 +448,11 @@ func TestRenderService_buildRenderingContext_PropagatesIndexBy(t *testing.T) {
 		},
 	}
 
-	renderCtx, fileRegistry, statusPatches, renderedResources := svc.buildRenderingContext(context.Background(), provider)
-	require.NotNil(t, fileRegistry, "fileRegistry collector must be wired so templates can register dynamic aux files")
-	require.NotNil(t, statusPatches, "statusPatchCollector must be wired so filters_status.go can capture mutations")
-	require.NotNil(t, renderedResources, "renderedResourceCollector must be wired so k8sResources templates can emit owned resources")
+	bctx := svc.buildRenderingContext(context.Background(), provider)
+	renderCtx := bctx.Context
+	require.NotNil(t, bctx.FileRegistry, "fileRegistry collector must be wired so templates can register dynamic aux files")
+	require.NotNil(t, bctx.StatusPatchCollector, "statusPatchCollector must be wired so filters_status.go can capture mutations")
+	require.NotNil(t, bctx.RenderedResourceCollector, "renderedResourceCollector must be wired so k8sResources templates can emit owned resources")
 
 	// BuildResourcesValue produces the typed `resources` struct
 	// with one field per cfg.WatchedResources entry — and ONLY per

@@ -1,0 +1,112 @@
+# Example resources for the bundled HAPTIC ingress chart. This is exactly what
+# `kubectl get ingress,svc,endpointslices,secrets -A -o yaml` produces — paste
+# your own cluster's output here to see the HAProxy config it would generate.
+#
+# Each object is bucketed by apiVersion+kind against the config's
+# watchedResources and filtered by each watcher's label/field selector, just as
+# the controller does. Two demo apps are wired up below: "shop" and "blog".
+apiVersion: v1
+kind: List
+items:
+  # HAPTIC's own LoadBalancer Service, as the cluster reports it. The controller
+  # discovers its external address here (status.loadBalancer.ingress) and writes
+  # it into each Ingress/Gateway .status (the "deployed" phase). Replace the
+  # example IP with your controller's real LoadBalancer address — or delete this
+  # object to see the no-address case. Matched by the controller_services watcher.
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: release-name-haptic-haproxy
+      namespace: default
+      labels:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: loadbalancer
+    spec:
+      type: LoadBalancer
+    status:
+      loadBalancer:
+        ingress:
+          - ip: 203.0.113.42
+  # Default TLS certificate served for HTTPS (self-signed example cert).
+  - apiVersion: v1
+    kind: Secret
+    type: kubernetes.io/tls
+    metadata:
+      name: default-ssl-cert
+      namespace: default
+    data:
+      tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURORENDQWh5Z0F3SUJBZ0lVQnZrZmlmMk1UYzJMUzNNMmpFZjFkS0REdjlnd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZqRVVNQklHQTFVRUF3d0xaWGhoYlhCc1pTNWpiMjB3SGhjTk1qWXdOekEyTWpFeE5UUTNXaGNOTXpZdwpOekF6TWpFeE5UUTNXakFXTVJRd0VnWURWUVFEREF0bGVHRnRjR3hsTG1OdmJUQ0NBU0l3RFFZSktvWklodmNOCkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFKVXZPa0JNeFBjaFNSZGR5QnJkVXRLNXNYdEkwU3pvcFU1bFlOQ3oKUlJZVFlGZXVzWEJldTFnZW5ZMUo3clZBM01jZ1hoL1FybkloaVM3NDlxMUwrdE9MTVR4Rit1dkN1T1Y4b1BWSQpKNmRDVjdDUFprb0FYTURkeERiZ0gyS2QwL3pjQmFoVGc2UTFOKzB0L080aS9qV210bjhiTVdLUGJhTHg0RE5JClBIcjFlOEpYbjgzdHQybzlwbGVvZE1jK3JQbXVWRE1XQXFFdTRVcWRvTnRjQmxndXV4U0lCdkhybUFTZUErZDYKc0w3VFFXOWFpWGMvNFZhUTI5cHdhV1VhdkxCQzRXVVBSZlpGTmFNTys5UmYybEFkbVB4ZDRBZDhFM3U3MGF2eQppR1Q0ZGxEeXQxdmtSTTk2WEI0eXk1WXQ3TVY4b3VoQzIzaU5NN1VJZ0JsZWtyc0NBd0VBQWFONk1IZ3dIUVlEClZSME9CQllFRkgrdWI5My92Z3c2SjhZVHpXVUh0YzJzYmF2Yk1COEdBMVVkSXdRWU1CYUFGSCt1YjkzL3ZndzYKSjhZVHpXVUh0YzJzYmF2Yk1BOEdBMVVkRXdFQi93UUZNQU1CQWY4d0pRWURWUjBSQkI0d0hJSUxaWGhoYlhCcwpaUzVqYjIyQ0RTb3VaWGhoYlhCc1pTNWpiMjB3RFFZSktvWklodmNOQVFFTEJRQURnZ0VCQUFVZVMydldjMDVrCkVmU1NUNVlMM0ZUMVdIZFBnNnZZc3hoRlVxSC9RN3FtMzVCd3ZsVjltdHlzUGc3OUlYdEpiVXB4aUs4QWRFSUEKSjhLdDJXQlk0Y3lwODRPdm0zQ2g3dHlUVWlyNDFOQTdvdFBFSTFONXFySUxLUlZrVWc2QUxRTXdyWStscXZtYQpKTGVmRWVETzZXRkpKa2VlakNoWUN0b1pDRWp1YndUb2xNcGpZbHgvVkRadWx5d3ZieS9YaHRkQUdyWTJvZDgvCllxZjFEc0xIaE1SMGdMSW0zTjBTQW9mZ1k2VFdLRzZvdVlMUnFYOWFERjVPZ0RUQU5VbkN3NG1uTEU1NGllRjAKbEM2ZklEaHNyZXdFdlhVSXN2eHpDS1YvaklJaWJsRWdkai80clRqN05Eem1pWGEwY3lBenZCaFo4eVIzRjlUVgpSN2ZGSDlMSmY4Yz0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+      tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2Z0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktnd2dnU2tBZ0VBQW9JQkFRQ1ZMenBBVE1UM0lVa1gKWGNnYTNWTFN1YkY3U05FczZLVk9aV0RRczBVV0UyQlhyckZ3WHJ0WUhwMk5TZTYxUU56SElGNGYwSzV5SVlrdQorUGF0Uy9yVGl6RThSZnJyd3JqbGZLRDFTQ2VuUWxld2oyWktBRnpBM2NRMjRCOWluZFA4M0FXb1U0T2tOVGZ0CkxmenVJdjQxcHJaL0d6RmlqMjJpOGVBelNEeDY5WHZDVjUvTjdiZHFQYVpYcUhUSFBxejVybFF6RmdLaEx1RksKbmFEYlhBWllMcnNVaUFieDY1Z0VuZ1BuZXJDKzAwRnZXb2wzUCtGV2tOdmFjR2xsR3J5d1F1RmxEMFgyUlRXagpEdnZVWDlwUUhaajhYZUFIZkJON3U5R3I4b2hrK0haUThyZGI1RVRQZWx3ZU1zdVdMZXpGZktMb1F0dDRqVE8xCkNJQVpYcEs3QWdNQkFBRUNnZ0VBQjRhTVg3WC9zWi9DT2lXRzlLUDVpNXZHY2p1b0lhWFN3UE9vUUo3cWUwU2EKOVpGZ2JoUzVTcWF3dC9IazBzdmsxejZ3d05ZY0ZySE9ZOG8zVjJLZjBwQVErY05sOXdLcHBSbjJYS2s1SnR6WAo0NVk0U0w5ZjduTEJkU3MxS2hwZ0dUOVlJYmVreW1ITTRuQVJkRW5iblFVOTY0ZUpwRGtzQks1QzZ4Tlh5YlFJCnVJcFIxN2lyS3dXR3JraTE5dXl1YTVHRk1JZUxkYXVUQVRLdyt4RjdBRlg0NXFkK3hlbXBzM3FqeGRxRDNxei8Kb1lYRUVET1NtVnhVUVp5NVAwUDZHQ08yaTVjd3NEYnJCTjBLcmtlK1l3ZnBLRDdWZDJyK1A0QTRCWnBEdVB5aApLUGtZcC8zbzRHdzJlUEJDSGFTQVYvMkxyQ01lMWw2d2tZaHM2Vm9ORVFLQmdRRFJleEM4RG5sdUtUVmZzQ3BrCkd1TlJ1aGhOcHl3VXBlaFIrakRHSTB2c2Y2OHdiaEgyTFpIQVV6V2ZrTWJhd0JpMGNTUWw0S21TYm9Dc3BZSTUKK0RDRC93SDdpYk1oNzdFaEM0S2hHVkM4VGE0dm90N0RyZXJxWlZLR0NBcExUYjM2cHZkNXV4SWwzZnBuWXFJNwoxWkhtTzlybi9kK1duSDZvOGRUYklQN3IzUUtCZ1FDMlVGVnE4alpFOFJEUkgyaXNnQ3MrSFEzOXR4RE5oUWVoClg4Zm5iOXVZTzlsczNkKzdLM1huWnJ2c3Zhc3ZRMFRUYXlINmJ4K2RxYnZQV01qTGlRR29DT3pBSDE1SmpPR1QKSXp4NkVTSkUrZ3lYQmkxY21mVVQxUVVocnpERkg5KzN5TWZhUmJha1FyamcrWnhucGhRMHBwbmJuaUZmc1FvaQpEWjRCY2Q4N2R3S0JnUUNETUZJcm85anlYNFpZbGNnR2h6eERpNHI2M3EzaGhJRjVEWG1NTE1DNHJNSTNUMGVhClo3RjJ3K1c2TjM0QnN2b0Z6ekYzTXpxZlJPcjZ0SEJaQTVER3FXWkJkRndsN2FsOWEycjBueGtMeEk1SXNQUlgKa2N5ajNLNlExK295Zk01MGNpcGNKd2JYaGl2eW9UZSt4eUtuRUdjb2tMcDg1U2NCZ09ud0RicjRWUUtCZ1FDSgo4QlFBbTR2Rjg2Sm1wdDM2amVxcHp5L1R3NXQ1OCtuSEJnSG9zSEEwS1N3ak8yZllaRlNMcE9ZUWc1eXVZTFlGClEreHNYNEZMTjYyNmZwRkZ0YjVFRmFTUzQramh1eTY4dFk4L1NCRm1vTTIvd2xPMTJXSmRBL0lpL3pybUdteVkKejlldDVNc0FVdDh3a0lydXZQQlN1YTUxUkpvNW5XaHVSV0ZEOUpVU2x3S0JnRk4wdWxBYVhCMEo5UWNOT1JhRgpRaTNSVmdFTi9POCtLMWNXaE9hUElKcndtK1ptT2h5M1prclIwczVuMVFEQ0duVmZISllsY1RXUUVGaCtwMVdDCmZYZ2k0SDZqWWZFVVQwRTdZSnJGSTNZRzBPVFBzU3hkWGgyd1p4QkE1dFoxZ3NRbmVDSFprTmxuZk9Ba1QzMFkKSERMUGxTSnhFM1ZiY0hScC9ITFQvbDFQCi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K
+
+  # App: shop (storefront namespace), 2 ready endpoints.
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: shop
+      namespace: storefront
+    spec:
+      selector: {app: shop}
+      ports:
+        - {name: http, port: 80, targetPort: 8080}
+  - apiVersion: discovery.k8s.io/v1
+    kind: EndpointSlice
+    metadata:
+      name: shop-a1b2
+      namespace: storefront
+      labels: {kubernetes.io/service-name: shop}
+    addressType: IPv4
+    ports:
+      - {name: http, port: 8080}
+    endpoints:
+      - {addresses: [10.244.1.10], conditions: {ready: true}}
+      - {addresses: [10.244.2.11], conditions: {ready: true}}
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: shop
+      namespace: storefront
+    spec:
+      ingressClassName: haptic
+      rules:
+        - host: shop.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend: {service: {name: shop, port: {number: 80}}}
+
+  # App: blog (content namespace), 1 ready endpoint.
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: blog
+      namespace: content
+    spec:
+      selector: {app: blog}
+      ports:
+        - {name: http, port: 80, targetPort: 8080}
+  - apiVersion: discovery.k8s.io/v1
+    kind: EndpointSlice
+    metadata:
+      name: blog-c3d4
+      namespace: content
+      labels: {kubernetes.io/service-name: blog}
+    addressType: IPv4
+    ports:
+      - {name: http, port: 8080}
+    endpoints:
+      - {addresses: [10.244.3.20], conditions: {ready: true}}
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: blog
+      namespace: content
+    spec:
+      ingressClassName: haptic
+      rules:
+        - host: blog.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend: {service: {name: blog, port: {number: 80}}}

@@ -11,7 +11,7 @@ templateSnippets:
         pathValue / hostname — and derives the route Kind via
         type-switch on routeInfo["route"].
       -#}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups any, pathType string, suffix string) string %}
       {%- for _, routeInfo := range sortedRoutes %}
         {%- var pathKey = tostring(routeInfo["pathKey"]) %}
@@ -97,7 +97,7 @@ templateSnippets:
           macro takes typed `[]*resources.httproutes.T` directly. No
           GRPCRoute sibling. -#}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- macro GeneratePathRegexMap(routes []*resources.httproutes.T) -%}
       {%- for _, route := range routes %}
       {%- var routeNs = route.Metadata.Namespace %}

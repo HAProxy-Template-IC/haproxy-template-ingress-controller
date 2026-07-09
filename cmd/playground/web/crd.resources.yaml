@@ -1,0 +1,20 @@
+# Example custom resources — instances of the made-up Microservice CRD. Edit them
+# (or the template on the left) and watch the HAProxy config update live.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: example.com/v1
+    kind: Microservice
+    metadata: {name: shop, namespace: storefront}
+    spec:
+      host: shop.example.com
+      servers:
+        - {address: 10.0.1.10:8080, weight: 90}
+        - {address: 10.0.1.11:8080, weight: 10}   # 10% canary
+  - apiVersion: example.com/v1
+    kind: Microservice
+    metadata: {name: blog, namespace: content}
+    spec:
+      host: blog.example.com
+      servers:
+        - {address: 10.0.2.20:8080}

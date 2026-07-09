@@ -101,7 +101,7 @@ templateSnippets:
         that match no path" semantics.
       -#}
       {%- import "util-nginx-ingress-default-backend" for ResolveDefaultBackend -%}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var info = map[string]any{} -%}
         {{- ResolveDefaultBackend(ingress, info) -}}

@@ -1,6 +1,6 @@
 module gitlab.com/haproxy-haptic/haptic
 
-go 1.26.5
+go 1.26.4
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.5
@@ -10,13 +10,13 @@ require (
 	github.com/haproxytech/client-native/v6 v6.4.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.19.0
-	github.com/oapi-codegen/oapi-codegen/v2 v2.7.2
+	github.com/oapi-codegen/oapi-codegen/v2 v2.7.1
 	github.com/oapi-codegen/runtime v1.4.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260709041447-4c83f75ab69e
+	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260709071509-56aee4186f1c
 	golang.org/x/sync v0.22.0
 	golang.org/x/text v0.40.0
 	golang.org/x/vuln v1.5.0
@@ -28,7 +28,7 @@ require (
 	k8s.io/apimachinery v0.36.2
 	k8s.io/client-go v0.36.2
 	k8s.io/klog/v2 v2.140.0
-	k8s.io/kube-openapi v0.0.0-20260706235625-cdb1db5517a0
+	k8s.io/kube-openapi v0.0.0-20260624041617-8f3fa4921821
 	sigs.k8s.io/controller-runtime v0.24.1
 	sigs.k8s.io/controller-tools v0.21.0
 	sigs.k8s.io/e2e-framework v0.7.0
@@ -324,7 +324,7 @@ require (
 	mvdan.cc/unparam v0.0.0-20251027182757-5beb8c8f8f15 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
-	sigs.k8s.io/structured-merge-diff/v6 v6.4.1 // indirect
+	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
 )
 
 tool (

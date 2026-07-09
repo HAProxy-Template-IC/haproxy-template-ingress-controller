@@ -24,7 +24,7 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
       -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
@@ -74,7 +74,7 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
       -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
@@ -114,7 +114,7 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
       -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
@@ -162,7 +162,7 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
       -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}

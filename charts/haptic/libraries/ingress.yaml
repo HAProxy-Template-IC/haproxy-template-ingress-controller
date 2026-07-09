@@ -146,30 +146,11 @@ templateSnippets:
   # ============================================================================
   # Host Key Normalisation
   # ============================================================================
-
-  # Single source of truth for how Ingress hosts get normalised into map
-  # keys. Wildcard hosts (`*.example.com`) lose the leading `*` so the
-  # key becomes `.example.com` — the same form host.map uses (see
-  # util-generate-host-map-ingress) and the same form HAProxy's
-  # `regsub(^[^.]*,,)` fallback in base.yaml's frontend-routing-logic
-  # produces at request time. With consistent normalisation, every
-  # `<host><path>`-keyed map (host.map, auth-url.map, auth-signin.map,
-  # auth-method.map, auth-forward-headers.map, auth-extract-headers.map,
-  # haproxy-ingress-waf.map, coraza-app.map, …) can be looked up via
-  # `var(txn.host_match),concat(,txn.path,),map_beg(...)` and a
-  # wildcard-host Ingress's per-route entries will hit.
   #
-  # The argument is `any` because Scriggo's `dig()` returns `any` and
-  # forcing every caller to `tostring(rule | dig("host") | fallback(""))`
-  # before the call would just push the same boilerplate everywhere.
-  # Returns a string. Empty input → empty string (caller's responsibility
-  # to validate non-empty if it matters; vendor libraries' annotation
-  # walks already do).
-  util-ingress-host-key:
-    template: |
-      {%- macro MapKeyForHost(host any) string -%}
-        {%- show tostring(host | fallback("")) | replace("*", "") -%}
-      {%- end macro -%}
+  # The util-host-key snippet (macro MapKeyForHost) moved to base.yaml
+  # ("Ingress Helpers" section) so gateway/ and the vendor annotation libraries
+  # can import it without the ingress library being enabled. Importers are
+  # unchanged: `{% import "util-host-key" for MapKeyForHost %}`.
 
   # ============================================================================
   # Backend Generation
@@ -211,7 +192,7 @@ templateSnippets:
     template: |
       {#- Generates map entries for a slice of Ingress resources -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
 
       {% macro PathMapEntryIngressShard(ingresses []*resources.ingresses.T, pathTypes []string, suffix string) string %}
         {%- for _, ingress := range ingresses -%}
@@ -369,7 +350,7 @@ templateSnippets:
   util-generate-host-map-ingress:
     template: |
       {#- Macro to generate host map entries for Ingress resources -#}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- macro GenerateIngressHostMap(ingresses []*resources.ingresses.T) -%}
       {%- for _, ingress := range ingresses -%}
       {%- var rules = ingress.Spec.Rules %}
@@ -492,7 +473,7 @@ templateSnippets:
          GitLab MR !955 pipeline 2529981548 for the rules-less case;
          the same logic applies per host now). -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- var candidates = []any{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {#- dig() handles "defaultBackend absent" (returns nil) vs

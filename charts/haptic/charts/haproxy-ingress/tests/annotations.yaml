@@ -630,15 +630,20 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
+      # Shares the vendor CORS macro: exact origin -> -m str, echo the matched
+      # request Origin, headers via http-after-response (also cover the 204).
       - type: contains
         target: haproxy.cfg
-        pattern: "Access-Control-Allow-Origin"
+        pattern: "acl cors_origin_\\S+ var\\(txn\\.cors_origin\\) -m str https://example\\.com"
       - type: contains
         target: haproxy.cfg
-        pattern: "https://example.com"
+        pattern: "http-after-response set-header Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
       - type: contains
         target: haproxy.cfg
-        pattern: "Access-Control-Allow-Credentials"
+        pattern: "http-after-response set-header Access-Control-Allow-Credentials 'true'"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "status 204 .*METH_OPTIONS"
 
   test-haproxy-ingress-app-root:
     description: HAProxy-Ingress app-root annotation generates redirect

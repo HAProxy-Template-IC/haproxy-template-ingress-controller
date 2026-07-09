@@ -17,6 +17,21 @@ watchedResources:
     resources: secrets
     indexBy: ["metadata.namespace", "metadata.name"]
 
+# Library-declared extraContext defaults (lowest precedence; an operator overrides
+# any of these via controller.config.templatingSettings.extraContext). HSTS is a
+# TLS concern, so its global knobs live here; features-085-ssl-hsts-global reads them.
+templatingSettings:
+  extraContext:
+    # Send Strict-Transport-Security on every TLS response (all hosts), matching
+    # ingress-nginx's global `hsts: true` default. Off by default; a per-Ingress
+    # hsts annotation still overrides the value for its hosts. HSTS only takes
+    # effect over HTTPS — pair it with an HTTP→HTTPS redirect (the rendered config
+    # emits a warning when HSTS is on but no redirect is configured).
+    hstsEnabled: false
+    hstsMaxAge: "31536000"          # one year
+    hstsIncludeSubdomains: false
+    hstsPreload: false
+
 templateSnippets:
   # SSL bind options utility - used by both HTTPS frontend and SSL passthrough
   # Uses crt-list for certificate management with per-certificate OCSP configuration
@@ -172,6 +187,49 @@ templateSnippets:
       {%- end -%}
       {%- if gf["needHTTPSFrontend"] == nil -%}
         {%- gf["needHTTPSFrontend"] = false -%}
+      {%- end -%}
+
+  features-085-ssl-hsts-global:
+    template: |
+      {#-
+        Global HSTS (opt-in)
+
+        Purpose: When extraContext.hstsEnabled is true, emit the
+        Strict-Transport-Security header on *every* TLS response, matching
+        ingress-nginx's global `hsts: true` default. Per-Ingress HSTS annotations
+        still win for their hosts — the per-host response-header rule in
+        frontend-filters-080-hsts runs after the global one, and set-header
+        replaces, so a host-specific value overrides this default.
+
+        Resource-agnostic: registers a single global value; it references no
+        specific resource kind.
+
+        Extension Point: features-* (priority 085 — after ssl init 050, before
+        the resource TLS phase 100).
+
+        Provides (in gf["hstsGlobalValue"]): the default Strict-Transport-Security
+        value, or unset when disabled.
+
+        extraContext knobs (safe opt-in default is OFF):
+          - hstsEnabled            (bool, default false) — turn the global header on
+          - hstsMaxAge             (default "31536000", one year)
+          - hstsIncludeSubdomains  (bool, default false)
+          - hstsPreload            (bool, default false)
+
+        Used By: frontend-filters-080-hsts (emits the shared response-header rule
+        and, when no HTTP→HTTPS redirect is configured, a warning that HSTS is
+        only effective over HTTPS).
+      -#}
+      {%- var enabled bool = extraContext | dig("hstsEnabled") | fallback(false) -%}
+      {%- if enabled -%}
+        {%- var maxAge = extraContext | dig("hstsMaxAge") | fallback("31536000") | tostring() -%}
+        {%- if regex_search(maxAge, "[[:cntrl:]]") -%}{{ fail("Invalid extraContext.hstsMaxAge '" + maxAge + "': must not contain control characters — config-injection guard.") }}{%- end -%}
+        {%- var value = "max-age=" + maxAge -%}
+        {%- if extraContext | dig("hstsIncludeSubdomains") | fallback(false) -%}{%- value = value + "; includeSubDomains" -%}{%- end -%}
+        {%- if extraContext | dig("hstsPreload") | fallback(false) -%}{%- value = value + "; preload" -%}{%- end -%}
+        {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+        {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+        {%- gf["hstsGlobalValue"] = value -%}
       {%- end -%}
 
   features-140-ssl-passthrough-binds:
@@ -939,6 +997,76 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "alpn h2,http/1.1"
+
+  test-ssl-hsts-global-enabled:
+    description: extraContext.hstsEnabled emits a global Strict-Transport-Security header on TLS responses, plus a no-redirect warning
+    extraContext:
+      hstsEnabled: true
+      hstsIncludeSubdomains: true
+      hstsPreload: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["example.com"]
+                secretName: default-ssl-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" if \{ ssl_fc \}'
+      # No ssl-redirect annotation → the effectiveness warning is emitted.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "HSTS is enabled globally but no HTTP"
+
+  test-ssl-hsts-global-disabled:
+    description: Without extraContext.hstsEnabled, no global HSTS header is emitted (default off)
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["example.com"]
+                secretName: default-ssl-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "Strict-Transport-Security"
 
   test-ssl-crtlist-basic:
     description: Verify crt-list file is generated with OCSP configuration
