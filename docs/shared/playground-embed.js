@@ -74,6 +74,105 @@
     return n ? '★'.repeat(n) : '';
   }
 
+  /* --- facade config highlighting (mirrors the playground editor) ---
+   * mkdocs renders the HAProxy config inside a `template: |` block scalar as one
+   * flat YAML string. Re-highlight it here so the shown config matches the live
+   * editor: HAProxy tokens inside HP-group template blocks, Scriggo tags, and a
+   * light YAML pass for the surrounding keys. Token classes map to mkdocs-material
+   * code colours (theme-aware). hpTokens is ported verbatim from editor.js. */
+  var HP_SECTIONS = new Set(['global', 'defaults', 'frontend', 'backend', 'listen', 'peers',
+    'resolvers', 'cache', 'ring', 'userlist', 'mailers', 'program', 'http-errors', 'fcgi-app',
+    'log-forward', 'crt-store', 'traces', 'acme', 'ruleset']);
+  var HP_GROUPS = new Set(['haproxyConfig', 'templateSnippets']);
+  var TPL_RE = /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}/g;
+
+  function escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  function hpTokens(line) {
+    var toks = [], code = line, commentStart = -1;
+    var hash = line.indexOf('#');
+    if (hash >= 0) { code = line.slice(0, hash); commentStart = hash; }
+    var lead = code.match(/^\s*/)[0];
+    var rest = code.slice(lead.length);
+    if (rest) {
+      var parts = rest.split(/(\s+)/), pos = lead.length, firstWord = true, afterSection = false;
+      for (var i = 0; i < parts.length; i++) {
+        var tok = parts[i], start = pos; pos += tok.length;
+        if (tok === '' || /^\s+$/.test(tok)) continue;
+        if (firstWord) {
+          firstWord = false;
+          if (lead === '' && HP_SECTIONS.has(tok.toLowerCase())) { toks.push({ start: start, end: pos, cls: 'sec' }); afterSection = true; }
+          else toks.push({ start: start, end: pos, cls: 'kw' });
+        } else if (afterSection) { afterSection = false; toks.push({ start: start, end: pos, cls: 'fn' }); }
+        else if (/^-?\d[\w.:/]*$/.test(tok)) toks.push({ start: start, end: pos, cls: 'num' });
+        else if (/^["']/.test(tok)) toks.push({ start: start, end: pos, cls: 'str' });
+      }
+    }
+    if (commentStart >= 0) toks.push({ start: commentStart, end: line.length, cls: 'cmt' });
+    return toks;
+  }
+
+  function renderRuns(line, cls) {
+    var html = '', i = 0;
+    while (i < line.length) {
+      var c = cls[i], j = i; while (j < line.length && cls[j] === c) j++;
+      var seg = escHtml(line.slice(i, j));
+      html += c ? '<span class="pg-cf-' + c + '">' + seg + '</span>' : seg;
+      i = j;
+    }
+    return html;
+  }
+
+  function markTags(line, cls) {
+    var m; TPL_RE.lastIndex = 0;
+    while ((m = TPL_RE.exec(line))) { for (var k = m.index; k < m.index + m[0].length; k++) cls[k] = 'tpl'; if (m[0] === '') TPL_RE.lastIndex++; }
+  }
+
+  function renderHpLine(line) {           // HAProxy config line inside a template block
+    var cls = new Array(line.length).fill(null);
+    markTags(line, cls);
+    var masked = line.replace(TPL_RE, function (t) { return ' '.repeat(t.length); });
+    var toks = hpTokens(masked);
+    for (var t = 0; t < toks.length; t++) for (var k = toks[t].start; k < toks[t].end; k++) if (cls[k] == null) cls[k] = toks[t].cls;
+    return renderRuns(line, cls);
+  }
+
+  function renderValue(s) {               // a scalar value: highlight scriggo tags, rest plain
+    var cls = new Array(s.length).fill(null);
+    markTags(s, cls);
+    return renderRuns(s, cls);
+  }
+
+  function renderYamlLine(line) {         // key: value / comment / list item
+    var cm = /^(\s*)(#.*)$/.exec(line);
+    if (cm) return escHtml(cm[1]) + '<span class="pg-cf-cmt">' + escHtml(cm[2]) + '</span>';
+    var kv = /^(\s*)(- )?([\w.\/-]+)(:)(\s*)([\s\S]*)$/.exec(line);
+    if (kv) return escHtml(kv[1]) + (kv[2] || '') + '<span class="pg-cf-key">' + escHtml(kv[3]) + '</span>' + kv[4] + escHtml(kv[5]) + (kv[6] ? renderValue(kv[6]) : '');
+    return renderValue(line);
+  }
+
+  function hpTemplateLines(lines) {       // line indices inside an HP-group `template: |` block
+    var set = new Set(), group = '', inBlock = false, keyIndent = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var text = lines[i], ind = /^\s*/.exec(text)[0].length, blank = text.trim() === '';
+      if (inBlock) {
+        if (!blank && ind <= keyIndent) inBlock = false;   // dedent → reprocess
+        else { if (!blank) set.add(i); continue; }
+      }
+      var g = /^(?: {2})?([A-Za-z][\w-]*):\s*$/.exec(text);
+      if (g) { group = g[1]; continue; }
+      var tm = /^(\s*)template:\s*\|/.exec(text);
+      if (tm && HP_GROUPS.has(group)) { inBlock = true; keyIndent = tm[1].length; }
+    }
+    return set;
+  }
+
+  function highlightConfigHTML(text, allTemplate) {
+    var lines = text.split('\n');
+    var hp = allTemplate ? null : hpTemplateLines(lines);
+    return lines.map(function (l, i) { return (allTemplate || hp.has(i)) ? renderHpLine(l) : renderYamlLine(l); }).join('\n');
+  }
+
   // Build the #s= fragment + query for one run.
   async function buildSrc(el, config, resources) {
     var v = el.dataset.version || '3.4';
@@ -153,8 +252,12 @@
     // Without this it lingers, unstyled, below the iframe after Run.
     for (var i = 1; i < blocks.length; i++) blocks[i].style.display = 'none';
 
-    // Wrap config block for styling.
+    // Re-highlight the shown config: mkdocs renders the HAProxy config inside a
+    // `template: |` block as a flat YAML scalar; this matches the live editor. A
+    // scriggo embed's block is a bare template, so highlight all of it as HAProxy.
     if (el._configBlock) {
+      var codeEl = el._configBlock.querySelector('pre code') || el._configBlock.querySelector('code');
+      if (codeEl) codeEl.innerHTML = highlightConfigHTML(codeText(el._configBlock), 'scriggo' in el.dataset);
       var wrap = document.createElement('div');
       wrap.className = 'pg-embed-code';
       el._configBlock.parentNode.insertBefore(wrap, el._configBlock);

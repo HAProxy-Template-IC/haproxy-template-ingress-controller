@@ -472,7 +472,7 @@
        config->output and "Open in full playground" show by default. */
     body[data-embed]:not([data-ctl~="dots"]) .bar .dots { display: none !important; }
     body[data-embed]:not([data-ctl~="nav"]) .bar .nav-tools { display: none !important; }
-    body[data-embed]:not([data-ctl~="max"]) .bar .maxbtn { display: none !important; }
+    /* Maximize is always available in embeds — a small pane badly needs it. */
     body[data-embed]:not([data-ctl~="tools"]) .bar .out-tools { display: none !important; }
     body[data-embed]:not([data-ctl~="tabs"]) .tabs { display: none !important; }
     body[data-embed]:not([data-ctl~="reload"]) #reload { display: none !important; }

@@ -352,7 +352,9 @@ function initCodeMirror(CM) {
           continue;
         }
       }
-      const g = /^  ([A-Za-z][\w-]*):\s*$/.exec(text);
+      // A spec group key. The config may be a bare spec (haproxyConfig: at col 0)
+      // or a full CR (spec: -> haproxyConfig: at 2 spaces), so match either indent.
+      const g = /^(?: {2})?([A-Za-z][\w-]*):\s*$/.exec(text);
       if (g) { group = g[1]; continue; }
       const tm = /^(\s*)template:\s*\|/.exec(text);
       if (tm && HP_GROUPS.has(group)) { inBlock = true; keyIndent = tm[1].length; from = -1; to = -1; }

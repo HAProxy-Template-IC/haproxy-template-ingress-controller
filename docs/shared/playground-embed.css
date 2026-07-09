@@ -54,6 +54,17 @@
 .pg-embed-code > .highlight,
 .pg-embed-code > pre { margin: 0 !important; border-radius: 0 !important; }
 
+/* HAProxy + Scriggo highlighting re-applied to the config's template block by
+ * playground-embed.js. Colours map to mkdocs-material's code tokens (theme-aware). */
+.pg-embed-code .pg-cf-sec { color: var(--md-code-hl-keyword-color); font-weight: 700; }
+.pg-embed-code .pg-cf-kw  { color: var(--md-code-hl-keyword-color); }
+.pg-embed-code .pg-cf-fn  { color: var(--md-code-hl-function-color); }
+.pg-embed-code .pg-cf-num { color: var(--md-code-hl-number-color); }
+.pg-embed-code .pg-cf-str { color: var(--md-code-hl-string-color); }
+.pg-embed-code .pg-cf-cmt { color: var(--md-code-hl-comment-color); font-style: italic; }
+.pg-embed-code .pg-cf-key { color: var(--md-code-hl-name-color, var(--md-code-hl-keyword-color)); }
+.pg-embed-code .pg-cf-tpl { color: var(--md-code-hl-special-color, var(--md-code-hl-constant-color, var(--md-code-hl-keyword-color))); font-weight: 600; }
+
 /* Task / challenge prose */
 .pg-task {
   margin: 0; padding: 0.6rem 0.8rem;
