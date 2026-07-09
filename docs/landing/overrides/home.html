@@ -206,6 +206,9 @@
           <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
         </span>
         <span class="term-title">haproxytemplateconfig.yaml</span>
+        <a class="term-run" href="./playground/?preset=extend" target="_blank" rel="noopener">
+          <span aria-hidden="true">▶</span> Run live
+        </a>
       </div>
       <div class="term-body">
         <pre class="code shell" tabindex="0"><code>{% raw %}<span class="t-kw">apiVersion</span>: <span class="t-str">haproxy-haptic.org/v1alpha1</span>
@@ -218,7 +221,7 @@
     <span class="t-kw">frontend-filters-300-request-id</span>:
       <span class="t-kw">template</span>: |
         <span class="t-d">{%-</span> <span class="t-ctrl">for</span> _, <span class="t-var">ingress</span> := <span class="t-ctrl">range</span> <span class="t-var">resources.ingresses.List</span>() <span class="t-d">%}</span>
-        <span class="t-d">{%-</span> <span class="t-ctrl">var</span> <span class="t-var">header</span> = <span class="t-ctrl">fallback</span>(<span class="t-var">ingress.metadata.annotations</span>[<span class="t-str">"example.com/request-id-header"</span>], <span class="t-str">""</span>) <span class="t-d">%}</span>
+        <span class="t-d">{%-</span> <span class="t-ctrl">var</span> <span class="t-var">header</span> = <span class="t-var">ingress</span> | <span class="t-ctrl">dig</span>(<span class="t-str">"metadata"</span>, <span class="t-str">"annotations"</span>, <span class="t-str">"example.com/request-id-header"</span>) | <span class="t-ctrl">fallback</span>(<span class="t-str">""</span>) | <span class="t-ctrl">tostring</span>() <span class="t-d">%}</span>
         <span class="t-d">{%-</span> <span class="t-ctrl">if</span> <span class="t-var">header</span> != <span class="t-str">""</span> <span class="t-d">%}</span>
         <span class="t-kw">http-request set-header</span> <span class="t-d">{{</span> <span class="t-var">header</span> <span class="t-d">}}</span> %[uuid()]
         <span class="t-d">{%-</span> <span class="t-ctrl">end</span> <span class="t-d">%}</span>
