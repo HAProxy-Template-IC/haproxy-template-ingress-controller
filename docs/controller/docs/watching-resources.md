@@ -2,6 +2,12 @@
 
 `spec.watchedResources` tells the controller which Kubernetes resources to subscribe to and how to make them available inside templates. This page explains the mental model. For field types, defaults, and validation rules see [CRD Reference](./crd-reference.md#watchedresources-required).
 
+Watch it end-to-end — a watched Ingress feeding the render:
+
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="A watched Ingress rendered to haproxy.cfg" data-height="440">
+
+</div>
+
 ## Anatomy of an Entry
 
 ```yaml

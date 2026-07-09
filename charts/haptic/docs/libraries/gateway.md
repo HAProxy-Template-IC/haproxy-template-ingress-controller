@@ -18,6 +18,11 @@ This library is **enabled by default**.
 !!! warning "Gateway API CRDs Required"
     The Gateway API library requires Gateway API CRDs to be installed in your cluster. Without them, the library is not merged into the configuration.
 
+Watch an HTTPRoute compile down to HAProxy config live:
+
+<div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs" data-title="Gateway API → HAProxy config" data-height="440">
+</div>
+
 ## Configuration
 
 ```yaml

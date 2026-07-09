@@ -13,6 +13,11 @@ The base library is **enabled by default** and provides the entire `haproxyConfi
 - Error page templates
 - Map file infrastructure for routing decisions
 
+Every render flows through base — here it is underpinning the Ingress preset live:
+
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="Base library underpinning a render" data-height="440">
+</div>
+
 ## Configuration
 
 The base library has the standard enable/disable flag, but disabling it is rarely useful: every other library plugs into the extension points base provides, so setting it to `false` produces a broken render with no `haproxyConfig` and no extension points.

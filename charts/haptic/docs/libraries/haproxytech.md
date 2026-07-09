@@ -19,6 +19,12 @@ Supported features:
 
 This library is enabled by default.
 
+Watch the `haproxy.org/*` annotations render to HAProxy config live:
+
+<div class="pg-embed" markdown data-scenario="haproxytech" data-tab="haproxy.cfg" data-controls="tabs" data-title="haproxy.org/* annotations rendered" data-height="440">
+
+</div>
+
 !!! note "Migrating from haproxytech/kubernetes-ingress"
     If you are migrating from the official HAProxy Technologies ingress controller, your existing `haproxy.org/*` annotations work without changes. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
 

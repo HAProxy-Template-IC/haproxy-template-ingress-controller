@@ -14,6 +14,11 @@ The SSL library handles all SSL/TLS-related functionality:
 
 This library is enabled by default and works in conjunction with resource libraries (ingress, gateway) that register TLS certificates.
 
+Explore the decoded certificates the SSL library assembles into the crt-list, live:
+
+<div class="pg-embed" markdown data-scenario="all" data-tab="certs" data-controls="tabs" data-title="SSL library → decoded certificates" data-height="440">
+</div>
+
 ## Configuration
 
 ```yaml

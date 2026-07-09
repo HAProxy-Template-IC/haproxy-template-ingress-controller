@@ -6,6 +6,12 @@ The haproxy-ingress library implements `haproxy-ingress.github.io/*` annotations
 
 This library is enabled by default.
 
+See the `haproxy-ingress.github.io/*` annotations render to HAProxy config live:
+
+<div class="pg-embed" markdown data-scenario="haproxy-ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="haproxy-ingress.github.io/* annotations rendered" data-height="440">
+
+</div>
+
 !!! note "Migrating from jcmoraisjr/haproxy-ingress"
     If you are migrating from jcmoraisjr/haproxy-ingress, your existing `haproxy-ingress.github.io/*` annotations work without changes. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
 

@@ -14,6 +14,11 @@ The Ingress library enables HAProxy to route traffic based on Kubernetes Ingress
 
 This library is enabled by default.
 
+See the Ingress preset render a full HAProxy config live:
+
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="Ingress → HAProxy config" data-height="440">
+</div>
+
 ## Configuration
 
 ```yaml
