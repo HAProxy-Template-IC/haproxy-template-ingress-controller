@@ -405,16 +405,34 @@ func installGatewayAPICRDs(ctx context.Context) (context.Context, error) {
 // applied via kustomize (config/crd, the standard-channel base), which is
 // how unreleased refs like "main" ship their CRDs.
 func applyGatewayAPICRDs(ctx context.Context, version string) error {
-	var apply *exec.Cmd
-	if strings.HasPrefix(version, "v") {
-		url := fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/standard-install.yaml", version)
-		apply = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", url)
-	} else {
+	// The CRD bundle (release manifest for a "v" version, kustomize base for a
+	// git ref) is fetched from GitHub, which intermittently 504s / times out at
+	// setup. A single failure there sinks the whole e2e or conformance job
+	// before any test runs, so retry a few times with linear backoff. exec.Cmd
+	// isn't reusable, so rebuild it each attempt.
+	newApply := func() *exec.Cmd {
+		if strings.HasPrefix(version, "v") {
+			url := fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/standard-install.yaml", version)
+			return exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-f", url)
+		}
 		ref := fmt.Sprintf("github.com/kubernetes-sigs/gateway-api/config/crd?ref=%s", version)
-		apply = exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-k", ref)
+		return exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath, "-k", ref)
 	}
-	if out, err := apply.CombinedOutput(); err != nil {
-		return fmt.Errorf("install Gateway API CRDs (%s): %w (output: %s)", version, err, out)
+	var out []byte
+	var err error
+	for attempt := 1; attempt <= 4; attempt++ {
+		if out, err = newApply().CombinedOutput(); err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			break // suite is shutting down — don't keep retrying
+		}
+		if attempt < 4 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Second) // 2s, 4s, 6s
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("install Gateway API CRDs (%s) after retries: %w (output: %s)", version, err, out)
 	}
 
 	// Single multi-arg `kubectl wait` — kubectl waits on all four CRDs in
