@@ -1089,7 +1089,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (activeTab === 'trace') { paintTrace(); return; }
       if (activeTab === 'migration') { paintMigration(); return; }
       if (activeTab === 'certs') { paintCerts(); return; }
-      if (activeTab === 'maps' || activeTab === 'files') { paintNamedFiles(glow); return; }
+      if (activeTab === 'maps' || activeTab === 'files' || activeTab === 'status' || activeTab === 'applied') { paintNamedFiles(glow); return; }
       const out = $('output');
       const text = tabs[activeTab] || '';
       if (!text.trim()) { lineChains = []; out.innerHTML = `<div class="empty">— nothing rendered for “${activeTab}” —</div>`; return; }
@@ -1129,20 +1129,21 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       const hasProv = Object.keys(prov).length > 0;
       updateHint(hasProv);
       const lang = OUT_LANG[activeTab] || 'plain';
+      const pfx = NAMED_PROV_PREFIX[activeTab] || '';   // status/applied namespace their prov/base keys
 
       lineChains = [];
       let gi = 0, html = '';
       for (const [name, content] of entries) {
         const vlines = String(content).split('\n');
         if (vlines.length > 1 && vlines[vlines.length - 1] === '') vlines.pop();   // drop the terminating newline
-        // filename header — clickable to its template block when we have a source line
-        const hb = base[name];
+        // entry header — clickable to its template block when we have a source line
+        const hb = base[pfx + name];
         lineChains[gi] = hb ? [{ n: name, l: hb }] : [];
         const hattr = (hasProv && hb) ? ` data-ln="${gi}"` : '';
         html += `<div class="mf-head"${hattr}><span class="mf-name">${esc(name)}</span>`
           + `<span class="mf-meta">${vlines.length} line${vlines.length === 1 ? '' : 's'}</span></div>`;
         gi++;
-        const pc = prov[name] || [];
+        const pc = prov[pfx + name] || [];
         const added = glow ? changedLines(String(prevObj[name] || '').split('\n'), vlines) : new Set();
         const hl = vlines.length <= 6000;
         html += `<div class="code${hasProv ? ' prov' : ''}" style="--gw:${String(vlines.length).length}">`;
