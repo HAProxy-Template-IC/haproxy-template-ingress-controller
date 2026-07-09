@@ -14,6 +14,12 @@ The two HAProxy libraries are enabled by default and work independently — you 
 
 See [Template Libraries](./template-libraries.md) for how to enable or disable individual libraries.
 
+See the nginx-ingress compatibility verdict render live:
+
+<div class="pg-embed" markdown data-scenario="nginx-ingress" data-tab="migration" data-controls="tabs" data-title="nginx-ingress annotation migration report" data-height="440">
+
+</div>
+
 ## Supported Features
 
 The libraries cover the following HAProxy feature areas through their respective annotation prefixes:

@@ -8,6 +8,12 @@ This library enables `nginx.ingress.kubernetes.io/*` annotations on Ingress reso
 
 This library is disabled by default.
 
+Because the preset mixes annotations that HAPTIC supports, maps differently, and drops, the migration report is the clearest live view:
+
+<div class="pg-embed" markdown data-scenario="nginx-ingress" data-tab="migration" data-controls="tabs" data-title="ingress-nginx annotation migration report" data-height="440">
+
+</div>
+
 ## Configuration
 
 ```yaml

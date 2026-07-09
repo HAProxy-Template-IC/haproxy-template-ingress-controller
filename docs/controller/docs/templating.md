@@ -300,6 +300,47 @@ backend {{ e }}
 
 </div>
 
+Ready for a challenge? Sort a list of backends heaviest-first, breaking ties by
+name. Edit the template to fix the sort — or peek at the solution.
+
+<div class="pg-embed" markdown data-scriggo data-title="Challenge: sort by two keys" data-difficulty="2" data-height="380">
+
+```go
+{# Challenge: list the backends heaviest-first, ties broken by name.
+   sort_by(items, criteria) sorts a []any by criteria like "$.field:desc". #}
+{%- var backends = []any{
+    map[string]any{"name": "web", "weight": 10},
+    map[string]any{"name": "api", "weight": 30},
+    map[string]any{"name": "cache", "weight": 30},
+} %}
+{#- TODO: sort by weight (desc), then name (asc). Fix the next line. -#}
+{%- var sorted = backends %}
+{%- for _, be := range sorted %}
+server {{ be["name"] }} weight {{ be["weight"] }}
+{%- end %}
+```
+
+<details class="pg-solution" markdown>
+<summary>Solution</summary>
+
+`$.weight:desc` sorts by weight descending; `$.name` breaks ties alphabetically.
+
+```go
+{%- var backends = []any{
+    map[string]any{"name": "web", "weight": 10},
+    map[string]any{"name": "api", "weight": 30},
+    map[string]any{"name": "cache", "weight": 30},
+} %}
+{%- var sorted = backends | sort_by([]string{"$.weight:desc", "$.name"}) %}
+{%- for _, be := range sorted %}
+server {{ be["name"] }} weight {{ be["weight"] }}
+{%- end %}
+```
+
+</details>
+
+</div>
+
 ### Path Resolution
 
 `pathResolver` is a helper available in every template. Its `GetPath(filename, type)` method returns the path that HAProxy should use to reference an auxiliary file (map, error file, certificate, crt-list). Use it instead of writing paths by hand so the controller and HAProxy agree on where files live.

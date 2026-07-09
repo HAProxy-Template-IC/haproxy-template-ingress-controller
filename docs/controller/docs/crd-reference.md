@@ -9,6 +9,10 @@ The `HAProxyTemplateConfig` custom resource configures the HAProxy Template Ingr
 **Kind**: `HAProxyTemplateConfig`
 **Short Names**: `htplcfg`, `haptpl`
 
+The schema is deliberately resource-agnostic — you template whatever you watch, so it works on a bespoke CRD exactly as it does on Ingress.
+
+▶ [Open the custom-CRD example in the playground](/playground/?preset=crd){target=_blank} — HAPTIC templating any resource, not just Ingress.
+
 ## Basic Example
 
 ```yaml

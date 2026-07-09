@@ -11,6 +11,11 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 - **Maintainability**: Each library focuses on a specific concern
 - **Customization**: Override or extend library behavior through values.yaml
 
+See the full library stack compose into one HAProxy config live:
+
+<div class="pg-embed" markdown data-scenario="all" data-tab="haproxy.cfg" data-controls="tabs" data-title="Full library stack → HAProxy config" data-height="440">
+</div>
+
 ## Available Libraries
 
 | Library | Default | Purpose |

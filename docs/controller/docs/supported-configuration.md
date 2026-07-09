@@ -12,6 +12,12 @@ The controller supports all configuration sections that can be managed through t
 
 **Coverage:** Every section the Dataplane API exposes as a manageable resource is supported — see the tables below for the current list. The comparator delegates attribute-level equality to `haproxytech/client-native` models' generated `.Equal()` methods, so new fields and sections added by HAProxy upstream become supported automatically without controller changes.
 
+To get a feel for the breadth, here's every bundled library rendered into one config:
+
+<div class="pg-embed" markdown data-scenario="all" data-tab="haproxy.cfg" data-controls="tabs" data-title="Every bundled library rendered into one haproxy.cfg" data-height="440">
+
+</div>
+
 ## Supported Configuration Sections
 
 | Section | Description | Priority | Implementation |
