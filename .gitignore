@@ -94,6 +94,14 @@ scale-metrics.json
 # source directories, so the lock pins nothing and only goes stale
 charts/haptic/Chart.lock
 
+# Browser playground build output (scripts/build-playground.sh writes the bundle
+# to public/playground/<version>/; `go build ./cmd/playground` drops a stray
+# `playground` binary at the repo root; the Help modal suggests a local
+# playground-local/ serve dir)
+/public/
+/playground
+/playground-local/
+
 # Claude Code working files
 .claude/
 plugins/

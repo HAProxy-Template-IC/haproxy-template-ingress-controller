@@ -1,0 +1,1748 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HAPTIC Playground</title>
+  <style>
+    :root {
+      /* ===== HAPTIC docs-landing tokens (dark-first, "terminal" aesthetic) =====
+         Chrome (header, bars, controls) uses the page-surface set; the editors
+         and rendered output are the constant-dark terminal set — same split the
+         landing page uses. The token palette (--t-*) doubles as the syntax
+         highlighting for haproxy.cfg and, later, Scriggo templates. */
+      color-scheme: dark;
+      --app-bg: #0b0f14;
+      --fg: #e6edf3; --muted: #9bacbd;
+      --surface: #1b212b; --surface-2: #222a35;
+      --border: #2b3744; --border-strong: #3a4756;
+      --accent: #6ba3d6; --accent-2: #8cc1ea; --accent-soft: rgba(107,163,214,.14);
+      --glow: rgba(47,125,192,.32);
+
+      /* terminal — constant in both themes */
+      --term-bg: #0d1117; --term-bg-soft: #0f151d; --term-chrome: #161c25;
+      --term-border: #283341; --term-fg: #c9d4e0; --term-dim: #7d8c9c;
+
+      /* token palette (highlighting) */
+      --t-kw: #6cb6ff; --t-ctrl: #d2a8ff; --t-var: #56d4dd; --t-str: #8ddb8c;
+      --t-num: #f0a868; --t-fn: #f69d50; --t-d: #7d8fa6; --t-prompt: #5fb37a; --t-cmt: #7a879a;
+
+      /* signals: orange = "you changed this" (diff-glow + rail pulse) */
+      --signal: #f0a868; --signal-weak: rgba(240,168,104,.15);
+      --warn: #e0a458; --err: #ff7b72;
+
+      /* macOS window dots */
+      --dot-r: #ff5f56; --dot-y: #ffbe2e; --dot-g: #28c840;
+
+      --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, Consolas, "Courier New", monospace;
+      --display: "Roboto", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      --rail-w: 42px;
+    }
+    /* Light chrome (OS preference or explicit toggle). Terminal stays dark. */
+    :root[data-theme="light"] { color-scheme: light; }
+    @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+      --app-bg: #eef2f6;
+      --fg: #1b2530; --muted: #57687a; --surface: #ffffff; --surface-2: #f4f7fb;
+      --border: #e2e9f1; --border-strong: #cfdae6; --accent: #1a5a96; --accent-2: #2f7dc0;
+      --accent-soft: rgba(26,90,150,.10); --glow: rgba(74,139,194,.20);
+    } }
+    :root[data-theme="light"] {
+      --app-bg: #eef2f6;
+      --fg: #1b2530; --muted: #57687a; --surface: #ffffff; --surface-2: #f4f7fb;
+      --border: #e2e9f1; --border-strong: #cfdae6; --accent: #1a5a96; --accent-2: #2f7dc0;
+      --accent-soft: rgba(26,90,150,.10); --glow: rgba(74,139,194,.20);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; display: flex; flex-direction: column; min-height: 100vh; overflow-x: hidden;
+      font: 14px/1.5 var(--display); color: var(--fg); background: var(--app-bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ---- Header ---- */
+    header {
+      display: flex; align-items: center; gap: 14px; padding: 0 16px; height: 54px; flex: 0 0 auto;
+      border-bottom: 1px solid var(--border); background: var(--surface);
+    }
+    .wordmark { display: flex; align-items: baseline; gap: 9px; }
+    .wordmark .mark {
+      font-family: var(--mono); font-weight: 700; font-size: 13px; letter-spacing: 1px;
+      color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border-strong);
+      border-radius: 6px; padding: 3px 6px; align-self: center;
+    }
+    .wordmark b { font-size: 15px; font-weight: 700; letter-spacing: .04em; }
+    .wordmark small { color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .02em; }
+    .spacer { flex: 1; }
+    .ctrl { display: flex; align-items: center; gap: 7px; }
+    .ctrl label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; font-family: var(--mono); }
+    select {
+      font: 12px/1 var(--mono); color: var(--fg); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; cursor: pointer;
+    }
+    select:hover { border-color: var(--accent); }
+    select:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+    button.btn {
+      font: 12px/1 var(--mono); font-weight: 600; letter-spacing: .02em; color: var(--fg);
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 9px; padding: 8px 14px; cursor: pointer;
+      transition: color .15s, border-color .15s, background .15s, transform .1s;
+    }
+    button.btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); transform: translateY(-1px); }
+    button.btn:active { transform: translateY(0); }
+    button.btn:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
+    button.btn.copied { border-color: var(--t-str); color: var(--t-str); background: color-mix(in srgb, var(--t-str) 12%, transparent); }
+    button.btn.warn { border-color: var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+
+    .chip {
+      display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12px;
+      color: var(--muted); background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 999px; padding: 5px 12px 5px 9px;
+    }
+    .chip .led { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); transition: background .2s; box-shadow: 0 0 0 0 transparent; }
+    .chip.ok .led { background: var(--t-str); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-str) 20%, transparent); }
+    .chip.err .led { background: var(--err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 20%, transparent); }
+    .chip.busy .led { background: var(--accent-2); animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+
+    /* ---- Bench layout: three terminal panels + a render rail ---- */
+    main {
+      flex: 1; min-height: 0; display: grid;
+      grid-template-columns: var(--w1, 1fr) 7px var(--w2, 1fr) var(--rail-w) minmax(0, 1.1fr);
+      background: var(--app-bg);
+    }
+    .col { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--term-bg); border-right: 1px solid var(--term-border); }
+    .col.out { border-right: 0; }
+    /* Panel bar styled like a terminal title bar (macOS dots + mono filename). */
+    .col > .bar {
+      margin: 0; padding: 0 12px; min-height: 38px; flex: 0 0 auto;
+      display: flex; align-items: center; gap: 9px;
+      font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--term-fg);
+      background: var(--term-chrome); border-bottom: 1px solid var(--term-border);
+    }
+    .col > .bar .dots { display: inline-flex; gap: 6px; flex: 0 0 auto; }
+    .col > .bar .dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+    .col > .bar .dots i:nth-child(1) { background: var(--dot-r); }
+    .col > .bar .dots i:nth-child(2) { background: var(--dot-y); }
+    .col > .bar .dots i:nth-child(3) { background: var(--dot-g); }
+    .col > .bar code { font-family: var(--mono); font-size: 11px; color: var(--t-var); letter-spacing: 0; }
+    .col > .bar .badge { font-family: var(--mono); font-size: 10px; font-weight: 400; letter-spacing: 0; color: var(--term-dim); }
+    .col > .bar .badge[hidden] { display: none; }
+
+    .editor { flex: 1; min-height: 0; overflow: hidden; position: relative; background: var(--term-bg); }
+    .editor:focus-within { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+    .cm-editor { height: 100%; }
+    .editor .loading { position: absolute; inset: 0; padding: 12px 14px; color: var(--term-dim); font-family: var(--mono); font-size: 12px; pointer-events: none; }
+    textarea.fallback {
+      width: 100%; height: 100%; border: 0; resize: none; padding: 12px 14px;
+      font-family: var(--mono); font-size: 12.5px; line-height: 1.6; tab-size: 2;
+      background: var(--term-bg); color: var(--term-fg); outline: none;
+    }
+
+    /* ---- Resize gutter (config | resources) ---- */
+    .gutter {
+      background: var(--term-chrome); cursor: col-resize; position: relative;
+      border-left: 1px solid var(--term-border); border-right: 1px solid var(--term-border);
+    }
+    .gutter::after {
+      content: ""; position: absolute; left: 50%; top: 50%; width: 2px; height: 26px;
+      transform: translate(-50%, -50%); border-radius: 2px; background: var(--term-border);
+    }
+    .gutter:hover, .gutter.drag { background: var(--accent-soft); }
+    .gutter:hover::after, .gutter.drag::after { background: var(--accent); }
+
+    /* ---- The render rail (signature; also resizes resources | output) ---- */
+    .rail { position: relative; background: var(--term-chrome); border-left: 1px solid var(--term-border); border-right: 1px solid var(--term-border); overflow: hidden; cursor: col-resize; }
+    .rail::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-.5px); background: linear-gradient(var(--term-border), transparent); }
+    .rail .pulse {
+      position: absolute; left: 50%; top: -14%; width: 3px; height: 14%; transform: translateX(-1.5px);
+      border-radius: 3px; background: linear-gradient(var(--signal), transparent); opacity: 0;
+    }
+    .rail.fire .pulse { animation: travel var(--dur, 900ms) cubic-bezier(.4,0,.2,1); }
+    @keyframes travel { 0% { top: -14%; opacity: 0 } 12% { opacity: 1 } 88% { opacity: 1 } 100% { top: 100%; opacity: 0 } }
+    .rail .tick { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; font-family: var(--mono); font-size: 10px; color: var(--term-dim); writing-mode: vertical-rl; letter-spacing: .14em; text-transform: uppercase; }
+
+    /* ---- Output tabs ---- */
+    .tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 0 6px; background: var(--term-chrome); border-bottom: 1px solid var(--term-border); flex: 0 0 auto; }
+    .tab {
+      appearance: none; border: 0; background: none; cursor: pointer; white-space: nowrap;
+      font: 11px/1 var(--mono); color: var(--term-dim); padding: 11px 10px 9px; border-bottom: 2px solid transparent;
+    }
+    .tab:hover { color: var(--term-fg); }
+    .tab[aria-selected="true"] { color: var(--term-fg); border-bottom-color: var(--accent); }
+    .tab .n { color: var(--accent); opacity: .85; }
+    .tab[aria-disabled="true"] { opacity: .3; cursor: default; }
+    .tab:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; border-radius: 4px; }
+
+    /* ---- Output (read-only, line-numbered, highlighted) ---- */
+    .output { flex: 1; min-height: 0; overflow: auto; background: var(--term-bg); }
+    .output:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+    .code { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; padding: 6px 0; min-width: max-content; }
+    .code .ln { display: flex; white-space: pre; }
+    /* Gutter width tracks the max line count (via --gw = digit count) + padding.
+       box-sizing is border-box, so the +26px covers the 24px padding + 1px border
+       and keeps the code column from shifting when line numbers gain a digit. */
+    .code .ln .g { position: sticky; left: 0; flex: 0 0 auto; min-width: calc(var(--gw, 3) * 1ch + 26px); padding: 0 12px; text-align: right; color: var(--term-dim); opacity: .55; user-select: none; background: var(--term-bg); border-right: 1px solid var(--term-border); }
+    .code .ln .t { flex: 1; padding: 0 16px; color: var(--term-fg); }
+    /* Ctrl/Cmd-hover go-to-definition affordance: underline the word a click would open */
+    .code .godef { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; cursor: pointer; }
+    .code .ln.add { background: var(--signal-weak); }
+    .code .ln.add .g { color: var(--signal); opacity: 1; background: color-mix(in srgb, var(--signal) 15%, var(--term-bg)); border-right-color: color-mix(in srgb, var(--signal) 55%, var(--term-border)); }
+    .code .ln.add.glow { animation: glowkeep 1200ms ease-out forwards; }
+    @keyframes glowkeep { from { background: color-mix(in srgb, var(--signal) 30%, transparent); } to { background: var(--signal-weak); } }
+    /* render provenance: click a config line to see which template snippet produced it */
+    /* one-time discoverability tip above the output (dismissed per browser) */
+    .outhint { display: flex; align-items: center; gap: 7px; padding: 5px 12px; font: 11px/1.4 var(--mono); color: var(--term-dim); background: var(--term-bg-soft); border-bottom: 1px solid var(--term-border); }
+    .outhint[hidden] { display: none; }
+    .outhint .oh-sep { color: var(--term-border); }
+    .outhint kbd { font-family: var(--mono); font-size: 10px; color: var(--term-fg); background: var(--term-chrome); border: 1px solid var(--term-border); border-radius: 4px; padding: 1px 5px; }
+    .outhint-x { margin-left: auto; appearance: none; border: 0; background: none; cursor: pointer; color: var(--term-dim); font-size: 14px; line-height: 1; padding: 0 4px; border-radius: 4px; }
+    .outhint-x:hover { color: var(--accent); background: var(--accent-soft); }
+    .outhint-x:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+
+    .code.prov .ln[data-ln] { cursor: pointer; }
+    .code.prov .ln[data-ln]:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+    .code .ln.sec-active { background: var(--accent-soft); }
+    .code .ln.sec-active:hover { background: var(--accent-soft); }
+    .code .ln.sec-active .g { color: var(--accent); opacity: 1; background: color-mix(in srgb, var(--accent) 12%, var(--term-bg)); border-right-color: color-mix(in srgb, var(--accent) 45%, var(--term-border)); }
+    /* provenance strip: panel chrome above the scroll area, cloned from .stale/.schemawarn */
+    #prov[hidden] { display: none; }
+    #prov { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 7px 14px; font-family: var(--mono); font-size: 12px; flex: 0 0 auto; color: var(--term-fg); background: var(--surface-2); border-bottom: 1px solid var(--border); }
+    #prov .prov-tag { flex: 0 0 auto; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; padding: 2px 6px; border-radius: 5px; color: #fff; background: var(--accent); }
+    #prov .prov-sum { color: var(--term-fg); word-break: break-word; }
+    #prov .prov-sum .sep { color: var(--term-dim); padding: 0 2px; }
+    #prov .prov-crumb { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; padding: 1px 7px; border-radius: 5px; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border-strong); cursor: pointer; }
+    #prov .prov-crumb:hover { color: var(--accent-2); border-color: var(--accent-2); }
+    #prov .prov-crumb.active { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 600; }   /* the template you're currently viewing */
+    #prov .prov-crumb:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+    #prov .prov-arrow { flex: 0 0 auto; color: var(--term-dim); font-size: 12px; }
+    #prov .prov-x { margin-left: auto; flex: 0 0 auto; font-family: var(--mono); font-size: 15px; line-height: 1; color: var(--term-dim); background: none; border: none; cursor: pointer; padding: 0 4px; }
+    #prov .prov-x:hover { color: var(--term-fg); }
+    #prov .prov-x:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 4px; }
+    /* highlight token classes */
+    .hl-cmt { color: var(--t-cmt); font-style: italic; }
+    .hl-sec { color: var(--t-kw); font-weight: 600; }
+    .hl-kw  { color: var(--t-kw); }
+    .hl-fn  { color: var(--t-fn); }
+    .hl-num { color: var(--t-num); }
+    .hl-str { color: var(--t-str); }
+    .empty { padding: 16px 16px; color: var(--term-dim); font-family: var(--mono); font-size: 12px; }
+    /* resources inspector (bucketing report) */
+    .tab .warn-n { color: var(--warn); margin-left: 5px; font-weight: 600; }
+    .inspector { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; padding: 10px 16px; min-width: max-content; }
+    .insp-h { color: var(--term-fg); font-weight: 600; letter-spacing: .02em; margin: 14px 0 4px; }
+    .insp-h:first-child { margin-top: 0; }
+    .insp-h.drop { color: var(--warn); }
+    .insp-b { display: flex; align-items: baseline; gap: 8px; margin-top: 7px; }
+    .insp-key { color: var(--t-var); }
+    .insp-c { color: var(--term-dim); font-size: 11px; }
+    .insp-o { color: var(--term-dim); padding-left: 18px; }
+    .insp-o b { color: var(--term-fg); font-weight: 600; }
+    .insp-o.drop { color: var(--warn); padding-left: 0; }
+    .insp-o.drop b { color: var(--warn); }
+    .insp-o.jump { cursor: pointer; border-radius: 4px; }
+    .insp-o.jump:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+    .insp-why { color: var(--term-dim); }
+    /* render trace */
+    .trace { font-family: var(--mono); font-size: 12px; padding: 10px 16px; min-width: max-content; }
+    .trace-h { color: var(--term-dim); margin-bottom: 8px; }
+    .trace-row { display: grid; grid-template-columns: minmax(220px, 24em) 3em 5.5em minmax(80px, 1fr); align-items: center; gap: 10px; padding: 2px 0; }
+    .trace-row.jump { cursor: pointer; border-radius: 4px; }
+    .trace-row.jump:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+    .trace-name { color: var(--t-var); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .trace-count { color: var(--term-dim); text-align: right; }
+    .trace-ms { color: var(--t-num); text-align: right; }
+    .trace-bar { height: 8px; background: var(--term-chrome); border-radius: 3px; overflow: hidden; }
+    .trace-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+    /* migration report (migrate-check verdict, per Ingress annotation) */
+    .mig { font-family: var(--mono); font-size: 12px; padding: 10px 16px 16px; min-width: 0; max-width: 62em; }
+    .mig-sum { color: var(--term-dim); margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .mig-pill { padding: 1px 7px; border-radius: 10px; font-size: 11px; border: 1px solid currentColor; }
+    .mig-src { margin-bottom: 14px; }
+    .mig-src-h { color: var(--t-var); border-bottom: 1px solid var(--term-border); padding-bottom: 4px; margin-bottom: 8px; }
+    .mig-ing { margin: 0 0 10px 4px; }
+    .mig-ing-h { color: var(--term-fg); margin-bottom: 4px; }
+    .mig-class { color: var(--term-dim); font-size: 11px; }
+    .mig-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0 0 10px; }
+    .mig-badge { flex: 0 0 5.5em; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; text-align: center; padding: 1px 0; border-radius: 3px; border: 1px solid currentColor; }
+    .mig-ann { color: var(--t-key, var(--term-fg)); word-break: break-all; }
+    .mig-note { color: var(--term-dim); padding: 0 0 3px calc(10px + 5.5em + 8px); }
+    .mig-ok { color: var(--t-str); padding-left: 10px; font-size: 11px; }
+    .mig .ok  { color: var(--t-str); }
+    .mig .warn { color: var(--warn); }
+    .mig .bad { color: var(--err); }
+    .mig .dim { color: var(--term-dim); }
+    /* clickable annotation → jump to its definition in the resource editor */
+    .mig-row.jump { cursor: pointer; border-radius: 4px; }
+    .mig-row.jump:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+    .mig-sup { display: flex; flex-wrap: wrap; gap: 5px; padding: 4px 0 2px 10px; }
+    .mig-chip { color: var(--t-str); font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--t-str) 40%, transparent); word-break: break-all; }
+    .mig-chip.jump { cursor: pointer; }
+    .mig-chip.jump:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+    /* certs tab: decoded X.509 summaries (concise, expandable) */
+    .certs { font-family: var(--mono); font-size: 12.5px; padding: 10px 16px 16px; min-width: 0; max-width: 66em; }
+    .cert-file { margin-bottom: 16px; }
+    .cert-file-h { color: var(--t-var); border-bottom: 1px solid var(--term-border); padding-bottom: 4px; margin-bottom: 8px; word-break: break-all; }
+    details.cert { margin: 0 0 5px 4px; }
+    details.cert > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; padding: 3px 6px; border-radius: 5px; }
+    details.cert > summary::-webkit-details-marker { display: none; }
+    details.cert > summary::before { content: '▸'; color: var(--term-dim); font-size: 10px; }
+    details.cert[open] > summary::before { content: '▾'; }
+    details.cert > summary:hover { background: var(--accent-soft); }
+    .cert-cn { color: var(--term-fg); font-weight: 600; word-break: break-all; }
+    .cert-tag { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; }
+    .cert-meta { color: var(--term-dim); font-size: 11px; }
+    .cert-ok { color: var(--t-str); font-size: 11px; }
+    .cert-bad { color: var(--err); font-size: 11px; }
+    .cert-warn { color: var(--warn); font-size: 11px; }
+    .cert-detail { padding: 5px 0 7px 20px; }
+    .cert-row { display: flex; gap: 8px; padding: 1px 0; }
+    .cert-k { flex: 0 0 6.5em; color: var(--term-dim); }
+    .cert-v { color: var(--term-fg); word-break: break-all; min-width: 0; }
+    .cert-key { color: var(--t-num); padding: 2px 0 2px 6px; }
+    .cert-err { color: var(--err); padding: 2px 0 2px 6px; }
+    details.cert-raw { margin: 4px 0 0 4px; }
+    details.cert-raw > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; color: var(--term-dim); padding: 3px 6px; border-radius: 5px; }
+    details.cert-raw > summary::-webkit-details-marker { display: none; }
+    details.cert-raw > summary::before { content: '▸'; font-size: 10px; margin-right: 5px; }
+    details.cert-raw[open] > summary::before { content: '▾'; }
+    details.cert-raw > summary:hover { color: var(--accent); background: var(--accent-soft); }
+    details.cert-raw > pre { margin: 4px 0 0; padding: 8px 10px; background: var(--term-bg); border: 1px solid var(--term-border); border-radius: 6px; color: var(--term-fg); font-size: 11.5px; line-height: 1.45; white-space: pre; overflow-x: auto; max-height: 340px; overflow-y: auto; }
+    /* annotation-occurrence cycler (bottom of the Resources panel) */
+    .col.res { position: relative; }
+    .anno-cycler { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 6; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 11px; background: var(--term-chrome); border: 1px solid var(--term-border); border-radius: 6px; font-family: var(--mono); font-size: 11px; box-shadow: 0 2px 10px rgba(0,0,0,.28); }
+    .anno-cycler[hidden] { display: none; }
+    .anno-cycler .ac-key { color: var(--t-var); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+    .anno-cycler .ac-count { color: var(--term-dim); flex: 0 0 auto; }
+    .anno-cycler .ac-nav, .anno-cycler .ac-x { appearance: none; border: 0; background: none; cursor: pointer; color: var(--term-dim); font-size: 15px; line-height: 1; padding: 1px 7px; border-radius: 4px; }
+    .anno-cycler .ac-nav:hover, .anno-cycler .ac-x:hover { color: var(--accent); background: var(--accent-soft); }
+    /* nested Scriggo template tokens (overlay inside the config's YAML block scalars) */
+    .cm-content .tpl-delim { color: var(--t-d); }
+    .cm-content .tpl-ctrl  { color: var(--t-ctrl); font-weight: 600; }
+    .cm-content .tpl-fn    { color: var(--t-fn); }
+    .cm-content .tpl-var   { color: var(--t-var); }
+    .cm-content .tpl-str   { color: var(--t-str); }
+    .cm-content .tpl-num   { color: var(--t-num); }
+    .cm-content .tpl-comment { color: var(--t-cmt); font-style: italic; }
+
+    /* ---- Error banners ---- */
+    .banner { display: none; padding: 9px 14px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid; gap: 8px; align-items: flex-start; flex: 0 0 auto; }
+    .banner.show { display: flex; }
+    .banner.jump { cursor: pointer; }
+    .banner.jump:hover { filter: brightness(1.12); }
+    .banner.jump:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+    .banner .k { flex: 0 0 auto; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; padding: 2px 6px; border-radius: 5px; color: #fff; }
+    .banner .m { flex: 1; white-space: pre-wrap; word-break: break-word; }
+    .banner.parse, .banner.render { color: var(--err); background: color-mix(in srgb, var(--err) 12%, transparent); border-color: color-mix(in srgb, var(--err) 32%, transparent); }
+    .banner.parse .k, .banner.render .k { background: #a5264a; }
+    .banner.compile { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: color-mix(in srgb, var(--warn) 32%, transparent); }
+    .banner.compile .k { background: #7a5514; }
+    .stale { display: none; padding: 5px 14px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); border-bottom: 1px solid var(--term-border); flex: 0 0 auto; }
+    .stale.show { display: block; }
+    /* schema check: a non-blocking per-field warning shown alongside valid output */
+    .schemawarn { display: none; padding: 8px 14px; font-family: var(--mono); font-size: 12px; gap: 8px; align-items: baseline; flex-wrap: wrap; flex: 0 0 auto; border-bottom: 1px solid; color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: color-mix(in srgb, var(--warn) 32%, transparent); }
+    .schemawarn.show { display: flex; }
+    .schemawarn .k { flex: 0 0 auto; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; padding: 2px 6px; border-radius: 5px; color: #fff; background: #7a5514; }
+    .schemawarn .m { white-space: pre-wrap; word-break: break-word; }
+    .schemawarn .scope { flex-basis: 100%; color: var(--term-dim); font-size: 10.5px; }
+    .schemawarn .scope code { color: var(--term-dim); }
+    /* reload-impact strip: would deploying this render reload HAProxy, or apply over the runtime socket? */
+    .reload { display: none; padding: 7px 14px; font-family: var(--mono); font-size: 12px; gap: 8px; align-items: baseline; flex-wrap: wrap; flex: 0 0 auto; border-bottom: 1px solid var(--term-border); background: var(--term-chrome); }
+    .reload.show { display: flex; }
+    .reload .k { flex: 0 0 auto; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; padding: 2px 6px; border-radius: 5px; color: #fff; }
+    .reload.rl-runtime .k { background: var(--t-prompt); }
+    .reload.rl-reload .k { background: #a5264a; }
+    .reload.rl-none .k { background: var(--term-dim); }
+    .reload .m { color: var(--term-fg); word-break: break-word; }
+    .reload .m .rl-hit { color: var(--term-dim); }
+    .reload .m .rl-hit.reload { color: var(--warn); }
+    .reload .rlbase { margin-left: auto; flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; color: var(--term-dim); font-size: 10.5px; }
+
+    /* ---- Privacy footer ---- */
+    footer.privacy {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+      padding: 7px 16px; font-family: var(--mono); font-size: 11px; color: var(--muted);
+      background: var(--surface); border-top: 1px solid var(--border);
+    }
+    footer.privacy .lock { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--t-str); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-str) 18%, transparent); }
+    footer.privacy strong { color: var(--fg); font-weight: 600; }
+    footer.privacy .sep { color: var(--border-strong); }
+
+    /* ---- Modal (Try out) ---- */
+    .modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 20px; background: color-mix(in srgb, #000 55%, transparent); }
+    .modal[hidden] { display: none; }
+    .modal-card { max-width: 480px; width: 100%; max-height: min(88vh, 680px); overflow-y: auto; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; padding: 20px 22px; box-shadow: 0 24px 60px -24px rgba(0,0,0,.6); }
+    .modal-card h3 { margin: 0 0 14px; font-size: 19px; font-weight: 700; letter-spacing: -.01em; color: var(--fg); }
+    .modal-card p { margin: 0 0 10px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+    .modal-card strong { color: var(--fg); }
+    .modal-card code { font-family: var(--mono); font-size: 12px; color: var(--accent); background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; }
+    .modal-card pre { font-family: var(--mono); font-size: 12px; color: var(--term-fg); background: var(--term-bg); border: 1px solid var(--term-border); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .modal-lbl { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 14px 0 6px; }
+    .modal-ref { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 12.5px; }
+    .modal-ref dt { font-family: var(--mono); color: var(--accent); white-space: nowrap; }
+    .modal-ref dd { margin: 0; color: var(--muted); line-height: 1.45; }
+    .modal-ref dd code { font-size: 11px; }
+    .modal-warn { color: var(--warn) !important; font-size: 12px !important; }
+    .modal-warn .wi { font-size: 9px; vertical-align: 1px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+    button.btn.primary { background: linear-gradient(135deg, #1f63a3, #0b3a66); color: #fff; border-color: transparent; }
+    button.btn.primary:hover { color: #fff; background: linear-gradient(135deg, #2a6fae, #134a82); border-color: transparent; transform: translateY(-1px); }
+    /* ---- Help modal (two onboarding scenarios) ---- */
+    .modal-wide { max-width: 620px; }
+    .help-scenario { border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px 4px; margin: 0 0 14px; background: var(--accent-soft); }
+    .help-scenario h4 { margin: 0 0 10px; font-size: 15px; font-weight: 700; color: var(--fg); }
+    .help-scenario ol { margin: 0 0 8px; padding-left: 20px; }
+    .help-scenario li { font-size: 13px; line-height: 1.5; color: var(--muted); margin-bottom: 8px; }
+    .help-scenario li strong, .help-scenario li em { color: var(--fg); font-style: normal; }
+    .help-scenario pre { margin: 6px 0 4px; }
+    .help-scenario > p { margin: 0 0 10px; font-size: 12.5px; color: var(--muted); }
+    .help-scenario .modal-ref { margin: 0 0 10px; }
+    .help-export-h { margin: 18px 0 8px; font-size: 15px; font-weight: 700; color: var(--fg); }
+    .help-sub { font-family: var(--mono); font-size: 11px; color: var(--accent); margin: 8px 0 4px !important; }
+    .help-note { font-size: 12px !important; color: var(--muted); }
+
+    /* ---- Boot progress bar (wasm download) ---- */
+    .boot { height: 3px; flex: 0 0 auto; background: var(--surface); overflow: hidden; }
+    .boot.done { display: none; }
+    .bootfill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .15s ease; }
+    .boot.indeterminate .bootfill { width: 40%; animation: bootslide 1.1s ease-in-out infinite; }
+    @keyframes bootslide { 0% { margin-left: -45%; } 100% { margin-left: 105%; } }
+
+    /* ---- Panel maximize ---- */
+    .bar .maxbtn { margin-left: auto; appearance: none; border: 0; background: none; cursor: pointer; color: var(--term-dim); font-size: 14px; line-height: 1; padding: 3px 6px; border-radius: 5px; }
+    .bar .maxbtn:hover { color: var(--accent); background: var(--accent-soft); }
+    .bar .maxbtn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+    /* back/forward nav: each button appears (right-aligned, before maximize) when
+       that direction has history — from a jump (provenance/trace/resource) or an
+       Alt+←/→ / mouse thumb-button navigation. */
+    .bar .nav-tools { margin-left: auto; display: inline-flex; gap: 2px; align-items: center; }
+    .bar .navback { display: none; appearance: none; border: 0; background: none; cursor: pointer; color: var(--term-dim); font-size: 13px; line-height: 1; padding: 3px 6px; border-radius: 5px; }
+    .bar .navback.show { display: inline-flex; align-items: center; }
+    .bar .navback:hover { color: var(--accent); background: var(--accent-soft); }
+    .bar .navback:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+    .bar .nav-tools:has(.navback.show) + .maxbtn { margin-left: 4px; }
+    /* output toolbar (wrap / copy / download) */
+    .bar .out-tools { margin-left: auto; display: inline-flex; gap: 3px; align-items: center; }
+    .bar .out-tools ~ .maxbtn { margin-left: 4px; }
+    .toolbtn { appearance: none; border: 1px solid transparent; background: none; cursor: pointer; color: var(--term-dim); font: 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .05em; padding: 4px 7px; border-radius: 5px; }
+    .toolbtn:hover { color: var(--accent); background: var(--accent-soft); }
+    .toolbtn[aria-pressed="true"] { color: var(--accent); border-color: var(--border-strong); }
+    .toolbtn.done { color: var(--t-str); }
+    .toolbtn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+    .output.wrap .code { min-width: 0; }
+    .output.wrap .code .ln .t { white-space: pre-wrap; word-break: break-word; }
+    main[data-max] { grid-template-columns: 1fr; }
+    main[data-max="config"] .col:not(.config), main[data-max="config"] .gutter, main[data-max="config"] .rail,
+    main[data-max="res"] .col:not(.res), main[data-max="res"] .gutter, main[data-max="res"] .rail,
+    main[data-max="out"] .col:not(.out), main[data-max="out"] .gutter, main[data-max="out"] .rail { display: none; }
+
+    /* ---- Responsive: stack the panels, drop the resize gutters ---- */
+    @media (max-width: 900px) {
+      header { flex-wrap: wrap; height: auto; padding: 10px 14px; gap: 10px 14px; }
+      .wordmark { flex: 1 0 100%; }
+      .ctrl { flex: 1 1 auto; }
+      .ctrl select { flex: 1 1 auto; }
+      main { grid-template-columns: 1fr; }
+      .gutter { display: none; }
+      .col { border-right: 0; border-bottom: 1px solid var(--term-border); min-height: 46vh; }
+      .col.out { min-height: 60vh; }
+      .rail { height: 28px; border-left: 0; border-right: 0; border-bottom: 1px solid var(--term-border); cursor: default; }
+      .rail::before { left: 0; right: 0; top: 50%; bottom: auto; width: auto; height: 1px; background: linear-gradient(90deg, var(--term-border), transparent); }
+      .rail .pulse { top: 50%; left: -14%; width: 14%; height: 3px; transform: translateY(-1.5px); background: linear-gradient(90deg, var(--signal), transparent); }
+      .rail.fire .pulse { animation: travelx var(--dur, 900ms) cubic-bezier(.4,0,.2,1); }
+      @keyframes travelx { 0% { left: -14%; opacity: 0 } 12% { opacity: 1 } 88% { opacity: 1 } 100% { left: 100%; opacity: 0 } }
+      .rail .tick { writing-mode: horizontal-tb; }
+    }
+    @media (max-width: 560px) {
+      .ctrl label { display: none; }
+      .wordmark small { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .rail.fire .pulse { animation: none; opacity: .8; }
+      .code .ln.add.glow { animation: none; }
+      .chip.busy .led { animation: none; }
+      button.btn { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="wordmark"><span class="mark">{%%}</span><b>HAPTIC</b><small>playground</small></span>
+    <div class="ctrl"><label for="preset">Preset</label>
+      <select id="preset" title="Prepopulate the editors"></select></div>
+    <div class="ctrl"><label for="ctrlver">Version</label>
+      <select id="ctrlver" title="Controller / chart version" disabled><option>local</option></select></div>
+    <div class="ctrl"><label for="hpver">HAProxy</label>
+      <select id="hpver" title="Target HAProxy version">
+        <option>3.0</option><option>3.1</option><option>3.2</option><option>3.3</option><option selected>3.4</option>
+      </select></div>
+    <span class="spacer"></span>
+    <button id="help" class="btn" title="How to use the playground with your own config and resources.">Help</button>
+    <button id="tryout" class="btn" title="Download a script that runs this rendered config locally in Docker/Podman, or as a Pod in your Kubernetes cluster.">Try out</button>
+    <button id="share" class="btn" title="Copy a shareable link. It embeds your full input, including any secrets you pasted — keep the link private.">Share</button>
+    <span class="chip" id="chip" role="status" aria-live="polite"><span class="led"></span><span id="chiptext">booting…</span></span>
+  </header>
+
+  <div id="boot" class="boot" role="progressbar" aria-label="Loading engine"><div id="bootfill" class="bootfill"></div></div>
+
+  <main>
+    <section class="col config">
+      <h2 class="bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Templates <code>HAProxyTemplateConfig</code><span class="nav-tools"><button class="navback" id="config-back" type="button" title="Back to position before the jump (Alt+← or mouse back button)" aria-label="Back">↩</button><button class="navback" id="config-fwd" type="button" title="Forward (Alt+→ or mouse forward button)" aria-label="Forward">↪</button></span><button class="maxbtn" data-panel="config" type="button" title="Maximize panel" aria-label="Maximize Templates panel" aria-pressed="false">⤢</button></h2>
+      <div class="editor" id="ed-config"><div class="loading">loading editor…</div></div>
+    </section>
+    <div class="gutter" id="gutter1" title="Drag to resize · double-click to reset" role="separator" aria-orientation="vertical" aria-hidden="true"></div>
+    <section class="col res">
+      <h2 class="bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Resources <span class="badge" id="res-hint">or paste kubectl -o yaml</span><span class="nav-tools"><button class="navback" id="res-back" type="button" title="Back to position before the jump (Alt+← or mouse back button)" aria-label="Back">↩</button><button class="navback" id="res-fwd" type="button" title="Forward (Alt+→ or mouse forward button)" aria-label="Forward">↪</button></span><button class="maxbtn" data-panel="res" type="button" title="Maximize panel" aria-label="Maximize Resources panel" aria-pressed="false">⤢</button></h2>
+      <div class="editor" id="ed-res"><div class="loading">loading editor…</div></div>
+      <div class="anno-cycler" id="anno-cycler" hidden>
+        <span class="ac-key" id="ac-key"></span>
+        <span class="ac-count" id="ac-count"></span>
+        <button class="ac-nav" id="ac-prev" type="button" title="Previous occurrence" aria-label="Previous occurrence">‹</button>
+        <button class="ac-nav" id="ac-next" type="button" title="Next occurrence" aria-label="Next occurrence">›</button>
+        <button class="ac-x" id="ac-close" type="button" title="Close" aria-label="Close">×</button>
+      </div>
+    </section>
+    <div class="rail" id="rail" title="Drag to resize · double-click to reset" role="separator" aria-orientation="vertical"><div class="pulse" aria-hidden="true"></div><div class="tick" id="tick" aria-hidden="true">idle</div></div>
+    <section class="col out">
+      <h2 class="bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Rendered output<span class="out-tools"><button id="wrapbtn" class="toolbtn" type="button" title="Toggle word wrap" aria-pressed="false">wrap</button><button id="copybtn" class="toolbtn" type="button" title="Copy this tab">copy</button><button id="dlbtn" class="toolbtn" type="button" title="Download this tab">download</button></span><button class="maxbtn" data-panel="out" type="button" title="Maximize panel" aria-label="Maximize output panel" aria-pressed="false">⤢</button></h2>
+      <div class="stale" id="stale" role="status">showing last working render — fix the error to update</div>
+      <div class="banner" id="banner" role="alert"><span class="k" id="bk"></span><span class="m" id="bm"></span></div>
+      <div class="schemawarn" id="schemawarn" role="status"><span class="k">schema</span><span class="m" id="swm"></span><span class="scope">HAProxy per-field validation — a subset of <code>haproxy -c</code>; it won't catch undefined backends, unknown keywords, or global/defaults errors.</span></div>
+      <div class="reload" id="reload" role="status"><span class="k" id="rlk"></span><span class="m" id="rlm"></span><span class="rlbase"><span id="rlbaselbl"></span><button id="pinbtn" class="toolbtn" type="button"></button></span></div>
+      <div class="tabs" id="tabs" role="tablist" aria-label="Rendered output files"></div>
+      <div class="outhint" id="outhint" hidden>click any line to jump to the template that produced it<span class="oh-sep">·</span><kbd>Ctrl</kbd>-click a keyword for its docs<button class="outhint-x" id="outhint-x" type="button" aria-label="Dismiss this tip" title="Dismiss">×</button></div>
+      <div class="prov" id="prov" hidden role="status"></div>
+      <div class="output" id="output" role="tabpanel" tabindex="0"><div class="empty">Rendering…</div></div>
+    </section>
+  </main>
+
+  <footer class="privacy">
+    <span class="lock" aria-hidden="true"></span>
+    <span><strong>Runs entirely in your browser.</strong> Nothing is uploaded — no server ever sees your input, so you can paste real secrets and any Kubernetes resources safely.</span>
+  </footer>
+
+  <div id="tryout-modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="tryout-title">
+      <h3 id="tryout-title">Try this config</h3>
+      <p><code>haptic-tryout.sh</code> bundles the rendered <code>haproxy.cfg</code> with every map, error
+         file, and certificate it references, then runs it locally or in your cluster.</p>
+      <pre>chmod +x haptic-tryout.sh
+./haptic-tryout.sh [command]     # no command: interactive menu</pre>
+      <div class="modal-lbl">Commands</div>
+      <dl class="modal-ref">
+        <dt>check</dt><dd>validate the config (<code>haproxy -c</code>)</dd>
+        <dt>run</dt><dd>serve it in a local Docker or Podman container</dd>
+        <dt>k8s</dt><dd>launch it as a Pod via <code>kubectl</code></dd>
+        <dt>emit-netpol</dt><dd>print an allow-egress NetworkPolicy for the Pod</dd>
+        <dt>files</dt><dd>write the bundled files only</dd>
+      </dl>
+      <div class="modal-lbl">Environment variables</div>
+      <dl class="modal-ref">
+        <dt>HAPTIC_TRYOUT_DIR</dt><dd>output directory (default <code>./haptic-tryout</code>)</dd>
+        <dt>HAPTIC_TRYOUT_NAMESPACE</dt><dd>namespace for <code>k8s</code></dd>
+        <dt>HAPTIC_TRYOUT_LABELS</dt><dd>extra Pod labels (<code>k=v,k=v</code>) to match a NetworkPolicy</dd>
+      </dl>
+      <p class="modal-warn">Static snapshot: the HAPTIC controller keeps backend servers in sync as pods
+         change; this script does not, so a restarted target pod returns 503.</p>
+      <div class="modal-actions">
+        <button id="tryout-cancel" class="btn" type="button">Cancel</button>
+        <button id="tryout-download" class="btn primary" type="button">Download script</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="help-modal" class="modal" hidden>
+    <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <h3 id="help-title">How to use the playground</h3>
+      <p>The right panel is the real <code>haproxy.cfg</code> the HAPTIC controller would deploy —
+         rendered in your browser from the <strong>Templates</strong> (left) and
+         <strong>Resources</strong> (middle) panels. It works with Ingress (plain or with your
+         controller's annotations), Gateway API, or a custom CRD. Load a preset from
+         <strong>Start</strong>, or bring your own:</p>
+
+      <section class="help-scenario">
+        <h4>You already run HAPTIC — test a template change</h4>
+        <p>Export your live config into <strong>Templates</strong> and edit it:</p>
+        <pre>kubectl get htplcfg -A -o yaml</pre>
+        <p>Then paste the resources it watches into <strong>Resources</strong> (commands below) and diff
+           the rendered output against your current <code>haproxy.cfg</code> — before you apply the change.</p>
+      </section>
+
+      <section class="help-scenario">
+        <h4>You don't run HAPTIC yet — see what it produces</h4>
+        <p>In <strong>Start</strong>, pick the config that matches your setup, then paste your resources
+           into <strong>Resources</strong> (commands below):</p>
+        <dl class="modal-ref">
+          <dt>Ingress</dt><dd>plain, or with your controller's annotations — <em>Ingress · NGINX-Ingress</em>, <em>· HAProxy-Ingress</em>, or <em>· HAProxyTech</em></dd>
+          <dt>Gateway API</dt><dd>GatewayClass, Gateway, HTTPRoute, …</dd>
+          <dt>Custom CRD</dt><dd>any resource, via an untyped example</dd>
+        </dl>
+        <p>The <strong>resources</strong> tab then shows what each object bucketed into (and why anything
+           was dropped); the <strong>migration</strong> tab shows how each annotation maps to HAProxy.</p>
+      </section>
+
+      <h4 class="help-export-h">Export your resources into the Resources panel</h4>
+      <p class="help-sub">Ingress</p>
+      <pre>kubectl get ingress,service,endpointslices,secrets -A -o yaml</pre>
+      <p class="help-sub">Gateway API</p>
+      <pre>kubectl get gatewayclass,gateway,httproute,service,endpointslices,secrets -A -o yaml</pre>
+      <p class="help-note">Match the kinds to your <code>watchedResources</code> — add
+         <code>grpcroutes</code>, <code>tcproutes</code>, <code>tlsroutes</code>, or your own CRD if you
+         use them. Everything stays in your browser; nothing is uploaded, so real secrets and cluster
+         data are safe to paste.</p>
+
+      <h4 class="help-export-h">Run it yourself (nothing leaves your browser)</h4>
+      <p>Once this page has loaded, the playground makes no further network requests — it renders
+         in WebAssembly on your machine. Confirm it: open your browser's developer tools, watch the
+         <strong>Network</strong> tab, and edit a config — nothing is sent.</p>
+      <p>To host the whole thing yourself, build the self-contained static bundle from source
+         (needs Go, Helm, and yq) and serve the folder:</p>
+      <pre>git clone https://gitlab.com/haproxy-haptic/haptic
+cd haptic
+./scripts/build-playground.sh ./playground-local dev
+cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
+      <p>Then open <code>http://localhost:8080</code>. The bundle is plain static files — HTML,
+         JavaScript, and WebAssembly with no third-party requests — so any static file server works.</p>
+
+      <h4 class="help-export-h">Getting around</h4>
+      <dl class="modal-ref">
+        <dt>Click an output line</dt><dd>jump to the template snippet that produced it; a breadcrumb shows the full include chain</dd>
+        <dt>Ctrl / ⌘-click a keyword</dt><dd>open its docs — HAProxy directives to the config manual, Scriggo functions to the HAPTIC reference</dd>
+        <dt>Alt + ← / →</dt><dd>step back and forward through jump history (mouse thumb buttons work too)</dd>
+        <dt>Rendered tabs</dt><dd><em>status</em>, <em>applied</em>, <em>resources</em>, and <em>trace</em> are all clickable back to their source</dd>
+        <dt>⤢ / Esc</dt><dd>maximize a panel, then Esc to restore</dd>
+      </dl>
+      <div class="modal-actions">
+        <button id="help-close" class="btn primary" type="button">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { makeEditors, setSchemaBundle, haproxyTokens } from './editor.js';
+    import { buildTryoutScript } from './tryout.js';
+
+    const $ = (id) => document.getElementById(id);
+
+    /* ---------- line diff (LCS) — bounded so huge configs never freeze the tab ---------- */
+    function changedLines(prev, next) {
+      const a = prev, b = next, n = a.length, m = b.length;
+      if (n > 2000 || m > 2000) return new Set();   // skip attribution on very large output
+      const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+      for (let i = n - 1; i >= 0; i--)
+        for (let j = m - 1; j >= 0; j--)
+          dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      const added = new Set();
+      let i = 0, j = 0;
+      while (i < n && j < m) {
+        if (a[i] === b[j]) { i++; j++; }
+        else if (dp[i + 1][j] >= dp[i][j + 1]) { i++; }
+        else { added.add(j); j++; }
+      }
+      while (j < m) { added.add(j); j++; }
+      return added;
+    }
+
+    /* ---------- syntax highlighting for the read-only output pane ---------- */
+    const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    // hlHaproxy builds the output HTML from the SAME tokenizer the template editor
+    // uses (editor.js haproxyTokens), so left and right highlight identically.
+    function hlHaproxy(line) {
+      let html = '', pos = 0;
+      for (const t of haproxyTokens(line)) {
+        html += esc(line.slice(pos, t.start)) + `<span class="hl-${t.cls}">${esc(line.slice(t.start, t.end))}</span>`;
+        pos = t.end;
+      }
+      return html + esc(line.slice(pos));
+    }
+    // hlYaml highlights a YAML line (keys, scalars, comments) for the status /
+    // applied tabs, which are marshaled Kubernetes objects. Reuses the shared hl-*
+    // classes so it matches the rest of the output pane.
+    function hlYamlVal(v) {
+      const lead = v.match(/^\s*/)[0], core = v.slice(lead.length);
+      if (!core) return esc(v);
+      let cls = 'str';
+      if (/^-?\d+(?:\.\d+)?$/.test(core)) cls = 'num';
+      else if (/^(?:true|false|null|~|True|False|Null|yes|no)$/.test(core)) cls = 'num';
+      return esc(lead) + `<span class="hl-${cls}">${esc(core)}</span>`;
+    }
+    function hlYaml(line) {
+      if (/^\s*#/.test(line)) return `<span class="hl-cmt">${esc(line)}</span>`;   // incl the "# <name>" block headers
+      let m = /^(\s*(?:-\s+)?)([A-Za-z0-9_.\-\/]+)(:)(\s|$)(.*)$/.exec(line);       // key: value (colon before space/EOL, so http:// stays a value)
+      if (m) return esc(m[1]) + `<span class="hl-kw">${esc(m[2])}</span>` + esc(m[3] + m[4]) + hlYamlVal(m[5]);
+      m = /^(\s*-\s+)(.*)$/.exec(line);                                             // bare list item "- value"
+      if (m) return esc(m[1]) + hlYamlVal(m[2]);
+      return hlYamlVal(line);
+    }
+    function highlightLine(line, lang) {
+      if (lang === 'haproxy') return hlHaproxy(line);
+      if (lang === 'yaml') return hlYaml(line);
+      if (line.trimStart().startsWith('#')) return `<span class="hl-cmt">${esc(line)}</span>`;
+      return esc(line);
+    }
+    const OUT_LANG = { 'haproxy.cfg': 'haproxy', maps: 'map', files: 'plain', certs: 'plain', status: 'yaml', applied: 'yaml' };
+
+    /* ---------- resizable input panels (persisted) ---------- */
+    const RS_KEY = 'haptic-playground:cols';
+    function initResizers() {
+      const main = document.querySelector('main');
+      const wide = () => window.matchMedia('(min-width: 901px)').matches;
+      try { const s = JSON.parse(localStorage.getItem(RS_KEY) || '{}');
+        if (s.w1) main.style.setProperty('--w1', s.w1); if (s.w2) main.style.setProperty('--w2', s.w2); } catch (e) { /* ignore */ }
+      const cs = () => getComputedStyle(main);
+      const save = () => { try { localStorage.setItem(RS_KEY, JSON.stringify({ w1: cs().getPropertyValue('--w1').trim(), w2: cs().getPropertyValue('--w2').trim() })); } catch (e) { /* quota */ } };
+      const wire = (handle, varName, leftSel) => {
+        handle.addEventListener('pointerdown', (e) => {
+          if (!wide()) return;
+          e.preventDefault(); handle.setPointerCapture(e.pointerId); handle.classList.add('drag');
+          const startW = document.querySelector(leftSel).getBoundingClientRect().width, startX = e.clientX;
+          // ponytail: clamp both the dragged panel and what's left for output to a sane minimum.
+          const cap = main.getBoundingClientRect().width - 320;
+          const move = (ev) => { const w = Math.max(180, Math.min(startW + (ev.clientX - startX), cap)); main.style.setProperty(varName, w + 'px'); };
+          const up = () => { handle.releasePointerCapture(e.pointerId); handle.classList.remove('drag');
+            handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up); save(); };
+          handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up);
+        });
+        handle.addEventListener('dblclick', () => { if (!wide()) return; main.style.removeProperty(varName); save(); });
+      };
+      wire($('gutter1'), '--w1', '.col.config');   // drag widens Templates, narrows Resources
+      wire($('rail'), '--w2', '.col.res');         // drag widens Resources, narrows Output
+    }
+
+    /* ---------- state ---------- */
+    const worker = new Worker('./playground.worker.js');
+    let ready = false, seq = 0, shown = -1, schemas = '', schemasUrl = null;
+    const CUSTOM_OPT = '__custom__';       // preset dropdown value for an edited/restored config
+    let loadingPreset = false;             // true while a preset/state load drives the editors (suppresses the custom switch)
+    const noGlowSeqs = new Set();          // render seqs whose output must NOT glow (preset loads, version flips)
+    let suppressNextGlow = true;           // set before a render that should skip attribution
+    let lastRes = null;                    // last successful render result (carries loadCount for e2e)
+    let prevTabs = {}, activeTab = 'haproxy.cfg', lastReport = [], lastTrace = [], lastMigration = null;
+
+    function setChip(text, cls) { $('chip').className = 'chip ' + (cls || ''); $('chiptext').textContent = text; }
+    function fireRail(ms) {
+      const rail = $('rail');
+      rail.style.setProperty('--dur', Math.min(1600, Math.max(320, ms * 6)) + 'ms');
+      rail.classList.remove('fire'); void rail.offsetWidth; rail.classList.add('fire');
+      $('tick').textContent = ms + ' ms';
+    }
+
+    const TAB_KEYS = ['haproxy.cfg', 'maps', 'files', 'certs', 'status', 'applied', 'resources', 'trace', 'migration'];
+    const MIG_ATTENTION = ['different', 'dropped', 'fails', 'unknown']; // statuses the user must review
+    function migAttentionCount(counts) { return MIG_ATTENTION.reduce((n, k) => n + (counts[k] || 0), 0); }
+    /* build per-tab text + counts from a render result. The 'resources' tab is
+       structured (the bucketing report), not text — painted separately. */
+    function tabsFrom(res) {
+      const named = (obj) => Object.entries(obj || {}).map(([k, v]) => `# ${k}\n${v}`).join('\n\n');
+      const tabs = {
+        'haproxy.cfg': res.haproxyCfg || '', maps: named(res.maps), files: named(res.files),
+        certs: named(res.certs), status: named(res.statusPatches), applied: named(res.applied),
+      };
+      const report = res.bucketReport || [];
+      const drops = report.filter((o) => o.dropped).length;
+      const mig = res.migration || null;
+      const counts = {
+        'haproxy.cfg': tabs['haproxy.cfg'] ? tabs['haproxy.cfg'].split('\n').length : 0,
+        maps: Object.keys(res.maps || {}).length, files: Object.keys(res.files || {}).length,
+        certs: Object.keys(res.certs || {}).length, status: Object.keys(res.statusPatches || {}).length,
+        applied: Object.keys(res.applied || {}).length, resources: report.length,
+        trace: (res.trace || []).length,
+        migration: mig ? mig.totalIngresses : 0,
+      };
+      const migWarn = mig ? migAttentionCount(mig.counts || {}) : 0;
+      return { tabs, counts, report, drops, migWarn };
+    }
+
+    function tabEnabled(key, tabs, counts) {
+      if (key === 'haproxy.cfg') return true;
+      if (key === 'resources') return counts.resources > 0;
+      if (key === 'trace') return counts.trace > 0;
+      if (key === 'migration') return !!lastMigration;
+      return !!(tabs[key] && tabs[key].trim());
+    }
+
+    function renderTabs(tabs, counts, drops, migWarn) {
+      // Never strand the user on a now-empty/disabled tab.
+      if (!tabEnabled(activeTab, tabs, counts)) activeTab = 'haproxy.cfg';
+      const strip = $('tabs'); strip.innerHTML = '';
+      for (const key of TAB_KEYS) {
+        const enabled = tabEnabled(key, tabs, counts);
+        const b = document.createElement('button');
+        b.className = 'tab'; b.id = 'tab-' + key; b.type = 'button';
+        b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', 'output');
+        b.setAttribute('aria-selected', String(key === activeTab));
+        if (!enabled) b.setAttribute('aria-disabled', 'true');
+        b.tabIndex = key === activeTab ? 0 : -1;
+        b.textContent = key + ' ';
+        const n = document.createElement('span'); n.className = 'n'; n.textContent = counts[key]; b.appendChild(n);
+        const warn = key === 'resources' ? drops : key === 'migration' ? migWarn : 0;
+        if (warn) { const w = document.createElement('span'); w.className = 'warn-n'; w.textContent = '⚠' + warn; b.appendChild(w); }
+        b.onclick = () => { if (enabled) { activeTab = key; renderTabs(tabs, counts, drops, migWarn); paintOutput(tabs, false); $('output').focus(); } };
+        strip.appendChild(b);
+      }
+      $('output').setAttribute('aria-labelledby', 'tab-' + activeTab);
+    }
+
+    // Roving-tabindex arrow-key nav across enabled tabs (WAI-ARIA tabs pattern).
+    $('tabs').addEventListener('keydown', (e) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      const tabs = [...$('tabs').querySelectorAll('.tab')].filter((t) => t.getAttribute('aria-disabled') !== 'true');
+      const i = tabs.indexOf(document.activeElement); if (i < 0) return;
+      e.preventDefault();
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1
+        : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length : (i + 1) % tabs.length;
+      tabs[next].focus(); tabs[next].click();
+    });
+
+    /* ---------- panel maximize / restore ---------- */
+    function toggleMax(panel) {
+      const main = document.querySelector('main');
+      const next = main.dataset.max === panel ? '' : panel;
+      if (next) main.dataset.max = next; else delete main.dataset.max;
+      for (const b of document.querySelectorAll('.maxbtn')) {
+        const on = b.dataset.panel === next;
+        b.textContent = on ? '⤡' : '⤢';
+        b.title = on ? 'Restore panel' : 'Maximize panel';
+        b.setAttribute('aria-pressed', String(on));
+      }
+    }
+    for (const b of document.querySelectorAll('.maxbtn')) b.addEventListener('click', () => toggleMax(b.dataset.panel));
+    document.addEventListener('keydown', (e) => {
+      const cur = document.querySelector('main').dataset.max;
+      if (e.key === 'Escape' && cur) toggleMax(cur);
+    });
+
+    /* ---------- output toolbar: wrap / copy / download ---------- */
+    function currentTabText() {
+      // Text tabs keep clean source in prevTabs; structured tabs use the rendered DOM.
+      if (prevTabs[activeTab] != null) return prevTabs[activeTab];
+      return $('output').innerText;
+    }
+    function flashTool(id, word) {
+      const b = $(id), orig = b.textContent;
+      b.textContent = word; b.classList.add('done');
+      setTimeout(() => { b.textContent = orig; b.classList.remove('done'); }, 1200);
+    }
+    const TAB_FILENAME = { 'haproxy.cfg': 'haproxy.cfg', certs: 'certs.pem' };
+    $('wrapbtn').addEventListener('click', () => {
+      $('wrapbtn').setAttribute('aria-pressed', String($('output').classList.toggle('wrap')));
+    });
+    $('copybtn').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(currentTabText()); flashTool('copybtn', 'copied'); } catch (e) { /* clipboard denied */ }
+    });
+    $('dlbtn').addEventListener('click', () => {
+      const name = TAB_FILENAME[activeTab] || ('haptic-' + activeTab.replace(/[^\w.-]/g, '-') + '.txt');
+      downloadText(name, currentTabText(), 'text/plain');
+      flashTool('dlbtn', 'saved');
+    });
+
+    // Resources inspector: what each pasted object bucketed into, and what was
+    // dropped and why — answers "why didn't my resource produce a backend?".
+    function paintResources() {
+      const out = $('output');
+      if (!lastReport.length) { out.innerHTML = '<div class="empty">No example resources parsed yet.</div>'; return; }
+      const matched = lastReport.filter((o) => !o.dropped);
+      const dropped = lastReport.filter((o) => o.dropped);
+      const byBucket = {};
+      for (const o of matched) for (const b of (o.buckets || [])) (byBucket[b] = byBucket[b] || []).push(o);
+      const objLine = (o) => `${esc(o.kind)} <b>${esc(o.namespace ? o.namespace + '/' : '')}${esc(o.name)}</b>`;
+      // data-* carry the jump targets: bucket (watched-resource name) → config
+      // declaration, and kind/ns/name → the object in the middle resource editor.
+      const objAttrs = (o, bucket) => ` data-kind="${esc(o.kind)}" data-ns="${esc(o.namespace || '')}" data-rname="${esc(o.name)}"${bucket ? ` data-bucket="${esc(bucket)}"` : ''}`;
+      let html = '<div class="inspector">';
+      const buckets = Object.keys(byBucket).sort();
+      html += `<div class="insp-h">Matched — ${matched.length} object${matched.length !== 1 ? 's' : ''} into ${buckets.length} watched resource${buckets.length !== 1 ? 's' : ''} · click a row to open it</div>`;
+      for (const b of buckets) {
+        html += `<div class="insp-b"><span class="insp-key">${esc(b)}</span><span class="insp-c">${byBucket[b].length}</span></div>`;
+        for (const o of byBucket[b]) html += `<div class="insp-o jump"${objAttrs(o, b)}>${objLine(o)}</div>`;
+      }
+      if (dropped.length) {
+        html += `<div class="insp-h drop">Dropped — ${dropped.length} object${dropped.length !== 1 ? 's' : ''}, not in the render</div>`;
+        for (const o of dropped) html += `<div class="insp-o drop jump"${objAttrs(o, '')}>${objLine(o)}<span class="insp-why"> — ${esc(o.reason)}</span></div>`;
+      }
+      html += '</div>';
+      out.innerHTML = html;
+    }
+
+    // Render trace: which snippets fired, how often, and how long — the engine's
+    // per-include profiling. Answers "why is this in my output / what's slow?".
+    function paintTrace() {
+      const out = $('output');
+      if (!lastTrace.length) { out.innerHTML = '<div class="empty">No render trace for this output.</div>'; return; }
+      const rows = lastTrace.slice().sort((a, b) => b.totalMs - a.totalMs);
+      const max = rows[0].totalMs || 1;
+      const blocks = (lastRes && lastRes.provBlocks) || {};
+      let html = `<div class="trace"><div class="trace-h">${rows.length} snippets rendered — sorted by total time · click a row to open its snippet</div>`;
+      for (const s of rows) {
+        const pct = Math.max(2, Math.round((s.totalMs / max) * 100));
+        const jump = blocks[s.name] ? ` data-block="${blocks[s.name]}"` : '';
+        html += `<div class="trace-row${jump ? ' jump' : ''}"${jump}><span class="trace-name">${esc(s.name)}</span>`
+          + `<span class="trace-count">×${s.count}</span>`
+          + `<span class="trace-ms">${s.totalMs.toFixed(2)} ms</span>`
+          + `<span class="trace-bar"><i style="width:${pct}%"></i></span></div>`;
+      }
+      html += '</div>';
+      out.innerHTML = html;
+    }
+
+    // Migration report: how each pasted Ingress's annotations classify against
+    // the config's spec.migrationCoverage — the same verdict `haptic
+    // migrate-check` prints, so you can gauge a controller migration in-browser.
+    const MIG_CLS = { supported: 'ok', different: 'warn', dropped: 'bad', fails: 'bad', unknown: 'dim' };
+    function paintMigration() {
+      const out = $('output');
+      const m = lastMigration;
+      if (!m) { out.innerHTML = '<div class="empty">This config declares no migration coverage.</div>'; return; }
+      const c = m.counts || {};
+      const pills = ['supported', ...MIG_ATTENTION].filter((k) => c[k]).map((k) =>
+        `<span class="mig-pill ${MIG_CLS[k]}">${c[k]} ${k}</span>`).join('');
+      const ingredient = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+      const renderIngress = (ing) => {
+        const findings = ing.findings || [];
+        const attention = findings.filter((f) => f.status !== 'supported');
+        const supported = findings.filter((f) => f.status === 'supported');
+        // data-* let a click jump the resource editor to where the annotation is set.
+        const anno = (f) => ` data-anno="${esc(f.annotation)}" data-ns="${esc(ing.namespace)}" data-name="${esc(ing.name)}"`;
+        let s = `<div class="mig-ing"><div class="mig-ing-h">${esc(ing.namespace)}/<b>${esc(ing.name)}</b>`
+          + `${ing.class ? ` <span class="mig-class">class ${esc(ing.class)}</span>` : ''}</div>`;
+        for (const f of attention) {
+          s += `<div class="mig-row jump"${anno(f)} title="jump to where this annotation is set"><span class="mig-badge ${MIG_CLS[f.status] || 'dim'}">${esc(f.status)}</span>`
+            + `<code class="mig-ann">${esc(f.annotation)}</code></div>`;
+          if (f.note) s += `<div class="mig-note">${esc(f.note)}</div>`;
+        }
+        if (supported.length) {
+          s += `<div class="mig-ok">✓ ${ingredient(supported.length, 'annotation')} fully supported</div>`;
+          s += '<div class="mig-sup">';
+          for (const f of supported) s += `<code class="mig-chip jump"${anno(f)} title="jump to where this annotation is set">${esc(f.annotation)}</code>`;
+          s += '</div>';
+        }
+        if (!findings.length) s += `<div class="mig-ok">no recognized annotations</div>`;
+        return s + '</div>';
+      };
+      const ingCount = `${m.totalIngresses} Ingress${m.totalIngresses === 1 ? '' : 'es'}`;
+      let html = '<div class="mig">';
+      html += `<div class="mig-sum">${ingCount} · ${ingredient(m.checkedAnnotations, 'annotation')} checked ${pills}</div>`;
+      for (const src of (m.sources || [])) {
+        html += `<div class="mig-src"><div class="mig-src-h">source: <b>${esc(src.source)}</b></div>`;
+        for (const ing of (src.ingresses || [])) html += renderIngress(ing);
+        html += '</div>';
+      }
+      if ((m.unattributed || []).length) {
+        html += '<div class="mig-src"><div class="mig-src-h">unattributed <span class="mig-note">— no source detect rule matched</span></div>';
+        for (const ing of m.unattributed) html += renderIngress(ing);
+        html += '</div>';
+      }
+      out.innerHTML = html + '</div>';
+    }
+
+    // Certs inspector: X.509 certificates decoded (in wasm, crypto/x509) into a
+    // concise summary per cert, expandable to full details, plus a "Raw PEM"
+    // expander showing the exact rendered bytes. The copy/download buttons still
+    // return the raw tab text.
+    function paintCerts() {
+      const out = $('output');
+      const dec = (lastRes && lastRes.certsDecoded) || {};
+      const raws = (lastRes && lastRes.certs) || {};
+      const files = Object.keys(dec);
+      if (!files.length) { out.innerHTML = `<div class="empty">— nothing rendered for “certs” —</div>`; return; }
+      const days = (c) => c.expired ? '<span class="cert-bad">expired</span>'
+        : c.notYetValid ? '<span class="cert-bad">not yet valid</span>'
+          : c.daysLeft <= 30 ? `<span class="cert-warn">${c.daysLeft}d left</span>`
+            : `<span class="cert-ok">${c.daysLeft}d left</span>`;
+      const row = (k, v) => `<div class="cert-row"><span class="cert-k">${k}</span><span class="cert-v">${esc(v)}</span></div>`;
+      const card = (c) => {
+        const sans = c.sans || [];
+        let s = `<details class="cert"><summary><span class="cert-cn">${esc(c.subject || '(no subject CN)')}</span>`
+          + (c.isCA ? '<span class="cert-tag">CA</span>' : '')
+          + (c.selfSigned ? '<span class="cert-tag">self-signed</span>' : '')
+          + `<span class="cert-meta">${esc(c.keyType)} · ${c.notBefore} → ${c.notAfter} · </span>${days(c)}`
+          + (sans.length ? `<span class="cert-meta"> · ${sans.length} SAN${sans.length !== 1 ? 's' : ''}</span>` : '')
+          + '</summary><div class="cert-detail">';
+        s += row('Subject', c.subjectFull);
+        s += row('Issuer', c.issuerFull);
+        if (sans.length) s += row('SANs', sans.join(', '));
+        s += row('Valid', `${c.notBefore} → ${c.notAfter}` + (c.expired ? ' · expired' : c.notYetValid ? ' · not yet valid' : ` · ${c.daysLeft} days left`));
+        s += row('Serial', c.serial);
+        s += row('Key', c.keyType);
+        s += row('Signature', c.sigAlg);
+        s += row('Version', 'v' + c.version);
+        return s + '</div></details>';
+      };
+      let html = '<div class="certs">';
+      for (const path of files) {
+        const info = dec[path] || {};
+        html += `<div class="cert-file"><div class="cert-file-h">${esc(path)}</div>`;
+        for (const c of (info.certs || [])) html += card(c);
+        for (const k of (info.keys || [])) html += `<div class="cert-key">🔑 ${esc(k)}</div>`;
+        for (const e of (info.errors || [])) html += `<div class="cert-err">⚠ ${esc(e)}</div>`;
+        if (!(info.certs || []).length && !(info.keys || []).length && !(info.errors || []).length)
+          html += '<div class="cert-err">no PEM blocks found</div>';
+        const raw = raws[path] || '';
+        if (raw) html += `<details class="cert-raw"><summary>Raw PEM</summary><pre>${esc(raw)}</pre></details>`;
+        html += '</div>';
+      }
+      out.innerHTML = html + '</div>';
+    }
+
+    /* ---------- render provenance (source-map, all template-backed tabs) ----------
+       The engine emits a real output→source line map (a fork feature): for each
+       rendered output line we know the full template include stack that produced
+       it (a fork feature), following `render` includes — even piped ones — into
+       the innermost snippet. Clicking an output line JUMPS the left editor to the
+       innermost template line; the strip shows the parent chain as breadcrumbs,
+       each clickable. Works for any config, no marker convention. `lineChains[i]`
+       holds the breadcrumb chain (innermost first) of {n: name, l: configLine}. */
+    let lineChains = [], activeProvLine = -1;
+    // Named tabs whose text is source-mapped: activeTab -> lastRes object key.
+    // status/applied are attributed on the Go side too — applied per-line by
+    // content-matching the re-marshaled object against its k8sResources template,
+    // status block-level to the template that called statusPatch() (the payload is
+    // a computed value with no per-line template text).
+    const NAMED_PROV_KEY = { maps: 'maps', files: 'files', certs: 'certs', status: 'statusPatches', applied: 'applied' };
+    // applied/status prov entries are namespaced (a target can be in both tabs);
+    // the prefixes mirror the Go side's appliedProvKey/statusProvKey.
+    const NAMED_PROV_PREFIX = { status: 'status\x00', applied: 'applied\x00' };
+
+    // buildLineChains returns the per-output-line breadcrumb chain for the active
+    // tab, or null when the tab has no source map. For named tabs it mirrors
+    // named() exactly: each file is `# <name>` + its value lines, and consecutive
+    // blocks are separated by one blank line (the `\n\n` join).
+    function buildLineChains(lineCount) {
+      const prov = lastRes && lastRes.provenance;
+      if (!prov) return null;
+      if (activeTab === 'haproxy.cfg') {
+        const a = prov['haproxy.cfg'];
+        return a && a.length === lineCount ? a : null;
+      }
+      const objKey = NAMED_PROV_KEY[activeTab];
+      if (!objKey) return null;
+      const obj = lastRes[objKey] || {};
+      const base = lastRes.provBase || {};
+      const pfx = NAMED_PROV_PREFIX[activeTab] || '';
+      const chains = [];
+      let first = true;
+      for (const [k, v] of Object.entries(obj)) {
+        if (!first) chains.push([]);                              // blank line between blocks
+        first = false;
+        chains.push(base[pfx + k] ? [{ n: k, l: base[pfx + k] }] : []);   // "# <name>" header → its template block
+        const vlines = String(v).split('\n');
+        const pc = prov[pfx + k] || [];
+        for (let j = 0; j < vlines.length; j++) chains.push(pc[j] || []);
+      }
+      return chains.length === lineCount ? chains : null;
+    }
+
+    function clearProv() {
+      $('output').querySelectorAll('.ln.sec-active').forEach((el) => el.classList.remove('sec-active'));
+      $('prov').hidden = true;
+      activeProvLine = -1;
+    }
+    // gotoCfg jumps the config editor to a line and marks the output line active.
+    function gotoCfg(i, line) {
+      const out = $('output');
+      out.querySelectorAll('.ln.sec-active').forEach((el) => el.classList.remove('sec-active'));
+      const el = out.querySelector(`.ln[data-ln="${i}"]`);
+      if (el) el.classList.add('sec-active');
+      editors.config.goto(line, 1);
+    }
+    // jumpToSource jumps to the INNERMOST template line for output line i and
+    // renders the include chain as clickable breadcrumbs (outermost → innermost).
+    // A second click on the same line toggles it off.
+    function jumpToSource(i) {
+      const chain = lineChains[i] || [];
+      if (!chain.length) return;
+      if (activeProvLine === i) { clearProv(); return; }
+      gotoCfg(i, chain[0].l);   // chain[0] is innermost
+      const disp = chain.slice().reverse();   // show outermost first, innermost last
+      const crumbs = disp.map((f, idx) =>
+        `<button class="prov-crumb${idx === disp.length - 1 ? ' active' : ''}" type="button" data-l="${f.l}" title="jump to ${esc(f.n)} (line ${f.l})">${esc(f.n)}</button>`
+      ).join('<span class="prov-arrow">›</span>');
+      $('prov').innerHTML = '<span class="prov-tag">source</span>' + crumbs
+        + '<button class="prov-x" type="button" aria-label="Close" title="Close (Esc)">×</button>';
+      $('prov').hidden = false;
+      activeProvLine = i;
+    }
+
+    // One-time tip strip: shown only on a code tab that actually has provenance,
+    // and only until the user dismisses it once (persisted per browser).
+    function updateHint(show) {
+      $('outhint').hidden = !show || localStorage.getItem('pgHintDismissed') === '1';
+    }
+    $('outhint-x').addEventListener('click', () => {
+      try { localStorage.setItem('pgHintDismissed', '1'); } catch { /* private mode */ }
+      $('outhint').hidden = true;
+    });
+
+    function paintOutput(tabs, glow) {
+      clearProv();   // any repaint (new render or tab switch) drops the current selection
+      updateHint(false);
+      if (activeTab === 'resources') { paintResources(); return; }
+      if (activeTab === 'trace') { paintTrace(); return; }
+      if (activeTab === 'migration') { paintMigration(); return; }
+      if (activeTab === 'certs') { paintCerts(); return; }
+      const out = $('output');
+      const text = tabs[activeTab] || '';
+      if (!text.trim()) { lineChains = []; out.innerHTML = `<div class="empty">— nothing rendered for “${activeTab}” —</div>`; return; }
+      const lines = text.split('\n');
+      // Source-map provenance: map each output line to its template include chain.
+      // Skipped on huge output to stay snappy.
+      lineChains = (lines.length <= 20000 && buildLineChains(lines.length)) || [];
+      const prov = lineChains.length > 0;
+      updateHint(prov);
+      const added = glow ? changedLines((prevTabs[activeTab] || '').split('\n'), lines) : new Set();
+      const lang = OUT_LANG[activeTab] || 'plain';
+      const hl = lines.length <= 6000;   // ponytail: skip highlighting on huge output to stay snappy
+      let html = `<div class="code${prov ? ' prov' : ''}" style="--gw:${String(lines.length).length}"${prov ? ' title="click a line to jump to the template that produced it"' : ''}>`;   // gutter width = digit count
+      for (let i = 0; i < lines.length; i++) {
+        const isAdd = added.has(i);
+        const body = hl ? highlightLine(lines[i], lang) : esc(lines[i]);
+        const attr = (prov && lineChains[i] && lineChains[i].length) ? ` data-ln="${i}"` : '';
+        html += `<div class="ln${isAdd ? ' add glow' : ''}"${attr}><span class="g">${i + 1}</span><span class="t">${body || ' '}</span></div>`;
+      }
+      html += '</div>';
+      out.innerHTML = html;
+    }
+
+    /* ---------- error classification (coarse, by the wasm's stage prefix) ---------- */
+    function classifyError(msg) {
+      if (/^(parsing config|converting config|parsing resources|parsing schema)/.test(msg)) return 'parse';
+      if (/^compiling templates/i.test(msg)) return 'compile';
+      return 'render';
+    }
+    const ERR_LABEL = { parse: 'parse', compile: 'template', render: 'render' };
+
+    // Extract a jump target (editor + line) from an error carrying a location.
+    function parseErrorLocation(msg) {
+      let m;
+      if ((m = /^parsing config:.*\byaml: line (\d+)/.exec(msg))) return { editor: 'config', line: +m[1] };
+      if ((m = /^parsing resources:.*\byaml: line (\d+)/.exec(msg))) return { editor: 'res', line: +m[1] };
+      // Scriggo compile error on the main config template: haproxy.cfg:LINE:COL,
+      // relative to the haproxyConfig.template block scalar.
+      if ((m = /compiling template 'haproxy\.cfg':\s*haproxy\.cfg:(\d+):(\d+)/.exec(msg))) return { editor: 'config', templateLine: +m[1], col: +m[2] };
+      return null;
+    }
+    // 1-indexed editor line of `template: |` under `haproxyConfig:` (0 if absent).
+    function templateBlockStart(text) {
+      const lines = text.split('\n');
+      let inBlock = false;
+      for (let i = 0; i < lines.length; i++) {
+        if (/^haproxyConfig:/.test(lines[i])) inBlock = true;
+        else if (/^\S/.test(lines[i])) inBlock = false;
+        if (inBlock && /^\s+template:\s*[|>]/.test(lines[i])) return i + 1;
+      }
+      return 0;
+    }
+    let errLoc = null;
+    function doJump() {
+      if (!errLoc || !editors) return;
+      const ed = errLoc.editor === 'res' ? editors.res : editors.config;
+      let line = errLoc.line;
+      if (errLoc.templateLine != null) {
+        const start = templateBlockStart(editors.config.get());
+        if (!start) return;
+        line = start + errLoc.templateLine;   // template body line 1 sits just below `template: |`
+      }
+      ed.goto(line, errLoc.col || 1);
+    }
+    function showError(msg) {
+      const kind = classifyError(msg);
+      errLoc = parseErrorLocation(msg);
+      $('banner').className = 'banner show ' + kind + (errLoc ? ' jump' : '');
+      $('bk').textContent = ERR_LABEL[kind];
+      const clean = msg.replace(/^(parsing|converting|compiling|rendering)[^:]*:\s*/, '');
+      $('bm').textContent = clean + (errLoc ? '   ↦ click to jump' : '');
+      $('banner').tabIndex = errLoc ? 0 : -1;
+      $('stale').classList.add('show');
+      setSchemaWarn('');   // a render failure supersedes any prior schema warning
+      $('reload').classList.remove('show');   // no new render → no reload verdict
+      setChip('error', 'err');
+    }
+    function clearError() { $('banner').className = 'banner'; $('stale').classList.remove('show'); errLoc = null; }
+
+    /* ---------- reload-impact analyzer ----------
+       Runs the production comparator (in wasm) against a baseline render — the
+       last render by default, or a pinned one — to show whether deploying the
+       current render would reload HAProxy or apply over the runtime socket. */
+    let baselinePinned = false;
+    function setReloadImpact(impact) {
+      const strip = $('reload');
+      if (!impact) {   // first render after a (re)load: no baseline yet
+        baselinePinned = false;
+        strip.className = 'reload show rl-none';
+        $('rlk').textContent = 'baseline';
+        $('rlm').textContent = 'Pin this render to compare later edits against it.';
+        $('rlbaselbl').textContent = '';
+        $('pinbtn').textContent = 'pin baseline';
+        return;
+      }
+      baselinePinned = !!impact.pinned;
+      const cls = !impact.changed ? 'rl-none' : impact.wouldReload ? 'rl-reload' : 'rl-runtime';
+      strip.className = 'reload show ' + cls;
+      $('rlk').textContent = !impact.changed ? 'no change' : impact.wouldReload ? 'reload' : 'no reload';
+      let msg;
+      if (!impact.changed) msg = 'identical to the baseline — nothing to deploy.';
+      else if (impact.wouldReload) msg = impact.structural > 0
+        ? `reload required — ${impact.structural} structural change${impact.structural !== 1 ? 's' : ''}` + (impact.runtimeEligible ? ` (plus ${impact.runtimeEligible} runtime-eligible)` : '') + '.'
+        : 'reload required — an auxiliary change (new map/cert, general file, or crt-list) forces it.';
+      else msg = `no reload — ${impact.runtimeEligible} runtime-eligible update${impact.runtimeEligible !== 1 ? 's' : ''} apply over the runtime socket.`;
+      const det = (impact.details || []).slice(0, 5).map((d) => `<span class="rl-hit${d.reload ? ' reload' : ''}">${esc(d.text)}</span>`).join(' · ');
+      $('rlm').innerHTML = esc(msg) + (det ? '<br>' + det : '');
+      $('rlbaselbl').textContent = 'vs ' + (impact.pinned ? 'pinned' : 'last render');
+      $('pinbtn').textContent = impact.pinned ? 'unpin' : 'pin';
+    }
+    // The wasm (pin state) lives in the worker, so the toggle rides on the next
+    // render message rather than a direct call. pendingBaseline is applied in fire().
+    let pendingBaseline = null;
+    $('pinbtn').addEventListener('click', () => {
+      pendingBaseline = baselinePinned ? 'unpin' : 'pin';
+      configDirty = false;   // a baseline change is a re-render, not a recompile
+      fire();
+    });
+    // Per-field schema check on a successfully rendered config (subset of haproxy -c).
+    function setSchemaWarn(msg) {
+      $('swm').textContent = msg || '';
+      $('schemawarn').classList.toggle('show', !!msg);
+    }
+    $('banner').addEventListener('click', () => { if (errLoc) doJump(); });
+    $('banner').addEventListener('keydown', (e) => { if (errLoc && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); doJump(); } });
+    // Render-provenance interaction: delegated once (never per render).
+    $('output').addEventListener('click', (e) => {
+      // Don't hijack a text selection (drag-select to copy) — only a plain click jumps.
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      const trow = e.target.closest('.trace-row[data-block]');
+      if (trow) { editors.config.goto(+trow.dataset.block, 1); return; }
+      const robj = e.target.closest('.insp-o.jump');
+      if (robj) { jumpToResource(robj.dataset); return; }
+      const mrow = e.target.closest('.mig-row.jump, .mig-chip.jump');
+      if (mrow) { jumpAnno(mrow.dataset); return; }
+      const ln = e.target.closest('.ln[data-ln]');
+      if (!ln) return;
+      const i = +ln.dataset.ln;
+      if (!Number.isNaN(i)) jumpToSource(i);
+    });
+    // jumpToResource opens a pasted object: its watcher declaration in the config
+    // editor (left) and the object itself in the resource editor (middle).
+    function jumpToResource(d) {
+      const wl = (lastRes && lastRes.watchedLines) || {};
+      if (d.bucket && wl[d.bucket]) editors.config.goto(wl[d.bucket], 1);
+      const rl = resourceLine(editors.res.get(), d.rname, d.kind);
+      if (rl) editors.res.goto(rl, 1);
+    }
+    // resourceLine finds a pasted object's line in the resource editor by its
+    // metadata.name (preferring one whose surrounding block names the kind), so a
+    // click lands on the right document in a multi-object paste.
+    function resourceLine(text, name, kind) {
+      if (!name) return 0;
+      const lines = text.split('\n');
+      const nameRe = new RegExp('^\\s*(?:-\\s*)?name:\\s*["\']?' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '["\']?\\s*$');
+      const hits = [];
+      for (let i = 0; i < lines.length; i++) if (nameRe.test(lines[i])) hits.push(i);
+      if (!hits.length) return 0;
+      // Prefer a hit whose nearby lines mention the kind (disambiguates same-named
+      // objects of different kinds in one paste).
+      for (const i of hits) {
+        const from = Math.max(0, i - 8);
+        if (lines.slice(from, i + 1).some((l) => new RegExp('kind:\\s*' + kind + '\\b').test(l))) return i + 1;
+      }
+      return hits[0] + 1;
+    }
+
+    /* ---------- editor navigation history (back / forward) ----------
+       Every jump (provenance, trace, resource, error) records where the editor
+       was; back/forward walk that history. Driven by the header buttons, Alt+←/→
+       while an editor is focused, and the mouse thumb buttons over a panel. */
+    function updateBackBtn(name) {
+      if (!editors) return;
+      const ed = editors[name];
+      const b = $(name + '-back'), f = $(name + '-fwd');
+      if (b) b.classList.toggle('show', ed.canBack());
+      if (f) f.classList.toggle('show', ed.canForward());
+    }
+    // Which editor's history a point belongs to (null outside the two editors).
+    function editorAt(el) {
+      const col = el && el.closest && el.closest('.col');
+      if (!col) return null;
+      if (col.contains($('ed-config'))) return 'config';
+      if (col.contains($('ed-res'))) return 'res';
+      return null;
+    }
+    for (const name of ['config', 'res']) {
+      $(name + '-back').addEventListener('click', () => editors && editors[name].back());
+      $(name + '-fwd').addEventListener('click', () => editors && editors[name].forward());
+    }
+    document.addEventListener('keydown', (e) => {
+      if (!editors || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const name = editorAt(document.activeElement);
+      if (!name) return;
+      e.preventDefault();
+      e.key === 'ArrowLeft' ? editors[name].back() : editors[name].forward();
+    });
+    // Mouse thumb buttons: 3 = back, 4 = forward. Chrome fires the browser's own
+    // history navigation on mouseup (Firefox on mousedown), and it's a default
+    // action — so we must preventDefault on mousedown AND mouseup AND auxclick, in
+    // the capture phase, whenever the pointer is over an editor panel. We only
+    // *act* on mousedown so the navigation fires once.
+    function navMouse(e, act) {
+      if (e.button !== 3 && e.button !== 4) return;
+      const name = editorAt(e.target);
+      if (!name) return;
+      e.preventDefault();
+      if (act && editors) e.button === 3 ? editors[name].back() : editors[name].forward();
+    }
+    document.addEventListener('mousedown', (e) => navMouse(e, true), true);
+    document.addEventListener('mouseup', (e) => navMouse(e, false), true);
+    document.addEventListener('auxclick', (e) => navMouse(e, false), true);
+
+    /* ---------- migration tab: jump to an annotation's definition ----------
+       Clicking an annotation (attention row or supported chip) jumps the resource
+       editor to where that key is set. An annotation can be set on many objects;
+       those become an occurrence cycler (compact "3/247 ‹ ›"), so hundreds of
+       locations stay discoverable without bloating the list. */
+    let annoCyc = null;   // { locs: [1-based lines], idx, key }
+    function annotationLocations(text, key, owner) {
+      const lines = text.split('\n');
+      const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const kRe = new RegExp('^\\s+["\']?' + esc + '["\']?:\\s');   // `<key>:` under an annotations block
+      const nameRe = /^\s+name:\s*["']?([^"'\s]+)/;
+      const locs = [], owners = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (!kRe.test(lines[i])) continue;
+        locs.push(i + 1);
+        let o = '';   // nearest metadata.name above — the object that carries this annotation
+        for (let j = i; j >= 0 && j > i - 80; j--) { const mm = nameRe.exec(lines[j]); if (mm) { o = mm[1]; break; } }
+        owners.push(o);
+      }
+      let primary = owner ? owners.indexOf(owner) : 0;   // start on the clicked finding's own object
+      if (primary < 0) primary = 0;
+      return { locs, primary };
+    }
+    function showAnnoCycler() {
+      const el = $('anno-cycler');
+      if (!annoCyc || annoCyc.locs.length < 2) { el.hidden = true; return; }
+      $('ac-key').textContent = annoCyc.key;
+      $('ac-count').textContent = (annoCyc.idx + 1) + ' / ' + annoCyc.locs.length;
+      el.hidden = false;
+    }
+    function closeAnnoCycler() { annoCyc = null; $('anno-cycler').hidden = true; }
+    function jumpAnno(dataset) {
+      if (!editors) return;
+      const { locs, primary } = annotationLocations(editors.res.get(), dataset.anno, dataset.name);
+      if (!locs.length) { setChip('annotation not found in pasted resources', 'busy'); setTimeout(() => setChip('rendered', 'ok'), 1400); return; }
+      annoCyc = { locs, idx: primary, key: dataset.anno };
+      editors.res.goto(locs[primary], 1);
+      showAnnoCycler();
+    }
+    function stepAnno(delta) {
+      if (!annoCyc || !annoCyc.locs.length) return;
+      annoCyc.idx = (annoCyc.idx + delta + annoCyc.locs.length) % annoCyc.locs.length;
+      editors.res.goto(annoCyc.locs[annoCyc.idx], 1);
+      showAnnoCycler();
+    }
+    $('ac-prev').addEventListener('click', () => stepAnno(-1));
+    $('ac-next').addEventListener('click', () => stepAnno(1));
+    $('ac-close').addEventListener('click', closeAnnoCycler);
+
+    /* ---------- go to definition (Ctrl/Cmd + left-click) ----------
+       HAProxy keywords open the versioned HAProxy configuration manual; Scriggo /
+       HAPTIC identifiers open the HAPTIC templating docs (or a repo blob search at
+       the selected version when the token isn't a documented helper). New tab. */
+    // Proxy keywords live in section 4 of the manual (verified by errorfile → #4-errorfile);
+    // that covers most directives in a rendered config. Anything else falls back to a text
+    // fragment that scrolls to the keyword, so unlisted keywords still land usefully.
+    const HAPROXY_SECT4 = new Set(['mode', 'balance', 'errorfile', 'errorfiles', 'errorloc', 'errorloc302', 'errorloc303',
+      'default_backend', 'use_backend', 'use-server', 'use-fcgi-app', 'retries', 'retry-on', 'option', 'timeout',
+      'http-request', 'http-response', 'http-after-response', 'http-check', 'http-error', 'http-reuse', 'http-send-name-header',
+      'tcp-request', 'tcp-response', 'tcp-check', 'acl', 'redirect', 'cookie', 'stick', 'stick-table', 'capture',
+      'monitor-uri', 'monitor-fail', 'hash-type', 'hash-balance-factor', 'default-server', 'fullconn', 'compression',
+      'unique-id-format', 'unique-id-header', 'log-format', 'log-format-sd', 'log-tag', 'log-steps', 'maxconn', 'backlog',
+      'description', 'disabled', 'enabled', 'email-alert', 'force-persist', 'ignore-persist', 'persist', 'load-server-state-from-file',
+      'server-state-file-name', 'source', 'dynamic-cookie-key', 'guid', 'id', 'grace', 'max-keep-alive-queue', 'max-session-srv-conns']);
+    function haproxyDocURL(kw) {
+      const ver = ($('hpver') && $('hpver').value) || '3.4';
+      const base = `https://docs.haproxy.org/${ver}/configuration.html`;
+      if (HAPROXY_SECT4.has(kw)) return `${base}#4-${encodeURIComponent(kw)}`;
+      if (kw === 'bind') return `${base}#5.1-bind`;
+      if (kw === 'server' || kw === 'server-template') return `${base}#5.2-${encodeURIComponent(kw)}`;
+      return `${base}#:~:text=${encodeURIComponent(kw)}`;   // scroll-to-text for unlisted keywords
+    }
+    const DOCS = 'https://haproxy-haptic.org/controller/templating';
+    const SCRIGGO_GLOBAL_ANCHOR = {
+      pathResolver: 'path-resolution', resources: 'the-resources-variable', extraContext: 'custom-template-variables',
+      shared: 'context-variables', dataplane: 'context-variables', capabilities: 'context-variables',
+      controller: 'context-variables', runtimeEnvironment: 'context-variables', http: 'context-variables',
+      templateSnippets: 'template-snippets', fileRegistry: 'context-variables',
+    };
+    const SCRIGGO_FUNCS = new Set(['sort_by', 'glob_match', 'strip', 'trim', 'debug', 'indent', 'fail', 'merge', 'keys', 'dig',
+      'dig_string', 'join', 'replace', 'coalesce', 'fallback', 'namespace', 'to_str_map', 'append', 'first_seen', 'selectattr',
+      'join_key', 'shard_slice', 'basename', 'condition', 'semver_gte', 'make_guid', 'tostring', 'toint', 'tofloat', 'toSlice',
+      'title', 'ceil', 'seq', 'regex_search', 'isdigit', 'sanitize_regex', 'sort_strings', 'sort_ints', 'b64decode', 'toStrMap']);
+    const SCRIGGO_KEYWORDS = new Set(['render', 'render_glob', 'macro', 'if', 'else', 'for', 'range', 'var', 'end', 'import',
+      'include', 'extends', 'show', 'in', 'default', 'inherit_context']);
+    function scriggoDocURL(token) {
+      const root = token.split('.')[0];
+      if (SCRIGGO_GLOBAL_ANCHOR[root]) return `${DOCS}/#${SCRIGGO_GLOBAL_ANCHOR[root]}`;
+      if (SCRIGGO_FUNCS.has(root)) return `${DOCS}/#helper-functions`;
+      if (SCRIGGO_KEYWORDS.has(root)) return `${DOCS}/#template-syntax`;
+      // Unknown identifier (user macro, Go stdlib call, …): repo blob search at the selected version.
+      const ref = document.documentElement.dataset.version || 'main';
+      return `https://gitlab.com/haproxy-haptic/haptic/-/search?search=${encodeURIComponent(root)}&scope=blobs&ref=${encodeURIComponent(ref)}`;
+    }
+    function gotoDefinition({ token, scriggo }) {
+      const url = scriggo ? scriggoDocURL(token) : haproxyDocURL(token);
+      if (url) window.open(url, '_blank', 'noopener');
+    }
+    // Output pane (rendered haproxy.cfg) also supports Ctrl/Cmd-click → HAProxy docs.
+    $('output').addEventListener('click', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || activeTab !== 'haproxy.cfg') return;
+      const range = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+      const node = range && range.startContainer, text = node && node.textContent;
+      if (!text) return;
+      let a = range.startOffset, b = range.startOffset;
+      while (a > 0 && /[\w-]/.test(text[a - 1])) a--;
+      while (b < text.length && /[\w-]/.test(text[b])) b++;
+      const kw = text.slice(a, b).replace(/^[-]+|[-]+$/g, '');
+      if (kw) { e.preventDefault(); e.stopPropagation(); window.open(haproxyDocURL(kw), '_blank', 'noopener'); }
+    }, true);
+
+    // Ctrl/Cmd-hover feedback: underline the word that a Ctrl/Cmd-click would open.
+    // Non-destructive-ish: wraps the hovered word in a <span class="godef"> and unwraps
+    // on move/release (normalize() re-fuses the split text node, restoring highlighting).
+    let godefWrap = null;
+    function clearGodefWrap() {
+      if (!godefWrap) return;
+      const p = godefWrap.parentNode;
+      if (p) { p.replaceChild(document.createTextNode(godefWrap.textContent), godefWrap); p.normalize(); }
+      godefWrap = null;
+    }
+    $('output').addEventListener('mousemove', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || activeTab !== 'haproxy.cfg') { clearGodefWrap(); return; }
+      const range = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+      const node = range && range.startContainer;
+      if (!node || node.nodeType !== 3) { clearGodefWrap(); return; }
+      if (godefWrap && godefWrap.contains(node)) return;   // still hovering the same word
+      clearGodefWrap();
+      const par = node.parentElement;
+      if (!par || !par.closest('.t')) return;              // only code text, never the gutter
+      const text = node.textContent;
+      let a = range.startOffset, b = range.startOffset;
+      while (a > 0 && /[\w-]/.test(text[a - 1])) a--;
+      while (b < text.length && /[\w-]/.test(text[b])) b++;
+      while (a < b && text[a] === '-') a++;                // trim to match the click resolver
+      while (b > a && text[b - 1] === '-') b--;
+      if (b <= a) return;
+      try {
+        const r = document.createRange(); r.setStart(node, a); r.setEnd(node, b);
+        const span = document.createElement('span'); span.className = 'godef';
+        r.surroundContents(span);
+        godefWrap = span;
+      } catch { /* range crossed a token boundary — skip the underline; click still works */ }
+    });
+    $('output').addEventListener('mouseleave', clearGodefWrap);
+    $('output').addEventListener('scroll', clearGodefWrap);
+    document.addEventListener('keyup', (e) => { if (!(e.ctrlKey || e.metaKey)) clearGodefWrap(); });
+
+    $('prov').addEventListener('click', (e) => {
+      if (e.target.closest('.prov-x')) { clearProv(); return; }
+      const crumb = e.target.closest('.prov-crumb');
+      if (crumb && activeProvLine >= 0) {
+        $('prov').querySelectorAll('.prov-crumb.active').forEach((c) => c.classList.remove('active'));
+        crumb.classList.add('active');   // the crumb you clicked is now the one you're viewing
+        gotoCfg(activeProvLine, +crumb.dataset.l);   // jump to that template level
+      }
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('prov').hidden) clearProv(); });
+
+    /* ---------- render loop (warm-engine protocol) ----------
+       A config/schema/version change recompiles the engine (a 'load' message);
+       a resource-only edit reuses the warm engine (a 'render' message). One
+       debounced timer decides which, based on whether the config is dirty. */
+    let editors, timer, configDirty = true;
+    // resetBaselineNext drops any pinned/last-render baseline on the next recompile.
+    // Only fresh loads (preset switch, shared link, session restore) set it — a plain
+    // config edit keeps the baseline so you can see the reload impact of that edit.
+    let resetBaselineNext = false;
+    function markConfig() { configDirty = true; schedule(); }
+    function schedule() { clearTimeout(timer); timer = setTimeout(fire, 200); }
+    function fire() {
+      if (!ready || !editors) return;
+      if (configDirty && !editors.config.get().trim()) return;   // never compile an empty config
+      const cur = ++seq;
+      if (suppressNextGlow) { noGlowSeqs.add(cur); suppressNextGlow = false; }
+      if (configDirty) {
+        configDirty = false;
+        setChip('compiling…', 'busy');
+        worker.postMessage({ type: 'load', seq: cur, config: editors.config.get(), schemas, haproxyVersion: $('hpver').value, resources: editors.res.get(), resetBaseline: resetBaselineNext });
+        resetBaselineNext = false;
+      } else {
+        setChip('rendering…', 'busy');
+        worker.postMessage({ type: 'render', seq: cur, resources: editors.res.get(), baseline: pendingBaseline });
+        pendingBaseline = null;
+      }
+    }
+
+    // Boot progress bar: driven by the worker's wasm-download stream. A compressed
+    // (brotli) response yields decompressed chunks larger than Content-Length, so
+    // loaded > total falls back to an indeterminate bar + MB counter.
+    function updateBoot(loaded, total) {
+      const boot = $('boot'), fill = $('bootfill');
+      if (total > 0 && loaded <= total * 1.05) {
+        boot.classList.remove('indeterminate');
+        const pct = Math.min(100, Math.round((loaded / total) * 100));
+        fill.style.width = pct + '%';
+        setChip('loading engine ' + pct + '%', 'busy');
+      } else {
+        boot.classList.add('indeterminate');
+        setChip(loaded > 1 ? 'loading engine ' + (loaded / 1048576).toFixed(1) + ' MB' : 'loading engine…', 'busy');
+      }
+    }
+
+    worker.onmessage = (e) => {
+      const m = e.data || {};
+      if (m.type === 'progress') { updateBoot(m.loaded, m.total); return; }
+      if (m.type === 'ready') { ready = true; $('boot').classList.add('done'); setChip('ready', 'ok'); schedule(); return; }
+      if (m.type === 'error') { $('boot').classList.add('done'); setChip('worker error', 'err'); $('banner').className = 'banner show render'; $('bk').textContent = 'worker'; $('bm').textContent = m.error || ''; return; }
+      if (m.type !== 'result' || m.seq <= shown) { noGlowSeqs.delete(m.seq); return; }  // drop stale
+      shown = m.seq;
+      const glow = !noGlowSeqs.delete(m.seq);
+      if (m.error) { showError(m.error); return; }                     // keep last-good output
+      clearError();
+      const { tabs, counts, report, drops, migWarn } = tabsFrom(m.res);
+      lastReport = report; lastTrace = m.res.trace || []; lastMigration = m.res.migration || null;
+      closeAnnoCycler();          // occurrence lines may have shifted; a fresh click recomputes
+      fireRail(m.res.durationMs ?? 0);
+      setSchemaWarn(m.res.schemaCheck || '');
+      setReloadImpact(m.res.reloadImpact || null);
+      setChip('rendered', 'ok');
+      renderTabs(tabs, counts, drops, migWarn);
+      lastRes = m.res;             // set before paintOutput: buildLineCfg reads lastRes.provenance
+      paintOutput(tabs, glow);
+      prevTabs = tabs;             // set after paintOutput so the glow diff compares against the previous render
+    };
+
+    /* ---------- presets ---------- */
+    // Each bundled preset is one `helm template` render enabling a specific set
+    // of template libraries, so the config demonstrates that library's snippets.
+    const bundled = (id) => ({ config: `./presets/${id}.config.yaml`, resources: `./presets/${id}.resources.yaml`, schemas: './schemas.json' });
+    const PRESETS = [
+      { id: 'starter', label: 'Minimal starter', config: './starter.config.yaml', resources: './starter.resources.yaml', schemas: null },
+      { id: 'crd', label: 'Custom CRD (any resource)', config: './crd.config.yaml', resources: './crd.resources.yaml', schemas: null },
+      { id: 'ingress', label: 'Ingress', ...bundled('ingress') },
+      { id: 'haproxytech', label: 'Ingress · HAProxyTech', ...bundled('haproxytech') },
+      { id: 'haproxy-ingress', label: 'Ingress · HAProxy-Ingress', ...bundled('haproxy-ingress') },
+      { id: 'nginx-ingress', label: 'Ingress · NGINX-Ingress', ...bundled('nginx-ingress') },
+      { id: 'gateway', label: 'Gateway API', ...bundled('gateway') },
+      { id: 'all', label: 'All libraries', ...bundled('all') },
+    ];
+    const presetEl = $('preset');
+    for (const p of PRESETS) { const o = document.createElement('option'); o.value = p.id; o.textContent = p.label; presetEl.appendChild(o); }
+    // A hidden "Modified" entry the dropdown shows once the config diverges from a
+    // bundled preset (edited, restored from autosave, or opened from a shared link),
+    // so it never falsely reads as "Minimal starter" while other content is loaded.
+    { const o = document.createElement('option'); o.value = CUSTOM_OPT; o.textContent = '— Modified —'; o.hidden = true; presetEl.appendChild(o); }
+    function markCustom() { if (presetEl.value !== CUSTOM_OPT) presetEl.value = CUSTOM_OPT; }
+    async function fetchText(url) { const r = await fetch(url); if (!r.ok) throw new Error(url + ': HTTP ' + r.status); return r.text(); }
+    async function loadPreset(p) {
+      setChip('loading ' + p.id + '…', 'busy');
+      try {
+        const [config, resources, sch] = await Promise.all([
+          fetchText(p.config), fetchText(p.resources), p.schemas ? fetchText(p.schemas) : Promise.resolve('')]);
+        suppressNextGlow = true; schemas = sch; schemasUrl = p.schemas; configDirty = true; resetBaselineNext = true;   // a preset always recompiles from a clean baseline
+        setSchemaBundle(schemas);   // refresh typed-field autocomplete
+        loadingPreset = true;
+        editors.config.set(config); editors.res.set(resources);
+        loadingPreset = false;
+        presetEl.value = p.id;   // reflect the loaded preset (the edit callbacks skipped the custom switch)
+        updateResHint(); schedule();
+      } catch (err) { setChip('preset load failed', 'err'); showError('parsing config: ' + err.message); loadingPreset = false; }
+    }
+    function updateResHint() { const h = $('res-hint'); h.hidden = !!(editors && editors.res.get().trim()); }
+    presetEl.addEventListener('change', () => { const p = PRESETS.find((x) => x.id === presetEl.value); if (p) loadPreset(p); });
+    $('hpver').addEventListener('change', () => { suppressNextGlow = true; markConfig(); autosave(); });   // version affects capabilities -> recompile
+
+    /* ---------- share & persist (URL hash + localStorage), zero-dependency ---------- */
+    const LS_KEY = 'haptic-playground:last';
+    async function gzipB64(str) {
+      const cs = new CompressionStream('gzip');
+      const buf = new Uint8Array(await new Response(new Blob([str]).stream().pipeThrough(cs)).arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+    function ungzipB64(s) {
+      const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+      const buf = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    }
+    function currentState() { return { c: editors.config.get(), r: editors.res.get(), v: $('hpver').value, s: schemasUrl, p: presetEl.value }; }
+    async function doShare() {
+      if (!editors) return;
+      const btn = $('share');
+      // Two-step: the link embeds the full input (including any secrets pasted),
+      // so make copying a deliberate, warned action rather than a silent one.
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = '⚠ Includes secrets — copy';
+        btn.classList.add('warn');
+        setTimeout(() => { if (btn.dataset.armed === '1') { btn.dataset.armed = '0'; btn.textContent = 'Share'; btn.classList.remove('warn'); } }, 4000);
+        return;
+      }
+      btn.dataset.armed = '0'; btn.classList.remove('warn');
+      try {
+        // The whole state (config + resources + version) is gzipped into the URL
+        // fragment (#s=…). The recipient decodes it client-side; the fragment is
+        // never sent in an HTTP request, so no server — not even the page's host —
+        // ever sees it. Cap at a browser-safe fragment length; a larger session
+        // can't be linked, so say so rather than mint a link that won't open.
+        const enc = await gzipB64(JSON.stringify(currentState()));
+        if (enc.length > 1500000) {
+          btn.textContent = 'Too large to link';
+          setTimeout(() => { btn.textContent = 'Share'; }, 2000);
+          return;
+        }
+        location.hash = 's=' + enc;
+        await navigator.clipboard?.writeText(location.href);
+        btn.textContent = 'Copied!'; btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Share'; btn.classList.remove('copied'); }, 1400);
+      } catch (err) { setChip('share failed', 'err'); }
+    }
+    $('share').addEventListener('click', doShare);
+
+    /* ---------- try out: download a self-contained run script ---------- */
+    function downloadText(name, text, mime) {
+      const url = URL.createObjectURL(new Blob([text], { type: mime || 'text/plain' }));
+      const a = document.createElement('a'); a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+    // The button opens a modal that explains what the script does and how to run
+    // it; the download only happens on the explicit "Download script" button.
+    function openTryout() {
+      const btn = $('tryout');
+      if (!lastRes) { btn.textContent = 'render first'; setTimeout(() => { btn.textContent = 'Try out'; }, 1600); return; }
+      $('tryout-modal').hidden = false;
+      $('tryout-download').focus();
+    }
+    function closeTryout() { $('tryout-modal').hidden = true; $('tryout').focus(); }
+    async function downloadTryout() {
+      const dl = $('tryout-download');
+      try {
+        const script = await buildTryoutScript(lastRes, $('hpver').value);
+        downloadText('haptic-tryout.sh', script, 'text/x-shellscript');
+        dl.textContent = 'Downloaded ✓';
+        setTimeout(() => { closeTryout(); dl.textContent = 'Download script'; }, 900);
+      } catch (err) { setChip('try-out failed', 'err'); closeTryout(); }
+    }
+    $('tryout').addEventListener('click', openTryout);
+    $('tryout-download').addEventListener('click', downloadTryout);
+    $('tryout-cancel').addEventListener('click', closeTryout);
+    $('tryout-modal').addEventListener('click', (e) => { if (e.target === $('tryout-modal')) closeTryout(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('tryout-modal').hidden) closeTryout(); });
+
+    /* ---------- help modal (how to use the playground) ---------- */
+    const HELP_SEEN_KEY = 'haptic-pg-help-seen';
+    function openHelp() {
+      $('help-modal').hidden = false;
+      $('help-modal').querySelector('.modal-card').scrollTop = 0;   // show the title, not the scrolled-to button
+      $('help-close').focus({ preventScroll: true });
+    }
+    function closeHelp() {
+      $('help-modal').hidden = true;
+      try { localStorage.setItem(HELP_SEEN_KEY, '1'); } catch (e) { /* quota */ }
+      $('help').focus();
+    }
+    $('help').addEventListener('click', openHelp);
+    $('help-close').addEventListener('click', closeHelp);
+    $('help-modal').addEventListener('click', (e) => { if (e.target === $('help-modal')) closeHelp(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('help-modal').hidden) closeHelp(); });
+
+    /* ---------- shared modal focus trap (honours the modals' aria-modal="true") ---------- */
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      const modal = document.querySelector('.modal:not([hidden])');
+      if (!modal) return;
+      const f = [...modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter((el) => !el.disabled && el.offsetParent !== null);
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (!modal.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+
+    async function readSharedState() {
+      const h = decodeURIComponent(location.hash.slice(1));
+      try {
+        if (h.startsWith('s=')) return JSON.parse(await ungzipB64(h.slice(2)));
+        if (h.startsWith('id=')) { const raw = localStorage.getItem(h.slice(3)); return raw ? JSON.parse(raw) : null; }
+      } catch (err) { /* corrupt hash -> fall through to default */ }
+      return null;
+    }
+    async function applyState(st) {
+      suppressNextGlow = true; configDirty = true; resetBaselineNext = true;
+      if (st.v) $('hpver').value = st.v;
+      schemasUrl = st.s || null;
+      schemas = schemasUrl ? await fetchText(schemasUrl).catch(() => '') : '';
+      setSchemaBundle(schemas);   // refresh typed-field autocomplete
+      loadingPreset = true;
+      editors.config.set(st.c || ''); editors.res.set(st.r || '');
+      loadingPreset = false;
+      // Restore the saved preset selection; fall back to "Modified" when the state
+      // was a custom edit or names a preset this build doesn't have.
+      presetEl.value = (st.p && PRESETS.some((x) => x.id === st.p)) ? st.p : CUSTOM_OPT;
+      updateResHint(); schedule();
+    }
+    let saveTimer;
+    function autosave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(currentState())); } catch (e) { /* quota */ } }, 500); }
+
+    /* ---------- controller-version selector ----------
+       When the site is published per release each bundle lives at
+       /playground/<version>/ and shares one /playground/versions.json (a sibling
+       of every version dir, so old immutable bundles are never re-touched). We
+       fetch it one level up (`../versions.json`) and let the dropdown navigate
+       between sibling versions. In local single-version dev there is no
+       versions.json, so the dropdown stays a disabled "local" — graceful, no error. */
+    async function initVersions() {
+      let data = null;
+      try { const r = await fetch('../versions.json'); if (r.ok) data = await r.json(); } catch (e) { /* local */ }
+      const list = data && Array.isArray(data.versions) ? data.versions : null;
+      if (!list || !list.length) return;
+      const sel = $('ctrlver'); sel.innerHTML = ''; sel.disabled = false;
+      const current = document.documentElement.dataset.version || data.current || list[0].version;
+      for (const v of list) {
+        const o = document.createElement('option');
+        o.value = v.version; o.textContent = v.version + (v.stable === false ? ' · pre' : '');
+        if (v.version === current) o.selected = true;
+        sel.appendChild(o);
+      }
+      // Each version is its own hosted bundle; switching navigates (carrying the share hash).
+      sel.addEventListener('change', () => { location.href = '../' + encodeURIComponent(sel.value) + '/' + location.hash; });
+    }
+
+    /* ---------- boot ---------- */
+    (async () => {
+      initResizers();
+      editors = await makeEditors(
+        () => { if (!loadingPreset) markCustom(); markConfig(); autosave(); },              // config editor -> recompile
+        () => { if (!loadingPreset) markCustom(); updateResHint(); schedule(); autosave(); }, // resource editor -> render-only (warm)
+        updateBackBtn,                                                                        // a jump/back changed history depth
+        gotoDefinition);                                                                      // Ctrl/Cmd-click → docs
+      window.hapticPlayground = {   // e2e automation surface (harmless in production)
+        setConfig: (t) => editors.config.set(t), setResources: (t) => editors.res.set(t), editorKind: editors.kind,
+        reload: () => { configDirty = true; fire(); }, render: () => { configDirty = false; fire(); },
+        stats: () => lastRes, share: doShare, tryout: openTryout, help: openHelp,
+        provenance: () => lineChains, provActive: () => activeProvLine,
+        tryoutScript: () => lastRes ? buildTryoutScript(lastRes, $('hpver').value) : null };
+      initVersions();   // fire-and-forget; no-op in local single-version dev
+      const shared = await readSharedState();
+      if (shared) return applyState(shared);                 // a shared link wins (skip onboarding)
+      // First-time visitors get the how-to-use modal once; it explains bringing your own inputs.
+      try { if (!localStorage.getItem(HELP_SEEN_KEY)) openHelp(); } catch (e) { /* private mode */ }
+      const auto = localStorage.getItem(LS_KEY);             // else restore your last session
+      if (auto) { try { return await applyState(JSON.parse(auto)); } catch (e) { /* corrupt */ } }
+      await loadPreset(PRESETS[0]);                          // else the default preset
+    })();
+  </script>
+</body>
+</html>

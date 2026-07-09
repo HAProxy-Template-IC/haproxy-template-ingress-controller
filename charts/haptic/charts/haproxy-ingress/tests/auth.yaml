@@ -61,6 +61,58 @@ validationTests:
         target: haproxy.cfg
         pattern: 'http-request auth realm "ProtectedArea"'
 
+  test-haproxy-ingress-basic-auth-htpasswd-key:
+    description: An `auth`-key htpasswd Secret (haproxy-ingress / ingress-nginx native format) is parsed into the userlist; "user::plain" lines use insecure-password
+    fixtures:
+      secrets:
+        # data.auth = base64("admin:$2y$05$...\nguest::plainpw\n")
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: hi-htpasswd
+          type: Opaque
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: auth-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: htpasswd-ingress
+            annotations:
+              haproxy-ingress.github.io/auth-secret: "hi-htpasswd"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: auth.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: auth-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user admin password [$]2y[$]05[$]"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user guest insecure-password plainpw"
+
   test-haproxy-ingress-basic-auth-missing-secret:
     description: >-
       auth-secret referencing a Secret that is ABSENT from the render snapshot

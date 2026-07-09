@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A browser playground for `HAProxyTemplateConfig` runs the controller's production render path entirely client-side in WebAssembly — nothing is uploaded, so real secrets and cluster resources are safe to paste. It shows the exact `haproxy.cfg`, map files, decoded certificates, status patches, and rendered Kubernetes resources a config produces, with per-line provenance back to the template that emitted each line, a reload-vs-runtime impact verdict against a pinned baseline, and an annotation-migration report. It is published per version on the docs site at `/playground/<version>/` (and a moving `/playground/dev/` from `main`).
 - `haptic-controller migrate-check` audits another ingress controller's Ingresses before you switch to HAPTIC: it classifies every source-controller annotation as supported, different, dropped, failing, or unknown, and renders each Ingress through the real template pipeline to catch rejections. With no arguments it uses the image-embedded chart, live-cluster schemas, and live Ingresses; `-f`/`--resources`/`--schema-dir`/`-n`/`--output text|json|markdown` switch inputs offline. Exit codes: `0` clean, `1` differences or unknowns, `2` blockers. Coverage is declared per source by the template libraries (`spec.migrationCoverage`), so no controller or annotation name is hardcoded.
 - Fleet-convergence and config-staleness metrics — `haptic_haproxy_fleet_size`, `haptic_haproxy_fleet_converged`, `haptic_last_full_sync_timestamp_seconds`, and `haptic_deployment_consecutive_failures` — give a noise-free "is the fleet converged, and for how long has it not been" signal to alert on instead of the now-self-healing deploy error counter.
 
@@ -22,8 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Helm chart
 
+#### Added
+
 - Each vendor annotation library (nginx-ingress, haproxy-ingress, haproxytech) now declares machine-readable migration coverage for its source controller's annotations — surfaced on `spec.migrationCoverage` and used to generate the per-source annotation-support tables in the [migration guide](./docs/controller/docs/migrating.md). Only enabled libraries contribute.
 - `HAProxyFleetDiverged` PrometheusRule alert (toggleable) and a Grafana fleet-convergence panel, built on the new fleet-convergence metrics.
+- New `haproxy.org/cors-respond-to-options` annotation: when `"true"`, HAProxy answers the CORS preflight (OPTIONS) with a 204 instead of forwarding it to the backend, matching the upstream HAProxy Kubernetes Ingress Controller.
+- New `extraContext.hstsEnabled` opt-in (default off, declared by the SSL library) sends `Strict-Transport-Security` on every TLS response, matching ingress-nginx's and haproxy-ingress's global HSTS default; `hstsMaxAge`/`hstsIncludeSubdomains`/`hstsPreload` tune the value, and a per-Ingress `hsts` annotation still overrides it per host. Because HSTS is only effective over HTTPS, the rendered config emits a warning when it is enabled without an HTTP→HTTPS redirect. The nginx-ingress and haproxy-ingress migration coverage now points to this knob.
+
+#### Fixed
+
+- The `nginx.ingress.kubernetes.io/enable-cors` and `haproxy-ingress.github.io/cors-enable` annotations now answer the CORS preflight (OPTIONS) request in HAProxy with a synthetic 204 carrying the `Access-Control-*` headers, matching ingress-nginx — previously the preflight was forwarded to the backend, which then had to handle OPTIONS itself. Both annotations are now marked `supported` in the migration coverage.
+- The `haproxy.org/cors-*` annotations now mirror the upstream HAProxy Kubernetes Ingress Controller: a non-wildcard `cors-allow-origin` is treated as a regex matched against the request Origin and the `Access-Control-Allow-Origin` header echoes the matched origin (previously the value was emitted verbatim, so a regex or multi-origin allow-list produced an invalid header). CORS headers are now added via `http-after-response` (so they also apply to the preflight response), and the `cors-allow-methods` / `cors-allow-headers` / `cors-max-age` defaults now track upstream (`*` / `*` / `5s`).
+- The `nginx.ingress.kubernetes.io/cors-allow-origin` and `haproxy-ingress.github.io/cors-allow-origin` annotations now accept a comma-separated allow-list with single-level `*.` subdomain wildcards, match it against the request `Origin`, and echo the matched origin back (adding `Vary: Origin` for non-wildcard lists) — matching ingress-nginx. Previously the annotation value was emitted verbatim as the `Access-Control-Allow-Origin` header, so a multi-origin list or a wildcard produced an invalid header. A malformed origin now fails the render.
+- `haproxy-ingress.github.io/auth-secret` now also parses an `auth`-key htpasswd Secret (haproxy-ingress's and ingress-nginx's native format — one `user:hash` line each, `user::plain` for insecure), so a Secret migrated from those controllers authenticates. The previous base64-hash-per-username Secret shape still works.
+- `haproxy.org/auth-realm` now normalizes spaces to dashes (matching the upstream HAProxy Kubernetes Ingress Controller) instead of failing the render, and its default realm is now `Protected-Content` (was `RestrictedArea`). The `sanitize_auth_realm` toggle is removed (normalization is unconditional).
+- The Gateway API template library no longer requires the Ingress library. Its shared hostname-to-map-key helper (`MapKeyForHost`) moved into the always-loaded base library (renamed `util-ingress-host-key` → `util-host-key`), so `controller.templateLibraries.gateway` can be enabled with `ingress` disabled without a template-compilation error.
 
 ## [0.2.0-alpha.1] - 2026-07-05
 

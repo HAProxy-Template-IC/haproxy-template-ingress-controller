@@ -237,7 +237,7 @@ migrationCoverage:
       # --- HSTS ---
       haproxy-ingress.github.io/hsts:
         status: different
-        note: The header is emitted only when the annotation is explicitly "true" on the Ingress — jcmoraisjr/haproxy-ingress enables HSTS globally by default.
+        note: By default the header is emitted only when the Ingress sets hsts "true", whereas jcmoraisjr/haproxy-ingress enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching that default); a per-Ingress hsts annotation still overrides the value for its hosts.
         doc: annotation-support
       haproxy-ingress.github.io/hsts-max-age:
         status: supported
@@ -250,12 +250,12 @@ migrationCoverage:
         note: Adds preload when "true".
       # --- CORS ---
       haproxy-ingress.github.io/cors-enable:
-        status: different
-        note: Header-injection only — OPTIONS preflights are forwarded to the backend rather than answered by HAProxy, so the backend must accept OPTIONS.
+        status: supported
+        note: CORS preflight (OPTIONS) is answered by HAProxy with a 204 carrying the Access-Control-* headers; the backend never sees the preflight. Simple cross-origin responses get the headers added on the way out.
         doc: annotation-support
       haproxy-ingress.github.io/cors-allow-origin:
-        status: different
-        note: Emitted verbatim into Access-Control-Allow-Origin; dynamic multi-origin matching is not performed — use a single origin or "*".
+        status: supported
+        note: Comma-separated allow-list with single-level "*." subdomain wildcards, matched against the request Origin; the matched origin is echoed back (a Vary Origin header is added for non-wildcard lists). A malformed origin fails the render.
         doc: annotation-support
       haproxy-ingress.github.io/cors-allow-methods:
         status: supported
@@ -274,8 +274,8 @@ migrationCoverage:
         note: Default 86400.
       # --- Basic authentication ---
       haproxy-ingress.github.io/auth-secret:
-        status: different
-        note: Secret format is one key per username with a base64(bcrypt/apr1 hash) value — different from ingress-nginx's htpasswd; a migrated htpasswd Secret will not authenticate. A missing Secret disables auth for the route until it appears.
+        status: supported
+        note: An `auth`-key htpasswd Secret (haproxy-ingress's own format, one "user:hash" line each; a "user::plain" line uses insecure-password) is parsed into the userlist, so a migrated Secret authenticates; a base64(hash)-per-username Secret also works. A missing Secret currently disables auth for the route until it appears (fail-open), where upstream serves 503.
         doc: annotation-support
       haproxy-ingress.github.io/auth-realm:
         status: supported
@@ -283,7 +283,7 @@ migrationCoverage:
       # --- Client certificate auth (mTLS) ---
       haproxy-ingress.github.io/auth-tls-secret:
         status: different
-        note: Verification is keyed by SNI — every rule needs an explicit host or the render fails; a missing Secret (or missing ca.crt) skips mTLS for the Ingress with a rendered warning.
+        note: Verification is keyed by SNI — every rule needs an explicit host or the render fails. A missing Secret (or missing ca.crt) currently SKIPS mTLS for the Ingress (fail-open — requests with no/any client cert pass), where upstream with auth-tls-strict defaulting to true installs a fake CA and rejects all clients (fail-closed).
         doc: annotation-support
       haproxy-ingress.github.io/auth-tls-verify-client:
         status: different
@@ -298,7 +298,7 @@ migrationCoverage:
         doc: annotation-support
       haproxy-ingress.github.io/auth-tls-strict:
         status: dropped
-        note: Accepted for compatibility but has no separate effect; for soft verification use auth-tls-verify-client optional instead.
+        note: Accepted for compatibility but has no separate effect. Upstream defaults it to true (fail-closed on a missing/invalid CA); here a missing CA fails open (see auth-tls-secret), and this annotation cannot restore fail-closed. For soft verification use auth-tls-verify-client optional instead.
         doc: annotation-support
       # --- External authentication (SPOA hub external-auth plugin) ---
       haproxy-ingress.github.io/auth-url:

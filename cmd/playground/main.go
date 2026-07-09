@@ -1,0 +1,792 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//go:build js && wasm
+
+// Command playground is the WebAssembly entrypoint for the browser template
+// playground. It renders a HAProxyTemplateConfig against example resources
+// entirely client-side by driving the controller's PRODUCTION render path —
+// renderer.RenderService.Render — so playground output is identical to what the
+// controller deploys at the same release. It contains no render orchestration
+// of its own; the only difference from production is that stores are built from
+// in-memory example resources instead of live informers, and the HAProxy
+// version/capabilities are supplied rather than detected.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"strings"
+	"syscall/js"
+	"time"
+
+	"sigs.k8s.io/yaml"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/kube-openapi/pkg/validation/spec"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/migratecheck"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+)
+
+// renderResult is the flat, JSON-friendly shape returned across the JS boundary.
+type renderResult struct {
+	HAProxyConfig string
+	Maps          map[string]string
+	Files         map[string]string
+	Certs         map[string]string
+	CertsDecoded  any // certs path -> decoded x509 summary (certs/keys/errors) for the certs tab
+	CRTLists      map[string]string
+	StatusPatches map[string]string // target "<Kind> <ns>/<name>" -> rendered .status YAML
+	Applied       map[string]string // target "<Kind> <ns>/<name>" -> full k8sResources object YAML the controller applies
+	DurationMs    int64
+	Bucket        *BucketReport // where each pasted resource landed / why it was dropped
+	Trace         []any         // per-snippet render stats (JS-ready): {name, count, totalMs, avgMs, maxMs}
+	Migration     any           // migrate-check report for pasted Ingresses (nil when no coverage/ingresses)
+	SchemaCheck   string        // per-field schema violation in the rendered config (empty = passed)
+	ReloadImpact  any           // comparator verdict vs the baseline (nil on first render / parse failure)
+	Provenance    any           // output tab -> per-line config-editor line that produced it (0 = none)
+	ProvBase      any           // aux file id -> config line of its template block (for the "# name" header)
+	ProvBlocks    any           // template name -> config line of its block scalar (trace tab jump targets)
+	WatchedLines  any           // watched-resource name -> config line of its declaration (resources tab jump)
+}
+
+// warmEngine holds the compiled engine + render service between renders, so a
+// resource-only edit renders without recompiling templates or re-running type
+// bootstrap. Package-global state is safe here because wasm is single-threaded:
+// every JS->Go call runs to completion before the next begins.
+type warmEngine struct {
+	cfg        *config.Config
+	svc        *renderer.RenderService // holds the compiled engine
+	runner     *testrunner.Runner      // owns CreateStoresFromFixtures (also holds the engine)
+	byKey      map[string]schema.GroupVersionKind
+	coverage   []v1alpha1.MigrationCoverageSource // spec.migrationCoverage, for the migration report
+	ver        *dataplane.Version                 // selected HAProxy version, for the schema check
+	configYAML []byte                             // raw config, for provenance line lookups
+}
+
+var (
+	warm      *warmEngine
+	loadCount int // number of engine compiles — the compile-count probe reads this
+
+	// Reload-impact baseline: the parsed config AND auxiliary files a new render
+	// is diffed against, via dataplane.ComputeReloadImpact, to show whether
+	// deploying it would reload HAProxy or apply over the runtime socket (map/cert
+	// content updates live in aux files, not the config, so both are needed).
+	// prevBaseline tracks the last render (the default baseline); pinnedBaseline
+	// freezes a baseline the user chose.
+	prevBaseline   *renderBaseline
+	pinnedBaseline *renderBaseline
+)
+
+// renderBaseline is a rendered config + its auxiliary files, the unit a later
+// render is diffed against for the reload-impact verdict.
+type renderBaseline struct {
+	cfg *parser.StructuredConfig
+	aux *dataplane.AuxiliaryFiles
+}
+
+func main() {
+	js.Global().Set("hapticLoadConfig", js.FuncOf(hapticLoadConfigJS))
+	js.Global().Set("hapticRender", js.FuncOf(hapticRenderJS))
+	js.Global().Set("hapticPinBaseline", js.FuncOf(func(_ js.Value, _ []js.Value) any { pinnedBaseline = prevBaseline; return pinnedBaseline != nil }))
+	js.Global().Set("hapticUnpinBaseline", js.FuncOf(func(_ js.Value, _ []js.Value) any { pinnedBaseline = nil; return nil }))
+	js.Global().Set("hapticResetBaseline", js.FuncOf(func(_ js.Value, _ []js.Value) any { prevBaseline = nil; pinnedBaseline = nil; return nil }))
+
+	// Signal readiness so the host can drop its loading state.
+	if ready := js.Global().Get("hapticOnReady"); ready.Type() == js.TypeFunction {
+		ready.Invoke()
+	}
+
+	// The Go runtime must stay alive to service future JS calls; returning from
+	// main would tear down the instance.
+	select {}
+}
+
+// hapticLoadConfigJS compiles the engine + render service and holds them warm.
+// Signature: hapticLoadConfig(configYAML, schemasJSON, haproxyVersion). Call it
+// when the config, schema bundle, or HAProxy version changes; then call
+// hapticRender(resourcesYAML) as often as the resources change without paying
+// the compile cost again. All YAML is unmarshalled inside wasm (sigs.k8s.io/yaml
+// yields JSON-native numerics so unstructured deep-copy never sees a bare int).
+func hapticLoadConfigJS(_ js.Value, args []js.Value) any {
+	if len(args) < 3 {
+		return jsError("hapticLoadConfig requires 3 arguments: configYAML, schemasJSON, haproxyVersion")
+	}
+	if err := loadConfig([]byte(args[0].String()), []byte(args[1].String()), args[2].String()); err != nil {
+		warm = nil // a failed load invalidates any previous warm engine
+		return jsError(err.Error())
+	}
+	return map[string]any{"ok": true, "loadCount": float64(loadCount)}
+}
+
+// hapticRenderJS renders the example resources against the warm engine.
+// Signature: hapticRender(resourcesYAML). hapticLoadConfig must have succeeded first.
+func hapticRenderJS(_ js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return jsError("hapticRender requires 1 argument: resourcesYAML")
+	}
+	res, err := renderWarm([]byte(args[0].String()))
+	if err != nil {
+		return jsError(err.Error())
+	}
+	return map[string]any{
+		"haproxyCfg":    res.HAProxyConfig,
+		"maps":          toAnyMap(res.Maps),
+		"files":         toAnyMap(res.Files),
+		"certs":         toAnyMap(res.Certs),
+		"certsDecoded":  res.CertsDecoded,
+		"crtLists":      toAnyMap(res.CRTLists),
+		"durationMs":    float64(res.DurationMs),
+		"loadCount":     float64(loadCount),
+		"bucketReport":  bucketReportToJS(res.Bucket),
+		"trace":         orEmptySlice(res.Trace),
+		"statusPatches": toAnyMap(res.StatusPatches),
+		"applied":       toAnyMap(res.Applied),
+		"migration":     res.Migration,
+		"schemaCheck":   res.SchemaCheck,
+		"reloadImpact":  res.ReloadImpact,
+		"provenance":    res.Provenance,
+		"provBase":      res.ProvBase,
+		"provBlocks":    res.ProvBlocks,
+		"watchedLines":  res.WatchedLines,
+	}
+}
+
+// orEmptySlice returns a non-nil slice so the JS boundary sees [] not null.
+func orEmptySlice(s []any) []any {
+	if s == nil {
+		return []any{}
+	}
+	return s
+}
+
+// bucketReportToJS converts the bucketing report into js.ValueOf-compatible
+// data ([]any of map[string]any) for the resources-inspector UI.
+func bucketReportToJS(r *BucketReport) any {
+	if r == nil {
+		return []any{}
+	}
+	objs := make([]any, 0, len(r.Objects))
+	for _, o := range r.Objects {
+		buckets := make([]any, len(o.Buckets))
+		for i, b := range o.Buckets {
+			buckets[i] = b
+		}
+		objs = append(objs, map[string]any{
+			"apiVersion": o.APIVersion,
+			"kind":       o.Kind,
+			"namespace":  o.Namespace,
+			"name":       o.Name,
+			"buckets":    buckets,
+			"dropped":    o.Dropped,
+			"reason":     o.Reason,
+		})
+	}
+	return objs
+}
+
+// migrationReportToJS flattens a migrate-check report into js.ValueOf-compatible
+// data for the migration UI tab. Per source, per Ingress, each classified
+// annotation carries its coverage status and note.
+func migrationReportToJS(r *migratecheck.Report) map[string]any {
+	toIngress := func(ir migratecheck.IngressReport) map[string]any {
+		findings := make([]any, 0, len(ir.Findings))
+		for _, f := range ir.Findings {
+			findings = append(findings, map[string]any{
+				"annotation": f.Annotation,
+				"value":      f.Value,
+				"status":     string(f.Status),
+				"note":       f.Note,
+			})
+		}
+		return map[string]any{
+			"namespace": ir.Namespace,
+			"name":      ir.Name,
+			"class":     ir.Class,
+			"findings":  findings,
+		}
+	}
+	sources := make([]any, 0, len(r.Sources))
+	for _, s := range r.Sources {
+		ings := make([]any, 0, len(s.Ingresses))
+		for _, ir := range s.Ingresses {
+			ings = append(ings, toIngress(ir))
+		}
+		sources = append(sources, map[string]any{
+			"source":    s.Source,
+			"ingresses": ings,
+			"counts":    countsToJS(s.Counts),
+		})
+	}
+	unattr := make([]any, 0, len(r.Unattributed))
+	for _, ir := range r.Unattributed {
+		unattr = append(unattr, toIngress(ir))
+	}
+	return map[string]any{
+		"sources":            sources,
+		"unattributed":       unattr,
+		"counts":             countsToJS(r.Counts),
+		"totalIngresses":     float64(r.TotalIngresses),
+		"checkedAnnotations": float64(r.CheckedAnnotations),
+	}
+}
+
+func countsToJS(c map[migratecheck.Status]int) map[string]any {
+	out := make(map[string]any, len(c))
+	for k, v := range c {
+		out[string(k)] = float64(v)
+	}
+	return out
+}
+
+// loadConfig runs the expensive steps — parse, type bootstrap, engine compile,
+// build the production render service — and stores them in `warm`. Same
+// production call graph as the controller; just split out so a resource-only
+// render can reuse it.
+func loadConfig(configYAML, schemasJSON []byte, haproxyVersion string) error {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	spec, err := parseConfigSpec(configYAML)
+	if err != nil {
+		return err
+	}
+	cfg, err := conversion.ConvertSpec(spec)
+	if err != nil {
+		return fmt.Errorf("converting config: %w", err)
+	}
+
+	byGVK, byKey, err := parseSchemaBundle(schemasJSON)
+	if err != nil {
+		return err
+	}
+
+	// Collapse each watched resource's candidate apiVersions to the one the
+	// schema bundle serves — the controller/offline-validate paths do this via
+	// config.ResolveEffective, and the render path relies on it: a multi-version
+	// resource like gatewayclasses (apiVersions: [v1, v1beta1]) otherwise keeps
+	// an empty singular APIVersion, so resources.<name>.APIVersion() returns ""
+	// and the status templates fail ("apiVersion ... required"). Resource-agnostic.
+	cfg, _, err = config.ResolveEffective(cfg, bundleServedChecker{byKey: byKey}, nil)
+	if err != nil {
+		return fmt.Errorf("resolving effective config: %w", err)
+	}
+
+	typed, err := bootstrapTypes(cfg, byGVK, byKey, logger)
+	if err != nil {
+		return err
+	}
+
+	// Replace dataplane.DetectLocalVersion() (execs the haproxy binary, which is
+	// unavailable in the browser) with the supplied version — the only mandatory
+	// bypass on the render path.
+	ver, err := dataplane.ParseVersionString(haproxyVersion)
+	if err != nil {
+		return fmt.Errorf("parsing HAProxy version %q: %w", haproxyVersion, err)
+	}
+	caps := dataplane.CapabilitiesFromVersion(ver)
+
+	// Compile the engine exactly as the controller does — same helper, same
+	// declarations — so template compilation behaves identically.
+	decls := helpers.BuildAdditionalDeclarations(cfg, typed)
+	// Profiling on: the playground surfaces per-snippet render stats (the trace
+	// tab). Behaviour-neutral for output; just adds include timing collection.
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, decls, helpers.EngineOptions{EnableProfiling: true})
+	if err != nil {
+		return fmt.Errorf("compiling templates: %w", err)
+	}
+
+	runner := testrunner.New(cfg, engine, renderPaths(), &testrunner.Options{
+		Logger:             logger,
+		Capabilities:       caps,
+		HAProxyVersion:     ver,
+		TypedResourceTypes: typed.Types,
+	})
+	// The production render service. This is the whole point: identical output
+	// to the controller at this release.
+	svc := renderer.NewRenderService(&renderer.RenderServiceConfig{
+		Engine:             engine,
+		Config:             cfg,
+		Logger:             logger,
+		Capabilities:       caps,
+		TypedResourceTypes: typed.Types,
+	})
+
+	warm = &warmEngine{cfg: cfg, svc: svc, runner: runner, byKey: byKey, coverage: spec.MigrationCoverage, ver: ver, configYAML: configYAML}
+	// NB: the reload-impact baseline (prev/pinned) intentionally survives a recompile,
+	// so a config edit is measured against the pinned/last render. Fresh loads (preset
+	// switch, shared link, session restore) drop it explicitly via hapticResetBaseline.
+	loadCount++
+	return nil
+}
+
+// renderWarm renders the example resources against the warm engine. Only the
+// cheap steps run: bucket the resources into in-memory stores (via the
+// production indexer) and invoke renderer.RenderService.Render.
+//
+// The resources may be a raw `kubectl get ... -o yaml` dump (a List, a single
+// object, or a multi-document stream) or the name-keyed validationTests-fixtures
+// shape; parseResources buckets each object by apiVersion+kind against the
+// config's watchedResources, honouring their label/field selectors, exactly as
+// the controller's watchers do.
+func renderWarm(resourcesYAML []byte) (*renderResult, error) {
+	if warm == nil {
+		return nil, fmt.Errorf("no config loaded: call hapticLoadConfig first")
+	}
+
+	fixtures, report, err := parseResources(warm.cfg, warm.byKey, resourcesYAML)
+	if err != nil {
+		return nil, fmt.Errorf("parsing resources: %w", err)
+	}
+	storeMap, err := warm.runner.CreateStoresFromFixtures(fixtures)
+	if err != nil {
+		return nil, fmt.Errorf("building stores from resources: %w", err)
+	}
+	provider := stores.NewRealStoreProvider(storeMap)
+
+	out, err := warm.svc.Render(context.Background(), provider)
+	if err != nil {
+		return nil, fmt.Errorf("rendering: %s", dataplane.SimplifyRenderingError(err))
+	}
+	// NOTE: no client-native validation of the output — it's too lenient to be a
+	// useful safety net (accepts arbitrary text; only rejects an empty string).
+	// Meaningful config validation needs `haproxy -c`, which can't run in wasm.
+	// Template mistakes surface as template-compile / render errors above.
+	rr := toRenderResult(out)
+	rr.Bucket = report
+	rr.Migration = migrationReport(warm.coverage, resourcesYAML)
+	// Per-field schema check on the rendered config: the same pure-Go OpenAPI
+	// validators the controller runs before deploy (dataplane.ValidateSyntaxAndSchema
+	// — no haproxy binary, no filesystem). Catches bad enums, out-of-range numbers,
+	// and missing required fields on servers/binds/frontend/backend rules. It is a
+	// strict SUBSET of `haproxy -c`: it can't see cross-references (use_backend to an
+	// undefined backend), unknown keywords, or global/defaults errors — the UI labels
+	// it as such, and its silence is never presented as "the config is valid".
+	if _, verr := dataplane.ValidateSyntaxAndSchema(out.HAProxyConfig, warm.ver); verr != nil {
+		rr.SchemaCheck = cleanSchemaError(dataplane.SimplifyValidationError(verr))
+	}
+	rr.ReloadImpact = reloadImpact(out, warm.ver)
+	// Provenance: a second, source-map-collecting render pass over the same
+	// context maps each output line back to the config-editor line that produced
+	// it (works for any config — no marker convention, follows render includes).
+	if sms, smErr := warm.svc.RenderSourceMaps(context.Background(), provider); smErr == nil && sms != nil {
+		prov, base := buildProvenance(warm.configYAML, sms, out)
+		// Applied (re-marshaled k8sResources) and status (computed values) can't be
+		// source-mapped by buildProvenance; attribute them separately and merge in.
+		blockBase := templateBlockBases(warm.configYAML)
+		k8sNames := make([]string, 0, len(warm.cfg.K8sResources))
+		for name := range warm.cfg.K8sResources {
+			k8sNames = append(k8sNames, name)
+		}
+		ap, ab := appliedStatusChains(sms, blockBase, k8sNames, rr.Applied, rr.StatusPatches, out.StatusPatches)
+		for k, v := range ap {
+			prov[k] = v
+		}
+		for k, v := range ab {
+			base[k] = v
+		}
+		rr.Provenance = chainsToJS(prov)
+		rr.ProvBase = intMapToJSFlat(base)
+		rr.ProvBlocks = intMapToJSFlat(blockBase)
+	}
+	rr.WatchedLines = intMapToJSFlat(watchedResourceLines(warm.configYAML))
+	return rr, nil
+}
+
+// reloadImpact parses the freshly-rendered config and diffs it against the
+// baseline (the pinned render if set, otherwise the previous render) using the
+// PRODUCTION comparator — the same code the deployer uses to choose a runtime
+// push vs a reload. It returns a JS-ready verdict, or nil on the first render
+// (no baseline) or if parsing fails. It also advances prevCfg to this render.
+func reloadImpact(out *renderer.RenderResult, ver *dataplane.Version) any {
+	p, err := parser.New()
+	if err != nil {
+		return nil
+	}
+	cur, err := p.ParseFromString(out.HAProxyConfig)
+	if err != nil {
+		return nil // unparseable output — no meaningful diff
+	}
+	current := &renderBaseline{cfg: cur, aux: out.AuxiliaryFiles}
+	baseline := pinnedBaseline
+	if baseline == nil {
+		baseline = prevBaseline
+	}
+	var res any
+	if baseline != nil {
+		if imp, ierr := dataplane.ComputeReloadImpact(baseline.cfg, current.cfg, baseline.aux, current.aux, dataplane.CapabilitiesFromVersion(ver)); ierr == nil {
+			res = reloadImpactToJS(imp, pinnedBaseline != nil)
+		}
+	}
+	prevBaseline = current
+	return res
+}
+
+// reloadImpactToJS flattens a dataplane.ReloadImpact into the JS verdict shape,
+// covering both config-diff changes and auxiliary-file (map / cert) content
+// updates — the latter live outside the haproxy.cfg but are runtime-eligible.
+func reloadImpactToJS(imp *dataplane.ReloadImpact, pinned bool) map[string]any {
+	s := imp.Summary
+	details := make([]any, 0)
+	add := func(text string, reload bool) {
+		if text != "" {
+			details = append(details, map[string]any{"text": text, "reload": reload})
+		}
+	}
+	if s.GlobalChanged {
+		add("global section changed", true)
+	}
+	if s.DefaultsChanged {
+		add("defaults section changed", true)
+	}
+	for _, f := range s.FrontendsAdded {
+		add("frontend "+f+" added", true)
+	}
+	for _, f := range s.FrontendsModified {
+		add("frontend "+f+" changed", true)
+	}
+	for _, f := range s.FrontendsDeleted {
+		add("frontend "+f+" removed", true)
+	}
+	for _, b := range s.BackendsAdded {
+		add("backend "+b+" added", true)
+	}
+	for _, b := range s.BackendsDeleted {
+		add("backend "+b+" removed", true)
+	}
+	for b, srv := range s.ServersAdded {
+		add(fmt.Sprintf("backend %s: %d server(s) added", b, len(srv)), true)
+	}
+	for b, srv := range s.ServersDeleted {
+		add(fmt.Sprintf("backend %s: %d server(s) removed", b, len(srv)), true)
+	}
+	for b, srv := range s.ServersModified {
+		add(fmt.Sprintf("backend %s: %d server field update(s) — address/port/state", b, len(srv)), false)
+	}
+	for _, m := range imp.MapUpdates {
+		add("map "+m+": content updated", false)
+	}
+	for _, c := range imp.CertUpdates {
+		add("certificate "+c+": content updated", false)
+	}
+
+	runtimeEligible := imp.ServerFieldUpdates + len(imp.MapUpdates) + len(imp.CertUpdates)
+	changed := imp.ConfigChanged || runtimeEligible > 0 || imp.AuxForcesReload
+	return map[string]any{
+		"pinned":          pinned,
+		"changed":         changed,
+		"wouldReload":     imp.WouldReload,
+		"runtimeEligible": float64(runtimeEligible),
+		"structural":      float64(imp.StructuralOps),
+		"details":         details,
+	}
+}
+
+// cleanSchemaError strips the schema-validator's wrapper prefix and bullet
+// markers that SimplifyValidationError leaves on the "API schema validation
+// failed:\n  - <detail>" error shape, keeping just the constraint detail(s).
+func cleanSchemaError(msg string) string {
+	if i := strings.LastIndex(msg, "API schema validation failed:"); i >= 0 {
+		msg = msg[i+len("API schema validation failed:"):]
+	}
+	var details []string
+	for _, line := range strings.Split(msg, "\n") {
+		if line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- ")); line != "" {
+			details = append(details, line)
+		}
+	}
+	if len(details) == 0 {
+		return strings.TrimSpace(msg)
+	}
+	return strings.Join(details, "; ")
+}
+
+// migrationReport classifies every pasted Ingress's annotations against the
+// config's spec.migrationCoverage, reusing the exact migrate-check logic
+// (migratecheck.Classify) so the playground and the CLI never diverge. Returns
+// nil when the config declares no coverage or no Ingress was pasted — the UI
+// hides the tab then. RenderError is left empty: this is annotation coverage,
+// not a render verdict (the render tabs already carry that).
+func migrationReport(coverage []v1alpha1.MigrationCoverageSource, resourcesYAML []byte) any {
+	if len(coverage) == 0 {
+		return nil
+	}
+	docs, err := decodeYAMLDocuments(resourcesYAML)
+	if err != nil {
+		return nil
+	}
+	var ings []migratecheck.Ingress
+	for _, doc := range docs {
+		for _, obj := range expandList(doc) {
+			m, ok := obj.(map[string]any)
+			if !ok {
+				continue
+			}
+			if kind, _ := m["kind"].(string); kind != "Ingress" {
+				continue
+			}
+			ings = append(ings, migratecheck.FromUnstructured(&unstructured.Unstructured{Object: m}))
+		}
+	}
+	if len(ings) == 0 {
+		return nil
+	}
+	return migrationReportToJS(migratecheck.Classify(coverage, ings))
+}
+
+// toRenderResult flattens the render output into the JS-boundary shape.
+func toRenderResult(out *renderer.RenderResult) *renderResult {
+	rr := &renderResult{
+		HAProxyConfig: out.HAProxyConfig,
+		DurationMs:    out.DurationMs,
+		Maps:          map[string]string{},
+		Files:         map[string]string{},
+		Certs:         map[string]string{},
+		CRTLists:      map[string]string{},
+		StatusPatches: map[string]string{},
+		Applied:       map[string]string{},
+	}
+	if out.AuxiliaryFiles != nil {
+		for _, m := range out.AuxiliaryFiles.MapFiles {
+			rr.Maps[m.Path] = m.Content
+		}
+		for _, f := range out.AuxiliaryFiles.GeneralFiles {
+			rr.Files[f.Filename] = f.Content
+		}
+		for _, c := range out.AuxiliaryFiles.SSLCertificates {
+			rr.Certs[c.Path] = c.Content
+		}
+		rr.CertsDecoded = decodeCerts(rr.Certs, time.Now())
+		for _, c := range out.AuxiliaryFiles.CRTListFiles {
+			rr.CRTLists[c.Path] = c.Content
+		}
+	}
+	for _, s := range out.IncludeStats {
+		rr.Trace = append(rr.Trace, map[string]any{
+			"name": s.Name, "count": float64(s.Count),
+			"totalMs": s.TotalMs, "avgMs": s.AvgMs, "maxMs": s.MaxMs,
+		})
+	}
+	// Status write-backs the controller applies to watched resources' .status. A
+	// patch declares one payload per pipeline phase; show them all, labelled, so
+	// the phase is explicit. Runtime-derived values (e.g. a LoadBalancer address
+	// from address discovery) are null here — the playground renders but never
+	// deploys, so those are filled from the live cluster at deploy time.
+	for _, sp := range out.StatusPatches {
+		var b strings.Builder
+		for _, phase := range []string{"rendered", "deployed", "renderFailed", "deployFailed"} {
+			variant, ok := sp.Variants[phase]
+			if !ok {
+				continue
+			}
+			y, err := yaml.Marshal(map[string]any{"status": variant})
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(&b, "# %s phase\n%s\n", phase, y)
+		}
+		if b.Len() > 0 {
+			rr.StatusPatches[targetKey(sp.Kind, sp.Namespace, sp.Name)] = b.String()
+		}
+	}
+	// Full Kubernetes objects the templates declare (spec.k8sResources) and the
+	// controller owns + applies via server-side apply (e.g. the HAProxy Service).
+	for _, res := range out.RenderedResources {
+		if y, err := yaml.Marshal(res.Object); err == nil {
+			rr.Applied[targetKey(res.Kind, res.Namespace, res.Name)] = string(y)
+		}
+	}
+	return rr
+}
+
+// parseConfigSpec decodes a HAProxyTemplateConfig, accepting either the full
+// Kubernetes resource form or a bare spec. YAML-only (no k8s codec) keeps the
+// wasm small.
+func parseConfigSpec(data []byte) (*v1alpha1.HAProxyTemplateConfigSpec, error) {
+	// A `kubectl get htplcfg -A -o yaml` dump is a List wrapper; unwrap the first
+	// config so users can paste that output verbatim. (A bare spec / single object
+	// has no "items", so this branch is skipped for them.)
+	var list struct {
+		Items []v1alpha1.HAProxyTemplateConfig `json:"items"`
+	}
+	if err := yaml.Unmarshal(data, &list); err == nil && len(list.Items) > 0 {
+		return &list.Items[0].Spec, nil
+	}
+
+	var full v1alpha1.HAProxyTemplateConfig
+	if err := yaml.Unmarshal(data, &full); err == nil {
+		if full.Kind == "HAProxyTemplateConfig" || full.Spec.HAProxyConfig.Template != "" {
+			return &full.Spec, nil
+		}
+	}
+
+	var bare v1alpha1.HAProxyTemplateConfigSpec
+	if err := yaml.Unmarshal(data, &bare); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	return &bare, nil
+}
+
+// schemaBundleEntry is one resolved schema in the JSON bundle the host build
+// step produces (via schemafetcher.DirFetcher over tests/schemas). Keyed by
+// "<apiVersion>|<plural>" so watched resources resolve to a GVK without any
+// singularization guessing.
+type schemaBundleEntry struct {
+	Group   string          `json:"group"`
+	Version string          `json:"version"`
+	Kind    string          `json:"kind"`
+	Schema  json.RawMessage `json:"schema"`
+}
+
+// parseSchemaBundle parses the JSON schema bundle into a GVK->schema map (for the
+// MapFetcher) and an "<apiVersion>|<plural>"->GVK map (for resolving watched
+// resources to kinds). Both are nil when no bundle is supplied — the untyped
+// path, where resources reach templates through dig().
+// bundleServedChecker implements config.ServedVersionChecker against the offline
+// schema bundle. A (apiVersion, plural) pair is served when the bundle carries
+// its schema. If the plural is present under a *different* version, this version
+// isn't served (so ResolveEffective prefers the bundled one). If the plural is
+// absent from the bundle entirely — an untyped/custom resource the bundle
+// doesn't cover — it's treated as served so those configs still render untyped,
+// preserving the pre-resolution leniency.
+type bundleServedChecker struct {
+	byKey map[string]schema.GroupVersionKind
+}
+
+func (c bundleServedChecker) IsServed(apiVersion, resources string) bool {
+	if _, ok := c.byKey[apiVersion+"|"+resources]; ok {
+		return true
+	}
+	for key := range c.byKey {
+		if strings.HasSuffix(key, "|"+resources) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseSchemaBundle(schemasJSON []byte) (map[schema.GroupVersionKind]*spec.Schema, map[string]schema.GroupVersionKind, error) {
+	trimmed := strings.TrimSpace(string(schemasJSON))
+	if trimmed == "" || trimmed == "{}" {
+		return nil, nil, nil
+	}
+
+	var bundle map[string]schemaBundleEntry
+	if err := json.Unmarshal(schemasJSON, &bundle); err != nil {
+		return nil, nil, fmt.Errorf("parsing schema bundle: %w", err)
+	}
+
+	byGVK := make(map[schema.GroupVersionKind]*spec.Schema, len(bundle))
+	byKey := make(map[string]schema.GroupVersionKind, len(bundle))
+	for key, e := range bundle {
+		var sch spec.Schema
+		if err := json.Unmarshal(e.Schema, &sch); err != nil {
+			return nil, nil, fmt.Errorf("parsing schema for %q: %w", key, err)
+		}
+		gvk := schema.GroupVersionKind{Group: e.Group, Version: e.Version, Kind: e.Kind}
+		byGVK[gvk] = &sch
+		byKey[key] = gvk
+	}
+	return byGVK, byKey, nil
+}
+
+// bootstrapTypes returns the typed-resource result the engine and render context
+// compile against, mirroring the controller's production type-bootstrap.
+//
+// With no schema bundle it returns an empty Result and every watched resource
+// falls through to the untyped resources[...] path via dig() — the same
+// behaviour as the offline validate CLI without --schema-dir. With a bundle it
+// builds an in-memory schemafetcher.MapFetcher (no host filesystem), resolves
+// each watched resource's (apiVersion, plural) to a GVK from the bundle, and
+// runs the production typebootstrap so chart templates that use typed globals
+// (e.g. currentConfig, ingresses[i].Spec) compile against the same shapes the
+// controller uses.
+func bootstrapTypes(cfg *config.Config, byGVK map[schema.GroupVersionKind]*spec.Schema, byKey map[string]schema.GroupVersionKind, logger *slog.Logger) (*typebootstrap.Result, error) {
+	if len(byGVK) == 0 {
+		// Non-nil empty Result: BuildAdditionalDeclarations panics on a nil *Result.
+		return &typebootstrap.Result{}, nil
+	}
+
+	resources := make([]typebootstrap.Resource, 0, len(cfg.WatchedResources))
+	for name := range cfg.WatchedResources {
+		wr := cfg.WatchedResources[name]
+		gvk, found := resolveWatchedGVK(byKey, wr)
+		if !found {
+			// No bundled schema for this resource: it stays on the untyped path.
+			continue
+		}
+		resources = append(resources, typebootstrap.Resource{Name: name, GVK: gvk})
+	}
+
+	return typebootstrap.Bootstrap(context.Background(), typebootstrap.Config{
+		Resources:          resources,
+		GlobalIgnoreFields: cfg.WatchedResourcesIgnoreFields,
+		Fetcher:            schemafetcher.NewMapFetcher(byGVK),
+		Logger:             logger,
+	})
+}
+
+// resolveWatchedGVK finds the bundled GVK for a watched resource, trying each of
+// its candidate apiVersions against the "<apiVersion>|<plural>" index.
+func resolveWatchedGVK(byKey map[string]schema.GroupVersionKind, wr config.WatchedResource) (schema.GroupVersionKind, bool) {
+	for _, apiVersion := range watchedAPIVersions(&wr) {
+		if gvk, ok := byKey[apiVersion+"|"+wr.Resources]; ok {
+			return gvk, true
+		}
+	}
+	return schema.GroupVersionKind{}, false
+}
+
+// renderPaths returns in-memory HAProxy target paths as plain strings. No
+// directory is created or read: RenderService derives its own PathResolver from
+// cfg.Dataplane, and the store-building path never touches these. They exist
+// only to satisfy testrunner.New's non-nil expectation.
+func renderPaths() *dataplane.ValidationPaths {
+	return &dataplane.ValidationPaths{
+		TempDir:           "/render",
+		MapsDir:           "/render/maps",
+		SSLCertsDir:       "/render/ssl",
+		CRTListDir:        "/render/ssl",
+		GeneralStorageDir: "/render/general",
+		ConfigFile:        "/render/haproxy.cfg",
+	}
+}
+
+// jsError wraps an error message in the object shape the host expects.
+func jsError(msg string) any {
+	return map[string]any{"error": msg}
+}
+
+// toAnyMap converts a string map into the map[string]any syscall/js can marshal.
+func toAnyMap(in map[string]string) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}

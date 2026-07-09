@@ -69,13 +69,37 @@ templateSnippets:
               {% var secretData = secret.Data -%}
               {%- var hashRegex = extraContext | dig_string("^.*$", "password_hash_validation_regex") %}
               {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "password_hash_validation_error_message") %}
-              {%- for _, username := range keys(secretData) %}
-                {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
-                {%- if !regex_search(passwordHash, hashRegex) %}
-                  {{- fail(hashErrMsg + " for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+              {#- haproxy-ingress (and ingress-nginx) store credentials as an
+                  htpasswd file under a single `auth` Secret key — one
+                  "user:hash" (or "user::plaintext") line each. Parse that when
+                  present so a migrated Secret authenticates; otherwise fall back
+                  to HAPTIC's one-key-per-username shape (base64(hash) value). -#}
+              {%- var authBlob, hasAuth = secretData["auth"] %}
+              {%- if hasAuth %}
+                {%- var htpasswd = authBlob | b64decode() | tostring() %}
+                {%- for _, line := range split(htpasswd, "\n") %}
+                  {%- var l = strip(line) %}
+                  {%- if l == "" || !strings_contains(l, ":") %}{%- continue %}{%- end %}
+                  {%- var parts = strings_splitn(l, ":", 2) %}
+                  {%- var user = parts[0] %}
+                  {%- var rest = parts[1] %}
+                  {%- var pwKeyword = "password" %}
+                  {%- if hasPrefix(rest, ":") %}{%- pwKeyword = "insecure-password" %}{%- rest = rest[1:] %}{%- end %}
+                  {%- if user == "" || rest == "" %}{%- continue %}{%- end %}
+                  {%- if !regex_search(rest, hashRegex) %}
+                    {{- fail(hashErrMsg + " for user '" + user + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                  {%- end %}
+        user {{ user }} {{ pwKeyword }} {{ rest }}
                 {%- end %}
+              {%- else %}
+                {%- for _, username := range keys(secretData) %}
+                  {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
+                  {%- if !regex_search(passwordHash, hashRegex) %}
+                    {{- fail(hashErrMsg + " for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                  {%- end %}
         user {{ username }} password {{ passwordHash }}
-              {% end -%}
+                {%- end %}
+              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}

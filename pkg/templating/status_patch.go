@@ -49,6 +49,16 @@ type StatusPatch struct {
 	// Keys are phase names: "rendered", "deployed", "renderFailed", "deployFailed".
 	// Values are the desired .status content for that phase.
 	Variants map[string]map[string]any
+
+	// SourceTemplate is the template path that called statusPatch() to register
+	// this patch (best-effort, from native.Env.CallPath). Empty when unknown.
+	// SourceLine is the 1-based line within that template of the statusPatch()
+	// call (from native.Env.CallLine), 0 when unknown. Provenance metadata only —
+	// the controller never reads them; they let the playground jump from a
+	// rendered status block back to the exact statusPatch() call. Resource-agnostic:
+	// a template name and line, not a resource path.
+	SourceTemplate string
+	SourceLine     int
 }
 
 // statusPatchKey uniquely identifies a target resource for patch merging.
@@ -124,6 +134,23 @@ func (c *StatusPatchCollector) Register(namespace, name, apiVersion, kind string
 	maps.Copy(existing.Variants, variants)
 
 	return nil
+}
+
+// SetSource records the template and line that registered the patch for the
+// given target, if a patch exists and none is set yet. Best-effort provenance
+// used by the playground; a no-op if the target was never registered. Kept
+// separate from Register so the render-path signature and all its callers stay
+// unchanged.
+func (c *StatusPatchCollector) SetSource(namespace, name, apiVersion, kind, sourceTemplate string, sourceLine int) {
+	if sourceTemplate == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if p, ok := c.patches[statusPatchKey(namespace, name, apiVersion, kind)]; ok && p.SourceTemplate == "" {
+		p.SourceTemplate = sourceTemplate
+		p.SourceLine = sourceLine
+	}
 }
 
 // Patches returns all collected status patches as a slice.

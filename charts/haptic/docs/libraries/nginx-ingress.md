@@ -505,7 +505,7 @@ http-response set-header Strict-Transport-Security "max-age=31536000; includeSub
 | Annotation | Description | Default |
 |------------|-------------|---------|
 | `enable-cors` | Enable CORS | - |
-| `cors-allow-origin` | Allowed origins | `*` |
+| `cors-allow-origin` | Allowed origins — comma-separated list, single-level `*.` wildcards; matched Origin is echoed back | `*` |
 | `cors-allow-methods` | Allowed methods | `GET, PUT, POST, DELETE, PATCH, OPTIONS` |
 | `cors-allow-headers` | Allowed headers | Common headers |
 | `cors-allow-credentials` | Allow credentials | - |

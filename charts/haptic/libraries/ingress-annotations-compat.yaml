@@ -184,10 +184,13 @@ templateSnippets:
           ingress, prefix, enabledAnn, defaultMaxAge, commentLabel
         )
 
-        Emits the four standard CORS response headers (Allow-Origin,
-        Allow-Methods, Allow-Headers, Max-Age) plus the conditional
-        Allow-Credentials and Expose-Headers headers, scoped to the
-        ingress's hosts.
+        Mirrors ingress-nginx: cors-allow-origin is a comma-separated
+        allow-list (single-level "*." subdomain wildcards allowed) matched
+        against the request Origin; the matched origin is echoed back and a
+        Vary: Origin header is added for non-wildcard lists. A lone "*" (or
+        unset) allows any origin and echoes the literal "*". CORS headers are
+        emitted via http-after-response so they also apply to the synthetic
+        preflight 204 that answers OPTIONS. Scoped to the ingress's hosts.
 
         Args:
           prefix        — annotation key prefix (e.g.
@@ -215,8 +218,8 @@ templateSnippets:
             {%- var ns = ingress.Metadata.Namespace %}
             {%- var name = ingress.Metadata.Name %}
             {%- var key = ns + "/" + name %}
-            {%- var origin = ingress.Metadata.Annotations[prefix + "/cors-allow-origin"] %}
-            {%- if origin == "" %}{%- origin = "*" %}{%- end %}
+            {%- var rawOrigin = ingress.Metadata.Annotations[prefix + "/cors-allow-origin"] %}
+            {%- if rawOrigin == "" %}{%- rawOrigin = "*" %}{%- end %}
             {%- var methods = ingress.Metadata.Annotations[prefix + "/cors-allow-methods"] %}
             {%- if methods == "" %}{%- methods = "GET, PUT, POST, DELETE, PATCH, OPTIONS" %}{%- end %}
             {%- var headers = ingress.Metadata.Annotations[prefix + "/cors-allow-headers"] %}
@@ -226,17 +229,62 @@ templateSnippets:
             {%- var maxAge = ingress.Metadata.Annotations[prefix + "/cors-max-age"] %}
             {%- if maxAge == "" %}{%- maxAge = defaultMaxAge %}{%- end %}
             {%- var cond = HostMatchCondition(hosts) %}
+            {#- Classify the comma-separated cors-allow-origin allow-list into an
+                exact-match set (-m str) and single-level "*." wildcards compiled
+                to anchored regexes (-m reg), matching ingress-nginx. A lone "*"
+                (or unset) allows any origin and echoes the literal "*"; otherwise
+                the matched request Origin is echoed back. -#}
+            {%- var allowAny = false %}
+            {%- var exact = []string{} %}
+            {%- var regexes = []string{} %}
+            {%- for _, tok := range split(rawOrigin, ",") %}
+              {%- var o = strip(tok) %}
+              {%- if o == "" %}{%- continue %}{%- end %}
+              {%- if o == "*" %}{%- allowAny = true %}{%- break %}{%- end %}
+              {%- if !regex_search(o, "^([a-z]+://(\\*\\.)?[A-Za-z0-9\\-.]*(:[0-9]+)?|null)$") %}
+                {{- fail("Invalid CORS origin '" + o + "' in annotation '" + prefix + "/cors-allow-origin' on Ingress '" + key + "' — must be scheme://host[:port], scheme://*.host[:port], null, or *.") -}}
+              {%- end %}
+              {%- if strings_contains(o, "*") %}
+                {%- regexes = append(regexes, "^" + replace(sanitize_regex(o), "\\*", "[A-Za-z0-9\\-]+") + "$") %}
+              {%- else %}
+                {%- exact = append(exact, o) %}
+              {%- end %}
+            {%- end %}
+            {%- var aclName = "cors_origin_" + replace(replace(prefix, ".", "_"), "/", "_") + "_" + ns + "_" + name %}
+            {%- var originHdr = "%[var(txn.cors_origin)]" %}
+            {%- if allowAny %}{%- originHdr = "*" %}{%- end %}
       # {{ commentLabel }} ({{ key }})
-      http-response add-header Access-Control-Allow-Origin '{{ origin }}' if {{ cond }}
-      http-response add-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }} METH_OPTIONS
-      http-response add-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }} METH_OPTIONS
-      http-response add-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }} METH_OPTIONS
-            {% if credentials == "true" %}
-      http-response add-header Access-Control-Allow-Credentials 'true' if {{ cond }}
-            {% end %}
-            {% if exposeHeaders != "" %}
-      http-response add-header Access-Control-Expose-Headers '{{ exposeHeaders }}' if {{ cond }}
-            {% end %}
+      {#- Capture the request Origin, then match it against the allow-list ACL.
+          CORS headers ride on http-after-response so they apply to backend
+          responses AND the synthetic preflight 204 (http-response would be
+          dropped for the return). Vary: Origin is added for non-wildcard lists. -#}
+      http-request set-var(txn.cors_origin) req.hdr(Origin) if {{ cond }}
+            {%- if allowAny %}
+      acl {{ aclName }} var(txn.cors_origin) -m found
+            {%- else %}
+              {%- for i := 0; i < len(exact); i += 20 %}
+                {%- var hi = i + 20 %}{%- if hi > len(exact) %}{%- hi = len(exact) %}{%- end %}
+      acl {{ aclName }} var(txn.cors_origin) -m str {{ join(exact[i:hi], " ") }}
+              {%- end %}
+              {%- for i := 0; i < len(regexes); i += 20 %}
+                {%- var hi = i + 20 %}{%- if hi > len(regexes) %}{%- hi = len(regexes) %}{%- end %}
+      acl {{ aclName }} var(txn.cors_origin) -m reg {{ join(regexes[i:hi], " ") }}
+              {%- end %}
+            {%- end %}
+      http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }} {{ aclName }}
+      http-after-response set-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }} {{ aclName }}
+            {%- if credentials == "true" %}
+      http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ aclName }}
+            {%- end %}
+            {%- if exposeHeaders != "" %}
+      http-after-response set-header Access-Control-Expose-Headers '{{ exposeHeaders }}' if {{ cond }} {{ aclName }}
+            {%- end %}
+            {%- if !allowAny %}
+      http-after-response set-header Vary Origin if {{ cond }} {{ aclName }}
+            {%- end %}
+      http-request return status 204 if {{ cond }} {{ aclName }} METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }
           {%- end %}
         {%- end %}
       {%- end macro %}

@@ -27,7 +27,7 @@ templateSnippets:
         Generated host.map entries:
           <alias-key> <rule-host-key>
       -#}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var aliasAnn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/server-alias"] -%}
         {%- if aliasAnn != "" -%}

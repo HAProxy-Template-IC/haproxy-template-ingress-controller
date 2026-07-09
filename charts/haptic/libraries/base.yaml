@@ -60,6 +60,22 @@ templateSnippets:
   # Ingress Helpers
   # ============================================================================
 
+  # Single source of truth for how hosts get normalised into map keys.
+  # Wildcard hosts (`*.example.com`) lose the leading `*` so the key becomes
+  # `.example.com` — the same form host.map uses and the same form HAProxy's
+  # `regsub(^[^.]*,,)` fallback in frontend-routing-logic produces at request
+  # time. Resource-agnostic (operates on a hostname string), so it lives in
+  # base and is imported by ingress.yaml, gateway/, and the vendor annotation
+  # libraries alike — keeping any of them loadable without the others (gateway
+  # imported this from ingress.yaml before, which broke gateway when ingress
+  # was disabled). The argument is `any` because Scriggo's dig() returns any;
+  # empty input → empty string (caller validates non-empty if it matters).
+  util-host-key:
+    template: |
+      {%- macro MapKeyForHost(host any) string -%}
+        {%- show tostring(host | fallback("")) | replace("*", "") -%}
+      {%- end macro -%}
+
   util-ingress-helpers:
     template: |
       {#- Generates HAProxy host match condition for use in if-expressions.
@@ -1249,16 +1265,32 @@ templateSnippets:
   frontend-filters-080-hsts:
     template: |
       {#-
-        Host-keyed HSTS response header. Single shared rule driven by hsts.map
-        (built by features-190-hsts-map), gated on a TLS connection (ssl_fc).
+        HSTS response header(s), gated on a TLS connection (ssl_fc):
+          1. A global header on every TLS response when extraContext.hstsEnabled is
+             set (value from features-085-ssl-hsts-global's gf["hstsGlobalValue"]).
+          2. The host-keyed header driven by hsts.map (built by
+             features-190-hsts-map) from per-Ingress annotations. It runs second,
+             so a per-host value overrides the global default (set-header replaces).
         var(txn.host) set during request routing is still in scope at response time.
-        Resource-agnostic: references only var(txn.host) and the map.
+        Resource-agnostic: references only var(txn.host), the map, and the global value.
       -#}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var hstsHosts []any = coalesce(gf["hstsHosts"], []any{}) -%}
+      {%- var hstsGlobal = tostring(coalesce(gf["hstsGlobalValue"], "")) -%}
+      {%- if hstsGlobal != "" %}
+      {%- var redirectHosts []any = coalesce(gf["sslRedirectHosts"], []any{}) -%}
+      {%- if len(redirectHosts) == 0 %}
+      # WARNING: HSTS is enabled globally but no HTTP→HTTPS redirect is configured.
+      #   HSTS is only sent over HTTPS, so plain-HTTP clients get no protection and
+      #   no upgrade. Add a redirect (per-Ingress ssl-redirect annotation, or your
+      #   platform's global redirect) so clients reach HTTPS.
+      {%- end %}
+      # base/hsts-global (extraContext.hstsEnabled) — HSTS on every TLS response
+      http-response set-header Strict-Transport-Security "{{ hstsGlobal }}" if { ssl_fc }
+      {%- end %}
       {%- if len(hstsHosts) > 0 %}
       {%- var m, _ = pathResolver.GetPath("hsts.map", "map") %}
-      # base/hsts
+      # base/hsts (per-Ingress values; override the global default above)
       http-response set-header Strict-Transport-Security %[var(txn.host),map({{ m }})] if { ssl_fc } { var(txn.host),map({{ m }}) -m found }
       {%- end %}
 

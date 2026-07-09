@@ -22,7 +22,7 @@ templateSnippets:
         mirrors the logic so host.map and the route-analysis view stay
         consistent.
       -#}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- macro GenerateHTTPRouteHostMap(routes []*resources.httproutes.T) -%}
@@ -221,7 +221,7 @@ templateSnippets:
         parameter stays at the call boundary — the whole point of the
         per-Kind split.
       -#}
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- macro GenerateGRPCRouteHostMap(routes []*resources.grpcroutes.T) -%}

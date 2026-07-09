@@ -83,7 +83,15 @@ templateSnippets:
 
   frontend-filters-300-haproxytech-cors:
     template: |
-      {#- HAProxy CORS configuration -#}
+      {#- HAProxy CORS — mirrors the upstream HAProxy Kubernetes Ingress
+          Controller (pkg/annotations/ingress/resSetCORS.go): capture the request
+          Origin into a txn var, emit the Access-Control-* headers via
+          http-after-response so they apply to backend responses AND the synthetic
+          preflight response, regex-match and echo the request Origin for a
+          non-wildcard allow-list, and — when cors-respond-to-options is "true" —
+          answer the OPTIONS preflight itself with a 204. Defaults track the
+          upstream controller: origin / methods / headers "*", credentials off,
+          max-age 5 (seconds). -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -95,39 +103,47 @@ templateSnippets:
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
+            {%- if len(hosts) > 0 %}
             {%- var origin = ingress.Metadata.Annotations["haproxy.org/cors-allow-origin"] %}
             {%- if origin == "" %}{%- origin = "*" %}{%- end %}
             {%- var methods = ingress.Metadata.Annotations["haproxy.org/cors-allow-methods"] %}
-            {%- if methods == "" %}{%- methods = "GET, POST" %}{%- end %}
+            {%- if methods == "" %}{%- methods = "*" %}{%- end %}
             {%- var headers = ingress.Metadata.Annotations["haproxy.org/cors-allow-headers"] %}
+            {%- if headers == "" %}{%- headers = "*" %}{%- end %}
             {%- var credentials = ingress.Metadata.Annotations["haproxy.org/cors-allow-credentials"] %}
             {%- if credentials == "" %}{%- credentials = "false" %}{%- end %}
             {%- var maxAge = ingress.Metadata.Annotations["haproxy.org/cors-max-age"] %}
-            {%- if maxAge == "" %}{%- maxAge = "0" %}{%- end %}
+            {%- if maxAge == "" %}{%- maxAge = "5" %}{%- end %}
+            {%- var respondOptions = ingress.Metadata.Annotations["haproxy.org/cors-respond-to-options"] %}
             {%- if credentials == "true" && origin == "*" %}
               {{- fail("CORS configuration error on Ingress '" + key + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}
             {%- end %}
-            {%- if len(hosts) > 0 %}
               {%- var cond = HostMatchCondition(hosts) %}
+              {#- Wildcard: allow any origin, echo "*". Non-wildcard: regex-match the
+                  request Origin against the annotation and echo the matched value —
+                  exactly like the upstream controller's `-m reg` + %[var] approach. -#}
+              {%- var originHdr = origin %}
+              {%- var originAcl = "{ var(txn.cors_origin) -m found }" %}
+              {%- if origin != "*" %}
+                {%- originAcl = "{ var(txn.cors_origin) -m reg " + origin + " }" %}
+                {%- originHdr = "%[var(txn.cors_origin)]" %}
+              {%- end %}
       # haproxytech/frontend-filters-haproxytech-cors (for {{ key }})
-      http-request capture req.hdr(Origin) len 128 if {{ cond }}
-
-      http-response set-header Access-Control-Allow-Origin '{{ origin }}' if {{ cond }}
-
-      http-response set-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }}
-
-              {% if headers != "" -%}
-      http-response set-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }}
-
-              {% end -%}
-              {% if credentials == "true" -%}
-      http-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }}
-
-              {% end -%}
-              {% if maxAge != "0" -%}
-      http-response set-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }}
-
-              {% end -%}
+      http-request set-var(txn.cors_origin) req.hdr(origin) if {{ cond }}
+      http-after-response set-header Access-Control-Allow-Origin '{{ originHdr }}' if {{ cond }} {{ originAcl }}
+      http-after-response set-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }} {{ originAcl }}
+              {%- if headers != "" %}
+      http-after-response set-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }} {{ originAcl }}
+              {%- end %}
+              {%- if credentials == "true" %}
+      http-after-response set-header Access-Control-Allow-Credentials 'true' if {{ cond }} {{ originAcl }}
+              {%- end %}
+              {%- if maxAge != "" %}
+      http-after-response set-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }} {{ originAcl }}
+              {%- end %}
+              {%- if respondOptions == "true" %}
+      http-request return status 204 if {{ cond }} METH_OPTIONS
+              {%- end %}
             {%- end %}
           {%- end %}
       {%- end -%}
@@ -704,17 +720,12 @@ templateSnippets:
         {%- if authType == "basic-auth" %}
           {%- var authSecret = ingress.Metadata.Annotations["haproxy.org/auth-secret"] %}
           {%- var authRealm = ingress.Metadata.Annotations["haproxy.org/auth-realm"] %}
-          {%- if authRealm == "" %}{%- authRealm = "RestrictedArea" %}{%- end %}
-          {#- Validate auth realm: DataPlane API pattern ^[^\s]+$ forbids spaces -#}
-          {%- if strings_contains(authRealm, " ") %}
-            {%- var sanitize = extraContext | dig("sanitize_auth_realm") | fallback(false) %}
-            {%- if sanitize %}
-              {#- Auto-sanitize: replace spaces with dashes -#}
-              {%- authRealm = replace(authRealm, " ", "-") %}
-            {%- else %}
-              {{- fail("Invalid auth-realm '" + authRealm + "' on Ingress '" + key + "': realm cannot contain spaces (DataPlane API limitation). Use hyphens or underscores, or set extraContext.sanitize_auth_realm=true to auto-replace spaces with dashes.") -}}
-            {%- end %}
-          {%- end %}
+          {%- if authRealm == "" %}{%- authRealm = "Protected-Content" %}{%- end %}
+          {#- The DataPlane API realm field forbids spaces (^[^\s]+$). Like the
+              upstream HAProxy Kubernetes Ingress Controller, silently replace
+              spaces with dashes rather than failing the render, so an Ingress
+              with a spaced realm that works upstream also works here. -#}
+          {%- authRealm = replace(authRealm, " ", "-") %}
           {%- if authSecret != "" %}
             {#- Parse secret reference (supports "ns/name" or just "name") -#}
             {%- var secretNs = ns %}
@@ -1040,7 +1051,7 @@ validationTests:
         pattern: 'http-request auth realm "API-Access"'
       - type: not_contains
         target: haproxy.cfg
-        pattern: 'realm "RestrictedArea"'
+        pattern: 'realm "Protected-Content"'
 
   test-haproxytech-basic-auth-missing-secret:
     description: >-
@@ -1091,58 +1102,8 @@ validationTests:
         target: haproxy.cfg
         pattern: "http_auth(auth_default_absent-secret)"
 
-  test-auth-realm-with-spaces-strict:
-    description: Auth realm with spaces fails in strict mode (default)
-    fixtures:
-      secrets:
-        - apiVersion: v1
-          kind: Secret
-          metadata:
-            namespace: default
-            name: api-auth
-          type: Opaque
-          data:
-            user1: JDJ5JDA1JDJlV1VoQVU5Z0VlZ2FDZkY4Uk4xZHV1WUNrdlhoUGtpS1BDL3pkTFBvN2xNYlkxcWlUQXRP
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: space-realm-ingress
-            annotations:
-              haproxy.org/auth-type: basic-auth
-              haproxy.org/auth-secret: api-auth
-              haproxy.org/auth-realm: "DeepL demo"
-          spec:
-            rules:
-              - host: api.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: api-service
-                          port:
-                            number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: api-service
-          spec:
-            ports:
-              - port: 80
-    assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "realm cannot contain spaces"
-
-  test-auth-realm-with-spaces-sanitize:
-    description: Auth realm with spaces auto-sanitized when sanitize_auth_realm=true
-    extraContext:
-      sanitize_auth_realm: true
+  test-auth-realm-with-spaces:
+    description: Auth realm with spaces is normalized to dashes (matching upstream), not a render failure
     fixtures:
       secrets:
         - apiVersion: v1
@@ -1186,6 +1147,9 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'realm "DeepL-demo"'
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request auth realm "DeepL-demo"'
@@ -1314,7 +1278,7 @@ validationTests:
         pattern: "balance hdr\\(x-session-id\\)"
 
   test-haproxytech-cors-regex-anchor:
-    description: CORS origin with regex $ anchor must not cause HAProxy parse error
+    description: CORS non-wildcard origin regex-matches the request Origin and echoes it back (upstream model), and a regex $ anchor must not cause a parse error
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1350,12 +1314,67 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
+      # The annotation value is a regex that matches the request Origin; the
+      # Allow-Origin header echoes the matched origin (never the raw regex).
       - type: contains
         target: haproxy.cfg
-        pattern: "Access-Control-Allow-Origin"
+        pattern: "var\\(txn\\.cors_origin\\) -m reg \\^https://"
       - type: contains
         target: haproxy.cfg
-        pattern: "com\\$'"
+        pattern: "Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
+      # Headers are added via http-after-response (so they also reach a preflight
+      # response generated by HAProxy), not http-response.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-after-response set-header Access-Control-Allow-Origin"
+
+  test-haproxytech-cors-respond-to-options:
+    description: cors-respond-to-options makes HAProxy answer the OPTIONS preflight with a 204
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-preflight-ingress
+            annotations:
+              haproxy.org/cors-enable: "true"
+              haproxy.org/cors-allow-origin: "https://app.example.com"
+              haproxy.org/cors-allow-credentials: "true"
+              haproxy.org/cors-respond-to-options: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: api-service
+                          port:
+                            number: 80
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: api-service
+          spec:
+            ports:
+              - port: 80
+    assertions:
+      - type: haproxy_valid
+      # Preflight is answered by HAProxy itself; the after-response headers apply
+      # to that synthetic 204, so no headers need to ride inline on the return.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request return status 204 if .* METH_OPTIONS"
+      # A specific origin allows credentials (echoed origin, not "*").
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-after-response set-header Access-Control-Allow-Credentials 'true'"
 
   test-haproxytech-auth-password-hash-validation-reject:
     description: Password hash validation rejects non-matching hashes
@@ -2438,7 +2457,7 @@ migrationCoverage:
         doc: annotation-support
       haproxy.org/auth-realm:
         status: different
-        note: Default "RestrictedArea"; a realm containing spaces fails the render unless extraContext.sanitize_auth_realm is set (DataPlane API limitation).
+        note: Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does, since the DataPlane API forbids spaces.
         doc: annotation-support
       # --- Backend TLS / server options ---
       haproxy.org/send-proxy-protocol:
@@ -2490,29 +2509,32 @@ migrationCoverage:
         status: different
         note: Deprecated alias of deny-list, honoured only when deny-list is absent; host-scoped.
         doc: annotation-support
-      # --- CORS (haproxytech's own implementation) ---
+      # --- CORS (mirrors the upstream HAProxy Kubernetes Ingress Controller) ---
       haproxy.org/cors-enable:
-        status: different
-        note: Header-injection only — OPTIONS preflights are forwarded to the backend rather than answered by HAProxy, so the backend must accept OPTIONS.
+        status: supported
+        note: Emits the Access-Control-* headers via http-after-response (matching the upstream controller). By default OPTIONS preflights flow to the backend; set cors-respond-to-options "true" to have HAProxy answer them with a 204.
         doc: annotation-support
       haproxy.org/cors-allow-origin:
-        status: different
-        note: Emitted verbatim into Access-Control-Allow-Origin; combining "*" with cors-allow-credentials "true" fails the render.
+        status: supported
+        note: The value is a regex matched against the request Origin; the Allow-Origin header echoes the matched origin (default "*" allows any). Combining "*" with cors-allow-credentials "true" fails the render.
         doc: annotation-support
       haproxy.org/cors-allow-methods:
-        status: different
-        note: Default is "GET, POST" (narrower than ingress-nginx's default method set).
+        status: supported
+        note: Default "*", matching the upstream controller.
         doc: annotation-support
       haproxy.org/cors-allow-headers:
         status: supported
-        note: Allowed request headers for preflight responses.
+        note: Allowed request headers for preflight responses (default "*").
       haproxy.org/cors-allow-credentials:
-        status: different
+        status: supported
         note: Only emitted when "true"; combining it with cors-allow-origin "*" fails the render.
         doc: annotation-support
       haproxy.org/cors-max-age:
         status: supported
-        note: Default 0 (no Max-Age header emitted).
+        note: Preflight cache duration in seconds; default 5. Unlike the upstream controller, HAPTIC takes a plain integer (seconds), not an HAProxy duration string.
+      haproxy.org/cors-respond-to-options:
+        status: supported
+        note: When "true", HAProxy answers the CORS preflight (OPTIONS) with a 204 instead of forwarding it to the backend, matching the upstream controller.
       # --- Not carried over ---
       haproxy.org/timeout-client:
         status: dropped

@@ -155,7 +155,7 @@ migrationCoverage:
       # --- HSTS ---
       nginx.ingress.kubernetes.io/hsts:
         status: different
-        note: The header is emitted only when the annotation is explicitly "true" on the Ingress — ingress-nginx enables HSTS globally by default.
+        note: By default the header is emitted only when the Ingress sets hsts "true", whereas ingress-nginx enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching ingress-nginx); a per-Ingress hsts annotation still overrides the value for its hosts.
         doc: annotation-support
       nginx.ingress.kubernetes.io/hsts-max-age:
         status: supported
@@ -169,12 +169,12 @@ migrationCoverage:
         note: Adds preload when "true".
       # --- CORS ---
       nginx.ingress.kubernetes.io/enable-cors:
-        status: different
-        note: Header-injection only — OPTIONS preflights are forwarded to the backend instead of being answered by HAProxy (ingress-nginx answers them with 204), so the backend must accept OPTIONS.
+        status: supported
+        note: CORS preflight (OPTIONS) is answered by HAProxy with a 204 carrying the Access-Control-* headers, exactly like ingress-nginx; the backend never sees the preflight. Simple cross-origin responses get the headers added on the way out.
         doc: annotation-support
       nginx.ingress.kubernetes.io/cors-allow-origin:
-        status: different
-        note: Emitted verbatim into Access-Control-Allow-Origin; ingress-nginx's dynamic multi-origin matching is not performed — use a single origin or "*".
+        status: supported
+        note: Comma-separated allow-list with single-level "*." subdomain wildcards, matched against the request Origin; the matched origin is echoed back (a Vary Origin header is added for non-wildcard lists), matching ingress-nginx. A malformed origin fails the render (ingress-nginx skips and logs it).
         doc: annotation-support
       nginx.ingress.kubernetes.io/cors-allow-methods:
         status: supported
@@ -215,7 +215,7 @@ migrationCoverage:
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-secret:
         status: different
-        note: htpasswd Secret format is unchanged from ingress-nginx, but a missing Secret disables auth for the route until the Secret appears — ingress-nginx serves 503 instead.
+        note: Two divergences to note. (1) A missing Secret disables auth for the route until the Secret appears (fail-open); ingress-nginx serves 503 instead. (2) Hashes are verified by HAProxy's crypt(3), which supports $2y$/$6$/$5$/$1$ but NOT Apache apr1 ($apr1$) or {SHA} — an htpasswd Secret using those verifies under ingress-nginx but rejects every login here; regenerate with a crypt(3) algorithm.
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-secret-type:
         status: supported
@@ -256,8 +256,8 @@ migrationCoverage:
         note: '"on"→required; "optional" and "optional_no_ca"→optional (HAProxy has no verify-but-accept-invalid mode); other values fail the render.'
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-tls-error-page:
-        status: supported
-        note: 302 redirect on client-certificate verification failure, applied reload-free via a map.
+        status: different
+        note: 302 redirect on client-certificate verification failure, applied reload-free via a map — but it only fires when auth-tls-verify-client is optional/optional_no_ca. Under the default "on" (HAProxy verify required) an invalid/missing client cert aborts the TLS handshake, so the request never reaches the redirect and the client sees a TLS error instead of the page.
       nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream:
         status: different
         note: Forwards ssl-client-cert (base64 DER — ingress-nginx sends URL-encoded PEM) and ssl-client-subject-dn; ssl-client-verify and ssl-client-issuer-dn are not set.

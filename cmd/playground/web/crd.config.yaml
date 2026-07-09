@@ -1,0 +1,51 @@
+# HAPTIC is resource-agnostic (RULE #1): it renders HAProxy from ANY Kubernetes
+# resource, not just Ingress/Gateway. This config watches a made-up "Microservice"
+# CRD — no Go code, no schema, just a template using untyped dig() access. Point
+# HAPTIC at your own CRD the same way; a schema later unlocks typed field access.
+#
+# The demo does something plain Ingress can't: per-server weights for a canary.
+haproxyConfig:
+  template: |
+    global
+      log stdout format raw local0
+
+    defaults
+      mode http
+      timeout connect 5s
+      timeout client 30s
+      timeout server 30s
+
+    frontend http
+      bind :8080
+      # Route by Host header to the Microservice's backend.
+      use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
+      default_backend not-found
+    {%- for _, ms := range resources.microservices.List() %}
+    {%%
+      var ns   = ms | dig("metadata", "namespace") | fallback("") | tostring()
+      var name = ms | dig("metadata", "name")      | fallback("") | tostring()
+      var key  = ns + "_" + name
+    %%}
+    backend {{ key }}
+      balance roundrobin
+    {%- for i, s := range ms | dig("spec", "servers") | fallback([]any{}) | toSlice() %}
+      server s{{ i }} {{ s | dig("address") | tostring() }} weight {{ s | dig("weight") | fallback(100) }} check
+    {%- end %}
+    {%- end %}
+
+    backend not-found
+      http-request deny deny_status 404
+
+watchedResources:
+  microservices:
+    apiVersion: example.com/v1
+    resources: microservices
+    indexBy:
+      - metadata.namespace
+      - metadata.name
+
+maps:
+  host.map:
+    template: |
+      {%- for _, ms := range resources.microservices.List() %}{{ ms | dig("spec", "host") | tostring() }} {{ ms | dig("metadata", "namespace") | tostring() }}_{{ ms | dig("metadata", "name") | tostring() }}
+      {% end %}
