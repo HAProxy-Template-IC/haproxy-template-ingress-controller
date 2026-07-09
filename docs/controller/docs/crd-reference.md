@@ -47,6 +47,83 @@ spec:
           bind *:80
 ```
 
+## Try it: add health checks to the servers
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="13-16" data-title="Challenge: give every server a health check" data-difficulty="1">
+
+This config renders two backends from an inline list, but the generated `server` lines have no health checking — HAProxy keeps routing to a pod even after it dies. Add `check` to the generated `server` line so every server gets an active health check.
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: health-check-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind *:80
+        default_backend web
+      {%- var backends = []any{
+        map[string]any{"name": "web", "servers": []any{"10.0.0.1:8080", "10.0.0.2:8080"}},
+        map[string]any{"name": "api", "servers": []any{"10.0.1.5:9000"}},
+      } %}
+      {%- for _, be := range backends %}
+      backend {{ be | dig("name") | tostring() }}
+      {%- for i, addr := range be | dig("servers") | toSlice() %}
+        server srv{{ i }} {{ addr | tostring() }}
+      {%- end %}
+      {%- end %}
+```
+
+<details class="pg-solution" markdown>
+<summary>Peek at the solution</summary>
+
+Append `check` to the `server` line inside the loop, so HAProxy health-checks each pod and stops sending traffic to unhealthy ones. Pair it with `init-addr last` when a server address is a DNS name, so HAProxy still starts if the name is briefly unresolvable.
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: health-check-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind *:80
+        default_backend web
+      {%- var backends = []any{
+        map[string]any{"name": "web", "servers": []any{"10.0.0.1:8080", "10.0.0.2:8080"}},
+        map[string]any{"name": "api", "servers": []any{"10.0.1.5:9000"}},
+      } %}
+      {%- for _, be := range backends %}
+      backend {{ be | dig("name") | tostring() }}
+      {%- for i, addr := range be | dig("servers") | toSlice() %}
+        server srv{{ i }} {{ addr | tostring() }} check
+      {%- end %}
+      {%- end %}
+```
+
+</details>
+
+</div>
+
 ## Spec Fields
 
 ### credentialsSecretRef (required)

@@ -341,6 +341,50 @@ server {{ be["name"] }} weight {{ be["weight"] }}
 
 </div>
 
+Next, use `first_seen` to collapse duplicates — a real pattern when several
+routes point at the same backend and you must emit each `backend` block exactly
+once.
+
+<div class="pg-embed" markdown data-scriggo data-title="Challenge: emit each backend only once" data-difficulty="3" data-height="380">
+
+Several routes share a service; emit one `backend` line per unique service instead of one per route.
+
+```go
+{%- var routes = []any{
+    map[string]any{"host": "a.example.com", "service": "api"},
+    map[string]any{"host": "b.example.com", "service": "api"},
+    map[string]any{"host": "c.example.com", "service": "web"},
+} -%}
+{% for _, r := range routes -%}
+{%- var svc = r | dig("service") | fallback("") -%}
+{#- TODO: a service can back many hosts — emit each backend only once -#}
+backend {{ svc }}
+{% end -%}
+```
+
+<details class="pg-solution" markdown>
+<summary>Peek at the solution</summary>
+
+Gate the emit on `first_seen("backend", svc)` — it returns `true` only the first time it sees each service key, so the repeat is skipped.
+
+```go
+{%- var routes = []any{
+    map[string]any{"host": "a.example.com", "service": "api"},
+    map[string]any{"host": "b.example.com", "service": "api"},
+    map[string]any{"host": "c.example.com", "service": "web"},
+} -%}
+{% for _, r := range routes -%}
+{%- var svc = r | dig("service") | fallback("") -%}
+{% if first_seen("backend", svc) -%}
+backend {{ svc }}
+{% end -%}
+{% end -%}
+```
+
+</details>
+
+</div>
+
 ### Path Resolution
 
 `pathResolver` is a helper available in every template. Its `GetPath(filename, type)` method returns the path that HAProxy should use to reference an auxiliary file (map, error file, certificate, crt-list). Use it instead of writing paths by hand so the controller and HAProxy agree on where files live.
