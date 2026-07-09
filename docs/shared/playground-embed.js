@@ -143,6 +143,10 @@
       .filter(function (b) { return !b.closest('details'); });
     el._configBlock = blocks[0] || null;
     el._resourcesBlock = blocks[1] || null; // an optional second block = resources
+    // Only the config is shown in the facade. A resources block is still read (for
+    // the run) but hidden — the reader sees it in the playground's Resources pane.
+    // Without this it lingers, unstyled, below the iframe after Run.
+    for (var i = 1; i < blocks.length; i++) blocks[i].style.display = 'none';
 
     // Wrap config block for styling.
     if (el._configBlock) {

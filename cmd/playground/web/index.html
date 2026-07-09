@@ -490,6 +490,12 @@
       .ctrl { flex: 1 1 auto; }
       .ctrl select { flex: 1 1 auto; }
       main { grid-template-columns: 1fr; }
+      /* Embed mode sets a higher-specificity grid (not in a media query), so it
+         must be re-stacked here explicitly or it stays multi-column and overflows
+         a phone. Both embed states collapse to one column (config / rail / output
+         become rows). */
+      body[data-embed]:not([data-embed-res]) main,
+      body[data-embed][data-embed-res] main { grid-template-columns: 1fr; }
       .gutter { display: none; }
       .col { border-right: 0; border-bottom: 1px solid var(--term-border); min-height: 46vh; }
       .col.out { min-height: 60vh; }

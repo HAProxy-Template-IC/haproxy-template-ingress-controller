@@ -16,11 +16,79 @@ This guide walks you through deploying HAPTIC (HAProxy Template Ingress Controll
 
 The entire process takes approximately 15-20 minutes on a local Kubernetes cluster.
 
-Want a taste first? This is HAPTIC rendering an Ingress into an HAProxy config —
-running in your browser, no install. Click **Run live**, then edit the Ingress and
-watch the config change.
+Want a taste first? This is a complete, minimal HAPTIC config rendering an Ingress
+into an HAProxy config — in your browser, no install. Click **Run live**, then edit
+the template or the Ingress and watch the output change.
 
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="An Ingress becomes an HAProxy config" data-height="440">
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="14-15" data-controls="tabs,resources" data-title="An Ingress becomes an HAProxy config" data-height="480">
+
+```yaml
+# One HAProxy backend per Ingress, routed by host. Untyped dig() access,
+# so no schema is needed. Edit this, or the Ingress, and watch the output.
+haproxyConfig:
+  template: |
+    global
+      log stdout format raw local0
+
+    defaults
+      mode http
+      timeout connect 5s
+      timeout client 30s
+      timeout server 30s
+
+    frontend http
+      bind :80
+      use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
+      default_backend unmatched
+    {%- for _, ing := range resources.ingresses.List() %}
+    {%- for _, rule := range ing | dig("spec", "rules") | toSlice() %}
+    {%- for _, path := range rule | dig("http", "paths") | toSlice() %}
+    backend {{ ing | dig("metadata", "name") | tostring() }}
+      server app {{ path | dig("backend", "service", "name") | tostring() }}:{{ path | dig("backend", "service", "port", "number") | fallback(80) | tostring() }}
+    {%- end %}
+    {%- end %}
+    {%- end %}
+
+    backend unmatched
+      http-request deny deny_status 404
+
+watchedResources:
+  ingresses:
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
+    indexBy:
+      - metadata.name
+
+maps:
+  host.map:
+    template: |
+      {%- for _, ing := range resources.ingresses.List() %}
+      {%- for _, rule := range ing | dig("spec", "rules") | toSlice() %}
+      {{ rule | dig("host") | tostring() }} {{ ing | dig("metadata", "name") | tostring() }}
+      {%- end %}
+      {%- end %}
+```
+
+```yaml
+# The Ingress the config renders. Add another, or change the host or service.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop
+spec:
+  rules:
+    - host: shop.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shop
+                port:
+                  number: 8080
+```
+
 </div>
 
 ## Prerequisites
