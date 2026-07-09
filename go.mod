@@ -19,7 +19,7 @@ require (
 	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260709071509-56aee4186f1c
 	golang.org/x/sync v0.22.0
 	golang.org/x/text v0.40.0
-	golang.org/x/vuln v1.5.0
+	golang.org/x/vuln v1.6.0
 	google.golang.org/grpc v1.82.0
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v4 v4.2.2
