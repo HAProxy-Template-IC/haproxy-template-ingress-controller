@@ -184,6 +184,14 @@
        and keeps the code column from shifting when line numbers gain a digit. */
     .code .ln .g { position: sticky; left: 0; flex: 0 0 auto; min-width: calc(var(--gw, 3) * 1ch + 26px); padding: 0 12px; text-align: right; color: var(--term-dim); opacity: .55; user-select: none; background: var(--term-bg); border-right: 1px solid var(--term-border); }
     .code .ln .t { flex: 1; padding: 0 16px; color: var(--term-fg); }
+    /* per-file sections in the maps/files output: a filename header above each file's
+       own 1..N line numbers (continuous numbering across files is misleading). */
+    .mf-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: baseline; gap: 10px; padding: 6px 12px 6px 14px; font: 11px/1.5 var(--mono); background: var(--term-chrome); border-bottom: 1px solid var(--term-border); }
+    .mf-head .mf-name { color: var(--accent); font-weight: 600; }
+    .mf-head .mf-meta { color: var(--term-dim); font-size: 10px; }
+    .mf-head[data-ln] { cursor: pointer; }
+    .mf-head[data-ln]:hover { background: color-mix(in srgb, var(--accent) 12%, var(--term-chrome)); }
+    .mf-head[data-ln]:hover .mf-name { text-decoration: underline; }
     /* Ctrl/Cmd-hover go-to-definition affordance: underline the word a click would open */
     .code .godef { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; cursor: pointer; }
     .code .ln.add { background: var(--signal-weak); }
@@ -717,6 +725,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     const noGlowSeqs = new Set();          // render seqs whose output must NOT glow (preset loads, version flips)
     let suppressNextGlow = true;           // set before a render that should skip attribution
     let lastRes = null;                    // last successful render result (carries loadCount for e2e)
+    let prevRes = null;                    // previous render result (for per-file diff-glow in maps/files)
     let prevTabs = {}, activeTab = 'haproxy.cfg', lastReport = [], lastTrace = [], lastMigration = null;
 
     function setChip(text, cls) { $('chip').className = 'chip ' + (cls || ''); $('chiptext').textContent = text; }
@@ -1080,6 +1089,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (activeTab === 'trace') { paintTrace(); return; }
       if (activeTab === 'migration') { paintMigration(); return; }
       if (activeTab === 'certs') { paintCerts(); return; }
+      if (activeTab === 'maps' || activeTab === 'files') { paintNamedFiles(glow); return; }
       const out = $('output');
       const text = tabs[activeTab] || '';
       if (!text.trim()) { lineChains = []; out.innerHTML = `<div class="empty">— nothing rendered for “${activeTab}” —</div>`; return; }
@@ -1100,6 +1110,51 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         html += `<div class="ln${isAdd ? ' add glow' : ''}"${attr}><span class="g">${i + 1}</span><span class="t">${body || ' '}</span></div>`;
       }
       html += '</div>';
+      out.innerHTML = html;
+    }
+
+    // Renders a multi-file tab (maps/files) as separate per-file sections, each with
+    // its own 1..N line numbers under a filename header. Continuous numbering across
+    // files is misleading when an error (or anything) references a line in a specific
+    // file. Keeps a flat lineChains[] aligned with the data-ln indices the provenance
+    // click machinery uses (each rendered header/line gets a unique index).
+    function paintNamedFiles(glow) {
+      const out = $('output');
+      const obj = (lastRes && lastRes[NAMED_PROV_KEY[activeTab]]) || {};
+      const entries = Object.entries(obj);
+      if (!entries.length) { lineChains = []; out.innerHTML = `<div class="empty">— nothing rendered for “${activeTab}” —</div>`; return; }
+      const prov = (lastRes && lastRes.provenance) || {};
+      const base = (lastRes && lastRes.provBase) || {};
+      const prevObj = (glow && prevRes && prevRes[NAMED_PROV_KEY[activeTab]]) || {};
+      const hasProv = Object.keys(prov).length > 0;
+      updateHint(hasProv);
+      const lang = OUT_LANG[activeTab] || 'plain';
+
+      lineChains = [];
+      let gi = 0, html = '';
+      for (const [name, content] of entries) {
+        const vlines = String(content).split('\n');
+        if (vlines.length > 1 && vlines[vlines.length - 1] === '') vlines.pop();   // drop the terminating newline
+        // filename header — clickable to its template block when we have a source line
+        const hb = base[name];
+        lineChains[gi] = hb ? [{ n: name, l: hb }] : [];
+        const hattr = (hasProv && hb) ? ` data-ln="${gi}"` : '';
+        html += `<div class="mf-head"${hattr}><span class="mf-name">${esc(name)}</span>`
+          + `<span class="mf-meta">${vlines.length} line${vlines.length === 1 ? '' : 's'}</span></div>`;
+        gi++;
+        const pc = prov[name] || [];
+        const added = glow ? changedLines(String(prevObj[name] || '').split('\n'), vlines) : new Set();
+        const hl = vlines.length <= 6000;
+        html += `<div class="code${hasProv ? ' prov' : ''}" style="--gw:${String(vlines.length).length}">`;
+        for (let j = 0; j < vlines.length; j++) {
+          lineChains[gi] = pc[j] || [];
+          const body = hl ? highlightLine(vlines[j], lang) : esc(vlines[j]);
+          const attr = (hasProv && pc[j] && pc[j].length) ? ` data-ln="${gi}"` : '';
+          html += `<div class="ln${added.has(j) ? ' add glow' : ''}"${attr}><span class="g">${j + 1}</span><span class="t">${body || ' '}</span></div>`;
+          gi++;
+        }
+        html += '</div>';
+      }
       out.innerHTML = html;
     }
 
@@ -1216,7 +1271,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (robj) { jumpToResource(robj.dataset); return; }
       const mrow = e.target.closest('.mig-row.jump, .mig-chip.jump');
       if (mrow) { jumpAnno(mrow.dataset); return; }
-      const ln = e.target.closest('.ln[data-ln]');
+      const ln = e.target.closest('.ln[data-ln], .mf-head[data-ln]');
       if (!ln) return;
       const i = +ln.dataset.ln;
       if (!Number.isNaN(i)) jumpToSource(i);
@@ -1516,6 +1571,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       setReloadImpact(m.res.reloadImpact || null);
       setChip('rendered', 'ok');
       renderTabs(tabs, counts, drops, migWarn);
+      prevRes = lastRes;           // capture the previous render before overwriting (per-file glow)
       lastRes = m.res;             // set before paintOutput: buildLineCfg reads lastRes.provenance
       paintOutput(tabs, glow);
       prevTabs = tabs;             // set after paintOutput so the glow diff compares against the previous render
