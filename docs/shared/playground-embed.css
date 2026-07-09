@@ -42,6 +42,7 @@
   text-decoration: none;
 }
 .pg-btn:hover { filter: brightness(1.08); }
+.pg-btn[hidden] { display: none; }  /* beat .pg-btn's display:inline-flex so hiding works */
 .pg-btn.pg-btn-ghost {
   background: transparent;
   color: var(--md-primary-fg-color, #3f6ec6);

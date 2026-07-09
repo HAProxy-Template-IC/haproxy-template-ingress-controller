@@ -318,12 +318,18 @@
   font-size: 0.72rem;
   color: var(--term-dim);
   letter-spacing: 0.01em;
+  min-width: 0;                 /* allow the title to shrink/truncate before the Run-live pill wraps */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .term-run {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 0.28rem;
+  flex-shrink: 0;        /* never squeeze the pill so its text wraps per-char on mobile */
+  white-space: nowrap;
   font-size: 0.72rem;
   font-weight: 700;
   color: #9ccbf0;
