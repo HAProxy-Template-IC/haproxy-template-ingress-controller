@@ -1727,6 +1727,7 @@ backend {{ e }}
       { id: 'starter', label: 'Minimal starter', config: './starter.config.yaml', resources: './starter.resources.yaml', schemas: null },
       { id: 'crd', label: 'Custom CRD (any resource)', config: './crd.config.yaml', resources: './crd.resources.yaml', schemas: null },
       { id: 'ingress', label: 'Ingress', ...bundled('ingress') },
+      { id: 'extend', label: 'Ingress · Custom snippet', ...bundled('extend') },
       { id: 'haproxytech', label: 'Ingress · HAProxyTech', ...bundled('haproxytech') },
       { id: 'haproxy-ingress', label: 'Ingress · HAProxy-Ingress', ...bundled('haproxy-ingress') },
       { id: 'nginx-ingress', label: 'Ingress · NGINX-Ingress', ...bundled('nginx-ingress') },

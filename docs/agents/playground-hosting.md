@@ -30,7 +30,7 @@ The `build-playground-wasm` job (`.gitlab-ci.yml`, `build` stage) runs
     schemas.json           (+ .br + .gz)            # typed-resource schema bundle
     vendor/codemirror.js   (+ .br + .gz)            # committed CM6 bundle (no CDN)
     starter.config.yaml  starter.resources.yaml     # from-scratch starter preset
-    presets/*.config.yaml  presets/*.resources.yaml # 7 presets (ingress, gateway, vendors, all)
+    presets/*.config.yaml  presets/*.resources.yaml # 7 presets (ingress, extend, gateway, vendors, all)
   ```
 
 The bundle is fully self-contained and has **no runtime third-party requests** — it renders
