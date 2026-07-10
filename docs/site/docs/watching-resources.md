@@ -98,7 +98,7 @@ Every entry is exposed to templates **two equivalent ways** when a schema is loa
 
 Both surfaces share the same typed pointer; iterating either way yields `*resources.<key>.T` with strongly-typed `.Metadata.Namespace`, `.Spec.X`, etc. Without a schema, both surfaces fall back to `[]any` / `map[string]any` and the chart's `dig()`-based snippets work unchanged.
 
-The typed shape comes from the resource's OpenAPI v3 schema. In production the controller fetches schemas live from the kube-apiserver. Offline (`controller validate`), schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`. The repo's `tests/schemas/` directory bundles schemas for the chart's Gateway API CRDs, haptic CRDs, **and** the K8s built-ins it watches (Namespace, Service, Secret, EndpointSlice, Ingress) — `--schema-dir tests/schemas` unlocks typed access for every chart-watched resource.
+The typed shape comes from the resource's OpenAPI v3 schema. In production the controller fetches schemas live from the kube-apiserver. Offline (`haptic-controller validate`), schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`. The repo's `tests/schemas/` directory bundles schemas for the chart's Gateway API CRDs, haptic CRDs, **and** the K8s built-ins it watches (Namespace, Service, Secret, EndpointSlice, Ingress) — `--schema-dir tests/schemas` unlocks typed access for every chart-watched resource.
 
 A misspelled field name in a template fails when the controller boots (or when `validate` runs against a schema-dir), not at the next reconcile. The `<key>.T` type expression also works in macro signatures, type-switch case clauses (`case *resources.<key>.T`), and slice types for sharded rendering.
 
@@ -293,7 +293,7 @@ Setting `enableValidationWebhook: true` on an entry registers that kind with the
 
 ## Debounce Override
 
-Each watcher uses a leading-edge refractory window to coalesce bursts of changes into a single store-update event before forwarding to the Reconciler. This is the only debounce layer — the Reconciler itself fires immediately on every event, and reload throttling lives in the deployer's `minDeploymentInterval` (see [architecture-overview](./development/design/architecture-overview.md)). The default is 2 seconds (set in `pkg/k8s/types.DefaultDebounceInterval`) and works well for most workloads. Override per-resource via `debounceInterval` (the bundled chart sets it to `"0"` on EndpointSlice so pod-IP rotations react instantly during rolling restarts):
+Each watcher uses a leading-edge refractory window to coalesce bursts of changes into a single store-update event before forwarding to the Reconciler. This is the only debounce layer — the Reconciler itself fires immediately on every event, and reload throttling lives in the deployer's `minDeploymentInterval` (see the [architecture overview](./development/design/architecture-overview.md)). The default is 2 seconds (set in `pkg/k8s/types.DefaultDebounceInterval`) and works well for most workloads. Override per-resource via `debounceInterval` (the bundled chart sets it to `"0"` on EndpointSlice so pod-IP rotations react instantly during rolling restarts):
 
 ```yaml
 watchedResources:

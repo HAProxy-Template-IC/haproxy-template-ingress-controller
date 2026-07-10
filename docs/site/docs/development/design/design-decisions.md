@@ -202,7 +202,7 @@ metricsServer := pkgmetrics.NewServer(":9090", metricsRegistry)
 go metricsServer.Start(ctx)
 ```
 
-**Metrics exposed** (36 metrics total — see `pkg/controller/metrics/README.md` for the full catalogue; `pkg/controller/metrics/metrics.go` itself is the authoritative list. `TestMetrics_AllMetricsRegistered` covers a representative subset, not every metric). Key groups:
+**Metrics exposed** (37 metrics total — see `pkg/controller/metrics/README.md` for the full catalogue; `pkg/controller/metrics/metrics.go` itself is the authoritative list. `TestMetrics_AllMetricsRegistered` covers a representative subset, not every metric). Key groups:
 
 1. **Reconciliation**:
    - `haptic_reconciliation_total`, `haptic_reconciliation_errors_total`, `haptic_reconciliation_duration_seconds`

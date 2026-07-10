@@ -1295,7 +1295,7 @@ haproxy.org/scale-server-slots: "100"
 
 **Default**: `roundrobin`
 
-**Valid values**: `roundrobin`, `leastconn`, `source`, `uri`, `hdr`, `random`, `rdp-cookie`
+**Valid values**: `roundrobin`, `static-rr`, `leastconn`, `first`, `source`, `random`, plus the parameterized `uri`, `url_param(name)`, `hdr(name)`, `rdp-cookie(name)`
 
 **Usage**:
 

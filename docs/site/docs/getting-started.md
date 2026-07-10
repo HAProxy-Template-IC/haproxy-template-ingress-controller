@@ -91,6 +91,10 @@ spec:
 
 </div>
 
+The playground accepts this bare `spec` content directly; on a cluster the same
+blocks live inside the `HAProxyTemplateConfig` custom resource — Step 3 shows the
+full wrapped shape.
+
 ## Prerequisites
 
 - Kubernetes cluster (1.21+) - kind, minikube, or cloud provider

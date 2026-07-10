@@ -33,7 +33,7 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 | [Base](libraries/base.md) | Enabled | Core HAProxy configuration, extension point definitions; disabling drops the `haproxyConfig` the other libraries plug into |
 | [SSL](libraries/ssl.md) | Enabled | TLS certificate management, HTTPS frontend |
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
-| [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTPRoute, GRPCRoute) support |
+| [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTP, gRPC, TLS and TCP routes) support |
 | [ingress-annotations-compat](libraries/ingress-annotations-compat.md) | Enabled | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
 | [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
@@ -359,8 +359,8 @@ applied last and overrides anything below it.
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Level 2 — Resource libraries                                         │
 │   ingress.yaml                          gateway/                     │
-│   (Kubernetes Ingress)                  (Gateway API HTTPRoute /     │
-│                                          GRPCRoute)                  │
+│   (Kubernetes Ingress)                  (Gateway API HTTP/gRPC/     │
+│                                          TLS/TCP routes)             │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▲
 ┌──────────────────────────────────────────────────────────────────────┐

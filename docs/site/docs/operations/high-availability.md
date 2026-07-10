@@ -140,7 +140,7 @@ These are automatically configured in the Helm chart's ClusterRole.
 
 ### Check Current Leader
 
-The Lease resource is named after the Helm release (e.g. `haptic` for `helm install haptic ...`). Override by setting `controller.config.controller.leaderElection.leaseName`.
+The Lease resource is named after the chart fullname — `haptic` for `helm install haptic …`, but `<release>-haptic` when the release name doesn't contain "haptic". Override by setting `controller.config.controller.leaderElection.leaseName`.
 
 ```bash
 # List leases in the release namespace
@@ -355,7 +355,7 @@ The leader does the heavy lifting (render + validate + deploy + status writes), 
 resources:
   requests:
     cpu: 100m
-    memory: 512Mi      # request = limit gives Guaranteed QoS
+    memory: 512Mi      # memory request = limit (pod stays Burstable — no CPU limit)
   limits:
     memory: 512Mi      # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
 ```

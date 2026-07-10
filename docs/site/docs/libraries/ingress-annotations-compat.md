@@ -8,8 +8,6 @@ The scaffold exists to concentrate behaviour that would otherwise be duplicated 
 
 **Scope: Ingress only.** A vendor library operating on a non-Ingress CRD (HTTPRoute, GRPCRoute, custom CRDs) does NOT use these macros — it writes its own equivalents. The earlier name (`annotation-compat`) implied generality across resources; in practice the scaffold was always Ingress-coupled, and pretending otherwise blocked typed Ingress access here. The rename makes the scope explicit.
 
-The scaffold pattern predates this rename; it still applies — only the scope is now made explicit.
-
 ## Hierarchy
 
 ```
