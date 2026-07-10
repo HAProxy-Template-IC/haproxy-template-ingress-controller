@@ -4,7 +4,7 @@
 
 Common issues when installing and operating HAPTIC via the Helm chart — missing CRDs, credentials, image pulls, and RBAC.
 
-For runtime behavior (why an Ingress renders the way it does, reconciliation stalls, and symptom-to-fix tables), see the [Troubleshooting guide](../troubleshooting.md).
+Once HAPTIC is installed and running, runtime symptoms — routing, 503s, config that won't update, SSL, and reconciliation stalls — live in the [Troubleshooting guide](../troubleshooting.md).
 
 !!! note "Namespace"
     The examples below assume the chart is installed into the `haptic` namespace. Substitute your release namespace if you installed elsewhere.
@@ -55,25 +55,6 @@ helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/ch
   --version <version> --namespace haptic
 ```
 
-## Ingress Not Processed
-
-If creating an Ingress produces no HAProxy configuration change:
-
-1. **Verify the IngressClass**: the Ingress must reference the class created by the chart
-
-   ```bash
-   kubectl get ingressclass
-   kubectl get ingress <name> -o jsonpath='{.spec.ingressClassName}'
-   ```
-
-2. **Check namespace filtering**: if `controller.config.watchedResources.ingresses.fieldSelector` is set (e.g. `metadata.namespace=foo`), the Ingress must match the selector
-
-3. **Check controller logs** for watch events:
-
-   ```bash
-   kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i ingress
-   ```
-
 ## Cannot Connect to HAProxy Pods
 
 1. **Check HAProxy pod labels** match `podSelector`
@@ -109,48 +90,6 @@ done
 (`kubectl get secret … -o jsonpath='{.data}'` alone returns the keys map verbatim — the values come out as base64-encoded strings, which is why each key is decoded individually.)
 
 The controller watches the credentials Secret via `pkg/controller/credentialsloader` and picks up updates live — no pod restart is needed. If 401/403 errors persist after the Secret has been corrected, also confirm that the `dataplaneapi.yaml` mounted into the HAProxy pod was rotated to match (the Dataplane API on the HAProxy side reads its credentials from a sidecar config, not from the controller's Secret).
-
-## HAProxy Returning 503
-
-A 503 usually means HAProxy has no healthy servers for the backend:
-
-1. **Check that backend pods are running and ready** (in the application's namespace, not necessarily `haptic`)
-
-   ```bash
-   kubectl get pods -l app=<your-app>
-   kubectl get endpointslices -l kubernetes.io/service-name=<service-name>
-   ```
-
-2. **Verify servers appear in HAProxy config**
-
-   ```bash
-   kubectl exec -n haptic <haproxy-pod> -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A5 "backend"
-   ```
-
-3. **Check HAProxy stats** for server state (UP/DOWN):
-
-   ```bash
-   kubectl port-forward -n haptic svc/haptic-haproxy 8404:8404
-   curl http://localhost:8404/stats
-   ```
-
-## Configuration Not Updating After Ingress Change
-
-If controller logs show successful deployment but HAProxy still serves the old config:
-
-1. **Confirm the config file was written**
-
-   ```bash
-   kubectl exec -n haptic <haproxy-pod> -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
-   ```
-
-2. **Check that both containers share the config volume** — HAProxy and Dataplane API must mount the same volume
-
-3. **Check Dataplane API reload logs**
-
-   ```bash
-   kubectl logs -n haptic <haproxy-pod> -c dataplane | tail -20
-   ```
 
 ## NetworkPolicy Issues in kind
 
