@@ -100,19 +100,7 @@ Narrowing the Watch](watching-resources.md#narrowing-the-watch).
 
 ## Template Libraries
 
-The controller uses a modular template library system where configuration files are merged at Helm render time. Each library provides specific HAProxy functionality and can be enabled or disabled independently.
-
-| Library | Default | Values key | Description |
-|---------|---------|------------|-------------|
-| Base | Enabled | `base` | Core HAProxy configuration, extension points; disabling drops the `haproxyConfig` the other libraries plug into |
-| SSL | Enabled | `ssl` | TLS certificates, HTTPS frontend |
-| Ingress | Enabled | `ingress` | Kubernetes Ingress support |
-| Gateway | Enabled | `gateway` | Gateway API (HTTPRoute, GRPCRoute, TLSRoute) |
-| ingress-annotations-compat | Enabled | `ingressAnnotationsCompat` | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
-| haproxytech | Enabled | `haproxytech` | `haproxy.org/*` annotation support |
-| haproxy-ingress | Enabled | `haproxyIngress` | `haproxy-ingress.github.io/*` annotation compatibility |
-| nginx-ingress | Disabled | `nginxIngress` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
-| spoa-hub | Auto | `spoaHub` | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
+The chart merges a modular set of template libraries at render time; each adds specific HAProxy functionality and can be toggled independently. See [Template Libraries](./template-libraries.md) for the full catalog of what each one does and its default, and the [Chart Values Reference](./reference.md#template-libraries) for every `controller.templateLibraries.*` value.
 
 ### Path Matching Order
 

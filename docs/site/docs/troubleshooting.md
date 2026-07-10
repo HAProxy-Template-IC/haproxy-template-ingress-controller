@@ -59,6 +59,7 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 |-------|-------|----------|
 | Informers not syncing | Logs show "timeout waiting for cache sync" | Check API server connectivity, network policies |
 | No matching resources | `kubectl get ingresses -A` | Verify resources exist in watched namespaces |
+| Ingress class mismatch | `kubectl get ingress <name> -o jsonpath='{.spec.ingressClassName}'` | The Ingress must reference the class the chart created; also check any `watchedResources.*.fieldSelector` namespace filter |
 | Leader election (HA) | `kubectl get lease -n haptic` (the Lease is named after the Helm release) | Ensure one pod shows `is_leader=1` |
 
 ## Configuration Issues
