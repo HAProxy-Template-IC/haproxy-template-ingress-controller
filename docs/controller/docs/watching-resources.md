@@ -152,8 +152,8 @@ spec:
         bind :80
         default_backend unmatched
       {%- for _, ing := range resources.ingresses.Fetch("shop") %}
-      backend {{ ing | dig("metadata", "name") | tostring() }}
-        server app {{ ing | dig("metadata", "name") | tostring() }}.svc:80
+      backend {{ ing.metadata.name }}
+        server app {{ ing.metadata.name }}.svc:80
       {%- end %}
       backend unmatched
         http-request deny deny_status 404
@@ -238,8 +238,8 @@ spec:
         bind :80
         default_backend unmatched
       {%- for _, ing := range resources.ingresses.List() %}
-      backend {{ ing | dig("metadata", "name") | tostring() }}
-        server app {{ ing | dig("metadata", "name") | tostring() }}.svc:80
+      backend {{ ing.metadata.name }}
+        server app {{ ing.metadata.name }}.svc:80
       {%- end %}
       backend unmatched
         http-request deny deny_status 404

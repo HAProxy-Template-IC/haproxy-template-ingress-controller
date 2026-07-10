@@ -85,7 +85,14 @@
     'resolvers', 'cache', 'ring', 'userlist', 'mailers', 'program', 'http-errors', 'fcgi-app',
     'log-forward', 'crt-store', 'traces', 'acme', 'ruleset']);
   var HP_GROUPS = new Set(['haproxyConfig', 'templateSnippets']);
-  var TPL_RE = /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}/g;
+  // Scriggo control-flow keywords + the inner-token grammar, ported from the live
+  // editor (editor.js) so tags inside the facade colour the same way: group 1 a
+  // `//` comment, 2 a string, 3 a number, 4 an identifier (keyword if in CTRL).
+  var CTRL = new Set(['for', 'in', 'if', 'else', 'end', 'range', 'break', 'continue',
+    'return', 'var', 'const', 'show', 'switch', 'case', 'default', 'fallthrough',
+    'macro', 'extends', 'import', 'using', 'defer', 'and', 'or', 'not', 'contains',
+    'true', 'false', 'nil']);
+  var INNER_RE = /(\/\/[^\n]*)|(`[^`]*`|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_]\w*)/g;
 
   function escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
@@ -113,43 +120,54 @@
     return toks;
   }
 
-  function renderRuns(line, cls) {
-    var html = '', i = 0;
-    while (i < line.length) {
-      var c = cls[i], j = i; while (j < line.length && cls[j] === c) j++;
-      var seg = escHtml(line.slice(i, j));
-      html += c ? '<span class="pg-cf-' + c + '">' + seg + '</span>' : seg;
-      i = j;
-    }
-    return html;
+  // Fill each token's char range with its class, only where still unset (an
+  // earlier pass — a masked scriggo tag/comment — always wins).
+  function fillToks(cls, off, toks) {
+    for (var t = 0; t < toks.length; t++)
+      for (var k = toks[t].start; k < toks[t].end; k++)
+        if (cls[off + k] == null) cls[off + k] = toks[t].cls;
   }
 
-  function markTags(line, cls) {
-    var m; TPL_RE.lastIndex = 0;
-    while ((m = TPL_RE.exec(line))) { for (var k = m.index; k < m.index + m[0].length; k++) cls[k] = 'tpl'; if (m[0] === '') TPL_RE.lastIndex++; }
-  }
-
-  function renderHpLine(line) {           // HAProxy config line inside a template block
-    var cls = new Array(line.length).fill(null);
-    markTags(line, cls);
-    var masked = line.replace(TPL_RE, function (t) { return ' '.repeat(t.length); });
-    var toks = hpTokens(masked);
-    for (var t = 0; t < toks.length; t++) for (var k = toks[t].start; k < toks[t].end; k++) if (cls[k] == null) cls[k] = toks[t].cls;
-    return renderRuns(line, cls);
-  }
-
-  function renderValue(s) {               // a scalar value: highlight scriggo tags, rest plain
-    var cls = new Array(s.length).fill(null);
-    markTags(s, cls);
-    return renderRuns(s, cls);
-  }
-
-  function renderYamlLine(line) {         // key: value / comment / list item
+  // A YAML line → token ranges: a leading '#' comment, or the `key` of `key:`.
+  // Values are left plain (their scriggo tags are already masked by markRanges).
+  function yamlTokens(line) {
     var cm = /^(\s*)(#.*)$/.exec(line);
-    if (cm) return escHtml(cm[1]) + '<span class="pg-cf-cmt">' + escHtml(cm[2]) + '</span>';
-    var kv = /^(\s*)(- )?([\w.\/-]+)(:)(\s*)([\s\S]*)$/.exec(line);
-    if (kv) return escHtml(kv[1]) + (kv[2] || '') + '<span class="pg-cf-key">' + escHtml(kv[3]) + '</span>' + kv[4] + escHtml(kv[5]) + (kv[6] ? renderValue(kv[6]) : '');
-    return renderValue(line);
+    if (cm) return [{ start: cm[1].length, end: line.length, cls: 'cmt' }];
+    var kv = /^(\s*)(- )?([\w.\/-]+):/.exec(line);
+    if (kv) { var s = kv[1].length + (kv[2] ? kv[2].length : 0); return [{ start: s, end: s + kv[3].length, cls: 'key' }]; }
+    return [];
+  }
+
+  // Mark every char of each match of `re` with class `c`, only where still null.
+  // `re` uses [\s\S] so matches SPAN LINES — this is what makes a multi-line
+  // {# … #} comment or {%% … %%} block highlight as one unit instead of its
+  // interior lines bleeding into the per-line HAProxy/YAML tokenizer.
+  function markRanges(text, cls, re, c) {
+    var m; re.lastIndex = 0;
+    while ((m = re.exec(text))) {
+      for (var k = m.index; k < m.index + m[0].length; k++) if (cls[k] == null) cls[k] = c;
+      if (m[0] === '') re.lastIndex++;
+    }
+  }
+
+  // Scriggo tags {%%…%%} / {%…%} / {{…}} (multi-line): base-colour the whole tag
+  // 'tpl', then overlay inner tokens (strings, numbers, control keywords, //
+  // comments) so the tag reads like code, matching the live editor. Runs after
+  // the {# … #} comment pass, so a tag inside a comment stays dimmed.
+  function markTags(text, cls) {
+    var TAG = /\{%%[\s\S]*?%%\}|\{%[\s\S]*?%\}|\{\{[\s\S]*?\}\}/g, m;
+    while ((m = TAG.exec(text))) {
+      var s = m.index, tag = m[0], any = false;
+      for (var k = 0; k < tag.length; k++) if (cls[s + k] == null) { cls[s + k] = 'tpl'; any = true; }
+      if (any) {   // only tokenize inner content of a tag that wasn't already inside a comment
+        INNER_RE.lastIndex = 0; var im;
+        while ((im = INNER_RE.exec(tag))) {
+          var c = im[1] ? 'cmt' : im[2] ? 'str' : im[3] ? 'num' : (im[4] && CTRL.has(im[4]) ? 'kw' : null);
+          if (c) for (var j = im.index; j < im.index + im[0].length; j++) if (cls[s + j] === 'tpl') cls[s + j] = c;
+        }
+      }
+      if (tag === '') TAG.lastIndex++;
+    }
   }
 
   function hpTemplateLines(lines) {       // line indices inside an HP-group `template: |` block
@@ -168,10 +186,37 @@
     return set;
   }
 
+  // Render the whole text as <span> runs from a per-char class array.
+  function renderRunsGlobal(text, cls) {
+    var html = '', i = 0, n = text.length;
+    while (i < n) {
+      var c = cls[i], j = i; while (j < n && cls[j] === c) j++;
+      html += c ? '<span class="pg-cf-' + c + '">' + escHtml(text.slice(i, j)) + '</span>' : escHtml(text.slice(i, j));
+      i = j;
+    }
+    return html;
+  }
+
+  // Stateful, whole-text highlighter (mirrors the live editor's layering):
+  //   1. mask scriggo comments {# … #} (dim), then tags {%%…%%}/{%…%}/{{…}},
+  //      each scanned across the FULL text so multi-line ones stay one unit;
+  //   2. tokenize the remaining code per line — HAProxy inside HP-group
+  //      `template: |` blocks, else YAML — with already-masked tag/comment
+  //      chars blanked so they never re-tokenize (no bleed, no comment interior).
   function highlightConfigHTML(text, allTemplate) {
+    var cls = new Array(text.length).fill(null);
+    markRanges(text, cls, /\{#[\s\S]*?#\}/g, 'cmt');   // comments first (dim, win over tags)
+    markTags(text, cls);                                // then tags, with inner tokenization
     var lines = text.split('\n');
     var hp = allTemplate ? null : hpTemplateLines(lines);
-    return lines.map(function (l, i) { return (allTemplate || hp.has(i)) ? renderHpLine(l) : renderYamlLine(l); }).join('\n');
+    var off = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i], masked = '';
+      for (var k = 0; k < line.length; k++) masked += cls[off + k] == null ? line[k] : ' ';
+      fillToks(cls, off, (allTemplate || (hp && hp.has(i))) ? hpTokens(masked) : yamlTokens(masked));
+      off += line.length + 1;
+    }
+    return renderRunsGlobal(text, cls);
   }
 
   // Build the #s= fragment + query for one run.

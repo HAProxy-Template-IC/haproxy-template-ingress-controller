@@ -88,12 +88,8 @@ haproxyConfig:
       bind :8080
       default_backend not-found
     {%- for _, svc := range resources.services.List() %}
-    {%%
-      var ns   = svc | dig("metadata", "namespace") | fallback("") | tostring()
-      var name = svc | dig("metadata", "name") | fallback("") | tostring()
-    %%}
-    backend {{ ns }}_{{ name }}
-      server app {{ name }}.{{ ns }}.svc:80
+    backend {{ svc.metadata.namespace }}_{{ svc.metadata.name }}
+      server app {{ svc.metadata.name }}.{{ svc.metadata.namespace }}.svc:80
     {%- end %}
 
     backend not-found

@@ -100,8 +100,8 @@ spec:
     host.map:
       template: |
         {%- for _, ingress := range resources.ingresses.List() %}
-        {%- for _, rule := range ingress | dig("spec", "rules") | toSlice() %}
-        {{ rule | dig("host") | tostring() }} {{ ingress | dig("metadata", "name") | tostring() }}
+        {%- for _, rule := range ingress.spec.rules %}
+        {{ rule.host }} {{ ingress.metadata.name }}
         {%- end %}
         {%- end %}
   haproxyConfig:
@@ -119,7 +119,7 @@ spec:
         bind *:80
         use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
       {%- for _, ingress := range resources.ingresses.List() %}
-      backend {{ ingress | dig("metadata", "name") | tostring() }}
+      backend {{ ingress.metadata.name }}
         balance roundrobin
       {%- end %}
 ```
@@ -189,9 +189,9 @@ spec:
     host.map:
       template: |
         {%- for _, ingress := range resources.ingresses.List() %}
-        {%- for _, rule := range ingress | dig("spec", "rules") | toSlice() %}
-        {%- if (rule | dig("http")) != nil %}
-        {{ rule | dig("host") | tostring() }} ing_{{ ingress | dig("metadata", "name") | tostring() }}
+        {%- for _, rule := range ingress.spec.rules %}
+        {%- if len(rule.http.paths) > 0 %}
+        {{ rule.host }} ing_{{ ingress.metadata.name }}
         {%- end %}
         {%- end %}
         {%- end %}
@@ -315,8 +315,8 @@ spec:
       template: |
         {%- var secret = resources.secrets.GetSingle("default", "example-com-tls") %}
         {%- if secret != nil %}
-        {{ secret | dig("data", "tls.crt") | tostring() | b64decode() }}
-        {{ secret | dig("data", "tls.key") | tostring() | b64decode() }}
+        {{ secret.data["tls.crt"] | b64decode() }}
+        {{ secret.data["tls.key"] | b64decode() }}
         {%- end %}
   haproxyConfig:
     template: |
@@ -921,15 +921,15 @@ spec:
         timeout client 30s
         timeout server 30s
       {%- for _, ing := range resources.ingresses.List() %}
-      {%- for _, rule := range ing | dig("spec", "rules") | toSlice() %}
-      {%- for _, path := range rule | dig("http", "paths") | toSlice() %}
-      {%- var svc = path | dig("backend", "service", "name") | tostring() %}
-      {%- var port = path | dig("backend", "service", "port", "number") | fallback(80) %}
-      backend ing_{{ ing | dig("metadata", "name") | tostring() }}_{{ svc }}
+      {%- for _, rule := range ing.spec.rules %}
+      {%- for _, path := range rule.http.paths %}
+      {%- var svc = path.backend.service.name %}
+      {%- var port = fallback(path.backend.service.port.number, 80) %}
+      backend ing_{{ ing.metadata.name }}_{{ svc }}
         {%- for _, es := range resources.endpoints.Fetch(svc) %}
-        {%- for _, ep := range es | dig("endpoints") | toSlice() %}
-        {%- for _, addr := range ep | dig("addresses") | toSlice() %}
-        server {{ ep | dig("targetRef", "name") | fallback(addr) | tostring() }} {{ addr | tostring() }}:{{ port | tostring() }} check
+        {%- for _, ep := range es.endpoints %}
+        {%- for _, addr := range ep.addresses %}
+        server {{ fallback(ep.targetRef.name, addr) }} {{ addr }}:{{ port }} check
         {%- end %}
         {%- end %}
         {%- end %}
@@ -1130,21 +1130,38 @@ Templates render all variants upfront. The controller selects the appropriate va
 
 ### condition()
 
-Creates a `metav1.Condition`-compatible map:
+Creates a `metav1.Condition`-compatible map. Run it — `toJSON` makes the returned map visible:
+
+<div class="pg-embed" markdown data-scriggo data-title="condition() builds a status condition" data-height="220">
 
 ```go
-{{ condition("Accepted", "True", "Accepted", "Resource is accepted", observedGeneration, lastTransitionTime) }}
+{# condition() returns a metav1.Condition-shaped map; pipe it through toJSON to see it. #}
+{{ condition("Accepted", "True", "Accepted", "Resource is accepted", 1, "2024-01-01T00:00:00Z") | toJSON() }}
 ```
+
+</div>
 
 **Parameters:** `type`, `status`, `reason`, `message`, `observedGeneration`, `lastTransitionTime`
 
 ### transitionTime()
 
-Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet. The first argument is the resource's existing conditions list — navigate to it yourself with `dig`, so the helper stays agnostic to where a given resource keeps its conditions:
+Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet. The first argument is the resource's existing conditions list — navigate to it yourself with `dig(resource, "status", "conditions")`, so the helper stays agnostic to where a given resource keeps its conditions. Run the demo with a literal conditions list:
+
+<div class="pg-embed" markdown data-scriggo data-title="transitionTime() keeps or refreshes a timestamp" data-height="320">
 
 ```go
-{{ transitionTime(dig(resource, "status", "conditions"), "Accepted", "True") }}
+{# In a real template you'd navigate to the existing conditions with
+   dig(resource, "status", "conditions"); here it's a literal so the demo runs. #}
+{%- var existing = []any{
+    map[string]any{"type": "Accepted", "status": "True", "lastTransitionTime": "2024-01-01T00:00:00Z"},
+} %}
+{# Status still "True" -> the existing 2024 timestamp is preserved: #}
+unchanged: {{ transitionTime(existing, "Accepted", "True") }}
+{# Status flipped to "False" -> a fresh current timestamp is returned: #}
+changed:   {{ transitionTime(existing, "Accepted", "False") }}
 ```
+
+</div>
 
 For resources with nested condition arrays (e.g., Gateway API Route `parents[]`), navigate to the parent's conditions first:
 
@@ -1157,7 +1174,7 @@ For resources with nested condition arrays (e.g., Gateway API Route `parents[]`)
 
 In the chart, status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
 
-The embed below is a self-contained version that patches a custom `Widget` resource. Run it and open the **status** tab to see the `.status.conditions` HAPTIC would write back:
+The embed below is a self-contained version that patches an Ingress with typed field access. Run it and open the **status** tab to see the `.status.conditions` HAPTIC would write back:
 
 <div class="pg-embed" markdown data-tab="status" data-controls="tabs,resources" data-title="Emit a status patch" data-height="440">
 
@@ -1168,9 +1185,9 @@ metadata:
   name: status-patch-demo
 spec:
   watchedResources:
-    widgets:
-      apiVersion: example.com/v1
-      resources: widgets
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
       indexBy: ["metadata.namespace", "metadata.name"]
   haproxyConfig:
     template: |
@@ -1186,16 +1203,17 @@ spec:
         default_backend app
       backend app
         server s1 127.0.0.1:8080 check
-      {%- for _, widget := range resources.widgets.List() %}
+      {%- for _, ingress := range resources.ingresses.List() %}
       {%%
-        var ns = tostring(fallback(dig(widget, "metadata", "namespace"), ""))
-        var name = tostring(fallback(dig(widget, "metadata", "name"), ""))
-        var gen = fallback(dig(widget, "metadata", "generation"), 0)
-        var existing = dig(widget, "status", "conditions")
-        statusPatch(ns, name, "example.com/v1", "Widget", map[string]any{
+        var ns = ingress.metadata.namespace
+        var name = ingress.metadata.name
+        var gen = fallback(ingress.metadata.generation, 0)
+        // Ingress status has no typed conditions field, so reach for it with dig.
+        var existing = dig(ingress, "status", "conditions")
+        statusPatch(ns, name, "networking.k8s.io/v1", "Ingress", map[string]any{
           "deployed": map[string]any{
             "conditions": []any{
-              condition("Ready", "True", "Deployed", "Widget programmed into HAProxy", gen, transitionTime(existing, "Ready", "True")),
+              condition("Ready", "True", "Deployed", "Ingress programmed into HAProxy", gen, transitionTime(existing, "Ready", "True")),
             },
           },
         })
@@ -1207,14 +1225,24 @@ spec:
 apiVersion: v1
 kind: List
 items:
-  - apiVersion: example.com/v1
-    kind: Widget
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
     metadata:
       name: demo
       namespace: shop
       generation: 3
     spec:
-      host: demo.example.com
+      rules:
+        - host: demo.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: demo
+                    port:
+                      number: 80
 ```
 
 </div>
@@ -1223,7 +1251,9 @@ The built-in Ingress and Gateway API libraries already include status patch snip
 
 ## Complete Example
 
-Full ingress → service → endpoints chain with reserved slots:
+Full ingress → service → endpoints chain with reserved slots, using typed access throughout. Press **Run live**, open the **maps** tab for the host map, and edit the resources to add or remove endpoints:
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → endpoints, with reserved slots" data-height="560">
 
 ```yaml
 watchedResources:
@@ -1240,7 +1270,7 @@ maps:
   host.map:
     template: |
       {%- for _, ingress := range resources.ingresses.List() %}
-      {%- for _, rule := range fallback(ingress.spec.rules, []any{}) %}
+      {%- for _, rule := range ingress.spec.rules %}
       {{ rule.host }} ing_{{ ingress.metadata.name }}
       {%- end %}
       {%- end %}
@@ -1251,8 +1281,8 @@ templateSnippets:
       {%- var initial_slots = 10 %}
       {%- var active_endpoints = []map[string]any{} %}
       {%- for _, es := range resources.endpoints.Fetch(service_name) %}
-        {%- for _, ep := range fallback(es.endpoints, []any{}) %}
-          {%- for _, addr := range fallback(ep.addresses, []any{}) %}
+        {%- for _, ep := range es.endpoints %}
+          {%- for _, addr := range ep.addresses %}
             {%- active_endpoints = append(active_endpoints, map[string]any{"addr": addr}) %}
           {%- end %}
         {%- end %}
@@ -1282,8 +1312,8 @@ haproxyConfig:
         use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
 
     {% for _, ingress := range resources.ingresses.List() %}
-    {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
-    {% for _, path := range fallback(rule.http.paths, []any{}) %}
+    {% for _, rule := range ingress.spec.rules %}
+    {% for _, path := range rule.http.paths %}
     {%- var service_name = path.backend.service.name %}
     {%- var port = fallback(path.backend.service.port.number, 80) %}
 
@@ -1294,6 +1324,41 @@ haproxyConfig:
     {% end %}
     {% end %}
 ```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata: { name: shop, namespace: storefront }
+    spec:
+      rules:
+        - host: shop.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: shop-svc
+                    port:
+                      number: 8080
+  - apiVersion: discovery.k8s.io/v1
+    kind: EndpointSlice
+    metadata:
+      name: shop-svc-abc
+      namespace: storefront
+      labels:
+        kubernetes.io/service-name: shop-svc
+    endpoints:
+      - addresses: ["10.244.1.10"]
+      - addresses: ["10.244.1.11"]
+    ports:
+      - port: 8080
+```
+
+</div>
 
 ## See Also
 
