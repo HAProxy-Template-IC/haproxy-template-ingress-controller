@@ -22,7 +22,7 @@ Watch an HTTPRoute compile down to HAProxy config live:
 
 <div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Gateway API → HAProxy config" data-height="440">
 
-<p class="pg-task" markdown>**Try it:** In the **Resources** panel, add `- www.example.com` under the `api` HTTPRoute's `spec.hostnames`, then open the **maps** tab and watch `host.map` gain a second entry.</p>
+<p class="pg-task" markdown>In the **Resources** panel, add `- www.example.com` under the `api` HTTPRoute's `spec.hostnames`, then open the **maps** tab and watch `host.map` gain a second entry.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
@@ -218,7 +218,7 @@ The path type decides which map file HAProxy consults — flip it live:
 
 <div class="pg-embed" markdown data-scenario="gateway" data-tab="maps" data-controls="tabs,resources" data-title="Path type → map file" data-height="440">
 
-<p class="pg-task" markdown>**Try it:** In the **Resources** panel, change the `api` HTTPRoute's `path.type` from `PathPrefix` to `Exact`, then watch the entry move between map files in the **maps** tab.</p>
+<p class="pg-task" markdown>In the **Resources** panel, change the `api` HTTPRoute's `path.type` from `PathPrefix` to `Exact`, then watch the entry move between map files in the **maps** tab.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
@@ -383,7 +383,7 @@ Add a matcher to the demo route and watch the frontend gain a condition:
 
 <div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Method / header / query matchers" data-height="440">
 
-<p class="pg-task" markdown>**Try it:** In the **Resources** panel, add `method: GET` to the `api` HTTPRoute's match (as a sibling of its `path`), then find the matcher line in the `haproxy.cfg` tab.</p>
+<p class="pg-task" markdown>In the **Resources** panel, add `method: GET` to the `api` HTTPRoute's match (as a sibling of its `path`), then find the matcher line in the `haproxy.cfg` tab.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
@@ -695,7 +695,7 @@ Split the demo route's traffic and inspect the generated weight map:
 
 <div class="pg-embed" markdown data-scenario="gateway" data-tab="maps" data-controls="tabs,resources" data-title="Weighted traffic split → map" data-height="440">
 
-<p class="pg-task" markdown>**Try it:** In the **Resources** panel, give the `api` HTTPRoute a second backend: add `weight: 90` to its existing `api` ref and append `- {name: api-canary, port: 80, weight: 10}`, then open `weighted-multi-backend.map` in the **maps** tab.</p>
+<p class="pg-task" markdown>In the **Resources** panel, give the `api` HTTPRoute a second backend: add `weight: 90` to its existing `api` ref and append `- {name: api-canary, port: 80, weight: 10}`, then open `weighted-multi-backend.map` in the **maps** tab.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>

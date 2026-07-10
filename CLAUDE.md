@@ -832,6 +832,39 @@ HAPTIC and takes every sentence literally.
   the serial (Oxford) comma; spell out ambiguous dates (2026-07-01, not 07/01).
 - **Show, then tell.** Prefer a runnable example over a paragraph describing it.
 
+### Interactive playground examples
+
+The docs embed a live playground (`docs/shared/playground-embed.js`, the `.pg-embed`
+component). When you author or edit a runnable example:
+
+- **Default to typed resource access, not `dig()`.** Every non-scriggo embed loads
+  the schema bundle, so a real cluster's typed access works: write
+  `svc.metadata.name`, `ingress.spec.rules`, `path.backend.service.port.number` —
+  not `dig(svc, "metadata", "name")`. Typed access is the idiom the controller
+  gives you against a live apiserver, so it's what examples should teach. Reserve
+  `dig()` for the three cases where it's genuinely right: the `dig`/`fallback`
+  lesson itself, inline `map[string]any` literals (no watched resource), and a
+  schema-less custom resource with no bundled schema. (`dig()` is *required* in the
+  chart libraries — that's RULE #1, resource-agnostic code — but that's the chart,
+  not user templates. Don't let chart `dig()` usage set the default for examples.)
+  Typed gotchas: range optional typed slices **directly** (`range ingress.spec.rules`)
+  — wrapping them in `fallback(x, []any{})` boxes elements to `interface{}` and
+  breaks the following typed field access; a nil typed slice ranges zero times.
+  Check presence with `len(x.paths) > 0` (a value-struct field can't compare to nil).
+  Show a `map` with `... | toJSON()`.
+- **Use the minimal `data-scriggo` embed for template-language demos.** When the
+  point is a helper function, a control-flow construct, or whitespace control —
+  anything that doesn't need watched resources — use `<div class="pg-embed"
+  data-scriggo>` with a bare template. It skips the whole `HAProxyTemplateConfig`
+  wrapper, so the reader sees only the template and its output. Reserve full-config
+  embeds (with `watchedResources`/`haproxyConfig`) for examples that genuinely
+  render resources into config.
+- **Teach before you test.** Put a challenge (`data-difficulty`, a `pg-solution`)
+  *after* the concept it exercises, never before — a reader can't solve a task for
+  something the page hasn't shown yet. Every task/challenge intro is one
+  `<p class="pg-task">` callout (the component styles it); don't leave it as plain
+  prose.
+
 Full guides: [Google](https://developers.google.com/style),
 [Microsoft](https://learn.microsoft.com/en-us/style-guide/welcome/),
 [Diátaxis](https://diataxis.fr/).

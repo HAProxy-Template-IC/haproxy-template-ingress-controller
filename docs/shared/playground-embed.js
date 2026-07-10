@@ -80,7 +80,16 @@
    * flat YAML string. Re-highlight it here so the shown config matches the live
    * editor: HAProxy tokens inside HP-group template blocks, Scriggo tags, and a
    * light YAML pass for the surrounding keys. Token classes map to mkdocs-material
-   * code colours (theme-aware). hpTokens is ported verbatim from editor.js. */
+   * code colours (theme-aware).
+   *
+   * SOURCE OF TRUTH: cmd/playground/web/editor.js. The grammar below mirrors the
+   * live editor's tokenizer so the facade highlights identically. The two can't
+   * share a module at runtime (versioned /playground/ vs unversioned /shared/
+   * deploy roots). scripts/check-highlight-grammar.mjs (run by `make lint`)
+   * guards the highest-drift-risk parts — the token TABLES HP_SECTIONS,
+   * HP_GROUPS, CTRL and INNER_RE — and fails if they diverge from editor.js.
+   * hpTokens mirrors editor.js's exported haproxyTokens by hand (stable logic,
+   * not table-compared); if you change either, update both. */
   var HP_SECTIONS = new Set(['global', 'defaults', 'frontend', 'backend', 'listen', 'peers',
     'resolvers', 'cache', 'ring', 'userlist', 'mailers', 'program', 'http-errors', 'fcgi-app',
     'log-forward', 'crt-store', 'traces', 'acme', 'ruleset']);
@@ -130,12 +139,40 @@
 
   // A YAML line → token ranges: a leading '#' comment, or the `key` of `key:`.
   // Values are left plain (their scriggo tags are already masked by markRanges).
+  function yamlValClass(v) {
+    v = v.trim();
+    if (!v || /^[|>][+-]?$/.test(v)) return null;      // block-scalar indicator (| |- > >-) → plain
+    if (/^["']/.test(v)) return 'str';                  // quoted string
+    if (/^-?\d[\d._]*$/.test(v)) return 'num';          // number
+    if (/^(true|false|null|yes|no|~)$/i.test(v)) return 'kw';   // bool / null
+    return null;                                        // bare scalar → plain (like YAML lexers)
+  }
+  // Classify a value at `valStart` and split off a trailing " # comment" (a hash
+  // preceded by whitespace — a `#` with no leading space, e.g. inside "a#b", is
+  // not a comment), so the comment isn't swallowed into the value's colour.
+  function pushValue(toks, valStart, valText) {
+    var c = /^([\s\S]*?)(\s+#.*)$/.exec(valText);
+    var val = c ? c[1] : valText;
+    var vc = yamlValClass(val);
+    if (vc) toks.push({ start: valStart, end: valStart + val.length, cls: vc });
+    if (c) toks.push({ start: valStart + c[1].length, end: valStart + valText.length, cls: 'cmt' });
+  }
   function yamlTokens(line) {
     var cm = /^(\s*)(#.*)$/.exec(line);
     if (cm) return [{ start: cm[1].length, end: line.length, cls: 'cmt' }];
-    var kv = /^(\s*)(- )?([\w.\/-]+):/.exec(line);
-    if (kv) { var s = kv[1].length + (kv[2] ? kv[2].length : 0); return [{ start: s, end: s + kv[3].length, cls: 'key' }]; }
-    return [];
+    var toks = [];
+    var kv = /^(\s*)(- )?([\w.\/-]+)(:)(\s+)(\S.*)?$/.exec(line);  // key: [value]
+    if (kv) {
+      var ks = kv[1].length + (kv[2] ? kv[2].length : 0);
+      toks.push({ start: ks, end: ks + kv[3].length, cls: 'key' });
+      if (kv[6]) pushValue(toks, ks + kv[3].length + kv[4].length + kv[5].length, kv[6]);
+      return toks;
+    }
+    var ke = /^(\s*)(- )?([\w.\/-]+):\s*$/.exec(line);                // "key:" mapping opener
+    if (ke) { var s = ke[1].length + (ke[2] ? ke[2].length : 0); return [{ start: s, end: s + ke[3].length, cls: 'key' }]; }
+    var li = /^(\s*)(- )(\S.*)$/.exec(line);                          // "- value" list item
+    if (li) pushValue(toks, li[1].length + li[2].length, li[3]);
+    return toks;
   }
 
   // Mark every char of each match of `re` with class `c`, only where still null.
@@ -308,6 +345,15 @@
       wrap.className = 'pg-embed-code';
       el._configBlock.parentNode.insertBefore(wrap, el._configBlock);
       wrap.appendChild(el._configBlock);
+    } else if (el.dataset.scenario) {
+      // A preset embed fetches its (large) bundled config on Run, so there's no
+      // inline block to show. Fill the facade with an inviting placeholder
+      // instead of leaving it blank.
+      var ph = document.createElement('div');
+      ph.className = 'pg-embed-placeholder';
+      ph.innerHTML = '<span class="pg-ph-play">▶</span> Press <strong>Run live</strong> to render the bundled <strong>'
+        + escHtml(el.dataset.scenario.replace(/-/g, ' ')) + '</strong> example in your browser.';
+      el.appendChild(ph);
     }
 
     // Header with title, difficulty, Run button.
@@ -317,8 +363,13 @@
     title.className = 'pg-embed-title';
     title.textContent = el.dataset.title || 'Live example';
     head.appendChild(title);
-    var diff = stars(el.dataset.difficulty);
-    if (diff) { var d = document.createElement('span'); d.className = 'pg-embed-diff'; d.textContent = diff; head.appendChild(d); }
+    var diffN = Math.max(0, Math.min(3, parseInt(el.dataset.difficulty, 10) || 0));
+    if (diffN) {
+      var d = document.createElement('span'); d.className = 'pg-embed-diff'; d.textContent = stars(diffN);
+      var label = 'Difficulty: ' + ({ 1: 'beginner', 2: 'intermediate', 3: 'advanced' }[diffN] || diffN + '/3');
+      d.title = label; d.setAttribute('aria-label', label);
+      head.appendChild(d);
+    }
     var sp = document.createElement('span'); sp.className = 'pg-embed-spacer'; head.appendChild(sp);
     var runBtn = document.createElement('button');
     runBtn.type = 'button';

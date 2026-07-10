@@ -57,7 +57,7 @@ spec:
 
 <div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="13-16" data-title="Challenge: give every server a health check" data-difficulty="1">
 
-This config renders two backends from an inline list, but the generated `server` lines have no health checking — HAProxy keeps routing to a pod even after it dies. Add `check` to the generated `server` line so every server gets an active health check.
+<p class="pg-task" markdown>This config renders two backends from an inline list, but the generated `server` lines have no health checking — HAProxy keeps routing to a pod even after it dies. Add `check` to the generated `server` line so every server gets an active health check.</p>
 
 ```yaml
 apiVersion: haproxy-haptic.org/v1alpha1

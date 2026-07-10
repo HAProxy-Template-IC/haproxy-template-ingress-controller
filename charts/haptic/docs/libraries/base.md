@@ -17,7 +17,7 @@ Every render flows through base — here it is underpinning the Ingress preset l
 
 <div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Base library underpinning a render" data-height="440">
 
-<p class="pg-task" markdown>**Try it:** In the **Templates** pane, add a `global-settings-500-tuning` snippet under `spec.templateSnippets` (the YAML is in the hint), then watch `tune.bufsize 262144` appear inside the `global` section of the `haproxy.cfg` tab.</p>
+<p class="pg-task" markdown>In the **Templates** pane, add a `global-settings-500-tuning` snippet under `spec.templateSnippets` (the YAML is in the hint), then watch `tune.bufsize 262144` appear inside the `global` section of the `haproxy.cfg` tab.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
@@ -42,7 +42,7 @@ Every base extension point is just a Scriggo snippet that emits HAProxy directiv
 
 <div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11-12" data-title="Challenge: turn a map into response headers" data-difficulty="2">
 
-The `frontend http` section already holds an `extraHeaders` map of header names to values, but emits nothing. Range it with `{% for k, v := range extraHeaders %}` and emit one `http-response set-header` per entry.
+<p class="pg-task" markdown>The `frontend http` section already holds an `extraHeaders` map of header names to values, but emits nothing. Range it with `{% for k, v := range extraHeaders %}` and emit one `http-response set-header` per entry.</p>
 
 ```yaml
 apiVersion: haproxy-haptic.org/v1alpha1
