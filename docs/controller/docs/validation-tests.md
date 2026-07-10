@@ -123,7 +123,7 @@ validationTests:
         description: Exactly two backends (shop + not-found)
 ```
 
-<p class="pg-task">🎯 <b>Try it:</b> Add a second Service to the <code>fixtures</code> block, then bump the <code>match_count</code> assertion's <code>expected</code> to <code>"3"</code> and re-run — watch it stay green. Set it back to <code>"2"</code> to see the assertion turn red.</p>
+<p class="pg-task" markdown>Add a second Service to the <code>fixtures</code> block, then bump the <code>match_count</code> assertion's <code>expected</code> to <code>"3"</code> and re-run — watch it stay green. Set it back to <code>"2"</code> to see the assertion turn red.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
