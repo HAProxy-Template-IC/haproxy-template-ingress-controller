@@ -78,8 +78,6 @@
     return n ? '★'.repeat(n) : '';
   }
 
-  function escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-
   /* --- facade config highlighting (shares the live editor's grammar) ---
    * mkdocs renders the config inside a `template: |` block as one flat YAML
    * string, and its own YAML lexer miscolours header lines in a files block
@@ -240,23 +238,29 @@
       // instead of leaving it blank.
       var ph = document.createElement('div');
       ph.className = 'pg-embed-placeholder';
-      ph.innerHTML = '<span class="pg-ph-play">▶</span> Press <strong>Run live</strong> to render the bundled <strong>'
-        + escHtml(el.dataset.scenario.replace(/-/g, ' ')) + '</strong> example in your browser.';
+      ph.textContent = 'press ▶ Run live — renders the bundled '
+        + el.dataset.scenario.replace(/-/g, ' ') + ' example in your browser, nothing uploaded';
       el.appendChild(ph);
     }
 
     // Header with title, difficulty, Run button.
     var head = document.createElement('div');
     head.className = 'pg-embed-head';
+    var mark = document.createElement('span');
+    mark.className = 'pg-embed-mark';
+    mark.textContent = '{%%}';
+    mark.setAttribute('aria-hidden', 'true');
+    head.appendChild(mark);
     var title = document.createElement('span');
     title.className = 'pg-embed-title';
     title.textContent = el.dataset.title || 'Live example';
     head.appendChild(title);
     var diffN = Math.max(0, Math.min(3, parseInt(el.dataset.difficulty, 10) || 0));
     if (diffN) {
-      var d = document.createElement('span'); d.className = 'pg-embed-diff'; d.textContent = stars(diffN);
-      var label = 'Difficulty: ' + ({ 1: 'beginner', 2: 'intermediate', 3: 'advanced' }[diffN] || diffN + '/3');
-      d.title = label; d.setAttribute('aria-label', label);
+      var word = { 1: 'beginner', 2: 'intermediate', 3: 'advanced' }[diffN];
+      var d = document.createElement('span'); d.className = 'pg-embed-diff';
+      d.textContent = stars(diffN) + ' ' + word;
+      d.setAttribute('aria-label', 'Difficulty: ' + word);
       head.appendChild(d);
     }
     var sp = document.createElement('span'); sp.className = 'pg-embed-spacer'; head.appendChild(sp);
@@ -299,7 +303,7 @@
     var loading = document.createElement('div');
     loading.className = 'pg-loading';
     loading.hidden = true;
-    loading.textContent = 'Loading the playground…';
+    loading.textContent = 'booting the render engine…';
     el.appendChild(loading);
 
     // Challenge: a "Compare with solution" button inside a <details class="pg-solution">.
