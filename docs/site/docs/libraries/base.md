@@ -309,9 +309,9 @@ Built-in function that escapes regex metacharacters so a user-supplied literal (
 
 </div>
 
-### Utility Macros (`util-macros`)
+### Utility macros
 
-The `util-macros` snippet provides reusable macros imported by other libraries:
+The base library provides reusable macros across several `util-*` snippets, imported by other libraries:
 
 | Macro | Purpose |
 |-------|---------|
@@ -463,14 +463,14 @@ global
     # global-settings-200-process
     daemon
     nbthread 2          # auto-calculated from CPU requests
+    # global-settings-250-shm-stats (when haproxy.shmStats.enabled=true and HAProxy >= 3.3)
+    shm-stats-file /dev/shm/haproxy-stats
+    shm-stats-file-max-objects 50000  # configurable via haproxy.shmStats.maxObjects
     # global-settings-300-paths — emits the BaseDir from pathResolver (chart default /etc/haproxy)
     default-path origin /etc/haproxy
     crt-base ssl/                              # relative to default-path origin
     # global-settings-400-ssl
     tune.ssl.default-dh-param 2048
-    # global-settings-250-shm-stats (when haproxy.shmStats.enabled=true and HAProxy >= 3.3)
-    shm-stats-file /dev/shm/haproxy-stats
-    shm-stats-file-max-objects 50000  # configurable via haproxy.shmStats.maxObjects
 
 defaults
     # defaults-settings-100-options
@@ -483,7 +483,7 @@ defaults
     # defaults-settings-200-balance
     balance roundrobin
     # defaults-settings-300-timeouts
-    timeout connect 5000
+    timeout connect 100
     timeout client 50000
     timeout server 50000
     # defaults-settings-400-errorfiles — relative paths resolved via default-path origin

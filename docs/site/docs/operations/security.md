@@ -1,6 +1,6 @@
 # Security
 
-HAPTIC exposes a focused set of security-relevant knobs. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator, etc.) is left to the upstream project's docs.
+HAPTIC exposes a focused set of security-relevant knobs. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator (ESO), etc.) is left to the upstream project's docs.
 
 ## What the Controller Needs
 
@@ -53,8 +53,8 @@ stringData:
 
 The controller watches the Secret and picks up rotations live — no pod restart needed. Use whatever secret-management tool you already run (ESO, Vault agent, SOPS, …); the controller just reads the Secret.
 
-!!! warning "Helm chart fallback password is deterministic"
-    If you install via the Helm chart and leave `credentials.dataplane.password` empty, the chart fills it with `sha256(<release>-<namespace>-haptic-dataplane-api) | trunc 32`. That value is preserved across upgrades from the existing Secret, but anyone who can guess your release name and namespace can reproduce it. Set `credentials.dataplane.password` explicitly (from a real random source / your secret manager) for any deployment whose Dataplane API is reachable beyond cluster-internal pod networking.
+!!! warning "Set the Dataplane password explicitly under GitOps"
+    If you install via the Helm chart and leave `credentials.dataplane.password` empty, the chart generates a **random** 32-char password and preserves it across upgrades by reading the existing Secret via `lookup`. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates on every sync and churns the credential — set `credentials.dataplane.password` explicitly (SealedSecret / external secret) for those deployments.
 
 Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/vars.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
 
@@ -97,7 +97,7 @@ The controller pod exposes three HTTP ports (all chart defaults):
 
 Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, CNI encryption) rather than transport-level authentication for that hop.
 
-The Dataplane API is authenticated with a basic-auth password stored in the `<release>-credentials` Secret. When `credentials.dataplane.password` is left empty the chart generates a **random** 32-char password and preserves it across upgrades via `lookup`. Under GitOps tools that render without cluster access (ArgoCD/Flux), `lookup` is unavailable, so an empty password regenerates on every sync — set `credentials.dataplane.password` explicitly (e.g. via a SealedSecret / external secret) for those setups, which is the recommended pattern for any generated credential under GitOps.
+The Dataplane API is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release fullname, which collapses to `<release>-credentials` only when the release name already contains `haptic`). When `credentials.dataplane.password` is left empty the chart generates a **random** 32-char password and preserves it across upgrades via `lookup`. Under GitOps tools that render without cluster access (ArgoCD/Flux), `lookup` is unavailable, so an empty password regenerates on every sync — set `credentials.dataplane.password` explicitly (e.g. via a SealedSecret / external secret) for those setups, which is the recommended pattern for any generated credential under GitOps.
 
 **The chart already ships default-on `NetworkPolicy` resources** for both the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods — both default `true` — restricting ingress to the exposed ports and egress to DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports. Set the relevant flag to `false` to manage your own; the example below mirrors the controller policy's shape:
 
@@ -136,19 +136,57 @@ If you keep the debug port enabled, pair it with a NetworkPolicy that restricts 
 
 Templates read watched Secrets like any other resource. Decode with `b64decode` (values in `.data` are base64-encoded by Kubernetes):
 
-```scriggo
-{%- var secret = resources.secrets.GetSingle("auth", "basic-auth") %}
-{%- if secret != nil %}
-userlist authenticated_users
-    user admin password {{ secret.data.password_hash | b64decode }}
-{%- end %}
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-focus="20" data-title="Watched Secret → userlist" data-height="480">
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: secret-userlist-demo
+spec:
+  watchedResources:
+    secrets:
+      apiVersion: v1
+      resources: secrets
+      indexBy:
+        - metadata.namespace
+        - metadata.name
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      {%- var secret = resources.secrets.GetSingle("auth", "basic-auth") %}
+      {%- if secret != nil %}
+      userlist authenticated_users
+          user admin password {{ secret.data.password_hash | b64decode() }}
+      {%- end %}
 ```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: basic-auth
+      namespace: auth
+    data:
+      password_hash: JDJ5JDA1JFp0MENrMXFZdzhwMXNRbTltUjNuUWVKOHlxM3ZKaEY1eEo4ZFEwb1YyYk43Y1gxa0w5bVNl
+```
+
+</div>
 
 Store *hashes*, not plaintext. For HAProxy basic auth:
 
 ```bash
 htpasswd -nbB admin mypassword | cut -d: -f2
-kubectl create secret generic basic-auth \
+kubectl create secret generic basic-auth -n auth \
   --from-literal=password_hash='$2y$05$...'
 ```
 
@@ -167,13 +205,13 @@ rules:
       - group: haproxy-haptic.org
         resources: ["haproxytemplateconfigs"]
   - level: Metadata
-    users: ["system:serviceaccount:<namespace>:<release>"]
+    users: ["system:serviceaccount:<namespace>:<release>-haptic"]
     resources:
       - group: ""
         resources: ["secrets"]
 ```
 
-Replace `<namespace>`/`<release>` with your Helm release; the SA name is `<release>` unless you overrode `serviceAccount.name`.
+Replace `<namespace>`/`<release>` with your Helm release. The SA name is the release fullname `<release>-haptic` (collapsing to `<release>` only when the release name already contains `haptic`) unless you overrode `serviceAccount.name` — get the exact value with `kubectl -n <namespace> get sa`. A rule keyed on the wrong SA name silently never matches, so the controller's Secret reads go unaudited.
 
 ## Checklist
 

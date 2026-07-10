@@ -19,7 +19,7 @@ The controller exposes Prometheus metrics via an HTTP endpoint, providing visibi
 
 ## Enabling Metrics
 
-Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (separate from the debug port — by default `:9090`). No additional configuration is needed beyond pointing Prometheus at this endpoint.
+Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (default `:9090`), which is separate from the debug port. No additional configuration is needed beyond pointing Prometheus at this endpoint.
 
 The controller reads its metrics port from the `METRICS_PORT` env var (default `9090`). To disable the metrics server, set `METRICS_PORT=0` on the controller container. Via Helm, use `extraEnv`:
 
@@ -635,7 +635,7 @@ Example Grafana dashboard structure (use as a starting point):
 }
 ```
 
-This is a starting point -- add additional panels using the [PromQL queries](#grafana-dashboard-queries) above for more detailed views of deployment latency distribution, resource counts over time, or per-pod leader status.
+This is a starting point — add panels using the [PromQL queries](#grafana-dashboard-queries) above for more detailed views of deployment latency distribution, resource counts over time, or per-pod leader status.
 
 ## Operational Insights
 
@@ -689,22 +689,11 @@ avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
 
 ### Prometheus Operator
 
-```yaml
-# values.yaml
-monitoring:
-  serviceMonitor:
-    enabled: true
-    interval: 30s
-    scrapeTimeout: 10s
-    labels:
-      release: prometheus
-```
-
-The chart renders a `ServiceMonitor` that targets the controller Service in the release namespace — no explicit namespace selector is needed.
+Enable the bundled `ServiceMonitor` as shown in [ServiceMonitor (Prometheus Operator)](#servicemonitor-prometheus-operator) above. The chart renders it to target the controller Service in the release namespace — no explicit namespace selector is needed.
 
 ### Victoria Metrics
 
-Use the same Prometheus scrape configuration - Victoria Metrics is compatible.
+Use the same Prometheus scrape configuration — Victoria Metrics is compatible.
 
 ### Datadog
 

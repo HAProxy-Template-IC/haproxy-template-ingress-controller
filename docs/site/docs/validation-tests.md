@@ -4,7 +4,7 @@
 
 Validation tests verify that your templates render correctly and produce valid HAProxy configurations. Tests are embedded in the HAProxyTemplateConfig CRD and run locally using the CLI.
 
-The controller binary has three subcommands beyond `run`: `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
+Beyond `run`, the controller binary provides `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
 
 ## Quick Start
 
@@ -265,14 +265,16 @@ Use for small, deterministic files. Not recommended for large configs.
 
 ### jsonpath
 
-Queries template rendering context:
+Evaluates a JSONPath expression against the template rendering context and compares the single result to `expected`. JSONPath reads plain values from the context — it can't invoke the store methods templates use (`resources.services.List()`), so it fits scalar context values (for example a `spec.templatingSettings.extraContext` key, which is injected into the context by name):
 
 ```yaml
 - type: jsonpath
-  jsonpath: "{.resources.services.List()[0].metadata.name}"
-  expected: "my-service"
-  description: First service should be my-service
+  jsonpath: "{.environment}"     # set via spec.templatingSettings.extraContext.environment
+  expected: "production"
+  description: extraContext.environment is wired through
 ```
+
+To assert on watched resources or rendered output, use `contains`, `match_count`, or `equals` against `haproxy.cfg` (or a `map:` / `file:` target) instead.
 
 ### match_count
 
@@ -452,14 +454,18 @@ validationTests:
 
 ### Testing Template Errors
 
-Test `fail()` assertions:
+A negative test passes when the render fails *as expected*. Assert on the `rendering_error` target (see [contains targets](#contains)) so the deliberate `fail()` is treated as the pass condition — without it, the failed render marks the whole test red:
 
 ```yaml
 test-no-services-error:
   description: Should fail when no services exist
   fixtures:
     services: []
-  # Test fails at rendering with fail() message
+  assertions:
+    - type: contains
+      target: rendering_error
+      pattern: "no services configured"
+      description: Render is rejected with the expected fail() message
 ```
 
 ### Testing Auxiliary Files
@@ -505,7 +511,7 @@ test1:
 | "haproxy: command not found" | Install HAProxy locally (the validator invokes `haproxy -c` on your `PATH`) |
 | "template rendering failed" | Check for undefined variables, missing filters |
 | Pattern not matching | Escape regex chars, check whitespace, use simpler patterns |
-| JSONPath returns no results | Verify path syntax, use `.List()` for resources |
+| JSONPath returns no results | Check the path; jsonpath reads scalar context values (e.g. `extraContext` keys), not the resource stores — assert on resources with `contains` / `match_count` |
 
 ## Complete Example
 

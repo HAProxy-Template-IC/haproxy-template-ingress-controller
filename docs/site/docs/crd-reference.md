@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `HAProxyTemplateConfig` custom resource configures the HAProxy Template Ingress Controller. It provides schema validation, status conditions, and embedded testing capabilities.
+The `HAProxyTemplateConfig` custom resource configures HAPTIC. It provides schema validation, status conditions, and embedded testing capabilities.
 
 **API Group**: `haproxy-haptic.org`
 **API Version**: `v1alpha1`
@@ -341,7 +341,9 @@ maps:
   host.map:
     template: |
       {% for _, ingress := range resources.ingresses.List() %}
+      {% for _, rule := range ingress.spec.rules %}
       {{ rule.host }} {{ ingress.metadata.name }}_backend
+      {% end %}
       {% end %}
 ```
 
@@ -380,7 +382,7 @@ Reference in config: `bind :443 ssl crt {{ pathResolver.GetPath("example-com", "
 
 Templates that emit Kubernetes resources for the controller to apply via Server-Side Apply. Each entry's rendered output is parsed as one or more YAML documents (multi-doc supported via `---` separators); each document must declare `apiVersion`, `kind`, and `metadata.name` (plus `metadata.namespace` for namespaced kinds).
 
-The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every applied resource, so cascade-delete (e.g. `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the SSA payload omits the `managed-by` label, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly-owned objects on which haptic only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
+The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every applied resource, so cascade-delete (e.g. `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the SSA payload omits the `managed-by` label, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly-owned objects on which HAPTIC only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
 
 Templates have full access to the same engine context as `haproxyConfig` — `resources`, filters, `templateSnippets`, `fileRegistry`, `extraContext`, and the per-render `shared` cache — so a `k8sResources` template can render extension points (`render_glob` patterns) and read shared state populated by the main config template.
 
@@ -464,20 +466,15 @@ templatingSettings:
 
 | Field          | Type                   | Required | Description                                                              |
 |----------------|------------------------|----------|--------------------------------------------------------------------------|
-| `extraContext` | `map[string]any` | No       | Custom variables; the whole map is exposed as `extraContext` and each top-level key is also injected as a bare variable in templates |
+| `extraContext` | `map[string]any` | No       | Custom variables, exposed to templates as the `extraContext` map. Read a key with `extraContext["key"]`, or `extraContext \| dig("key") \| fallback(default)` when it may be unset |
 
 **Usage in templates:**
 
-Custom variables are merged at the top level of the template context. Access them directly:
+Custom variables are exposed as the `extraContext` map. Read a key with bracket access, or `dig` + `fallback` when it might be absent:
 
 ```go
-{% if debug.enabled %}
-  # Debug-specific configuration
-  http-response set-header X-HAProxy-Backend %[be_name]
-{% end %}
-
-{% if environment == "production" %}
-  timeout client {{ customTimeout }}s
+{% if extraContext["environment"] == "production" %}
+  timeout client {{ extraContext | dig("customTimeout") | fallback("300") }}s
 {% else %}
   timeout client 300s
 {% end %}
@@ -613,8 +610,8 @@ kubectl get htplcfg -w
 haptic-controller validate -f haproxy-config.yaml
 
 # Validate deployed config
-kubectl get htplcfg -n haptic haptic-config -o yaml > /tmp/haptic-config.yaml
-haptic-controller validate -f /tmp/haptic-config.yaml
+kubectl get htplcfg -n haptic haproxy-config -o yaml > /tmp/haproxy-config.yaml
+haptic-controller validate -f /tmp/haproxy-config.yaml
 ```
 
 ### Edit Configuration

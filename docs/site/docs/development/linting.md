@@ -28,9 +28,9 @@ The config is in v2 format (`version: "2"`), so formatters and linters are separ
 | Hygiene | `godox` (BUG/FIXME/HACK), `asciicheck`, `bidichk`, `dogsled`, `makezero`, `nolintlint` |
 | Tests | `thelper` |
 
-Plus one project-local analyzer built in `tools/linters/eventimmutability` that enforces pointer receivers on all `events.Event` implementations. The analyzer is compiled and invoked as part of `make lint`.
+Plus one project-local analyzer built in `tools/linters/eventimmutability` that enforces the event immutability contract — it flags assignments that mutate the fields of an event struct in `pkg/controller/events` after creation. The analyzer is compiled and invoked as part of `make lint`.
 
-### Project Rules Worth Knowing
+### Project rules worth knowing
 
 - **`importas`** enforces canonical aliases for Kubernetes and haproxytech packages (`corev1`, `metav1`, `apierrors`, `corev1client`, `haproxy`). Deviations fail CI.
 - **`revive`** caps function length at 50 lines and cognitive complexity at 20. `exported` and `package-comments` rules are off for internal packages.
@@ -64,7 +64,7 @@ make audit
 
 If the finding is in the standard library, bump the Go toolchain in `.tool-versions` and verify CI images pick up the new version.
 
-## Pre-commit Hooks
+## Pre-commit hooks
 
 `.pre-commit-config.yaml` wires `make lint` and `make audit` to run on every commit via the [pre-commit](https://pre-commit.com/) framework:
 

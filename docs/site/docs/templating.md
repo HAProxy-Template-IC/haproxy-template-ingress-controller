@@ -695,11 +695,11 @@ All templates have access to the following top-level variables:
 | `runtimeEnvironment` | object | Runtime info exposed by the controller (e.g. `runtimeEnvironment.GOMAXPROCS`) |
 | `fileRegistry` | object | Lets templates dynamically register auxiliary files at render time via `fileRegistry.Register("file"/"cert"/"map"/"crt-list", filename, content)`; returns the resolved path. Used by the SSL, haproxytech, and haproxy-ingress libraries to materialise CA bundles, client certs, and SSL crt-lists from Secrets. |
 | `http` | object | HTTP fetcher for `http.Fetch("https://example.com/...")`. Always available — URLs are auto-registered the first time a template calls `http.Fetch()` and refreshed periodically per the call's `delay` option. The CRD has no top-level `spec.httpResources`; mocked responses live under `spec.validationTests[].httpResources` for tests only. |
-| `extraContext` | map | The full `templatingSettings.extraContext` map. Top-level keys are also injected as bare variables — see below. |
+| `extraContext` | map | The full `templatingSettings.extraContext` map. Read a key with `extraContext.key` or `extraContext["key"]` — see below. |
 
-Note: the controller doesn't inject a `haproxyVersion` variable on its own. The Helm chart populates `templatingSettings.extraContext.haproxyVersion` from its `haproxyVersion` value, and `MergeExtraContextInto` flattens every `extraContext` key into the top-level context — so chart-deployed templates can use either `{{ haproxyVersion }}` or `{{ extraContext.haproxyVersion }}`. If you bypass the chart, set the value yourself in `templatingSettings.extraContext.haproxyVersion`. For feature checks prefer `capabilities.*` flags, which the controller derives from the local HAProxy probe.
+Note: the controller doesn't inject a `haproxyVersion` variable on its own. The Helm chart populates `templatingSettings.extraContext.haproxyVersion` from its `haproxyVersion` value, so chart-deployed templates read it as `{{ extraContext.haproxyVersion }}`. If you bypass the chart, set the value yourself in `templatingSettings.extraContext.haproxyVersion`. For feature checks prefer `capabilities.*` flags, which the controller derives from the local HAProxy probe.
 
-Custom variables defined in `templatingSettings.extraContext` are also available directly by name. See [Custom Template Variables](#custom-template-variables).
+Read custom variables from `templatingSettings.extraContext` via `extraContext.key` (or `extraContext | dig("key")` when a key may be unset). See [Custom Template Variables](#custom-template-variables).
 
 ### The `resources` Variable
 
@@ -722,6 +722,8 @@ Templates access watched resources through the `resources` variable. Each store 
 ### Typed Resource Access
 
 When a schema is loaded for a watched resource (live in production, or via `--schema-dir` offline), both the `resources.<name>` store wrapper **and** a top-level global named `<name>` return typed pointers instead of `map[string]any`. Field access goes through the strongly-typed struct, so a misspelled field is a compile-time error rather than a silently-`nil` `dig()`.
+
+A typed field resolves by **either** its Go-PascalCase name **or** its lowercase JSON tag: `gw.metadata.name` and `gw.Metadata.Name` reach the same field, because the engine falls back to the JSON tag when the Go field name doesn't match. That's why the lowercase `ingress.spec.rules` / `ingress.metadata.name` examples elsewhere on this page are typed access too — not untyped `dig()`. The code blocks below use the PascalCase form to make the struct mapping explicit, but either spelling compiles.
 
 ```go
 {# Typed access — fields resolve at engine compile time #}
@@ -841,12 +843,12 @@ spec:
 Access in templates:
 
 ```go
-{% if debug %}
+{% if extraContext.debug %}
   http-response set-header X-Debug %[be_name]
 {% end %}
 
 global
-  maxconn {{ limits.maxConn }}
+  maxconn {{ extraContext.limits.maxConn }}
 ```
 
 ## Common Patterns

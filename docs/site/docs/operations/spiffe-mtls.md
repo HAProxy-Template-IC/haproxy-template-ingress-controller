@@ -64,7 +64,7 @@ The integration uses four components working together inside the HAProxy pod:
 
 ## Configuration
 
-### HAProxy Pod Setup
+### HAProxy pod setup
 
 Add the following to your Helm values to configure the HAProxy pod with spiffe-helper:
 
@@ -135,7 +135,7 @@ haproxy:
         runAsUser: 99
         runAsNonRoot: true
     - name: cert-reloader
-      image: haproxytech/haproxy-debian:3.3
+      image: haproxytech/haproxy-debian:3.4
       command: ["sh", "-c"]
       args:
         - |
@@ -199,9 +199,9 @@ haproxy:
 !!! note
     The spiffe-helper container image tags do **not** use a `v` prefix — use `0.11.0`, not `v0.11.0`.
 
-The cert-reloader sidecar reuses the `haproxytech/haproxy-debian` image (already pulled for the main container) which includes `socat` and `stat`. It uses the `@1` prefix to route Runtime API commands to the current HAProxy worker process via the master socket. If the SPIFFE certificate is not loaded in HAProxy (e.g. no Ingress uses the annotation), it logs a skip message and waits for the next change.
+The cert-reloader sidecar reuses the `haproxytech/haproxy-debian` image, which includes `socat` and `stat`. Pin its tag to the same version as `haproxyVersion` (the example uses `3.4`, the chart default) so the sidecar shares the image already pulled for the main container and avoids version skew. It uses the `@1` prefix to route Runtime API commands to the current HAProxy worker process via the master socket. If the SPIFFE certificate is not loaded in HAProxy (e.g. no Ingress uses the annotation), it logs a skip message and waits for the next change.
 
-### spiffe-helper Configuration
+### spiffe-helper configuration
 
 Create a ConfigMap with the spiffe-helper configuration using `extraDeploy`. The configuration format is [HCL](https://github.com/hashicorp/hcl) (not TOML or INI):
 
@@ -235,7 +235,7 @@ extraDeploy:
 !!! warning
     The `health_checks` block uses **HCL block syntax** (`health_checks { ... }`), not TOML section syntax (`[health_checks]`). Using the wrong format causes a parse error.
 
-### Backend mTLS via Custom Annotation
+### Backend mTLS via custom annotation
 
 To enable per-Ingress backend mTLS using the SPIRE certificates, add a custom `templateSnippet` that processes an annotation (e.g., `example.com/server-mtls-spire`):
 
@@ -327,7 +327,7 @@ backend default_my-backend_svc_my-backend_https
     default-server check ssl verify required ca-file /etc/haproxy/spiffe/bundle.pem crt /etc/haproxy/spiffe/svid.pem sni str(my-backend.default.svc)
 ```
 
-### DNS SAN Configuration
+### DNS SAN configuration
 
 The `sni str(...)` directive in the snippet above requires that backend SVIDs include DNS SANs matching the Kubernetes service name. Enable [`autoPopulateDNSNames`](https://github.com/spiffe/spire-controller-manager/blob/main/docs/clusterspiffeid-crd.md) on the default ClusterSPIFFEID so that SPIRE automatically adds service DNS names (e.g. `my-backend`, `my-backend.default.svc`, `my-backend.default.svc.cluster.local`) as DNS SANs in all SVIDs:
 
@@ -355,7 +355,7 @@ spire-server:
 !!! note
     `autoPopulateDNSNames` populates DNS SANs based on the Kubernetes services each pod is an endpoint of. Both HAProxy and backend pods receive DNS SANs for their respective services. Since certificate updates are pushed via the Runtime API without process restarts, using the default SVID TTL (typically 1h) is fine.
 
-## Controller Validation
+## Controller validation
 
 The HAPTIC controller validates HAProxy configuration by running `haproxy -c` locally before deploying it. Since the SPIRE certificates only exist on the HAProxy pods (managed by spiffe-helper), the controller pod needs placeholder files at the same absolute paths so that validation passes.
 
@@ -505,7 +505,7 @@ health_checks {
 Unable to dump bundle ... open /etc/haproxy/spiffe/svid.pem: no such file or directory
 ```
 
-The `haproxy-runtime` emptyDir does not include the `spiffe/` subdirectory by default. Ensure the init container is configured to create it before spiffe-helper starts. If the init container fails due to ResourceQuota, add `resources.requests` and `resources.limits`.
+The `haproxy-runtime` emptyDir does not include the `spiffe/` subdirectory by default. Ensure the init container is configured to create it before spiffe-helper starts. The example init container above already sets `resources.requests` and `resources.limits`; keep them in place if you customized it, so the init container isn't rejected by a namespace ResourceQuota.
 
 ### ImagePullBackOff for spiffe-helper
 
@@ -524,10 +524,10 @@ kubectl -n haptic exec <controller-pod> -- ls /etc/haproxy/spiffe/
 # Should list: bundle.pem  svid.pem  svid.pem.key
 ```
 
-## See Also
+## See also
 
 - [Security Guide](./security.md) — TLS configuration and credential management
-- [Helm Chart Reference](../deploying-with-helm.md) — `haproxy.sidecars`, `haproxy.initContainers`, `extraDeploy`
+- [Chart Values Reference](../reference.md) — `haproxy.sidecars`, `haproxy.initContainers`, `extraDeploy`
 - [SPIFFE/SPIRE Documentation](https://spiffe.io/docs/latest/) — SPIFFE concepts, SPIRE deployment, workload registration
 - [spiffe-helper on GitHub](https://github.com/spiffe/spiffe-helper) — Configuration reference and release notes
 - [Templating Guide](../templating.md) — Writing custom `templateSnippets`

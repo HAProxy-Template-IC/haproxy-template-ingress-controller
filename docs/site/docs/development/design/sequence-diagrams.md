@@ -38,11 +38,11 @@ sequenceDiagram
         Note over Iteration,EventBus: 5. Start EventBus
         Iteration->>EventBus: Start() (replay buffered events)
 
-        Note over Iteration,Reconciler: Stage 5: Reconciliation & Observability Components
+        Note over Iteration,Reconciler: 6. Reconciliation & Observability Components
         Iteration->>Reconciler: Start Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, Metrics
         Iteration->>EventBus: Publish initial ReconciliationTriggeredEvent
 
-        Note over Iteration: 6. Event Loop
+        Note over Iteration: 7. Event Loop
         Iteration->>Iteration: Wait for config change or cancellation
 
         alt Config Change Detected

@@ -2,7 +2,7 @@
 
 ## Overview
 
-HAPTIC's admission webhook validates incoming `HAProxyTemplateConfig` and watched-resource changes by performing a dry-run render of the operator's templates and an HAProxy syntax check on the result. That catches templating mistakes and HAProxy-syntax mistakes — but the rendered config can also include payloads (Coraza WAF directives via the SPOA hub, OpenTelemetry exporter URLs, OIDC discovery endpoints, etc.) that are not exercised by HAProxy itself. A typo like `nginx.ingress.kubernetes.io/modsecurity-snippet: "SecResquestBodyAccess On"` would otherwise ship through admission, land in the rendered config, and only fail when the SPOA hub's plugin-init runs in production — at which point the entire HAProxy data plane is down until the operator notices.
+HAPTIC's admission webhook validates incoming `HAProxyTemplateConfig` and watched-resource changes by performing a dry-run render of the operator's templates and an HAProxy syntax check on the result. That catches templating mistakes and HAProxy-syntax mistakes — but the rendered config can also include payloads (Coraza Web Application Firewall (WAF) directives via the Stream Processing Offload Agent (SPOA) hub, OpenTelemetry exporter URLs, OIDC discovery endpoints, etc.) that are not exercised by HAProxy itself. A typo like `nginx.ingress.kubernetes.io/modsecurity-snippet: "SecResquestBodyAccess On"` would otherwise ship through admission, land in the rendered config, and only fail when the SPOA hub's plugin-init runs in production — at which point the entire HAProxy data plane is down until the operator notices.
 
 **Pluggable validators close that gap.** You declare one or more validator sidecars in `spec.validators`, each pointing at a Unix domain socket inside the controller pod and listing file glob patterns. After every dry-run render, the controller routes each rendered file to every validator whose globs match. The validator returns line-numbered diagnostics, the webhook surfaces them in the admission response — so a broken `modsecurity-snippet` is caught at `kubectl apply` time with the offending row highlighted.
 
@@ -12,7 +12,7 @@ The validator on the other side of the socket is an **opaque program** as far as
 
 Enable pluggable validators when your templates render any file whose contents the validator program understands:
 
-- **SPOA hub TOML configs** with Coraza WAF directives, OpenTelemetry exporter URLs, OIDC sso configs, etc. (validator: `haproxy-spoa-hub --validate-socket`).
+- **SPOA hub TOML configs** with Coraza WAF directives, OpenTelemetry exporter URLs, OIDC SSO configs, etc. (validator: `haproxy-spoa-hub --validate-socket`).
 - **Future** specialised validators (custom map-file linter, gateway-config validator, etc.) — anything that conforms to the wire protocol can plug in.
 
 Skip this feature if your templates only produce HAProxy config — the core HAProxy syntax dry-run already catches everything that matters in that case.
@@ -103,19 +103,27 @@ A file that matches no validator's globs is not validated by any sidecar; it sti
 
 ### Chart wiring (default)
 
-The Helm chart wires up the SPOA hub validator by default when you set `controller.validators.enabled: true`:
+The chart's validator sidecar **auto-enables** whenever you have a SPOA hub plugin turned on — the plugins that need admission-time validation are the same ones that run on the data plane, so you don't set a separate flag. The shipped default is `controller.validators.enabled: null`, which derives the sidecar's state from the SPOA hub. Enable a plugin and the validator comes along with it:
 
 ```yaml
 # values.yaml
 controller:
   validators:
-    enabled: true
-    # Image and tag default to the bundled spoa-hub; override only if needed.
-    # image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub
-    # tag: <pinned by chart appVersion>
+    enabled: null  # default: auto-derive from the SPOA hub sidecar
 ```
 
-This adds one sidecar container to the controller pod, an `emptyDir` volume mounted at `/var/run/haptic-validators/`, and a default `spec.validators` entry pointing at the sidecar's socket with appropriate file globs. To disable, set `enabled: false`.
+When on, this adds one sidecar container to the controller pod, an `emptyDir` volume mounted at `/var/run/haptic-validators/`, and a default `spec.validators` entry pointing at the sidecar's socket with appropriate file globs.
+
+Set `enabled` explicitly only to override the auto-derive:
+
+```yaml
+# values.yaml
+controller:
+  validators:
+    enabled: true   # force the sidecar on even with no SPOA hub plugins
+                    # (useful for bench/test setups validating template fragments)
+    # enabled: false  # force the sidecar off even when a plugin is enabled
+```
 
 For custom validator implementations or multiple sidecars, see "Custom validators" below.
 
@@ -135,7 +143,7 @@ When multiple validators check the same file (or different files), all their dia
 
 ### `/healthz` integration
 
-The controller's `/healthz` endpoint stat()'s every configured validator socket on every probe. A failed check (socket missing, wrong file type, connection refused) returns HTTP 503 with a structured failure list:
+The controller's `/healthz` endpoint stat()s and then briefly dials every configured validator socket on every probe. A failed check (socket missing, wrong file type, connection refused) returns HTTP 503 with a structured failure list:
 
 ```json
 {
@@ -169,7 +177,7 @@ The controller maintains a per-validator connection pool of persistent keep-aliv
 
 `(validator, file)` pairs run **in parallel** — independent validators on different sockets validating independent files. Top-level concurrency is capped at 16 in-flight tasks; each validator's individual pool further throttles within-validator concurrency.
 
-For a typical webhook call with one validator and a handful of matched files, the dispatch finishes near the per-call timeout of the slowest file. Sequential single-file latency is the worst case (when `maxConnections=1`).
+For a typical webhook call with one validator and a handful of matched files, the dispatch finishes about as fast as the slowest file's validation latency. Sequential single-file latency is the worst case (when `maxConnections=1`).
 
 ### Failure modes
 
@@ -203,6 +211,12 @@ sidecars:
     volumeMounts:
       - name: haptic-validators
         mountPath: /var/run/haptic-validators
+# Mount the shared socket dir into the controller too — with the default
+# sidecar off, the chart doesn't add this mount for you, so the controller
+# can't reach the socket without it.
+extraVolumeMounts:
+  - name: haptic-validators
+    mountPath: /var/run/haptic-validators
 extraVolumes:
   - name: haptic-validators
     emptyDir: {}
@@ -232,7 +246,7 @@ See [`development/validator-protocol.md`](https://gitlab.com/haproxy-haptic/hapt
 
 **Admission denied with `unknown directive "..."` or similar specific errors.** This is the feature working — the validator caught a broken config in a rendered file. The diagnostic carries the row + column; use that to find the offending Ingress annotation.
 
-**Admission denied with `validation timed out after 5s`.** The validator is too slow on this file. First, check the validator container's logs for the panic / hang. If the slowness is real (very large CRS bundle, slow regex compile), bump `spec.validators[i].timeoutMs` to a higher value (max 60000).
+**Admission denied with `validation timed out after 5s`.** The validator is too slow on this file. First, check the validator container's logs for the panic / hang. If the slowness is real (very large OWASP Core Rule Set (CRS) bundle, slow regex compile), bump `spec.validators[i].timeoutMs` to a higher value (max 60000).
 
 **`/healthz` returns 503 with `pluggable-validators` failures listed.** Match the failure entries to your `spec.validators` and check the corresponding sidecar container's status. Common causes: OOMKilled (bump container resources), filesystem unmounted (check the chart's `emptyDir` volume), or an upstream image regression (pin a known-good `tag`).
 

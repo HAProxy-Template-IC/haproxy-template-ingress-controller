@@ -9,7 +9,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `replicaCount` | int | `2` | Number of controller replicas (2+ recommended for HA with leader election) |
-| `haproxyVersion` | string | `"3.2"` | HAProxy major.minor series. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
+| `haproxyVersion` | string | `"3.4"` | HAProxy major.minor series. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
 | `haproxyPatchVersions` | map | See values.yaml | Per-`haproxyVersion` community patch pins (e.g. `"3.2": "3.2.x"`). Maintained by the chart and auto-updated by Renovate |
 | `haproxyEnterprisePatchVersions` | map | See values.yaml | Per-`haproxyVersion` enterprise revision pins (e.g. `"3.2": "3.2r1"`). Used when `haproxy.enterprise.enabled=true` |
 | `image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic` | Controller image repository |
@@ -167,7 +167,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `credentials.dataplane.username` | string | `admin` | Dataplane API username |
-| `credentials.dataplane.password` | string | `""` | Dataplane API password. Empty triggers a 32-character fallback derived as `sha256(<release>-<namespace>-haptic-dataplane-api) | trunc 32` so GitOps tools without `lookup` access render deterministically. On the second `helm upgrade` (or any chart-driven install where `lookup` works) the chart reads the existing Secret and preserves whatever password is there. **Override this with a strong random value in any environment where the Dataplane API is reachable beyond cluster-internal networking** — the SHA256 fallback is only unguessable to people who don't know your release name and namespace. |
+| `credentials.dataplane.password` | string | `""` | Dataplane API password. Empty generates a random 32-char password. When `lookup` works (a normal `helm upgrade`, or an install against a reachable cluster) the chart reads the existing Secret and preserves the current password across renders. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates every sync — **set an explicit value** (SealedSecret / external secret) in those setups. |
 
 ## ServiceAccount & RBAC
 
@@ -327,7 +327,7 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `haproxy.enterprise.version` | string | `3.2` | Enterprise version |
 | `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |
 | `haproxy.dataplaneBin` | string | Auto-detected | Dataplane API binary path |
-| `haproxy.initialConfig` | string | See values.yaml | HAProxy bootstrap config served until the controller pushes the first rendered config; processed via Helm `tpl`. Keep the `/ready` 503 gate or clients hit an empty backend set — see [HAProxy Deployment](./haproxy-deployment.md) |
+| `haproxy.initialConfig` | string | See values.yaml | HAProxy bootstrap config served until the controller pushes the first rendered config; processed via Helm `tpl`. Keep the `/ready` 503 gate or clients hit an empty backend set — see the [HAProxy deployment guide](./haproxy-deployment.md) |
 
 ## HAProxy Pod Configuration
 

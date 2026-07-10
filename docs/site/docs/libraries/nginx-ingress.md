@@ -1,4 +1,4 @@
-# Nginx Ingress Library
+# nginx-ingress Library
 
 The Nginx Ingress library provides compatibility with the [nginx-ingress controller](https://kubernetes.github.io/ingress-nginx/) annotations for Kubernetes Ingress resources.
 
@@ -391,10 +391,19 @@ annotations:
   nginx.ingress.kubernetes.io/app-root: "/dashboard"
 ```
 
-**Generated HAProxy Configuration**:
+**Generated configuration**: the redirect target is registered host→path into the
+shared `app-root.map` (built by base.yaml `features-175-app-root-map`); a single
+shared frontend rule (base.yaml `frontend-filters-065-app-root`) applies it, so
+adding or changing an app-root is a map-only, reload-free update.
+
+```
+# app-root.map
+example.com /dashboard
+```
 
 ```haproxy
-http-request redirect location /dashboard code 302 if { path / } { hdr(host) -i example.com }
+# frontend (shared, static — emitted once regardless of how many hosts set app-root)
+http-request redirect location %[var(txn.host),map(maps/app-root.map)] code 302 if { path / } { var(txn.host),map(maps/app-root.map) -m found }
 ```
 
 ---
@@ -434,10 +443,20 @@ annotations:
   nginx.ingress.kubernetes.io/ssl-redirect: "true"
 ```
 
-**Generated HAProxy Configuration**:
+**Generated configuration**: redirected hosts are registered into the shared
+`ssl-redirect-<code>.map` (one map per distinct code; built by ssl.yaml
+`features-160-ssl-redirect-map`); a single shared frontend rule per code
+(ssl.yaml `frontend-filters-050-ssl-redirect`) applies it, so enabling or
+disabling the redirect for a host is a map-only, reload-free update.
+
+```
+# ssl-redirect-308.map
+example.com 1
+```
 
 ```haproxy
-http-request redirect scheme https code 308 if !{ ssl_fc } { hdr(host) -i example.com }
+# frontend (shared, static — one rule per distinct redirect code)
+http-request redirect scheme https code 308 if !{ ssl_fc } { var(txn.host),map_str(maps/ssl-redirect-308.map) -m found }
 ```
 
 ---
@@ -499,10 +518,19 @@ annotations:
   nginx.ingress.kubernetes.io/hsts-preload: "true"
 ```
 
-**Generated HAProxy Configuration**:
+**Generated configuration**: the per-host header value is registered into the
+shared `hsts.map` (built by base.yaml `features-190-hsts-map`); a single shared
+frontend rule (base.yaml `frontend-filters-080-hsts`) applies it, so changing an
+HSTS value is a map-only, reload-free update.
+
+```
+# hsts.map
+example.com max-age=31536000; includeSubDomains; preload
+```
 
 ```haproxy
-http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" if { ssl_fc } { hdr(host) -i example.com }
+# frontend (shared, static — emitted once for all per-Ingress HSTS hosts)
+http-response set-header Strict-Transport-Security %[var(txn.host),map(maps/hsts.map)] if { ssl_fc } { var(txn.host),map(maps/hsts.map) -m found }
 ```
 
 ---
@@ -1035,9 +1063,9 @@ This library watches the following additional resources:
 
 ## Implementation Status Summary
 
-**Total annotations**: 54
+**Total annotations**: 57
 
-- ✅ **Fully Supported**: 54
+- ✅ **Fully Supported**: 57
   - Timeouts: 3 annotations
   - Load Balancing: 1 annotation
   - Body Size Limit: 1 annotation
@@ -1060,6 +1088,8 @@ This library watches the following additional resources:
   - SSL Passthrough: 1 annotation
   - Canary: 6 annotations
   - mTLS: 4 annotations (`auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-pass-certificate-to-upstream`)
+  - WAF (ModSecurity): 2 annotations (`modsecurity-snippet`, `enable-modsecurity` — requires SPOA hub Coraza plugin)
+  - Request Mirroring: 1 annotation (`mirror-target` — requires SPOA hub mirror plugin)
 
 ## See Also
 

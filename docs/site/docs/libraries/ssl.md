@@ -68,7 +68,7 @@ The SSL library implements these extension points from base.yaml:
 | `frontend-filters-*` | `frontend-filters-050-ssl-redirect` | HTTP→HTTPS redirect rules |
 | `frontends-*` | `frontends-500-https` | HTTPS frontend with TLS termination |
 | `frontends-*` | `frontends-500-ssl-tcp` | TCP frontend for SSL passthrough (conditional on registered passthrough backends) |
-| `backends-*` | `backends-500-ssl-loopback` | Loopback backend that forwards passthrough-decrypted traffic from the TCP frontend to the HTTPS frontend |
+| `backends-*` | `backends-500-ssl-loopback` | Loopback backend that forwards TLS-termination traffic (still encrypted) from the TCP frontend to the HTTPS frontend, which decrypts it |
 
 Snippet names reflect their real numeric-prefix values in `libraries/ssl.yaml`; lower-numbered `features-050-*` snippets run before higher-numbered `features-150-*` ones, which is how SSL initializes shared state before resource libraries populate it and before the CRT-list is emitted.
 
@@ -95,7 +95,7 @@ The Gateway library uses this hook to support Gateway listeners on non-default H
 
 Custom libraries that need additional TLS binds (e.g. for protocol-specific extensions) follow the same pattern. Always reuse `util-ssl-bind-options` so the SSL handshake behaves identically across all binds — direct use of literal SSL options would drift from chart-static if the operator overrides crt-list path or ALPN settings.
 
-The HTTP frontend has a sibling hook `http-bind-extra-*` for plain-HTTP Gateway listener ports. See `charts/CLAUDE.md` Extension Point Reference for the full list of extension points.
+The HTTP frontend has a sibling hook `http-bind-extra-*` for plain-HTTP Gateway listener ports. See the [base library extension points](base.md#extension-points) for the full list.
 
 **Example - Registering a TLS certificate (from ingress.yaml):**
 

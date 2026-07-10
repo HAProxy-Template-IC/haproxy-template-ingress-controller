@@ -2,7 +2,7 @@
 
 ## Overview
 
-By default, the controller creates a default SSL certificate for HTTPS traffic. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
+By default, the chart provisions a default SSL certificate for HTTPS traffic (via cert-manager), and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
 
 ## Default SSL Certificate
 
@@ -20,7 +20,8 @@ The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local dev
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
 
 # Install the chart - SSL works out of the box
-helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1
+helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1 \
+  --namespace haptic --create-namespace
 ```
 
 !!! note
@@ -168,13 +169,28 @@ kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.key}' | b
 
 **Certificate not being updated:**
 
-The controller watches Secrets via an in-memory store (the default). Secret changes are detected immediately and trigger a reconciliation within the 2s per-watcher debounce window; HAProxy deployment then follows the configured `dataplane.minDeploymentInterval` (5s in the chart's default values; the controller's own field default is 2s) plus the normal render → validate → deploy pipeline. If deployments appear stuck, the `dataplane.driftPreventionInterval` (60s default) will also force a push.
+The controller watches Secrets and detects changes immediately, triggering a reconciliation within the 2s per-watcher debounce window; HAProxy deployment then follows the configured `dataplane.minDeploymentInterval` (5s in the chart's default values; the controller's own field default is 2s) plus the normal render → validate → deploy pipeline. If deployments appear stuck, the `dataplane.driftPreventionInterval` (60s default) will also force a push.
 
-For very large cert Secrets that you don't want to keep resident in memory, you can override the watched-resource store to `on-demand` via `controller.config.watchedResources.secrets.store: on-demand` — but this is not the chart default.
+By default the chart watches Secrets with an **on-demand** store (`controller.config.watchedResources.secrets.store: on-demand`), so cert bodies aren't kept resident in memory. Override it to `full` if you'd rather hold Secrets in the in-memory store.
 
 ## Webhook Certificates
 
-The admission webhook requires TLS certificates. The simplest setup uses cert-manager with a self-signed issuer:
+The admission webhook requires TLS certificates. By default the chart generates a self-signed certificate itself — no cert-manager required (`webhook.certManager.enabled` is `false`):
+
+```yaml
+webhook:
+  enabled: true
+  # certManager.enabled defaults to false → the chart issues a self-signed cert
+```
+
+Rotate the self-signed certificate by deleting its Secret and re-running the upgrade:
+
+```bash
+kubectl delete secret <release>-webhook-cert -n haptic
+helm upgrade <release> oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --reuse-values
+```
+
+If cert-manager is installed, hand it the certificate instead so it issues and **auto-rotates** with a real CA:
 
 ```yaml
 webhook:
@@ -184,11 +200,11 @@ webhook:
     createIssuer: true  # Creates a self-signed Issuer automatically
 ```
 
-This is the recommended approach when cert-manager is installed. The chart creates:
+The chart then creates:
 
 - A self-signed `Issuer` resource
 - A `Certificate` resource that references the Issuer
-- The webhook is automatically configured with CA bundle injection
+- CA-bundle injection into the webhook configuration
 
 To use an existing Issuer or ClusterIssuer instead:
 

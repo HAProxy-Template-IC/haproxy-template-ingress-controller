@@ -65,29 +65,21 @@ dataplane:
 
 The package-global `haproxyCheckMutex` serialises the `haproxy -c` invocations (without it, concurrent runs interfere with each other even when the temp directories are isolated). It does *not* protect the file writes — those happen before the lock is acquired and against caller-supplied `ValidationPaths`, so callers that share paths across goroutines need their own coordination. In practice the controller wrapper hands every call its own `os.MkdirTemp`, so this only matters for direct library users.
 
-**Parser Improvements**:
+**Global directive parsing**:
 
-The config parser (`pkg/dataplane/parser`) has been enhanced to correctly handle all HAProxy global directives:
+The config parser (`pkg/dataplane/parser`) classifies HAProxy global directives precisely:
 
-1. **Fixed Log Target Parsing**: Previously, the parser incorrectly treated `log-send-hostname` as a log target
-   - Now correctly identifies log targets: lines starting with "log" followed by an address
-   - Properly classifies `log-send-hostname` as a general global directive (not a log target)
-   - Example valid config now parses correctly:
+1. **Log target detection**: A log target is a line starting with `log` followed by an address (`log <address> <facility> [level]`). The parser distinguishes these from log-option directives such as `log-send-hostname` and `log-tag`, which are general global directives, not log targets. This config parses correctly:
 
-     ```
-     global
-         log stdout local0
-         log-send-hostname
-     ```
+   ```
+   global
+       log stdout local0
+       log-send-hostname
+   ```
 
-2. **Improved Directive Classification**: Enhanced logic to distinguish between:
-   - Log targets: `log <address> <facility> [level]`
-   - Log options: `log-send-hostname`, `log-tag`, etc.
-   - Other global directives
+2. **Directive classification**: The parser separates log targets, log options (`log-send-hostname`, `log-tag`, and similar), and other global directives.
 
-3. **Better Error Messages**: Parser now provides clearer error messages when encountering unsupported directives
-
-This fix resolves issues where valid HAProxy configurations were rejected during the parsing phase of validation.
+3. **Error messages**: The parser reports clear errors when it encounters unsupported directives.
 
 ## Template Engine Selection
 
@@ -275,7 +267,7 @@ If the deployment later requires end-to-end trace correlation across controller 
 ```go
 // ValidationError represents semantic validation failure from HAProxy.
 type ValidationError struct {
-    Phase   string  // "syntax" or "semantic"
+    Phase   string  // "syntax", "schema", or "semantic"
     Message string
     Cause   error
 }
@@ -396,7 +388,7 @@ type EventBus struct {
 
 **Event Type Definitions**:
 
-The full catalog of event-type constants (~45 in total) lives in `pkg/controller/events/types.go`; the structs and constructors are split across category files (`config.go`, `resource.go`, `reconciliation.go`, `template.go`, `validation.go`, `deployment.go`, `discovery.go`, `credentials.go`, `leader.go`, `publishing.go`, `http.go`, `proposal.go`, `status.go`).
+The full catalog of event-type constants (~47 in total) lives in `pkg/controller/events/types.go`; the structs and constructors are split across category files (`config.go`, `resource.go`, `reconciliation.go`, `template.go`, `validation.go`, `deployment.go`, `discovery.go`, `credentials.go`, `leader.go`, `publishing.go`, `http.go`, `proposal.go`, `status.go`).
 
 Every event type follows the same shape:
 
@@ -428,7 +420,7 @@ func NewConfigParsedEvent(config, templateConfig any, version, secretVersion str
 func (e *ConfigParsedEvent) EventType() string { return EventTypeConfigParsed }
 ```
 
-Categories include configuration, resource indexing, reconciliation, template rendering, three-phase validation, deployment, HAProxy pod discovery, credentials, leader election, config publishing, webhook validation (observability only — admission validation itself is a synchronous library call, see ADR-0001), HTTP resources, proposal validation, and status patches. Refer to the source for exact field shapes — they evolve more often than this design doc does.
+Categories include configuration, resource indexing, reconciliation, template rendering, three-phase validation, deployment, HAProxy pod discovery, credentials, leader election, config publishing, webhook validation (observability only — admission validation itself is a synchronous library call so admission and reconciliation decisions can't diverge), HTTP resources, proposal validation, and status patches. Refer to the source for exact field shapes — they evolve more often than this design doc does.
 
 **Event Immutability Contract**:
 
@@ -909,9 +901,9 @@ func (h *ConfigChangeHandler) handleParsed(ctx context.Context, parsed *events.C
 
 The three validators that respond — `BasicValidator`, `TemplateValidator`, `JSONPathValidator` — all live in `pkg/controller/validator/` and share a `BaseValidator` that subscribes them to `ConfigValidationRequest`. To add a new validator: drop in a new `*Validator` constructor that wraps `NewBaseValidator(...)`, then add its name to the `validators` slice passed to `configchange.NewConfigChangeHandler`.
 
-**Validator Logging Improvements**:
+**Validator logging**:
 
-The handler implements enhanced logging to provide visibility into the scatter-gather validation process:
+The handler logs the scatter-gather validation process for visibility:
 
 1. **Structured Logging**: Uses `log/slog` with structured fields for queryability
    - Validator names, response counts, validation error counts
@@ -997,12 +989,12 @@ The Event Commentator pattern combines several established patterns:
 ```
 Event Flow with Commentator:
 
-EventBus (50+ event types)
+EventBus (~47 event types)
     │
     ├─> Domain components (publish/consume events; logging stays out of business logic)
     │   ├── ConfigLoader, CredentialsLoader, ConfigChangeHandler
     │   ├── BasicValidator / TemplateValidator / JSONPathValidator (scatter-gather over ConfigValidationRequest)
-    │   ├── Reconciler → Coordinator (Coordinator drives RenderService + ValidationService synchronously inside Pipeline.Execute, see ADR-0001)
+    │   ├── Reconciler → Coordinator (Coordinator drives RenderService + ValidationService synchronously inside Pipeline.Execute)
     │   ├── DeploymentScheduler → Deployer → ConfigPublisher → StatusApplier
     │   ├── Discovery, HTTPStore, ProposalValidator, DriftPreventionMonitor
     │   └── LeaderElector, ResourceWatcher

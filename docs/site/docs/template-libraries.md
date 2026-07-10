@@ -242,41 +242,94 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 
 ## Custom Libraries
 
-You can create custom libraries by providing template snippets that implement extension point patterns:
+You can create custom libraries by watching any Kubernetes resource and implementing extension point patterns against it. Because HAPTIC is resource-agnostic, a plain ConfigMap becomes HAProxy config the same way an Ingress does — watch it, then emit into `backends-*` and `map-host-*` from a template snippet.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="ConfigMaps → backends and host.map" data-height="480">
+
+<p class="pg-task" markdown>Open the **Resources** panel and add `routing: enabled` to the `blog` ConfigMap's `metadata.labels`, then watch a `backend cm_content_blog` block appear in `haproxy.cfg` and a matching line show up in the `maps` tab.</p>
 
 ```yaml
-# values.yaml
-controller:
-  config:
-    # Add watched resources for your custom library
-    watchedResources:
-      configmaps:
-        apiVersion: v1
-        resources: configmaps
-        indexBy: ["metadata.namespace", "metadata.name"]
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: configmap-library-demo
+spec:
+  # Watch a resource the bundled libraries never touch.
+  watchedResources:
+    configmaps:
+      apiVersion: v1
+      resources: configmaps
+      indexBy: ["metadata.namespace", "metadata.name"]
 
-    # Implement extension points
-    templateSnippets:
-      # Process ConfigMaps and generate backends
-      backends-configmap-routes:
-        template: |
-          {%- for cm in resources.configmaps.List() %}
-          {%- if cm.metadata.labels["routing"] | fallback("") == "enabled" %}
-          backend cm_{{ cm.metadata.namespace }}_{{ cm.metadata.name }}
-              # Generate backend from ConfigMap data
-              server app {{ cm.data["target"] }}
-          {%- end %}
-          {%- end %}
+  # A minimal base that invokes the extension points your snippets plug into.
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend http
+        bind :80
+        use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
+        default_backend not-found
+      {{ render_glob "backends-*" }}
+      backend not-found
+        http-request deny deny_status 404
+  maps:
+    host.map:
+      template: |
+        {{ render_glob "map-host-*" }}
 
-      # Generate host map entries
-      map-host-configmap-routes:
-        template: |
-          {%- for cm in resources.configmaps.List() %}
-          {%- if cm.metadata.labels["routing"] | fallback("") == "enabled" %}
-          {{ cm.data["hostname"] }} {{ cm.data["hostname"] }}
-          {%- end %}
-          {%- end %}
+  templateSnippets:
+    # Emit one backend per labeled ConfigMap (matches backends-*).
+    backends-configmap-routes:
+      template: |
+        {%- for cm in resources.configmaps.List() %}
+        {%- if cm.metadata.labels["routing"] == "enabled" %}
+        backend cm_{{ cm.metadata.namespace }}_{{ cm.metadata.name }}
+            server app {{ cm.data["target"] }}
+        {%- end %}
+        {%- end %}
+
+    # Emit one host.map entry per labeled ConfigMap (matches map-host-*).
+    map-host-configmap-routes:
+      template: |
+        {%- for cm in resources.configmaps.List() %}
+        {%- if cm.metadata.labels["routing"] == "enabled" %}
+        {{ cm.data["hostname"] }} cm_{{ cm.metadata.namespace }}_{{ cm.metadata.name }}
+        {%- end %}
+        {%- end %}
 ```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: shop
+      namespace: storefront
+      labels: {routing: enabled}
+    data:
+      hostname: shop.example.com
+      target: 10.0.1.10:8080
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: blog
+      namespace: content
+    data:
+      hostname: blog.example.com
+      target: 10.0.2.20:8080
+```
+
+</div>
+
+In your own values.yaml, drop the same `watchedResources` and `templateSnippets` under `controller.config` — the bundled base library already provides the `render_glob` invocations, so you only supply the snippets.
 
 ## Library Architecture
 
@@ -327,13 +380,4 @@ and is auto-loaded whenever the sidecar is enabled (by an explicit
 It plugs into the same extension points as the level-3 libraries
 above.
 
-## See Also
-
-- [Base Library](libraries/base.md) - Core template and extension point definitions
-- [SSL Library](libraries/ssl.md) - TLS certificate management and HTTPS frontend
-- [Ingress Library](libraries/ingress.md) - Kubernetes Ingress resource support
-- [Gateway API Library](libraries/gateway.md) - HTTPRoute and GRPCRoute support
-- [ingress-annotations-compat scaffold](libraries/ingress-annotations-compat.md) - Shared macros consumed by the Ingress vendor annotation libraries below (level 2.5)
-- [haproxytech library](libraries/haproxytech.md) - `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat)
-- [haproxy-ingress library](libraries/haproxy-ingress.md) - `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat)
-- [nginx-ingress library](libraries/nginx-ingress.md) - `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat)
+Each library's own page (linked from the [Available Libraries](#available-libraries) table above) documents its snippets, tunables, and extension points in detail.

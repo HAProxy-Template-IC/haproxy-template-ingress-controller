@@ -6,9 +6,9 @@ HAPTIC supports annotations on Ingress resources through three template librarie
 
 | Compatible with | Annotation prefix | Library docs |
 |-----------------|-------------------|--------------|
-| [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) (vendor IC) | `haproxy.org/` | [haproxytech library →](./libraries/haproxytech.md) |
-| [jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) (community IC) | `haproxy-ingress.github.io/` | [haproxy-ingress library →](./libraries/haproxy-ingress.md) |
-| [kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) (nginx IC) | `nginx.ingress.kubernetes.io/` | [nginx-ingress library →](./libraries/nginx-ingress.md) |
+| [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) (vendor ingress controller) | `haproxy.org/` | [haproxytech library →](./libraries/haproxytech.md) |
+| [jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) (community ingress controller) | `haproxy-ingress.github.io/` | [haproxy-ingress library →](./libraries/haproxy-ingress.md) |
+| [kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) (nginx ingress controller) | `nginx.ingress.kubernetes.io/` | [nginx-ingress library →](./libraries/nginx-ingress.md) |
 
 The two HAProxy libraries are enabled by default and work independently — you can use annotations from either prefix on the same Ingress. The nginx-ingress library is disabled by default and must be explicitly enabled. If you are migrating from a specific controller, its annotation prefix is the one you already know. If you are starting fresh, enabling the HAProxy libraries gives you the widest annotation coverage.
 
@@ -82,7 +82,9 @@ Create the secret with crypt(3) SHA-512 password hashes:
 ```bash
 HASH=$(openssl passwd -6 mypassword)
 kubectl create secret generic my-auth-secret \
-  --from-literal=admin=$(echo -n "$HASH" | base64 -w0)
+  --from-literal=admin="$HASH"
 ```
+
+`kubectl` base64-encodes `--from-literal` values into the Secret's `data` for you, and the library decodes them once — so pass the raw hash, not a pre-`base64`'d copy (double-encoding makes the hash unparseable and auth silently fails).
 
 See [haproxytech library — Basic Authentication](./libraries/haproxytech.md#authentication) for the full reference including secret format, cross-namespace secrets, and generated HAProxy config.

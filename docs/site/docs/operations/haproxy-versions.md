@@ -34,10 +34,14 @@ Set `haproxyVersion` to your desired series. The chart defaults to `3.4`:
 
 ```bash
 # Use HAProxy 3.0 LTS
-helm install haptic ... --set haproxyVersion=3.0
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --namespace haptic --create-namespace \
+  --set haproxyVersion=3.0
 
 # Use HAProxy 3.3
-helm install haptic ... --set haproxyVersion=3.3
+helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --namespace haptic --create-namespace \
+  --set haproxyVersion=3.3
 ```
 
 Or in your values file:
@@ -102,6 +106,7 @@ Enterprise deployments require:
 1. Setting `haproxy.enterprise.enabled: true`
 2. Pointing `haproxy.image.repository` to the enterprise registry
 3. Configuring `haproxy.podSpec.imagePullSecrets` with your registry credentials
+4. Building your own controller image and pointing `image.repository` (and optionally `image.tag`) at it — the HAPTIC project does not distribute enterprise controller images (see the note below)
 
 ```yaml
 haproxyVersion: "3.2"
@@ -136,6 +141,12 @@ To move from one major.minor to another (e.g. 3.2 → 3.3):
 1. Verify the new series is supported in the chart version you are using
 2. Update `haproxyVersion` in your values
 3. Clear any `haproxy.image.tag` override, or update it to a patch in the new series
-4. Run `helm upgrade`
+4. Run `helm upgrade`:
+
+   ```bash
+   helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+     --namespace haptic \
+     --reuse-values --set haproxyVersion=3.3
+   ```
 
 The controller and HAProxy pods restart with the new images.

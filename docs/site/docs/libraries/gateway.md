@@ -27,7 +27,7 @@ Watch an HTTPRoute compile down to HAProxy config live:
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-`host.map`'s provenance comment goes from `# HTTPRoute: platform/api (1 hosts)` to `(2 hosts)`, and a second `www.example.com…` line appears next to the `api.example.com…` one — the gateway library writes one entry per effective hostname. It derives them from `spec.hostnames` in `map-host-500-gateway` (`charts/haptic/charts/gateway/40-maps-host.yaml:437`), emitting one `<hostKey> <hostKey>` line per host (line 205). Each key carries a `:<port>` suffix because the demo Gateway's HTTP listener is a catch-all with no hostname, which scopes its routes to that Gateway's own bind port.
+`host.map`'s provenance comment goes from `# HTTPRoute: platform/api (1 hosts)` to `(2 hosts)`, and a second `www.example.com…` line appears next to the `api.example.com…` one — the gateway library writes one entry per effective hostname. It derives them from `spec.hostnames` in `map-host-500-gateway`, emitting one `<hostKey> <hostKey>` line per host. Each key carries a `:<port>` suffix because the demo Gateway's HTTP listener is a catch-all with no hostname, which scopes its routes to that Gateway's own bind port.
 
 </details>
 
@@ -149,7 +149,7 @@ This architecture allows the controller to remain resource-agnostic while the ch
 | Field | Status | Notes |
 |-------|--------|-------|
 | `hostnames[]` | ✅ Supported | Multiple hostnames per route |
-| Wildcard hostnames (e.g., `*.example.com`) | ⚠️ Untested | May work but not validated |
+| Wildcard hostnames (e.g., `*.example.com`) | ⚠️ Untested | Regex host-map support exists; not pinned by a validationTest |
 | Empty hostnames list | ✅ Supported | Matches all hosts |
 
 **Example:**
@@ -223,7 +223,7 @@ The path type decides which map file HAProxy consults — flip it live:
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-With `PathPrefix`, the route's entry (`api.example.com…/ GW_ROUTE_ID:http:platform_api_0`) sits in `path-prefix.map`. Switch to `Exact` and the same entry moves to `path-exact.map`, leaving `path-prefix.map` empty. Each path type is filled by its own snippet — `map-path-exact-500-gateway` and `map-path-prefix-500-gateway` (`charts/haptic/charts/gateway/41-maps-path.yaml:166` and `:182`) — and a route's entry only lands in the map whose `pathType` matches (`41-maps-path.yaml:22`).
+With `PathPrefix`, the route's entry (`api.example.com…/ GW_ROUTE_ID:http:platform_api_0`) sits in `path-prefix.map`. Switch to `Exact` and the same entry moves to `path-exact.map`, leaving `path-prefix.map` empty. Each path type is filled by its own snippet — `map-path-exact-500-gateway` and `map-path-prefix-500-gateway` — and a route's entry only lands in the map whose `pathType` matches.
 
 </details>
 
@@ -388,7 +388,7 @@ Add a matcher to the demo route and watch the frontend gain a condition:
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-Under `# Advanced route matching`, the rule's provenance comment changes from `- path-only` to `- method GET`, and its `http-request set-var(txn.gw_rule_id) …` guard gains a `{ method GET }` condition. `frontend-matchers-advanced-500-gateway` emits that condition (`charts/haptic/charts/gateway/60-frontend.yaml:313`) and the comment (`:394`). Header and query matchers build the same guard: a `headers:` entry adds `{ req.hdr(<name>) "<value>" }` (`:324`) and a `queryParams:` entry adds `{ urlp(<name>) "<value>" }` (`:339`).
+Under `# Advanced route matching`, the rule's provenance comment changes from `- path-only` to `- method GET`, and its `http-request set-var(txn.gw_rule_id) …` guard gains a `{ method GET }` condition. `frontend-matchers-advanced-500-gateway` emits that condition and the comment. Header and query matchers build the same guard: a `headers:` entry adds `{ req.hdr(<name>) "<value>" }` and a `queryParams:` entry adds `{ urlp(<name>) "<value>" }`.
 
 </details>
 
@@ -637,6 +637,21 @@ http-request replace-path "^/api/v1(.*)" "/\1" if <route-conditions>
 - **URLRewrite** rewrites the request and forwards to backend (transparent to client)
 - **RequestRedirect** sends HTTP redirect response to client (client sees new URL)
 
+Attach a filter to the demo route and watch the real directive compile — no `<route-conditions>` placeholder:
+
+<div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
+
+<p class="pg-task" markdown>In the **Resources** panel, give the `api` HTTPRoute's rule a `filters:` list (a sibling of `backendRefs`) with a `RequestHeaderModifier` that sets a header — `set: [{name: X-API-Version, value: "v2"}]` — then find the generated `http-request set-header X-API-Version` line in the `haproxy.cfg` tab.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+A `http-request set-header X-API-Version "v2"` directive appears under the filters, guarded by an `if` condition that matches the route's `gw_rule_id` — so it fires only for requests the `api` HTTPRoute selected, not for every request on the frontend. The `frontend-filters-500-gateway-request-header` snippet emits it; `add`/`remove` operations become `http-request add-header` / `http-request del-header` lines the same way. This is the real condition the engine writes, in place of the `<route-conditions>` placeholder shown in the static examples above.
+
+</details>
+
+</div>
+
 ### spec.rules[].backendRefs
 
 | Field | Status | Notes |
@@ -700,7 +715,7 @@ Split the demo route's traffic and inspect the generated weight map:
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-`weighted-multi-backend.map` fills with 100 entries keyed `<0-99>:platform_api_0` — indexes 0–89 map to `gtw_platform_api_api_80` and 90–99 to `gtw_platform_api_api-canary_80`, the 90/10 split expanded one map entry per weight unit. A rule only produces these entries once it has more than one `backendRef` (`charts/haptic/charts/gateway/42-maps-weighted.yaml:16`); the per-unit expansion and emission are at `:25` and `:40`. A new `backend gtw_platform_api_api-canary_80` block also appears in the `haproxy.cfg` tab (empty of servers until an `api-canary` Service exists).
+`weighted-multi-backend.map` fills with 100 entries keyed `<0-99>:platform_api_0` — indexes 0–89 map to `gtw_platform_api_api_80` and 90–99 to `gtw_platform_api_api-canary_80`, the 90/10 split expanded one map entry per weight unit. A rule only produces these entries once it has more than one `backendRef`, in `map-weighted-backend-500-gateway`, which expands and emits one map entry per weight unit. A new `backend gtw_platform_api_api-canary_80` block also appears in the `haproxy.cfg` tab (empty of servers until an `api-canary` Service exists).
 
 </details>
 
@@ -925,8 +940,6 @@ Status patches use outcome-keyed variants:
 1. **ExtensionRef filter** - General custom-filter extension mechanism not yet implemented (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
 
 2. **Per-backend filters** (`backendRefs[].filters[]`) - Partially implemented: a `RequestHeaderModifier` on a backendRef **is** emitted per-backend (rule-scoped via `gw_rule_id`; see `test-httproute-backend-request-header-modifier`). Other filter types (ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only, not per-backend.
-
-(The `RequestMirror` filter, previously listed here, **is** implemented — per-route mirroring via the bundled spoa-hub `mirror` plugin with percent/fraction sampling and multiple mirrors per rule.)
 
 ### Partially Covered Features
 

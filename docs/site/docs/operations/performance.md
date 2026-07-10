@@ -1,6 +1,6 @@
 # Performance
 
-This guide covers performance tuning and optimization for the HAProxy Template Ingress Controller.
+This guide covers performance tuning and optimization for HAPTIC.
 
 ## Overview
 
@@ -23,7 +23,7 @@ Performance optimization involves three areas:
 These recommendations are based on the controller's primary memory consumers (watched resource caches, template rendering buffers, event history) and CPU consumers (template rendering, API server watch streams). Adjust based on your actual resource counts and template complexity.
 
 !!! note "Chart defaults differ — deliberately"
-    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Guaranteed QoS), which differs from the table above for two reasons spelled out in the [Helm chart's HAProxy Deployment guide](../haproxy-deployment.md#resource-limits-and-container-awareness): omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel OOM killer from preferring this pod over Burstable neighbours. The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
+    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Guaranteed QoS), which differs from the table above for two reasons spelled out in the [HAProxy deployment guide](../haproxy-deployment.md#resource-limits-and-container-awareness): omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel OOM killer from preferring this pod over Burstable neighbours. The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
 
 Configure via Helm values:
 
@@ -32,10 +32,10 @@ Configure via Helm values:
 resources:
   requests:
     cpu: 100m
-    memory: 128Mi
-  limits:
-    cpu: 500m
     memory: 512Mi
+  limits:
+    # No CPU limit — avoids throttling GOMAXPROCS-aware Go under bursts.
+    memory: 512Mi   # request == limit → Guaranteed QoS
 ```
 
 ### Memory Considerations
@@ -71,7 +71,7 @@ rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
 
 ### Debounce Interval (per-resource override, 2s default)
 
-The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 2-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 2 s are batched. This is the only debounce layer — the Reconciler fires immediately on every event, and reload throttling lives in the deployer's `minDeploymentInterval`.
+The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 2-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 2 s are batched.
 
 Each watched resource can override the window via `spec.watchedResources.<name>.debounceInterval`:
 
@@ -191,7 +191,7 @@ There is no `Set` method on the shared cache — this is deliberate and prevents
 {#- AVOID: O(n*m) complexity -#}
 {%- for _, ingress := range ingresses %}
   {%- for _, service := range services %}
-    {%- if ingress.spec.backend.service.name == service.metadata.name %}
+    {%- if ingress.spec.defaultBackend.service.name == service.metadata.name %}
       ...
     {%- end %}
   {%- end %}
@@ -203,7 +203,7 @@ There is no `Set` method on the shared cache — this is deliberate and prevents
   {%- service_map[service.metadata.name] = service %}
 {%- end %}
 {%- for _, ingress := range ingresses %}
-  {%- var service = service_map[ingress.spec.backend.service.name] %}
+  {%- var service = service_map[ingress.spec.defaultBackend.service.name] %}
   ...
 {%- end %}
 ```

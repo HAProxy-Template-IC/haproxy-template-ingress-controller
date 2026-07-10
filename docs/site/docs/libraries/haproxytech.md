@@ -69,9 +69,8 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | Snippet | Annotations Processed |
 |---------|----------------------|
 | `frontend-filters-100-haproxytech-basic-headers` | `haproxy.org/forwarded-for`, `haproxy.org/src-ip-header` |
-| `frontend-filters-200-haproxytech-access-control` | `haproxy.org/allowlist`, `haproxy.org/denylist` |
+| `frontend-filters-200-haproxytech-access-control` | `haproxy.org/allow-list`, `haproxy.org/deny-list` |
 | `frontend-filters-300-haproxytech-cors` | `haproxy.org/cors-*` |
-| `features-130-haproxytech-request-redirect` | `haproxy.org/request-redirect`, `haproxy.org/request-redirect-code` (registers host→location in the shared `redirect-loc-<code>.map`) |
 | `frontend-filters-500-haproxytech-logging` | `haproxy.org/request-capture`, `haproxy.org/request-capture-len` |
 
 ### backend-directives-* (per-backend directives)
@@ -84,7 +83,6 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | `backend-directives-200-haproxytech-health-checks` | `haproxy.org/check` |
 | `backend-directives-210-haproxytech-advanced-health-checks` | `haproxy.org/check-http`, `haproxy.org/check-interval` |
 | `backend-directives-250-haproxytech-rate-limiting` | `haproxy.org/rate-limit-*` |
-| `map-reqhdr-host-250-haproxytech` | `haproxy.org/set-host` (relocated to reqhdr-host.map + shared frontend rule) |
 | `backend-directives-300-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
 | `backend-directives-350-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` |
 | `backend-directives-400-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
@@ -98,6 +96,8 @@ The haproxytech library implements these extension points from base.yaml. All sn
 |---------|-----------------|---------|
 | `global-top-500-haproxytech-ingress-auth` | `global-top-*` | Emits a deduplicated `userlist auth_<secretNs>_<secretName>` per unique auth secret |
 | `backends-501-haproxytech-ssl-passthrough` | `backends-*` | TCP-mode backends for hosts annotated with `haproxy.org/ssl-passthrough: "true"` |
+| `features-130-haproxytech-request-redirect` | `features-*` | Registers host→location for `haproxy.org/request-redirect` / `haproxy.org/request-redirect-code` in the shared `redirect-loc-<code>.map` |
+| `map-reqhdr-host-250-haproxytech` | `map-reqhdr-host-*` | Relocates `haproxy.org/set-host` to `reqhdr-host.map` + a shared frontend rule |
 
 ### Injecting Custom Annotations
 
@@ -120,7 +120,7 @@ controller:
 
 ## Access Control & IP Filtering
 
-### haproxy.org/allowlist
+### haproxy.org/allow-list
 
 **Status**: ✅ Supported
 
@@ -134,7 +134,7 @@ kind: Ingress
 metadata:
   name: protected-api
   annotations:
-    haproxy.org/allowlist: "192.168.1.0/24, 10.0.0.1"
+    haproxy.org/allow-list: "192.168.1.0/24, 10.0.0.1"
 spec:
   rules:
     - host: api.example.com
@@ -160,11 +160,11 @@ http-request deny if !allowlist_192_168_1_0_24 !allowlist_10_0_0_1
 
 **Dependencies**: None
 
-**Related annotations**: Can be combined with `denylist`
+**Related annotations**: Can be combined with `deny-list`
 
 ---
 
-### haproxy.org/denylist
+### haproxy.org/deny-list
 
 **Status**: ✅ Supported
 
@@ -178,7 +178,7 @@ kind: Ingress
 metadata:
   name: public-api
   annotations:
-    haproxy.org/denylist: "203.0.113.0/24, 198.51.100.50"
+    haproxy.org/deny-list: "203.0.113.0/24, 198.51.100.50"
 spec:
   rules:
     - host: api.example.com
@@ -204,27 +204,27 @@ http-request deny if denylist_203_0_113_0_24 or denylist_198_51_100_50
 
 **Dependencies**: None
 
-**Related annotations**: Can be combined with `allowlist`
+**Related annotations**: Can be combined with `allow-list`
 
 ---
 
 ### haproxy.org/whitelist
 
-**Status**: ❌ Not Implemented (Deprecated)
+**Status**: ✅ Supported (deprecated alias)
 
-**Description**: Legacy name for `allowlist`. Prefer using `allowlist` instead.
+**Description**: Deprecated alias for `allow-list`, honoured only when `allow-list` is absent on the same Ingress. Kept for upstream parity — prefer `allow-list` for new Ingresses.
 
-**Note**: Deprecated in favor of `allowlist`. Not recommended for new implementations.
+**Note**: If both `allow-list` and `whitelist` are set, `allow-list` wins and `whitelist` is ignored.
 
 ---
 
 ### haproxy.org/blacklist
 
-**Status**: ❌ Not Implemented (Deprecated)
+**Status**: ✅ Supported (deprecated alias)
 
-**Description**: Legacy name for `denylist`. Prefer using `denylist` instead.
+**Description**: Deprecated alias for `deny-list`, honoured only when `deny-list` is absent on the same Ingress. Kept for upstream parity — prefer `deny-list` for new Ingresses.
 
-**Note**: Deprecated in favor of `denylist`. Not recommended for new implementations.
+**Note**: If both `deny-list` and `blacklist` are set, `deny-list` wins and `blacklist` is ignored.
 
 ---
 
@@ -532,6 +532,51 @@ haproxy.org/rate-limit-size: "1000000"  # Track 1 million IPs
 ```yaml
 haproxy.org/rate-limit-status-code: "429"
 ```
+
+**Dependencies**: Requires `rate-limit-requests` to be set
+
+---
+
+### haproxy.org/rate-limit-whitelist
+
+**Status**: ✅ Supported
+
+**Description**: Comma-separated IP addresses or CIDR ranges that are exempt from the rate-limit deny. Whitelisted sources are still tracked in the stick-table but are never denied, mirroring haproxy-ingress' `limit-whitelist`.
+
+**Usage**:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rate-limited-api
+  annotations:
+    haproxy.org/rate-limit-requests: "10"
+    haproxy.org/rate-limit-period: "10s"
+    haproxy.org/rate-limit-whitelist: "10.0.0.0/8, 192.168.1.5"
+spec:
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 80
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+stick-table type ip size 100k expire 10s store http_req_rate(10s) peers localinstance
+http-request track-sc0 src
+http-request deny deny_status 403 if { sc_http_req_rate(0) gt 10 } !{ src 10.0.0.0/8 192.168.1.5 }
+```
+
+The trailing `!{ src … }` guard makes the deny fire only for non-whitelisted sources.
 
 **Dependencies**: Requires `rate-limit-requests` to be set
 
@@ -860,7 +905,7 @@ haproxy.org/ssl-redirect-code: "301"
 
 **Description**: Target HTTPS port for the SSL redirect. The haproxytech library always redirects to the scheme (`https://`) without an explicit port.
 
-**Workaround**: Override the `frontend-filters-050-ssl-redirect` snippet (from the SSL library) to emit a `redirect location https://…:<port>` line instead of `redirect scheme https`.
+**Workaround**: Override the `frontend-filters-050-ssl-redirect` snippet (from the [SSL library](ssl.md)) to emit a `redirect location https://…:<port>` line instead of `redirect scheme https`.
 
 ---
 
@@ -1734,7 +1779,8 @@ userlist auth_default_auth-credentials
   user admin password $2y$05$...
 
 # Backend section
-http-request auth realm "API Access" unless { http_auth(auth_default_auth-credentials) }
+# The realm "API Access" is normalized to "API-Access" (see note below)
+http-request auth realm "API-Access" unless { http_auth(auth_default_auth-credentials) }
 ```
 
 **Dependencies**: Requires `auth-secret` to be set
@@ -1812,7 +1858,7 @@ Validation cost matters because HAProxy re-runs the hash at every config parse, 
 
 **Description**: Authentication realm displayed in browser's authentication prompt.
 
-**Default**: `RestrictedArea`
+**Default**: `Protected-Content`
 
 **Usage**:
 
@@ -1822,7 +1868,7 @@ haproxy.org/auth-realm: "API Access"
 
 **Dependencies**: Requires `auth-type: basic-auth` and `auth-secret`
 
-**Note**: HAProxy Data Plane API requires realm without spaces (regex: `^[^\s]+$`). Use hyphenated names.
+**Note**: The HAProxy Data Plane API forbids spaces in the realm (regex: `^[^\s]+$`). Like the upstream controller, the library automatically replaces spaces with dashes, so `"API Access"` renders as `realm "API-Access"` — you don't need to hyphenate the value yourself.
 
 ---
 
@@ -1832,7 +1878,7 @@ haproxy.org/auth-realm: "API Access"
 
 1. **Service-level annotations** - Annotations on Service resources are not supported. Only Ingress annotations are implemented.
 
-2. **Deprecated annotations** - Legacy annotation names (`whitelist`, `blacklist`, `ingress.class`) are not implemented. Use current names instead.
+2. **Deprecated annotations** - `whitelist` and `blacklist` are honoured as deprecated aliases of `allow-list` / `deny-list` (only when the canonical key is absent). `ingress.class` is not implemented — set `spec.ingressClassName` instead.
 
 3. **RequestMirror equivalent** - No annotation-based traffic mirroring. Consider using Gateway API with external SPOE agent for this feature.
 
@@ -1848,36 +1894,39 @@ haproxy.org/auth-realm: "API Access"
 
 ## Implementation Status Summary
 
-The library processes **47** `haproxy.org/*` annotations (verified against `libraries/haproxytech.yaml`).
+The library supports **47** `haproxy.org/*` annotations, grouped by category below. Deprecated aliases (`whitelist`, `blacklist`) and parsed-but-no-op annotations (`check-interval`, `scale-server-slots`) are excluded from this count.
 
 **Supported by category:**
 
 | Category | Count | Annotations |
 |----------|-------|-------------|
-| Access control | 2 | `allowlist`, `denylist` |
+| Access control | 2 | `allow-list`, `deny-list` |
 | Authentication | 3 | `auth-type`, `auth-secret`, `auth-realm` |
-| CORS | 6 | `cors-enable`, `cors-allow-origin`, `cors-allow-methods`, `cors-allow-headers`, `cors-allow-credentials`, `cors-max-age` |
-| Rate limiting | 4 | `rate-limit-requests`, `rate-limit-period`, `rate-limit-size`, `rate-limit-status-code` |
+| CORS | 7 | `cors-enable`, `cors-allow-origin`, `cors-allow-methods`, `cors-allow-headers`, `cors-allow-credentials`, `cors-max-age`, `cors-respond-to-options` |
+| Rate limiting | 5 | `rate-limit-requests`, `rate-limit-period`, `rate-limit-size`, `rate-limit-status-code`, `rate-limit-whitelist` |
 | Header manipulation | 3 | `forwarded-for`, `request-set-header`, `response-set-header` |
 | Path manipulation | 1 | `path-rewrite` |
 | Request redirect | 2 | `request-redirect`, `request-redirect-code` |
 | SSL/TLS | 3 | `ssl-redirect`, `ssl-redirect-code`, `ssl-passthrough` |
-| Health checks | 3 | `check`, `check-http`, `check-interval` |
+| Health checks | 2 | `check`, `check-http` |
 | Load balancing | 1 | `load-balance` |
 | Session persistence | 2 | `cookie-persistence`, `cookie-persistence-no-dynamic` |
 | Timeouts | 5 | `timeout-server`, `timeout-connect`, `timeout-queue`, `timeout-tunnel`, `timeout-check` |
 | Logging | 3 | `src-ip-header`, `request-capture`, `request-capture-len` |
 | Host manipulation | 1 | `set-host` |
 | Connection management | 1 | `pod-maxconn` |
-| Server scaling | 1 | `scale-server-slots` |
 | Backend server options | 4 | `server-ssl`, `server-proto`, `server-crt`, `server-ca` |
 | Proxy protocol | 1 | `send-proxy-protocol` |
 | Advanced backend config | 1 | `backend-config-snippet` |
 
+**Supported deprecated aliases** (honoured only when the canonical key is absent on the same Ingress):
+
+- `whitelist` → `allow-list`, `blacklist` → `deny-list`
+
 **Not implemented in the `haproxy.org/*` namespace:**
 
 - `ssl-redirect-port`, `timeout-client`, `timeout-http-request`, `timeout-http-keep-alive` — four of these timeouts are available under `haproxy-ingress.github.io/*` instead (see [haproxy-ingress library](haproxy-ingress.md))
-- `whitelist`, `blacklist` — replaced by `allowlist` / `denylist` in the upstream project
+- `check-interval`, `scale-server-slots` — parsed but silent no-ops today (see their sections above for the current behavior and workarounds)
 - `standalone-backend` — not needed; this controller already emits a dedicated backend per `<namespace>_<ingress-name>_svc_<service-name>_<port>` tuple
 
 ## See Also
