@@ -28,7 +28,7 @@ logger.Log(ctx, logging.LevelTrace, "store list called", "resource_type", t)
 
 ## Runtime Rewiring
 
-The controller wires up a `NewDynamicLogger` at startup using the `LOG_LEVEL` environment variable, then calls `SetLevel` from the `configloader` when a new `HAProxyTemplateConfig` CRD arrives with a non-empty `spec.logging.level`. The CRD value wins over `LOG_LEVEL` once it has been successfully loaded. See `docs/controller/docs/troubleshooting.md#enable-debug-logging` for the user-facing view.
+The controller wires up a `NewDynamicLogger` at startup using the `LOG_LEVEL` environment variable, then calls `SetLevel` from the `configloader` when a new `HAProxyTemplateConfig` CRD arrives with a non-empty `spec.logging.level`. The CRD value wins over `LOG_LEVEL` once it has been successfully loaded. See `docs/site/docs/troubleshooting.md#enable-debug-logging` for the user-facing view.
 
 ## Log-Line Style
 
@@ -37,7 +37,7 @@ This package doesn't enforce anything beyond "logfmt via slog". The conventions 
 ## See Also
 
 - `pkg/core/CLAUDE.md` — log-line style conventions and examples
-- `docs/controller/docs/troubleshooting.md` — operator view (`LOG_LEVEL` env var + CRD `logging.level` field)
+- `docs/site/docs/troubleshooting.md` — operator view (`LOG_LEVEL` env var + CRD `logging.level` field)
 - [`log/slog`](https://pkg.go.dev/log/slog) — upstream standard library
 
 ## License

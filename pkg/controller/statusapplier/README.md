@@ -47,7 +47,7 @@ Each apply uses a phase-scoped field manager (e.g. `haptic-rendered`, `haptic-de
 
 - [`pkg/templating`](../../templating/) — `StatusPatch` registration API used by templates
 - [`pkg/controller/events`](../events/) — event types this component subscribes to
-- [`docs/controller/docs/templating.md`](../../../docs/controller/docs/templating.md) — template-author view of status patches
+- [`docs/site/docs/templating.md`](../../../docs/site/docs/templating.md) — template-author view of status patches
 
 ## License
 

@@ -1,1 +1,0 @@
-../../../../docs/shared/javascripts/stable-version.js

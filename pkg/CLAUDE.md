@@ -49,7 +49,7 @@ pkg/
 └── controller/        # Orchestration and coordination (the only event-bus consumer)
 ```
 
-For the canonical layout (with sub-packages), see [`docs/controller/docs/development/design/package-structure.md`](../docs/controller/docs/development/design/package-structure.md).
+For the canonical layout (with sub-packages), see [`docs/site/docs/development/design/package-structure.md`](../docs/site/docs/development/design/package-structure.md).
 
 ## Dependency Hierarchy
 
@@ -441,5 +441,5 @@ engine, err := templating.New(templates, &templating.Options{
 
 - Root-level architecture: `/CLAUDE.md`
 - Package-specific context: `pkg/*/CLAUDE.md`
-- Architecture documentation: `/docs/controller/docs/development/design.md`
+- Architecture documentation: `/docs/site/docs/development/design.md`
 - Package API documentation: `pkg/*/README.md`

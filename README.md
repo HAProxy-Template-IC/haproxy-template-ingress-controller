@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="docs/controller/docs/assets/logo.svg" alt="HAPTIC Logo" width="400">
+<img src="docs/site/docs/assets/logo.svg" alt="HAPTIC Logo" width="400">
 
 </div>
 
@@ -39,9 +39,9 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1
 ```
 
-The chart ships with [template libraries](https://haproxy-haptic.org/helm-chart/latest/template-libraries/) for Kubernetes Ingress and Gateway API enabled by default — standard routing works immediately without any template configuration.
+The chart ships with [template libraries](https://haproxy-haptic.org/docs/latest/template-libraries/) for Kubernetes Ingress and Gateway API enabled by default — standard routing works immediately without any template configuration.
 
-For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-haptic.org/controller/latest/getting-started/) guide.
+For complete setup instructions including HAProxy pod deployment, see the [Getting Started](https://haproxy-haptic.org/docs/latest/getting-started/) guide.
 
 ## Development
 
@@ -137,7 +137,7 @@ Contributions are welcome. Before submitting pull requests:
 3. Update documentation as needed
 4. Follow existing code style and patterns
 
-See the [development documentation](docs/controller/docs/development/design.md) for architecture and patterns.
+See the [development documentation](docs/site/docs/development/design.md) for architecture and patterns.
 
 ## License
 

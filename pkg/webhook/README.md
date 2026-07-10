@@ -107,7 +107,7 @@ Server-level tests bring up a real TLS listener on a random port with a self-sig
 - [AdmissionReview v1 API](https://kubernetes.io/docs/reference/config-api/apiserver-webhooks.v1/)
 - `pkg/controller/webhook` — event adapter that owns the `Server` lifecycle inside the controller
 - The controller passes the mounted Secret directory to the server via `ServerConfig.CertDir`, which the server reads and hot-reloads on rotation; the Helm chart provisions and mounts that Secret
-- `docs/controller/docs/development/crd-validation-design.md` — why the webhook lives in the controller pod and fails closed
+- `docs/site/docs/development/crd-validation-design.md` — why the webhook lives in the controller pod and fails closed
 
 ## License
 

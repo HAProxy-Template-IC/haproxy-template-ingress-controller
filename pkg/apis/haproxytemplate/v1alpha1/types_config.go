@@ -88,7 +88,7 @@ type HAProxyTemplateConfigSpec struct {
 
 	// Validators declares pluggable validator sidecars consulted by the
 	// admission webhook before admitting changes that affect plugin
-	// configuration. See `docs/controller/docs/operations/pluggable-validators.md`
+	// configuration. See `docs/site/docs/operations/pluggable-validators.md`
 	// for setup; the wire protocol is at
 	// `docs/development/validator-protocol.md`.
 	//
@@ -226,7 +226,7 @@ type AnnotationCoverage struct {
 	// +optional
 	Note string `json:"note,omitempty"`
 
-	// Doc is an anchor into the migration guide (docs/controller/docs/
+	// Doc is an anchor into the migration guide (docs/site/docs/
 	// migrating.md) with more detail, e.g. "annotation-support".
 	// +optional
 	Doc string `json:"doc,omitempty"`

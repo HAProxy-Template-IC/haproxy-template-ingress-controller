@@ -53,7 +53,7 @@ maps:
       # Coraza WAF per-Ingress app routing: <ns>/<name> (resource id) → app, so each
       # tenant's modsecurity-snippet rules stay isolated. Populated by nginx-ingress
       # map-coraza-app-*; fed to the check-request SPOE app= arg (empty → default WAF).
-      # See https://haproxy-haptic.org/controller/latest/operations/spoa-hub/
+      # See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
       {{ render_glob "map-coraza-app-*" -}}
 
   haproxy-ingress-waf.map:
@@ -61,7 +61,7 @@ maps:
       # Coraza WAF per-Ingress enforcement mode: <ns>/<name> → deny (block) | detect (shadow).
       # Populated by haproxy-ingress map-haproxy-ingress-waf-* (/waf + /waf-mode); read into
       # txn.coraza_mode (empty → no opt-in; request skips the WAF SPOE roundtrip).
-      # See https://haproxy-haptic.org/controller/latest/operations/spoa-hub/
+      # See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
       {{ render_glob "map-haproxy-ingress-waf-*" -}}
 
   coraza-disabled.map:
@@ -69,7 +69,7 @@ maps:
       # Coraza WAF per-path opt-out (only under coraza.dispatch.mode=default-on): an entry
       # (keyed by host+path) excludes that path from the unconditional WAF SPOE dispatch.
       # Populated by nginx-ingress map-coraza-disabled-* (enable-modsecurity: "false");
-      # empty under the default opt-in dispatch. See https://haproxy-haptic.org/controller/latest/operations/spoa-hub/
+      # empty under the default opt-in dispatch. See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
       {{ render_glob "map-coraza-disabled-*" -}}
 
   auth-url.map:
@@ -99,7 +99,7 @@ maps:
       # union of auth-response-headers / auth-headers-succeed|fail). Keyed by <ns>/<name>.
       # Populated by ingress map-auth-extract-headers-*; fed to the check-auth SPOE
       # extract_headers arg, which publishes each as txn.hub.external_auth.<name>.
-      # See https://haproxy-haptic.org/controller/latest/operations/spoa-hub/
+      # See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
       {{ render_glob "map-auth-extract-headers-*" -}}
 
 

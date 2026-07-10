@@ -116,7 +116,7 @@ Unit tests use `k8s.io/client-go/kubernetes/fake`; integration tests live under 
 - `pkg/k8s/CLAUDE.md` — developer context, adding-a-resource walkthrough, pitfalls in depth
 - `pkg/k8s/leaderelection/README.md` — pure leader election component
 - `pkg/controller/resourcewatcher` — the event adapter that wires `Watcher`s into the EventBus
-- `docs/controller/docs/watching-resources.md` — user-facing documentation for the CRD side
+- `docs/site/docs/watching-resources.md` — user-facing documentation for the CRD side
 
 ## License
 

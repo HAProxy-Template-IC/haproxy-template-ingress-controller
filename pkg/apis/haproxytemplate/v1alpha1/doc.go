@@ -37,7 +37,7 @@
 //
 // # Examples
 //
-// See docs/controller/docs/development/crd-validation-design.md for
+// See docs/site/docs/development/crd-validation-design.md for
 // comprehensive examples and usage patterns.
 //
 // +k8s:deepcopy-gen=package

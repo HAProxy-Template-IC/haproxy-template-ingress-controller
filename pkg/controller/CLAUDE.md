@@ -3,7 +3,7 @@
 Development context for the controller coordination layer.
 
 **API Documentation**: See `pkg/controller/README.md`
-**Architecture**: See `/docs/controller/docs/development/design/architecture-overview.md` (controller internal architecture)
+**Architecture**: See `/docs/site/docs/development/design/architecture-overview.md` (controller internal architecture)
 
 ## When to Work Here
 
@@ -65,7 +65,7 @@ pkg/controller/
 ```
 
 This tree is a representative subset; `pkg/controller` has ~40 sub-packages. Run
-`ls pkg/controller` (or see `docs/controller/docs/development/design/package-structure.md`)
+`ls pkg/controller` (or see `docs/site/docs/development/design/package-structure.md`)
 for the full layout.
 
 ## Key Design Pattern: Event Adapters
@@ -1098,5 +1098,5 @@ kubectl -n haptic delete pod $LEADER
 - Leader election: `pkg/controller/leaderelection/CLAUDE.md`
 - Leadership transition guidelines: `pkg/controller/LEADER_ONLY_COMPONENTS.md`
 - Metrics component: `pkg/controller/metrics/CLAUDE.md`
-- Architecture: `/docs/controller/docs/development/design.md`
+- Architecture: `/docs/site/docs/development/design.md`
 - API documentation: `pkg/controller/README.md`

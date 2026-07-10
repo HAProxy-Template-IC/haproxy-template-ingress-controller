@@ -19,7 +19,7 @@ Pure library          Event adapter                         EventBus consumers
 - Event adapters embed `*component.Base` (the shared event-loop scaffold) and translate events to pure-library calls and back.
 - Consumers (EventCommentator, metrics adapter, debug server) subscribe without publishing — they observe.
 
-The sub-package tree in this directory mirrors those three layers. For the canonical list see `docs/controller/docs/development/design/package-structure.md`.
+The sub-package tree in this directory mirrors those three layers. For the canonical list see `docs/site/docs/development/design/package-structure.md`.
 
 ## Startup Sequence
 
@@ -88,8 +88,8 @@ End-to-end tests that actually spin up controllers against a Kind cluster live u
 - [`pkg/lifecycle`](../lifecycle/) — component registry, dependency ordering, leader-only gating
 - `pkg/controller/CLAUDE.md` — developer context, leadership-transition patterns, pitfalls
 - `pkg/controller/LEADER_ONLY_COMPONENTS.md` — checklist for leader-only components
-- `docs/controller/docs/development/design/package-structure.md` — whole-repo orientation
-- `docs/controller/docs/development/design/sequence-diagrams.md` — reconciliation and validation flows
+- `docs/site/docs/development/design/package-structure.md` — whole-repo orientation
+- `docs/site/docs/development/design/sequence-diagrams.md` — reconciliation and validation flows
 
 ## License
 

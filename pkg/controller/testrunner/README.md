@@ -114,7 +114,7 @@ Rendering and validation errors pass through `dataplane.SimplifyRenderingError` 
 
 ## See Also
 
-- [`docs/controller/docs/validation-tests.md`](../../../docs/controller/docs/validation-tests.md) — user-facing authoring guide (fixtures, assertion types, CLI flags)
+- [`docs/site/docs/validation-tests.md`](../../../docs/site/docs/validation-tests.md) — user-facing authoring guide (fixtures, assertion types, CLI flags)
 - [`pkg/dataplane/validator.go`](../../dataplane/validator.go) — `ValidationPaths` definition + the `haproxy -c` semantic validator
 - [`pkg/controller/rendercontext`](../rendercontext/) — how fixtures become render contexts
 - [`cmd/controller/validate.go`](../../../cmd/controller/validate.go) — CLI wiring (populates `Options` from flags)

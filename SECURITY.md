@@ -26,4 +26,4 @@ Security fixes are applied to the latest stable release only.
 
 ## Supply Chain Security
 
-All release artifacts are signed with [Cosign](https://github.com/sigstore/cosign) using keyless OIDC. See [Supply Chain Security](docs/controller/docs/development/releasing.md#supply-chain-security) for instructions on verifying signatures and inspecting SBOM attestations.
+All release artifacts are signed with [Cosign](https://github.com/sigstore/cosign) using keyless OIDC. See [Supply Chain Security](docs/site/docs/development/releasing.md#supply-chain-security) for instructions on verifying signatures and inspecting SBOM attestations.

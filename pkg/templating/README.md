@@ -2,7 +2,7 @@
 
 Pure template rendering library. Wraps a fork of [Scriggo](https://scriggo.com/) with a pre-compile-then-render lifecycle, HAProxy-specific filters and context helpers, and structured errors. Zero dependencies on other `pkg/` packages — this is a reusable library.
 
-Module path: `gitlab.com/haproxy-haptic/haptic`. The source is authoritative (`go doc ./pkg/templating`); this README is a short orientation. `docs/controller/docs/templating.md` covers the template *author's* side (syntax, filters, custom variables) — this page is for Go callers.
+Module path: `gitlab.com/haproxy-haptic/haptic`. The source is authoritative (`go doc ./pkg/templating`); this README is a short orientation. `docs/site/docs/templating.md` covers the template *author's* side (syntax, filters, custom variables) — this page is for Go callers.
 
 ## Minimal Usage
 
@@ -166,7 +166,7 @@ The benchmarks in `benchmark_pool_test.go` and `benchmark_test.go` are the autho
 ## See Also
 
 - `pkg/templating/CLAUDE.md` — runtime-variable pattern, adding new filters, Scriggo fork notes
-- `docs/controller/docs/templating.md` — template-author reference (syntax, filters, context variables)
+- `docs/site/docs/templating.md` — template-author reference (syntax, filters, context variables)
 - `pkg/controller/rendercontext` — builds the render context from watched stores and HTTP resources
 - `pkg/controller/renderer` — event adapter that wires this engine into the reconciliation pipeline
 - [Scriggo Templates](https://scriggo.com/templates) — base syntax reference

@@ -76,8 +76,7 @@ __debug_bin
 tmp/
 
 # Copied shared CSS files (source of truth is docs/shared/colors.css)
-docs/controller/docs/stylesheets/colors.css
-charts/haptic/docs/stylesheets/colors.css
+docs/site/docs/stylesheets/colors.css
 
 # mkdocs build output (each docs/* and charts/*/docs sub-tree builds to its own site/)
 docs/*/site/

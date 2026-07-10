@@ -34,7 +34,7 @@
         resource</a>, and shape the generated config exactly the way you want it.
       </p>
       <div class="hero-cta">
-        <a class="btn btn-primary" href="./controller/latest/getting-started/">
+        <a class="btn btn-primary" href="./docs/latest/getting-started/">
           <svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"></path>
@@ -124,7 +124,7 @@
         </span>
         <h3>No Upstream Waiting</h3>
         <p>Add an annotation, a header rewrite, or support for a new API by
-           editing a <a href="./controller/latest/templating/">template</a> — not by
+           editing a <a href="./docs/latest/templating/">template</a> — not by
            forking the controller or waiting for an upstream release.</p>
       </article>
 
@@ -167,7 +167,7 @@
         </span>
         <h3>Validated Before Rollout</h3>
         <p>A validating webhook and
-           <a href="./controller/latest/validation-tests/">CI-runnable template tests</a>
+           <a href="./docs/latest/validation-tests/">CI-runnable template tests</a>
            catch bad config before it ships — then it's applied via the
            <a href="https://www.haproxy.com/documentation/dataplaneapi/">Dataplane API</a>
            with hitless reloads.</p>
@@ -181,13 +181,13 @@
     <p class="tradeoff-q"><span class="tradeoff-tag" aria-hidden="true">//</span> If you
        own every line, are you maintaining a config fork forever?</p>
     <p class="tradeoff-a">No — you don't start from a blank file.
-       <a href="./helm-chart/latest/template-libraries/">Bundled libraries</a> render
+       <a href="./docs/latest/template-libraries/">Bundled libraries</a> render
        classic Ingress and the Gateway API out of the box, and read existing annotations
-       from <strong><a href="./helm-chart/latest/libraries/nginx-ingress/">ingress-nginx</a></strong>,
+       from <strong><a href="./docs/latest/libraries/nginx-ingress/">ingress-nginx</a></strong>,
        HAProxy&nbsp;Technologies'
-       <strong><a href="./helm-chart/latest/libraries/haproxytech/">kubernetes-ingress</a></strong>,
+       <strong><a href="./docs/latest/libraries/haproxytech/">kubernetes-ingress</a></strong>,
        and the community
-       <strong><a href="./helm-chart/latest/libraries/haproxy-ingress/">haproxy-ingress</a></strong>.
+       <strong><a href="./docs/latest/libraries/haproxy-ingress/">haproxy-ingress</a></strong>.
        Much of a current setup migrates by pointing HAPTIC at the Ingresses you already
        run — you only template the gap, a few lines in HAPTIC's config, not a fork you
        rebase.</p>
@@ -198,7 +198,7 @@
     <h2 class="section-head"><span class="prompt">$</span> haptic <span class="flag">--extend</span></h2>
     <p class="extend-lead">Need something the bundled libraries don't ship — say an
        <code>X-Request-ID</code> header your platform users opt into per Ingress? Drop a
-       snippet into the <a href="./controller/latest/crd-reference/"><code>HAProxyTemplateConfig</code></a>
+       snippet into the <a href="./docs/latest/crd-reference/"><code>HAProxyTemplateConfig</code></a>
        HAPTIC watches. No controller fork, no waiting for a release.</p>
     <div class="terminal terminal-extend">
       <div class="term-bar">
@@ -275,7 +275,7 @@
           <span class="doc-path">~/controller</span>
         </div>
         <div class="doc-body">
-          <h2><a href="./controller/latest/">Controller</a></h2>
+          <h2><a href="./docs/latest/">Controller</a></h2>
           <p>How the ingress controller works: resource watching, template
              rendering, configuration validation, and HAProxy deployment.</p>
           <div class="versions">
@@ -293,7 +293,7 @@
           <span class="doc-path">~/helm-chart</span>
         </div>
         <div class="doc-body">
-          <h2><a href="./helm-chart/latest/">Helm Chart</a></h2>
+          <h2><a href="./docs/latest/">Helm Chart</a></h2>
           <p>Installs the controller into your cluster with preconfigured
              templates. Start here if you already know the basics or just
              want to deploy.</p>
@@ -361,7 +361,7 @@
   }
   async function updateQuickStartVersion() {
     try {
-      const res = await fetch('./helm-chart/versions.json');
+      const res = await fetch('./docs/versions.json');
       if (!res.ok) throw new Error('Not found');
       const versions = await res.json();
       const latest = versions.find(v => v.aliases && v.aliases.includes('latest')) || versions[0];

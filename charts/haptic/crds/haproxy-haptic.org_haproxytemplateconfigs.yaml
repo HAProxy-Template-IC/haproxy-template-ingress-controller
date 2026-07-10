@@ -525,7 +525,7 @@ spec:
                         properties:
                           doc:
                             description: |-
-                              Doc is an anchor into the migration guide (docs/controller/docs/
+                              Doc is an anchor into the migration guide (docs/site/docs/
                               migrating.md) with more detail, e.g. "annotation-support".
                             type: string
                           note:
@@ -934,7 +934,7 @@ spec:
                 description: |-
                   Validators declares pluggable validator sidecars consulted by the
                   admission webhook before admitting changes that affect plugin
-                  configuration. See `docs/controller/docs/operations/pluggable-validators.md`
+                  configuration. See `docs/site/docs/operations/pluggable-validators.md`
                   for setup; the wire protocol is at
                   `docs/development/validator-protocol.md`.
 

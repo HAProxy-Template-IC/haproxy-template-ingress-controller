@@ -90,7 +90,7 @@ The introspection server supports `?field={...}` JSONPath on every response, so 
 ## Security
 
 - `CredentialsVar` is deliberately built to expose metadata only. It constructs its response map field-by-field — no marshalling of the `Credentials` struct, so a future accidental field addition can't leak the password by default.
-- `FullStateVar` includes the rendered `haproxy.cfg`, which references internal hostnames and backend IPs. Operators should restrict the debug port with a NetworkPolicy (see `docs/controller/docs/operations/security.md`).
+- `FullStateVar` includes the rendered `haproxy.cfg`, which references internal hostnames and backend IPs. Operators should restrict the debug port with a NetworkPolicy (see `docs/site/docs/operations/security.md`).
 - Validators in this package never read raw `Credentials.Password` fields for their own responses — the `StateProvider.GetCredentials` signature returns `*config.Credentials` but the `CredentialsVar.Get()` implementation picks out individual safe fields.
 
 ## Testing
@@ -106,7 +106,7 @@ Each Var has a test that constructs a mock `StateProvider`, calls `.Get()`, and 
 
 - `pkg/introspection` — generic registry + HTTP server this package plugs into
 - `pkg/controller/debug/CLAUDE.md` — developer context, walkthrough for adding a new Var
-- `docs/controller/docs/operations/debugging.md` — operator-facing view of the same endpoints
+- `docs/site/docs/operations/debugging.md` — operator-facing view of the same endpoints
 - `tests/acceptance/debug_client.go` — end-to-end consumer that polls these endpoints
 
 ## License

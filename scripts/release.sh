@@ -145,7 +145,7 @@ PREV_VERSION=$(git show HEAD:VERSION 2>/dev/null || cat VERSION)
 # literally instead of `+` acting as a quantifier.
 PREV_ESC=$(printf '%s' "$PREV_VERSION" | sed 's/[][\.^$*]/\\&/g')
 VERSION_DOC_FILES=$(grep -rlF -- "$PREV_VERSION" \
-    README.md charts/haptic/README.md docs/controller/docs charts/haptic/docs 2>/dev/null || true)
+    README.md charts/haptic/README.md docs/site/docs 2>/dev/null || true)
 for f in $VERSION_DOC_FILES; do
     sed -i \
         -e "s|\\(--version \\)$PREV_ESC\\b|\\1$VERSION|g" \
@@ -155,8 +155,8 @@ done
 # Landing page fallback (replaced client-side by the published-versions JS)
 sed -i -E "s|(<span id=\"helm-version\" class=\"t-num\">)[^<]*|\1$VERSION|" docs/landing/overrides/home.html
 
-# --- docs-site changelog copies -------------------------------------------------
-# Both doc sites carry a copy of the root CHANGELOG. Repo-relative links don't
+# --- docs-site changelog copy ---------------------------------------------------
+# The docs site carries a copy of the root CHANGELOG. Repo-relative links don't
 # resolve on the docs site, so they are rewritten to GitLab source URLs.
 sync_changelog_copy() {
     local target=$1
@@ -177,13 +177,12 @@ sync_changelog_copy() {
                   -e 's|](\./charts/|](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/|g'
     } > "$target"
 }
-echo "Regenerating docs-site changelog copies..."
-sync_changelog_copy docs/controller/docs/changelog.md yes
-sync_changelog_copy charts/haptic/docs/changelog.md no
+echo "Regenerating docs-site changelog copy..."
+sync_changelog_copy docs/site/docs/changelog.md yes
 
 # --- commit --------------------------------------------------------------------
 git add CHANGELOG.md VERSION charts/haptic/Chart.yaml \
-    docs/controller/docs/changelog.md charts/haptic/docs/changelog.md \
+    docs/site/docs/changelog.md \
     docs/landing/overrides/home.html $VERSION_DOC_FILES
 
 if git diff --cached --quiet; then

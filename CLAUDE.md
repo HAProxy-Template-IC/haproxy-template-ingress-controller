@@ -6,7 +6,7 @@ This file contains cross-cutting development context for working on this codebas
 
 Event-driven Kubernetes operator that manages HAProxy configurations through template-driven approaches. Uses pure components wrapped in event adapters for clean separation of concerns.
 
-Architecture documentation: `docs/controller/docs/development/design.md`
+Architecture documentation: `docs/site/docs/development/design.md`
 
 ## Resource-Agnostic Design (RULE #1)
 
@@ -780,16 +780,17 @@ func (c *Component) Start(ctx context.Context) error {
 
 ## Resources
 
-- Architecture: `docs/controller/docs/development/design.md`
+- Architecture: `docs/site/docs/development/design.md`
 - Package READMEs: `pkg/*/README.md`
-- Linting guidelines: `docs/controller/docs/development/linting.md`
-- Configuration reference: `docs/controller/docs/supported-configuration.md`
+- Linting guidelines: `docs/site/docs/development/linting.md`
+- Configuration reference: `docs/site/docs/supported-configuration.md`
 
 ## User Documentation Authoring
 
-Applies to **all** user-facing docs — controller (`docs/controller/docs/`), chart
-(`charts/haptic/docs/`), and landing (`docs/landing/`). The reader is often new to
-HAPTIC and takes every sentence literally.
+Applies to **all** user-facing docs — the merged docs site (`docs/site/docs/`,
+served at `/docs/`, covering both the controller and the Helm chart) and the
+landing page (`docs/landing/`). The reader is often new to HAPTIC and takes every
+sentence literally.
 
 - **Examine prerequisites vs. procedure for contradictions.** Cross-check every
   "Before you start" / "Prerequisites" item against the steps that follow. If a
@@ -904,7 +905,7 @@ To prepare a release:
 2. **Run `./scripts/release.sh <version>`** - Promotes `[Unreleased]` to the version section and updates every version-bearing file (VERSION, Chart.yaml, install examples, docs-site changelog copies) in one commit
 3. **Merge the release MR to main** - CI creates the `v<version>` tag after the full post-merge pipeline passes; the tag pipeline publishes binaries, images, the chart, and versioned docs
 
-See `docs/controller/docs/development/releasing.md` for the full process.
+See `docs/site/docs/development/releasing.md` for the full process.
 
 ## Package-Specific Context
 

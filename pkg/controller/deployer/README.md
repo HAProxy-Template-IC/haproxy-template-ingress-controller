@@ -92,7 +92,7 @@ See `pkg/controller/LEADER_ONLY_COMPONENTS.md` for the full replay/clear contrac
 - [`pkg/controller/reconciler`](../reconciler/) — leader-only `Coordinator` that publishes `TemplateRenderedEvent` and `ValidationCompletedEvent` from inside `Pipeline.Execute` (the synchronous renderer + validator services live in [`pkg/controller/renderer`](../renderer/) and [`pkg/controller/validation`](../validation/), but are called directly, not subscribed to)
 - [`pkg/controller/leadership`](../leadership/) — the gating helper these components use
 - `pkg/controller/LEADER_ONLY_COMPONENTS.md` — leadership-transition patterns
-- `docs/controller/docs/operations/high-availability.md` — user-facing view of the leader-only deployment split
+- `docs/site/docs/operations/high-availability.md` — user-facing view of the leader-only deployment split
 
 ## License
 
