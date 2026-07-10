@@ -15,7 +15,25 @@ The base library is **enabled by default** and provides the entire `haproxyConfi
 
 Every render flows through base — here it is underpinning the Ingress preset live:
 
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="Base library underpinning a render" data-height="440">
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Base library underpinning a render" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **Templates** pane, add a `global-settings-500-tuning` snippet under `spec.templateSnippets` (the YAML is in the hint), then watch `tune.bufsize 262144` appear inside the `global` section of the `haproxy.cfg` tab.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+Base's `global-settings` snippet is just `render_glob "global-settings-*"` rendered inside the `global` section, so any snippet whose name starts with `global-settings-` is emitted there in alphabetical order. Add this under `spec.templateSnippets`:
+
+```yaml
+global-settings-500-tuning:
+  template: |
+    tune.bufsize 262144
+```
+
+Its `tune.bufsize 262144` line lands in `global` right after the built-in `tune.ssl.default-dh-param 2048` — `global-settings-400-ssl` sorts before your `-500-tuning`.
+
+</details>
+
 </div>
 
 ## Try it: emit a header per map entry
@@ -278,11 +296,18 @@ See the [Scriggo template guide](https://haproxy-haptic.org/controller/latest/te
 
 #### sanitize_regex (function)
 
-Built-in function that escapes regex metacharacters so a user-supplied pattern can be safely embedded in a `map_reg()` lookup:
+Built-in function that escapes regex metacharacters so a user-supplied literal (a host or path containing `.`, `+`, …) can be safely embedded in a `map_reg()` lookup. Edit the value and watch each metacharacter pick up a backslash:
 
-```scriggo
-{{ sanitize_regex("^/api/v[0-9]+$") }}
+<div class="pg-embed" markdown data-scriggo data-title="sanitize_regex escapes a literal for map_reg" data-height="320">
+
+```go
+{# sanitize_regex(s) escapes every regex metacharacter in s (regexp.QuoteMeta),
+   so the string matches literally inside a map_reg() lookup. Edit it. #}
+{%- var literal = "/api.v1/users" -%}
+{{ sanitize_regex(literal) }} api_backend
 ```
+
+</div>
 
 ### Utility Macros (`util-macros`)
 

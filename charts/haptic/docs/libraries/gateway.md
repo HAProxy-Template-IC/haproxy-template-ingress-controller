@@ -20,7 +20,17 @@ This library is **enabled by default**.
 
 Watch an HTTPRoute compile down to HAProxy config live:
 
-<div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs" data-title="Gateway API → HAProxy config" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Gateway API → HAProxy config" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **Resources** panel, add `- www.example.com` under the `api` HTTPRoute's `spec.hostnames`, then open the **maps** tab and watch `host.map` gain a second entry.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+`host.map`'s provenance comment goes from `# HTTPRoute: platform/api (1 hosts)` to `(2 hosts)`, and a second `www.example.com…` line appears next to the `api.example.com…` one — the gateway library writes one entry per effective hostname. It derives them from `spec.hostnames` in `map-host-500-gateway` (`charts/haptic/charts/gateway/40-maps-host.yaml:437`), emitting one `<hostKey> <hostKey>` line per host (line 205). Each key carries a `:<port>` suffix because the demo Gateway's HTTP listener is a catch-all with no hostname, which scopes its routes to that Gateway's own bind port.
+
+</details>
+
 </div>
 
 ## Configuration
@@ -204,6 +214,21 @@ spec:
           port: 8080
 ```
 
+The path type decides which map file HAProxy consults — flip it live:
+
+<div class="pg-embed" markdown data-scenario="gateway" data-tab="maps" data-controls="tabs,resources" data-title="Path type → map file" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **Resources** panel, change the `api` HTTPRoute's `path.type` from `PathPrefix` to `Exact`, then watch the entry move between map files in the **maps** tab.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+With `PathPrefix`, the route's entry (`api.example.com…/ GW_ROUTE_ID:http:platform_api_0`) sits in `path-prefix.map`. Switch to `Exact` and the same entry moves to `path-exact.map`, leaving `path-prefix.map` empty. Each path type is filled by its own snippet — `map-path-exact-500-gateway` and `map-path-prefix-500-gateway` (`charts/haptic/charts/gateway/41-maps-path.yaml:166` and `:182`) — and a route's entry only lands in the map whose `pathType` matches (`41-maps-path.yaml:22`).
+
+</details>
+
+</div>
+
 ### spec.rules[].matches - Method, Header and Query Matching
 
 | Field | Status | Notes |
@@ -353,6 +378,21 @@ spec:
         - name: user-generic-svc
           port: 8080
 ```
+
+Add a matcher to the demo route and watch the frontend gain a condition:
+
+<div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Method / header / query matchers" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **Resources** panel, add `method: GET` to the `api` HTTPRoute's match (as a sibling of its `path`), then find the matcher line in the `haproxy.cfg` tab.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+Under `# Advanced route matching`, the rule's provenance comment changes from `- path-only` to `- method GET`, and its `http-request set-var(txn.gw_rule_id) …` guard gains a `{ method GET }` condition. `frontend-matchers-advanced-500-gateway` emits that condition (`charts/haptic/charts/gateway/60-frontend.yaml:313`) and the comment (`:394`). Header and query matchers build the same guard: a `headers:` entry adds `{ req.hdr(<name>) "<value>" }` (`:324`) and a `queryParams:` entry adds `{ urlp(<name>) "<value>" }` (`:339`).
+
+</details>
+
+</div>
 
 ### spec.rules[].filters
 
@@ -650,6 +690,21 @@ spec:
         - name: backend-b
           port: 80
 ```
+
+Split the demo route's traffic and inspect the generated weight map:
+
+<div class="pg-embed" markdown data-scenario="gateway" data-tab="maps" data-controls="tabs,resources" data-title="Weighted traffic split → map" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **Resources** panel, give the `api` HTTPRoute a second backend: add `weight: 90` to its existing `api` ref and append `- {name: api-canary, port: 80, weight: 10}`, then open `weighted-multi-backend.map` in the **maps** tab.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+`weighted-multi-backend.map` fills with 100 entries keyed `<0-99>:platform_api_0` — indexes 0–89 map to `gtw_platform_api_api_80` and 90–99 to `gtw_platform_api_api-canary_80`, the 90/10 split expanded one map entry per weight unit. A rule only produces these entries once it has more than one `backendRef` (`charts/haptic/charts/gateway/42-maps-weighted.yaml:16`); the per-unit expansion and emission are at `:25` and `:40`. A new `backend gtw_platform_api_api-canary_80` block also appears in the `haproxy.cfg` tab (empty of servers until an `api-canary` Service exists).
+
+</details>
+
+</div>
 
 ### Advanced Features
 

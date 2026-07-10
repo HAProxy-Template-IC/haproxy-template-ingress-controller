@@ -16,7 +16,17 @@ This library is enabled by default and works in conjunction with resource librar
 
 Explore the decoded certificates the SSL library assembles into the crt-list, live:
 
-<div class="pg-embed" markdown data-scenario="all" data-tab="certs" data-controls="tabs" data-title="SSL library → decoded certificates" data-height="440">
+<div class="pg-embed" markdown data-scenario="all" data-tab="certs" data-controls="tabs,resources" data-title="SSL library → decoded certificates" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **Resources** panel, give the `shop` Ingress the annotation `haproxy.org/ssl-passthrough: "true"` (add an `annotations:` block under its `metadata:`), then open the **haproxy.cfg** tab and watch a new `frontend ssl-tcp` appear alongside a `backend ssl-passthrough-storefront-shop`.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+The annotation registers `shop.example.com` as an SSL-passthrough backend, so the shared `sslPassthroughBackends` list becomes non-empty. That flips `gf["bindHTTPSDefault"]` on (`features-140-ssl-passthrough-binds`), which lets `frontends-500-ssl-tcp` emit a `mode tcp` frontend bound to the HTTPS port. That frontend reads the SNI without decrypting and routes it with `use_backend ssl-passthrough-storefront-shop if { req_ssl_sni -m str shop.example.com }`; the matching `backend ssl-passthrough-storefront-shop` (also `mode tcp`) forwards the still-encrypted stream straight to the shop pods. The **certs** tab is unchanged — passthrough never terminates TLS, so no certificate is loaded for it.
+
+</details>
+
 </div>
 
 ## Configuration

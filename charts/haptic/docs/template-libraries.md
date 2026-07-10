@@ -13,7 +13,17 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 
 See the full library stack compose into one HAProxy config live:
 
-<div class="pg-embed" markdown data-scenario="all" data-tab="haproxy.cfg" data-controls="tabs" data-title="Full library stack → HAProxy config" data-height="440">
+<div class="pg-embed" markdown data-scenario="all" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Full library stack → HAProxy config" data-height="440">
+
+<p class="pg-task" markdown>**Try it:** In the **Resources** panel, change the `blog` Ingress's host from `blog.example.com` to `news.example.com`, then open the `maps` tab and watch the `host.map` entry follow.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+The Ingress library's `map-host-500-ingress` snippet emits one `host host` line per Ingress rule host, so `host.map` grows a `blog.example.com blog.example.com` entry for the `blog` Ingress. Rename the host and that line becomes `news.example.com news.example.com` — the whole stack re-renders from the edited resource, and only this library owns the host-to-group mapping.
+
+</details>
+
 </div>
 
 ## Available Libraries
