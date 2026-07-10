@@ -229,6 +229,8 @@ decl["templateSnippets"] = (*[]string)(nil)           // Not &[]string{}
 
 ### Typed Watched Resources
 
+**Typed access is the preferred idiom for user templates and documentation examples** — a live cluster always serves schemas (the controller fetches them from the apiserver), so `svc.metadata.name` / `ingress.spec.rules` just work and read far better than `dig(...)`. `dig()` is the fallback for the two places a schema is absent or the shape is deliberately open: **chart libraries** (RULE #1 — resource-agnostic code that must not assume any resource's shape) and polymorphic `any` boundaries. Don't let the chart's necessary `dig()` usage become the default reflex for user-facing templates and examples. See root `CLAUDE.md` → "Interactive playground examples" for the doc-authoring rule.
+
 In addition to `resources` (the untyped store map above), the engine declares **one typed top-level global per watched resource** when a schema is loaded. The declaration is built by `pkg/k8s/typegen` from each resource's OpenAPI v3 schema and exposed as `*[]*resources.<name>.T` — a nil pointer whose static type carries the generated struct.
 
 The store-wrapper return types are also typed when a schema is loaded: `resources.<name>.List()` returns `[]*resources.<name>.T`, `resources.<name>.Fetch(...)` returns `[]*resources.<name>.T`, and `resources.<name>.GetSingle(...)` returns `*resources.<name>.T` (nil if not found). Both surfaces share the same typed pointer — the top-level global and the store wrapper are interchangeable at the call site. Without a schema (e.g. `controller validate` without `--schema-dir`), both fall back to `[]any` / `map[string]any`.

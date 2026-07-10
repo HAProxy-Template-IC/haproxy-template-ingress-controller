@@ -64,6 +64,8 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	./scripts/check-migration-coverage.sh
 	@echo "Checking migrating.md generated tables are up-to-date..."
 	./scripts/gen-migration-docs.sh --check
+	@echo "Checking playground/facade highlight grammar is in sync..."
+	node scripts/check-highlight-grammar.mjs
 	@echo "Linting YAML files..."
 	yamllint -c .yamllint.yml .
 	@echo "Linting JSON files..."

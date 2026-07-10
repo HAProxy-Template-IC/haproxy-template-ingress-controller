@@ -18,7 +18,7 @@ See the Ingress preset render a full HAProxy config live:
 
 <div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → HAProxy config" data-height="440">
 
-<p class="pg-task" markdown>**Try it:** In the **Resources** panel, add a second host to the `shop` Ingress — copy its existing rule and change the host to `www.shop.example.com`. Then open the **maps** tab and watch `www.shop.example.com` join `host.map` and `path-prefix.map`, both routing to the existing `storefront_shop_svc_shop_http` backend.</p>
+<p class="pg-task" markdown>In the **Resources** panel, add a second host to the `shop` Ingress — copy its existing rule and change the host to `www.shop.example.com`. Then open the **maps** tab and watch `www.shop.example.com` join `host.map` and `path-prefix.map`, both routing to the existing `storefront_shop_svc_shop_http` backend.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>

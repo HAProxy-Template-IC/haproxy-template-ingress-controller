@@ -18,7 +18,7 @@ Explore the decoded certificates the SSL library assembles into the crt-list, li
 
 <div class="pg-embed" markdown data-scenario="all" data-tab="certs" data-controls="tabs,resources" data-title="SSL library → decoded certificates" data-height="440">
 
-<p class="pg-task" markdown>**Try it:** In the **Resources** panel, give the `shop` Ingress the annotation `haproxy.org/ssl-passthrough: "true"` (add an `annotations:` block under its `metadata:`), then open the **haproxy.cfg** tab and watch a new `frontend ssl-tcp` appear alongside a `backend ssl-passthrough-storefront-shop`.</p>
+<p class="pg-task" markdown>In the **Resources** panel, give the `shop` Ingress the annotation `haproxy.org/ssl-passthrough: "true"` (add an `annotations:` block under its `metadata:`), then open the **haproxy.cfg** tab and watch a new `frontend ssl-tcp` appear alongside a `backend ssl-passthrough-storefront-shop`.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>

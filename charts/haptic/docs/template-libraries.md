@@ -15,7 +15,7 @@ See the full library stack compose into one HAProxy config live:
 
 <div class="pg-embed" markdown data-scenario="all" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Full library stack → HAProxy config" data-height="440">
 
-<p class="pg-task" markdown>**Try it:** In the **Resources** panel, change the `blog` Ingress's host from `blog.example.com` to `news.example.com`, then open the `maps` tab and watch the `host.map` entry follow.</p>
+<p class="pg-task" markdown>In the **Resources** panel, change the `blog` Ingress's host from `blog.example.com` to `news.example.com`, then open the `maps` tab and watch the `host.map` entry follow.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>

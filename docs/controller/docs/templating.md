@@ -11,64 +11,6 @@ Templates are rendered automatically when any watched resource changes, during i
 
 Hit **Run live** above to render the bundled Ingress example entirely in your browser. Edit the template on the left and watch `haproxy.cfg` update on the right — then switch tabs to see the `maps`, `files`, and `status` it also produces. Click any output line to jump to the template line that produced it, or **Open in full playground** to bring your changes into the full editor.
 
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11" data-title="Your turn: add an HSTS header" data-difficulty="1">
-
-Edit the `frontend web` section so every response carries a `Strict-Transport-Security` header, then hit **Run live** and watch line&nbsp;11 of the output. (Hint: HAProxy's `http-response set-header`.)
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: hsts-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend web
-        bind *:80
-        # TODO(you): add a line so every response carries an HSTS header
-        default_backend app
-      backend app
-        server s1 127.0.0.1:8080 check
-```
-
-<details class="pg-solution" markdown>
-<summary>Peek at the solution</summary>
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: hsts-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend web
-        bind *:80
-        http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        default_backend app
-      backend app
-        server s1 127.0.0.1:8080 check
-```
-
-</details>
-</div>
-
 ## What You Can Template
 
 | Template Type | Use When |
@@ -166,6 +108,66 @@ items:
 
 !!! important
     Whenever your HAProxy config references a map file, error file, certificate, or crt-list, use `pathResolver.GetPath(filename, type)` instead of a hard-coded path. The controller deploys these files to a configurable directory (set in `spec.dataplane.mapsDir`, `sslCertsDir`, `generalStorageDir`) and `pathResolver` knows where they live, so the path stays correct even if you reconfigure those directories.
+
+Now that you've seen a config render, try editing one. This template has no loops — just a static `frontend` — so you can focus on the edit-and-run cycle.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="11" data-title="Your turn: add an HSTS header" data-difficulty="1">
+
+<p class="pg-task" markdown>Add a line to the `frontend web` section so every response carries a `Strict-Transport-Security` header, then hit **Run live** and watch line&nbsp;11 of the output. (Hint: HAProxy's `http-response set-header`.)</p>
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: hsts-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend web
+        bind *:80
+        # TODO(you): add a line so every response carries an HSTS header
+        default_backend app
+      backend app
+        server s1 127.0.0.1:8080 check
+```
+
+<details class="pg-solution" markdown>
+<summary>Peek at the solution</summary>
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: hsts-demo
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend web
+        bind *:80
+        http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        default_backend app
+      backend app
+        server s1 127.0.0.1:8080 check
+```
+
+</details>
+</div>
 
 ### Map Files
 
@@ -540,6 +542,8 @@ name. Edit the template to fix the sort — or peek at the solution.
 
 <div class="pg-embed" markdown data-scriggo data-title="Challenge: sort by two keys" data-difficulty="2" data-height="380">
 
+<p class="pg-task" markdown>List the backends heaviest-first, breaking ties by name. Fix the `sorted` line with `sort_by`, then hit **Run live**.</p>
+
 ```go
 {# Challenge: list the backends heaviest-first, ties broken by name.
    sort_by(items, criteria) sorts a []any by criteria like "$.field:desc". #}
@@ -582,7 +586,7 @@ once.
 
 <div class="pg-embed" markdown data-scriggo data-title="Challenge: emit each backend only once" data-difficulty="3" data-height="380">
 
-Several routes share a service; emit one `backend` line per unique service instead of one per route.
+<p class="pg-task" markdown>Several routes share a service; emit one `backend` line per unique service instead of one per route.</p>
 
 ```go
 {%- var routes = []any{

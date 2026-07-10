@@ -12,7 +12,7 @@ Watched resources arrive as loosely-typed data, so a field you expect may be abs
 
 <div class="pg-embed" markdown data-scriggo data-title="Challenge: default a missing port to 80" data-difficulty="2" data-height="380">
 
-One service omits `spec.port`; give every `server` line a port, defaulting to 80 when the field is absent.
+<p class="pg-task" markdown>One service omits `spec.port`; give every `server` line a port, defaulting to 80 when the field is absent.</p>
 
 ```go
 {%- var services = []any{

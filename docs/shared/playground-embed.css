@@ -23,7 +23,7 @@
   font-size: 0.8rem;
 }
 .pg-embed-title { font-weight: 700; color: var(--md-default-fg-color, #111); }
-.pg-embed-diff { color: var(--md-accent-fg-color, #e0642e); letter-spacing: 0.05em; font-size: 0.72rem; }
+.pg-embed-diff { color: var(--md-accent-fg-color, #e0642e); letter-spacing: 0.05em; font-size: 0.72rem; cursor: help; }
 .pg-embed-spacer { flex: 1; }
 
 /* Run / pop-out buttons */
@@ -43,9 +43,18 @@
 }
 .pg-btn:hover { filter: brightness(1.08); }
 .pg-btn[hidden] { display: none; }  /* beat .pg-btn's display:inline-flex so hiding works */
+/* "Load solution" is a peer action to "Run live" (both load a config and run it),
+ * so it's a clearly-active secondary button — tinted + bordered, filling on hover —
+ * not a faint ghost that reads as disabled. */
 .pg-btn.pg-btn-ghost {
-  background: transparent;
+  background: color-mix(in srgb, var(--md-primary-fg-color, #3f6ec6) 12%, transparent);
   color: var(--md-primary-fg-color, #3f6ec6);
+  border-color: var(--md-primary-fg-color, #3f6ec6);
+}
+.pg-btn.pg-btn-ghost:hover {
+  background: var(--md-primary-fg-color, #3f6ec6);
+  color: var(--md-primary-bg-color, #fff);
+  filter: none;
 }
 .pg-btn-play { font-size: 0.7rem; }
 
@@ -55,24 +64,47 @@
 .pg-embed-code > pre { margin: 0 !important; border-radius: 0 !important; }
 
 /* HAProxy + Scriggo highlighting re-applied to the config's template block by
- * playground-embed.js. Colours map to mkdocs-material's code tokens (theme-aware). */
-.pg-embed-code .pg-cf-sec { color: var(--md-code-hl-keyword-color); font-weight: 700; }
-.pg-embed-code .pg-cf-kw  { color: var(--md-code-hl-keyword-color); }
-.pg-embed-code .pg-cf-fn  { color: var(--md-code-hl-function-color); }
-.pg-embed-code .pg-cf-num { color: var(--md-code-hl-number-color); }
-.pg-embed-code .pg-cf-str { color: var(--md-code-hl-string-color); }
-.pg-embed-code .pg-cf-cmt { color: var(--md-code-hl-comment-color); font-style: italic; }
-.pg-embed-code .pg-cf-key { color: var(--md-code-hl-name-color, var(--md-code-hl-keyword-color)); }
-.pg-embed-code .pg-cf-tpl { color: var(--md-code-hl-special-color, var(--md-code-hl-constant-color, var(--md-code-hl-keyword-color))); font-weight: 600; }
+ * playground-embed.js. Colours match the LIVE editor's palette (index.html
+ * --t-*) — a calm blue keyword, not mkdocs-material's loud pink — so the shown
+ * config looks the same before and after Run. Light values first; the dark
+ * (slate) scheme overrides with the editor's exact terminal palette. */
+.pg-embed-code .pg-cf-sec { color: #0550ae; font-weight: 700; }
+.pg-embed-code .pg-cf-kw  { color: #0550ae; }
+.pg-embed-code .pg-cf-fn  { color: #953800; }
+.pg-embed-code .pg-cf-num { color: #953800; }
+.pg-embed-code .pg-cf-str { color: #0a7c42; }
+.pg-embed-code .pg-cf-cmt { color: #6e7781; font-style: italic; }
+.pg-embed-code .pg-cf-key { color: #0e7490; }
+.pg-embed-code .pg-cf-tpl { color: #8250df; font-weight: 600; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-sec { color: #6cb6ff; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-kw  { color: #6cb6ff; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-fn  { color: #f69d50; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-num { color: #f0a868; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-str { color: #8ddb8c; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-cmt { color: #7a879a; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-key { color: #56d4dd; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-tpl { color: #d2a8ff; }
 
-/* Task / challenge prose */
+/* Task / challenge callout — one standard style whether it introduces a
+ * challenge inside an embed or an "explore this" prompt after a preset embed.
+ * Accent left-bar + tint + an uppercase "🎯 Try it" lead so it reads as an
+ * invitation, not plain prose. Horizontal padding matches the embed header. */
 .pg-task {
-  margin: 0; padding: 0.6rem 0.8rem;
-  background: color-mix(in srgb, var(--md-primary-fg-color, #3f6ec6) 8%, transparent);
+  margin: 0; padding: 0.6rem 0.7rem 0.6rem 0.75rem;
+  background: color-mix(in srgb, var(--md-accent-fg-color, #e0642e) 8%, var(--md-default-bg-color, #fff));
+  border-left: 3px solid var(--md-accent-fg-color, #e0642e);
   border-bottom: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
-  font-size: 0.84rem;
+  font-size: 0.82rem; line-height: 1.55;
 }
-.pg-task::before { content: "🎯 "; }
+.pg-task::before {
+  content: "🎯 Try it";
+  display: inline-block; margin-right: 0.45rem;
+  font-weight: 700; font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--md-accent-fg-color, #e0642e);
+}
+/* A pg-task placed as the first child of an embed (a challenge intro) has no
+ * header divider above it, so round the top to match the embed corners. */
+.pg-embed > .pg-task:first-child { border-radius: 8px 8px 0 0; }
 
 /* Collapsed hint / solution (also works if the author uses a raw <details>) */
 .pg-embed details.pg-hint,
@@ -86,6 +118,14 @@
 .pg-embed details > summary::before { content: "▸ "; }
 .pg-embed details[open] > summary::before { content: "▾ "; }
 .pg-embed details.pg-hint > summary::after { content: " (hint)"; font-weight: 400; opacity: 0.7; }
+
+/* Placeholder shown in a preset embed's facade (its config is fetched on Run). */
+.pg-embed-placeholder {
+  padding: 1.1rem 0.9rem; text-align: center; font-size: 0.82rem;
+  color: var(--md-default-fg-color--light, #5a5a5a);
+  border-top: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+}
+.pg-ph-play { color: var(--md-primary-fg-color, #3f6ec6); font-weight: 700; margin-right: 0.15rem; }
 
 /* The live iframe (revealed on Run) */
 .pg-frame {
