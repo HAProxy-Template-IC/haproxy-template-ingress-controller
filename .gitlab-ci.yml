@@ -115,8 +115,6 @@ variables:
   rules:
     - changes:
         - docs/**/*
-        - charts/**/docs/**/*
-        - charts/**/mkdocs.yml
         - .gitlab-ci.yml
 
 # Jobs that only run on MRs (skip main branch and tags)
@@ -753,7 +751,7 @@ build-playground-wasm:
         # produced zero-job MR pipelines. The build is a cache-hit no-op when
         # the SPOA image inputs are unchanged, so the broad trigger is cheap.
         - scripts/**/*
-        - docs/controller/docs/operations/spoa-hub.md
+        - docs/site/docs/operations/spoa-hub.md
         - .gitlab-ci.yml
         # Go-source paths. `test-e2e` triggers on these (its own
         # `changes:` lists **/*.go, go.mod, go.sum) and `needs:`
@@ -2660,10 +2658,9 @@ release-chart:
       # Sign the OCI artifact using digest (cosign doesn't support oci:// prefix)
       cosign sign --yes ${CI_REGISTRY}/haproxy-haptic/haptic/charts/haptic@${CHART_DIGEST}
 
-# Trigger the versioned documentation build. One trigger covers both doc
-# sites: the downstream deploy script builds the controller AND helm-chart
-# docs from a single DOC_VERSION. Gated on both release jobs so docs never
-# advertise a version whose artifacts failed to publish.
+# Trigger the versioned documentation build. The downstream deploy script builds
+# the single merged /docs/ site from DOC_VERSION. Gated on both release jobs so
+# docs never advertise a version whose artifacts failed to publish.
 trigger-docs-release:
   stage: deploy
   needs:
@@ -2701,8 +2698,6 @@ pages-preview:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &pages-preview-changes
         - docs/**/*
-        - charts/**/docs/**/*
-        - charts/**/mkdocs.yml
   script:
     - |
       # Clone pages repo to get deployment script
@@ -2718,9 +2713,9 @@ pages-preview:
       unzip -q pages-artifact.zip
       rm pages-artifact.zip
     - |
-      # Set up versions backup for deploy script
+      # Set up versions backup for deploy script (single merged /docs/ site)
       mkdir -p /tmp/versions-backup
-      for prefix in controller helm-chart; do
+      for prefix in docs; do
         if [ -f "public/${prefix}/versions.json" ]; then
           cp "public/${prefix}/versions.json" "/tmp/versions-backup/${prefix}-versions.json"
         fi

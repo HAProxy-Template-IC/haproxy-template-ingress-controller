@@ -46,7 +46,7 @@ stringData:
 - [`pkg/core/config`](../../core/config/) — `ParseSecretData` / `LoadCredentials` (the functions this adapter wraps), and `ValidateCredentials` for the startup-time structural check
 - [`pkg/controller/resourceloader`](../resourceloader/) — shared event-loop base
 - [`pkg/controller/configloader`](../configloader/) — sibling loader built on the same pattern
-- `docs/controller/docs/operations/security.md` — operator-facing credential rotation + secret-management guidance
+- `docs/site/docs/operations/security.md` — operator-facing credential rotation + secret-management guidance
 
 ## License
 

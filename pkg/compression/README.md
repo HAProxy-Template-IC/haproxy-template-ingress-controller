@@ -29,7 +29,7 @@ kubectl get haproxycfg <name> -o jsonpath='{.spec.content}' | base64 -d | zstd -
 ## See Also
 
 - [`pkg/k8s/configpublisher`](../k8s/configpublisher/) — primary caller; threshold-driven compression
-- `docs/controller/docs/crd-reference.md` — operator-facing description of the compression knob
+- `docs/site/docs/crd-reference.md` — operator-facing description of the compression knob
 
 ## License
 

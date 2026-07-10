@@ -15,7 +15,7 @@ The SPOA hub sidecar today gets its `config.toml` from a Helm-rendered ConfigMap
 
 Two related pieces are already in place:
 
-- `pkg/controller/pluggablevalidator` (MR !895/!896) dispatches each rendered file to validator sidecars over a Unix socket and surfaces line/col diagnostics in the admission response. The chart wires a `haproxy-spoa-hub --validate-socket` sidecar in the controller pod for this; `docs/controller/docs/operations/pluggable-validators.md` documents the contract and uses `/etc/haproxy-spoa-hub/*.toml` as the reference glob.
+- `pkg/controller/pluggablevalidator` (MR !895/!896) dispatches each rendered file to validator sidecars over a Unix socket and surfaces line/col diagnostics in the admission response. The chart wires a `haproxy-spoa-hub --validate-socket` sidecar in the controller pod for this; `docs/site/docs/operations/pluggable-validators.md` documents the contract and uses `/etc/haproxy-spoa-hub/*.toml` as the reference glob.
 - The hub binary supports `--validate-socket` mode (used by the validator sidecar). Its runtime mode currently expects a static config path passed via `--config`.
 
 What's missing is the runtime delivery side: how the rendered hub TOML reaches the runtime sidecar and how the hub picks it up without restarting.
@@ -53,7 +53,7 @@ This rework needs four MRs landing in this order. Each unlocks the next:
 1. **MR1 — hub file-watch trigger + reload metrics** (in `haproxy-spoa-hub`): add file-watch on the `--config` argument that calls into the existing SIGHUP reload path. Reuse the in-place `arc_swap` swap and `bail!`-on-failure semantics; do not change them. Add `spoa_hub_config_reload_success_total` / `spoa_hub_config_reload_failure_total` counters and a `spoa_hub_config_reload_age_seconds` gauge. Unit test: feed a valid file then a broken one, assert the hub still serves the valid rules and the failure counter incremented.
 2. **MR2 — chart wiring**: drop the rendered config block from `templates/spoa-hub-configmap.yaml` (replace with a placeholder), add a shared `emptyDir` mounted into both the haproxy and spoa-hub containers, point the spoa-hub container's `--config` at the shared mount path. Do *not* yet emit any HAPTIC-rendered config — the hub starts on the placeholder and stays there until MR3.
 3. **MR3 — controller-side rendering**: a chart-library snippet that renders the full hub `config.toml` and registers it via `fileRegistry.Register("file", "spoa-hub-config.toml", rendered)` (flat filename). Smoke-tested with no per-Ingress annotations (chart values only), then extended to inline per-Ingress modsecurity-snippet.
-4. **MR4 — admission validation + e2e test**: add the `spec.validators[]` entry pointing at the existing `--validate-socket` sidecar with the glob `general/spoa-hub-config.toml`; update `docs/controller/docs/operations/pluggable-validators.md` to use the actual flat path in its example (replacing the speculative `/etc/haproxy-spoa-hub/*.toml`); restore the e2e test from the closed !898 branch with the assertions adapted to the new file path.
+4. **MR4 — admission validation + e2e test**: add the `spec.validators[]` entry pointing at the existing `--validate-socket` sidecar with the glob `general/spoa-hub-config.toml`; update `docs/site/docs/operations/pluggable-validators.md` to use the actual flat path in its example (replacing the speculative `/etc/haproxy-spoa-hub/*.toml`); restore the e2e test from the closed !898 branch with the assertions adapted to the new file path.
 
 ## Do not re-suggest
 
@@ -65,6 +65,6 @@ If the hub binary turns out not to support file-watch + graceful-reload, *don't*
 
 ## Related
 
-- `docs/controller/docs/operations/pluggable-validators.md` — documents the validator wire-up that will gate this ADR's runtime config push. The reference glob `/etc/haproxy-spoa-hub/*.toml` already implies the file path this ADR commits to.
+- `docs/site/docs/operations/pluggable-validators.md` — documents the validator wire-up that will gate this ADR's runtime config push. The reference glob `/etc/haproxy-spoa-hub/*.toml` already implies the file path this ADR commits to.
 - `docs/development/validator-protocol.md` — the wire protocol the validator sidecar speaks. No changes needed.
 - ADR-0001 — establishes that synchronous direct calls beat event hops when there's only one publisher and one subscriber. This ADR's "render → push → file-watch → reload" loop is asynchronous by necessity (the hub reload is local to the hub process, not HAPTIC); ADR-0001 doesn't apply.

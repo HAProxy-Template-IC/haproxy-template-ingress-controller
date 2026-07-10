@@ -3,7 +3,7 @@
 Development context for Kubernetes resource watching and indexing.
 
 **API Documentation**: See `pkg/k8s/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (design documentation index)
+**Architecture**: See `/docs/site/docs/development/design.md` (design documentation index)
 
 ## When to Work Here
 
@@ -719,7 +719,7 @@ go func() {
 ## Resources
 
 - API documentation: `pkg/k8s/README.md`
-- Architecture: `/docs/controller/docs/development/design.md`
+- Architecture: `/docs/site/docs/development/design.md`
 - Leader election: `pkg/k8s/leaderelection/CLAUDE.md`
 - client-go documentation: <https://github.com/kubernetes/client-go>
 - JSONPath syntax: <https://kubernetes.io/docs/reference/kubectl/jsonpath/>

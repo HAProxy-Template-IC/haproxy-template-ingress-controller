@@ -172,4 +172,4 @@ The component depends on the small `MetricsRecorder` interface, not the heavy `*
 - Pure webhook library: `pkg/webhook/CLAUDE.md`
 - DryRunValidator: `pkg/controller/dryrunvalidator/CLAUDE.md`
 - Cert lifecycle: the chart-managed cert-manager Secret/`ValidatingWebhookConfiguration`, mounted and pointed at via `Config.CertDir`, then served + hot-reloaded by `pkg/webhook`
-- Architecture: `/docs/controller/docs/development/design.md`
+- Architecture: `/docs/site/docs/development/design.md`

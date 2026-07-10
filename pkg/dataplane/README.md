@@ -156,7 +156,7 @@ Integration tests that need a real HAProxy instance live under `tests/integratio
 - `pkg/dataplane/comparator/sections/` — section factories + the JSON-marshal trick for converting unified `dataplaneapi.*` models into per-version `v3{0,1,2,3}.*` types
 - `pkg/controller/deployer` — event adapter that wires `Client.Sync` into the controller's reconciliation pipeline
 - `pkg/controller/discovery` — probes HAProxy pods + builds the `*Endpoint` slice that gets handed to `Sync`
-- `docs/controller/docs/supported-configuration.md` — user-facing view of which HAProxy sections / fields are synced
+- `docs/site/docs/supported-configuration.md` — user-facing view of which HAProxy sections / fields are synced
 
 ## License
 

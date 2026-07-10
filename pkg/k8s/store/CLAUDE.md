@@ -3,7 +3,7 @@
 Development context for Kubernetes resource storage implementations.
 
 **API Documentation**: See `pkg/k8s/store/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (design documentation index)
+**Architecture**: See `/docs/site/docs/development/design.md` (design documentation index)
 
 ## When to Work Here
 
@@ -705,5 +705,5 @@ go test -race -tags=integration ./tests/...
 - API documentation: `pkg/k8s/store/README.md`
 - Watcher integration: `pkg/k8s/watcher/README.md`
 - Indexer usage: `pkg/k8s/indexer/README.md`
-- User guide: `docs/controller/docs/watching-resources.md`
+- User guide: `docs/site/docs/watching-resources.md`
 - Store interface: `pkg/k8s/types/types.go` (search for `type Store interface`)

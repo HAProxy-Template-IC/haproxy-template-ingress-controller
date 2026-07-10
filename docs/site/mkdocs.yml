@@ -1,0 +1,134 @@
+site_name: "HAPTIC - HAProxy Ingress Controller"
+site_url: https://haproxy-haptic.org/docs/
+site_description: "Documentation for HAPTIC, a template-driven HAProxy ingress controller for Kubernetes with Ingress and Gateway API support."
+
+repo_name: haproxy-haptic/haptic
+repo_url: https://gitlab.com/haproxy-haptic/haptic
+
+docs_dir: docs
+
+theme:
+  name: material
+  logo: assets/logo-icon.svg
+  favicon: assets/logo-icon.svg
+  icon:
+    alternate: material/book-open-page-variant
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: light-blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: light-blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+  - /shared/playground-embed.css
+
+extra_javascript:
+  - javascripts/stable-version.js
+  - /shared/playground-embed.js
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Migrating: migrating.md
+  - Using HAPTIC:
+    - Templating: templating.md
+    - Watching Resources: watching-resources.md
+    - CRD Reference: crd-reference.md
+    - Validation Tests: validation-tests.md
+    - Supported Configuration: supported-configuration.md
+  - Deploying with Helm:
+    - Overview: deploying-with-helm.md
+    - Configuration: configuration.md
+    - IngressClass: ingress-class.md
+    - GatewayClass: gateway-class.md
+    - SSL Certificates: ssl-certificates.md
+    - Annotations: annotations.md
+    - HAProxy Deployment: haproxy-deployment.md
+    - Networking: operations/networking.md
+    - Chart Values Reference: reference.md
+    - Troubleshooting the Install: operations/troubleshooting.md
+  - Template Libraries:
+    - Overview: template-libraries.md
+    - Base: libraries/base.md
+    - SSL: libraries/ssl.md
+    - Ingress: libraries/ingress.md
+    - Gateway API: libraries/gateway.md
+    - Annotation Compat (scaffold): libraries/ingress-annotations-compat.md
+    - HAProxy Annotations: libraries/haproxytech.md
+    - HAProxy Ingress: libraries/haproxy-ingress.md
+    - Nginx Ingress: libraries/nginx-ingress.md
+  - Operations:
+    - HAProxy Versions: operations/haproxy-versions.md
+    - SPOA Hub: operations/spoa-hub.md
+    - Pluggable Validators: operations/pluggable-validators.md
+    - High Availability: operations/high-availability.md
+    - Monitoring: operations/monitoring.md
+    - Security: operations/security.md
+    - SPIFFE/SPIRE mTLS: operations/spiffe-mtls.md
+    - Performance: operations/performance.md
+    - Debugging: operations/debugging.md
+    - Troubleshooting: troubleshooting.md
+  - Development:
+    - Design Overview: development/design.md
+    - Architecture:
+      - Overview: development/design/architecture-overview.md
+      - Package Structure: development/design/package-structure.md
+      - Sequence Diagrams: development/design/sequence-diagrams.md
+    - Components:
+      - Configuration: development/design/configuration.md
+      - Deployment: development/design/deployment.md
+      - Leader Election: development/design/leader-election.md
+      - Introspection: development/design/introspection.md
+    - CRD Validation: development/crd-validation-design.md
+    - Design Decisions: development/design/design-decisions.md
+    - Considerations: development/design/considerations.md
+    - Appendices: development/design/appendices.md
+    - Linting: development/linting.md
+    - Releasing: development/releasing.md
+    - Gateway API Upgrade Playbook: development/gateway-api-upgrade-playbook.md
+  - Changelog: changelog.md
+
+plugins:
+  - search

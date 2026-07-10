@@ -74,7 +74,7 @@ These are used to authenticate against the production HAProxy pods' Dataplane AP
 
 - [`pkg/controller/conversion`](../../controller/conversion/) — CRD → `Config` adapter used by the running controller
 - [`pkg/controller/configloader`](../../controller/configloader/) / [`credentialsloader`](../../controller/credentialsloader/) — event adapters that call into this package
-- `docs/controller/docs/crd-reference.md` — user-facing field reference
+- `docs/site/docs/crd-reference.md` — user-facing field reference
 
 ## License
 

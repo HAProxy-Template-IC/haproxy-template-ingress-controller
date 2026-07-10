@@ -38,14 +38,14 @@
   function withSlash(b) { return b.slice(-1) === '/' ? b : b + '/'; }
 
   // Which playground bundle an embed targets. A versioned docs page
-  // (/controller/<v>/…, /helm-chart/<v>/…) uses the matching /playground/<v>/ so
-  // the shown render matches that release's engine; anything else (the "latest"
-  // alias, the landing page) falls back to the dev shell. Override per-embed with
-  // data-base, or per-site with window.HAPTIC_PG_BASE.
+  // (/docs/<v>/…) uses the matching /playground/<v>/ so the shown render matches
+  // that release's engine; anything else (the "latest" alias, the landing page)
+  // falls back to the dev shell. Override per-embed with data-base, or per-site
+  // with window.HAPTIC_PG_BASE.
   function embedBase(el) {
     if (el.dataset.base) return withSlash(el.dataset.base);
     if (window.HAPTIC_PG_BASE) return withSlash(window.HAPTIC_PG_BASE);
-    var m = location.pathname.match(/\/(?:controller|helm-chart)\/([^/]+)\//);
+    var m = location.pathname.match(/\/docs\/([^/]+)\//);
     if (m && /^[0-9]/.test(m[1])) return '/playground/' + m[1] + '/';
     return '/playground/dev/';
   }

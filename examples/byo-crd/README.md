@@ -50,7 +50,7 @@ for a custom CRD: a CRD's structural schema can't declare `metadata` fields
 (`name`, `generation`, …), so typed dot-access to metadata isn't available, but
 `dig("metadata", "name")` works regardless. For the typed dot-field style on
 fields a schema *does* declare (`wa.Spec.Host`), and when to prefer it, see
-[Typed Resource Access](../../docs/controller/docs/templating.md#typed-resource-access).
+[Typed Resource Access](../../docs/site/docs/templating.md#typed-resource-access).
 
 ## Try it on a cluster
 

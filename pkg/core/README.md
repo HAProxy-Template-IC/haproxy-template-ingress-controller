@@ -62,7 +62,7 @@ Authoritative list lives in `pkg/core/config/defaults.go`. Commonly surprising o
 - `dataplane.driftPreventionInterval`: `60s`
 - `dataplane.deploymentTimeout`: `30s`
 - `dataplane.{mapsDir,sslCertsDir,generalStorageDir,configFile}`: the standard `/etc/haproxy/...` paths
-- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, `15s`, `10s`, `2s` (matches the kube-controller-manager / kube-scheduler defaults; the Helm chart leaves the timings alone but rewrites `leaseName` to the release fullname — see [High Availability](../../docs/controller/docs/operations/high-availability.md))
+- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, `15s`, `10s`, `2s` (matches the kube-controller-manager / kube-scheduler defaults; the Helm chart leaves the timings alone but rewrites `leaseName` to the release fullname — see [High Availability](../../docs/site/docs/operations/high-availability.md))
 - `controller.configPublishing.compressionThreshold`: `1048576` (1 MiB)
 - `templatingSettings.engine`: `scriggo`
 
@@ -100,7 +100,7 @@ All functions here are pure, so tests are straightforward table-driven cases —
 
 - [`pkg/controller/conversion`](../controller/conversion/) — converts `HAProxyTemplateConfig` CRD types into the `config.Config` this package consumes
 - [`pkg/controller/configloader`](../controller/configloader/) / [`credentialsloader`](../controller/credentialsloader/) — event adapters that watch the CRD / Secret and call into this package
-- `docs/controller/docs/crd-reference.md` — user-facing field reference
+- `docs/site/docs/crd-reference.md` — user-facing field reference
 
 ## License
 

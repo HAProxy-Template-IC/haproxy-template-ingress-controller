@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gen-migration-docs.sh — render the per-source annotation-support tables in
-# docs/controller/docs/migrating.md FROM the vendor libraries' migrationCoverage
+# docs/site/docs/migrating.md FROM the vendor libraries' migrationCoverage
 # declarations, so the migration guide can never drift from the template code
 # (whose reads are in turn pinned to the coverage by check-migration-coverage.sh).
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DOC=docs/controller/docs/migrating.md
+DOC=docs/site/docs/migrating.md
 CHARTS=charts/haptic/charts
 
 CHECK=0

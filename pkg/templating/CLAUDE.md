@@ -3,7 +3,7 @@
 Development context for the template engine library.
 
 **API Documentation**: See `pkg/templating/README.md`
-**Architecture**: See `/docs/controller/docs/development/design/design-decisions.md` (template engine selection)
+**Architecture**: See `/docs/site/docs/development/design/design-decisions.md` (template engine selection)
 
 ## Engine
 
@@ -235,7 +235,7 @@ In addition to `resources` (the untyped store map above), the engine declares **
 
 The store-wrapper return types are also typed when a schema is loaded: `resources.<name>.List()` returns `[]*resources.<name>.T`, `resources.<name>.Fetch(...)` returns `[]*resources.<name>.T`, and `resources.<name>.GetSingle(...)` returns `*resources.<name>.T` (nil if not found). Both surfaces share the same typed pointer — the top-level global and the store wrapper are interchangeable at the call site. Without a schema (e.g. `controller validate` without `--schema-dir`), both fall back to `[]any` / `map[string]any`.
 
-The `resources.<name>.T` form is a selector-chain-as-type expression: it resolves to the generated struct's static type wherever a type expression is expected (macro parameters, var declarations, type assertions, slice types, and type-switch case clauses). The case-clause form is the canonical pattern for chart code that dispatches across multiple Kinds at a polymorphic `any` boundary. See `docs/adr/0010-typed-watched-resources.md` for the design rationale and `docs/controller/docs/templating.md#typed-resource-access` for the chart-author-facing reference.
+The `resources.<name>.T` form is a selector-chain-as-type expression: it resolves to the generated struct's static type wherever a type expression is expected (macro parameters, var declarations, type assertions, slice types, and type-switch case clauses). The case-clause form is the canonical pattern for chart code that dispatches across multiple Kinds at a polymorphic `any` boundary. See `docs/adr/0010-typed-watched-resources.md` for the design rationale and `docs/site/docs/templating.md#typed-resource-access` for the chart-author-facing reference.
 
 #### Filter behaviour against typed shapes
 

@@ -69,7 +69,7 @@ The pure elector in `pkg/k8s/leaderelection` has no dependency on the event bus 
 - [`pkg/k8s/leaderelection`](../../k8s/leaderelection/) — the pure elector and its `Config` / `Callbacks` shapes
 - [`pkg/controller/leadership`](../leadership/) — gating utilities for leader-only components
 - [`pkg/controller/events`](../events/) — event type definitions
-- [`docs/controller/docs/operations/high-availability.md`](../../../docs/controller/docs/operations/high-availability.md) — operator-facing configuration reference
+- [`docs/site/docs/operations/high-availability.md`](../../../docs/site/docs/operations/high-availability.md) — operator-facing configuration reference
 
 ## License
 

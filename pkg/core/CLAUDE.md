@@ -3,7 +3,7 @@
 Development context for core shared functionality.
 
 **API Documentation**: See `pkg/core/README.md`
-**Architecture**: See `/docs/controller/docs/development/design/package-structure.md` (package organization)
+**Architecture**: See `/docs/site/docs/development/design/package-structure.md` (package organization)
 
 ## When to Work Here
 
@@ -612,6 +612,6 @@ if err := config.ValidateStructure(cfg); err != nil {
 ## Resources
 
 - API documentation: `pkg/core/README.md`
-- Configuration reference: `/docs/controller/docs/supported-configuration.md`
-- Architecture: `/docs/controller/docs/development/design.md`
+- Configuration reference: `/docs/site/docs/supported-configuration.md`
+- Architecture: `/docs/site/docs/development/design.md`
 - slog documentation: <https://pkg.go.dev/log/slog>

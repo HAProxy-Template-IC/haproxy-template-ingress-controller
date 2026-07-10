@@ -70,7 +70,7 @@ Registration happens once at `Start`:
 - [`pkg/controller/dryrunvalidator`](../dryrunvalidator/) — the `DryRunValidator` implementation this component calls into
 - [`pkg/controller/proposalvalidator`](../proposalvalidator/) — the speculative render+validate pipeline shared by `dryrunvalidator` (synchronous, this webhook path) and the background HTTP-content refresh in `pkg/controller/httpstore` (asynchronous)
 - The controller supplies the mounted Secret directory via `Config.CertDir`, which the pure server reads and hot-reloads; the Helm chart provisions and mounts the cert Secret
-- `docs/controller/docs/development/crd-validation-design.md` — why the webhook fails closed, lives in the controller pod, and runs the same render/validate code as the reconciler
+- `docs/site/docs/development/crd-validation-design.md` — why the webhook fails closed, lives in the controller pod, and runs the same render/validate code as the reconciler
 
 ## License
 

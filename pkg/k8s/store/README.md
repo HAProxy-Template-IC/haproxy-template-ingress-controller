@@ -2,7 +2,7 @@
 
 Two concrete implementations of `types.Store`: `MemoryStore` (holds full resources in memory) and `CachedStore` (holds index references and fetches on demand). Both are thread-safe and support composite-key indexing with prefix-scan lookups.
 
-For the user-facing framing (when to pick which, template-side `List`/`Fetch`/`GetSingle` semantics) see [`docs/controller/docs/watching-resources.md`](../../../docs/controller/docs/watching-resources.md). This README covers the Go API.
+For the user-facing framing (when to pick which, template-side `List`/`Fetch`/`GetSingle` semantics) see [`docs/site/docs/watching-resources.md`](../../../docs/site/docs/watching-resources.md). This README covers the Go API.
 
 ## Interface
 

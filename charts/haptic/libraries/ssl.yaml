@@ -751,7 +751,7 @@ templateSnippets:
 
           # Route to passthrough backends by SNI: wildcard *.host → `-m end .host` (single-label
           # subdomain only, not bare host), exact → `-m str`. See
-          # https://haproxy-haptic.org/helm-chart/latest/libraries/ssl/#ssl-passthrough
+          # https://haproxy-haptic.org/docs/latest/libraries/ssl/#ssl-passthrough
           {# Filter to Passthrough-mode entries only — the
              gateway-ssl-passthrough builder now also emits Terminate
              entries (consumed by frontends-600-gateway-tls-listener for

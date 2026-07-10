@@ -169,7 +169,7 @@ templateSnippets:
       http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ mapPath("weighted-multi-backend.map") }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       # BACKEND: direct routing
       http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
-      # owner resource id <ns>/<name>, keying per-resource feature maps (auth, coraza, …). See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#frontend-routing-logic
+      # owner resource id <ns>/<name>, keying per-resource feature maps (auth, coraza, …). See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
       http-request set-var(txn.resource_namespace) var(txn.backend_name),field(1,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
@@ -197,7 +197,7 @@ templateSnippets:
           - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
       -#}
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      # base/frontend-routing-logic — host/path → backend. See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#frontend-routing-logic
+      # base/frontend-routing-logic — host/path → backend. See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
       {{ render "util-routing-prefix" }}
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
@@ -957,7 +957,7 @@ templateSnippets:
       option forwardfor
       # Retry a failed TCP connect on a different server in the backend (not the
       # same dead one); with the default `retries 3` this closes the pod-termination
-      # race during rolling updates. See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#connection-reliability-and-timeouts
+      # race during rolling updates. See https://haproxy-haptic.org/docs/latest/libraries/base/#connection-reliability-and-timeouts
       option redispatch
 
   defaults-settings-200-balance:
@@ -969,7 +969,7 @@ templateSnippets:
       # timeout connect 100ms (vs the usual 5s): fast-fail a SYN to a just-terminated
       # pod IP so `option redispatch` retries a live server within ~200ms instead of
       # stalling 5s into a 504. Override extraContext.timeout_connect on slow networks.
-      # See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#connection-reliability-and-timeouts
+      # See https://haproxy-haptic.org/docs/latest/libraries/base/#connection-reliability-and-timeouts
       timeout connect {{ extraContext | dig("timeout_connect") | fallback("100") }}
       timeout client {{ extraContext | dig("timeout_client") | fallback("50000") }}
       timeout server {{ extraContext | dig("timeout_server") | fallback("50000") }}
@@ -1339,7 +1339,7 @@ templateSnippets:
           # gRPC-aware fallback: a trailers-only grpc-status 12 (Unimplemented) for
           # application/grpc, else a plain 404. content-type is re-added via
           # http-after-response (the `return` action strips it). See
-          # https://haproxy-haptic.org/helm-chart/latest/libraries/base/#grpc-request-handling
+          # https://haproxy-haptic.org/docs/latest/libraries/base/#grpc-request-handling
           http-request return status 200 hdr "grpc-status" "12" hdr "grpc-message" "Unimplemented" if { req.hdr(content-type) -m sub "application/grpc" }
           http-after-response set-header content-type "application/grpc" if { res.hdr(grpc-status) -m found }
           http-request return status 404
@@ -1385,7 +1385,7 @@ maps:
     template: |
       # Wildcard-host regex fallback: <regex pattern> <normalized host key>, tried
       # after the exact host.map + single-label regsub miss (multi-label hosts under
-      # a wildcard listener). See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#frontend-routing-logic
+      # a wildcard listener). See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
       {{ render_glob "map-hostregex-*" -}}
 
   path-exact.map:
@@ -1417,7 +1417,7 @@ maps:
     template: |
       # Per-backend request body-size limits: backend_name → max bytes. Populated by resource
       # libraries (map-body-size-*); enforced by frontend-filters-250-request-body-size.
-      # See https://haproxy-haptic.org/helm-chart/latest/libraries/base/#map-files
+      # See https://haproxy-haptic.org/docs/latest/libraries/base/#map-files
       {{ render_glob "map-body-size-*" -}}
 
   reqhdr-host.map:
@@ -1785,7 +1785,7 @@ haproxyConfig:
 
         # Detect the h2c prior-knowledge preface (PRI * HTTP/2.0..SM.., 24 bytes; hex
         # below) — the only h2c signal available in mode tcp. See
-        # https://haproxy-haptic.org/helm-chart/latest/libraries/base/#h2c-cleartext-detection
+        # https://haproxy-haptic.org/docs/latest/libraries/base/#h2c-cleartext-detection
         acl is_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
 
         # Decide as soon as 24 bytes are in; WAIT_END covers shorter HTTP/1.1 sends.

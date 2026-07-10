@@ -152,7 +152,7 @@ type AnnotationCoverage struct {
 	// Note explains the classification in plain language.
 	Note string `yaml:"note,omitempty"`
 
-	// Doc is an anchor into docs/controller/docs/migrating.md.
+	// Doc is an anchor into docs/site/docs/migrating.md.
 	Doc string `yaml:"doc,omitempty"`
 }
 

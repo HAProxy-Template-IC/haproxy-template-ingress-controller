@@ -5,7 +5,7 @@ Domain metrics for the HAProxy Template Ingress Controller. Two things live here
 - A `Metrics` struct that owns every controller-defined Prometheus metric (instance-based `prometheus.Registry`, not the global default).
 - A `Component` event adapter that subscribes to controller events and updates metrics accordingly.
 
-User-facing queries, alerting rules, and dashboard templates live in [`docs/controller/docs/operations/monitoring.md`](../../../docs/controller/docs/operations/monitoring.md). This README is the authoritative developer reference for *which* metrics exist and which component owns them.
+User-facing queries, alerting rules, and dashboard templates live in [`docs/site/docs/operations/monitoring.md`](../../../docs/site/docs/operations/monitoring.md). This README is the authoritative developer reference for *which* metrics exist and which component owns them.
 
 ## Complete Metric Catalogue
 
@@ -147,7 +147,7 @@ The controller's reinitialisation loop creates a fresh `EventBus` on every confi
 ## Dropping or Renaming a Metric
 
 - The `TestMetrics_AllMetricsRegistered` assertion covers a representative subset of the exported names. Update that slice when you add, rename, or remove one — and ideally extend it so every name is guarded.
-- Dashboards and alert rules in `docs/controller/docs/operations/monitoring.md` reference names too; keep that file in sync or link the dashboard PR to the metric PR.
+- Dashboards and alert rules in `docs/site/docs/operations/monitoring.md` reference names too; keep that file in sync or link the dashboard PR to the metric PR.
 
 ## Testing
 
@@ -162,7 +162,7 @@ go test ./pkg/controller/metrics/... -race    # race detector
 
 - [`pkg/metrics`](../../metrics/) — generic HTTP `/metrics` server + `NewCounter`/`NewHistogram`/`NewGauge` helpers
 - [`pkg/controller/events`](../events/) — event catalogue; this package subscribes to nearly all of it
-- [`docs/controller/docs/operations/monitoring.md`](../../../docs/controller/docs/operations/monitoring.md) — user-facing queries, alerts, dashboards
+- [`docs/site/docs/operations/monitoring.md`](../../../docs/site/docs/operations/monitoring.md) — user-facing queries, alerts, dashboards
 
 ## License
 

@@ -817,7 +817,7 @@ spec:
                 description: |-
                   Validators declares pluggable validator sidecars consulted by the
                   admission webhook before admitting changes that affect plugin
-                  configuration. See `docs/controller/docs/operations/pluggable-validators.md`
+                  configuration. See `docs/site/docs/operations/pluggable-validators.md`
                   for setup; the wire protocol is at
                   `docs/development/validator-protocol.md`.
 

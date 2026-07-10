@@ -292,7 +292,7 @@ Rejected because:
   diverges from how Go-side K8s authors typically write field names
   in code. Chart authors writing `gw.ApiVersion` once and reading
   `obj.APIVersion` in upstream Go source is a one-time adjustment;
-  documented in `docs/controller/docs/templating.md` and the chart
+  documented in `docs/site/docs/templating.md` and the chart
   CLAUDE.md.
 
 ## Do not re-suggest
@@ -322,10 +322,10 @@ helper macros over `any`. Forced cutover doesn't carry its weight
 
 ## Related
 
-- `docs/controller/docs/templating.md#typed-resource-access` —
+- `docs/site/docs/templating.md#typed-resource-access` —
   chart-author-facing reference for the field-name convention,
   schema sources, type-switch dispatch, and worked example.
-- `docs/controller/docs/watching-resources.md#typed-access-in-templates`
+- `docs/site/docs/watching-resources.md#typed-access-in-templates`
   — brief mention with a pointer to the templating reference.
 - `charts/CLAUDE.md` — chart-side dev context with the same guidance
   duplicated for chart contributors.

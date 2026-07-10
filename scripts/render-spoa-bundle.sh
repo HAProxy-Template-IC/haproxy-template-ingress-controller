@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Render the bundled spoa-hub component table from versions-spoa.env into
-# docs/controller/docs/operations/spoa-hub.md between the sentinel comments
+# docs/site/docs/operations/spoa-hub.md between the sentinel comments
 # `<!-- BEGIN: spoa-hub-bundle -->` and `<!-- END: spoa-hub-bundle -->`.
 #
 # Usage:
@@ -12,7 +12,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="${REPO_ROOT}/versions-spoa.env"
-DOC_FILE="${REPO_ROOT}/docs/controller/docs/operations/spoa-hub.md"
+DOC_FILE="${REPO_ROOT}/docs/site/docs/operations/spoa-hub.md"
 BEGIN_MARK='<!-- BEGIN: spoa-hub-bundle -->'
 END_MARK='<!-- END: spoa-hub-bundle -->'
 

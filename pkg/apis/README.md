@@ -26,7 +26,7 @@ Never hand-edit anything in this tree's `zz_generated_*.go` files or the corresp
 
 - `pkg/generated/` — typed clientset, informers, and listers generated from these types
 - `charts/haptic/crds/` — OpenAPI CRD manifests generated from these types
-- `docs/controller/docs/crd-reference.md` — operator-facing field reference
+- `docs/site/docs/crd-reference.md` — operator-facing field reference
 - `Makefile` — `generate` / `generate-crds` / `generate-deepcopy` / `generate-clientset` targets
 
 ## License

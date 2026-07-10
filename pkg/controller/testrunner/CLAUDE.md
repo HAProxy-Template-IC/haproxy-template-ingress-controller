@@ -848,7 +848,7 @@ func TestRunner_RegexMatch(t *testing.T) {
 ## Resources
 
 - API documentation: `pkg/controller/testrunner/README.md`
-- User documentation: `docs/controller/docs/validation-tests.md`
+- User documentation: `docs/site/docs/validation-tests.md`
 - DryRunValidator pattern: `pkg/controller/dryrunvalidator/CLAUDE.md`
 - StoreWrapper: `pkg/controller/rendercontext/CLAUDE.md` (lives there, not in `pkg/controller/renderer/`)
-- Architecture: `/docs/controller/docs/development/design.md`
+- Architecture: `/docs/site/docs/development/design.md`

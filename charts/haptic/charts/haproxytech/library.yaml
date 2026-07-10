@@ -2333,7 +2333,7 @@ validationTests:
 # Machine-readable classification of every haproxy.org/* annotation this
 # library reads (plus known-unsupported ones), consumed by
 # `haptic-controller migrate-check` and by the generated annotation-support
-# tables in docs/controller/docs/migrating.md. The source controller is
+# tables in docs/site/docs/migrating.md. The source controller is
 # haproxytech/kubernetes-ingress.
 #
 # Status vocabulary: supported | different | dropped | fails (see the
