@@ -50,6 +50,11 @@ type Runner struct {
 	// `gateways` (etc.) globals compile against the same shape they
 	// would in production.
 	typedResourceTypes map[string]reflect.Type
+
+	// skipBinaryValidation runs tests without a filesystem or haproxy binary
+	// (browser/WASM): createTestPaths skips MkdirAll and haproxy_valid falls
+	// back to the pure-Go syntax+schema check. See Options.SkipBinaryValidation.
+	skipBinaryValidation bool
 }
 
 // testEntry is a tuple of test name and test definition for worker processing.
@@ -86,6 +91,16 @@ type Options struct {
 	// HAProxyVersion is the detected local HAProxy version.
 	// When set, tests with MinHAProxyVersion above this version are skipped.
 	HAProxyVersion *dataplane.Version
+
+	// SkipBinaryValidation runs without a real filesystem or the haproxy
+	// binary: per-test temp directories are not created, and `haproxy_valid`
+	// assertions fall back to the pure-Go syntax + schema check
+	// (dataplane.ValidateSyntaxAndSchema) instead of `haproxy -c`. It exists
+	// for the browser (WASM) playground, where neither a writable filesystem
+	// nor the haproxy binary is available. Callers that set it must present
+	// `haproxy_valid` results as syntax+schema-only, since the binary phase
+	// (cross-references, unknown keywords, global/defaults checks) is not run.
+	SkipBinaryValidation bool
 
 	// TypedResourceTypes is the per-resource generated Go type the
 	// engine was constructed with via typebootstrap. Same shape as

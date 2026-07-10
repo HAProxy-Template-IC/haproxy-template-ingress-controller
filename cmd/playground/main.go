@@ -114,6 +114,7 @@ type renderBaseline struct {
 func main() {
 	js.Global().Set("hapticLoadConfig", js.FuncOf(hapticLoadConfigJS))
 	js.Global().Set("hapticRender", js.FuncOf(hapticRenderJS))
+	js.Global().Set("hapticRunTests", js.FuncOf(hapticRunTestsJS))
 	js.Global().Set("hapticPinBaseline", js.FuncOf(func(_ js.Value, _ []js.Value) any { pinnedBaseline = prevBaseline; return pinnedBaseline != nil }))
 	js.Global().Set("hapticUnpinBaseline", js.FuncOf(func(_ js.Value, _ []js.Value) any { pinnedBaseline = nil; return nil }))
 	js.Global().Set("hapticResetBaseline", js.FuncOf(func(_ js.Value, _ []js.Value) any { prevBaseline = nil; pinnedBaseline = nil; return nil }))
@@ -175,6 +176,80 @@ func hapticRenderJS(_ js.Value, args []js.Value) any {
 		"provBase":      res.ProvBase,
 		"provBlocks":    res.ProvBlocks,
 		"watchedLines":  res.WatchedLines,
+		// Count of runnable spec.validationTests so the UI can offer the Tests
+		// tab without re-parsing the config. Excludes the special "_global" key
+		// (shared fixtures, not a test — the runner skips it too), so the count
+		// matches TestResults.TotalTests. Tests run on demand via hapticRunTests.
+		"testCount": float64(runnableTestCount(warm.cfg.ValidationTests)),
+	}
+}
+
+// runnableTestCount counts real validation tests, excluding the special
+// "_global" entry, which only carries fixtures shared across tests and is
+// skipped by testrunner.RunTests (so TotalTests never counts it).
+func runnableTestCount(tests map[string]config.ValidationTest) int {
+	n := 0
+	for name := range tests {
+		if name != "_global" {
+			n++
+		}
+	}
+	return n
+}
+
+// hapticRunTestsJS runs the config's spec.validationTests against the warm
+// engine and returns per-test / per-assertion results for the Tests tab.
+// Signature: hapticRunTests(). hapticLoadConfig must have succeeded first.
+//
+// The runner is constructed with SkipBinaryValidation (no filesystem / haproxy
+// binary in the browser), so `haproxy_valid` assertions run the pure-Go
+// syntax+schema check — the UI labels them as such.
+func hapticRunTestsJS(_ js.Value, _ []js.Value) any {
+	if warm == nil {
+		return jsError("no config loaded: call hapticLoadConfig first")
+	}
+	results, err := warm.runner.RunTests(context.Background(), "")
+	if err != nil {
+		return jsError(dataplane.SimplifyRenderingError(err))
+	}
+	return testResultsToJS(results)
+}
+
+// testResultsToJS converts a *testrunner.TestResults into js.ValueOf-compatible
+// data for the Tests tab.
+func testResultsToJS(r *testrunner.TestResults) map[string]any {
+	tests := make([]any, 0, len(r.TestResults))
+	for i := range r.TestResults {
+		t := &r.TestResults[i]
+		assertions := make([]any, 0, len(t.Assertions))
+		for j := range t.Assertions {
+			a := &t.Assertions[j]
+			assertions = append(assertions, map[string]any{
+				"type":        a.Type,
+				"description": a.Description,
+				"passed":      a.Passed,
+				"error":       a.Error,
+				"target":      a.Target,
+			})
+		}
+		tests = append(tests, map[string]any{
+			"name":        t.TestName,
+			"description": t.Description,
+			"passed":      t.Passed,
+			"skipped":     t.Skipped,
+			"skipReason":  t.SkipReason,
+			"renderError": t.RenderError,
+			"durationMs":  float64(t.Duration.Milliseconds()),
+			"assertions":  assertions,
+		})
+	}
+	return map[string]any{
+		"total":      float64(r.TotalTests),
+		"passed":     float64(r.PassedTests),
+		"failed":     float64(r.FailedTests),
+		"skipped":    float64(r.SkippedTests),
+		"durationMs": float64(r.Duration.Milliseconds()),
+		"tests":      tests,
 	}
 }
 
@@ -326,6 +401,11 @@ func loadConfig(configYAML, schemasJSON []byte, haproxyVersion string) error {
 		Capabilities:       caps,
 		HAProxyVersion:     ver,
 		TypedResourceTypes: typed.Types,
+		// Browser: no filesystem, no haproxy binary. Run tests single-threaded
+		// (js/wasm has no OS threads) and let haproxy_valid fall back to the
+		// pure-Go syntax+schema check. The Tests tab labels it accordingly.
+		Workers:              1,
+		SkipBinaryValidation: true,
 	})
 	// The production render service. This is the whole point: identical output
 	// to the controller at this release.

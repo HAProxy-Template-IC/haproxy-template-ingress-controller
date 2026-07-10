@@ -70,6 +70,13 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 	// This ensures CRTListDir is set correctly for HAProxy < 3.2
 	resolvedPaths := dataplane.ResolvePaths(basePaths)
 
+	// Browser/WASM: no writable filesystem. Nothing writes to these paths when
+	// binary validation is skipped (render is in-memory; haproxy_valid uses the
+	// pure-Go check), so return the resolved path strings without MkdirAll.
+	if r.skipBinaryValidation {
+		return resolvedPaths.ToValidationPaths(), nil
+	}
+
 	// Create all directories (CRTListDir may be same as GeneralDir or SSLDir)
 	dirsToCreate := []string{resolvedPaths.MapsDir, resolvedPaths.SSLDir, resolvedPaths.GeneralDir}
 	if resolvedPaths.CRTListDir != resolvedPaths.SSLDir && resolvedPaths.CRTListDir != resolvedPaths.GeneralDir {

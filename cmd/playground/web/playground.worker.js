@@ -53,9 +53,21 @@ async function init() {
 
 onmessage = (e) => {
   const m = e.data || {};
-  if (m.type !== 'load' && m.type !== 'render') return;
+  if (m.type !== 'load' && m.type !== 'render' && m.type !== 'runtests') return;
   if (!ready) {
     postMessage({ type: 'result', seq: m.seq, error: 'engine not ready' });
+    return;
+  }
+  // Run the config's spec.validationTests against the already-warm engine.
+  // Independent of the resources pane — each test carries its own fixtures.
+  if (m.type === 'runtests') {
+    try {
+      const out = globalThis.hapticRunTests();
+      if (out && out.error) postMessage({ type: 'testresult', seq: m.seq, error: out.error });
+      else postMessage({ type: 'testresult', seq: m.seq, res: out });
+    } catch (err) {
+      postMessage({ type: 'testresult', seq: m.seq, error: 'wasm panic: ' + String((err && err.message) || err) });
+    }
     return;
   }
   // hapticLoadConfig / hapticRender each return EITHER { error } on failure OR a

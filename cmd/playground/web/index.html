@@ -287,6 +287,39 @@
     .mig-chip { color: var(--t-str); font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--t-str) 40%, transparent); word-break: break-all; }
     .mig-chip.jump { cursor: pointer; }
     .mig-chip.jump:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+    /* tests tab: spec.validationTests results */
+    .tests-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px 4px; flex-wrap: wrap; }
+    .tests-run { font-family: var(--mono); font-size: 12.5px; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+      color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border-strong); }
+    .tests-run:hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+    .tests-run:disabled { opacity: .6; cursor: default; }
+    .tests-run:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+    .tests-sum { font-family: var(--mono); font-size: 12.5px; display: flex; gap: 10px; align-items: baseline; }
+    .ts-pass { color: var(--t-str); } .ts-fail { color: var(--err); } .ts-skip { color: var(--warn); }
+    .ts-dur { color: var(--term-dim); }
+    .tests-note { color: var(--term-dim); font-family: var(--mono); font-size: 11.5px; padding: 0 16px 8px; max-width: 66em; line-height: 1.5; }
+    .tests-note code { color: var(--t-key, var(--term-fg)); }
+    .tests-err { color: var(--err); font-family: var(--mono); font-size: 12px; padding: 4px 16px 16px; white-space: pre-wrap; }
+    .tests-list { padding: 4px 16px 16px; max-width: 72em; min-width: 0; }
+    .test-card { border: 1px solid var(--term-border); border-left-width: 3px; border-radius: 6px; margin-bottom: 8px; padding: 8px 10px; }
+    .test-card.pass { border-left-color: var(--t-str); }
+    .test-card.fail { border-left-color: var(--err); }
+    .test-card.skip { border-left-color: var(--warn); opacity: .85; }
+    .test-hd { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono); font-size: 12.5px; flex-wrap: wrap; }
+    .tc-i { font-weight: 700; }
+    .test-card.pass .tc-i { color: var(--t-str); } .test-card.fail .tc-i { color: var(--err); } .test-card.skip .tc-i { color: var(--warn); }
+    .tc-name { color: var(--term-fg); font-weight: 600; }
+    .tc-desc { color: var(--term-dim); font-size: 11.5px; }
+    .tc-dur { color: var(--term-dim); font-size: 11px; margin-left: auto; }
+    .test-skip, .test-rerr { font-family: var(--mono); font-size: 11.5px; padding: 4px 0 2px 22px; }
+    .test-skip { color: var(--warn); } .test-rerr { color: var(--err); white-space: pre-wrap; }
+    .assn { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; padding: 3px 0 0 22px; font-family: var(--mono); font-size: 12px; }
+    .a-i { font-size: 11px; } .assn.pass .a-i { color: var(--t-str); } .assn.fail .a-i { color: var(--err); }
+    .a-type { color: var(--t-key, var(--accent)); }
+    .a-target { color: var(--term-dim); font-size: 11px; }
+    .a-tag { color: var(--warn); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; }
+    .a-desc { color: var(--term-fg); }
+    .a-err { flex-basis: 100%; color: var(--err); font-size: 11.5px; padding: 2px 0 2px 18px; white-space: pre-wrap; word-break: break-word; }
     /* certs tab: decoded X.509 summaries (concise, expandable) */
     .certs { font-family: var(--mono); font-size: 12.5px; padding: 10px 16px 16px; min-width: 0; max-width: 66em; }
     .cert-file { margin-bottom: 16px; }
@@ -738,6 +771,9 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         renderTabs(tabs, counts, drops, migWarn);
         paintOutput(tabs, false);
       }
+      // A tests-focused embed auto-runs so the reader lands on green/red results,
+      // not a "Run tests" button they have to notice and click.
+      if (activeTab === 'tests' && !lastTestRes && !testRunning) doRunTests();
       const spec = EMBED.get('focus');
       if (spec) requestAnimationFrame(() => focusOutput(spec));
     }
@@ -857,6 +893,17 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     let lastRes = null;                    // last successful render result (carries loadCount for e2e)
     let prevRes = null;                    // previous render result (for per-file diff-glow in maps/files)
     let prevTabs = {}, activeTab = 'haproxy.cfg', lastReport = [], lastTrace = [], lastMigration = null;
+    let lastTestRes = null, testRunning = false, testCount = 0;   // validationTests results (Tests tab)
+    const testPending = new Map();                                // seq -> resolver for hapticRunTests responses
+    // runTests posts a one-shot 'runtests' to the worker and resolves with the
+    // marshalled results (or {error}). Independent of the render seq counter.
+    function runTests() {
+      return new Promise((resolve) => {
+        const cur = ++seq;
+        testPending.set(cur, (m) => resolve(m.error ? { error: m.error } : m.res));
+        worker.postMessage({ type: 'runtests', seq: cur });
+      });
+    }
 
     function setChip(text, cls) { $('chip').className = 'chip ' + (cls || ''); $('chiptext').textContent = text; }
     function fireRail(ms) {
@@ -866,7 +913,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       $('tick').textContent = ms + ' ms';
     }
 
-    const TAB_KEYS = ['haproxy.cfg', 'maps', 'files', 'certs', 'status', 'applied', 'resources', 'trace', 'migration'];
+    const TAB_KEYS = ['haproxy.cfg', 'maps', 'files', 'certs', 'status', 'applied', 'resources', 'trace', 'migration', 'tests'];
     const MIG_ATTENTION = ['different', 'dropped', 'fails', 'unknown']; // statuses the user must review
     function migAttentionCount(counts) { return MIG_ATTENTION.reduce((n, k) => n + (counts[k] || 0), 0); }
     /* build per-tab text + counts from a render result. The 'resources' tab is
@@ -887,6 +934,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         applied: Object.keys(res.applied || {}).length, resources: report.length,
         trace: (res.trace || []).length,
         migration: mig ? mig.totalIngresses : 0,
+        tests: res.testCount || 0,
       };
       const migWarn = mig ? migAttentionCount(mig.counts || {}) : 0;
       return { tabs, counts, report, drops, migWarn };
@@ -897,6 +945,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (key === 'resources') return counts.resources > 0;
       if (key === 'trace') return counts.trace > 0;
       if (key === 'migration') return !!lastMigration;
+      if (key === 'tests') return counts.tests > 0;
       return !!(tabs[key] && tabs[key].trim());
     }
 
@@ -914,7 +963,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         b.tabIndex = key === activeTab ? 0 : -1;
         b.textContent = key + ' ';
         const n = document.createElement('span'); n.className = 'n'; n.textContent = counts[key]; b.appendChild(n);
-        const warn = key === 'resources' ? drops : key === 'migration' ? migWarn : 0;
+        const warn = key === 'resources' ? drops : key === 'migration' ? migWarn : key === 'tests' ? (lastTestRes ? lastTestRes.failed : 0) : 0;
         if (warn) { const w = document.createElement('span'); w.className = 'warn-n'; w.textContent = '⚠' + warn; b.appendChild(w); }
         b.onclick = () => { if (enabled) { activeTab = key; renderTabs(tabs, counts, drops, migWarn); paintOutput(tabs, false); $('output').focus(); } };
         strip.appendChild(b);
@@ -1027,6 +1076,67 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     // Migration report: how each pasted Ingress's annotations classify against
     // the config's spec.migrationCoverage — the same verdict `haptic
     // migrate-check` prints, so you can gauge a controller migration in-browser.
+    /* ---------- Tests tab: spec.validationTests results ---------- */
+    // Runs the config's validationTests via the worker, caches the result, repaints.
+    async function doRunTests() {
+      if (testRunning) return;
+      testRunning = true; paintTests();
+      const res = await runTests();
+      testRunning = false;
+      lastTestRes = (res && !res.error) ? res : null;
+      if (res && res.error) { lastTestErr = res.error; } else { lastTestErr = ''; }
+      // refresh the tab strip so the ⚠failure badge updates
+      const t = lastRes ? tabsFrom(lastRes) : null;
+      if (t) renderTabs(t.tabs, t.counts, t.drops, t.migWarn);
+      if (activeTab === 'tests') paintTests();
+    }
+    let lastTestErr = '';
+    function paintTests() {
+      const out = $('output');
+      const r = lastTestRes;
+      const btnLabel = testRunning ? 'Running…' : (r ? '↻ Re-run tests' : '▶ Run validation tests');
+      let head = `<div class="tests-head"><button class="tests-run" type="button"${testRunning ? ' disabled' : ''}>${btnLabel}</button>`;
+      if (r) {
+        head += `<span class="tests-sum">`
+          + `<span class="ts-pass">✓ ${r.passed}</span>`
+          + (r.failed ? ` <span class="ts-fail">✗ ${r.failed}</span>` : '')
+          + (r.skipped ? ` <span class="ts-skip">⊘ ${r.skipped}</span>` : '')
+          + ` <span class="ts-dur">${r.durationMs} ms</span></span>`;
+      }
+      head += `</div>`;
+      const note = `<div class="tests-note">Each test renders the config against its own fixtures and checks its assertions. In the browser, <code>haproxy_valid</code> runs the pure-Go syntax + schema check (no <code>haproxy&nbsp;-c</code> binary).</div>`;
+      if (lastTestErr && !r) { out.innerHTML = head + note + `<div class="tests-err">${esc(lastTestErr)}</div>`; wireTestRun(); return; }
+      if (!r) {
+        out.innerHTML = head + note + (testRunning ? '' : `<div class="empty">Press “Run validation tests” to execute the ${testCount} test${testCount === 1 ? '' : 's'} in this config.</div>`);
+        wireTestRun(); return;
+      }
+      let cards = '';
+      for (const t of r.tests) {
+        const cls = t.skipped ? 'skip' : t.passed ? 'pass' : 'fail';
+        const icon = t.skipped ? '⊘' : t.passed ? '✓' : '✗';
+        cards += `<div class="test-card ${cls}"><div class="test-hd"><span class="tc-i">${icon}</span>`
+          + `<span class="tc-name">${esc(t.name)}</span>`
+          + (t.description ? `<span class="tc-desc">${esc(t.description)}</span>` : '')
+          + `<span class="tc-dur">${t.durationMs} ms</span></div>`;
+        if (t.skipped) cards += `<div class="test-skip">skipped${t.skipReason ? ': ' + esc(t.skipReason) : ''}</div>`;
+        if (t.renderError) cards += `<div class="test-rerr">render error: ${esc(t.renderError)}</div>`;
+        for (const a of (t.assertions || [])) {
+          const ap = a.passed;
+          cards += `<div class="assn ${ap ? 'pass' : 'fail'}"><span class="a-i">${ap ? '✓' : '✗'}</span>`
+            + `<span class="a-type">${esc(a.type)}</span>`
+            + (a.target ? `<span class="a-target">${esc(a.target)}</span>` : '')
+            + (a.type === 'haproxy_valid' ? `<span class="a-tag">syntax + schema</span>` : '')
+            + `<span class="a-desc">${esc(a.description || '')}</span>`;
+          if (!ap && a.error) cards += `<div class="a-err">${esc(a.error)}</div>`;
+          cards += `</div>`;
+        }
+        cards += `</div>`;
+      }
+      out.innerHTML = head + note + `<div class="tests-list">${cards}</div>`;
+      wireTestRun();
+    }
+    function wireTestRun() { const b = $('output').querySelector('.tests-run'); if (b) b.onclick = doRunTests; }
+
     const MIG_CLS = { supported: 'ok', different: 'warn', dropped: 'bad', fails: 'bad', unknown: 'dim' };
     function paintMigration() {
       const out = $('output');
@@ -1218,6 +1328,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (activeTab === 'resources') { paintResources(); return; }
       if (activeTab === 'trace') { paintTrace(); return; }
       if (activeTab === 'migration') { paintMigration(); return; }
+      if (activeTab === 'tests') { paintTests(); return; }
       if (activeTab === 'certs') { paintCerts(); return; }
       if (activeTab === 'maps' || activeTab === 'files' || activeTab === 'status' || activeTab === 'applied') { paintNamedFiles(glow); return; }
       const out = $('output');
@@ -1658,6 +1769,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (suppressNextGlow) { noGlowSeqs.add(cur); suppressNextGlow = false; }
       if (configDirty) {
         configDirty = false;
+        lastTestRes = null; lastTestErr = '';   // config changed → prior test results are stale
         setChip('compiling…', 'busy');
         worker.postMessage({ type: 'load', seq: cur, config: isScriggo ? scriggoWrap(editors.config.get()) : editors.config.get(), schemas, haproxyVersion: $('hpver').value, resources: editors.res.get(), resetBaseline: resetBaselineNext });
         resetBaselineNext = false;
@@ -1689,6 +1801,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (m.type === 'progress') { updateBoot(m.loaded, m.total); return; }
       if (m.type === 'ready') { ready = true; $('boot').classList.add('done'); setChip('ready', 'ok'); schedule(); return; }
       if (m.type === 'error') { $('boot').classList.add('done'); setChip('worker error', 'err'); $('banner').className = 'banner show render'; $('bk').textContent = 'worker'; $('bm').textContent = m.error || ''; return; }
+      if (m.type === 'testresult') { const cb = testPending.get(m.seq); if (cb) { testPending.delete(m.seq); cb(m); } return; }
       if (m.type !== 'result' || m.seq <= shown) { noGlowSeqs.delete(m.seq); return; }  // drop stale
       shown = m.seq;
       const glow = !noGlowSeqs.delete(m.seq);
@@ -1696,6 +1809,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       clearError();
       const { tabs, counts, report, drops, migWarn } = tabsFrom(m.res);
       lastReport = report; lastTrace = m.res.trace || []; lastMigration = m.res.migration || null;
+      testCount = m.res.testCount || 0;
       closeAnnoCycler();          // occurrence lines may have shifted; a fresh click recomputes
       fireRail(m.res.durationMs ?? 0);
       setSchemaWarn(m.res.schemaCheck || '');
