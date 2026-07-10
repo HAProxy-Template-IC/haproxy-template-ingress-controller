@@ -26,7 +26,8 @@
  *                   — "tests" auto-runs the config's spec.validationTests on load
  *   data-focus      [file:]start-end | file — highlight/scroll to the important lines
  *   data-controls   comma list re-enabling controls in the embed (tabs,resources,tools,nav,max,reload,provenance,dots)
- *   data-height     iframe height in px (default 460)
+ *   data-height     minimum running-iframe height in px (default 460); the running
+ *                   embed breaks out of the article column and grows to ~76vh
  *   data-title      header label
  *   data-difficulty 1-3 -> shown as stars
  *
@@ -149,7 +150,8 @@
         frame.className = 'pg-frame';
         frame.setAttribute('loading', 'lazy');
         frame.setAttribute('title', el.dataset.title || 'HAPTIC playground');
-        frame.style.height = (parseInt(el.dataset.height, 10) || 460) + 'px';
+        // Height comes from CSS: max(--pg-hmin, min(76vh, 880px)) — the author's
+        // data-height is only the minimum (see .pg-embed.pg-running .pg-frame).
         el.appendChild(frame);
       }
       frame.src = src;
@@ -161,6 +163,9 @@
     }
     if (loading) loading.hidden = true;
     if (el._runBtn) el._runBtn.hidden = true;   // the iframe is the content now
+    if (el._closeBtn) el._closeBtn.hidden = false;
+    el._loaded = true;                          // Close keeps the iframe; reopening is instant
+    el.scrollIntoView({ block: 'nearest' });    // the box just grew — keep its header on screen
     return true;
   }
 
@@ -219,9 +224,35 @@
     runBtn.type = 'button';
     runBtn.className = 'pg-btn pg-btn-play';
     runBtn.textContent = '▶ Run live';
-    runBtn.addEventListener('click', function () { runBtn.disabled = true; runBtn.textContent = 'Loading…'; run(el); });
+    runBtn.addEventListener('click', function () {
+      if (el._loaded) {           // already ran once: reopen the live iframe instantly
+        el.classList.add('pg-running');
+        runBtn.hidden = true;
+        if (el._closeBtn) el._closeBtn.hidden = false;
+        el.scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      runBtn.disabled = true; runBtn.textContent = 'Loading…'; run(el);
+    });
     head.appendChild(runBtn);
     el._runBtn = runBtn;   // run() restores it on failure, hides it once the iframe is up
+    // "Close" collapses the running playground back to the clean static example.
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'pg-btn pg-btn-close';
+    closeBtn.textContent = '✕ Close';
+    closeBtn.hidden = true;
+    closeBtn.addEventListener('click', function () {
+      el.classList.remove('pg-running');
+      closeBtn.hidden = true;
+      runBtn.hidden = false; runBtn.disabled = false; runBtn.textContent = '▶ Run live';
+      el.scrollIntoView({ block: 'nearest' });
+    });
+    head.appendChild(closeBtn);
+    el._closeBtn = closeBtn;
+    // The author's data-height becomes the running iframe's MINIMUM height (CSS
+    // grows it to working size — see .pg-embed.pg-running .pg-frame).
+    el.style.setProperty('--pg-hmin', (parseInt(el.dataset.height, 10) || 460) + 'px');
     el.insertBefore(head, el.firstChild);
 
     // A hidden loading line for the iframe stage.

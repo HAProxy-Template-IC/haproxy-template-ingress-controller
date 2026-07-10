@@ -149,6 +149,44 @@
 }
 .pg-embed:not(.pg-running) .pg-frame { display: none; }
 .pg-embed.pg-running .pg-embed-code { display: none; }
+
+/* Running: break the embed out of the article column. The playground's phone
+ * breakpoint is 900px and the docs column is ~700-750px, so an in-column iframe
+ * renders the stacked phone layout squeezed into the data-height box — tiny
+ * editors, double scrolling. Growing to min(96vw, 1240px) puts the iframe above
+ * that breakpoint (proper side-by-side editor | output), and the height grows
+ * to working size (the author's data-height acts as a minimum via --pg-hmin).
+ * Centered on the viewport with the full-bleed margin trick; z-index above the
+ * mkdocs sidebars but below the sticky header (4), so scrolling stays sane. */
+.pg-embed.pg-running {
+  position: relative;
+  width: min(96vw, 1240px);
+  margin-left: calc(50% - min(48vw, 620px));
+  z-index: 3;
+  box-shadow: 0 18px 48px -18px rgba(0, 0, 0, 0.35);
+}
+.pg-embed.pg-running .pg-frame {
+  height: max(var(--pg-hmin, 460px), min(76vh, 880px));
+}
+@media (max-width: 960px) {
+  /* Below the playground's own breakpoint the panes stack regardless, so give
+     them room in the only dimension left: height. */
+  .pg-embed.pg-running { width: 100%; margin-left: 0; }
+  .pg-embed.pg-running .pg-frame { height: max(var(--pg-hmin, 460px), 84vh); }
+}
+
+/* "Close" returns from the running playground to the clean static example. */
+.pg-btn.pg-btn-close {
+  background: transparent;
+  color: var(--md-default-fg-color--light, #666);
+  border-color: var(--md-default-fg-color--lightest, #ddd);
+}
+.pg-btn.pg-btn-close:hover {
+  color: var(--md-accent-fg-color, #e0642e);
+  border-color: currentColor;
+  background: transparent;
+  filter: none;
+}
 .pg-embed .pg-loading {
   padding: 1.4rem; text-align: center; font-size: 0.8rem;
   color: var(--md-default-fg-color--light, #666);
