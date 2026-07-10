@@ -1,0 +1,57 @@
+// Scriggo template tag grammar (inner level of the composite HAProxyTemplateConfig
+// highlighter). Recognises the four Scriggo delimiter forms and classifies the
+// tag interior into highlight-bearing tokens. Usable two ways:
+//   - overlaid (parseMixed) onto a single `TemplateTag` node of the haproxy/map
+//     grammars, where the input is exactly one `{{ }}` / `{% %}` / `{%% %%}` /
+//     `{# #}` tag; and
+//   - directly as the `textParser` for files/sslCertificates block scalars, where
+//     the input is a plain text + tags stream.
+// The interior is a deliberately flat token sequence (robust > precise): all
+// identifier classification (Keyword/Bool/FunctionName/VariableName/PropertyName)
+// happens in the external tokenizer, so the LR grammar stays conflict-free.
+
+@top Template { element* }
+
+element {
+  Text |
+  Comment |
+  Expression |
+  Statement |
+  BlockStatement
+}
+
+// A tag body is a flat run of classified tokens between the delimiters.
+Expression    { ExprOpen  item* TagClose }
+Statement     { StmtOpen  item* TagClose }
+BlockStatement { BlockOpen item* TagClose }
+
+item {
+  Keyword | Bool | FunctionName | VariableName | PropertyName |
+  String | Number | Operator | Dot | Punct | Space
+}
+
+// Text-mode tokens: consume plain text and detect a tag start. `Comment` is the
+// whole `{# … #}` span (opaque, styled dim in one piece).
+@external tokens textTokens from "./scriggo-tokens.js" {
+  Text
+  Comment
+  ExprOpen
+  StmtOpen
+  BlockOpen
+}
+
+// Interior-mode tokens: everything between the opening and closing delimiters.
+@external tokens interiorTokens from "./scriggo-tokens.js" {
+  TagClose
+  Keyword
+  Bool
+  FunctionName
+  VariableName
+  PropertyName
+  String
+  Number
+  Operator
+  Dot
+  Punct
+  Space
+}

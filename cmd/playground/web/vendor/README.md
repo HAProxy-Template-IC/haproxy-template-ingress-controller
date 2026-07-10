@@ -14,7 +14,7 @@ export { EditorView, basicSetup } from "codemirror";
 export { EditorState, Prec, RangeSetBuilder } from "@codemirror/state";
 export { Decoration, ViewPlugin, keymap } from "@codemirror/view";
 export { yaml } from "@codemirror/lang-yaml";
-export { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+export { HighlightStyle, syntaxHighlighting, LRLanguage, LanguageSupport } from "@codemirror/language";
 export { autocompletion } from "@codemirror/autocomplete";
 export { tags } from "@lezer/highlight";
 JS
