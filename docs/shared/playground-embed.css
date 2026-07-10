@@ -133,6 +133,7 @@
 .pg-embed details > summary::before { content: "▸ "; }
 .pg-embed details[open] > summary::before { content: "▾ "; }
 .pg-embed details.pg-hint > summary::after { content: " (hint)"; font-weight: 400; opacity: 0.7; }
+.pg-embed details.pg-solution .pg-btn-solution { margin: 0 0.8rem 0.6rem; }
 
 /* Placeholder shown in a preset embed's facade (its config is fetched on Run). */
 .pg-embed-placeholder {

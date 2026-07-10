@@ -374,6 +374,20 @@
     .cm-content .pg-cf-tdelim,
     .cm-content .pg-cf-top { color: var(--t-d); }
 
+    /* ---- Solution compare modal (opened from docs challenge embeds) ---- */
+    .modal-card.cmp-card { max-width: min(96vw, 1200px); width: 100%; height: min(88vh, 900px); max-height: none; display: flex; flex-direction: column; overflow: hidden; }
+    .cmp-labels { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font: 600 11px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 6px 0; }
+    .cmp-body { flex: 1; min-height: 0; border: 1px solid var(--term-border); border-radius: 8px; overflow: hidden; background: var(--term-bg); }
+    .cmp-body .cm-mergeView, .cmp-body .cm-mergeViewEditors { height: 100%; }
+    .cmp-body .cm-mergeViewEditor { height: 100%; overflow: auto; }
+    .cmp-body .cm-editor { height: 100%; }
+    /* Diff tints on the terminal palette: left = your config, right = solution. */
+    .cmp-body .cm-merge-a .cm-changedLine { background: rgba(229, 83, 75, .10); }
+    .cmp-body .cm-merge-a .cm-changedText { background: rgba(229, 83, 75, .30); border-radius: 2px; }
+    .cmp-body .cm-merge-b .cm-changedLine { background: rgba(87, 171, 90, .12); }
+    .cmp-body .cm-merge-b .cm-changedText { background: rgba(87, 171, 90, .32); border-radius: 2px; }
+    .cmp-body .cm-changedLineGutter { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+
     /* ---- Error banners ---- */
     .banner { display: none; padding: 9px 14px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid; gap: 8px; align-items: flex-start; flex: 0 0 auto; }
     .banner.show { display: flex; }
@@ -716,6 +730,20 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       </dl>
       <div class="modal-actions">
         <button id="help-close" class="btn primary" type="button">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Solution comparison (opened from docs challenge embeds via hapticPlayground.compareSolution) -->
+  <div id="cmp-modal" class="modal" hidden>
+    <div class="modal-card cmp-card">
+      <h3>Compare with the solution</h3>
+      <p>Left is <strong>your config</strong>, right is the <strong>solution</strong> — differences are highlighted, so you can see exactly what's missing. Close to keep working, or apply the solution to the editor.</p>
+      <div class="cmp-labels"><span>Your config</span><span>Solution</span></div>
+      <div id="cmp-body" class="cmp-body"></div>
+      <div class="modal-actions">
+        <button id="cmp-apply" class="btn" type="button" title="Replace the editor contents with the solution">Apply solution to editor</button>
+        <button id="cmp-close" class="btn primary" type="button">Keep my version</button>
       </div>
     </div>
   </div>
@@ -1876,6 +1904,7 @@ backend {{ e }}
         loadingPreset = false;
         presetEl.value = p.id;   // reflect the loaded preset (the edit callbacks skipped the custom switch)
         updateResHint(); schedule();
+        markStateReady();
       } catch (err) { setChip('preset load failed', 'err'); showError('parsing config: ' + err.message); loadingPreset = false; }
     }
     function updateResHint() { const h = $('res-hint'); h.hidden = !!(editors && editors.res.get().trim()); }
@@ -1961,6 +1990,24 @@ backend {{ e }}
     $('tryout-modal').addEventListener('click', (e) => { if (e.target === $('tryout-modal')) closeTryout(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('tryout-modal').hidden) closeTryout(); });
 
+    /* ---------- solution compare (docs challenge embeds) ---------- */
+    let cmpMV = null, cmpSolution = '';
+    function openCompare(solution) {
+      if (!editors || !editors.makeMerge) { if (editors) editors.config.set(solution); return; }  // textarea fallback
+      cmpSolution = solution;
+      if (cmpMV) { cmpMV.destroy(); cmpMV = null; }
+      const body = $('cmp-body');
+      body.textContent = '';
+      cmpMV = editors.makeMerge(body, editors.config.get(), solution);
+      $('cmp-modal').hidden = false;
+      $('cmp-close').focus();
+    }
+    function closeCompare() { $('cmp-modal').hidden = true; if (cmpMV) { cmpMV.destroy(); cmpMV = null; } }
+    $('cmp-apply').addEventListener('click', () => { editors.config.set(cmpSolution); closeCompare(); });
+    $('cmp-close').addEventListener('click', closeCompare);
+    $('cmp-modal').addEventListener('click', (e) => { if (e.target === $('cmp-modal')) closeCompare(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('cmp-modal').hidden) closeCompare(); });
+
     /* ---------- help modal (how to use the playground) ---------- */
     const HELP_SEEN_KEY = 'haptic-pg-help-seen';
     function openHelp() {
@@ -2000,6 +2047,12 @@ backend {{ e }}
       } catch (err) { /* corrupt hash -> fall through to default */ }
       return null;
     }
+    // The e2e/embed surface exposes compareSolution before init has loaded the
+    // config (readSharedState is awaited AFTER the surface is assigned). Docs
+    // embeds must not diff against an empty editor, so every path that puts the
+    // initial config into the editor marks the state ready; the parent frame
+    // polls this flag before opening the comparison.
+    const markStateReady = () => { if (window.hapticPlayground) window.hapticPlayground.stateReady = true; };
     async function applyState(st) {
       suppressNextGlow = true; configDirty = true; resetBaselineNext = true;
       if (st.v) $('hpver').value = st.v;
@@ -2013,6 +2066,7 @@ backend {{ e }}
       // was a custom edit or names a preset this build doesn't have.
       presetEl.value = (st.p && PRESETS.some((x) => x.id === st.p)) ? st.p : CUSTOM_OPT;
       updateResHint(); schedule();
+      markStateReady();
     }
     let saveTimer;
     // In ?scriggo=1 the config editor holds a bare template, not a real config, so
@@ -2057,6 +2111,7 @@ backend {{ e }}
         setConfig: (t) => editors.config.set(t), setResources: (t) => editors.res.set(t), editorKind: editors.kind,
         reload: () => { configDirty = true; fire(); }, render: () => { configDirty = false; fire(); },
         stats: () => lastRes, share: doShare, tryout: openTryout, help: openHelp,
+        getConfig: () => editors.config.get(), compareSolution: openCompare,
         provenance: () => lineChains, provActive: () => activeProvLine,
         tryoutScript: () => lastRes ? buildTryoutScript(lastRes, $('hpver').value) : null };
       initVersions();   // fire-and-forget; no-op in local single-version dev
@@ -2072,6 +2127,7 @@ backend {{ e }}
         editors.config.set(DEFAULT_SCRIGGO); editors.res.set('');
         loadingPreset = false;
         configDirty = true; fire();
+        markStateReady();
         return;
       }
       // First-time visitors get the how-to-use modal once; it explains bringing your own inputs.

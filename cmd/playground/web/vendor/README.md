@@ -17,9 +17,10 @@ export { yaml } from "@codemirror/lang-yaml";
 export { HighlightStyle, syntaxHighlighting, LRLanguage, LanguageSupport } from "@codemirror/language";
 export { autocompletion } from "@codemirror/autocomplete";
 export { tags } from "@lezer/highlight";
+export { MergeView } from "@codemirror/merge";
 JS
 npm install codemirror@6.0.1 @codemirror/lang-yaml@6.1.2 @codemirror/view@6 \
-  @codemirror/state@6 @codemirror/language@6 @codemirror/autocomplete@6 @lezer/highlight@1
+  @codemirror/state@6 @codemirror/language@6 @codemirror/autocomplete@6 @lezer/highlight@1 @codemirror/merge@6
 npx esbuild@0.24 entry.mjs --bundle --format=esm --minify --legal-comments=none \
   --target=es2020 --outfile=codemirror.bundle.js
 cp codemirror.bundle.js <repo>/cmd/playground/web/vendor/codemirror.js
