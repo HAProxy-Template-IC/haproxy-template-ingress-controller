@@ -1,8 +1,8 @@
-# Helm chart troubleshooting
+# Troubleshooting the Install
 
 ## Overview
 
-This page covers common issues when installing and operating HAPTIC via the Helm chart — missing CRDs, credentials, image pulls, and RBAC.
+Common issues when installing and operating HAPTIC via the Helm chart — missing CRDs, credentials, image pulls, and RBAC.
 
 For runtime behavior (why an Ingress renders the way it does, reconciliation stalls, and symptom-to-fix tables), see the [Troubleshooting guide](../troubleshooting.md).
 

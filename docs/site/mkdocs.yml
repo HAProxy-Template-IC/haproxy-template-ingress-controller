@@ -86,7 +86,6 @@ nav:
     - SSL Certificates: ssl-certificates.md
     - Annotations: annotations.md
     - HAProxy Deployment: haproxy-deployment.md
-    - Networking: operations/networking.md
     - Chart Values Reference: reference.md
     - Troubleshooting the Install: operations/troubleshooting.md
   - Template Libraries:
@@ -106,6 +105,7 @@ nav:
     - High Availability: operations/high-availability.md
     - Monitoring: operations/monitoring.md
     - Security: operations/security.md
+    - Networking: operations/networking.md
     - SPIFFE/SPIRE mTLS: operations/spiffe-mtls.md
     - Performance: operations/performance.md
     - Debugging: operations/debugging.md

@@ -1,4 +1,4 @@
-# Performance Guide
+# Performance
 
 This guide covers performance tuning and optimization for the HAProxy Template Ingress Controller.
 

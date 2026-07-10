@@ -133,4 +133,4 @@ Users opt in per-Ingress with `example.com/request-id-header: "X-Request-ID"`. T
 - **Custom resources beyond Ingress**: [Watching Resources](watching-resources.md)
 - **Template tests for CI/CD**: [Validation Tests](validation-tests.md)
 - **Reference**: [Supported Configuration](supported-configuration.md), [Troubleshooting](troubleshooting.md)
-- **Helm chart configuration**: [Helm Chart Documentation](deploying-with-helm.md)
+- **Helm chart configuration**: [Deploying with Helm](deploying-with-helm.md)

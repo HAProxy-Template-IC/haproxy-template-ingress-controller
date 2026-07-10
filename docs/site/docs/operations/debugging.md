@@ -1,4 +1,4 @@
-# Debugging Guide
+# Debugging
 
 The controller serves a debug HTTP server that exposes internal state, recent events, and Go profiling. Use it when logs aren't enough — you can see exactly what config is loaded, what it rendered to, and what's happened in the last ~1000 events without having to correlate timestamps.
 

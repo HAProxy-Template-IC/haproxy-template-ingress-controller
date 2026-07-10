@@ -2,7 +2,7 @@
 
 ## Overview
 
-The chart automatically creates a GatewayClass resource when the gateway library is enabled and Gateway API CRDs are installed. This page covers GatewayClass configuration, the parametersRef mechanism, and advanced multi-GatewayClass scenarios.
+The chart automatically creates a GatewayClass resource when the gateway library is enabled and Gateway API CRDs are installed.
 
 ## Prerequisites
 

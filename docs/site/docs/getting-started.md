@@ -8,7 +8,7 @@ hide:
 
 ## Overview
 
-This guide walks you through deploying HAPTIC (HAProxy Template Ingress Controller) and creating your first template-driven configuration. You'll learn how to:
+This guide walks you through deploying HAPTIC and creating your first template-driven configuration. You'll learn how to:
 
 - Install the controller and HAProxy using Helm
 - Create a basic Ingress configuration
