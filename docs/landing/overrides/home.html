@@ -272,34 +272,16 @@
           <span class="dots" aria-hidden="true">
             <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
           </span>
-          <span class="doc-path">~/controller</span>
+          <span class="doc-path">~/docs</span>
         </div>
         <div class="doc-body">
-          <h2><a href="./docs/latest/">Controller</a></h2>
-          <p>How the ingress controller works: resource watching, template
-             rendering, configuration validation, and HAProxy deployment.</p>
+          <h2><a href="./docs/latest/">Documentation</a></h2>
+          <p>From your first Helm install to writing your own templates —
+             deploying with Helm, watching resources, template rendering,
+             config validation, and operating HAProxy in production.</p>
           <div class="versions">
             <h3>Available versions</h3>
-            <div id="controller-versions" class="version-list">Loading…</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="doc-card">
-        <div class="doc-bar">
-          <span class="dots" aria-hidden="true">
-            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
-          </span>
-          <span class="doc-path">~/helm-chart</span>
-        </div>
-        <div class="doc-body">
-          <h2><a href="./docs/latest/">Helm Chart</a></h2>
-          <p>Installs the controller into your cluster with preconfigured
-             templates. Start here if you already know the basics or just
-             want to deploy.</p>
-          <div class="versions">
-            <h3>Available versions</h3>
-            <div id="helm-versions" class="version-list">Loading…</div>
+            <div id="docs-versions" class="version-list">Loading…</div>
           </div>
         </div>
       </div>
@@ -399,8 +381,7 @@
     });
   }
 
-  loadVersions('controller', 'controller-versions');
-  loadVersions('helm-chart', 'helm-versions');
+  loadVersions('docs', 'docs-versions');
   updateQuickStartVersion();
 </script>
 {% endblock %}
