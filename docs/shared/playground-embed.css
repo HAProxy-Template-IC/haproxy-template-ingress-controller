@@ -16,15 +16,52 @@
 .pg-embed-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.45rem 0.7rem;
+  gap: 0.55rem;
+  min-height: 2.4rem;
+  padding: 0.4rem 0.75rem;
   border-bottom: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
   background: var(--md-default-bg-color, #fff);
   font-size: 0.8rem;
 }
+/* The widget brand mark — the same {%%} glyph the playground wordmark uses. */
+.pg-embed-mark {
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.72rem; font-weight: 700;
+  color: var(--md-typeset-a-color, #3f6ec6);
+  letter-spacing: -0.02em;
+  user-select: none;
+}
 .pg-embed-title { font-weight: 700; color: var(--md-default-fg-color, #111); }
-.pg-embed-diff { color: var(--md-accent-fg-color, #e0642e); letter-spacing: 0.05em; font-size: 0.72rem; cursor: help; }
+/* Difficulty chip: stars + word, self-explanatory (no tooltip hunting). */
+.pg-embed-diff {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.64rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--md-typeset-a-color, #3f6ec6);
+  border: 1px solid color-mix(in srgb, var(--md-typeset-a-color, #3f6ec6) 35%, transparent);
+  background: color-mix(in srgb, var(--md-typeset-a-color, #3f6ec6) 7%, transparent);
+  padding: 0.14rem 0.5rem; border-radius: 99px;
+}
 .pg-embed-spacer { flex: 1; }
+
+/* Running: the header flips to the playground's terminal chrome (traffic dots
+ * appear, dark surface) and fuses with the dark iframe below into one
+ * "powered-on" window — the widget's signature state change. */
+.pg-embed.pg-running .pg-embed-head {
+  background: #2d333b;
+  border-bottom-color: #444c56;
+}
+.pg-embed.pg-running .pg-embed-head::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #f47067;
+  box-shadow: 16px 0 0 #daaa3f, 32px 0 0 #57ab5a;
+  margin-right: 26px;
+}
+.pg-embed.pg-running .pg-embed-title { color: #adbac7; }
+.pg-embed.pg-running .pg-embed-mark { color: #6cb6ff; }
+.pg-embed.pg-running .pg-embed-diff { color: #768390; border-color: #444c56; background: transparent; }
+.pg-embed.pg-running { border-color: #444c56; }
 
 /* Run / pop-out buttons */
 .pg-btn {
@@ -47,13 +84,14 @@
  * so it's a clearly-active secondary button — tinted + bordered, filling on hover —
  * not a faint ghost that reads as disabled. */
 .pg-btn.pg-btn-ghost {
-  background: color-mix(in srgb, var(--md-primary-fg-color, #3f6ec6) 12%, transparent);
-  color: var(--md-primary-fg-color, #3f6ec6);
-  border-color: var(--md-primary-fg-color, #3f6ec6);
+  background: color-mix(in srgb, var(--md-typeset-a-color, #3f6ec6) 8%, transparent);
+  color: var(--md-typeset-a-color, #3f6ec6);
+  border-color: color-mix(in srgb, var(--md-typeset-a-color, #3f6ec6) 55%, transparent);
 }
 .pg-btn.pg-btn-ghost:hover {
-  background: var(--md-primary-fg-color, #3f6ec6);
-  color: var(--md-primary-bg-color, #fff);
+  background: var(--md-typeset-a-color, #3f6ec6);
+  color: var(--md-default-bg-color, #fff);
+  border-color: var(--md-typeset-a-color, #3f6ec6);
   filter: none;
 }
 .pg-btn-play { font-size: 0.7rem; }
@@ -105,27 +143,83 @@
  * Accent left-bar + tint + an uppercase "🎯 Try it" lead so it reads as an
  * invitation, not plain prose. Horizontal padding matches the embed header. */
 .pg-task {
-  margin: 0; padding: 0.6rem 0.7rem 0.6rem 0.75rem;
+  margin: 0; padding: 0.6rem 0.75rem 0.6rem 0.75rem;
   background: color-mix(in srgb, var(--md-accent-fg-color, #e0642e) 8%, var(--md-default-bg-color, #fff));
   border-left: 3px solid var(--md-accent-fg-color, #e0642e);
   border-bottom: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
-  font-size: 0.82rem; line-height: 1.55;
+  font-size: 0.8rem; line-height: 1.55;
 }
 .pg-task::before {
   content: "🎯 Try it";
   display: inline-block; margin-right: 0.45rem;
-  font-weight: 700; font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase;
+  font-weight: 700; font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--md-accent-fg-color, #e0642e);
 }
 /* A pg-task placed as the first child of an embed (a challenge intro) has no
  * header divider above it, so round the top to match the embed corners. */
 .pg-embed > .pg-task:first-child { border-radius: 8px 8px 0 0; }
-
-/* Collapsed hint / solution (also works if the author uses a raw <details>) */
-.pg-embed details.pg-hint,
-.pg-embed details.pg-solution {
-  margin: 0; border-top: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+/* A standalone explore-prompt (pg-task outside any embed) gets the full frame
+ * so it reads as a sibling widget, not an orphaned strip. */
+.md-typeset .pg-task:not(.pg-embed .pg-task) {
+  border: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+  border-left: 3px solid var(--md-accent-fg-color, #e0642e);
+  border-radius: 8px;
+  margin: 1.2em 0;
 }
+
+/* Collapsed hint / solution / what-to-expect rows. mkdocs-material styles every
+ * <details> as an admonition (icon, border, box-shadow, its own margins) — a doc
+ * callout look that clashes inside the widget. Neutralize it and use one flat
+ * hairline-row language for all inner sections. */
+.md-typeset .pg-embed details.pg-hint,
+.md-typeset .pg-embed details.pg-solution,
+.md-typeset .pg-embed details {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  font-size: 0.8rem;
+  overflow: visible;
+}
+.md-typeset .pg-embed details > summary {
+  cursor: pointer;
+  padding: 0.55rem 0.75rem;
+  margin: 0;
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--md-typeset-a-color, #3f6ec6);
+  background: transparent;
+  border: 0;
+  list-style: none;
+  display: block;
+}
+.md-typeset .pg-embed details > summary::marker { content: ""; }
+.md-typeset .pg-embed details > summary::-webkit-details-marker { display: none; }
+/* Kill material's absolute-positioned admonition icon + chevron. */
+.md-typeset .pg-embed details > summary::after { display: none; }
+.md-typeset .pg-embed details > summary::before {
+  content: "▸";
+  position: static;
+  display: inline-block;
+  width: auto; height: auto;
+  margin: 0 0.4rem 0 0;
+  background: none;
+  -webkit-mask: none; mask: none;
+  transform: none;
+  color: inherit;
+}
+.md-typeset .pg-embed details[open] > summary::before { content: "▾"; }
+.md-typeset .pg-embed details > summary:hover { color: var(--md-accent-fg-color, #e0642e); }
+.md-typeset .pg-embed details.pg-hint > summary::after {
+  display: inline; content: " (hint)";
+  font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.7;
+  position: static; background: none; -webkit-mask: none; mask: none;
+}
+/* Body content of an open row: normal doc padding, hairline above. */
+.md-typeset .pg-embed details > *:not(summary) { margin-left: 0.75rem; margin-right: 0.75rem; }
+.md-typeset .pg-embed details > summary + * { margin-top: 0.25rem; }
+.md-typeset .pg-embed details > *:last-child { margin-bottom: 0.65rem; }
 .pg-embed details > summary {
   cursor: pointer; padding: 0.45rem 0.8rem; font-size: 0.8rem; font-weight: 600;
   color: var(--md-accent-fg-color, #e0642e); list-style: none;
@@ -135,13 +229,22 @@
 .pg-embed details.pg-hint > summary::after { content: " (hint)"; font-weight: 400; opacity: 0.7; }
 .pg-embed details.pg-solution .pg-btn-solution { margin: 0 0.8rem 0.6rem; }
 
-/* Placeholder shown in a preset embed's facade (its config is fetched on Run). */
+/* Placeholder shown in a preset embed's facade (its config is fetched on Run):
+ * a quiet terminal prompt line — the playground identity, previewed. */
 .pg-embed-placeholder {
-  padding: 1.1rem 0.9rem; text-align: center; font-size: 0.82rem;
+  padding: 0.85rem 0.9rem;
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.72rem; line-height: 1.6;
   color: var(--md-default-fg-color--light, #5a5a5a);
-  border-top: 1px solid var(--md-default-fg-color--lightest, #e0e0e0);
 }
-.pg-ph-play { color: var(--md-primary-fg-color, #3f6ec6); font-weight: 700; margin-right: 0.15rem; }
+.pg-embed-placeholder::before { content: "$ "; color: var(--md-typeset-a-color, #3f6ec6); font-weight: 700; }
+.pg-embed-placeholder::after {
+  content: "▍"; margin-left: 2px;
+  color: var(--md-typeset-a-color, #3f6ec6);
+  animation: pg-caret 1.1s step-end infinite;
+}
+@keyframes pg-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .pg-embed-placeholder::after { animation: none; } }
 
 /* The live iframe (revealed on Run) */
 .pg-frame {
@@ -182,6 +285,8 @@
   color: var(--md-default-fg-color--light, #666);
   border-color: var(--md-default-fg-color--lightest, #ddd);
 }
+.pg-embed.pg-running .pg-btn-close { color: #909dab; border-color: #444c56; }
+.pg-embed.pg-running .pg-btn-close:hover { color: #f47067; border-color: currentColor; }
 .pg-btn.pg-btn-close:hover {
   color: var(--md-accent-fg-color, #e0642e);
   border-color: currentColor;
@@ -189,6 +294,10 @@
   filter: none;
 }
 .pg-embed .pg-loading {
-  padding: 1.4rem; text-align: center; font-size: 0.8rem;
+  padding: 1.1rem 0.9rem;
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.72rem;
   color: var(--md-default-fg-color--light, #666);
 }
+.pg-embed .pg-loading::before { content: "$ "; color: var(--md-typeset-a-color, #3f6ec6); font-weight: 700; }
+.pg-embed.pg-running .pg-loading { color: #909dab; background: #22272e; }
