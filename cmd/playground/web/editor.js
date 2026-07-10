@@ -1,40 +1,30 @@
-// Playground editors: CodeMirror 6 (vendored, no CDN) with YAML highlighting, a
-// Scriggo-template overlay for `haproxyConfig`/`maps`/`files`/snippet block
-// scalars, and template-aware autocomplete. The vendored bundle is imported
-// dynamically inside makeEditors so that if it ever fails to load, we fall back
-// to a plain <textarea> and the playground still works.
+// Playground editors: CodeMirror 6 (vendored, no CDN). The config editor's
+// highlighting comes from the SAME Lezer grammar the docs facade uses
+// (./highlight/config-highlight.bundle.js) — one grammar, both surfaces, so the
+// editor and the shown config match by construction. The vendored bundle is
+// imported dynamically inside makeEditors so that if it ever fails to load, we
+// fall back to a plain <textarea> and the playground still works.
+
+import { configParser, templateParser, highlighter } from './highlight/config-highlight.bundle.js';
 
 /* ---------- Scriggo template grammar (CM-independent data) ---------- */
 // Delimiter forms: {{ … }}, {% … %} (with {%- / -%} trim), {%% … %%} (blocks),
 // and {# … #} comments. Match the block form first so its %%} isn't mis-closed
-// by the {% … %} rule.
+// by the {% … %} rule. Highlighting is done by the Lezer grammar now; this
+// regex only survives for go-to-definition (tokenAt: is the cursor in a tag?).
 const TPL_RE = /\{%%[\s\S]*?%%\}|\{%[\s\S]*?%\}|\{\{[\s\S]*?\}\}|\{#[\s\S]*?#\}/g;
-const OPEN_RE = /^\{%%-?|^\{%-?|^\{\{-?/;
-const CLOSE_RE = /-?%%\}$|-?%\}$|-?\}\}$/;
-// Scriggo statement keywords + literals (control flow), not the callable builtins.
-const CTRL = new Set(['for', 'in', 'if', 'else', 'end', 'range', 'break', 'continue',
-  'return', 'var', 'const', 'show', 'switch', 'case', 'default', 'fallthrough',
-  'macro', 'extends', 'import', 'using', 'defer', 'and', 'or', 'not', 'contains',
-  'true', 'false', 'nil']);
-// Group 1: `//` line comment (matched first so quotes/backticks inside a comment
-// don't start a string). Group 2: strings — backtick spans lines (Go raw string)
-// but "…"/'…' stop at a newline so a stray quote can't bleed. Group 3: number.
-// Group 4: identifier.
-const INNER_RE = /(\/\/[^\n]*)|(`[^`]*`|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_]\w*)/g;
 
-/* ---------- HAProxy config grammar (for injection into template blocks) ---------- */
+/* ---------- HAProxy config grammar (for the rendered output pane) ---------- */
 // Section keywords that open an HAProxy section (highlighted as headings). Every
 // other leading word of a config line is treated as a directive keyword.
 const HP_SECTIONS = new Set(['global', 'defaults', 'frontend', 'backend', 'listen',
   'peers', 'resolvers', 'cache', 'ring', 'userlist', 'mailers', 'program',
   'http-errors', 'fcgi-app', 'log-forward', 'crt-store', 'traces', 'acme', 'ruleset']);
-// spec groups whose `template:` blocks render HAProxy config (not maps/files/certs).
-const HP_GROUPS = new Set(['haproxyConfig', 'templateSnippets']);
 
 // haproxyTokens classifies one HAProxy config line into spans, each
-// {start, end, cls} with cls one of sec|kw|fn|num|str|cmt. This is the SINGLE
-// source of truth shared by the output pane (index.html hlHaproxy) and the
-// template-block overlay, so the left editor matches the right output exactly.
+// {start, end, cls} with cls one of sec|kw|fn|num|str|cmt. The rendered output
+// pane (index.html hlHaproxy) tokenizes the final haproxy.cfg with it; the
+// editor's own highlighting comes from the Lezer grammar.
 export function haproxyTokens(line) {
   const toks = [];
   // haproxy comments run '#' to end of line.
@@ -217,19 +207,16 @@ function templateCompletions(context) {
 }
 
 /* ---------- CM-dependent setup (built after the bundle loads) ---------- */
-function initCodeMirror(CM) {
-  const { EditorView, basicSetup, Prec, RangeSetBuilder, Decoration, ViewPlugin,
-    yaml, HighlightStyle, syntaxHighlighting, tags } = CM;
+function initCodeMirror(CM, scriggoMode) {
+  const { EditorView, basicSetup, Prec, syntaxHighlighting, LRLanguage, LanguageSupport, yaml, autocompletion } = CM;
 
-  // YAML palette (docs-landing token colors).
-  const yamlPalette = HighlightStyle.define([
-    { tag: [tags.definition(tags.propertyName), tags.propertyName], color: 'var(--t-var)' },
-    { tag: [tags.string, tags.special(tags.string)], color: 'var(--t-str)' },
-    { tag: tags.number, color: 'var(--t-num)' },
-    { tag: [tags.bool, tags.null, tags.keyword, tags.atom], color: 'var(--t-kw)' },
-    { tag: tags.comment, color: 'var(--t-cmt)', fontStyle: 'italic' },
-    { tag: [tags.meta, tags.punctuation, tags.separator], color: 'var(--t-d)' },
-  ]);
+  // The config editor is highlighted by the shared Lezer grammar: configParser
+  // for a full HAProxyTemplateConfig, templateParser for a bare scriggo
+  // scratchpad (?scriggo=1). `highlighter` maps grammar tags to the pg-cf-*
+  // classes styled in index.html — the same classes the docs facade uses.
+  const configLang = new LanguageSupport(LRLanguage.define({ parser: configParser }));
+  const templateLang = new LanguageSupport(LRLanguage.define({ parser: templateParser }));
+  const editorLang = scriggoMode ? templateLang : configLang;
 
   // Editor theme — a terminal, always dark regardless of page theme.
   const theme = EditorView.theme({
@@ -252,181 +239,33 @@ function initCodeMirror(CM) {
     '.cm-godef': { textDecoration: 'underline', textDecorationColor: 'var(--accent)', textUnderlineOffset: '2px', cursor: 'pointer' },
   }, { dark: true });
 
-  const MARK = {
-    delim: Decoration.mark({ class: 'tpl-delim' }),
-    ctrl: Decoration.mark({ class: 'tpl-ctrl' }),
-    fn: Decoration.mark({ class: 'tpl-fn' }),
-    vari: Decoration.mark({ class: 'tpl-var' }),
-    str: Decoration.mark({ class: 'tpl-str' }),
-    num: Decoration.mark({ class: 'tpl-num' }),
-    comment: Decoration.mark({ class: 'tpl-comment' }),
-  };
-
-  const tokenizeInner = (add, base, inner) => {
-    let t;
-    INNER_RE.lastIndex = 0;
-    while ((t = INNER_RE.exec(inner))) {
-      const from = base + t.index, to = from + t[0].length;
-      if (t[1]) add(from, to, MARK.comment);   // // line comment
-      else if (t[2]) add(from, to, MARK.str);
-      else if (t[3]) add(from, to, MARK.num);
-      else {
-        const name = t[4];
-        if (CTRL.has(name)) add(from, to, MARK.ctrl);
-        else if (/^\s*\(/.test(inner.slice(t.index + name.length))) add(from, to, MARK.fn);
-        else add(from, to, MARK.vari);
-      }
-    }
-  };
-
-  // Scan only the visible ranges (+ a margin to catch a tag opened just above the
-  // viewport) so the overlay stays fast on large bundled configs regardless of
-  // total size. A tag straddling the far edge re-resolves on the next scroll.
-  const templateDecorations = (view) => {
-    const b = new RangeSetBuilder();
-    const doc = view.state.doc, docLen = doc.length;
-    const marks = [];
-    const seen = new Set();   // region-start offsets already emitted (windows can overlap)
-    for (const { from, to } of view.visibleRanges) {
-      const winStart = Math.max(0, from - 3000);
-      const text = doc.sliceString(winStart, Math.min(docLen, to + 3000));
-      let m;
-      TPL_RE.lastIndex = 0;
-      while ((m = TPL_RE.exec(text))) {
-        const s = m[0], base = winStart + m.index;
-        if (seen.has(base)) continue;
-        seen.add(base);
-        if (s.startsWith('{#')) { marks.push({ from: base, to: base + s.length, mark: MARK.comment }); continue; }   // {# comment #}
-        const open = s.match(OPEN_RE)[0], close = s.match(CLOSE_RE)[0];
-        marks.push({ from: base, to: base + open.length, mark: MARK.delim });
-        tokenizeInner((f, t, mk) => marks.push({ from: f, to: t, mark: mk }), base + open.length, s.slice(open.length, s.length - close.length));
-        marks.push({ from: base + s.length - close.length, to: base + s.length, mark: MARK.delim });
-      }
-    }
-    marks.sort((a, z) => a.from - z.from || a.to - z.to);   // RangeSetBuilder needs sorted, non-overlapping
-    let lastTo = -1;
-    for (const { from, to, mark } of marks) {
-      if (from < lastTo) continue;
-      b.add(from, to, mark);
-      lastTo = to;
-    }
-    return b.finish();
-  };
-
-  const templateOverlay = ViewPlugin.fromClass(class {
-    constructor(view) { this.decorations = templateDecorations(view); }
-    update(u) { if (u.docChanged || u.viewportChanged) this.decorations = templateDecorations(u.view); }
-  }, { decorations: (v) => v.decorations });
-
-  // --- HAProxy config injection ---
-  // Highlight HAProxy directives / section keywords / comments inside the
-  // `template:` block scalars under haproxyConfig & templateSnippets (which render
-  // HAProxy config). maps/files/certs template blocks are left as plain strings.
-  // Same classes the output pane uses (hl-*), so the highlighting matches exactly.
-  const HL_MARK = {
-    sec: Decoration.mark({ class: 'hl-sec' }),
-    kw: Decoration.mark({ class: 'hl-kw' }),
-    fn: Decoration.mark({ class: 'hl-fn' }),
-    num: Decoration.mark({ class: 'hl-num' }),
-    str: Decoration.mark({ class: 'hl-str' }),
-    cmt: Decoration.mark({ class: 'hl-cmt' }),
-  };
-
-  // haproxyRegions returns the {from,to} char ranges of HAProxy-config block
-  // content in one O(n) pass: track the current spec group (2-space-indented
-  // keys) and, inside a `template:` block under an HP group, its content until
-  // the block dedents.
-  const haproxyRegions = (doc) => {
-    const regions = [];
-    let group = '', inBlock = false, keyIndent = 0, from = -1, to = -1;
-    for (let i = 1; i <= doc.lines; i++) {
-      const line = doc.line(i), text = line.text;
-      const ind = /^\s*/.exec(text)[0].length;
-      const blank = text.trim() === '';
-      if (inBlock) {
-        if (!blank && ind <= keyIndent) {          // dedent → block ends; re-process this line below
-          if (from !== -1) regions.push({ from, to });
-          inBlock = false;
-        } else {
-          if (!blank) { if (from === -1) from = line.from; to = line.to; }
-          continue;
-        }
-      }
-      // A spec group key. The config may be a bare spec (haproxyConfig: at col 0)
-      // or a full CR (spec: -> haproxyConfig: at 2 spaces), so match either indent.
-      const g = /^(?: {2})?([A-Za-z][\w-]*):\s*$/.exec(text);
-      if (g) { group = g[1]; continue; }
-      const tm = /^(\s*)template:\s*\|/.exec(text);
-      if (tm && HP_GROUPS.has(group)) { inBlock = true; keyIndent = tm[1].length; from = -1; to = -1; }
-    }
-    if (inBlock && from !== -1) regions.push({ from, to });
-    return regions;
-  };
-
-  // haproxyDecorations runs the shared HAProxy tokenizer on each visible region
-  // line, with scriggo tags masked to spaces so the tokenizer ignores them (the
-  // scriggo overlay highlights the tags themselves). A '#' comment is clipped at
-  // the first scriggo tag after it, so a live `{{ … }}` inside a comment line
-  // stays a template tag rather than being swallowed by the comment.
-  const haproxyDecorations = (view, regions) => {
-    const b = new RangeSetBuilder();
-    const doc = view.state.doc;
-    const marks = [];
-    for (const { from: vf, to: vt } of view.visibleRanges) {
-      for (const reg of regions) {
-        if (reg.to < vf || reg.from > vt) continue;
-        let pos = Math.max(vf, reg.from);
-        const end = Math.min(vt, reg.to);
-        while (pos <= end) {
-          const line = doc.lineAt(pos), text = line.text;
-          const tagStarts = [];
-          const masked = text.replace(TPL_RE, (m, off) => { tagStarts.push(off); return ' '.repeat(m.length); });
-          for (const t of haproxyTokens(masked)) {
-            let to = t.end;
-            if (t.cls === 'cmt') { const clip = tagStarts.find((s) => s >= t.start); if (clip !== undefined) to = clip; }
-            if (to > t.start) marks.push({ from: line.from + t.start, to: line.from + to, mark: HL_MARK[t.cls] });
-          }
-          if (line.to + 1 <= pos) break;   // last line
-          pos = line.to + 1;
-        }
-      }
-    }
-    marks.sort((a, z) => a.from - z.from || a.to - z.to);
-    let lastTo = -1;
-    for (const { from, to, mark } of marks) { if (from < lastTo) continue; b.add(from, to, mark); lastTo = to; }
-    return b.finish();
-  };
-
-  const haproxyOverlay = ViewPlugin.fromClass(class {
-    constructor(view) { this.regions = haproxyRegions(view.state.doc); this.decorations = haproxyDecorations(view, this.regions); }
-    update(u) {
-      if (u.docChanged) this.regions = haproxyRegions(u.state.doc);
-      if (u.docChanged || u.viewportChanged) this.decorations = haproxyDecorations(u.view, this.regions);
-    }
-  }, { decorations: (v) => v.decorations });
-
-  const yamlSupport = yaml();
   const base = [
     basicSetup,
-    yamlSupport,
-    Prec.highest(syntaxHighlighting(yamlPalette)),   // our palette wins over basicSetup's default
+    Prec.highest(syntaxHighlighting(highlighter)),   // our palette wins over basicSetup's default
     theme,
     EditorView.lineWrapping,
   ];
-  // The config editor gets the template overlay + template-aware completions;
-  // the resources editor is plain YAML.
-  // haproxyOverlay first so templateOverlay's scriggo marks layer over it.
-  const configExtra = [haproxyOverlay, templateOverlay, yamlSupport.language.data.of({ autocomplete: templateCompletions })];
-  return { EditorView, base, configExtra };
+  // The config editor gets the composite grammar + template-aware completions;
+  // the resources editor is plain YAML (its own language, so it isn't parsed as
+  // a HAProxyTemplateConfig). Both share the highlighter above.
+  //
+  // templateCompletions is registered as an `override` source, not via
+  // language.data: the caret lives inside a parseMixed mount (the template block
+  // scalar), and CM6 does NOT fall back to the outer language's data across a
+  // mount boundary, so a language-scoped source never fires there. The source
+  // self-gates on insideTemplate(), so being global is safe.
+  const configExtra = [editorLang, autocompletion({ override: [templateCompletions] })];
+  const resExtra = [yaml()];
+  return { EditorView, base, configExtra, resExtra };
 }
 
 /* ---------- public API ---------- */
-export async function makeEditors(onConfigChange, onResChange, onNav, onGotoDef) {
+export async function makeEditors(onConfigChange, onResChange, onNav, onGotoDef, scriggoMode) {
   const $ = (id) => document.getElementById(id);
   const notify = (name) => { if (onNav) onNav(name); };
   try {
     const CM = await import('./vendor/codemirror.js');
-    const { EditorView, base, configExtra } = initCodeMirror(CM);
+    const { EditorView, base, configExtra, resExtra } = initCodeMirror(CM, scriggoMode);
     const { Decoration, ViewPlugin } = CM;
     // The token under a document position: word run (including '-' for HAProxy
     // keywords like http-request, '.' for Scriggo member chains like
@@ -541,7 +380,7 @@ export async function makeEditors(onConfigChange, onResChange, onNav, onGotoDef)
     };
     return {
       config: mk($('ed-config'), [...configExtra, gotoDefExt, godefPlugin], onConfigChange, 'config'),
-      res: mk($('ed-res'), [], onResChange, 'res'),
+      res: mk($('ed-res'), resExtra, onResChange, 'res'),
       kind: 'codemirror',
     };
   } catch (err) {

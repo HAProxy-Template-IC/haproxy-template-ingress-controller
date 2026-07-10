@@ -63,27 +63,42 @@
 .pg-embed-code > .highlight,
 .pg-embed-code > pre { margin: 0 !important; border-radius: 0 !important; }
 
-/* HAProxy + Scriggo highlighting re-applied to the config's template block by
- * playground-embed.js. Colours match the LIVE editor's palette (index.html
- * --t-*) — a calm blue keyword, not mkdocs-material's loud pink — so the shown
- * config looks the same before and after Run. Light values first; the dark
- * (slate) scheme overrides with the editor's exact terminal palette. */
+/* Token classes emitted by the shared Lezer highlighter (highlightToHTML) — the
+ * SAME grammar the live editor uses, so the shown config matches the editor by
+ * construction. Calm blue directives, teal names, purple template keywords —
+ * not mkdocs-material's loud pink. Light values first; the dark (slate) scheme
+ * overrides with the editor's terminal palette (index.html --t-*).
+ *   sec  HAProxy section      kw   HAProxy directive / bool-null
+ *   key  YAML key             tvar tprop  scriggo variable / property
+ *   tkw  scriggo keyword      tdelim  {{ }} {% %} delimiters
+ *   fn   function / proxy     num tbool  number / scriggo bool
+ *   str  string   top operator   cmt comment */
 .pg-embed-code .pg-cf-sec { color: #0550ae; font-weight: 700; }
 .pg-embed-code .pg-cf-kw  { color: #0550ae; }
 .pg-embed-code .pg-cf-fn  { color: #953800; }
-.pg-embed-code .pg-cf-num { color: #953800; }
+.pg-embed-code .pg-cf-num,
+.pg-embed-code .pg-cf-tbool { color: #953800; }
 .pg-embed-code .pg-cf-str { color: #0a7c42; }
 .pg-embed-code .pg-cf-cmt { color: #6e7781; font-style: italic; }
-.pg-embed-code .pg-cf-key { color: #0e7490; }
-.pg-embed-code .pg-cf-tpl { color: #8250df; font-weight: 600; }
+.pg-embed-code .pg-cf-key,
+.pg-embed-code .pg-cf-tvar,
+.pg-embed-code .pg-cf-tprop { color: #0e7490; }
+.pg-embed-code .pg-cf-tkw,
+.pg-embed-code .pg-cf-tdelim { color: #8250df; font-weight: 600; }
+.pg-embed-code .pg-cf-top { color: #6e7781; }
 [data-md-color-scheme="slate"] .pg-embed-code .pg-cf-sec { color: #6cb6ff; }
 [data-md-color-scheme="slate"] .pg-embed-code .pg-cf-kw  { color: #6cb6ff; }
 [data-md-color-scheme="slate"] .pg-embed-code .pg-cf-fn  { color: #f69d50; }
-[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-num { color: #f0a868; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-num,
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-tbool { color: #f0a868; }
 [data-md-color-scheme="slate"] .pg-embed-code .pg-cf-str { color: #8ddb8c; }
 [data-md-color-scheme="slate"] .pg-embed-code .pg-cf-cmt { color: #7a879a; }
-[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-key { color: #56d4dd; }
-[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-tpl { color: #d2a8ff; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-key,
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-tvar,
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-tprop { color: #56d4dd; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-tkw,
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-tdelim { color: #d2a8ff; }
+[data-md-color-scheme="slate"] .pg-embed-code .pg-cf-top { color: #7d8fa6; }
 
 /* Task / challenge callout — one standard style whether it introduces a
  * challenge inside an embed or an "explore this" prompt after a preset embed.

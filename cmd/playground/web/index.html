@@ -357,14 +357,22 @@
     .anno-cycler .ac-count { color: var(--term-dim); flex: 0 0 auto; }
     .anno-cycler .ac-nav, .anno-cycler .ac-x { appearance: none; border: 0; background: none; cursor: pointer; color: var(--term-dim); font-size: 15px; line-height: 1; padding: 1px 7px; border-radius: 4px; }
     .anno-cycler .ac-nav:hover, .anno-cycler .ac-x:hover { color: var(--accent); background: var(--accent-soft); }
-    /* nested Scriggo template tokens (overlay inside the config's YAML block scalars) */
-    .cm-content .tpl-delim { color: var(--t-d); }
-    .cm-content .tpl-ctrl  { color: var(--t-ctrl); font-weight: 600; }
-    .cm-content .tpl-fn    { color: var(--t-fn); }
-    .cm-content .tpl-var   { color: var(--t-var); }
-    .cm-content .tpl-str   { color: var(--t-str); }
-    .cm-content .tpl-num   { color: var(--t-num); }
-    .cm-content .tpl-comment { color: var(--t-cmt); font-style: italic; }
+    /* Config-editor tokens, emitted by the shared Lezer grammar (editor.js
+       highlighter). Same pg-cf-* classes the docs facade uses, in the terminal
+       palette — YAML keys, HAProxy directives, and nested Scriggo tags. */
+    .cm-content .pg-cf-sec { color: var(--t-kw); font-weight: 600; }
+    .cm-content .pg-cf-kw  { color: var(--t-kw); }
+    .cm-content .pg-cf-fn  { color: var(--t-fn); }
+    .cm-content .pg-cf-num { color: var(--t-num); }
+    .cm-content .pg-cf-tbool { color: var(--t-kw); }
+    .cm-content .pg-cf-str { color: var(--t-str); }
+    .cm-content .pg-cf-cmt { color: var(--t-cmt); font-style: italic; }
+    .cm-content .pg-cf-key { color: var(--t-var); }
+    .cm-content .pg-cf-tvar,
+    .cm-content .pg-cf-tprop { color: var(--t-var); }
+    .cm-content .pg-cf-tkw { color: var(--t-ctrl); font-weight: 600; }
+    .cm-content .pg-cf-tdelim,
+    .cm-content .pg-cf-top { color: var(--t-d); }
 
     /* ---- Error banners ---- */
     .banner { display: none; padding: 9px 14px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid; gap: 8px; align-items: flex-start; flex: 0 0 auto; }
@@ -2043,7 +2051,8 @@ backend {{ e }}
         () => { if (!loadingPreset) markCustom(); markConfig(); autosave(); },              // config editor -> recompile
         () => { if (!loadingPreset) markCustom(); updateResHint(); schedule(); autosave(); }, // resource editor -> render-only (warm)
         updateBackBtn,                                                                        // a jump/back changed history depth
-        gotoDefinition);                                                                      // Ctrl/Cmd-click → docs
+        gotoDefinition,                                                                       // Ctrl/Cmd-click → docs
+        isScriggo);                                                                           // bare template mode → template grammar
       window.hapticPlayground = {   // e2e automation surface (harmless in production)
         setConfig: (t) => editors.config.set(t), setResources: (t) => editors.res.set(t), editorKind: editors.kind,
         reload: () => { configDirty = true; fire(); }, render: () => { configDirty = false; fire(); },

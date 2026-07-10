@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "Composite Lezer grammar + headless highlighter for HAPTIC's HAProxyTemplateConfig. Sources: *.grammar + *-tokens.js; compiled: *.js + *.terms.js (via build.mjs). Requires @lezer/{common,lr,highlight,yaml,generator} + esbuild for build/test."
+}

@@ -1,0 +1,19 @@
+// HAProxy map-file grammar (a middle level of the composite highlighter). Drives
+// the `maps` block scalars. Each line is `KEY VALUE`: the first whitespace-
+// delimited column is a MapKey, the remainder MapValue. `#` starts a comment; the
+// four Scriggo tag forms are opaque TemplateTag nodes for the scriggo overlay.
+
+@context trackColumn from "./map-tokens.js"
+
+@external tokens mapTokens from "./map-tokens.js" {
+  Newline
+  Space
+  TemplateTag
+  Comment
+  MapKey
+  MapValue
+}
+
+@top MapFile { token* }
+
+token { Newline | Space | TemplateTag | Comment | MapKey | MapValue }

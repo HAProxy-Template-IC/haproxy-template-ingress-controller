@@ -1,0 +1,29 @@
+// HAProxy config grammar (a middle level of the composite highlighter). Drives
+// the `haproxyConfig`/`templateSnippets` block scalars. The whole thing is a flat
+// token stream produced by one external tokenizer that tracks line state through a
+// @context tracker: the first word of a line is a Section (if it's a known section
+// keyword) or a Directive; the word right after a Section is a ProxyName. The four
+// Scriggo tag forms are emitted as opaque `TemplateTag` nodes, onto which the
+// scriggo parser is overlaid (parseMixed) in highlight.js.
+
+@context trackLine from "./haproxy-tokens.js"
+
+@external tokens haproxyTokens from "./haproxy-tokens.js" {
+  Newline
+  Space
+  TemplateTag
+  Comment
+  Section
+  Directive
+  ProxyName
+  Number
+  StringTok
+  Word
+}
+
+@top HAProxyConfig { token* }
+
+token {
+  Newline | Space | TemplateTag | Comment |
+  Section | Directive | ProxyName | Number | StringTok | Word
+}

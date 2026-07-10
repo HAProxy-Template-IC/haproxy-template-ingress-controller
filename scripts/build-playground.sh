@@ -30,6 +30,8 @@ cp "$WEB/index.html" "$WEB/editor.js" "$WEB/tryout.js" "$WEB/tryout-template.sh"
    "$WEB/playground.worker.js" "$WEB/starter.config.yaml" "$WEB/starter.resources.yaml" \
    "$WEB/crd.config.yaml" "$WEB/crd.resources.yaml" "$OUT/"
 cp -r "$WEB/vendor" "$OUT/vendor"   # committed CodeMirror bundle (no CDN at runtime)
+mkdir -p "$OUT/highlight"           # committed Lezer highlight bundle (editor + facade share it)
+cp "$WEB/highlight/config-highlight.bundle.js" "$OUT/highlight/"
 # Stamp the version so the version selector marks this build as current.
 sed -i "s#<html lang=\"en\">#<html lang=\"en\" data-version=\"${VERSION}\">#" "$OUT/index.html"
 
@@ -45,7 +47,7 @@ echo "==> schema bundle + presets"
 # serves the .br sibling (best ratio) or the .gz sibling; otherwise the plain
 # file is used. gzip is emitted too because Content-Encoding: br support on the
 # Pages host is not guaranteed (see docs/agents/playground-hosting.md).
-BIG_ASSETS=(playground.wasm schemas.json vendor/codemirror.js)
+BIG_ASSETS=(playground.wasm schemas.json vendor/codemirror.js highlight/config-highlight.bundle.js)
 if command -v brotli >/dev/null; then
   echo "==> brotli precompress"
   for f in "${BIG_ASSETS[@]}"; do [ -f "$OUT/$f" ] && brotli -q 11 -k -f "$OUT/$f"; done
