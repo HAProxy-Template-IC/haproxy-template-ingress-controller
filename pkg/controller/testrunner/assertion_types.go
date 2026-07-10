@@ -47,6 +47,22 @@ func (r *Runner) assertHAProxyValid(
 		result.Description = "HAProxy configuration must be syntactically valid"
 	}
 
+	// Browser/WASM: no haproxy binary. Fall back to the pure-Go syntax + schema
+	// check (the same subset the render path runs). It catches malformed
+	// directives, bad enums, and out-of-range/missing fields, but NOT the
+	// binary-only checks (cross-references, unknown keywords, global/defaults).
+	// Callers set SkipBinaryValidation must label these results accordingly.
+	if r.skipBinaryValidation {
+		_, err := dataplane.ValidateSyntaxAndSchema(haproxyConfig, r.haproxyVersion)
+		if err != nil {
+			result.Passed = false
+			result.Error = fmt.Sprintf("HAProxy syntax/schema validation failed (config size: %d bytes): %s",
+				len(haproxyConfig), dataplane.SimplifyValidationError(err))
+		}
+		r.populateTargetMetadata(&result, haproxyConfig, names.MainTemplateName, !result.Passed)
+		return result
+	}
+
 	// Use dataplane.ValidateConfiguration to validate HAProxy config with worker-specific paths
 	// Pass nil version to use default v3.0 schema (safest for validation)
 	// Use strict validation (skipDNSValidation=false) for CLI to catch DNS issues during local validation

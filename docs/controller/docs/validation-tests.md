@@ -60,6 +60,84 @@ Run tests:
 haptic-controller validate -f my-config.yaml
 ```
 
+Or run tests right here — this is a complete config with a `validationTests` block. Press **Run live**, then open the **tests** tab to see each assertion pass or fail:
+
+<div class="pg-embed" markdown data-tab="tests" data-controls="tabs" data-title="Validation tests, live" data-height="560">
+
+```yaml
+watchedResources:
+  services:
+    apiVersion: v1
+    resources: services
+    indexBy:
+      - metadata.namespace
+      - metadata.name
+
+haproxyConfig:
+  template: |
+    global
+      maxconn 1000
+
+    defaults
+      mode http
+      timeout connect 5s
+      timeout client 30s
+      timeout server 30s
+
+    frontend http
+      bind :8080
+      default_backend not-found
+    {%- for _, svc := range resources.services.List() %}
+    {%%
+      var ns   = svc | dig("metadata", "namespace") | fallback("") | tostring()
+      var name = svc | dig("metadata", "name") | fallback("") | tostring()
+    %%}
+    backend {{ ns }}_{{ name }}
+      server app {{ name }}.{{ ns }}.svc:80
+    {%- end %}
+
+    backend not-found
+      http-request deny deny_status 404
+
+# Tests render this config against fixture resources and check the output.
+validationTests:
+  one-backend-per-service:
+    description: Each Service becomes its own backend
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: shop
+            namespace: storefront
+          spec:
+            ports:
+              - port: 80
+    assertions:
+      - type: haproxy_valid
+        description: Rendered config is valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend storefront_shop"
+        description: A backend exists for the shop Service
+      - type: match_count
+        target: haproxy.cfg
+        pattern: "(?m)^backend "
+        expected: "2"
+        description: Exactly two backends (shop + not-found)
+```
+
+<p class="pg-task">🎯 <b>Try it:</b> Add a second Service to the <code>fixtures</code> block, then bump the <code>match_count</code> assertion's <code>expected</code> to <code>"3"</code> and re-run — watch it stay green. Set it back to <code>"2"</code> to see the assertion turn red.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+The **tests** tab auto-runs on load: all three assertions pass (green). In the browser, `haproxy_valid` runs the pure-Go syntax + schema check — it's tagged **syntax + schema** because the `haproxy -c` binary can't run in a browser. Editing the config and pressing **↻ Re-run tests** re-evaluates every assertion.
+
+</details>
+
+</div>
+
 ## Test Structure
 
 Each test consists of:

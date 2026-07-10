@@ -81,17 +81,18 @@ func New(
 	traceTemplates := engine.IsTracingEnabled()
 
 	return &Runner{
-		engineTemplate:     engine,
-		validationPaths:    validationPaths,
-		config:             cfg,
-		logger:             logger.With("component", "test-runner"),
-		workers:            workers,
-		debugFilters:       options.DebugFilters,
-		traceTemplates:     traceTemplates,
-		profileIncludes:    options.ProfileIncludes,
-		capabilities:       options.Capabilities,
-		haproxyVersion:     options.HAProxyVersion,
-		typedResourceTypes: options.TypedResourceTypes,
+		engineTemplate:       engine,
+		validationPaths:      validationPaths,
+		config:               cfg,
+		logger:               logger.With("component", "test-runner"),
+		workers:              workers,
+		debugFilters:         options.DebugFilters,
+		traceTemplates:       traceTemplates,
+		profileIncludes:      options.ProfileIncludes,
+		capabilities:         options.Capabilities,
+		haproxyVersion:       options.HAProxyVersion,
+		typedResourceTypes:   options.TypedResourceTypes,
+		skipBinaryValidation: options.SkipBinaryValidation,
 	}
 }
 

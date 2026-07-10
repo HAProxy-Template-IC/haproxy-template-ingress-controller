@@ -22,7 +22,8 @@
  *   data-scenario   preset name -> fetch BOTH config+resources from the bundle (no inline block needed)
  *   data-resources  preset name -> resources when the config is inline
  *   data-version    HAProxy target version (default 3.4)
- *   data-tab        output tab to open on (haproxy.cfg|maps|files|certs|status|applied)
+ *   data-tab        output tab to open on (haproxy.cfg|maps|files|certs|status|applied|resources|trace|tests)
+ *                   — "tests" auto-runs the config's spec.validationTests on load
  *   data-focus      [file:]start-end | file — highlight/scroll to the important lines
  *   data-controls   comma list re-enabling controls in the embed (tabs,resources,tools,nav,max,reload,provenance,dots)
  *   data-height     iframe height in px (default 460)
