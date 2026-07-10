@@ -32,7 +32,9 @@
  *   data-difficulty 1-3 -> shown as stars
  *
  * Challenge: add a `<details class="pg-solution">` containing a solution config
- * block; a "Load solution" button reruns the embed with it.
+ * block; a "Compare with my config" button opens the playground's side-by-side
+ * diff of the reader's current config vs the solution (applying it is an
+ * explicit action inside that view).
  */
 (function () {
   'use strict';
@@ -169,6 +171,44 @@
     return true;
   }
 
+  // Open the solution comparison inside the running playground. Starts the
+  // playground first if needed — comparing against the STARTING config is the
+  // point then: the diff reads as "what the solution adds". The iframe is
+  // same-origin (docs and playground ship from one site), so the shell's
+  // hapticPlayground API is reachable directly; a versioned playground too old
+  // to have compareSolution falls back to loading the solution outright.
+  async function compareSolution(el, solution) {
+    if (!el._loaded) {
+      if (!(await run(el))) return;
+    } else if (!el.classList.contains('pg-running')) {
+      el.classList.add('pg-running');
+      if (el._runBtn) el._runBtn.hidden = true;
+      if (el._closeBtn) el._closeBtn.hidden = false;
+    }
+    el.scrollIntoView({ block: 'nearest' });
+    var frame = el.querySelector('.pg-frame');
+    var t0 = Date.now();
+    (function poll() {
+      var api = null;
+      try { api = frame.contentWindow && frame.contentWindow.hapticPlayground; } catch (e) { /* treat as not ready */ }
+      if (api && api.compareSolution) {
+        // New shell: also wait for the initial config to be IN the editor
+        // (stateReady) so the diff never runs against an empty pane.
+        if (api.stateReady) { api.compareSolution(solution); return; }
+      } else if (api && api.setConfig && Date.now() - t0 > 4000) {
+        api.setConfig(solution); return;   // old versioned shell without the compare API
+      }
+      if (Date.now() - t0 < 20000) { setTimeout(poll, 250); return; }
+      // Timed out: tell the reader instead of dead-ending silently.
+      var loading = el.querySelector('.pg-loading');
+      if (loading) {
+        loading.hidden = false;
+        loading.textContent = 'could not open the comparison — try again once the playground has rendered';
+        setTimeout(function () { loading.hidden = true; }, 5000);
+      }
+    })();
+  }
+
   function enhance(el) {
     if (el._pgReady) return;
     el._pgReady = true;
@@ -262,18 +302,20 @@
     loading.textContent = 'Loading the playground…';
     el.appendChild(loading);
 
-    // Challenge: a "Load solution" button inside a <details class="pg-solution">.
+    // Challenge: a "Compare with solution" button inside a <details class="pg-solution">.
+    // Non-destructive: it opens the playground's side-by-side diff (your current
+    // config vs the solution) so the reader sees what's missing; replacing the
+    // editor is an explicit action inside that comparison, not the default.
     var sol = el.querySelector('details.pg-solution');
     if (sol) {
       var solBlock = sol.querySelector('.highlight, pre, .highlighttable');
       if (solBlock) {
-        var loadSol = document.createElement('button');
-        loadSol.type = 'button';
-        loadSol.className = 'pg-btn pg-btn-ghost';
-        loadSol.style.margin = '0 0.8rem 0.6rem';
-        loadSol.textContent = '▶ Load solution';
-        loadSol.addEventListener('click', function () { run(el, codeText(solBlock)); });
-        sol.appendChild(loadSol);
+        var cmpBtn = document.createElement('button');
+        cmpBtn.type = 'button';
+        cmpBtn.className = 'pg-btn pg-btn-ghost pg-btn-solution';
+        cmpBtn.textContent = '⇆ Compare with my config';
+        cmpBtn.addEventListener('click', function () { compareSolution(el, codeText(solBlock)); });
+        sol.appendChild(cmpBtn);
       }
     }
   }

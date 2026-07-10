@@ -208,7 +208,7 @@ function templateCompletions(context) {
 
 /* ---------- CM-dependent setup (built after the bundle loads) ---------- */
 function initCodeMirror(CM, scriggoMode) {
-  const { EditorView, basicSetup, Prec, syntaxHighlighting, LRLanguage, LanguageSupport, yaml, autocompletion } = CM;
+  const { EditorView, EditorState, basicSetup, Prec, syntaxHighlighting, LRLanguage, LanguageSupport, yaml, autocompletion, MergeView } = CM;
 
   // The config editor is highlighted by the shared Lezer grammar: configParser
   // for a full HAProxyTemplateConfig, templateParser for a bare scriggo
@@ -256,7 +256,19 @@ function initCodeMirror(CM, scriggoMode) {
   // self-gates on insideTemplate(), so being global is safe.
   const configExtra = [editorLang, autocompletion({ override: [templateCompletions] })];
   const resExtra = [yaml()];
-  return { EditorView, base, configExtra, resExtra };
+  // Side-by-side read-only diff of two configs (the challenge "compare with
+  // solution" view). Same language + palette as the live editor, so the diff
+  // reads like the editor. Returns the MergeView (caller calls .destroy()).
+  const makeMerge = (parent, aDoc, bDoc) => {
+    const ro = [
+      basicSetup, editorLang,
+      Prec.highest(syntaxHighlighting(highlighter)),
+      theme, EditorView.lineWrapping,
+      EditorState.readOnly.of(true), EditorView.editable.of(false),
+    ];
+    return new MergeView({ parent, a: { doc: aDoc, extensions: ro }, b: { doc: bDoc, extensions: ro } });
+  };
+  return { EditorView, base, configExtra, resExtra, makeMerge };
 }
 
 /* ---------- public API ---------- */
@@ -265,7 +277,7 @@ export async function makeEditors(onConfigChange, onResChange, onNav, onGotoDef,
   const notify = (name) => { if (onNav) onNav(name); };
   try {
     const CM = await import('./vendor/codemirror.js');
-    const { EditorView, base, configExtra, resExtra } = initCodeMirror(CM, scriggoMode);
+    const { EditorView, base, configExtra, resExtra, makeMerge } = initCodeMirror(CM, scriggoMode);
     const { Decoration, ViewPlugin } = CM;
     // The token under a document position: word run (including '-' for HAProxy
     // keywords like http-request, '.' for Scriggo member chains like
@@ -382,6 +394,7 @@ export async function makeEditors(onConfigChange, onResChange, onNav, onGotoDef,
       config: mk($('ed-config'), [...configExtra, gotoDefExt, godefPlugin], onConfigChange, 'config'),
       res: mk($('ed-res'), resExtra, onResChange, 'res'),
       kind: 'codemirror',
+      makeMerge: makeMerge,   // (parent, aDoc, bDoc) -> MergeView; solution-compare view
     };
   } catch (err) {
     console.warn('CodeMirror unavailable, using textareas:', err);
