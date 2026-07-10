@@ -23,8 +23,8 @@ the template or the Ingress and watch the output change.
 <div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="14-15" data-controls="tabs,resources" data-title="An Ingress becomes an HAProxy config" data-height="480">
 
 ```yaml
-# One HAProxy backend per Ingress, routed by host. Untyped dig() access,
-# so no schema is needed. Edit this, or the Ingress, and watch the output.
+# One HAProxy backend per Ingress, routed by host. Typed field access —
+# the schema is bundled, so no dig() needed. Edit this, or the Ingress, and watch the output.
 haproxyConfig:
   template: |
     global
@@ -41,10 +41,10 @@ haproxyConfig:
       use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
       default_backend unmatched
     {%- for _, ing := range resources.ingresses.List() %}
-    {%- for _, rule := range ing | dig("spec", "rules") | toSlice() %}
-    {%- for _, path := range rule | dig("http", "paths") | toSlice() %}
-    backend {{ ing | dig("metadata", "name") | tostring() }}
-      server app {{ path | dig("backend", "service", "name") | tostring() }}:{{ path | dig("backend", "service", "port", "number") | fallback(80) | tostring() }}
+    {%- for _, rule := range ing.spec.rules %}
+    {%- for _, path := range rule.http.paths %}
+    backend {{ ing.metadata.name }}
+      server app {{ path.backend.service.name }}:{{ path.backend.service.port.number | fallback(80) }}
     {%- end %}
     {%- end %}
     {%- end %}
@@ -63,8 +63,8 @@ maps:
   host.map:
     template: |
       {%- for _, ing := range resources.ingresses.List() %}
-      {%- for _, rule := range ing | dig("spec", "rules") | toSlice() %}
-      {{ rule | dig("host") | tostring() }} {{ ing | dig("metadata", "name") | tostring() }}
+      {%- for _, rule := range ing.spec.rules %}
+      {{ rule.host }} {{ ing.metadata.name }}
       {%- end %}
       {%- end %}
 ```
