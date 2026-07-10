@@ -206,7 +206,7 @@ cosign verify \
 
 ### SBOM (Software Bill of Materials)
 
-Each Docker image includes an SBOM attestation in SPDX format:
+Each controller image includes an SBOM attestation in SPDX format (the spoa-hub image uses CycloneDX — see [SPOA Hub](../operations/spoa-hub.md)):
 
 **View SBOM:**
 

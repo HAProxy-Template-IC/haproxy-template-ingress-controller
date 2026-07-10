@@ -7,7 +7,7 @@ HAPTIC is an ingress controller for a fleet of HAProxy load balancers. It contin
 - The main HAProxy configuration file (`haproxy.cfg`)
 - Optional auxiliary files — custom error pages (e.g. `500.http`) and lookup map files (e.g. `host.map`)
 
-After rendering, files are validated and pushed to each HAProxy pod via the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). The controller pushes the full rendered configuration in a single raw update per pod; when a change touches only runtime-eligible server attributes (address, port, enabled/disabled state) it is applied through the [HAProxy Runtime API](https://www.haproxy.com/documentation/haproxy-runtime-api/) instead, updating HAProxy at runtime without a process reload.
+After rendering, files are validated and pushed to each HAProxy pod via the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). The controller pushes the full rendered configuration in a single raw update per pod; when a change touches only runtime-eligible server attributes (weight, address, port, enabled/disabled state) it is applied through the [HAProxy Runtime API](https://www.haproxy.com/documentation/haproxy-runtime-api/) instead, updating HAProxy at runtime without a process reload.
 
 ## Triggers
 

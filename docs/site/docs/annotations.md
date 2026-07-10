@@ -29,20 +29,20 @@ The libraries cover the following HAProxy feature areas through their respective
 | Basic authentication | `auth-type`, `auth-secret`, `auth-realm` | `auth-secret`, `auth-realm` | `auth-type`, `auth-secret`, `auth-realm` |
 | External authentication ([SPOA hub](operations/spoa-hub.md)) | — | `auth-url`, `auth-signin`, `auth-method`, `auth-headers-request`, `auth-headers-succeed`, `auth-headers-fail` | `auth-url`, `auth-signin`, `auth-method`, `auth-response-headers` |
 | Client certificate (incoming mTLS) | — | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-cert-header` | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-pass-certificate-to-upstream` |
-| Allowlist / Denylist | `allowlist`, `denylist` | `allowlist-source-range`, `denylist-source-range` | `whitelist-source-range`, `denylist-source-range` |
+| Allowlist / Denylist | `allow-list`, `deny-list` | `allowlist-source-range`, `denylist-source-range` | `whitelist-source-range`, `denylist-source-range` |
 | SSL redirect | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect` |
 | SSL passthrough | `ssl-passthrough` | `ssl-passthrough` | `ssl-passthrough` |
 | Backend SSL / mTLS | `server-ssl`, `server-proto`, `server-ca`, `server-crt` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret` | `backend-protocol` |
 | CORS | `cors-enable`, `cors-allow-origin`, … | `cors-enable`, `cors-allow-origin`, … | `enable-cors`, `cors-allow-origin`, … |
 | Load balancing | `load-balance` | `balance-algorithm` | `load-balance` |
 | Session affinity (cookies) | `cookie-persistence` | `affinity`, `session-cookie-*` | `affinity`, `session-cookie-*` |
-| Rate limiting | `rate-limit-requests`, `rate-limit-period`, … | — | — |
+| Rate limiting | `rate-limit-requests`, `rate-limit-period`, … | — | `limit-rps`, `limit-rpm`, `limit-connections` |
 | Timeouts | `timeout-server`, `timeout-connect`, … | `timeout-server`, `timeout-connect`, … | `proxy-connect-timeout`, `proxy-read-timeout`, `proxy-send-timeout` |
 | Health checks | `check`, `check-http`, `check-interval` | `backend-check-interval`, `health-check-uri`, … | — |
 | HSTS | — | `hsts`, `hsts-max-age`, … | — |
 | Request / response headers | `request-set-header`, `response-set-header` | `headers` | `custom-request-headers`, `custom-response-headers` |
 | Path rewriting | `path-rewrite` | — | `rewrite-target` |
-| PROXY protocol | `send-proxy-protocol` | `proxy-protocol` | — |
+| PROXY protocol | `send-proxy-protocol` | `proxy-protocol` | `use-proxy-protocol` |
 | Raw backend config | `backend-config-snippet` | `config-backend` | `configuration-snippet` |
 
 For the complete per-annotation reference with examples and generated HAProxy configuration output, see the library docs:

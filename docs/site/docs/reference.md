@@ -41,7 +41,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.templateLibraries.base.enabled` | bool | `true` | Core HAProxy configuration. Disabling drops the `haproxyConfig` template the other libraries plug into; leave on unless you supply a complete replacement |
 | `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
-| `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTPRoute, GRPCRoute) |
+| `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTP, gRPC, TLS and TCP routes) |
 | `controller.templateLibraries.ingressAnnotationsCompat.enabled` | bool | `true` | Shared ingress-annotations-compat scaffold (level 2.5). Provides parameterized macros consumed by the Ingress vendor annotation libraries below |
 | `controller.templateLibraries.haproxytech.enabled` | bool | `true` | haproxy.org/* annotation support |
 | `controller.templateLibraries.haproxyIngress.enabled` | bool | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
@@ -101,7 +101,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 
 ## Watched Resources
 
-`controller.config.watchedResources.<name>` is a map of resource entries. The chart's template libraries contribute most entries (Ingress, Service, EndpointSlice, Secret, plus HTTPRoute / GRPCRoute when the gateway library is on); operators can add or override entries here. Each entry accepts:
+`controller.config.watchedResources.<name>` is a map of resource entries. The chart's template libraries contribute most entries (Ingress, Service, EndpointSlice, Secret, plus the Gateway API route kinds when the gateway library is on); operators can add or override entries here. Each entry accepts:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -132,7 +132,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `webhook.haproxyTemplateConfig.enabled` | bool | `true` | Also validate `HAProxyTemplateConfig` CRD updates via the webhook (`failurePolicy: Ignore`, not configurable — controller downtime never blocks CRD edits). When active, the leader-side reconcile can skip `haproxy -c` on every render |
 | `webhook.secretName` | string | Auto-generated | Webhook TLS certificate secret name |
 | `webhook.service.port` | int | `443` | Webhook service port |
-| `webhook.certManager.enabled` | bool | `true` | Use cert-manager for certificates (set to `false` for manual cert management via `webhook.caBundle`) |
+| `webhook.certManager.enabled` | bool | `false` | cert-manager integration for the webhook cert. Default `false`: the chart issues a self-signed cert itself. Set `true` for cert-manager-managed issuance and auto-rotation; for manual certs keep `false` and set `webhook.caBundle` |
 | `webhook.certManager.createIssuer` | bool | `true` | Create a self-signed Issuer for webhook certs |
 | `webhook.certManager.issuerRef.name` | string | `""` | Issuer name (auto-set when createIssuer=true) |
 | `webhook.certManager.issuerRef.kind` | string | `Issuer` | Issuer kind |
@@ -458,7 +458,7 @@ Available plugin names (`<name>`): `coraza`, `external-auth`, `fingerprinting`, 
 | `haproxy.resources.requests.memory` | string | `1Gi` | Memory request (Guaranteed QoS — limits.memory matches) |
 | `haproxy.resources.limits.memory` | string | `1Gi` | Memory limit |
 
-No CPU limit is set by default to avoid throttling; Go's auto-GOMAXPROCS adapts to the request value.
+No CPU limit is set by default to avoid throttling; HAProxy's `nbthread` auto-calculates from the CPU request.
 
 ## HAProxy NetworkPolicy
 

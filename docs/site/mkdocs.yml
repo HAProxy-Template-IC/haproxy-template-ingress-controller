@@ -94,10 +94,10 @@ nav:
     - SSL: libraries/ssl.md
     - Ingress: libraries/ingress.md
     - Gateway API: libraries/gateway.md
-    - Annotation Compat (scaffold): libraries/ingress-annotations-compat.md
-    - HAProxy Annotations: libraries/haproxytech.md
-    - HAProxy Ingress: libraries/haproxy-ingress.md
-    - Nginx Ingress: libraries/nginx-ingress.md
+    - ingress-annotations-compat (scaffold): libraries/ingress-annotations-compat.md
+    - haproxytech (haproxy.org/*): libraries/haproxytech.md
+    - haproxy-ingress: libraries/haproxy-ingress.md
+    - nginx-ingress: libraries/nginx-ingress.md
   - Operations:
     - HAProxy Versions: operations/haproxy-versions.md
     - SPOA Hub: operations/spoa-hub.md

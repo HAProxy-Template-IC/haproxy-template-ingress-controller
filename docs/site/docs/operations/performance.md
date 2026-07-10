@@ -23,7 +23,7 @@ Performance optimization involves three areas:
 These recommendations are based on the controller's primary memory consumers (watched resource caches, template rendering buffers, event history) and CPU consumers (template rendering, API server watch streams). Adjust based on your actual resource counts and template complexity.
 
 !!! note "Chart defaults differ — deliberately"
-    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Guaranteed QoS), which differs from the table above for two reasons spelled out in the [HAProxy deployment guide](../haproxy-deployment.md#resource-limits-and-container-awareness): omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel OOM killer from preferring this pod over Burstable neighbours. The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
+    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Burstable QoS — no CPU limit, by design), which differs from the table above for two reasons spelled out in the [HAProxy deployment guide](../haproxy-deployment.md#resource-limits-and-container-awareness): omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel OOM killer from preferring this pod over Burstable neighbours. The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
 
 Configure via Helm values:
 
@@ -35,7 +35,7 @@ resources:
     memory: 512Mi
   limits:
     # No CPU limit — avoids throttling GOMAXPROCS-aware Go under bursts.
-    memory: 512Mi   # request == limit → Guaranteed QoS
+    memory: 512Mi   # memory request == limit; no CPU limit → Burstable QoS (by design)
 ```
 
 ### Memory Considerations

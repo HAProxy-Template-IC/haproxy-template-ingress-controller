@@ -6,7 +6,7 @@ The Gateway API library provides support for Kubernetes Gateway API resources, e
 
 The Gateway API library implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) specification, providing:
 
-- HTTPRoute and GRPCRoute support
+- HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute support
 - Advanced request matching (method, headers, query parameters)
 - Traffic splitting with weighted backends
 - Request/response header modification
@@ -122,7 +122,7 @@ TLS Secrets are watched by the SSL library (not gateway), and controller-service
 
 The `gateway/` library:
 
-- Declares `httproutes` and `grpcroutes` as watched resources
+- Declares the Gateway API resource set as watched resources — `httproutes`, `grpcroutes`, `tlsroutes`, `tcproutes`, plus `gateways`, `gatewayclasses`, `referencegrants`, and the other supporting kinds (see the table above)
 - Implements backend generation for Gateway routes
 - Adds routing rules to HAProxy map files
 - Plugs into extension points defined in `base.yaml`

@@ -184,9 +184,10 @@ Useful flags:
 
 ### 1. Match the IngressClass
 
-HAPTIC scopes Ingresses with a server-side field selector
-`spec.ingressClassName=<ingressClass.name>`. Your Ingresses carry
-`ingressClassName: nginx`, so pick one:
+HAPTIC scopes Ingresses with a field selector on
+`spec.ingressClassName=<ingressClass.name>` (a client-side filter — the
+controller fetches the watch and drops non-matching Ingresses before they reach
+its store). Your Ingresses carry `ingressClassName: nginx`, so pick one:
 
 === "Edit Ingress manifests (recommended)"
 
@@ -403,9 +404,9 @@ Three defaults cause most "it's installed but doesn't behave like before"
 reports. Each fails quietly, so check them first.
 
 - **Existing Ingresses aren't being routed.** HAPTIC only serves Ingresses whose
-  `spec.ingressClassName` equals `ingressClass.name` (default **`haptic`**), and
-  the filter is applied *at the watch level* — an `ingressClassName: nginx`
-  Ingress is never even seen. Fix: [match the IngressClass](#1-match-the-ingressclass).
+  `spec.ingressClassName` equals `ingressClass.name` (default **`haptic`**) —
+  an `ingressClassName: nginx` Ingress is filtered out before it reaches the
+  controller's store. Fix: [match the IngressClass](#1-match-the-ingressclass).
 
 - **Annotations seem to be ignored.** The `nginx.ingress.kubernetes.io/*`
   compatibility library is **disabled by default**, so those annotations

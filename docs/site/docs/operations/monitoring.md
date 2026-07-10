@@ -194,7 +194,7 @@ The bundled `HAProxyFleetDiverged` alert (see [Alerting Rules](#alerting-rules))
 
 ### Runtime Fast-Path Metrics
 
-The runtime fast path applies runtime-eligible server changes (address, port, admin state) directly to the running HAProxy worker via the Dataplane API, bypassing a config reload. `applies` stuck at 0 while `fires` climbs means the fast path runs but the render diff never carries a runtime-eligible change.
+The runtime fast path applies runtime-eligible server changes (weight, address, port, admin state) directly to the running HAProxy worker via the Dataplane API, bypassing a config reload. `applies` stuck at 0 while `fires` climbs means the fast path runs but the render diff never carries a runtime-eligible change.
 
 | Metric | Type | Description |
 |--------|------|-------------|

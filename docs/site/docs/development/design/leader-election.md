@@ -460,9 +460,11 @@ func TestLeaderElection_DisabledMode(t *testing.T)
 **Verification steps**:
 
 ```bash
-# Set your Helm release name once; both the deployment and the
-# lease are derived from it (deployment: "$RELEASE-controller", lease: "$RELEASE")
-RELEASE=my-controller
+# Set your Helm release name once; both the deployment and the lease are
+# derived from the chart fullname (deployment: "$RELEASE-controller", lease:
+# "$RELEASE"). These short forms hold because the release name contains
+# "haptic" — otherwise the chart prefixes names as "<release>-haptic".
+RELEASE=haptic
 
 # Deploy with 3 replicas
 kubectl scale deployment "$RELEASE-controller" --replicas=3
