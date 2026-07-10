@@ -8,7 +8,7 @@ The scaffold exists to concentrate behaviour that would otherwise be duplicated 
 
 **Scope: Ingress only.** A vendor library operating on a non-Ingress CRD (HTTPRoute, GRPCRoute, custom CRDs) does NOT use these macros — it writes its own equivalents. The earlier name (`annotation-compat`) implied generality across resources; in practice the scaffold was always Ingress-coupled, and pretending otherwise blocked typed Ingress access here. The rename makes the scope explicit.
 
-See ADR-0003 (`docs/adr/0003-annotation-compat-scaffold-level-2-5.md`) for the design rationale (the ADR predates this rename; the scaffold pattern still applies — only the scope is now made explicit).
+The scaffold pattern predates this rename; it still applies — only the scope is now made explicit.
 
 ## Hierarchy
 
@@ -61,7 +61,7 @@ The service fields (`svcName`, `svcPort`, `svcPortName`) are captured at scan ti
 - `haproxy-ingress/` → `util-haproxy-ingress-ssl-passthrough` (annotation: `haproxy-ingress.github.io/ssl-passthrough`)
 - `nginx-ingress/` → `util-nginx-ingress-ssl-passthrough` (annotation: `nginx.ingress.kubernetes.io/ssl-passthrough`)
 
-The protocol library still owns the per-library `ComputeIfAbsent` cache key, so the data slots stay distinct.
+The vendor library still owns the per-library `ComputeIfAbsent` cache key, so the data slots stay distinct.
 
 ### `EmitAnnotationAccessControl`
 
@@ -96,13 +96,13 @@ The scaffold deliberately holds only patterns that share enough behaviour across
 - **Backend timeouts.** Each library has its own annotation naming (`timeout-server` vs `proxy-read-timeout`). `nginx-ingress` maps two annotations (`proxy-read-timeout` and `proxy-send-timeout`) onto HAProxy's single `timeout server` using `max()`. Per-vendor transforms.
 - **Request/response header manipulation.** Different rendering positions (backend-directives in `haproxytech`, frontend-filters in `nginx-ingress`), different annotation value separators (`\n` vs `|`), different name/value separators (space vs colon), different host-match application.
 
-For these patterns, each protocol library keeps its own implementation. If a fourth annotation library appears and its shape converges with the existing three, that's the time to extract — not before.
+For these patterns, each vendor library keeps its own implementation. If a fourth annotation library appears and its shape converges with the existing three, that's the time to extract — not before.
 
 ## Adding a New Macro
 
 A new macro earns its keep when:
 
-1. Two or more protocol libraries already implement nearly the same emission logic.
+1. Two or more vendor libraries already implement nearly the same emission logic.
 2. The differences can be expressed as a small fixed set of string parameters (annotation keys, naming prefixes, comment formats).
 3. Validation-test assertions can survive the move (or can be updated cheaply).
 
@@ -112,4 +112,3 @@ If any of those fail, leave the duplication in place. Forced abstractions over g
 
 - [Template Libraries Overview](../template-libraries.md)
 - [Base Library](base.md) — provides `util-ingress-helpers` (HostMatchCondition) used inside scaffold macros
-- ADR-0003 (`docs/adr/0003-annotation-compat-scaffold-level-2-5.md`)

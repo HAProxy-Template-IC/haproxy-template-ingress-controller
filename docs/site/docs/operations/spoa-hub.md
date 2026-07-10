@@ -2,9 +2,9 @@
 
 ## Overview
 
-HAPTIC ships a `spoa-hub` container image that bundles the [haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) plus a curated set of plugin shared libraries. Deployed as a sidecar to each HAProxy pod, the hub speaks the [SPOP wire protocol](https://docs.haproxy.org/spoe.html) over a shared Unix domain socket and delegates per-request work to plugins (WAF inspection, geoip, JA3/JA4 fingerprinting, OpenTelemetry export, OIDC/SAML auth, nginx-style external auth).
+HAPTIC ships a `spoa-hub` container image that bundles the [haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) plus a curated set of plugin shared libraries. Deployed as a sidecar to each HAProxy pod, the hub is a SPOA (Stream Processing Offload Agent): it speaks the [SPOP (Stream Processing Offload Protocol) wire protocol](https://docs.haproxy.org/spoe.html) over a shared Unix domain socket and delegates per-request work to plugins (WAF inspection, geoip, JA3/JA4 fingerprinting, OpenTelemetry export, OIDC/SAML auth, request mirroring, nginx-style external auth).
 
-This page documents the exact components bundled with the version of HAPTIC you are reading docs for, how to verify them end-to-end, and how to tune the HAProxy-side SPOE wiring the chart emits when the sidecar is enabled.
+This page documents the exact components bundled with the version of HAPTIC you are reading docs for, how to verify them end-to-end, and how to tune the HAProxy-side SPOE (Stream Processing Offload Engine) wiring the chart emits when the sidecar is enabled.
 
 ## Bundled components
 
@@ -65,7 +65,7 @@ The chart's `spoaHub.haproxy.*` values map directly to HAProxy directives the ch
 | Values key                          | HAProxy directive                                                  | Default              | When to change                                                                                                        |
 | ----------------------------------- | ------------------------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `spoaHub.haproxy.socketPath`        | `server hub <path>` in `backend spoa-hub`                          | `/run/spoa/hub.sock` | Match a different bind path the sidecar listens on (e.g. when `securityContext.runAsUser` blocks `/run/spoa`).        |
-| `spoaHub.haproxy.modeSpop`          | `mode spop` (true) vs. `mode tcp` + filter (false) on the backend  | `true`               | Auto-falls back to `mode tcp` on HAProxy 3.0 (`mode spop` was introduced in 3.1). Set `false` to force `mode tcp` on 3.1+ as well — rare, mostly compat testing.                                           |
+| `spoaHub.haproxy.modeSpop`          | `mode` line in `backend spoa-hub` — `mode spop` (true) or `mode tcp` (false); the `filter spoe engine` directive on the frontend is emitted either way | `true`               | Auto-falls back to `mode tcp` on HAProxy 3.0 (`mode spop` was introduced in 3.1). Set `false` to force `mode tcp` on 3.1+ as well — rare, mostly compat testing.                                           |
 | `spoaHub.haproxy.timeoutHello`      | `timeout hello` on `spoe-agent`                                    | `2s`                 | Raise if the hub regularly logs HELLO timeouts under cold-start (e.g. heavy plugin init like MaxMind DB load).        |
 | `spoaHub.haproxy.timeoutIdle`       | `timeout idle` on `spoe-agent` and `timeout server` on the backend | `5m`                 | Lower to free pooled connections faster in low-traffic clusters; raise to match upstream auth-service idle budgets.   |
 | `spoaHub.haproxy.timeoutProcessing` | `timeout processing` on `spoe-agent`                               | `500ms`              | Raise per slow plugin (Coraza WAF inspection, large MaxMind lookups). Keep tight to fail fast on hub regressions.     |

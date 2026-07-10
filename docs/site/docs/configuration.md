@@ -14,17 +14,17 @@ For the complete list of all Helm values, see the [Configuration Reference](./re
 | `image.repository` | Controller image repository | `registry.gitlab.com/haproxy-haptic/haptic` |
 | `image.tag` | Controller image tag (empty = `<chart appVersion>-haproxy<haproxyVersion>`) | `""` |
 | `controller.templateLibraries.ingress.enabled` | Enable Ingress resource support | `true` |
-| `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTPRoute, GRPCRoute, TLSRoute) | `true` |
+| `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTP, gRPC, TLS and TCP routes) | `true` |
 | `ingressClass.enabled` | Create IngressClass resource | `true` |
 | `ingressClass.name` | IngressClass name | `haptic` |
 | `gatewayClass.enabled` | Create GatewayClass resource | `true` |
 | `gatewayClass.name` | GatewayClass name | `haptic` |
 | `controller.debugPort` | Introspection HTTP server port (provides /healthz and /debug/*) | `8080` |
-| `controller.config.podSelector` | Labels to match HAProxy pods | `{app.kubernetes.io/component: loadbalancer}` |
+| `controller.config.podSelector` | Labels to match HAProxy pods | `{matchLabels: {app.kubernetes.io/component: loadbalancer}}` |
 | `controller.logLevel` | Initial log level (`LOG_LEVEL` env var: TRACE, DEBUG, INFO, WARN, ERROR — case-insensitive) | `INFO` |
 | `controller.config.logging.level` | Log level from the `HAProxyTemplateConfig` CRD (overrides env var if non-empty) | `""` |
 | `credentials.dataplane.username` | Dataplane API username | `admin` |
-| `credentials.dataplane.password` | Dataplane API password. Empty falls back to a deterministic 32-char SHA256 hash of `<release>-<namespace>-haptic-dataplane-api`, preserved across upgrades from the existing Secret when `lookup` works. **Set explicitly in production** — see `reference.md`. | `""` |
+| `credentials.dataplane.password` | Dataplane API password. Empty generates a random 32-char password, preserved across upgrades by reading the existing Secret via `lookup`. GitOps tools without `lookup` (ArgoCD/Flux) regenerate it every sync — **set it explicitly** there. See the [Chart Values Reference](./reference.md). | `""` |
 | `networkPolicy.enabled` | Enable NetworkPolicy | `true` |
 
 ## Controller Configuration
@@ -32,7 +32,7 @@ For the complete list of all Helm values, see the [Configuration Reference](./re
 The controller configuration is defined in `controller.config` and includes:
 
 - **podSelector**: Labels to identify HAProxy pods to manage
-- **watchedResources**: Kubernetes resources to watch — defaults derive from the enabled template libraries (e.g. Ingress, Service, EndpointSlice, Secret when the `ingress` + `ssl` libraries are on; plus HTTPRoute / GRPCRoute / Gateway when `gateway` is on). Override per-resource to extend or narrow the set
+- **watchedResources**: Kubernetes resources to watch — defaults derive from the enabled template libraries (e.g. Ingress, Service, EndpointSlice, Secret when the `ingress` + `ssl` libraries are on; plus Gateway, HTTPRoute, GRPCRoute, TLSRoute and TCPRoute when `gateway` is on). Override per-resource to extend or narrow the set
 - **templateSnippets**: Reusable template fragments
 - **maps**: HAProxy map file templates
 - **files**: Auxiliary files (error pages, etc.)

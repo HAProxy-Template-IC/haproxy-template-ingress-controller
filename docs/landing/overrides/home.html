@@ -346,7 +346,7 @@
       const res = await fetch('./docs/versions.json');
       if (!res.ok) throw new Error('Not found');
       const versions = await res.json();
-      const latest = versions.find(v => v.aliases && v.aliases.includes('latest')) || versions[0];
+      const latest = versions.find(v => v.aliases && v.aliases.includes('latest'));
       if (latest) {
         document.getElementById('helm-version').textContent = latest.version;
       }

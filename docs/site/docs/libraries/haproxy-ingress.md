@@ -42,6 +42,10 @@ The haproxy-ingress library hooks into these extension points. Snippet names enc
 | Snippet | Purpose |
 |---------|---------|
 | `features-100-haproxy-ingress-ssl-passthrough` | Scans ingresses annotated with `haproxy-ingress.github.io/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
+| `features-105-haproxy-ingress-ssl-redirect` | Processes `ssl-redirect`, `ssl-redirect-code` — registers hosts into the shared `ssl-redirect-<code>.map` (ssl.yaml emits the redirect rule) |
+| `features-135-haproxy-ingress-redirect-to` | Processes `redirect-to`, `redirect-to-code` — registers host→location in the shared `redirect-loc-<code>.map` |
+| `features-145-haproxy-ingress-app-root` | Processes `app-root` — registers host→path into the shared `app-root.map` (base.yaml emits the gated rule) |
+| `features-155-haproxy-ingress-hsts` | Processes `hsts`, `hsts-max-age`, `hsts-include-subdomains`, `hsts-preload` — registers host→value into the shared `hsts.map` (base.yaml emits the response-header rule) |
 
 ### map-path-* (path-map extension points)
 
@@ -59,9 +63,9 @@ The haproxy-ingress library hooks into these extension points. Snippet names enc
 | `backend-directives-600-haproxy-ingress-timeouts` | `timeout-connect`, `timeout-server`, `timeout-queue`, `timeout-http-request`, `timeout-keep-alive`, `timeout-tunnel` |
 | `backend-directives-610-haproxy-ingress-load-balance` | `balance-algorithm` |
 | `backend-directives-620-haproxy-ingress-maxconn` | `maxconn-server` |
-| `backend-directives-630-haproxy-ingress-health-checks` | `health-check-uri`, `backend-check-interval` |
+| `backend-directives-630-haproxy-ingress-health-checks` | `health-check-uri`, `backend-check-interval`, `health-check-port`, `health-check-fall-count`, `health-check-rise-count` |
 | `backend-directives-640-haproxy-ingress-proxy-protocol` | `proxy-protocol` |
-| `backend-directives-650-haproxy-ingress-ssl-backend` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret` |
+| `backend-directives-650-haproxy-ingress-ssl-backend` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-hostname`, `secure-verify-ca-secret`, `secure-crt-secret` |
 | `backend-directives-660-haproxy-ingress-server-options` | `initial-weight`, other server-line options |
 | `backend-directives-670-haproxy-ingress-session-affinity` | `affinity`, `session-cookie-*` |
 | `backend-directives-680-haproxy-ingress-auth` | `auth-secret`, `auth-realm` (attaches userlist to the backend) |
@@ -73,10 +77,6 @@ The haproxy-ingress library hooks into these extension points. Snippet names enc
 |---------|----------------------|
 | `frontend-filters-600-haproxy-ingress-forwardfor` | `forwardfor` |
 | `frontend-filters-610-haproxy-ingress-access-control` | `allowlist-source-range`, `denylist-source-range` |
-| `features-105-haproxy-ingress-ssl-redirect` | `ssl-redirect`, `ssl-redirect-code` (registers hosts into the shared `ssl-redirect-<code>.map`; ssl.yaml emits the redirect rule) |
-| `features-155-haproxy-ingress-hsts` | `hsts`, `hsts-max-age`, `hsts-include-subdomains`, `hsts-preload` (registers host→value into the shared `hsts.map`; base.yaml emits the response-header rule) |
-| `features-145-haproxy-ingress-app-root` | `app-root` (registers host→path into the shared `app-root.map`; base.yaml emits the gated rule) |
-| `features-135-haproxy-ingress-redirect-to` | `redirect-to`, `redirect-to-code` (registers host→location in the shared `redirect-loc-<code>.map`) |
 | `frontend-filters-660-haproxy-ingress-cors` | `cors-enable`, `cors-*` |
 | `frontend-filters-670-haproxy-ingress-headers` | `headers` |
 
@@ -933,7 +933,7 @@ data:
 
 **Status**: ✅ Supported
 
-**Description**: Client certificate verification mode. Same value semantics as the nginx-ingress flavour; see the [nginx-ingress documentation for auth-tls-verify-client](nginx-ingress.md#nginxingresskubernetesioauth-tls-verify-client) for the value mapping table.
+**Description**: Client certificate verification mode. Same value semantics as the nginx-ingress flavour; see [auth-tls-verify-client in the nginx-ingress library](nginx-ingress.md#nginxingresskubernetesioauth-tls-verify-client) for the value mapping table.
 
 **Valid values**: `on` (default), `off`, `optional`, `optional_no_ca`.
 

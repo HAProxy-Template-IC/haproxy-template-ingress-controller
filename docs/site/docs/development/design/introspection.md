@@ -97,7 +97,7 @@ graph TB
 
 ## HTTP Endpoints
 
-The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`). `/healthz` shares the same listener, so setting the port to `0` disables both `/debug/*` and `/healthz` and breaks Kubernetes probes — restrict `/debug/*` via NetworkPolicy instead of disabling the port.
+The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`). `/healthz` shares the same listener — see [Configuration](#configuration) for why setting the port to `0` breaks Kubernetes probes.
 
 ```bash
 # List all available variables
@@ -177,16 +177,9 @@ require.NoError(t, err)
 rendered, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
 require.NoError(t, err)
 assert.Contains(t, rendered, "expected-content")
-
-// Inspect recent events. GetEvents returns []map[string]any; each entry has
-// a "type" key (e.g. "config.validated"). Walk the slice rather than using
-// assert.Contains on the raw slice.
-events, err := debugClient.GetEvents(ctx)
-require.NoError(t, err)
-require.True(t, slices.ContainsFunc(events, func(e map[string]any) bool {
-    return e["type"] == "config.validated"
-}))
 ```
+
+`DebugClient` also exposes `GetConfig`, `GetPipelineStatus`, `GetErrors`, and `GetAuxiliaryFiles`. To inspect the recent-events buffer, fetch the `/debug/vars/events` endpoint directly (there is no typed `GetEvents` helper).
 
 If you need to construct the client yourself (typically only inside `EnsureDebugClientReady`), the constructor takes the clientset, the namespace, the *service* name (not a pod name), and the port:
 
@@ -229,7 +222,7 @@ The debug server is configured by the controller binary at startup, not via the 
 | Setting | Source | Notes |
 |---------|--------|-------|
 | Port | `--debug-port` flag, `DEBUG_PORT` env, or Helm `controller.debugPort` value | Default `0` = disabled; the chart sets it to `8080` by default |
-| Bind address | Hardcoded `0.0.0.0:<port>` | So that `kubectl port-forward` can reach it |
+| Bind address | Hardcoded `0.0.0.0:<port>` | So kubelet health probes and the Kubernetes API service-proxy (used by acceptance tests) can reach it on the pod IP; `kubectl port-forward` works regardless |
 | Event-buffer size | Compile-time constant (`pkg/controller/debug`) | Not tunable per-deployment |
 | Go profiling | Always mounted at `/debug/pprof/*` when the debug port is enabled | See [Debugging Guide](../../operations/debugging.md#go-profiling) |
 

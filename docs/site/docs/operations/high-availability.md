@@ -1,6 +1,6 @@
 # High Availability with Leader Election
 
-This guide explains how to deploy and operate the HAProxy Template Ingress Controller in high availability (HA) mode with multiple replicas.
+This guide explains how to deploy and operate HAPTIC in high availability (HA) mode with multiple replicas.
 
 ## Overview
 
@@ -429,7 +429,7 @@ To migrate an existing single-replica deployment to HA:
    ```bash
    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
      -n haptic --reuse-values \
-     -f new-values.yaml
+     -f values.yaml
    ```
 
 4. **Verify leadership:**
@@ -441,10 +441,7 @@ To migrate an existing single-replica deployment to HA:
 5. **Confirm one leader:**
 
    ```bash
-   kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller \
-     -o custom-columns=NAME:.metadata.name,LEADER:.status.podIP
-
-   # Check metrics to identify leader
+   # Query each pod's metrics; exactly one should report is_leader 1
    for pod in $(kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o name); do
      echo "$pod:"
      kubectl exec -n haptic $pod -- wget -qO- localhost:9090/metrics | grep is_leader

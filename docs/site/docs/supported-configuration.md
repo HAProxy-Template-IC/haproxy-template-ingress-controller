@@ -4,7 +4,7 @@ This document provides an overview of HAProxy configuration sections and child c
 
 ## Overview
 
-The controller supports all configuration sections that can be managed through the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Configuration changes are applied by pushing the full rendered config to the Dataplane API in a single request; a fine-grained comparison classifies each change so the push can skip the HAProxy reload — and apply the change through the Runtime API for zero-downtime updates — whenever every change is a runtime-eligible server update.
+The controller supports all configuration sections that can be managed through the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Configuration changes are applied by pushing the full rendered config to the Dataplane API in a single request; a fine-grained comparison classifies each change so the push can skip the HAProxy reload — and apply the change through the Runtime API for zero-downtime updates — whenever every change is a runtime-eligible change.
 
 **API Version Support:** The controller supports Dataplane API versions 3.0, 3.1, 3.2, and 3.3. The API version is auto-detected at runtime.
 
@@ -34,8 +34,8 @@ To get a feel for the breadth, here's every bundled library rendered into one co
 | **HTTPErrors** | HTTP error response sections | 10 | Create/Update/Delete |
 | **Userlists** | User authentication lists | 10 | Create/Delete (no update) |
 | **LogForwards** | Syslog forwarding sections | 10 | Create/Update/Delete |
-| **LogProfiles** | Log-format profiles (DataPlane API 3.1+) | 10 | Create/Update/Delete |
-| **Traces** | Traces section (singleton, DataPlane API 3.1+) | 10 | Update only |
+| **LogProfiles** | Log-format profiles (Dataplane API 3.1+) | 10 | Create/Update/Delete |
+| **Traces** | Traces section (singleton, Dataplane API 3.1+) | 10 | Update only |
 | **FCGIApps** | FastCGI application configs | 10 | Create/Update/Delete |
 | **CrtStores** | Certificate store sections | 10 | Create/Update/Delete |
 | **AcmeProviders** | ACME certificate provider configurations | 10 | Create/Update/Delete |

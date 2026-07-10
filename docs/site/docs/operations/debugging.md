@@ -85,7 +85,7 @@ curl http://localhost:8080/debug/pprof/
 Analyse with `go tool pprof -http=:8081 cpu.pprof`.
 
 !!! note
-    `/debug/pprof/block` and `/debug/pprof/mutex` are registered but return empty profiles unless `runtime.SetBlockProfileRate` / `runtime.SetMutexProfileFraction` are enabled — the controller does not enable them by default. Enable them via `GODEBUG=` only for targeted investigation; both have measurable runtime overhead.
+    `/debug/pprof/block` and `/debug/pprof/mutex` are registered but always return empty profiles: the controller never calls `runtime.SetBlockProfileRate` / `runtime.SetMutexProfileFraction`, so no data is collected. Enabling them requires a custom build that turns on sampling, which carries measurable runtime overhead — do it only for a targeted investigation.
 
 ## Common Recipes
 
@@ -137,7 +137,7 @@ go tool pprof -top heap.pprof          # biggest retainers
 curl http://localhost:8080/debug/vars/resources   # any watched type growing unexpectedly?
 ```
 
-High counts on a `full`-store resource type is usually the answer; see [Watching Resources](../watching-resources.md) for switching to `on-demand`.
+High counts on a `full`-store resource type are usually the answer; see [Watching Resources](../watching-resources.md) for switching to `on-demand`.
 
 **Why is CPU elevated?**
 

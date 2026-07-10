@@ -6,13 +6,15 @@ The chart automatically creates a GatewayClass resource when the gateway library
 
 ## Prerequisites
 
-Install Gateway API CRDs (standard channel) before enabling the gateway library:
+For the chart to create the GatewayClass, install the Gateway API CRDs (standard channel) first:
 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
 ```
 
 Check [Gateway API releases](https://github.com/kubernetes-sigs/gateway-api/releases) for newer versions.
+
+If the CRDs are absent, the chart skips the GatewayClass and installs everything else normally. Install the CRDs later and re-run `helm upgrade` to create it.
 
 ## Configuration
 
@@ -34,17 +36,15 @@ gatewayClass:
     namespace: ""   # Defaults to Release.Namespace
 ```
 
-## Capability Detection
+## Creation conditions
 
-The chart checks for `gateway.networking.k8s.io/v1/GatewayClass` before creating the resource. If Gateway API CRDs are not installed, the resource is silently skipped without error.
-
-## Creation Conditions
-
-GatewayClass is created only when ALL of the following are true:
+The chart creates the GatewayClass only when ALL of the following are true:
 
 1. `gatewayClass.enabled: true` (default)
 2. `controller.templateLibraries.gateway.enabled: true` (default)
-3. `gateway.networking.k8s.io/v1/GatewayClass` API exists in cluster
+3. The `gateway.networking.k8s.io/v1/GatewayClass` API exists in the cluster (Gateway API CRDs are installed)
+
+If the API is absent, the chart skips the GatewayClass without error and installs the rest normally.
 
 ## parametersRef - Controller Configuration Link
 

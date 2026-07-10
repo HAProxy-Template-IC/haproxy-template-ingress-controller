@@ -29,7 +29,9 @@ haptic/
 │   │   ├── configpublisher/ # Publishes HAProxyCfg and HAProxyGeneralFile CRDs
 │   │   ├── indexer/         # JSONPath extraction + metadata trimming
 │   │   ├── leaderelection/  # Pure leader election (no event bus dependency)
+│   │   ├── schemafetcher/   # Fetches OpenAPI schemas from the apiserver (or --schema-dir)
 │   │   ├── store/           # MemoryStore and CachedStore
+│   │   ├── typegen/         # Runtime typed access to watched resources from their schema
 │   │   ├── types/           # Store, WatcherConfig, SingleWatcherConfig, ChangeStats
 │   │   └── watcher/         # Bulk Watcher and SingleWatcher with debouncing
 │   ├── lifecycle/           # Component lifecycle registry (dependencies, leader-only,
@@ -40,13 +42,12 @@ haptic/
 │   ├── dataplane/           # HAProxy Dataplane API integration (pure)
 │   │   ├── auxiliaryfiles/  # 3-phase sync of general files, SSL, SSL-CA, maps, crt-list
 │   │   ├── client/          # HTTP client with transaction lifecycle + per-version dispatcher
-│   │   │   └── enterprise/  # Enterprise-only operations (WAF, Bot, ALOHA, Keepalived, ...)
 │   │   ├── comparator/      # Fine-grained config comparison (per-section logic)
 │   │   │   └── sections/    # Section factories
 │   │   │       # Operations are descriptors only; execution is raw-push via orchestrator
 │   │   ├── parser/          # client-native wrapper for syntax parsing
 │   │   │   └── enterprise/  # Enterprise section extensions
-│   │   # Operation execution lives in orchestrator.go / orchestrator_execution.go
+│   │   # Operation execution lives in the top-level orchestrator*.go files
 │   │   └── validators/      # Per-model validators generated from OpenAPI specs
 │   │   # Public types (Endpoint, SyncOptions, AuxiliaryFiles, SyncResult,
 │   │   # Capabilities, Version, ValidationPaths) live at the top level —
@@ -60,7 +61,9 @@ haptic/
 │       ├── configchange/    # Reacts to config changes and coordinates reloads
 │       ├── configloader/    # Parses HAProxyTemplateConfig CRD into internal config
 │       ├── configpublisher/ # Publishes rendered config to HAProxyCfg CRD
+│       ├── configtest/      # Runs a config's embedded validationTests offline
 │       ├── conversion/      # Converts CRD types <-> internal config structs
+│       ├── crdwatch/        # Reinitializes the controller when watched-resource CRDs change
 │       ├── credentialsloader/ # Parses dataplane credentials from Secret
 │       ├── currentconfigstore/ # Caches the last-deployed HAProxy config for templates
 │       ├── debug/           # Controller-specific introspection Vars
@@ -77,20 +80,27 @@ haptic/
 │       ├── leadership/      # Gating utilities for leader-only components
 │       ├── metrics/         # Controller-domain metrics adapter (reconciliation,
 │       │                    #   deployment, validation, event-bus counters)
+│       ├── migratecheck/    # Classifies Ingress annotations against migrationCoverage data
+│       ├── names/           # Well-known string constants shared across the controller
 │       ├── pipeline/        # Chains stages into a composable reconciliation pipeline
+│       ├── pluggablevalidator/ # Client for the pluggable-validator-sidecar wire protocol
 │       ├── proposalvalidator/ # Validates proposed configs from the webhook
 │       ├── reconciler/      # Debounces resource changes, triggers reconciliation
 │       ├── rendercontext/   # Builds the template context from stores and HTTP resources
 │       ├── renderer/        # Template rendering adapter
+│       ├── resourceapplier/ # Reconciles template-declared resources via Server-Side Apply
 │       ├── resourceloader/  # Thin wrapper over component.Base for loader components
 │       │                    #   (configloader, credentialsloader)
 │       ├── resourcewatcher/ # Lifecycle manager for all configured resource watchers
 │       ├── statusapplier/   # Applies status subresources on CRDs
 │       ├── testrunner/      # Runs embedded validation tests from template libraries
+│       ├── throttle/        # Leading-edge refractory throttle helpers
 │       ├── timeouts/        # Timeout helpers used by components
 │       ├── timers/          # Periodic event emitters (drift prevention, etc.)
+│       ├── typebootstrap/   # Wires the typed-watched-resources pipeline at startup
 │       ├── validation/      # Shared validation helpers
-│       └── validator/       # Syntax/semantic validators (scatter-gather + HAProxy)
+│       ├── validator/       # Syntax/semantic validators (scatter-gather + HAProxy)
+│       └── webhook/         # Event adapter bridging the pure webhook library
 ├── tests/
 │   ├── acceptance/          # End-to-end tests with debug endpoint + metrics assertions
 │   └── integration/         # Cross-component integration tests

@@ -29,10 +29,10 @@ defaults that most often trip up a migration.
 Two ways to see how your current setup fares under HAPTIC, before you change
 anything:
 
-- **Explore one Ingress interactively** in the [playground](/playground/): paste
-  an annotated Ingress and watch it render live in your browser, with an inline
-  migration warning for every annotation HAPTIC treats differently or can't carry
-  over. Best for understanding a specific annotation — or trying a fix on the spot.
+- **Explore one Ingress interactively** — the live migration report below (or the
+  full [playground](/playground/)) renders an annotated Ingress in your browser and
+  flags every annotation HAPTIC treats differently or can't carry over. Best for
+  understanding a specific annotation — or trying a fix on the spot.
 - **Audit the whole cluster** with `migrate-check`: one command classifies every
   annotation in use and renders each Ingress through the real pipeline, for a
   go/no-go verdict before cutover. Read on for how to run it.
@@ -41,6 +41,22 @@ The `migrate-check` tool reads your Ingresses, classifies every source-controlle
 annotation as supported, different, dropped, or blocking, and renders each Ingress
 through HAPTIC's real template pipeline to catch anything that would be rejected —
 so you find the surprises now, not mid-cutover.
+
+The same classification runs live below on a preset ingress-nginx setup — the
+**migration** report is the clearest view of what carries over and what doesn't:
+
+<div class="pg-embed" markdown data-scenario="nginx-ingress" data-tab="migration" data-controls="tabs,resources" data-title="ingress-nginx annotation migration report" data-height="440">
+
+<p class="pg-task" markdown>In the **Resources** panel, add `nginx.ingress.kubernetes.io/server-snippet: "more_set_headers X-From: nginx;"` to the `shop` Ingress, then watch a new **dropped** verdict appear in the **migration** report.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+The report gains a red `dropped` badge for `server-snippet` — "nginx server-level directives have no HAProxy equivalent" — and the dropped count rises by one. This is exactly the pre-cutover surprise `migrate-check` surfaces for your whole cluster at once.
+
+</details>
+
+</div>
 
 The controller image carries the tool and the chart, so a read-only audit of the
 live cluster is a single command (it only lists and reads Ingresses — it changes
@@ -61,14 +77,22 @@ is fully supported; `1` means there are differences or unknown annotations to
 review; `2` means there are blockers — annotations HAPTIC rejects, or Ingresses
 that fail to render — fix those before cutover.
 
-To audit without cluster access — in CI, or against manifests you export with
-`kubectl get ingress -A -o yaml > ingresses.yaml` — point the tool at a directory
-of manifests and a directory of Kubernetes schemas instead:
+To audit without cluster access — in CI, or against manifests you keep in Git —
+mount a directory of Ingress manifests and a directory of Kubernetes schemas into
+the same image and point the tool at both:
 
 ```bash
-haptic-controller migrate-check \
-  --resources ./manifests --schema-dir ./schemas \
-  --output markdown
+# Export the Ingresses to audit and the schemas the audit renders against.
+# The schemas directory needs the Kubernetes schemas for the resources it
+# renders (at minimum the Ingress type); export them from any cluster that
+# serves them, or reuse a directory you already keep for CI.
+mkdir -p manifests schemas
+kubectl get ingress -A -o yaml > manifests/ingresses.yaml
+
+docker run --rm \
+  -v "$PWD/manifests:/manifests:ro" -v "$PWD/schemas:/schemas:ro" \
+  registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4 migrate-check \
+  --resources /manifests --schema-dir /schemas --output markdown
 ```
 
 Useful flags:
@@ -123,9 +147,17 @@ Useful flags:
 4. **Bulk cut over** once you're confident: change `ingressClassName` on the
    remaining Ingresses (in batches you can roll back).
 
-5. **Flip DNS / enable status.** Set `controller.statusPatches.enabled=true`
-   (so `external-dns` and dashboards see HAPTIC's address) and/or repoint DNS to
-   HAPTIC's load balancer. Watch traffic.
+5. **Enable status writes, then flip DNS.** Turn status patches back on (step 1
+   installed with them off) so `external-dns` and dashboards see HAPTIC's address:
+
+    ```bash
+    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      --namespace haptic --reuse-values \
+      --set controller.statusPatches.enabled=true
+    ```
+
+    Then repoint DNS to HAPTIC's load balancer if you manage it manually. Watch
+    traffic.
 
 6. **Decommission** the old controller once all Ingresses are served by HAPTIC
    and traffic is stable.
@@ -388,12 +420,11 @@ reports. Each fails quietly, so check them first.
   on that to repoint DNS. Keep it off until you've verified routing. Fix:
   [control the DNS cutover](#3-control-the-dns-cutover).
 
-See also [Troubleshooting](troubleshooting.md) for general "my Ingress isn't
-being served" diagnostics.
+For symptoms beyond these three, see the general
+[troubleshooting](troubleshooting.md) guide.
 
 ## See also
 
 - [Getting Started](getting-started.md) — install HAPTIC and route your first Ingress.
 - [Playground](/playground/) — render an annotated Ingress live and see per-annotation migration warnings.
 - [Watching Resources](watching-resources.md) — how `ingressClassName` scoping and field selectors work.
-- [Troubleshooting](troubleshooting.md) — "my Ingress isn't being served" diagnostics.

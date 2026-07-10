@@ -50,7 +50,7 @@ The Ingress library hooks into these extension points from base.yaml. Snippet na
 |-----------------|---------|-------------------|
 | `features-*` | `features-100-ingress-bind` | Sets `gf["bindHTTPDefault"]` / `gf["needHTTPFrontend"]`; for Ingresses with `spec.tls` also sets `gf["bindHTTPSDefault"]`, `gf["needHTTPSFrontend"]`, `gf["needHTTPSTermination"]` |
 | `features-*` | `features-100-ingress-tls` | Registers TLS Secrets from `ingress.spec.tls[]` into `gf["tlsCertificates"]` for the SSL library's CRT-list |
-| `backends-*` | `backends-500-ingress` | Backend blocks per unique `(namespace, service, port)` referenced by an Ingress |
+| `backends-*` | `backends-500-ingress` | Backend blocks per unique `(namespace, ingress, service, port)` referenced by an Ingress |
 | `map-host-*` | `map-host-500-ingress` | Host → group entries derived from `ingress.spec.rules[].host` |
 | `map-path-exact-*` | `map-path-exact-500-ingress` | Entries for `pathType: Exact` paths |
 | `map-pfxexact-*` | `map-pfxexact-500-ingress` | Prefix-exact entries emitted when `pathType: Prefix` paths need to match their exact boundary |
@@ -116,6 +116,25 @@ spec:
                   number: 8080
 ```
 
+Watch the three path-type maps populate as you add Exact and Prefix paths:
+
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="maps" data-controls="tabs,resources" data-title="Path types → map entries" data-height="440">
+
+<p class="pg-task" markdown>In the **Resources** panel, add two paths to the `shop` Ingress rule (alongside the existing `/`): a `/api` path with `pathType: Prefix` and a `/health` path with `pathType: Exact`, both pointing at the `shop` service on port `80`. Then open the **maps** tab and watch each path land in a different map.</p>
+
+<details class="pg-hint" markdown>
+<summary>What to expect</summary>
+
+- `map-path-exact-500-ingress` adds `shop.example.com/health BACKEND:storefront_shop_svc_shop_http` to `path-exact.map` — the `Exact` path lowers to a `map()` lookup.
+- `map-path-prefix-500-ingress` adds `shop.example.com/api/ BACKEND:storefront_shop_svc_shop_http` to `path-prefix.map` — the `Prefix` path lowers to a `map_beg()` lookup.
+- `map-pfxexact-500-ingress` also adds `shop.example.com/api BACKEND:storefront_shop_svc_shop_http` to `path-prefix-exact.map` — the exact-boundary entry so a request to exactly `/api` (no trailing slash) still matches the Prefix rule. A root `/` Prefix path emits no boundary entry, which is why the original `/` path isn't in this map.
+
+All three route to the same `storefront_shop_svc_shop_http` backend: they share one Service and port, so `backends-500-ingress` emits a single backend.
+
+</details>
+
+</div>
+
 ### TLS Configuration
 
 TLS certificates are automatically loaded from Kubernetes Secrets and registered with the SSL library:
@@ -164,7 +183,7 @@ data:
 Backends are generated with:
 
 - Automatic endpoint discovery via EndpointSlices
-- Health checks using the path from the Ingress rule
+- TCP-connect health checks (`default-server check`) — the Ingress path is not used as an HTTP health-check URI
 - Round-robin load balancing
 - Backend deduplication (multiple paths to same service share one backend)
 
@@ -174,14 +193,12 @@ Backends are generated with:
 <namespace>_<ingress-name>_svc_<service-name>_<port-name>
 ```
 
-`<port-name>` is the port name from the Service spec (e.g. `http`, `https`), not the numeric port number.
+`<port-name>` is the Service port's name when the port is named (e.g. `http`, `https`). When the Service port is unnamed — or the Service isn't yet in the controller's store — it falls back to the numeric port number (e.g. `..._svc_shop_80`).
 
 **Example generated configuration:**
 
 ```haproxy
 backend default_my-app_svc_api-service_http
-    balance roundrobin
-    option httpchk GET /api
     default-server check
     server SRV_1 10.0.0.1:8080 enabled    # Pod: api-pod-1
     server SRV_2 10.0.0.2:8080 enabled    # Pod: api-pod-2

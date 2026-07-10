@@ -44,7 +44,7 @@ Rewrite the accumulated `## [Unreleased]` entries in `CHANGELOG.md` into user-fa
 
 Don't rename `[Unreleased]` yourself — the release script does the mechanical promotion.
 
-### Step 2: Cut a Release Branch
+### Step 2: Cut a release branch
 
 `main` is protected, so the release commit lands via merge request. Branch first; the script commits to whatever branch is currently checked out.
 
@@ -52,7 +52,7 @@ Don't rename `[Unreleased]` yourself — the release script does the mechanical 
 git checkout -b release/v<version>
 ```
 
-### Step 3: Run the Release Script
+### Step 3: Run the release script
 
 ```bash
 make release RELEASE_VERSION=<version>
@@ -71,7 +71,7 @@ The script:
 
 The script does **not** create a tag — that happens in CI after the MR merges.
 
-### Step 4: Push and Open the MR
+### Step 4: Push and open the MR
 
 ```bash
 git push -u origin release/v<version>
@@ -119,11 +119,11 @@ When a `v*` tag is pushed, CI will:
 5. **Package the Helm chart** and push it as a signed OCI artifact to `registry.gitlab.com/haproxy-haptic/haptic/charts`
 6. **Sign all artifacts** with Cosign (keyless OIDC)
 7. **Generate SBOM** (Software Bill of Materials) for each image and attach it as a Cosign attestation
-8. **Trigger the versioned documentation build** (controller and helm-chart doc sites)
+8. **Trigger the versioned documentation build** (the `/docs/` site)
 
 ## Documentation Versioning
 
-Each release creates a versioned documentation snapshot of both doc sites (controller and helm-chart):
+Each release creates a versioned snapshot of the documentation site:
 
 | Release Type | Docs Behavior |
 |--------------|---------------|

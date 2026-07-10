@@ -1,16 +1,6 @@
 # Architecture Overview
 
-## Overview
-
-HAPTIC is a Kubernetes operator that manages HAProxy load balancer configurations through template-driven configuration generation. The system continuously monitors Kubernetes resources and translates them into HAProxy configuration files using a powerful templating engine.
-
-**Core Capabilities:**
-
-- **Template-Driven Configuration**: Uses a feature-rich template engine to generate HAProxy configurations from Kubernetes resources
-- **Dynamic Resource Watching**: Monitors user-defined Kubernetes resource types (Ingress, Service, ConfigMap, custom CRDs)
-- **Validation-First Deployment**: All configurations are parsed and validated before deployment to production instances
-- **Zero-Reload Optimization**: Leverages HAProxy Runtime API for configuration changes that don't require process reloads
-- **Structured Comparison**: Intelligently compares configurations to minimize deployments and maximize use of runtime operations
+This page maps the controller's runtime components and how a Kubernetes change flows through rendering, validation, and deployment. For what HAPTIC is and why, see the [design landing page](../design.md).
 
 **Operational Model:**
 
@@ -110,7 +100,7 @@ graph TB
             COORD["Coordinator<br/>(leader-only<br/>pipeline driver)"]
         end
 
-        subgraph pipeline["Synchronous Pipeline (no event hop, ADR-0001)"]
+        subgraph pipeline["Synchronous Pipeline (no event hop)"]
             direction LR
             REND["RenderService"]
             VAL["ValidationService<br/>(syntax + schema<br/>+ haproxy -c)"]
@@ -158,7 +148,7 @@ graph TB
     style ext fill:#F5F5F5
 ```
 
-The dashed arrows between Coordinator and the synchronous pipeline are direct function calls — there is no event hop for rendering or HAProxy validation (ADR-0001). The Coordinator publishes `TemplateRenderedEvent` and `ValidationCompletedEvent` itself once the synchronous call returns.
+The dashed arrows between Coordinator and the synchronous pipeline are direct function calls — there is no event hop for rendering or HAProxy validation. This synchronous render-validate design is recorded as an Architecture Decision Record (ADR); see [Design Decisions](design-decisions.md#event-driven-architecture) for the rationale. The Coordinator publishes `TemplateRenderedEvent` and `ValidationCompletedEvent` itself once the synchronous call returns.
 
 **Event-Driven Data Flow:**
 
@@ -174,7 +164,7 @@ The dashed arrows between Coordinator and the synchronous pipeline are direct fu
 **Key Architecture Properties:**
 
 - **EventBus** is the single coordination mechanism - zero direct component-to-component function calls
-- **Event-Driven Components** (Reconciler, Coordinator, Scheduler, Deployer, ConfigPublisher, Discovery, …) wrap pure libraries (pkg/templating, pkg/dataplane, pkg/k8s) in event adapters; the rendering and HAProxy-validation services they call are themselves *not* event-adapter components — they're synchronous services driven from inside Coordinator's `Pipeline.Execute` (ADR-0001)
+- **Event-Driven Components** (Reconciler, Coordinator, Scheduler, Deployer, ConfigPublisher, Discovery, …) wrap pure libraries (pkg/templating, pkg/dataplane, pkg/k8s) in event adapters; the rendering and HAProxy-validation services they call are themselves *not* event-adapter components — they're synchronous services driven from inside Coordinator's `Pipeline.Execute` (see [Design Decisions](design-decisions.md#event-driven-architecture))
 - **Pure Libraries** (pkg/templating, pkg/dataplane, pkg/k8s) contain testable business logic with no event dependencies
 - **Event Adapters** translate between EventBus pub/sub and pure library function calls
 - **Extensibility** - new features can subscribe to existing events without modifying existing code
@@ -214,4 +204,4 @@ Three phases run in-process, eliminating the need for a separate validation side
 2. **Phase 1.5 — OpenAPI schema check.** The parsed structure is cross-checked against the version-specific DataPlane API OpenAPI spec — catches out-of-range values, pattern violations, and missing required fields before they reach HAProxy.
 3. **Phase 2 — Semantic validation.** `haproxy -c -f config` performs full semantic validation including resource availability. Each call creates a per-process temp directory mirroring the production layout (`maps/`, `ssl/`, `general/`), writes the auxiliary files there, and rewrites the rendered config's `default-path origin <baseDir>` line to point at the temp dir — so file references resolve exactly like at runtime. File I/O is fully isolated per call, but the actual `haproxy -c` invocation is still serialised by a global `haproxyCheckMutex` (`pkg/dataplane/validate_haproxy.go`) because concurrent binary invocations have been observed to interfere with each other.
 
-Results are cached by an SHA-256 over (config + auxiliary files) per instance — repeat validations during drift-prevention cycles short-circuit before touching disk. This provides the same guarantees as a full HAProxy instance while being lightweight and fast.
+Results are cached by an SHA-256 over (config + auxiliary files) per instance — repeat validations during drift-prevention cycles short-circuit before touching disk. This provides the same guarantees as a full HAProxy instance.

@@ -8,7 +8,7 @@ Watch it end-to-end — a watched Ingress feeding the render:
 
 </div>
 
-Watched resources arrive as loosely-typed data, so a field you expect may be absent on some objects. Navigate with `dig(...)`, then supply a default with `fallback(...)` so a missing field never breaks the render. Try it below.
+When a schema is loaded — the norm in production, where the controller fetches it live from the kube-apiserver — watched resources arrive as strongly-typed values you navigate with dotted field access (`ing.spec.rules`), covered in [Typed Access in Templates](#typed-access-in-templates) below. For the cases where you're working with untyped data — an inline `map[string]any` literal, a schema-less custom resource, or a genuinely-optional field that may be absent — navigate with `dig(...)` and supply a default with `fallback(...)` so a missing field never breaks the render. Try that below.
 
 <div class="pg-embed" markdown data-scriggo data-title="Challenge: default a missing port to 80" data-difficulty="2" data-height="380">
 
@@ -182,7 +182,7 @@ items:
 
 </div>
 
-### Canonical index shapes
+### Canonical Index Shapes
 
 | Resource | `indexBy` | Why |
 |----------|-----------|-----|

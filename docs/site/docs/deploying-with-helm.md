@@ -29,7 +29,7 @@ helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
   -f my-values.yaml
 ```
 
-## What's in This Chart
+## What's in this chart
 
 The chart deploys:
 
@@ -61,6 +61,16 @@ Jump to what you need:
 | Diagnose problems | [Troubleshooting](./operations/troubleshooting.md) |
 
 ## Upgrading
+
+If you installed with a values file, re-pass it so your custom values survive the upgrade:
+
+```bash
+helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.1 \
+  -f my-values.yaml
+```
+
+Otherwise, upgrade without it:
 
 ```bash
 helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \

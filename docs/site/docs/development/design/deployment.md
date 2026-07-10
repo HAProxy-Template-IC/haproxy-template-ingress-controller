@@ -124,7 +124,7 @@ graph TB
 Controller Pod:
 
 - CPU request `100m` (no CPU limit — avoids throttling; GOMAXPROCS auto-derived)
-- Memory `512Mi` request = limit (Guaranteed QoS; GOMEMLIMIT auto-derived via automemlimit)
+- Memory `512Mi` request = limit, so GOMEMLIMIT is auto-derived via automemlimit (the pod is Burstable, not Guaranteed QoS, because there's no CPU limit by design)
 - `/tmp` emptyDir for transient `haproxy -c` validation; root filesystem is read-only
 
 HAProxy Pod:
@@ -200,7 +200,7 @@ graph LR
 
 **Network Flow:**
 
-1. **Ingress Traffic**: Internet → HAProxy Service (LoadBalancer) → HAProxy Pods → Application Pods
+1. **Ingress Traffic**: Internet → HAProxy Service → HAProxy Pods → Application Pods (the diagram shows the `haproxy.service.type: LoadBalancer` variant; the chart default is NodePort)
 2. **Control Plane**: Controller → Kubernetes API (resource watching)
 3. **Configuration Deployment**: Controller → Dataplane API endpoints (HTTP)
 4. **Service Discovery**: Controller watches HAProxy pods via Kubernetes API
@@ -209,7 +209,7 @@ graph LR
 
 **Scaling Considerations:**
 
-- **HAProxy horizontal scaling**: `kubectl scale deployment <release>-haproxy --replicas=N` (or set `haproxy.replicaCount`). Pods are auto-discovered via `controller.config.podSelector`.
+- **HAProxy horizontal scaling**: set `haproxy.replicaCount=N` (or scale the Deployment directly — its name is `<release-fullname>-haproxy`, where the fullname is `<release>-haptic` unless the release name already contains `haptic`). Find it with `kubectl get deploy -l app.kubernetes.io/component=loadbalancer`. Pods are auto-discovered via `controller.config.podSelector`.
 - **Controller horizontal scaling**: Run 2+ replicas with leader election (the chart default). Only the leader pushes configuration; followers are hot standby.
 - **Resource sizing**: Scales with the number of watched resources and template complexity — see [Performance Guide](../../operations/performance.md) for per-size profiles.
 - **Network topology**: Ensure LoadBalancer/NodePort can distribute traffic across all HAProxy replicas and that NetworkPolicy allows the controller to reach Dataplane API port 5555 on each HAProxy pod.

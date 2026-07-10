@@ -45,8 +45,10 @@ The chart defaults to **Guaranteed QoS for memory** (`requests.memory == limits.
 At startup the controller logs the detected limits, for example:
 
 ```
-INFO HAPTIC starting ... gomaxprocs=1 gomemlimit="461373644 bytes (440.00 MiB)"
+INFO HAPTIC starting ... gomaxprocs=8 gomemlimit="483183820 bytes (460.80 MiB)"
 ```
+
+`gomemlimit` is 90% of the 512Mi memory limit (≈460.8 MiB). Because the example omits a CPU limit, `gomaxprocs` matches the node's core count (8 here) rather than a container CPU limit — you only see `gomaxprocs=1` when you set a 1-CPU limit.
 
 ### Fine-Tuning Memory Limits
 
@@ -98,7 +100,7 @@ A Service (`<fullname>-haproxy`, e.g. `<release>-haptic-haproxy`, `NodePort` by 
 | `https` | 443 | 443 | 30443 |
 | `stats` | 8404 | 8404 | 30404 |
 
-The Dataplane API sidecar gets its own internal-only `ClusterIP` Service (`haproxy.dataplane.service`) on port 5555.
+The Dataplane API sidecar gets its own internal-only `ClusterIP` Service (`<fullname>-haproxy-dataplane`, e.g. `<release>-haptic-haproxy-dataplane`) on port 5555. Its type comes from `haproxy.dataplane.service.type`.
 
 **Development (kind cluster)** — NodePort default works out of the box; switch to LoadBalancer if you want `localhost` mapping via kind's port-forward:
 

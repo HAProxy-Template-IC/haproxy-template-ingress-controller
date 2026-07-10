@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common issues and solutions for the HAProxy Template Ingress Controller.
+Common issues and solutions for HAPTIC.
 
 !!! note "Namespace"
     All `kubectl` commands below assume the default installation namespace `haptic`. Replace `-n haptic` with your namespace if you installed elsewhere.
@@ -147,6 +147,7 @@ curl -u admin:<password> http://localhost:5555/v3/info
 **Diagnosis**:
 
 ```bash
+HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n haptic $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
 kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "deployment.*succeeded"
 ```
@@ -197,7 +198,7 @@ haproxy:
     maxObjects: 100000  # default: 50000
 ```
 
-**Sizing formula**: `(number of backends + number of servers) × 1.2 safety margin`. Each object uses ~4KB of shared memory. For example, 100,000 objects require ~430Mi in `/dev/shm`, which counts against the pod's memory limit.
+**Sizing formula**: `(number of backends + number of servers) × 1.2 safety margin`. Each object uses ~4KiB of shared memory. For example, 100,000 objects require ~390Mi in `/dev/shm`, which counts against the pod's memory limit.
 
 !!! warning
     After changing `maxObjects`, verify that `haproxy.resources.limits.memory` is large enough to accommodate the increased `/dev/shm` usage. The shm volume is memory-backed and counts against the pod's memory limit.
@@ -211,6 +212,7 @@ haproxy:
 **Diagnosis**:
 
 ```bash
+HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A10 "backend"
 kubectl get endpointslices -l kubernetes.io/service-name=<service>
 ```
@@ -230,7 +232,12 @@ kubectl get endpointslices -l kubernetes.io/service-name=<service>
 **Diagnosis**:
 
 ```bash
+HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n haptic $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/ssl/
+
+# Port-forward HAProxy's HTTPS port, then probe the handshake.
+# Stop the forward with `kill %1` (or Ctrl+C) when done.
+kubectl port-forward -n haptic $HAPROXY_POD 443:443 &
 openssl s_client -connect localhost:443 -servername your-host.example.com < /dev/null
 ```
 

@@ -18,17 +18,18 @@ ingressClass:
 
 The default name is `haptic` (not `haproxy`) so the chart can be installed alongside other HAProxy-based ingress controllers without colliding on IngressClass. When replacing an existing controller, override `ingressClass.name` to match your incumbent's class (often `haproxy`) and your existing Ingress manifests keep working.
 
-## Capability Detection
+## Capability detection
 
-The chart uses `Capabilities.APIVersions.Has` to check for `networking.k8s.io/v1/IngressClass`. If the API is not available (Kubernetes < 1.19, before the v1 graduation), the resource is silently skipped without error.
+The chart uses `Capabilities.APIVersions.Has` to check for `networking.k8s.io/v1/IngressClass`. Because `IngressClass` reached v1 in Kubernetes 1.19 and the chart's minimum is 1.21, this API is always present on a supported cluster, so the check never skips creation in practice. It's an internal safety net that only skips the resource on clusters below the supported floor, where the API is absent.
 
-## Creation Conditions
+## Creation conditions
 
-IngressClass is created only when ALL of the following are true:
+IngressClass is created only when both of the following are true:
 
 1. `ingressClass.enabled: true` (default)
 2. `controller.templateLibraries.ingress.enabled: true` (default)
-3. `networking.k8s.io/v1/IngressClass` API exists in cluster
+
+A third, internal condition also applies: the `networking.k8s.io/v1/IngressClass` API must exist in the cluster. On any supported cluster (1.21+) this is always the case, so it isn't something you need to plan for; it only skips creation below the supported floor. See [Capability detection](#capability-detection).
 
 ## Multi-Controller Environments
 

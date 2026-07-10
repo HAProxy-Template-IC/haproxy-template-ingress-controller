@@ -97,7 +97,7 @@ spec:
 - kubectl configured to access your cluster
 - Helm 3.0+
 
-!!! note "Webhook Validation"
+!!! note "Webhook validation"
     The validating admission webhook is **enabled by default and works out of the box** — the chart generates a self-signed TLS certificate for it, with no cert-manager required. It intercepts CREATE/UPDATE on Ingresses, HTTPRoutes, and GRPCRoutes (the kinds the chart libraries opt in via `enableValidationWebhook: true`) and rejects changes that would break template rendering. The self-signed cert is long-lived and **not auto-rotated**; for automatic rotation set `webhook.certManager.enabled=true` (requires [cert-manager](https://cert-manager.io/docs/installation/)) — see [Security](./operations/security.md) for details.
 
 ## Step 1: Install with Helm
@@ -133,7 +133,7 @@ You should see the controller pod and two HAProxy pods in `Running` state.
 !!! note "HAProxy version"
     The chart defaults to HAProxy 3.4. To select a different version (e.g. 3.0 LTS or 3.3), set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for details.
 
-## Step 2: Deploy a Sample Application
+## Step 2: Deploy a sample application
 
 Create a simple echo service to test routing:
 
@@ -181,7 +181,7 @@ Save as `echo-app.yaml` and apply:
 kubectl apply -f echo-app.yaml
 ```
 
-## Step 3: Create an Ingress Resource
+## Step 3: Create an Ingress resource
 
 Create an Ingress resource that the controller processes:
 
@@ -214,9 +214,9 @@ kubectl apply -f echo-ingress.yaml
 
 The controller automatically detects this new Ingress, renders the HAProxy configuration, validates it, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
 
-## Step 4: Verify the Configuration
+## Step 4: Verify the configuration
 
-### Check Controller Logs
+### Check controller logs
 
 Watch the controller process the Ingress:
 
@@ -231,7 +231,7 @@ You should see log entries showing:
 - Configuration validation passed
 - Deployment to HAProxy instances succeeded
 
-### Inspect HAProxy Configuration
+### Inspect HAProxy configuration
 
 Verify the generated HAProxy configuration was deployed:
 
@@ -249,9 +249,9 @@ You should see:
 - A backend section referencing the echo service
 - Server entries pointing to the echo pod endpoints
 
-## Step 5: Test the Routing
+## Step 5: Test the routing
 
-### Port-Forward to HAProxy
+### Port-forward to HAProxy
 
 HAProxy is running inside the cluster and isn't directly reachable from your machine. Port-forward creates a temporary tunnel from your local port to the HAProxy service:
 
@@ -259,7 +259,7 @@ HAProxy is running inside the cluster and isn't directly reachable from your mac
 kubectl port-forward -n haptic svc/haptic-haproxy 8080:80
 ```
 
-### Test the Endpoint
+### Test the endpoint
 
 In another terminal:
 
@@ -273,7 +273,7 @@ curl -H "Host: echo.example.local" http://localhost:8080/
 # - Environment variables
 ```
 
-### Test Load Balancing
+### Test load balancing
 
 Make multiple requests to see load balancing across echo pods:
 
@@ -285,7 +285,7 @@ done
 
 You should see responses from different echo pods.
 
-## What's Happening Behind the Scenes
+## What's happening behind the scenes
 
 When you created the Ingress resource, the controller:
 
@@ -299,7 +299,7 @@ When you created the Ingress resource, the controller:
 
 The entire process typically completes in under 1 second.
 
-## Next Steps
+## Next steps
 
 Now that you have a working setup, explore these topics:
 
@@ -309,7 +309,7 @@ Replacing ingress-nginx or haproxy-ingress? See [Migrating to HAPTIC](./migratin
 for the zero-downtime, one-Ingress-at-a-time cutover — and the three settings
 that silently break a migration if you miss them.
 
-### Customize the Configuration
+### Customize the configuration
 
 The default configuration is generated from the HAProxyTemplateConfig CRD created by Helm. To customize:
 
@@ -323,13 +323,13 @@ kubectl edit haproxytemplateconfig -n haptic haptic-config
 
 See [CRD Reference](./crd-reference.md) for all available options.
 
-### Template Customization
+### Template customization
 
 The default [template libraries](template-libraries.md) already cover many common use cases: path-based routing, SSL termination, and annotation-driven configuration. You do not need to write or modify templates to use these features.
 
 When you need to go beyond the default libraries — custom annotations, domain-specific logic, or HAProxy features not covered — see the [Templating Guide](./templating.md).
 
-### Watched Resources
+### Watched resources
 
 Extend the controller to watch additional Kubernetes resources:
 
@@ -340,7 +340,7 @@ Extend the controller to watch additional Kubernetes resources:
 
 See [Watching Resources](./watching-resources.md) for configuration details.
 
-### High Availability
+### High availability
 
 Configure the controller for production deployments:
 
@@ -375,7 +375,7 @@ If you run into issues during setup, check these common areas:
 
 For detailed diagnosis steps, see the [Troubleshooting Guide](./troubleshooting.md).
 
-## Clean Up
+## Clean up
 
 Remove all resources created in this guide:
 

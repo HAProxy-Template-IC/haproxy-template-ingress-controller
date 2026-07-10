@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the leader election system for the HAProxy Template Ingress Controller, which enables running multiple controller replicas for high availability while preventing conflicting updates to HAProxy instances.
+This document describes the leader election system for HAPTIC, which enables running multiple controller replicas for high availability while preventing conflicting updates to HAProxy instances.
 
 ## Problem Statement
 
@@ -56,7 +56,7 @@ With 30s/20s the system tolerates nodes progressing 1.5× faster than others. Wo
 
 ### Component Classification
 
-The actual classification lives in `pkg/controller/reconciliation.go` (search for `registry.Build().AllReplica(...).LeaderOnly(...)`); this section reflects that registration list.
+The actual classification lives in `pkg/controller/reconciliation.go` (search for `registerLifecycleComponents`, which registers all-replica components via `reg.Register(c, false)` and leader-only ones via `reg.Register(c, true)`); this section reflects that registration list.
 
 **All replicas run** (read-only or validation operations):
 
@@ -82,7 +82,7 @@ The renderer is **not** a registered component. It lives in `pkg/controller/rend
 - **Coordinator** (`pkg/controller/reconciler`) — Drives the render-validate pipeline (calls `Pipeline.Execute` which in turn calls `RenderService.Render`)
 - **Deployer** (`pkg/controller/deployer`) — Pushes the validated config to every HAProxy endpoint in parallel via `pkg/dataplane.Client`
 - **DeploymentScheduler** (`pkg/controller/deployer`) — Rate-limits and queues deployments; coalesces back-to-back deployment requests via `pkg/controller/coalesce`
-- **DriftMonitor** (`pkg/controller/deployer`) — Periodic redeploy when nothing has changed for `driftPreventionInterval`, so out-of-band Dataplane API edits get overwritten by the controller's last-known-good config
+- **DriftPreventionMonitor** (`pkg/controller/deployer`) — Periodic redeploy when nothing has changed for `driftPreventionInterval`, so out-of-band Dataplane API edits get overwritten by the controller's last-known-good config
 - **ConfigPublisher** (`pkg/controller/configpublisher`) — Publishes rendered config + per-pod status as `HAProxyCfg` / `HAProxyMapFile` / `HAProxyGeneralFile` / `HAProxyCRTListFile` CRDs
 - **StatusUpdater** (`pkg/controller/configchange`) — Writes validation results back onto the `HAProxyTemplateConfig` CRD's status subresource
 
@@ -460,17 +460,18 @@ func TestLeaderElection_DisabledMode(t *testing.T)
 **Verification steps**:
 
 ```bash
-# Deploy with 3 replicas
-kubectl scale deployment haptic-controller --replicas=3
-
-# The Lease is named after the Helm release (e.g. "my-controller")
+# Set your Helm release name once; both the deployment and the
+# lease are derived from it (deployment: "$RELEASE-controller", lease: "$RELEASE")
 RELEASE=my-controller
+
+# Deploy with 3 replicas
+kubectl scale deployment "$RELEASE-controller" --replicas=3
 
 # Check lease status
 kubectl get lease -n haptic "$RELEASE" -o yaml
 
 # Verify leader via metrics
-kubectl port-forward deployment/haptic-controller 9090:9090
+kubectl port-forward deployment/"$RELEASE-controller" 9090:9090
 curl http://localhost:9090/metrics | grep haptic_leader_election_is_leader
 
 # Check logs for leadership events
