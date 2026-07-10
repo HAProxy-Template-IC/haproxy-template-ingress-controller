@@ -2,7 +2,7 @@
 
 ## Overview
 
-The chart can deploy HAProxy pods alongside the controller, or you can manage HAProxy separately. This page covers resource limits, the service architecture, and HAProxy pod requirements.
+The chart can deploy HAProxy pods alongside the controller, or you can manage HAProxy separately.
 
 ## Resource Limits and Container Awareness
 

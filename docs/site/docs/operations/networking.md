@@ -2,7 +2,7 @@
 
 ## Overview
 
-The controller requires network access to the Kubernetes API, HAProxy pods, and DNS. This page covers NetworkPolicy configuration for securing controller network access.
+The controller requires network access to the Kubernetes API, HAProxy pods, and DNS.
 
 For all NetworkPolicy-related Helm values, see the [Configuration Reference](../reference.md).
 

@@ -2,22 +2,9 @@
 description: "Helm chart for deploying HAPTIC, a template-driven HAProxy ingress controller for Kubernetes, with preconfigured template libraries for Ingress and Gateway API."
 ---
 
-# HAPTIC Helm Chart
+# Deploying with Helm
 
-## Overview
-
-This Helm chart deploys HAPTIC (HAProxy Template Ingress Controller), which manages HAProxy configurations dynamically based on Kubernetes resources.
-
-HAPTIC:
-
-- Watches Kubernetes Ingress and/or Gateway API resources
-- Renders Scriggo templates to generate [HAProxy](https://www.haproxy.org/) configurations
-- Deploys configurations to HAProxy pods via [Dataplane API](https://github.com/haproxytech/dataplaneapi)
-- Supports cross-namespace HAProxy pod management
-- Template library system for modular feature support
-- Conditional resource watching based on enabled features
-
-For controller architecture and behavior documentation, see the [the rest of the documentation](index.md).
+The Helm chart is the supported way to install HAPTIC. A default install deploys the controller, a 2-replica HAProxy Deployment, the CRDs, and a ready-to-use set of [template libraries](template-libraries.md) covering Ingress and Gateway API — so traffic routes without any template authoring. Cross-namespace HAProxy management, conditional resource watching, and which libraries load are all configured through Helm values.
 
 ## Prerequisites
 
@@ -46,7 +33,7 @@ helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 
 The chart deploys:
 
-- **Controller Deployment** -- the operator that watches resources and generates configurations
+- **Controller Deployment** -- the controller that watches resources and generates configurations
 - **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, with Dataplane API sidecars
 - **CRDs** -- five resource types under the `haproxy-haptic.org` API group: `HAProxyTemplateConfig` (input — templates, watched resources, settings) plus `HAProxyCfg`, `HAProxyGeneralFile`, `HAProxyCRTListFile`, and `HAProxyMapFile` (outputs the controller publishes for observability). Installed from `charts/haptic/crds/`; preserved across `helm uninstall` (delete them explicitly — see [Uninstalling](#uninstalling))
 - **`HAProxyTemplateConfig` custom resource** -- the merged template-library configuration that drives config rendering (created from the enabled `controller.templateLibraries.*` at render time)
@@ -55,11 +42,11 @@ The chart deploys:
 - Optional **ServiceMonitor** -- Prometheus integration for metrics scraping
 - Optional **admission webhook** -- configuration validation before deployment
 
-If you are new to HAPTIC, start with the [Getting Started guide](getting-started.md) to deploy your first template-driven configuration, then come back here for chart-specific topics.
+New to HAPTIC? [Getting Started](getting-started.md) walks through a first install and a sample app, end to end.
 
-## Documentation Sections
+## Where to go next
 
-Use this chart to find what you need:
+Jump to what you need:
 
 | I want to… | See |
 |------------|-----|

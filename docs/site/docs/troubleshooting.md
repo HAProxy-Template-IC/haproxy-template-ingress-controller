@@ -1,4 +1,4 @@
-# Troubleshooting Guide
+# Troubleshooting
 
 Common issues and solutions for the HAProxy Template Ingress Controller.
 

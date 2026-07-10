@@ -2,7 +2,7 @@
 
 ## Overview
 
-This page covers the key configuration options for the HAPTIC Helm chart, including controller settings, ingress class filtering, and template library management.
+Configure HAPTIC through Helm values — controller settings, ingress-class filtering, and which template libraries load.
 
 For the complete list of all Helm values, see the [Configuration Reference](./reference.md).
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-By default, the controller creates a default SSL certificate for HTTPS traffic. This page covers SSL certificate configuration via cert-manager or manual management, as well as webhook certificate setup. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
+By default, the controller creates a default SSL certificate for HTTPS traffic. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
 
 ## Default SSL Certificate
 

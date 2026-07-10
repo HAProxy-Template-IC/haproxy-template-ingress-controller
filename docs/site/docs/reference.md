@@ -1,4 +1,4 @@
-# Configuration Reference
+# Chart Values Reference
 
 ## Overview
 

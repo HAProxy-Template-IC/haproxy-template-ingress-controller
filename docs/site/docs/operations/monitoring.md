@@ -1,6 +1,6 @@
-# Monitoring Guide
+# Monitoring
 
-This guide explains how to monitor HAPTIC (HAProxy Template Ingress Controller) using Prometheus metrics, including setup, key metrics, alerting, and dashboards.
+Monitor HAPTIC with Prometheus metrics: setup, the metrics reference, alerting rules, and dashboards.
 
 ## Overview
 

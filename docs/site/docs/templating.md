@@ -1,8 +1,8 @@
-# Templating Guide
+# Templating
 
 ## Overview
 
-The HAProxy Template Ingress Controller uses [Scriggo](https://scriggo.com/), a Go template engine, to generate HAProxy configurations from Kubernetes resources. The Helm chart ships with ready-to-use [template libraries](template-libraries.md) that cover standard Ingress and Gateway API use cases — you only need to write templates when you want to extend or replace that default behavior. Templates access watched Kubernetes resources, and the controller renders them whenever resources change, validates the output, and deploys it to HAProxy instances.
+HAPTIC uses [Scriggo](https://scriggo.com/), a Go template engine, to generate HAProxy configurations from Kubernetes resources. The Helm chart ships with ready-to-use [template libraries](template-libraries.md) that cover standard Ingress and Gateway API use cases — you only need to write templates when you want to extend or replace that default behavior. Templates access watched Kubernetes resources, and the controller renders them whenever resources change, validates the output, and deploys it to HAProxy instances.
 
 Templates are rendered automatically when any watched resource changes, during initial synchronization, or periodically for drift detection.
 

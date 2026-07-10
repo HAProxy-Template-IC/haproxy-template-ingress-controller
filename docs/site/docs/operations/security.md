@@ -1,6 +1,6 @@
-# Security Guide
+# Security
 
-This page covers the security-relevant knobs the controller actually exposes. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator, etc.) is left to the upstream project's docs.
+HAPTIC exposes a focused set of security-relevant knobs. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator, etc.) is left to the upstream project's docs.
 
 ## What the Controller Needs
 
