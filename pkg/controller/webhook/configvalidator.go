@@ -102,6 +102,7 @@ type ConfigValidator struct {
 	declarations       map[string]any
 	typedResourceTypes map[string]reflect.Type
 	bootstrap          SchemaBootstrapper
+	effectiveResolver  func(ctx context.Context, cfg *coreconfig.Config) (*coreconfig.Config, error)
 }
 
 // ConfigValidatorConfig wires the ConfigValidator's dependencies. All fields
@@ -153,6 +154,18 @@ type ConfigValidatorConfig struct {
 	// don't change their own typed watchedResources). Production wires the live
 	// bootstrapper; unit tests may leave it nil or pass a stub.
 	Bootstrap SchemaBootstrapper
+
+	// EffectiveResolver (optional) transforms the parsed prospective config
+	// into the EFFECTIVE config before validation — the same transformation
+	// the load gate applies (candidate apiVersions resolved against live
+	// discovery, requires/requiresFields-unsatisfied snippets and tests
+	// stripped; see coreconfig.ResolveEffective). Without it, admission
+	// compiles snippets the controller itself would strip — on a cluster
+	// without Gateway API CRDs the chart's gateway snippets then fail typed
+	// compilation and EVERY config update is denied (issue #79). Production
+	// wires the iteration's resolver; nil (unit tests) validates the raw
+	// config as-is.
+	EffectiveResolver func(ctx context.Context, cfg *coreconfig.Config) (*coreconfig.Config, error)
 }
 
 // NewConfigValidator constructs a ConfigValidator. Panics if any required
@@ -178,6 +191,7 @@ func NewConfigValidator(cfg *ConfigValidatorConfig) *ConfigValidator {
 		declarations:       cfg.Declarations,
 		typedResourceTypes: cfg.TypedResourceTypes,
 		bootstrap:          cfg.Bootstrap,
+		effectiveResolver:  cfg.EffectiveResolver,
 	}
 }
 
@@ -208,6 +222,27 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 	cfg, _, err := conversion.ParseCRD(u)
 	if err != nil {
 		return false, fmt.Sprintf("parsing HAProxyTemplateConfig: %v", err), nil
+	}
+
+	// Resolve the EFFECTIVE config first — the load gate strips
+	// requires/requiresFields-unsatisfied snippets and tests against live
+	// resource availability before compiling, and admission must judge the
+	// same config the controller would actually load (issue #79). Must run
+	// BEFORE resolveSchemas so typebootstrap probes only resolved-version
+	// resources. On resolver error, admit with a warning rather than compile
+	// the raw config (which would reproduce the bug) or deny (which would
+	// block operator applies on transient apiserver blips): the load gate
+	// still deterministically enforces the config, matching this webhook's
+	// safe-to-be-absent posture.
+	if v.effectiveResolver != nil {
+		effective, resolveErr := v.effectiveResolver(ctx, cfg)
+		if resolveErr != nil {
+			v.logger.Warn("Effective-config resolution failed at admission; admitting (load gate still enforces)",
+				"namespace", namespace, "name", name, "error", resolveErr)
+			return true, "", []string{fmt.Sprintf(
+				"effective-config resolution failed at admission: %v — validation skipped; the controller's load gate will still enforce this config", resolveErr)}
+		}
+		cfg = effective
 	}
 
 	// Resolve the typed-resource declarations + reflect.Types this admission

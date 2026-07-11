@@ -243,6 +243,14 @@ func createDryRunValidator(
 		// load-gate's TypeBootstrapper and the webhook's SchemaBootstrapper
 		// share an underlying signature, so the closure converts directly.
 		Bootstrap: webhook.SchemaBootstrapper(newIterationTypeBootstrapper(k8sClient, logger)),
+		// Resolve the prospective config to its EFFECTIVE form before
+		// validation — the same requires/requiresFields stripping the load
+		// gate applies (issue #79: without it, admission denies every config
+		// update on clusters missing an optional watched resource's CRDs).
+		EffectiveResolver: func(ctx context.Context, c *coreconfig.Config) (*coreconfig.Config, error) {
+			effective, _, err := resolveEffectiveConfig(ctx, c, k8sClient, logger)
+			return effective, err
+		},
 	})
 
 	// DryRunValidator is only needed when at least one watched resource
