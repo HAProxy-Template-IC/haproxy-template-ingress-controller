@@ -1,10 +1,12 @@
 {{- $default := .Values.controller.defaultSSLCertificate }}
+{{- $cm := $default.certManager }}
+{{- $ns := $default.namespace | default .Release.Namespace }}
 {{- if and $default.enabled $default.create $default.cert $default.key }}
 apiVersion: v1
 kind: Secret
 metadata:
   name: {{ $default.secretName }}
-  namespace: {{ $default.namespace | default .Release.Namespace }}
+  namespace: {{ $ns }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
   annotations:
@@ -15,4 +17,52 @@ type: kubernetes.io/tls
 data:
   tls.crt: {{ $default.cert | b64enc }}
   tls.key: {{ $default.key | b64enc }}
+{{- else if and $default.enabled $cm.enabled
+      (not (.Capabilities.APIVersions.Has "cert-manager.io/v1"))
+      (not (lookup "v1" "Secret" $ns $default.secretName)) }}
+{{- /*
+Self-signed fallback (issue #78): with defaultSSLCertificate enabled, the ssl
+library refuses to render until this Secret exists — so a default install on a
+cluster without cert-manager would silently never converge: helm install
+succeeds, but the controller fails every render with "TLS Secret not found"
+and the HAProxy pods never become ready. Generate a self-signed certificate so
+the chart works out of the box, mirroring the webhook's self-signed mode
+(_webhook.tpl). The fallback only rescues the DEFAULT configuration
+(certManager.enabled=true with the API absent); manual mode
+(certManager.enabled=false) keeps its contract that the operator provides the
+Secret externally, so late provisioners (external-secrets) are never raced.
+
+The lookup gate renders this ONLY when the Secret does not already exist: a
+Secret pre-created out-of-band (dev script, e2e harness, external-secrets) is
+left untouched (no Helm ownership conflict), and on upgrades the previously
+generated Secret survives via the keep resource-policy below. GitOps tools
+that render without cluster access can't lookup and would regenerate the
+certificate on every sync — for those deployments install cert-manager, or
+provide the certificate explicitly (create/cert/key).
+
+Validity is 10 years (matching the webhook's self-signed cert) so a dev or
+evaluation install never silently expires; it is not auto-rotated. Production
+setups use cert-manager or their own Secret (docs/site/docs/ssl-certificates.md).
+*/}}
+{{- if not $cm.dnsNames }}
+{{- fail "controller.defaultSSLCertificate.certManager.dnsNames must be a non-empty list for the self-signed fallback certificate" }}
+{{- end }}
+{{- $dnsNames := $cm.dnsNames }}
+{{- $cert := genSelfSignedCert (first $dnsNames) nil $dnsNames 3650 }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $default.secretName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "haptic.labels" . | nindent 4 }}
+  annotations:
+    # Keep Secret on helm uninstall/upgrade: on upgrade the lookup gate above
+    # drops it from the rendered release, and this policy stops Helm from
+    # pruning the live Secret (which would break HAProxy until re-created).
+    "helm.sh/resource-policy": "keep"
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ $cert.Cert | b64enc }}
+  tls.key: {{ $cert.Key | b64enc }}
 {{- end }}

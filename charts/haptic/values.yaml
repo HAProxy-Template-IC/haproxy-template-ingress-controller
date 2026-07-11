@@ -199,6 +199,14 @@ controller:
   #   1. cert-manager (default): Uses self-signed issuer for localdev.me
   #   2. Manual: Set certManager.enabled=false, create TLS Secret externally
   #   3. Inline (testing only): Set create=true with cert/key values
+  #
+  # Self-signed fallback: when certManager.enabled is true but the
+  # cert-manager API is absent, the chart generates a self-signed Secret
+  # (for certManager.dnsNames, 10-year validity, not auto-rotated) so the
+  # install converges out of the box — an already-existing Secret is never
+  # touched, and manual mode (certManager.enabled=false) is unaffected.
+  # GitOps tools that render without cluster access regenerate it every
+  # sync; use cert-manager or an explicit certificate there.
   defaultSSLCertificate:
     # Enable default SSL certificate requirement
     # Set to false to disable HTTPS support (HTTP only mode)

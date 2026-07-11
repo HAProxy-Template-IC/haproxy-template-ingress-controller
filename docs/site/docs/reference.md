@@ -53,7 +53,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.defaultSSLCertificate.enabled` | bool | `true` | Enable default SSL certificate requirement |
+| `controller.defaultSSLCertificate.enabled` | bool | `true` | Enable default SSL certificate requirement. When the cert-manager API is absent and no inline cert is set, the chart generates a self-signed Secret (never touching an existing one) so the install converges out of the box |
 | `controller.defaultSSLCertificate.secretName` | string | `default-ssl-cert` | TLS Secret name containing certificate |
 | `controller.defaultSSLCertificate.namespace` | string | `""` | Secret namespace (defaults to Release.Namespace) |
 | `controller.defaultSSLCertificate.certManager.enabled` | bool | `true` | Use cert-manager for certificate provisioning |
