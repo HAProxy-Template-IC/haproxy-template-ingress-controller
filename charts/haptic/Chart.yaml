@@ -82,7 +82,7 @@ annotations:
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://gitlab.com/haproxy-haptic/haptic#readme
+      url: https://haproxy-haptic.org/docs/dev/
     - name: Issue Tracker
       url: https://gitlab.com/haproxy-haptic/haptic/-/issues
 

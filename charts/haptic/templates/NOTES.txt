@@ -133,5 +133,5 @@ Next Steps:
   3. Create Ingress resources to configure routing
 {{- end }}
 
-For more information, visit:
-  https://gitlab.com/haproxy-haptic/haptic
+Documentation:
+  https://haproxy-haptic.org/docs/dev/
