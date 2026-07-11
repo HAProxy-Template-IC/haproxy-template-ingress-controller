@@ -43,7 +43,7 @@ hide:
 HAPTIC is an event-driven Kubernetes controller that:
 
 - **Watches any Kubernetes resource** - Ingresses, Services, Secrets, Gateway API resources, or any custom resource type you configure
-- **Renders Scriggo templates** - A fast, Go-native template engine
+- **Renders Scriggo templates** - A Go-native template engine
 - **Validates before deployment** - Every rendered config passes syntax, schema, and `haproxy -c` checks before it reaches your load balancers
 - **Deploys configurations** to HAProxy pods via the Dataplane API
 
@@ -61,16 +61,14 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 
 - **Full HAProxy access** - If HAProxy supports it, your templates can emit it — every section, every directive in the [configuration manual](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
 - **Add features without code changes** - New directives are template updates, not controller releases
-- **Iterate rapidly** - Deploy configuration changes in minutes, not release cycles
 - **Rich template context** - Access any Kubernetes resource, fetch external data via HTTP, and use controller state in your templates
 - **Everything is templatable** - Generate not just `haproxy.cfg` but also map files, SSL certificates, CRT-lists, and custom auxiliary files
 
 ### Production Ready
 
 - **High availability** - Leader election with automatic failover
-- **Comprehensive validation** - Validating webhook, template validation, and CI/CD-runnable tests
+- **Layered validation** - Admission webhook, template validation, and tests you can run in CI before anything reaches a cluster
 - **Observability** - Prometheus metrics, structured logging, and debug endpoints
-- **HTTP resource access** - Fetch external data for use in templates
 
 !!! note "Ready to use out of the box"
     The [Helm chart](deploying-with-helm.md) ships with [Template Libraries](template-libraries.md) enabled by default. They cover Kubernetes Ingress and Gateway API resources with annotation support comparable to existing HAProxy ingress controllers — no template authoring required. Customizing or extending the templates is entirely optional.
