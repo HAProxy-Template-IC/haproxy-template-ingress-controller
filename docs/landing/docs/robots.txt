@@ -1,5 +1,13 @@
 User-agent: *
+# The pre-merge two-site layout survives as frozen version snapshots under
+# these prefixes (the moving `latest` URLs 301 to the merged /docs/ site).
+# Keep `latest` crawlable so the redirects transfer, but block the frozen
+# snapshots: they serve outdated content with dead canonical URLs.
+Allow: /controller/latest/
+Allow: /helm-chart/latest/
+Disallow: /controller/
+Disallow: /helm-chart/
 Allow: /
 
 Sitemap: https://haproxy-haptic.org/sitemap.xml
-Sitemap: https://haproxy-haptic.org/docs/latest/sitemap.xml
+Sitemap: https://haproxy-haptic.org/docs/dev/sitemap.xml
