@@ -79,10 +79,10 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 1. Check template syntax in HAProxyTemplateConfig
 2. Inspect the last rendered output via the debug server — port-forward first (see [Debugging Guide](./operations/debugging.md)):
 
-   ```bash
-   kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
-   curl http://localhost:8080/debug/vars/rendered
-   ```
+    ```bash
+    kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
+    curl http://localhost:8080/debug/vars/rendered
+    ```
 
 3. See [Templating Guide](./templating.md)
 
