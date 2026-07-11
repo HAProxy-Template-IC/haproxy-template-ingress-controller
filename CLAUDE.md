@@ -821,7 +821,12 @@ sentence literally.
   behind a vacuous main clause ("deploy with confidence knowing X is validated" —
   the point is the validation, lead with it). Test: if negating the clause
   produces nonsense rather than a real alternative, the clause says nothing — cut
-  it or replace it with the concrete fact it was gesturing at.
+  it or replace it with the concrete fact it was gesturing at. The same test
+  applies to *advantage* claims: if every alternative's docs could truthfully
+  say the same sentence ("deploy config changes in minutes", "fast",
+  "flexible"), it differentiates nothing — cut it or replace it with the
+  HAPTIC-specific mechanism. Watch for bullets whose intended point is already
+  the previous bullet.
 
 ### Distilled style rules (Google/Microsoft/Diátaxis)
 

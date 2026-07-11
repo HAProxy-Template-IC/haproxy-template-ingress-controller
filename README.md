@@ -20,18 +20,16 @@
 
 Traditional ingress controllers embed configuration logic in code. HAPTIC inverts this:
 
-- **Full HAProxy access** - Write any HAProxy directive using the [configuration language](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
+- **Full HAProxy access** - If HAProxy supports it, your templates can emit it — every section, every directive in the [configuration manual](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
 - **Add features without code changes** - New directives are template updates, not controller releases
-- **Iterate rapidly** - Deploy configuration changes in minutes, not release cycles
 - **Rich template context** - Access any Kubernetes resource, fetch external data via HTTP, and use controller state in your templates
 - **Everything is templatable** - Generate not just `haproxy.cfg` but also map files, SSL certificates, CRT-lists, and custom auxiliary files
 
 ### Production Ready
 
 - **High availability** - Leader election with automatic failover
-- **Comprehensive validation** - Validating webhook, template validation, and CI/CD-runnable tests
+- **Layered validation** - Admission webhook, template validation, and tests you can run in CI before anything reaches a cluster
 - **Observability** - Prometheus metrics, structured logging, and debug endpoints
-- **HTTP resource access** - Fetch external data for use in templates
 
 ## Quick Start
 
