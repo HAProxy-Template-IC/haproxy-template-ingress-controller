@@ -28,3 +28,84 @@
 .md-typeset table:not([class]) code {
   word-break: normal;
 }
+
+/* Mermaid renders client-side: without this, the raw diagram definition
+   flashes as a code block before the SVG replaces it. The <pre> only exists
+   pre-render (or on a parse failure, which the authoring probe catches). */
+.md-typeset pre.mermaid > code {
+  visibility: hidden;
+}
+
+/* ---- home hero pipeline (index.md) ------------------------------------- */
+.hx-pipeline {
+  display: flex; align-items: stretch; gap: 0;
+  margin: 1.6em 0 2em; padding: 1.1em 1.2em;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 12px;
+  background:
+    radial-gradient(60% 120% at 8% 0%, color-mix(in srgb, var(--md-typeset-a-color) 6%, transparent), transparent 60%),
+    var(--md-default-bg-color);
+}
+.hx-group, .hx-card {
+  display: flex; flex-direction: column; justify-content: center; gap: .45em;
+  padding: .9em 1.1em; border-radius: 10px; min-width: 0;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-code-bg-color);
+}
+.hx-group { flex: 0 1 auto; }
+.hx-card { flex: 1 1 0; text-align: center; }
+.hx-cap {
+  font-size: .58rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+}
+.hx-card .hx-cap { align-self: center; }
+.hx-chip {
+  font-size: .72rem; white-space: nowrap;
+  padding: .32em .7em; border-radius: 999px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color);
+}
+.hx-card strong { font-size: .85rem; line-height: 1.25; }
+.hx-card small { font-size: .68rem; color: var(--md-default-fg-color--light); line-height: 1.35; }
+.hx-card.hx-hot {
+  border-color: color-mix(in srgb, var(--md-typeset-a-color) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-typeset-a-color) 12%, transparent);
+}
+.hx-card.hx-hot strong { color: var(--md-typeset-a-color); }
+/* connector: line + arrowhead + travelling pulse */
+.hx-link { flex: 0 0 44px; position: relative; align-self: center; height: 2px; margin: 0 2px;
+  background: var(--md-default-fg-color--lightest); }
+.hx-link::after { content: ""; position: absolute; right: -1px; top: 50%; transform: translateY(-50%);
+  border: 5px solid transparent; border-left-color: var(--md-default-fg-color--lighter, var(--md-default-fg-color--light)); }
+.hx-link i { position: absolute; top: 50%; left: 0; width: 7px; height: 7px; border-radius: 50%;
+  transform: translate(-4px, -50%);
+  background: var(--md-typeset-a-color);
+  animation: hx-flow 2.6s linear infinite; opacity: 0; }
+.hx-link:nth-of-type(2) i { animation-delay: 0s; }
+.hx-link:nth-of-type(4) i { animation-delay: .85s; }
+.hx-link:nth-of-type(6) i { animation-delay: 1.7s; }
+@keyframes hx-flow {
+  0% { left: 0; opacity: 0; }
+  12% { opacity: .9; }
+  38% { left: calc(100% - 6px); opacity: .9; }
+  50% { left: calc(100% - 6px); opacity: 0; }
+  100% { left: calc(100% - 6px); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .hx-link i { animation: none; opacity: 0; } }
+/* stack vertically on narrow screens */
+@media (max-width: 44em) {
+  .hx-pipeline { flex-direction: column; align-items: stretch; gap: 0; }
+  .hx-group { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .hx-group .hx-cap { width: 100%; }
+  .hx-link { flex: 0 0 26px; width: 2px; height: 26px; align-self: center; margin: 2px 0; }
+  .hx-link::after { right: 50%; top: auto; bottom: -1px; transform: translateX(50%);
+    border: 5px solid transparent; border-top-color: var(--md-default-fg-color--lighter, var(--md-default-fg-color--light)); }
+  .hx-link i { left: 50%; top: 0; transform: translate(-50%, -4px); animation-name: hx-flow-v; }
+  @keyframes hx-flow-v {
+    0% { top: 0; opacity: 0; }
+    12% { opacity: .9; }
+    38% { top: calc(100% - 6px); opacity: .9; }
+    50% { top: calc(100% - 6px); opacity: 0; }
+    100% { top: calc(100% - 6px); opacity: 0; }
+  }
+}
