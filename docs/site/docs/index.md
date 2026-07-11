@@ -8,11 +8,32 @@ hide:
 
 **HAPTIC** (HAProxy Template Ingress Controller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
-```mermaid
-flowchart LR
-    K["Kubernetes Resources"] --> T["Template Engine"]
-    T --> H["HAProxy Pods"]
-```
+<div class="hx-pipeline" aria-label="How HAPTIC works: cluster resources feed your templates, the rendered config is validated, then deployed to the HAProxy fleet">
+  <div class="hx-group">
+    <span class="hx-cap">Your cluster</span>
+    <span class="hx-chip">🌐 Ingress</span>
+    <span class="hx-chip">🔀 Gateway API</span>
+    <span class="hx-chip">🧩 Any CRD</span>
+  </div>
+  <div class="hx-link" aria-hidden="true"><i></i></div>
+  <div class="hx-card hx-hot">
+    <span class="hx-cap">Templates</span>
+    <strong>Your templates</strong>
+    <small>full control over haproxy.cfg</small>
+  </div>
+  <div class="hx-link" aria-hidden="true"><i></i></div>
+  <div class="hx-card">
+    <span class="hx-cap">Gate</span>
+    <strong>Validated</strong>
+    <small>schema&nbsp;+&nbsp;haproxy&nbsp;-c</small>
+  </div>
+  <div class="hx-link" aria-hidden="true"><i></i></div>
+  <div class="hx-card">
+    <span class="hx-cap">Fleet</span>
+    <strong>HAProxy</strong>
+    <small>reload-free updates<br>where possible</small>
+  </div>
+</div>
 
 !!! note "Community Project"
     This is an independent community project and is not affiliated with or endorsed by HAProxy Technologies.
