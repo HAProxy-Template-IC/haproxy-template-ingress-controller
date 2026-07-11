@@ -321,7 +321,7 @@ type ConfigPublishingConfig struct {
 	// Compression uses zstd+base64 encoding.
 	//
 	// Default: 1048576 (1 MiB)
-	// Set to 0 to disable compression.
+	// A value of 0 is treated as unset and the default applies.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:default=1048576
 	// +optional
@@ -378,7 +378,7 @@ type DataplaneConfig struct {
 	// SSLCertsDir is the directory for SSL certificates.
 	//
 	// Used for both validation and deployment.
-	// Default: /etc/haproxy/ssl
+	// Default: /etc/haproxy/certs (the Helm chart sets /etc/haproxy/ssl)
 	// +optional
 	SSLCertsDir string `json:"sslCertsDir,omitempty"`
 

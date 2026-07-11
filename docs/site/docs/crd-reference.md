@@ -147,7 +147,7 @@ credentialsSecretRef:
 - `dataplane_username` - Dataplane API username
 - `dataplane_password` - Dataplane API password
 
-The same credentials are used for both production and validation Dataplane API instances; the controller does not need separate validation credentials.
+Credentials are used only for the production Dataplane API; config validation runs locally against the `haproxy` binary and needs no credentials.
 
 ### podSelector (required)
 
@@ -163,7 +163,7 @@ At least one label must be specified.
 
 ### controller
 
-Controller-level settings for ports and leader election.
+Controller-level settings for leader election and config publishing.
 
 ```yaml
 controller:
@@ -195,7 +195,7 @@ controller:
 
 | Field                  | Type  | Default   | Description                                                                      |
 |------------------------|-------|-----------|----------------------------------------------------------------------------------|
-| `compressionThreshold` | int64 | 1048576   | Compress content when size exceeds this threshold (bytes). Set to 0 to disable |
+| `compressionThreshold` | int64 | 1048576   | Compress content when size exceeds this threshold (bytes). A value of `0` is treated as unset — the 1 MiB default applies (compression can't currently be disabled) |
 
 **How compression works:**
 
@@ -241,12 +241,12 @@ dataplane:
   reloadVerificationTimeout: 10s     # Wait for HAProxy to confirm graceful reload (default 10s)
   syncTimeout: 2m                    # Per-endpoint sync timeout (default 2m)
   mapsDir: /etc/haproxy/maps         # Used for both validation and deployment
-  sslCertsDir: /etc/haproxy/ssl
+  sslCertsDir: /etc/haproxy/ssl      # chart-set; the controller's built-in default is /etc/haproxy/certs
   generalStorageDir: /etc/haproxy/general
   configFile: /etc/haproxy/haproxy.cfg
 ```
 
-The four `*Dir` / `configFile` paths are used by the controller's local `haproxy -c` validation step as well as for deployment — they must match the paths the Dataplane API server is configured to manage. The Helm chart keeps them in sync by deriving both sides from a single set of chart values.
+The three `*Dir` paths are used by the controller's local `haproxy -c` validation step as well as for deployment — they must match the paths the Dataplane API server is configured to manage (`configFile` is used only by local validation; the Dataplane API manages its own config-file path). The Helm chart keeps them in sync by deriving both sides from a single set of chart values.
 
 ### watchedResourcesIgnoreFields
 
@@ -276,7 +276,7 @@ watchedResources:
     labelSelector: "app=myapp"  # Optional, equality-only ("k=v[,k=v]"); set-based syntax not supported
     fieldSelector: "spec.ingressClassName=haproxy"  # Optional, client-side JSONPath equality ("field.path=value"); matches any field
     store: full  # or "on-demand" for cached store
-    debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 2s default
+    debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 2s default, an explicit "0" disables debouncing
 ```
 
 Instead of a single `apiVersion`, an entry can declare an ordered
@@ -382,7 +382,7 @@ Reference in config: `bind :443 ssl crt {{ pathResolver.GetPath("example-com", "
 
 Templates that emit Kubernetes resources for the controller to apply via Server-Side Apply. Each entry's rendered output is parsed as one or more YAML documents (multi-doc supported via `---` separators); each document must declare `apiVersion`, `kind`, and `metadata.name` (plus `metadata.namespace` for namespaced kinds).
 
-The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every applied resource, so cascade-delete (e.g. `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the SSA payload omits the `managed-by` label, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly-owned objects on which HAPTIC only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
+The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every full-ownership applied resource, so cascade-delete (e.g. `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the SSA payload omits the `managed-by` label **and** the `OwnerReference`, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly-owned objects on which HAPTIC only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
 
 Templates have full access to the same engine context as `haproxyConfig` — `resources`, filters, `templateSnippets`, `fileRegistry`, `extraContext`, and the per-render `shared` cache — so a `k8sResources` template can render extension points (`render_glob` patterns) and read shared state populated by the main config template.
 
@@ -445,6 +445,23 @@ haproxyConfig:
 
 See [Templating Guide](./templating.md) for syntax and filters.
 
+Every template-bearing entry (`haproxyConfig`, and each entry under `maps`, `files`, `sslCertificates`, and `k8sResources`) also accepts an optional `postProcessing` list applied to the rendered output:
+
+```yaml
+haproxyConfig:
+  template: |
+    ...
+  postProcessing:
+    - type: regex_replace          # params: pattern, replace
+      params:
+        pattern: '\n{3,}'
+        replace: "\n\n"
+    # or a Scriggo transform — the rendered output is available as `input`:
+    # - type: template
+    #   params:
+    #     source: "{{ input }}"
+```
+
 ### templatingSettings
 
 Template rendering configuration and custom variables.
@@ -467,6 +484,7 @@ templatingSettings:
 | Field          | Type                   | Required | Description                                                              |
 |----------------|------------------------|----------|--------------------------------------------------------------------------|
 | `extraContext` | `map[string]any` | No       | Custom variables, exposed to templates as the `extraContext` map. Read a key with `extraContext["key"]`, or `extraContext \| dig("key") \| fallback(default)` when it may be unset |
+| `engine`       | string                 | No       | Template engine. Only valid value (and default): `scriggo` |
 
 **Usage in templates:**
 
@@ -486,7 +504,7 @@ See [Templating Guide - Custom Template Variables](./templating.md#custom-templa
 
 ### validationTests
 
-Embedded validation tests (optional, used by webhook and CLI).
+Embedded validation tests (optional; run by the admission webhook, the `validate` CLI, and the controller itself on config load).
 
 ```yaml
 validationTests:
@@ -548,7 +566,13 @@ descended transparently (`spec.rules.filters.cors` matches the field inside
 the `rules[]` / `filters[]` items). The current stripping outcome is visible
 at `/debug/vars/effectiveConfigResolution`.
 
+Beyond `description`/`fixtures`/`assertions`/`requires`/`requiresFields`, each test also accepts `httpResources` (mocked responses for `http.Fetch()` calls), `currentConfig` (a simulated live HAProxy config for runtime-context assertions), `extraContext` (per-test overrides of `templatingSettings.extraContext`), and `minHAProxyVersion` (skip the test on older HAProxy).
+
 See [Validation Tests](./validation-tests.md) for the full test-framework reference (fixtures, assertion types, CLI usage) and [CRD & Validation Design](./development/crd-validation-design.md) for the design rationale.
+
+### migrationCoverage
+
+Per-migration-source annotation coverage declarations (optional). Each entry names a source controller (`source`, unique), how to recognise resources it manages (`detect.ingressClasses`, `detect.annotationPrefixes`), and a map of the source's annotation keys to their migration classification (`annotations`). The controller treats this as opaque data — it's contributed by the template libraries, merged by the Helm chart, and consumed by tooling such as `migrate-check`; no entry influences rendering or reconciliation. See [Migrating](./migrating.md) for the tooling that reads it.
 
 ### validators
 

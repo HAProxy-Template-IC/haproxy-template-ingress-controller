@@ -70,7 +70,7 @@ spec:
                           Compression uses zstd+base64 encoding.
 
                           Default: 1048576 (1 MiB)
-                          Set to 0 to disable compression.
+                          A value of 0 is treated as unset and the default applies.
                         format: int64
                         minimum: 0
                         type: integer
@@ -229,7 +229,7 @@ spec:
                       SSLCertsDir is the directory for SSL certificates.
 
                       Used for both validation and deployment.
-                      Default: /etc/haproxy/ssl
+                      Default: /etc/haproxy/certs (the Helm chart sets /etc/haproxy/ssl)
                     type: string
                   syncTimeout:
                     description: |-
