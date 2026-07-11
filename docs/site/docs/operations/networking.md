@@ -8,21 +8,23 @@ For all NetworkPolicy-related Helm values, see the [Configuration Reference](../
 
 ## Default configuration
 
-By default, the NetworkPolicy allows egress to three targets:
+By default, the NetworkPolicy allows egress to four targets:
 
 - **DNS** (kube-system namespace): Required for name resolution.
 - **Kubernetes API** (`0.0.0.0/0` and `::/0`, adjust for production): Required for watching Ingress, Gateway, Secret, and other configured resources. The default ships both an IPv4 and an IPv6 catch-all so the controller can reach an apiserver dialed over either family.
-- **HAProxy pods** (any namespace, label-matched): The controller reaches the Dataplane API and stats ports on every pod whose labels match `networkPolicy.egress.haproxyPods.podSelector`. The `networkPolicy.egress.haproxyPods.namespaceSelector` default is `{}` — an empty selector means *all* namespaces — so narrow it explicitly when you know which namespaces host HAProxy.
+- **HAProxy pods** (release namespace, label-matched): The controller reaches the Dataplane API and stats ports on every pod whose labels match `networkPolicy.egress.haproxyPods.podSelector`. With the default empty `networkPolicy.egress.haproxyPods.namespaceSelector: {}`, no namespace selector is emitted, which in NetworkPolicy semantics restricts the rule to the policy's own namespace — set a non-empty selector to reach HAProxy pods in other namespaces.
+- **All in-cluster pods**: `networkPolicy.egress.additionalRules` ships a default rule allowing egress to every pod in every namespace on any port, so template helpers like `http.Fetch()` reach cluster services out of the box.
 
 Helm replaces list values wholesale rather than merging them. When you override `kubernetesApi`, you restate the entire list — every `cidr` entry and its `ports` array — because your value fully replaces the default. The examples below are complete on purpose.
 
 ## Production hardening
 
-For production, restrict Kubernetes API access to the CIDRs your apiserver actually uses:
+For production, clear the default allow-all egress rule (only needed when templates call `http.Fetch()` against in-cluster services) and restrict Kubernetes API access to the CIDRs your apiserver actually uses:
 
 ```yaml
 networkPolicy:
   egress:
+    additionalRules: []  # drop the default all-pods rule
     kubernetesApi:
       - cidr: 10.96.0.0/12  # Your cluster's service CIDR
         ports:

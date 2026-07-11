@@ -51,7 +51,7 @@ spec:
     {{- end }}
 
     {{- if $np.egress.haproxyPods.enabled }}
-    # Allow access to HAProxy Dataplane API pods (cross-namespace)
+    # Allow access to HAProxy Dataplane API pods (release namespace unless namespaceSelector is set)
     - to:
         - podSelector:
             {{- toYaml $np.egress.haproxyPods.podSelector | nindent 12 }}

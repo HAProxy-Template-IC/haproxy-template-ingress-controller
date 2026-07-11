@@ -477,13 +477,13 @@ No CPU limit is set by default to avoid throttling; HAProxy's `nbthread` auto-ca
 | `networkPolicy.enabled` | bool | `true` | Enable controller NetworkPolicy |
 | `networkPolicy.egress.allowDNS` | bool | `true` | Allow DNS resolution |
 | `networkPolicy.egress.kubernetesApi` | list | See values.yaml | Kubernetes API access rules |
-| `networkPolicy.egress.haproxyPods.enabled` | bool | `true` | Allow controller egress to HAProxy Dataplane API pods (cross-namespace by default) |
+| `networkPolicy.egress.haproxyPods.enabled` | bool | `true` | Allow controller egress to HAProxy Dataplane API pods (release namespace unless `namespaceSelector` is set) |
 | `networkPolicy.egress.haproxyPods.podSelector` | map | See values.yaml | Pod-label selector matching the HAProxy pods to reach |
-| `networkPolicy.egress.haproxyPods.namespaceSelector` | map | `{}` | Namespace selector. **`{}` means every namespace** (Kubernetes' permissive default) — narrow to specific namespaces in production by setting `matchLabels` |
-| `networkPolicy.egress.additionalRules` | list | See values.yaml | Additional egress rules; chart default permits backend-service connections in every namespace, so override with caution |
+| `networkPolicy.egress.haproxyPods.namespaceSelector` | map | `{}` | Namespace selector. **`{}` emits no selector**, restricting the rule to the release namespace — set `matchLabels` to reach HAProxy pods in other namespaces |
+| `networkPolicy.egress.additionalRules` | list | See values.yaml | Additional egress rules; the chart default allows egress to every in-cluster pod (keeps `http.Fetch()` working) — set `[]` to lock down |
 | `networkPolicy.ingress.monitoring.enabled` | bool | `false` | Allow Prometheus scraping |
 | `networkPolicy.ingress.monitoring.podSelector` | map | `{}` | Prometheus pod selector. **`{}` means every pod** — set `matchLabels` to identify your Prometheus deployment |
-| `networkPolicy.ingress.monitoring.namespaceSelector` | map | `{}` | Prometheus namespace selector. **`{}` means every namespace** — set `matchLabels` to scope to the monitoring namespace |
+| `networkPolicy.ingress.monitoring.namespaceSelector` | map | `{}` | Prometheus namespace selector. **`{}` emits no selector**, so only same-namespace scrapers match — set `matchLabels` to admit your monitoring namespace |
 | `networkPolicy.ingress.healthChecks.enabled` | bool | `true` | Allow health check access |
 | `networkPolicy.ingress.dataplaneApi.enabled` | bool | `true` | Allow Dataplane API access |
 | `networkPolicy.ingress.webhook.enabled` | bool | `true` | Allow webhook access |
