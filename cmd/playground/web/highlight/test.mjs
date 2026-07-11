@@ -91,5 +91,41 @@ console.log("\n--- Assertion 5: Scriggo comment is entirely pg-cf-cmt ---");
 check("{# this is a comment #} → pg-cf-cmt (whole span)",
   hasSpan(htmlComment, "pg-cf-cmt", "{# this is a comment #}"));
 
+// --- Regression: template scalars highlight regardless of document shape ---
+// (a) Helm-values wrapping (controller.config.templateSnippets...), (b) a
+// dedented facade excerpt with no group key at all. Both must give the
+// template body real HAProxy/Scriggo spans, not plain YAML-scalar text.
+const shapes = {
+  "values-wrapped": `controller:
+  config:
+    templateSnippets:
+      my-snippet:
+        template: |
+          {%- if x %}
+          http-request set-header X-Y z
+          {%- end %}
+`,
+  "dedented excerpt": `my-snippet:
+  template: |
+    {%- if x %}
+    http-request set-header X-Y z
+    {%- end %}
+`,
+  "spec-shaped": `spec:
+  templateSnippets:
+    my-snippet:
+      template: |
+        {%- if x %}
+        http-request set-header X-Y z
+        {%- end %}
+`,
+};
+console.log("\n--- Assertion 5: template scalars highlight in every document shape ---");
+for (const [name, doc] of Object.entries(shapes)) {
+  const h = highlightToHTML(doc);
+  check(`${name}: scriggo keyword 'if' highlighted`, wrappedIn(h, "pg-cf-tkw", "if"));
+  check(`${name}: haproxy keyword 'http-request' highlighted`, wrappedIn(h, "pg-cf-kw", "http-request") || hasSpan(h, "pg-cf-kw", "http-request"));
+}
+
 console.log("\n" + (failures === 0 ? "ALL ASSERTIONS PASSED" : `${failures} ASSERTION(S) FAILED`));
 process.exit(failures === 0 ? 0 : 1);

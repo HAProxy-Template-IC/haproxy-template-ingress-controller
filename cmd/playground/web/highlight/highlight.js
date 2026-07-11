@@ -63,9 +63,16 @@ const haproxyParser = rawHaproxy.configure({ props: [haproxyHighlight], wrap: ov
 const mapParser = rawMap.configure({ props: [mapHighlight], wrap: overlayScriggo });
 const textParser = scriggoParser;
 
-// Reconstruct the spec-group key of a BlockLiteralContent node: the key directly
-// under `spec` (or the outermost key for a bare spec document). Walks the Pair
-// ancestors, reading each Key's text.
+// Classify a BlockLiteralContent node by the DEEPEST recognized group key in
+// its Pair-ancestor chain, so the shape of the wrapping document doesn't
+// matter: `spec.templateSnippets.x.template`, a Helm-values
+// `controller.config.templateSnippets.x.template`, and a facade excerpt
+// `x.template` under a known group all resolve identically. When no group key
+// appears at all (e.g. a dedented single-snippet excerpt), a literal sitting
+// directly under a `template:` key still gets the template parser.
+const GROUPS = new Set([
+  "haproxyConfig", "templateSnippets", "maps", "files", "sslCertificates", "k8sResources",
+]);
 function specGroupOf(node, input) {
   const keys = [];
   for (let n = node.parent; n; n = n.parent) {
@@ -74,10 +81,9 @@ function specGroupOf(node, input) {
       if (key) keys.push(input.read(key.from, key.to).trim());
     }
   }
-  keys.reverse(); // root → leaf, e.g. [spec, haproxyConfig, template]
-  const si = keys.indexOf("spec");
-  if (si >= 0 && si + 1 < keys.length) return keys[si + 1];
-  return keys.length ? keys[0] : null;
+  // keys are leaf → root; the first recognized group is the deepest one.
+  for (const k of keys) if (GROUPS.has(k)) return k;
+  return keys[0] === "template" ? "templateSnippets" : null;
 }
 
 // Bare-template parser (HAProxy body + scriggo overlay), exported so the editor
@@ -93,7 +99,7 @@ export const configParser = yamlParser.configure({
     const group = specGroupOf(node.node, input);
     if (group === "haproxyConfig" || group === "templateSnippets") return { parser: haproxyParser };
     if (group === "maps") return { parser: mapParser };
-    if (group === "files" || group === "sslCertificates") return { parser: textParser };
+    if (group === "files" || group === "sslCertificates" || group === "k8sResources") return { parser: textParser };
     return null;
   }),
 });
