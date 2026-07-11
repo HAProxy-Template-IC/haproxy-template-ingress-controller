@@ -152,6 +152,16 @@ for f in $VERSION_DOC_FILES; do
         -e "s|\\(haptic:\\)$PREV_ESC-haproxy[0-9.]*|\\1$VERSION-haproxy$DEFAULT_HAPROXY|g" \
         "$f"
 done
+# The chart README ships inside the released chart (Artifact Hub renders it),
+# so its hosted-docs links must point at the version being released, not the
+# moving dev docs. Two patterns keep this idempotent across releases: the
+# first release rewrites the initial /docs/dev/ links; every later release
+# rewrites the previous version's links (same PREV->CURRENT keying as the
+# version-pin rewrites above).
+sed -i \
+    -e "s|haproxy-haptic.org/docs/dev/|haproxy-haptic.org/docs/$VERSION/|g" \
+    -e "s|haproxy-haptic.org/docs/$PREV_ESC/|haproxy-haptic.org/docs/$VERSION/|g" \
+    charts/haptic/README.md
 # Landing page fallback (replaced client-side by the published-versions JS)
 sed -i -E "s|(<span id=\"helm-version\" class=\"t-num\">)[^<]*|\1$VERSION|" docs/landing/overrides/home.html
 

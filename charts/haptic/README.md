@@ -2,13 +2,14 @@
 
 HAPTIC (HAProxy Template Ingress Controller) ships as a single Helm chart that installs the controller, an `HAProxyTemplateConfig` CRD, and (optionally) the HAProxy pods it manages. The controller watches Ingress / Gateway API / CRD resources, renders [Scriggo](https://scriggo.com/) templates to HAProxy configuration, and pushes the result to HAProxy via the [Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
-Full documentation: see [`docs/`](./docs/index.md) in this directory.
+Full documentation: [haproxy-haptic.org/docs](https://haproxy-haptic.org/docs/dev/) (this chart's pages live under *Deploying with Helm*).
 
 ## Prerequisites
 
 - Kubernetes **1.21+** (default `PodDisruptionBudget` is `policy/v1`; watches `discovery.k8s.io/v1` EndpointSlices)
 - Helm **3.0+**
 - **HAProxy 3.0+** — the chart deploys HAProxy by default and the SSL library requires 3.0+. Pin a specific series via `haproxyVersion`.
+- **cert-manager** (optional but recommended) — the default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without it, create the `default-ssl-cert` TLS Secret yourself before the HAProxy pods can become ready — see [SSL Certificates](https://haproxy-haptic.org/docs/dev/ssl-certificates/).
 
 ## Installation
 
@@ -33,7 +34,7 @@ helm uninstall my-controller
 
 ## Key Values
 
-The full values reference lives in [`docs/reference.md`](./docs/reference.md). The ones operators most commonly change:
+The full values reference lives in [Chart Values Reference](https://haproxy-haptic.org/docs/dev/reference/). The ones operators most commonly change:
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
@@ -52,7 +53,7 @@ The full values reference lives in [`docs/reference.md`](./docs/reference.md). T
 | `monitoring.serviceMonitor.enabled` | `false` | Prometheus Operator `ServiceMonitor` |
 | `networkPolicy.enabled` | `true` | NetworkPolicy allowing controller ↔ HAProxy ↔ API server |
 | `ingressClass.name` / `gatewayClass.name` | `haptic` | Class names the controller matches against — deliberately distinct from `haproxy` so HAPTIC can run side-by-side with other HAProxy-based ingress controllers; set to `haproxy` when replacing an incumbent |
-| `credentials.dataplane.username` / `credentials.dataplane.password` | `admin` / sha256-of-release-name | Empty `password` falls back to a deterministic 32-char SHA256 hash (preserved across upgrades from the existing Secret); **set explicitly in production**. See [`docs/reference.md`](./docs/reference.md#credentials). |
+| `credentials.dataplane.username` / `credentials.dataplane.password` | `admin` / generated | Empty `password` generates a random 32-char password, preserved across upgrades by reading the existing Secret. GitOps tools that render without cluster access regenerate it every sync — **set explicitly there and in production**. See [Credentials](https://haproxy-haptic.org/docs/dev/reference/#credentials). |
 
 ## Template Libraries
 
@@ -70,20 +71,19 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 | `nginx-ingress` | off | `nginx.ingress.kubernetes.io/*` annotation compatibility |
 | `spoaHub` | auto | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
-Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, `haproxyConfig`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [`docs/template-libraries.md`](./docs/template-libraries.md) and [`CLAUDE.md`](../CLAUDE.md) for the library-merging design, extension points, and snippet priority ranges.
+Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, `haproxyConfig`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [Template Libraries](https://haproxy-haptic.org/docs/dev/template-libraries/) for the library-merging design, extension points, and snippet priority ranges.
 
 ## Documentation
 
 | Area | Where to look |
 |------|---------------|
-| Getting started | [`docs/index.md`](./docs/index.md), [`docs/configuration.md`](./docs/configuration.md) |
-| Ingress & Gateway setup | [`docs/ingress-class.md`](./docs/ingress-class.md), [`docs/gateway-class.md`](./docs/gateway-class.md) |
-| SSL and annotations | [`docs/ssl-certificates.md`](./docs/ssl-certificates.md), [`docs/annotations.md`](./docs/annotations.md) |
-| Running HAProxy | [`docs/haproxy-deployment.md`](./docs/haproxy-deployment.md) |
-| Library reference | [`docs/template-libraries.md`](./docs/template-libraries.md) + [`docs/libraries/`](./docs/libraries/) |
-| Day-two operations | [`docs/operations/`](./docs/operations/) (HA, monitoring, networking, debugging, troubleshooting) |
-| Full values reference | [`docs/reference.md`](./docs/reference.md) |
-| Chart development | [`CLAUDE.md`](../CLAUDE.md) |
+| Getting started | [Getting Started](https://haproxy-haptic.org/docs/dev/getting-started/), [Deploying with Helm](https://haproxy-haptic.org/docs/dev/deploying-with-helm/) |
+| Ingress & Gateway setup | [IngressClass](https://haproxy-haptic.org/docs/dev/ingress-class/), [GatewayClass](https://haproxy-haptic.org/docs/dev/gateway-class/) |
+| SSL and annotations | [SSL Certificates](https://haproxy-haptic.org/docs/dev/ssl-certificates/), [Annotations](https://haproxy-haptic.org/docs/dev/annotations/) |
+| Running HAProxy | [HAProxy Deployment](https://haproxy-haptic.org/docs/dev/haproxy-deployment/) |
+| Library reference | [Template Libraries](https://haproxy-haptic.org/docs/dev/template-libraries/) |
+| Day-two operations | [High Availability](https://haproxy-haptic.org/docs/dev/operations/high-availability/), [Monitoring](https://haproxy-haptic.org/docs/dev/operations/monitoring/), [Networking](https://haproxy-haptic.org/docs/dev/operations/networking/), [Debugging](https://haproxy-haptic.org/docs/dev/operations/debugging/), [Troubleshooting](https://haproxy-haptic.org/docs/dev/troubleshooting/) |
+| Full values reference | [Chart Values Reference](https://haproxy-haptic.org/docs/dev/reference/) |
 
 ## Upgrading
 
@@ -92,11 +92,16 @@ helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
   --version 0.2.0-alpha.1 -f my-values.yaml
 ```
 
-CRDs are not upgraded by `helm upgrade` — see [`docs/operations/`](./docs/operations/) if the CRD schema changed between versions.
+CRDs are not upgraded by `helm upgrade`. When the CRD schema changed between versions, apply the packaged CRDs first:
+
+```bash
+helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.1 | kubectl apply --server-side --force-conflicts -f -
+```
 
 ## Examples
 
-Ready-to-adapt configurations live in the repository's top-level [`examples/`](../../examples/) directory.
+Ready-to-adapt configurations live in the repository's top-level [examples/](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples) directory.
 
 ## License
 
