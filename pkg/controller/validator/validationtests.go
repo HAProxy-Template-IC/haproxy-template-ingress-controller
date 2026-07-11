@@ -56,6 +56,55 @@ const validationTestsBootstrapTimeout = 5 * time.Second
 // more than 25s for engine compile + the haproxy -c sweep.
 const validationTestsRunTimeout = 25 * time.Second
 
+// suitePerTestBudget is the per-test increment SuiteRunBudget adds above the
+// floor for large suites. ~100ms comfortably covers one test's engine render +
+// `haproxy -c` on a contended CI node (observed: the chart's 362-test suite
+// needs 26-28s under 4-shard contention ≈ 75ms/test).
+const suitePerTestBudget = 100 * time.Millisecond
+
+// SuiteRunBudget returns the live-gate test-execution budget for a suite of
+// the given size: the validationTestsRunTimeout floor, scaled up by
+// suitePerTestBudget per test once the suite outgrows it. A fixed 25s cap
+// rejected the chart's all-passing 362-test suite on contended CI nodes
+// (issue #77: 362/362 passed in 27.8s, cancelled at 25s, config rejected as
+// "partially-validated"). Scaling with suite size keeps small suites on the
+// tight bound while a legitimately large suite gets time proportional to its
+// work. Exported so configchange can derive its scatter-gather envelope from
+// the SAME formula — the envelope must stay strictly larger than this budget
+// (see SuiteValidationEnvelope).
+func SuiteRunBudget(testCount int) time.Duration {
+	scaled := time.Duration(testCount) * suitePerTestBudget
+	if scaled < validationTestsRunTimeout {
+		return validationTestsRunTimeout
+	}
+	return scaled
+}
+
+// suiteEnvelopeMargin is the fixed part of what SuiteValidationEnvelope adds
+// on top of the run budget: bootstrap (≤5s) + base engine setup + 10s slack —
+// preserving the 45s = 25s + 20s relationship the fixed constants had for
+// small suites.
+const suiteEnvelopeMargin = 20 * time.Second
+
+// suitePerTestSetup is the per-test envelope allowance for the parts of the
+// validator's wall time OUTSIDE the ctx-bounded run: engine compilation of
+// each test's declarations grows with suite size and is not cancellable, so
+// a fixed margin alone would let a huge suite eat the slack and miss the
+// coordinator's deadline — the exact false-rejection this formula exists to
+// prevent. Compilation is far cheaper than execution, hence 20ms vs the
+// 100ms run increment.
+const suitePerTestSetup = 20 * time.Millisecond
+
+// SuiteValidationEnvelope returns the scatter-gather timeout for validating a
+// config with the given suite size. Every component that grows with the suite
+// (run budget, engine compile) scales, so the envelope is strictly larger
+// than the validator's worst-case wall time for every testCount and the
+// validationtests validator always self-reports (pass, or "did not complete")
+// before the coordinator declares it a missing responder.
+func SuiteValidationEnvelope(testCount int) time.Duration {
+	return SuiteRunBudget(testCount) + suiteEnvelopeMargin + time.Duration(testCount)*suitePerTestSetup
+}
+
 // ValidationTestsValidator runs the config's embedded validationTests — the
 // exact suite the `controller validate` CLI runs — as a scatter-gather
 // validator. It guards live config changes: when a CRD update's tests fail the
@@ -80,10 +129,12 @@ type ValidationTestsValidator struct {
 	eventBus  *busevents.EventBus
 	logger    *slog.Logger
 	bootstrap TypeBootstrapper
-	// runTimeout bounds the test-execution phase. Defaults to
-	// validationTestsRunTimeout; overridable in tests to exercise the
-	// fail-closed-on-timeout path without waiting the full budget.
-	runTimeout time.Duration
+	// budgetFor returns the test-execution budget for a suite of the given
+	// size. Defaults to SuiteRunBudget (a 25s floor scaled by suite size, so a
+	// large all-passing suite isn't rejected on a contended node — issue #77);
+	// overridable in tests to exercise the fail-closed-on-timeout path without
+	// waiting a real budget.
+	budgetFor func(testCount int) time.Duration
 
 	// lifecycleCtx is the iteration/shutdown context captured in Start, so the
 	// (potentially multi-second) bootstrap + test run abort promptly on
@@ -107,10 +158,10 @@ func NewValidationTestsValidator(eventBus *busevents.EventBus, logger *slog.Logg
 			"false-positively rejected")
 	}
 	v := &ValidationTestsValidator{
-		eventBus:   eventBus,
-		logger:     logger,
-		bootstrap:  bootstrap,
-		runTimeout: validationTestsRunTimeout,
+		eventBus:  eventBus,
+		logger:    logger,
+		bootstrap: bootstrap,
+		budgetFor: SuiteRunBudget,
 	}
 	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameValidationTests, v)
 	return v
@@ -152,9 +203,11 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 		return
 	}
 
-	v.logger.Debug("Running validationTests", "version", req.Version, "test_count", len(cfg.ValidationTests))
+	budget := v.budgetFor(len(cfg.ValidationTests))
+	v.logger.Debug("Running validationTests",
+		"version", req.Version, "test_count", len(cfg.ValidationTests), "run_budget", budget)
 
-	result, err := v.runTests(cfg)
+	result, err := v.runTests(cfg, budget)
 	if err != nil {
 		v.logger.Error("ValidationTests could not run",
 			"version", req.Version, "error", err)
@@ -168,9 +221,9 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 		// Daemon load gate fails CLOSED on an incomplete run: never accept a
 		// config we didn't finish validating.
 		v.logger.Error("ValidationTests did not complete in time",
-			"version", req.Version, "run_timeout", v.runTimeout, "duration_ms", duration.Milliseconds())
+			"version", req.Version, "run_budget", budget, "duration_ms", duration.Milliseconds())
 		v.respond(req, false, []string{fmt.Sprintf(
-			"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", v.runTimeout)})
+			"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", budget)})
 	case result.Passed:
 		v.logger.Debug("ValidationTests passed",
 			"version", req.Version, "duration_ms", duration.Milliseconds())
@@ -183,9 +236,9 @@ func (v *ValidationTestsValidator) HandleRequest(req *events.ConfigValidationReq
 }
 
 // runTests delegates to RunValidationTestsSync with this validator's bootstrap,
-// run timeout, and lifecycle context.
-func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config) (configtest.Result, error) {
-	return RunValidationTestsSync(v.baseCtx(), cfg, v.bootstrap, v.runTimeout, v.logger)
+// the suite-size-scaled run budget, and lifecycle context.
+func (v *ValidationTestsValidator) runTests(cfg *coreconfig.Config, budget time.Duration) (configtest.Result, error) {
+	return RunValidationTestsSync(v.baseCtx(), cfg, v.bootstrap, budget, v.logger)
 }
 
 // RunValidationTestsSync resolves typed schemas, builds a throwaway engine, and
