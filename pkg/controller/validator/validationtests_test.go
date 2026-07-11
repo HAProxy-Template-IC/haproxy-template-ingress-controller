@@ -77,7 +77,9 @@ func runValidationTestsValidatorWithTimeout(t *testing.T, cfg *coreconfig.Config
 
 	v := NewValidationTestsValidator(bus, logger, stubTypeBootstrapper)
 	if runTimeout > 0 {
-		v.runTimeout = runTimeout
+		// Fixed override bypassing the suite-size scaling, so the
+		// fail-closed-on-timeout path is exercisable with a tiny budget.
+		v.budgetFor = func(int) time.Duration { return runTimeout }
 	}
 	v.HandleRequest(events.NewConfigValidationRequest(cfg, "v-test"))
 
@@ -199,5 +201,29 @@ func TestRunValidationTestsSync_BootstrapErrorSurfaces(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "schema acquisition failed") {
 		t.Fatalf("expected a wrapped schema-acquisition error, got: %v", err)
+	}
+}
+
+// TestSuiteRunBudget pins the suite-size scaling (#77): the 25s floor holds
+// for small suites, and large suites get time proportional to their work —
+// the chart's 362-test suite (which legitimately needs 26-28s on a contended
+// CI node) must fit its budget. The envelope must stay strictly larger than
+// the run budget for any size, or the coordinator would declare the
+// validationtests validator a missing responder instead of receiving its
+// self-reported verdict.
+func TestSuiteRunBudget(t *testing.T) {
+	if got := SuiteRunBudget(0); got != 25*time.Second {
+		t.Fatalf("zero-suite budget must be the 25s floor, got %s", got)
+	}
+	if got := SuiteRunBudget(100); got != 25*time.Second {
+		t.Fatalf("100 tests (10s scaled) must keep the 25s floor, got %s", got)
+	}
+	if got := SuiteRunBudget(362); got != 36200*time.Millisecond {
+		t.Fatalf("the incident's 362-test suite must scale to 36.2s, got %s", got)
+	}
+	for _, n := range []int{0, 1, 100, 250, 362, 1000} {
+		if SuiteValidationEnvelope(n) <= SuiteRunBudget(n) {
+			t.Fatalf("envelope must be strictly larger than the run budget for %d tests", n)
+		}
 	}
 }

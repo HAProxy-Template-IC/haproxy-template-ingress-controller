@@ -10,6 +10,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -24,18 +25,15 @@ const (
 	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
-// configValidationTimeout bounds the config-validation scatter-gather. It must
-// be strictly LARGER than the validationtests validator's own worst-case total,
-// so that validator always self-reports its result (pass / "invalid: did not
-// complete") rather than being declared a missing responder. That worst case is
-// bootstrap (≤5s) + engine-compile/version-detect setup (≤~5s for a very large
-// config; not itself ctx-bounded, but CPU-bound and sub-second in practice) +
-// the 25s test-run cap ≈ 35s. The 45s envelope keeps ~10s of margin so a large-
-// but-valid config is never false-rejected. The validator's internal run cap —
-// not this number — is the binding suite limit; this is just the outer envelope.
-// Config-load only: rare, operator-initiated, never on the reconciliation hot
-// path, so a budget well above the sub-second structural validators is correct.
-const configValidationTimeout = 45 * time.Second
+// The config-validation scatter-gather timeout is computed per request from
+// validator.SuiteValidationEnvelope(len(cfg.ValidationTests)) — the
+// validationtests validator's suite-size-scaled run budget plus a fixed
+// bootstrap/setup/slack margin — so the envelope is strictly LARGER than the
+// validator's own worst case for ANY suite size, and that validator always
+// self-reports its result (pass / "invalid: did not complete") rather than
+// being declared a missing responder. Config-load only: rare,
+// operator-initiated, never on the reconciliation hot path, so a budget well
+// above the sub-second structural validators is correct (#77).
 
 // DefaultReinitDebounceInterval is the default time to wait after the last config
 // change before signaling controller reinitialization. This allows rapid CRD updates
@@ -351,8 +349,9 @@ func (h *ConfigChangeHandler) startOrQueueValidation(ctx context.Context, event 
 }
 
 // handleConfigParsed coordinates validation for a parsed config using the
-// scatter-gather pattern. It blocks for the full validation (up to
-// configValidationTimeout), so it runs OFF the event loop, in the goroutine
+// scatter-gather pattern. It blocks for the full validation (up to the
+// suite-size-scaled validator.SuiteValidationEnvelope), so it runs OFF the
+// event loop, in the goroutine
 // spawned by startOrQueueValidation. Everything it touches is safe off-loop:
 // effectiveResolver is read under h.mu, configReplayer is internally locked,
 // and EventBus Publish/Request are thread-safe.
@@ -401,8 +400,16 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	// refuse a perfectly good config); config loads are rare and operator-
 	// initiated, never on the reconciliation hot path. If validation consistently
 	// approaches this, investigate the validationtests suite / apiserver latency.
+	// Derived from the SAME formula as the validationtests validator's run
+	// budget so the envelope stays strictly larger for any suite size — the
+	// validator must always self-report before this deadline (#77). A non-
+	// *coreconfig.Config payload (unit-test stub) gets the zero-suite floor.
+	suiteSize := 0
+	if parsed, ok := event.Config.(*coreconfig.Config); ok {
+		suiteSize = len(parsed.ValidationTests)
+	}
 	result, err := h.eventBus.Request(ctx, req, busevents.RequestOptions{
-		Timeout:            configValidationTimeout,
+		Timeout:            validator.SuiteValidationEnvelope(suiteSize),
 		ExpectedResponders: h.validators,
 	})
 
