@@ -435,6 +435,28 @@ func (s *DeploymentScheduler) publishScheduled(dep *scheduledDeployment) {
 	))
 }
 
+// invalidateDispatchBaselineLocked drops the lane-classification baseline and
+// downgrades any parked pending to the structural lane, clearing its stale
+// runtime diff. Call it (under schedulerMutex) whenever a dispatched deploy is
+// not known to have landed on every pod — a completion with failures, or a
+// timeout. The baseline (last-DISPATCHED render) then no longer reflects the
+// pods' running state: without the reset, a pending whose runtime-raw lane was
+// frozen against the unlanded render dispatches silently, restamps the config
+// version header over disk content the workers never loaded, and the fast
+// retry trusts the empty diff — a 0-op "success" that leaves structural config
+// parked unreloaded until the next unrelated change (issue #76).
+// classifyLane(nil, …) is always structural, so no runtime-raw dispatch (and
+// no restamp) can occur until a deploy completes cleanly — exactly the
+// restamp's safety precondition (disk == running).
+func (s *DeploymentScheduler) invalidateDispatchBaselineLocked() {
+	s.lastDispatchedParsed = nil
+	s.lastDispatchedConfig = ""
+	if s.state.pending != nil {
+		s.state.pending.lane = laneStructural
+		s.state.pending.runtimeUpdates = nil
+	}
+}
+
 // checkDeploymentTimeout checks if the current deployment has exceeded the timeout.
 //
 // If a deployment is in progress and has exceeded the configured timeout, this method
@@ -487,6 +509,9 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(_ context.Context) {
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeCorrelationID = ""
 	s.state.lastDeploymentEndTime = time.Now()
+	// A timed-out deploy is not known to have landed on the pods — same
+	// invalidation as a failed deploy (issue #76).
+	s.invalidateDispatchBaselineLocked()
 	s.schedulerMutex.Unlock()
 	s.signalCompleted()
 

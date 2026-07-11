@@ -347,6 +347,15 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeCorrelationID = ""
 	s.state.lastDeploymentEndTime = time.Now()
+
+	// A deploy that reported failures did NOT land on every pod: drop the
+	// dispatch baseline so the next dispatch — including the armed fast
+	// retry — classifies structural and full-syncs against the pods' real
+	// state (see invalidateDispatchBaselineLocked for the issue #76 incident
+	// this prevents).
+	if event.Total > 0 && event.Failed > 0 {
+		s.invalidateDispatchBaselineLocked()
+	}
 	s.schedulerMutex.Unlock()
 
 	s.signalCompleted()
