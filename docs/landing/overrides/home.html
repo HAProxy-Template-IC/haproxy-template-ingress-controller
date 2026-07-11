@@ -381,7 +381,27 @@
     });
   }
 
+  // The static hrefs point at ./docs/latest/…, but the `latest` alias only
+  // exists once a stable release has published its docs. Until then, rewrite
+  // the links to the moving dev docs so no homepage link 404s; once `latest`
+  // exists they are left untouched. A failed versions.json fetch also leaves
+  // them alone — a transient error is no evidence that `latest` is missing.
+  async function resolveDocsLinks() {
+    try {
+      const res = await fetch('./docs/versions.json');
+      if (!res.ok) throw new Error('Not found');
+      const versions = await res.json();
+      const hasLatest = versions.some(v => v.aliases && v.aliases.includes('latest'));
+      if (hasLatest) return;
+      document.querySelectorAll('a[href^="./docs/latest/"]').forEach(a => {
+        a.setAttribute('href', a.getAttribute('href').replace('./docs/latest/', './docs/dev/'));
+      });
+    } catch (e) {
+      // versions.json unreachable — leave the static links alone.
+    }
+  }
   loadVersions('docs', 'docs-versions');
   updateQuickStartVersion();
+  resolveDocsLinks();
 </script>
 {% endblock %}
