@@ -1,5 +1,10 @@
 site_name: "HAPTIC - HAProxy Ingress Controller"
-site_url: https://haproxy-haptic.org/docs/
+# Canonical base for every page (mkdocs also uses it for sitemap entries).
+# The deploy script overrides it per build: /docs/dev/ while only dev exists,
+# /docs/latest/ once a stable release publishes that alias — so canonicals
+# always resolve (a bare /docs/<page>/ would 404) and all versions consolidate
+# their search ranking onto the default version.
+site_url: !ENV [DOCS_SITE_URL, 'https://haproxy-haptic.org/docs/dev/']
 site_description: "Documentation for HAPTIC, a template-driven HAProxy ingress controller for Kubernetes with Ingress and Gateway API support."
 
 repo_name: haproxy-haptic/haptic
