@@ -62,27 +62,27 @@ graph TB
 **Deployment Components:**
 
 1. **Controller Deployment** — defaults to 2 replicas with leader election
-   - All replicas watch Kubernetes resources, run admission webhooks, and discover HAProxy pods (hot standby — keeps caches warm so failover is instant)
-   - Only the elected leader runs the render-validate Pipeline and pushes configuration to HAProxy via Dataplane API
-   - See [High Availability](../../operations/high-availability.md) for tuning failover and [Leader Election](./leader-election.md) for the full all-replica vs leader-only component split
+    - All replicas watch Kubernetes resources, run admission webhooks, and discover HAProxy pods (hot standby — keeps caches warm so failover is instant)
+    - Only the elected leader runs the render-validate Pipeline and pushes configuration to HAProxy via Dataplane API
+    - See [High Availability](../../operations/high-availability.md) for tuning failover and [Leader Election](./leader-election.md) for the full all-replica vs leader-only component split
 
 2. **Controller Service** (ClusterIP) — operational endpoints only
-   - `:8080` → healthz probes and `/debug/*` introspection
-   - `:9090` → Prometheus metrics
-   - `:9443` → validating webhook
+    - `:8080` → healthz probes and `/debug/*` introspection
+    - `:9090` → Prometheus metrics
+    - `:9443` → validating webhook
 
 3. **HAProxy Deployment** (not StatefulSet) — scales horizontally
-   - Each pod runs HAProxy + the Dataplane API as a sidecar, sharing the config volume
-   - Ready pods are auto-discovered via `controller.config.podSelector`
+    - Each pod runs HAProxy + the Dataplane API as a sidecar, sharing the config volume
+    - Ready pods are auto-discovered via `controller.config.podSelector`
 
 4. **HAProxy Service** — NodePort by default; set `haproxy.service.type: LoadBalancer` for cloud providers
-   - Service port 80 maps to HAProxy container port 80, service port 443 maps to 443 (the chart binds HAProxy on the literal 80/443; set `haproxy.ports.http`/`https` to override)
+    - Service port 80 maps to HAProxy container port 80, service port 443 maps to 443 (the chart binds HAProxy on the literal 80/443; set `haproxy.ports.http`/`https` to override)
 
 5. **HAProxyTemplateConfig CRD** — holds every piece of configuration the controller needs
-   - Template bodies (`haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`)
-   - `watchedResources` (what to subscribe to and how to index it)
-   - Dataplane tuning (`minDeploymentInterval`, `driftPreventionInterval`, storage paths)
-   - Validation tests shipped alongside the templates
+    - Template bodies (`haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`)
+    - `watchedResources` (what to subscribe to and how to index it)
+    - Dataplane tuning (`minDeploymentInterval`, `driftPreventionInterval`, storage paths)
+    - Validation tests shipped alongside the templates
 
 6. **Credentials Secret** referenced by `spec.credentialsSecretRef` — holds Dataplane API usernames/passwords. Watched live, so rotations don't require a restart.
 

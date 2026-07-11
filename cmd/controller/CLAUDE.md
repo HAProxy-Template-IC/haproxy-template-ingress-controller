@@ -101,25 +101,25 @@ haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-temp
 **Flag Details:**
 
 - `--verbose` - Shows content preview for failed assertions
-  - Displays target name and size
-  - Shows first 200 characters of content
-  - Includes hints for further debugging
-  - Default: false
+    - Displays target name and size
+    - Shows first 200 characters of content
+    - Includes hints for further debugging
+    - Default: false
 
 - `--dump-rendered` - Dumps all rendered content
-  - HAProxy configuration (haproxy.cfg)
-  - Map files with full content
-  - General files with full content
-  - SSL certificates with full content
-  - Shown after test results
-  - Default: false
+    - HAProxy configuration (haproxy.cfg)
+    - Map files with full content
+    - General files with full content
+    - SSL certificates with full content
+    - Shown after test results
+    - Default: false
 
 - `--trace-templates` - Shows template execution trace
-  - Template names and render order
-  - Timing information in milliseconds
-  - Useful for identifying slow templates
-  - Default: false
-  - Note: Shows top-level renders only. Use with `--profile-includes` for full call tree
+    - Template names and render order
+    - Timing information in milliseconds
+    - Useful for identifying slow templates
+    - Default: false
+    - Note: Shows top-level renders only. Use with `--profile-includes` for full call tree
 
 **Enhanced Error Messages:**
 

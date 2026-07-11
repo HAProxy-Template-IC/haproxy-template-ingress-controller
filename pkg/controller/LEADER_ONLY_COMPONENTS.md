@@ -135,37 +135,37 @@ When creating a new component that only runs on the leader, ensure:
 
 - [ ] **Event dependencies documented**: List all events the component subscribes to
 - [ ] **State management**:
-  - [ ] If component maintains state, implement mutex protection
-  - [ ] If component depends on all-replica component state, verify those components replay on `BecameLeaderEvent`
+    - [ ] If component maintains state, implement mutex protection
+    - [ ] If component depends on all-replica component state, verify those components replay on `BecameLeaderEvent`
 - [ ] **Leadership transition handling**:
-  - [ ] Subscribe to `LostLeadershipEvent` if component has in-progress work
-  - [ ] Clear in-progress flags in `LostLeadershipEvent` handler
-  - [ ] Stop timers/goroutines in `LostLeadershipEvent` handler
+    - [ ] Subscribe to `LostLeadershipEvent` if component has in-progress work
+    - [ ] Clear in-progress flags in `LostLeadershipEvent` handler
+    - [ ] Stop timers/goroutines in `LostLeadershipEvent` handler
 - [ ] **Testing**:
-  - [ ] Test component behavior during leadership transitions
-  - [ ] Verify no deadlocks when leadership changes mid-operation
-  - [ ] Verify state is properly replayed to new leader
+    - [ ] Test component behavior during leadership transitions
+    - [ ] Verify no deadlocks when leadership changes mid-operation
+    - [ ] Verify state is properly replayed to new leader
 - [ ] **Documentation**:
-  - [ ] Add component to table in this file
-  - [ ] Document state dependencies in component CLAUDE.md
-  - [ ] Log state replay and cleanup events for debugging
+    - [ ] Add component to table in this file
+    - [ ] Document state dependencies in component CLAUDE.md
+    - [ ] Log state replay and cleanup events for debugging
 
 ## Checklist for New All-Replica Components
 
 When creating a new component that maintains state used by leader-only components:
 
 - [ ] **State caching**:
-  - [ ] Cache last successful state with mutex protection
-  - [ ] Include `hasState` boolean to distinguish "no state yet" from "zero state"
+    - [ ] Cache last successful state with mutex protection
+    - [ ] Include `hasState` boolean to distinguish "no state yet" from "zero state"
 - [ ] **BecameLeaderEvent handling**:
-  - [ ] Subscribe to `BecameLeaderEvent`
-  - [ ] Re-publish last state in handler
-  - [ ] Log state replay with relevant metrics
-  - [ ] Check `hasState` before replaying (avoid publishing uninitialized state)
+    - [ ] Subscribe to `BecameLeaderEvent`
+    - [ ] Re-publish last state in handler
+    - [ ] Log state replay with relevant metrics
+    - [ ] Check `hasState` before replaying (avoid publishing uninitialized state)
 - [ ] **Documentation**:
-  - [ ] Add component to "All-Replica Components with State Replay" table
-  - [ ] Document what event is replayed
-  - [ ] Reference handler location in code
+    - [ ] Add component to "All-Replica Components with State Replay" table
+    - [ ] Document what event is replayed
+    - [ ] Reference handler location in code
 
 ## Testing Leadership Transitions
 

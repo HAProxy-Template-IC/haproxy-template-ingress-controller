@@ -110,10 +110,10 @@ When a `v*` tag is pushed, CI will:
 
 1. **Build binaries** for linux/amd64, linux/arm64, linux/arm/v7
 2. **Create the GitLab release** with:
-   - Signed binaries
-   - SHA256 checksums
-   - Release notes from the version's `CHANGELOG.md` section (controller + chart)
-   - Pre-release flag (for alpha/beta/rc versions)
+    - Signed binaries
+    - SHA256 checksums
+    - Release notes from the version's `CHANGELOG.md` section (controller + chart)
+    - Pre-release flag (for alpha/beta/rc versions)
 3. **Build Docker images** for every supported HAProxy series (3.0-3.4)
 4. **Build the spoa-hub image** (`spoa-hub:<version>`)
 5. **Package the Helm chart** and push it as a signed OCI artifact to `registry.gitlab.com/haproxy-haptic/haptic/charts`
