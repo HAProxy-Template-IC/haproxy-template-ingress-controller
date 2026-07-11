@@ -1,6 +1,6 @@
 # Base Library
 
-The base library provides the core HAProxy configuration infrastructure. It defines extension points that other libraries use to inject their functionality, making it the foundation of the template library system.
+The base library renders the entire `haproxyConfig` and defines the extension points every other library — and your own snippets — plug into.
 
 ## Overview
 

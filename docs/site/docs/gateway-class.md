@@ -48,7 +48,7 @@ If the API is absent, the chart skips the GatewayClass without error and install
 
 ## parametersRef - Controller Configuration Link
 
-The GatewayClass automatically references the HAProxyTemplateConfig created by this chart via `parametersRef`. This links Gateway API configuration to the controller's template-based configuration system.
+The GatewayClass automatically references the HAProxyTemplateConfig created by this chart via `parametersRef`. The reference records which HAProxyTemplateConfig drives Gateways of this class — useful when you run several classes with different configs.
 
 **How it works:**
 

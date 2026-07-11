@@ -1,6 +1,6 @@
 # Runtime Introspection and Debugging
 
-The controller provides comprehensive runtime introspection capabilities through an HTTP debug server, enabling production debugging, operational visibility, and acceptance testing without relying solely on logs.
+The controller exposes its live state — config, rendered output, resources, events — over an HTTP debug server, so you can debug production issues and drive acceptance tests without parsing logs.
 
 ## Architecture Overview
 
@@ -149,7 +149,7 @@ This separation allows different buffer sizes, retention policies, and use cases
 
 ## Integration with Acceptance Testing
 
-The debug endpoints enable powerful acceptance testing. `tests/acceptance/debug_client.go` provides a `*DebugClient` that talks to the controller via the Kubernetes API server's service-proxy, so tests don't need to manage `kubectl port-forward` themselves:
+Acceptance tests drive the controller and assert on its state through these endpoints. `tests/acceptance/debug_client.go` provides a `*DebugClient` that talks to the controller via the Kubernetes API server's service-proxy, so tests don't need to manage `kubectl port-forward` themselves:
 
 ```go
 import "gitlab.com/haproxy-haptic/haptic/tests/acceptance"
@@ -183,11 +183,11 @@ If you need to construct the client yourself (typically only inside `EnsureDebug
 client := acceptance.NewDebugClient(clientset, namespace, serviceName, acceptance.DebugPort)
 ```
 
-This enables true end-to-end testing without parsing logs or relying on timing heuristics.
+Tests observe controller state directly — no log parsing, no timing heuristics.
 
 ## Security Considerations
 
-Debug variables implement careful filtering:
+Debug variables never expose secret material — credential variables return metadata only:
 
 ```go
 // CredentialsVar returns metadata only

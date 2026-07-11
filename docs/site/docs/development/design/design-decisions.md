@@ -8,7 +8,7 @@
 
 - **Performance**: Parser validation is fast (~10ms), binary validation completes in ~50-100ms
 - **Resource Efficiency**: No additional HAProxy container needed (saves ~256Mi memory per controller pod)
-- **Simplicity**: Single container deployment reduces complexity
+- **Simplicity**: No validation sidecar to build, schedule, or keep version-matched with the controller
 - **Reliability**: Same validation guarantees as full HAProxy instance
 
 **Implementation**: lives in `pkg/dataplane/validator.go` plus `validate_syntax.go` / `validate_schema.go` / `validate_haproxy.go`. The leader-side reconciliation pipeline calls into it through `pkg/controller/validation.ValidationService`, which wraps caching and DNS-strictness on top.
@@ -90,9 +90,9 @@ The config parser (`pkg/dataplane/parser`) classifies HAProxy global directives 
 **Rationale**:
 
 - **Dynamic Includes**: Supports runtime-resolved include paths via custom file system implementation
-- **Active Maintenance**: Actively maintained with regular releases
+- **Maintenance**: Regular upstream releases, consumed via the `gitlab.com/haproxy-haptic/scriggo` fork
 - **Go-Native**: Pure Go implementation with Go-like template syntax
-- **Features**: Full feature set including control flow, macros, and template inheritance
+- **Features**: Control flow, macros, and template inheritance built in
 - **Extensibility**: Custom file systems enable dynamic template loading and include resolution
 - **Pure Go**: No external dependencies
 
@@ -104,7 +104,7 @@ The config parser (`pkg/dataplane/parser`) classifies HAProxy global directives 
 
 - **Control**: Direct control over informer lifecycle and event handling
 - **Flexibility**: Custom indexing logic without framework constraints
-- **Performance**: Optimized cache and index management
+- **Performance**: You tune cache and index behaviour directly instead of inheriting framework defaults
 - **Simplicity**: No code generation, no framework-imposed structure
 
 **Implementation Pattern**:
@@ -298,7 +298,7 @@ func validateSyntax(config string) error {
 
 **Rationale**:
 
-- **Decoupling**: Components communicate via events, not direct calls
+- **Decoupling**: Publishers don't know their consumers, so components can be added or replaced without touching each other
 - **Extensibility**: New features can be added without modifying existing code
 - **Observability**: Complete system visibility through event stream
 - **Testability**: Pure components without event dependencies

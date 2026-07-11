@@ -197,7 +197,7 @@ kubectl apply -f echo-app.yaml
 
 ## Step 3: Create an Ingress resource
 
-Create an Ingress resource that the controller processes:
+Create an Ingress that routes your test hostname to the echo service:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -361,7 +361,7 @@ Configure the controller for production deployments:
 - Scale to 3+ replicas across availability zones
 - Configure PodDisruptionBudgets
 - Set up monitoring and alerting
-- Enable leader election (already enabled by default)
+- Keep leader election enabled (the default) so exactly one replica deploys
 
 See [High Availability](./operations/high-availability.md) for HA configuration.
 

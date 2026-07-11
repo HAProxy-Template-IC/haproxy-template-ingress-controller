@@ -4,9 +4,7 @@ Monitor HAPTIC with Prometheus metrics: setup, the metrics reference, alerting r
 
 ## Overview
 
-The controller exposes Prometheus metrics via an HTTP endpoint, providing visibility into reconciliation performance, deployment status, resource counts, and leader election state.
-
-**Key monitoring areas:**
+The controller's `haptic_*` metrics cover:
 
 - Reconciliation cycle performance and errors
 - HAProxy deployment latency and success rates

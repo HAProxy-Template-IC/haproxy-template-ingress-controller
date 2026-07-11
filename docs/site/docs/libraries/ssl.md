@@ -4,7 +4,7 @@ The SSL library provides TLS certificate management, HTTPS frontend configuratio
 
 ## Overview
 
-The SSL library handles all SSL/TLS-related functionality:
+The SSL library provides:
 
 - HTTPS frontend with TLS termination
 - Dynamic TLS certificate loading from Kubernetes Secrets

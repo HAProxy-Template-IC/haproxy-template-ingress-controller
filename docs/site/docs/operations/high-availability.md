@@ -11,7 +11,7 @@ The controller supports running multiple replicas for high availability using le
 - Zero-downtime during controller upgrades (rolling updates)
 - Automatic failover if leader pod crashes (~30-35 seconds; voluntary handoffs like rolling updates release the lease immediately)
 - All replicas ready to take over immediately (hot caches, ready webhooks)
-- Balanced leader distribution across nodes
+- Replicas spread across nodes and zones via anti-affinity (see [Anti-Affinity](#anti-affinity))
 
 **How it works:**
 
@@ -243,7 +243,7 @@ Check these areas in order of likelihood:
 - Multiple pods deploying configs simultaneously
 - Conflicting deployments in HAProxy
 
-**This should never happen** with proper Kubernetes Lease implementation. If it does:
+Lease-based election rules this out unless clocks are badly skewed or the API server is unhealthy. If you see it:
 
 1. Check for severe clock skew between nodes:
 

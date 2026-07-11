@@ -811,6 +811,17 @@ sentence literally.
 - **Never add sentences that carry no value.** Every sentence must instruct, warn,
   or inform. Cut reassurances and filler ("anyway", "as you'd expect", "simply") —
   they don't help and can confuse readers who read them as load-bearing.
+- **No technically-true-but-vacuous phrasing.** A clause that sounds informative
+  but adds nothing makes readers parse the sentence twice looking for the meaning
+  that isn't there. Watch for: tautological qualifiers ("write any HAProxy
+  directive *using the configuration language*" — what else would you write it
+  in?), circular statements ("the validator validates the config"), self-evident
+  claims presented as features, dangling qualifiers with no criteria ("where
+  applicable", "as needed" — say *when*), and sentences whose real point hides
+  behind a vacuous main clause ("deploy with confidence knowing X is validated" —
+  the point is the validation, lead with it). Test: if negating the clause
+  produces nonsense rather than a real alternative, the clause says nothing — cut
+  it or replace it with the concrete fact it was gesturing at.
 
 ### Distilled style rules (Google/Microsoft/Diátaxis)
 

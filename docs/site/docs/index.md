@@ -44,7 +44,7 @@ HAPTIC is an event-driven Kubernetes controller that:
 
 - **Watches any Kubernetes resource** - Ingresses, Services, Secrets, Gateway API resources, or any custom resource type you configure
 - **Renders Scriggo templates** - A fast, Go-native template engine
-- **Validates before deployment** - Deploy with confidence knowing configurations are validated before they reach your load balancers
+- **Validates before deployment** - Every rendered config passes syntax, schema, and `haproxy -c` checks before it reaches your load balancers
 - **Deploys configurations** to HAProxy pods via the Dataplane API
 
 Unlike traditional ingress controllers with hardcoded configuration logic, HAPTIC uses a template-driven approach that gives you full control over the generated HAProxy configuration. This means you can:
@@ -59,7 +59,7 @@ Unlike traditional ingress controllers with hardcoded configuration logic, HAPTI
 
 Traditional ingress controllers embed configuration logic in code. HAPTIC inverts this:
 
-- **Full HAProxy access** - Write any HAProxy directive using the [configuration language](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
+- **Full HAProxy access** - If HAProxy supports it, your templates can emit it — every section, every directive in the [configuration manual](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)
 - **Add features without code changes** - New directives are template updates, not controller releases
 - **Iterate rapidly** - Deploy configuration changes in minutes, not release cycles
 - **Rich template context** - Access any Kubernetes resource, fetch external data via HTTP, and use controller state in your templates
@@ -104,7 +104,7 @@ Key components:
 
 - **Watcher** - Subscribes to Kubernetes API for configured resource types
 - **Template Engine** - Renders Scriggo templates with resource data as context
-- **Validator** - Validates generated HAProxy configuration before deployment
+- **Validator** - Runs syntax, schema, and `haproxy -c` checks on the rendered config so broken configs never deploy
 - **Dataplane Syncer** - Applies configuration changes to HAProxy pods via the Dataplane API
 
 ## Quick Start

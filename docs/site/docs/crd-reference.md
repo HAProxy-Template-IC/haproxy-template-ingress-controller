@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `HAProxyTemplateConfig` custom resource configures HAPTIC. It provides schema validation, status conditions, and embedded testing capabilities.
+One `HAProxyTemplateConfig` resource defines everything HAPTIC does: what it watches, what it renders, and the tests that gate deployment. It provides schema validation, status conditions, and embedded testing capabilities.
 
 **API Group**: `haproxy-haptic.org`
 **API Version**: `v1alpha1`

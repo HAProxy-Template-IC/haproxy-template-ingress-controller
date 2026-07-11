@@ -1,6 +1,6 @@
 # haproxytech Library
 
-The haproxytech library implements `haproxy.org/*` annotations compatible with [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress), the official HAProxy ingress controller by HAProxy Technologies. This enables fine-grained control over HAProxy behavior through Kubernetes resource annotations.
+The haproxytech library implements `haproxy.org/*` annotations compatible with [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress), the official HAProxy ingress controller by HAProxy Technologies.
 
 ## Overview
 
@@ -1888,9 +1888,9 @@ haproxy.org/auth-realm: "API Access"
 
 2. **Resource-agnostic architecture** - The controller doesn't have built-in annotation handling. All annotation support is provided through pluggable template libraries.
 
-3. **Validation tests** - Each annotation implementation includes comprehensive validation tests that run during chart development/testing.
+3. **Validation tests** - Each annotation ships validation tests in the chart's `validationTests`, which the controller re-runs on every config load — not just in CI.
 
-4. **Secret format for auth** - Password values must be base64-encoded hashes only, not htpasswd format (`username:hash`). This simplifies template logic and aligns with Kubernetes Secret best practices.
+4. **Secret format for auth** - Password values must be base64-encoded hashes only, not htpasswd format (`username:hash`). The key is the username and the value is the hash — templates need no string parsing.
 
 ## Implementation Status Summary
 
