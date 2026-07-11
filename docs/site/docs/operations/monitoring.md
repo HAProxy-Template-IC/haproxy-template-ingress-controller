@@ -30,7 +30,7 @@ extraEnv:
     value: "0"
 ```
 
-The CRD has a `controller.metricsPort` field, but the chart strips it from the serialized CRD (it's only used for chart-side templating like `NOTES.txt`). Setting `controller.config.controller.metricsPort: 0` in Helm values does *not* disable the metrics server.
+The `controller.config.controller.metricsPort` Helm value is display-only: it isn't part of the CRD schema, and the chart strips it before serializing (the apiserver would reject it otherwise). Setting `controller.config.controller.metricsPort: 0` in Helm values does *not* disable the metrics server.
 
 ## Accessing Metrics
 
@@ -316,13 +316,13 @@ Exposed when the validating admission webhook is enabled (`webhook.enabled=true`
 |--------|------|--------|-------------|
 | `haptic_webhook_requests_total` | Counter | `gvk`, `result` | Total admission requests by GroupVersionKind and result |
 | `haptic_webhook_request_duration_seconds` | Histogram | — | Time spent processing webhook requests |
-| `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes (allowed / rejected / error) per GVK |
+| `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes (`allowed` / `denied`) per GVK |
 
 **Key queries:**
 
 ```promql
-# Reject rate per resource kind
-sum by (gvk) (rate(haptic_webhook_validation_total{result="rejected"}[5m]))
+# Denial rate per resource kind
+sum by (gvk) (rate(haptic_webhook_validation_total{result="denied"}[5m]))
 
 # 95th percentile webhook latency (must stay well under the 10s admission timeout)
 histogram_quantile(0.95, rate(haptic_webhook_request_duration_seconds_bucket[5m]))
@@ -427,7 +427,7 @@ The full metric set is HAProxy's own, not HAPTIC's — see the [HAProxy Promethe
 
 ## Alerting Rules
 
-If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `monitoring.prometheusRule.enabled`) covering a core set of controller alerts. The rules below are a broader recommended set you can copy and adapt for any Prometheus setup.
+If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `monitoring.prometheusRule.enabled`) covering a core set of nine controller alerts, each individually togglable via `monitoring.prometheusRule.defaultRules.*`. The rules below are a broader recommended set you can copy and adapt for any Prometheus setup.
 
 ### Recommended Alerts
 
@@ -675,7 +675,7 @@ avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
 
 **Missing metrics:**
 
-1. Verify the metrics server is enabled — `METRICS_PORT` env var on the controller container is non-zero (default `9090`; the `metricsPort` field on the CRD is *not* read by the controller)
+1. Verify the metrics server is enabled — `METRICS_PORT` env var on the controller container is non-zero (default `9090`; the `controller.config.controller.metricsPort` Helm value is display-only and never reaches the controller)
 2. Check ServiceMonitor selector matches Prometheus configuration
 3. Verify network policies allow scraping
 
