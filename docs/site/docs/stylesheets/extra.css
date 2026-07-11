@@ -109,3 +109,16 @@
     100% { top: calc(100% - 6px); opacity: 0; }
   }
 }
+
+/* ---- architecture variant of the pipeline (index.md) -------------------- */
+.hx-arch .hx-group { align-items: center; text-align: center; }
+.hx-arch .hx-group > small { font-size: .66rem; color: var(--md-default-fg-color--light); }
+.hx-arch .hx-pod { border-style: dashed; }
+.hx-arch .hx-chip { min-width: 11em; text-align: center; }
+.hx-vlink { position: relative; width: 2px; height: 14px; margin: 0 auto;
+  background: var(--md-default-fg-color--lightest); }
+.hx-vlink::after { content: ""; position: absolute; bottom: -3px; left: 50%; transform: translateX(-50%);
+  border: 4px solid transparent; border-top-color: var(--md-default-fg-color--lighter, var(--md-default-fg-color--light)); }
+@media (max-width: 44em) {
+  .hx-arch .hx-group { flex-direction: column; }
+}
