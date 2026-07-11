@@ -54,6 +54,11 @@
     }
 
     * { box-sizing: border-box; }
+    /* Mobile font boosting (Android text autosizer / iOS text-size-adjust)
+       inflates the output pane's wide text block while CodeMirror's chunked
+       DOM escapes it, making the rendered output much larger than the
+       editors. Pin the adjustment; every font size here is explicit. */
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
     html, body { height: 100%; }
     body {
       margin: 0; display: flex; flex-direction: column; min-height: 100vh; overflow-x: hidden;
@@ -203,6 +208,7 @@
     .outhint { display: flex; align-items: center; gap: 7px; padding: 5px 12px; font: 11px/1.4 var(--mono); color: var(--term-dim); background: var(--term-bg-soft); border-bottom: 1px solid var(--term-border); }
     .outhint[hidden] { display: none; }
     .outhint .oh-sep { color: var(--term-border); }
+    #outhint-text { display: flex; align-items: center; gap: 7px; }
     .outhint kbd { font-family: var(--mono); font-size: 10px; color: var(--term-fg); background: var(--term-chrome); border: 1px solid var(--term-border); border-radius: 4px; padding: 1px 5px; }
     .outhint-x { margin-left: auto; appearance: none; border: 0; background: none; cursor: pointer; color: var(--term-dim); font-size: 14px; line-height: 1; padding: 0 4px; border-radius: 4px; }
     .outhint-x:hover { color: var(--accent); background: var(--accent-soft); }
@@ -626,7 +632,7 @@
       <div class="schemawarn" id="schemawarn" role="status"><span class="k">schema</span><span class="m" id="swm"></span><span class="scope">HAProxy per-field validation — a subset of <code>haproxy -c</code>; it won't catch undefined backends, unknown keywords, or global/defaults errors.</span></div>
       <div class="reload" id="reload" role="status"><span class="k" id="rlk"></span><span class="m" id="rlm"></span><span class="rlbase"><span id="rlbaselbl"></span><button id="pinbtn" class="toolbtn" type="button"></button></span></div>
       <div class="tabs" id="tabs" role="tablist" aria-label="Rendered output files"></div>
-      <div class="outhint" id="outhint" hidden>click any line to jump to the template that produced it<span class="oh-sep">·</span><kbd>Ctrl</kbd>-click a keyword for its docs<button class="outhint-x" id="outhint-x" type="button" aria-label="Dismiss this tip" title="Dismiss">×</button></div>
+      <div class="outhint" id="outhint" hidden><span id="outhint-text">click any line to jump to the template that produced it<span class="oh-sep">·</span><kbd>Ctrl</kbd>-click a keyword for its docs</span><button class="outhint-x" id="outhint-x" type="button" aria-label="Dismiss this tip" title="Dismiss">×</button></div>
       <div class="prov" id="prov" hidden role="status"></div>
       <div class="output" id="output" role="tabpanel" tabindex="0"><div class="empty">Rendering…</div></div>
     </section>
@@ -1353,6 +1359,10 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     function updateHint(show) {
       $('outhint').hidden = !show || localStorage.getItem('pgHintDismissed') === '1';
     }
+    // Touch devices have no Ctrl-click; the long-press handler replaces it.
+    if (matchMedia('(pointer: coarse)').matches) {
+      $('outhint-text').innerHTML = 'tap any line to jump to the template that produced it<span class="oh-sep">\u00b7</span>long-press a keyword for its docs';
+    }
     $('outhint-x').addEventListener('click', () => {
       try { localStorage.setItem('pgHintDismissed', '1'); } catch { /* private mode */ }
       $('outhint').hidden = true;
@@ -1726,18 +1736,70 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       const url = scriggo ? scriggoDocURL(token) : haproxyDocURL(token);
       if (url) window.open(url, '_blank', 'noopener');
     }
-    // Output pane (rendered haproxy.cfg) also supports Ctrl/Cmd-click → HAProxy docs.
-    $('output').addEventListener('click', (e) => {
-      if (!(e.ctrlKey || e.metaKey) || activeTab !== 'haproxy.cfg') return;
-      const range = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+    // Keyword under a viewport point in the output pane (shared by the
+    // desktop Ctrl/Cmd-click and the mobile long-press paths).
+    function outputKeywordAt(x, y) {
+      const el = document.elementFromPoint(x, y);
+      if (!el || el.closest('.g')) return null;   // line-number gutter is not a keyword
+      const range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
       const node = range && range.startContainer, text = node && node.textContent;
-      if (!text) return;
+      if (!text) return null;
       let a = range.startOffset, b = range.startOffset;
       while (a > 0 && /[\w-]/.test(text[a - 1])) a--;
       while (b < text.length && /[\w-]/.test(text[b])) b++;
       const kw = text.slice(a, b).replace(/^[-]+|[-]+$/g, '');
+      return kw && !/^\d+$/.test(kw) ? kw : null;   // bare numbers (line nrs, ports) aren't keywords
+    }
+    // Output pane (rendered haproxy.cfg) also supports Ctrl/Cmd-click → HAProxy docs.
+    $('output').addEventListener('click', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || activeTab !== 'haproxy.cfg') return;
+      const kw = outputKeywordAt(e.clientX, e.clientY);
       if (kw) { e.preventDefault(); e.stopPropagation(); window.open(haproxyDocURL(kw), '_blank', 'noopener'); }
     }, true);
+    // Touch has no Ctrl-click: long-press a keyword in the output → HAProxy docs.
+    // (Editors keep long-press for native text selection; the output's plain
+    // tap is taken by the provenance jump, so long-press is the free gesture.)
+    // Press ARMS (vibration tick after 500ms), release OPENS: window.open must
+    // run synchronously inside the pointerup gesture handler — from a timer
+    // callback iOS Safari and popup blockers silently drop the new tab.
+    {
+      let lpTimer = null, lpArmed = false, lpFired = false, lpX = 0, lpY = 0;
+      const lpCancel = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } lpArmed = false; };
+      const out = $('output');
+      out.addEventListener('pointerdown', (e) => {
+        if (e.pointerType !== 'touch' || activeTab !== 'haproxy.cfg') return;
+        lpFired = false; lpArmed = false; lpX = e.clientX; lpY = e.clientY;
+        lpTimer = setTimeout(() => {
+          lpTimer = null;
+          if (outputKeywordAt(lpX, lpY)) {
+            lpArmed = true;
+            if (navigator.vibrate) navigator.vibrate(10);
+          }
+        }, 500);
+      });
+      out.addEventListener('pointermove', (e) => {
+        if ((lpTimer || lpArmed) && Math.hypot(e.clientX - lpX, e.clientY - lpY) > 10) lpCancel();
+      });
+      out.addEventListener('pointerup', (e) => {
+        const armed = lpArmed;
+        lpCancel();
+        if (!armed || e.pointerType !== 'touch') return;
+        const kw = outputKeywordAt(lpX, lpY);
+        if (kw && haproxyDocURL(kw)) {
+          lpFired = true;
+          window.open(haproxyDocURL(kw), '_blank', 'noopener');
+        }
+      });
+      out.addEventListener('pointercancel', lpCancel);
+      // While a long-press is pending or armed, suppress the native context
+      // menu and text selection so the gesture reaches pointerup intact;
+      // after a fired press, swallow the provenance click that follows.
+      out.addEventListener('contextmenu', (e) => { if (lpArmed || lpFired || lpTimer) e.preventDefault(); });
+      out.addEventListener('selectstart', (e) => { if (lpTimer || lpArmed) e.preventDefault(); });
+      out.addEventListener('click', (e) => {
+        if (lpFired) { lpFired = false; e.preventDefault(); e.stopPropagation(); }
+      }, true);
+    }
 
     // Ctrl/Cmd-hover feedback: underline the word that a Ctrl/Cmd-click would open.
     // Non-destructive-ish: wraps the hovered word in a <span class="godef"> and unwraps
