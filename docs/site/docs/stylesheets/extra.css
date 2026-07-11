@@ -122,3 +122,22 @@
 @media (max-width: 44em) {
   .hx-arch .hx-group { flex-direction: column; }
 }
+
+/* ---- mobile: keep code blocks and tables inside the text margins -------- */
+/* Material full-bleeds .highlight / pre / table scrollwraps edge-to-edge on
+   phones (margin: 0 -.8rem). Every other element keeps the 16px side margin,
+   which makes the bleed read as a layout bug rather than a feature. Restore
+   the margins and the rounded corners the bleed variant drops. */
+@media screen and (max-width: 45em) {
+  .md-content__inner .highlight,
+  .md-content__inner > pre,
+  .md-content__inner .md-typeset__scrollwrap {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  .md-content__inner .highlight code,
+  .md-content__inner .highlight pre,
+  .md-content__inner > pre code {
+    border-radius: .1rem;
+  }
+}
