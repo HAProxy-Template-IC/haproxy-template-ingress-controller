@@ -129,26 +129,27 @@ kubectl describe haproxycfg -n haptic
 
 ### What Makes HAPTIC Different
 
-Templates are the difference. Suppose your platform users want a custom annotation that injects an `X-Request-ID` header for tracing. Add a snippet to your Helm values — no controller fork, no waiting for a release:
+Templates are the difference. Suppose your platform users want a custom annotation that injects an `X-Request-ID` header for tracing. One snippet — no controller fork, no waiting for a release (with the Helm chart you'd place it under `controller.config.templateSnippets` in your values):
 
 <div class="pg-embed" markdown data-scenario="extend" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="A custom annotation, implemented as one snippet" data-height="440">
 
 <p class="pg-task" markdown>The `frontend-filters-300-request-id` snippet under `templateSnippets` implements the annotation. In the **Resources** panel, change the `shop` Ingress's `example.com/request-id-header` value to `X-Trace-ID` — or remove the annotation — and watch the `http-request set-header` line in `haproxy.cfg` follow.</p>
 
 ```yaml
-controller:
-  config:
-    templateSnippets:
-      # The frontend-filters-* glob picks this up automatically; the 300 prefix
-      # places it alongside the built-in header-manipulation snippets.
-      frontend-filters-300-request-id:
-        template: |
-          {%- for _, ingress := range resources.ingresses.List() %}
-          {%- var header = ingress | dig("metadata", "annotations", "example.com/request-id-header") | fallback("") | tostring() %}
-          {%- if header != "" %}
-          http-request set-header {{ header }} %[uuid()]
-          {%- end %}
-          {%- end %}
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+spec:
+  templateSnippets:
+    # The frontend-filters-* glob picks this up automatically; the 300 prefix
+    # places it alongside the built-in header-manipulation snippets.
+    frontend-filters-300-request-id:
+      template: |
+        {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var header = ingress | dig("metadata", "annotations", "example.com/request-id-header") | fallback("") | tostring() %}
+        {%- if header != "" %}
+        http-request set-header {{ header }} %[uuid()]
+        {%- end %}
+        {%- end %}
 ```
 
 </div>
