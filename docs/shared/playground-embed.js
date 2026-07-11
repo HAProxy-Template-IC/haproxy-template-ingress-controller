@@ -25,6 +25,13 @@
  *   data-tab        output tab to open on (haproxy.cfg|maps|files|certs|status|applied|resources|trace|tests)
  *                   — "tests" auto-runs the config's spec.validationTests on load
  *   data-focus      [file:]start-end | file — highlight/scroll to the important lines
+ *   data-facade     for scenario embeds: show a section of the bundled config
+ *                   as the pre-run facade instead of the bare placeholder.
+ *                   Value = dotted YAML path into the scenario config (e.g.
+ *                   "spec.templateSnippets.map-host-500-gateway"), or
+ *                   "resources" to show the scenario's resources file. The
+ *                   section is fetched live from the bundle, so it never
+ *                   drifts from what Run shows.
  *   data-controls   comma list re-enabling controls in the embed (tabs,resources,tools,nav,max,reload,provenance,dots)
  *   data-height     minimum running-iframe height in px (default 460); the running
  *                   embed breaks out of the article column and grows to ~76vh
@@ -69,8 +76,19 @@
     return code ? code.textContent.replace(/\n$/, '') : '';
   }
 
+  // Memoized by URL: a page can hold several embeds of the same scenario
+  // (gateway.md has five), whose facade fetches fire concurrently — before any
+  // response lands in the HTTP cache. Sharing the promise makes them one
+  // request; failures are evicted so a later Run can retry.
+  var _txtCache = {};
   function fetchText(url) {
-    return fetch(url).then(function (r) { if (!r.ok) throw new Error(url); return r.text(); });
+    if (!_txtCache[url]) {
+      _txtCache[url] = fetch(url).then(function (r) {
+        if (!r.ok) throw new Error(url);
+        return r.text();
+      }).catch(function (e) { delete _txtCache[url]; throw e; });
+    }
+    return _txtCache[url];
   }
 
   function stars(n) {
@@ -207,6 +225,68 @@
     })();
   }
 
+  // Extract one YAML section by dotted path, using indentation only (the
+  // bundled configs are machine-generated, consistently indented YAML). The
+  // section spans from the matched key line to the next non-empty line at the
+  // same or lower indent. Returns null when the path isn't found.
+  function extractYamlSection(text, path) {
+    var lines = text.split('\n');
+    var start = 0, end = lines.length, indent = -1;
+    var parts = path.split('.');
+    for (var pi = 0; pi < parts.length; pi++) {
+      var re = new RegExp('^(\\s*)' + parts[pi].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':');
+      var found = -1, foundIndent = 0;
+      for (var i = start; i < end; i++) {
+        var m = lines[i].match(re);
+        if (m && m[1].length > indent) { found = i; foundIndent = m[1].length; break; }
+      }
+      if (found < 0) return null;
+      // narrow the window to this section
+      var sEnd = end;
+      for (var j = found + 1; j < end; j++) {
+        var l = lines[j];
+        if (l.trim() && l.match(/^(\s*)/)[1].length <= foundIndent) { sEnd = j; break; }
+      }
+      start = found; end = sEnd; indent = foundIndent;
+      if (pi < parts.length - 1) start = found + 1;
+    }
+    return lines.slice(start, end).join('\n');
+  }
+
+  // Build the auto-facade for a scenario embed: fetch the bundled file the run
+  // will use, cut out the named section, and show it highlighted. Falls back
+  // to the plain placeholder when anything goes wrong.
+  function autoFacade(el, ph) {
+    var spec = el.dataset.facade;
+    var base = embedBase(el);
+    var fromResources = spec === 'resources';
+    var url = base + 'presets/' + el.dataset.scenario + (fromResources ? '.resources.yaml' : '.config.yaml');
+    fetchText(url).then(function (text) {
+      var section = fromResources ? text : extractYamlSection(text, spec);
+      if (!section) return;
+      // dedent: the section keeps its nesting indentation from the source file
+      var lead = section.match(/^\s*/)[0];
+      if (lead) section = section.split('\n').map(function (l) {
+        return l.indexOf(lead) === 0 ? l.slice(lead.length) : l;
+      }).join('\n');
+      var wrap = document.createElement('div');
+      wrap.className = 'pg-embed-code pg-facade-auto';
+      var cap = document.createElement('div');
+      cap.className = 'pg-facade-caption';
+      cap.textContent = fromResources
+        ? 'resources the run watches — from the bundled ' + el.dataset.scenario + ' example'
+        : spec + ' — from the bundled ' + el.dataset.scenario + ' config (what Run renders)';
+      var pre = document.createElement('pre');
+      var code = document.createElement('code');
+      pre.appendChild(code);
+      code.textContent = section;
+      wrap.appendChild(cap);
+      wrap.appendChild(pre);
+      ph.replaceWith(wrap);
+      highlightConfig(code, section, false);
+    }).catch(function () { /* keep the placeholder */ });
+  }
+
   function enhance(el) {
     if (el._pgReady) return;
     el._pgReady = true;
@@ -241,6 +321,7 @@
       ph.textContent = 'press ▶ Run live — renders the bundled '
         + el.dataset.scenario.replace(/-/g, ' ') + ' example in your browser, nothing uploaded';
       el.appendChild(ph);
+      if (el.dataset.facade) autoFacade(el, ph);
     }
 
     // Header with title, difficulty, Run button.

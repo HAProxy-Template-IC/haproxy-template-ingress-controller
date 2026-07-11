@@ -16,7 +16,7 @@ This library is enabled by default.
 
 See the Ingress preset render a full HAProxy config live:
 
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → HAProxy config" data-height="440">
+<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.map-host-500-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Ingress → HAProxy config" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, add a second host to the `shop` Ingress — copy its existing rule and change the host to `www.shop.example.com`. Then open the **maps** tab and watch `www.shop.example.com` join `host.map` and `path-prefix.map`, both routing to the existing `storefront_shop_svc_shop_http` backend.</p>
 
@@ -118,7 +118,7 @@ spec:
 
 Watch the three path-type maps populate as you add Exact and Prefix paths:
 
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="maps" data-controls="tabs,resources" data-title="Path types → map entries" data-height="440">
+<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.map-path-exact-500-ingress" data-tab="maps" data-controls="tabs,resources" data-title="Path types → map entries" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, add two paths to the `shop` Ingress rule (alongside the existing `/`): a `/api` path with `pathType: Prefix` and a `/health` path with `pathType: Exact`, both pointing at the `shop` service on port `80`. Then open the **maps** tab and watch each path land in a different map.</p>
 

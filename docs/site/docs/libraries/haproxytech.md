@@ -21,7 +21,7 @@ This library is enabled by default.
 
 Watch the `haproxy.org/*` annotations render to HAProxy config live:
 
-<div class="pg-embed" markdown data-scenario="haproxytech" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy.org/* annotations rendered" data-height="440">
+<div class="pg-embed" markdown data-scenario="haproxytech" data-facade="spec.templateSnippets.backend-directives-150-haproxytech-load-balance" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy.org/* annotations rendered" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, change the `shop` Ingress's `haproxy.org/load-balance` value from `leastconn` to `source`, then watch the shop backend's `balance` line update in the `haproxy.cfg` tab.</p>
 

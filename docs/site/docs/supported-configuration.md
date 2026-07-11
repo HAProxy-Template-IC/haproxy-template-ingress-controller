@@ -14,7 +14,7 @@ The controller supports all configuration sections that can be managed through t
 
 To get a feel for the breadth, here's every bundled library rendered into one config:
 
-<div class="pg-embed" markdown data-scenario="all" data-tab="haproxy.cfg" data-controls="tabs" data-title="Every bundled library rendered into one haproxy.cfg" data-height="440">
+<div class="pg-embed" markdown data-scenario="all" data-facade="spec.watchedResources" data-tab="haproxy.cfg" data-controls="tabs" data-title="Every bundled library rendered into one haproxy.cfg" data-height="440">
 
 </div>
 
