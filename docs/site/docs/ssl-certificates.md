@@ -27,6 +27,9 @@ helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/h
 !!! note
     The default self-signed certificate is intended for development and testing only. For production, override with your own domain and issuer.
 
+!!! warning "Without cert-manager the install can't converge"
+    When the cert-manager API is absent, the chart skips the `Certificate` silently — `helm install` succeeds, but nothing ever creates the `default-ssl-cert` Secret. The controller then fails every render (`TLS Secret not found: <namespace>/default-ssl-cert` in its logs) and the HAProxy pods never become fully ready. Either install cert-manager first, or create the Secret yourself (see [Alternative: Manual Certificate](#alternative-manual-certificate)) — the controller picks it up live.
+
 ### Production Deployment
 
 For production, override the default certificate configuration with your actual domain and a trusted issuer:

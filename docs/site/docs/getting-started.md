@@ -122,6 +122,16 @@ The Helm chart deploys:
 - **RBAC**: Permissions for watching Ingress, Service, and EndpointSlice resources
 - **HAProxyTemplateConfig**: CRD resource with the default template configuration, including [template libraries](template-libraries.md) for Ingress and Gateway API out of the box
 
+The chart's default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without cert-manager on the cluster, the chart skips the certificate silently — the controller then can't render its first configuration (its logs repeat `TLS Secret not found: haptic/default-ssl-cert`) and the HAProxy pods never become fully ready. If cert-manager is installed, skip to the verification below. Otherwise, create a self-signed certificate Secret now:
+
+```bash
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout tls.key -out tls.crt -subj "/CN=*.example.local"
+kubectl create secret tls default-ssl-cert -n haptic --cert=tls.crt --key=tls.key
+```
+
+The controller watches the Secret and converges within seconds — no restart needed. See [SSL Certificates](./ssl-certificates.md) for the cert-manager path and production options.
+
 Verify both components are running:
 
 ```bash
@@ -132,7 +142,7 @@ kubectl get pods -n haptic -l app.kubernetes.io/component=controller
 kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
 ```
 
-You should see the controller pod and two HAProxy pods in `Running` state.
+You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `3/3`).
 
 !!! note "HAProxy version"
     The chart defaults to HAProxy 3.4. To select a different version (e.g. 3.0 LTS or 3.3), set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for details.
