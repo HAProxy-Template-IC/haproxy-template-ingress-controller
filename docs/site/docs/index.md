@@ -8,7 +8,7 @@ hide:
 
 **HAPTIC** (HAProxy Template Ingress Controller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them via the [HAProxy Dataplane API](https://github.com/haproxytech/dataplaneapi).
 
-<div class="hx-pipeline" aria-label="How HAPTIC works: cluster resources feed your templates, the rendered config is validated, then deployed to the HAProxy fleet">
+<div class="hx-pipeline" role="img" aria-label="How HAPTIC works: cluster resources feed your templates, the rendered config is validated, then deployed to the HAProxy fleet">
   <div class="hx-group">
     <span class="hx-cap">Your cluster</span>
     <span class="hx-chip">🌐 Ingress</span>
@@ -77,26 +77,29 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 
 The controller follows an event-driven architecture where changes to Kubernetes resources trigger a pipeline that renders templates, validates the output, and syncs configurations to HAProxy pods.
 
-```mermaid
-flowchart TB
-    subgraph API["Kubernetes API"]
-        R["Any Resource<br/>(Ingress, Gateway, CRDs, ...)"]
-    end
-    subgraph Controller["Controller Pod"]
-        W["Watcher"]
-        T["Template Engine"]
-        V["Validator"]
-    end
-    subgraph HAProxy["HAProxy Pod"]
-        D["Dataplane API"]
-        H["HAProxy"]
-    end
-    R --> W
-    W --> T
-    T --> V
-    V --> D
-    D --> H
-```
+<div class="hx-pipeline hx-arch" role="img" aria-label="Runtime architecture: the controller pod watches the Kubernetes API, renders and validates the config, and pushes it to each HAProxy pod's Dataplane API">
+  <div class="hx-group">
+    <span class="hx-cap">Kubernetes API</span>
+    <span class="hx-chip">🗂️ Any resource</span>
+    <small>Ingress · Gateway · CRDs</small>
+  </div>
+  <div class="hx-link" aria-hidden="true"><i></i></div>
+  <div class="hx-group hx-pod">
+    <span class="hx-cap">Controller pod</span>
+    <span class="hx-chip">👀 Watcher</span>
+    <span class="hx-vlink" aria-hidden="true"></span>
+    <span class="hx-chip">📝 Template engine</span>
+    <span class="hx-vlink" aria-hidden="true"></span>
+    <span class="hx-chip">🛡️ Validator</span>
+  </div>
+  <div class="hx-link" aria-hidden="true"><i></i></div>
+  <div class="hx-group hx-pod">
+    <span class="hx-cap">HAProxy pod</span>
+    <span class="hx-chip">🔌 Dataplane API</span>
+    <span class="hx-vlink" aria-hidden="true"></span>
+    <span class="hx-chip">⚡ HAProxy</span>
+  </div>
+</div>
 
 Key components:
 
