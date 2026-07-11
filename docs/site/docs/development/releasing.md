@@ -66,8 +66,9 @@ The script:
 - Writes `<version>` to the `VERSION` file
 - Updates `Chart.yaml` `version`, `appVersion`, and the `artifacthub.io/images` annotation (controller and spoa-hub image tags)
 - Updates the `helm install ... --version <version>` examples in the READMEs and docs, and the landing page's fallback version
-- Regenerates the docs-site changelog copy (`docs/site/docs/changelog.md`) from `CHANGELOG.md`
 - Stages and commits everything as `release: haptic v<version>`
+
+The docs-site changelog page needs no release-time sync: it is generated from `CHANGELOG.md` on every mkdocs build (`docs/site/hooks/changelog.py`).
 
 The script does **not** create a tag — that happens in CI after the MR merges.
 

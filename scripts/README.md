@@ -97,7 +97,7 @@ Requirements: a kube context with the resources installed (kind clusters are fin
 
 ## release.sh
 
-Invoked by `make release RELEASE_VERSION=...` (which runs `release.sh <version>`). One invocation prepares the whole release (controller + chart share one version): it promotes the `CHANGELOG.md` `[Unreleased]` section, bumps `VERSION` and `Chart.yaml` (`version`, `appVersion`, image annotations), updates the `helm install --version` examples and the docs-site changelog copies, and creates the release commit. Do **not** call it directly in normal workflows — go through the Makefile target so you get the arg validation for free. See [`docs/site/docs/development/releasing.md`](../docs/site/docs/development/releasing.md) for the end-to-end release process.
+Invoked by `make release RELEASE_VERSION=...` (which runs `release.sh <version>`). One invocation prepares the whole release (controller + chart share one version): it promotes the `CHANGELOG.md` `[Unreleased]` section, bumps `VERSION` and `Chart.yaml` (`version`, `appVersion`, image annotations), updates the `helm install --version` examples, and creates the release commit (the docs-site changelog page is generated from `CHANGELOG.md` at mkdocs build time, so it needs no release-time sync). Do **not** call it directly in normal workflows — go through the Makefile target so you get the arg validation for free. See [`docs/site/docs/development/releasing.md`](../docs/site/docs/development/releasing.md) for the end-to-end release process.
 
 ## See Also
 

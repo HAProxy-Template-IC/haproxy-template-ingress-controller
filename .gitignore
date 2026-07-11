@@ -107,3 +107,4 @@ plugins/
 
 # Serena MCP server working files
 .serena/
+__pycache__/

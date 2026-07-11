@@ -16,8 +16,7 @@
 # 5. Rewrites every current-version reference across the documentation in one
 #    pass (helm install --version examples, the pinned controller image tag in
 #    migrate-check's docker one-liner) and the landing page's fallback version
-# 6. Regenerates the docs-site changelog copies from CHANGELOG.md
-# 7. Commits everything (the tag is created automatically by CI after merge)
+# 6. Commits everything (the tag is created automatically by CI after merge)
 #
 # After running this script:
 #   1. Review the commit — especially the promoted changelog section and the
@@ -175,34 +174,11 @@ sed -i \
 # Landing page fallback (replaced client-side by the published-versions JS)
 sed -i -E "s|(<span id=\"helm-version\" class=\"t-num\">)[^<]*|\1$VERSION|" docs/landing/overrides/home.html
 
-# --- docs-site changelog copy ---------------------------------------------------
-# The docs site carries a copy of the root CHANGELOG. Repo-relative links don't
-# resolve on the docs site, so they are rewritten to GitLab source URLs.
-sync_changelog_copy() {
-    local target=$1
-    local with_front_matter=$2
-    {
-        if [[ "$with_front_matter" == "yes" ]]; then
-            printf -- '---\nhide:\n  - navigation\n---\n\n'
-        fi
-        printf '# Changelog\n\n'
-        printf 'All notable changes to HAPTIC — the controller and its Helm chart — are\n'
-        printf 'documented in this file. Controller changes are listed first; chart changes\n'
-        printf '(values, templates, chart defaults) follow under each release'\''s "Helm chart"\n'
-        printf 'subsection.\n\n'
-        printf 'The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),\n'
-        printf 'and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n\n'
-        sed -n '/^## \[/,$p' CHANGELOG.md \
-            | sed -e 's|](\./docs/|](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/|g' \
-                  -e 's|](\./charts/|](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/|g'
-    } > "$target"
-}
-echo "Regenerating docs-site changelog copy..."
-sync_changelog_copy docs/site/docs/changelog.md yes
+# The docs-site changelog page is generated at mkdocs build time from
+# CHANGELOG.md (docs/site/hooks/changelog.py) — no release-time sync needed.
 
 # --- commit --------------------------------------------------------------------
 git add CHANGELOG.md VERSION charts/haptic/Chart.yaml \
-    docs/site/docs/changelog.md \
     docs/landing/overrides/home.html $VERSION_DOC_FILES
 
 if git diff --cached --quiet; then
