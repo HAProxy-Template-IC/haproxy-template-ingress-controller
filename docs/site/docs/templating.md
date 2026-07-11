@@ -6,7 +6,7 @@ HAPTIC uses [Scriggo](https://scriggo.com/), a Go template engine, to generate H
 
 Templates are rendered automatically when any watched resource changes, during initial synchronization, or periodically for drift detection.
 
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-title="See a template render — live" data-controls="tabs,provenance" data-height="480">
+<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.templateSnippets.backends-500-ingress" data-tab="haproxy.cfg" data-title="See a template render — live" data-controls="tabs,provenance" data-height="480">
 </div>
 
 Hit **Run live** above to render the bundled Ingress example entirely in your browser. Edit the template on the left and watch `haproxy.cfg` update on the right — then switch tabs to see the `maps`, `files`, and `status` it also produces. Click any output line to jump to the template line that produced it, or **Open in full playground** to bring your changes into the full editor.

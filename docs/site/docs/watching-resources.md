@@ -4,7 +4,7 @@
 
 Watch it end-to-end — a watched Ingress feeding the render:
 
-<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="A watched Ingress rendered to haproxy.cfg" data-height="440">
+<div class="pg-embed" markdown data-scenario="ingress" data-facade="spec.watchedResources" data-tab="haproxy.cfg" data-controls="tabs" data-title="A watched Ingress rendered to haproxy.cfg" data-height="440">
 
 </div>
 

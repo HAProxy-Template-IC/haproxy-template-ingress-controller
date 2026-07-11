@@ -10,7 +10,7 @@ This library is disabled by default.
 
 Because the preset mixes annotations that HAPTIC supports, maps differently, and drops, the migration report is the clearest live view:
 
-<div class="pg-embed" markdown data-scenario="nginx-ingress" data-tab="migration" data-controls="tabs,resources" data-title="ingress-nginx annotation migration report" data-height="440">
+<div class="pg-embed" markdown data-scenario="nginx-ingress" data-facade="resources" data-tab="migration" data-controls="tabs,resources" data-title="ingress-nginx annotation migration report" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, add `nginx.ingress.kubernetes.io/server-snippet: "more_set_headers X-From: nginx;"` to the `shop` Ingress, then watch a new **dropped** verdict appear in the **migration** report.</p>
 

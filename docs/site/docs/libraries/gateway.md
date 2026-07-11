@@ -20,7 +20,7 @@ This library is **enabled by default**.
 
 Watch an HTTPRoute compile down to HAProxy config live:
 
-<div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Gateway API → HAProxy config" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.map-host-500-gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Gateway API → HAProxy config" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, add `- www.example.com` under the `api` HTTPRoute's `spec.hostnames`, then open the **maps** tab and watch `host.map` gain a second entry.</p>
 
@@ -216,7 +216,7 @@ spec:
 
 The path type decides which map file HAProxy consults — flip it live:
 
-<div class="pg-embed" markdown data-scenario="gateway" data-tab="maps" data-controls="tabs,resources" data-title="Path type → map file" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.map-path-exact-500-gateway" data-tab="maps" data-controls="tabs,resources" data-title="Path type → map file" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, change the `api` HTTPRoute's `path.type` from `PathPrefix` to `Exact`, then watch the entry move between map files in the **maps** tab.</p>
 
@@ -381,7 +381,7 @@ spec:
 
 Add a matcher to the demo route and watch the frontend gain a condition:
 
-<div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Method / header / query matchers" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.frontend-matchers-advanced-500-gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Method / header / query matchers" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, add `method: GET` to the `api` HTTPRoute's match (as a sibling of its `path`), then find the matcher line in the `haproxy.cfg` tab.</p>
 
@@ -639,7 +639,7 @@ http-request replace-path "^/api/v1(.*)" "/\1" if <route-conditions>
 
 Attach a filter to the demo route and watch the real directive compile — no `<route-conditions>` placeholder:
 
-<div class="pg-embed" markdown data-scenario="gateway" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.frontend-filters-500-gateway-request-header" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, give the `api` HTTPRoute's rule a `filters:` list (a sibling of `backendRefs`) with a `RequestHeaderModifier` that sets a header — `set: [{name: X-API-Version, value: "v2"}]` — then find the generated `http-request set-header X-API-Version` line in the `haproxy.cfg` tab.</p>
 
@@ -708,7 +708,7 @@ spec:
 
 Split the demo route's traffic and inspect the generated weight map:
 
-<div class="pg-embed" markdown data-scenario="gateway" data-tab="maps" data-controls="tabs,resources" data-title="Weighted traffic split → map" data-height="440">
+<div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.map-weighted-backend-500-gateway" data-tab="maps" data-controls="tabs,resources" data-title="Weighted traffic split → map" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, give the `api` HTTPRoute a second backend: add `weight: 90` to its existing `api` ref and append `- {name: api-canary, port: 80, weight: 10}`, then open `weighted-multi-backend.map` in the **maps** tab.</p>
 

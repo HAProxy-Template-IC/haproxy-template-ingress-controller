@@ -16,7 +16,7 @@ See [Template Libraries](./template-libraries.md) for how to enable or disable i
 
 See the nginx-ingress compatibility verdict render live:
 
-<div class="pg-embed" markdown data-scenario="nginx-ingress" data-tab="migration" data-controls="tabs" data-title="nginx-ingress annotation migration report" data-height="440">
+<div class="pg-embed" markdown data-scenario="nginx-ingress" data-facade="resources" data-tab="migration" data-controls="tabs" data-title="nginx-ingress annotation migration report" data-height="440">
 
 </div>
 

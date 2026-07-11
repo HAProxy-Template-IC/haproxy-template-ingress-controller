@@ -301,3 +301,11 @@
 }
 .pg-embed .pg-loading::before { content: "$ "; color: var(--md-typeset-a-color, #3f6ec6); font-weight: 700; }
 .pg-embed.pg-running .pg-loading { color: #909dab; background: #22272e; }
+
+/* auto-facade for scenario embeds (data-facade) */
+.pg-facade-auto pre { max-height: 24em; overflow: auto; margin: 0; }
+.pg-facade-caption {
+  font-size: .68rem; padding: .35em .9em; opacity: .75;
+  font-family: var(--md-code-font, monospace);
+  border-bottom: 1px solid rgba(128,128,128,.25);
+}

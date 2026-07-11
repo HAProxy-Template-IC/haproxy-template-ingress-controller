@@ -8,7 +8,7 @@ This library is enabled by default.
 
 See the `haproxy-ingress.github.io/*` annotations render to HAProxy config live:
 
-<div class="pg-embed" markdown data-scenario="haproxy-ingress" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy-ingress.github.io/* annotations rendered" data-height="440">
+<div class="pg-embed" markdown data-scenario="haproxy-ingress" data-facade="spec.templateSnippets.backend-directives-630-haproxy-ingress-health-checks" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="haproxy-ingress.github.io/* annotations rendered" data-height="440">
 
 <p class="pg-task" markdown>In the **Resources** panel, change the `shop` Ingress's `haproxy-ingress.github.io/health-check-uri` from `/healthz` to `/readyz`, then watch the shop backend's health-check line update in the `haproxy.cfg` tab.</p>
 
