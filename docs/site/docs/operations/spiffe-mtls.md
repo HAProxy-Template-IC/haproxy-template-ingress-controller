@@ -1,6 +1,6 @@
 # Backend mTLS with SPIFFE/SPIRE
 
-This guide explains how to configure HAPTIC to use [SPIFFE/SPIRE](https://spiffe.io/) for automatic mutual TLS (mTLS) between HAProxy and backend services using short-lived X.509 certificates.
+Use [SPIFFE/SPIRE](https://spiffe.io/) to give HAProxy automatic mutual TLS (mTLS) to backend services: SPIRE issues and rotates short-lived X.509 certificates, and HAPTIC wires them into the backend configuration.
 
 ## Overview
 

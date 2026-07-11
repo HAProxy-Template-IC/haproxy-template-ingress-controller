@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides the architectural design for HAPTIC. The controller is a Kubernetes operator that manages HAProxy load balancer configurations through template-driven configuration generation, continuously monitoring Kubernetes resources and translating them into validated HAProxy configurations.
+HAPTIC is a Kubernetes operator that manages HAProxy load balancer configurations through template-driven configuration generation, continuously monitoring Kubernetes resources and translating them into validated HAProxy configurations.
 
 The design follows event-driven architecture principles with clean component separation. Components communicate through a central EventBus using pub/sub and request-response patterns, enabling observability, testability, and loose coupling.
 

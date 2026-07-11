@@ -1,6 +1,6 @@
 # Supported HAProxy Configuration
 
-This document provides an overview of HAProxy configuration sections and child components supported by HAPTIC via the HAProxy Dataplane API.
+HAPTIC manages every HAProxy configuration section and child component the Dataplane API exposes; the tables below list each with its comparison strategy and reload behaviour.
 
 ## Overview
 
@@ -268,21 +268,21 @@ Keepalived sections support fine-grained management of VRRP configuration:
 The implementation uses two approaches for optimal performance:
 
 1. **Fine-Grained Child Resource Management** (frequently-changing resources)
-   - Frontends and backends expose per-child operations (binds, ACLs, rules, servers, health checks, …)
-   - Each child resource is diffed as an individual Create/Update/Delete operation
-   - These per-child operations drive change classification and the `X-Runtime-Actions` for runtime-eligible server updates; the config itself ships as one raw push
-   - **Benefit:** Lets the controller skip the HAProxy reload whenever no structural change is present
+    - Frontends and backends expose per-child operations (binds, ACLs, rules, servers, health checks, …)
+    - Each child resource is diffed as an individual Create/Update/Delete operation
+    - These per-child operations drive change classification and the `X-Runtime-Actions` for runtime-eligible server updates; the config itself ships as one raw push
+    - **Benefit:** Lets the controller skip the HAProxy reload whenever no structural change is present
 
 2. **Whole-Section Replacement** (infrequently-changing resources)
-   - Sections without exposed child operations: Rings, HTTPErrors, Userlists, LogForwards, FCGIApps, CrtStores
-   - Uses `.Equal()` method to compare the entire section including nested components
-   - If any attribute changes, the entire section is replaced
-   - **Benefit:** Simpler code, fewer operations for resources that rarely change
+    - Sections without exposed child operations: Rings, HTTPErrors, Userlists, LogForwards, FCGIApps, CrtStores
+    - Uses `.Equal()` method to compare the entire section including nested components
+    - If any attribute changes, the entire section is replaced
+    - **Benefit:** Simpler code, fewer operations for resources that rarely change
 
-   Resolvers, Mailers, and Peers sit in between — their *child entries*
-   (Nameservers, MailerEntries, PeerEntries) use fine-grained Create/Update/Delete
-   operations like Frontend/Backend children, while the parent section's own
-   attributes are compared with an "Equal-without-children" helper.
+    Resolvers, Mailers, and Peers sit in between — their *child entries*
+    (Nameservers, MailerEntries, PeerEntries) use fine-grained Create/Update/Delete
+    operations like Frontend/Backend children, while the parent section's own
+    attributes are compared with an "Equal-without-children" helper.
 
 ### Operation Ordering
 

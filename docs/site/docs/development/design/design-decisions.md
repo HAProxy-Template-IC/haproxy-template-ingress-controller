@@ -71,11 +71,11 @@ The config parser (`pkg/dataplane/parser`) classifies HAProxy global directives 
 
 1. **Log target detection**: A log target is a line starting with `log` followed by an address (`log <address> <facility> [level]`). The parser distinguishes these from log-option directives such as `log-send-hostname` and `log-tag`, which are general global directives, not log targets. This config parses correctly:
 
-   ```
-   global
-       log stdout local0
-       log-send-hostname
-   ```
+    ```
+    global
+        log stdout local0
+        log-send-hostname
+    ```
 
 2. **Directive classification**: The parser separates log targets, log options (`log-send-hostname`, `log-tag`, and similar), and other global directives.
 
@@ -136,36 +136,36 @@ factory.Start(stopCh)
 
 1. **Event Processing**: Buffered channels for event debouncing
 
-   ```go
-   type Debouncer struct {
-       events chan Event
-       timer  *time.Timer
-   }
-   ```
+    ```go
+    type Debouncer struct {
+        events chan Event
+        timer  *time.Timer
+    }
+    ```
 
 2. **Parallel Deployment**: Worker pools for deploying to multiple HAProxy instances
 
-   ```go
-   var wg sync.WaitGroup
-   for _, endpoint := range endpoints {
-       wg.Add(1)
-       go func(ep DataplaneEndpoint) {
-           defer wg.Done()
-           deploy(ep)
-       }(endpoint)
-   }
-   wg.Wait()
-   ```
+    ```go
+    var wg sync.WaitGroup
+    for _, endpoint := range endpoints {
+        wg.Add(1)
+        go func(ep DataplaneEndpoint) {
+            defer wg.Done()
+            deploy(ep)
+        }(endpoint)
+    }
+    wg.Wait()
+    ```
 
 3. **Context Propagation**: All operations use context.Context for cancellation
 
-   ```go
-   func (d *Deployer) Deploy(ctx context.Context, config Config) error {
-       ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-       defer cancel()
-       // ... deployment logic
-   }
-   ```
+    ```go
+    func (d *Deployer) Deploy(ctx context.Context, config Config) error {
+        ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+        defer cancel()
+        // ... deployment logic
+    }
+    ```
 
 ## Observability Integration
 
@@ -205,33 +205,33 @@ go metricsServer.Start(ctx)
 **Metrics exposed** (37 metrics total — see `pkg/controller/metrics/README.md` for the full catalogue; `pkg/controller/metrics/metrics.go` itself is the authoritative list. `TestMetrics_AllMetricsRegistered` covers a representative subset, not every metric). Key groups:
 
 1. **Reconciliation**:
-   - `haptic_reconciliation_total`, `haptic_reconciliation_errors_total`, `haptic_reconciliation_duration_seconds`
-   - `haptic_reconciliation_queue_wait_seconds`
+    - `haptic_reconciliation_total`, `haptic_reconciliation_errors_total`, `haptic_reconciliation_duration_seconds`
+    - `haptic_reconciliation_queue_wait_seconds`
 
 2. **Deployment**:
-   - `haptic_deployment_total`, `haptic_deployment_errors_total`, `haptic_deployment_duration_seconds`
+    - `haptic_deployment_total`, `haptic_deployment_errors_total`, `haptic_deployment_duration_seconds`
 
 3. **Validation**:
-   - `haptic_validation_total`, `haptic_validation_errors_total`
+    - `haptic_validation_total`, `haptic_validation_errors_total`
 
 4. **Resources**:
-   - `haptic_resource_count` (gauge vector labeled by `type`, including `haproxy-pods` and every `watchedResources` key)
+    - `haptic_resource_count` (gauge vector labeled by `type`, including `haproxy-pods` and every `watchedResources` key)
 
 5. **Event bus**:
-   - `haptic_event_subscribers`, `haptic_events_published_total`
-   - Drops: `haptic_events_dropped_total`, `..._dropped_critical_total`, `..._dropped_by_subscriber_total`, `..._dropped_observability_total`
+    - `haptic_event_subscribers`, `haptic_events_published_total`
+    - Drops: `haptic_events_dropped_total`, `..._dropped_critical_total`, `..._dropped_by_subscriber_total`, `..._dropped_observability_total`
 
 6. **Leader election**:
-   - `haptic_leader_election_is_leader`, `haptic_leader_election_transitions_total`, `haptic_leader_election_time_as_leader_seconds_total`
+    - `haptic_leader_election_is_leader`, `haptic_leader_election_transitions_total`, `haptic_leader_election_time_as_leader_seconds_total`
 
 7. **Webhook**:
-   - `haptic_webhook_requests_total`, `haptic_webhook_request_duration_seconds`, `haptic_webhook_validation_total`
+    - `haptic_webhook_requests_total`, `haptic_webhook_request_duration_seconds`, `haptic_webhook_validation_total`
 
 8. **Parser cache**:
-   - `haptic_parser_cache_hits_total`, `haptic_parser_cache_misses_total`
+    - `haptic_parser_cache_hits_total`, `haptic_parser_cache_misses_total`
 
 9. **Build info**:
-   - `haptic_build_info` (labels: `version`, `haproxy_version`, `go_version`)
+    - `haptic_build_info` (labels: `version`, `haproxy_version`, `go_version`)
 
 **Logging + event correlation (instead of distributed tracing)**:
 
@@ -427,29 +427,29 @@ Categories include configuration, resource indexing, reconciliation, template re
 Events in the system are designed to be immutable after creation, representing historical facts about what happened. The implementation balances practical immutability with Go idioms and performance:
 
 1. **Pointer Receivers**: All Event interface methods use pointer receivers
-   - Avoids copying large structs (many events exceed 200 bytes)
-   - Follows Go best practices for methods on types with mutable fields
-   - Enforced by custom `eventimmutability` linter in `tools/linters/`
+    - Avoids copying large structs (many events exceed 200 bytes)
+    - Follows Go best practices for methods on types with mutable fields
+    - Enforced by custom `eventimmutability` linter in `tools/linters/`
 
 2. **Exported Fields**: Event fields are exported for idiomatic Go access
-   - Follows industry standards (Kubernetes, NATS)
-   - Enables JSON serialization without reflection tricks
-   - Relies on team discipline rather than compiler enforcement
+    - Follows industry standards (Kubernetes, NATS)
+    - Enables JSON serialization without reflection tricks
+    - Relies on team discipline rather than compiler enforcement
 
 3. **Defensive Copying**: Constructors perform defensive copies of slices and maps
-   - Publishers cannot modify events after creation
-   - Example: `NewConfigInvalidEvent` deep-copies the validation errors map
-   - Prevents accidental mutation from affecting published events
+    - Publishers cannot modify events after creation
+    - Example: `NewConfigInvalidEvent` deep-copies the validation errors map
+    - Prevents accidental mutation from affecting published events
 
 4. **Read-Only Discipline**: Consumers must treat events as read-only
-   - Enforced through code review and team practices
-   - This is an internal project where all consumers are controlled
-   - Alternative (unexported fields + getters) would be less idiomatic Go
+    - Enforced through code review and team practices
+    - This is an internal project where all consumers are controlled
+    - Alternative (unexported fields + getters) would be less idiomatic Go
 
 5. **Custom Linter**: The `eventimmutability` analyzer enforces pointer receivers
-   - Integrated into `make lint` and CI pipeline
-   - Prevents value receivers that would cause struct copying
-   - Located in `tools/linters/eventimmutability/`
+    - Integrated into `make lint` and CI pipeline
+    - Prevents value receivers that would cause struct copying
+    - Located in `tools/linters/eventimmutability/`
 
 This approach provides practical immutability while maintaining clean, idiomatic Go code without the overhead of getters or complex accessor patterns.
 
@@ -906,24 +906,24 @@ The three validators that respond — `BasicValidator`, `TemplateValidator`, `JS
 The handler logs the scatter-gather validation process for visibility:
 
 1. **Structured Logging**: Uses `log/slog` with structured fields for queryability
-   - Validator names, response counts, validation error counts
-   - Duration tracking for performance monitoring
-   - Clear distinction between validation failure (expected) and system errors
+    - Validator names, response counts, validation error counts
+    - Duration tracking for performance monitoring
+    - Clear distinction between validation failure (expected) and system errors
 
 2. **Appropriate Log Levels**:
-   - `warn` level for validation failures (not `error`) - invalid config is an expected condition
-   - `info` level for successful validation with validator details
-   - `error` level reserved for actual system failures (timeouts, missing validators)
+    - `warn` level for validation failures (not `error`) - invalid config is an expected condition
+    - `info` level for successful validation with validator details
+    - `error` level reserved for actual system failures (timeouts, missing validators)
 
 3. **Detailed Error Aggregation**:
-   - Groups validation errors by validator name
-   - Shows which validators responded and their individual results
-   - Provides actionable error messages for config authors
+    - Groups validation errors by validator name
+    - Shows which validators responded and their individual results
+    - Provides actionable error messages for config authors
 
 4. **Observability**: Full visibility into validation workflow
-   - Which validators participated in validation
-   - How long validation took
-   - Exactly which aspects of config failed validation
+    - Which validators participated in validation
+    - How long validation took
+    - Exactly which aspects of config failed validation
 
 Example log output for validation failure:
 

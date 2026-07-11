@@ -1,6 +1,6 @@
 # High Availability with Leader Election
 
-This guide explains how to deploy and operate HAPTIC in high availability (HA) mode with multiple replicas.
+Run multiple controller replicas so a leader crash, node drain, or upgrade never stalls HAProxy configuration delivery.
 
 ## Overview
 
@@ -208,32 +208,32 @@ Check these areas in order of likelihood:
 
 1. **Missing RBAC permissions:**
 
-   The controller's ServiceAccount name is the Helm release fullname (unless you overrode `serviceAccount.name`):
+    The controller's ServiceAccount name is the Helm release fullname (unless you overrode `serviceAccount.name`):
 
-   ```bash
-   SA=$(kubectl get deployment haptic-controller -n haptic -o jsonpath='{.spec.template.spec.serviceAccountName}')
-   kubectl auth can-i get leases    --as=system:serviceaccount:haptic:$SA
-   kubectl auth can-i create leases --as=system:serviceaccount:haptic:$SA
-   kubectl auth can-i update leases --as=system:serviceaccount:haptic:$SA
-   ```
+    ```bash
+    SA=$(kubectl get deployment haptic-controller -n haptic -o jsonpath='{.spec.template.spec.serviceAccountName}')
+    kubectl auth can-i get leases    --as=system:serviceaccount:haptic:$SA
+    kubectl auth can-i create leases --as=system:serviceaccount:haptic:$SA
+    kubectl auth can-i update leases --as=system:serviceaccount:haptic:$SA
+    ```
 
 2. **Missing environment variables:**
 
-   ```bash
-   kubectl get pod <pod-name> -o yaml | grep -A2 "POD_NAME\|POD_NAMESPACE"
+    ```bash
+    kubectl get pod <pod-name> -o yaml | grep -A2 "POD_NAME\|POD_NAMESPACE"
 
-   # Should show:
-   # - name: POD_NAME
-   #   valueFrom:
-   #     fieldRef:
-   #       fieldPath: metadata.name
-   ```
+    # Should show:
+    # - name: POD_NAME
+    #   valueFrom:
+    #     fieldRef:
+    #       fieldPath: metadata.name
+    ```
 
 3. **API server connectivity:**
 
-   ```bash
-   kubectl logs <pod-name> | grep "connection refused\|timeout"
-   ```
+    ```bash
+    kubectl logs <pod-name> | grep "connection refused\|timeout"
+    ```
 
 ### Multiple Leaders (Split-Brain)
 
@@ -247,22 +247,22 @@ Check these areas in order of likelihood:
 
 1. Check for severe clock skew between nodes:
 
-   ```bash
-   # On each node
-   timedatectl status
-   ```
+    ```bash
+    # On each node
+    timedatectl status
+    ```
 
 2. Verify Kubernetes API server health:
 
-   ```bash
-   kubectl get --raw /healthz
-   ```
+    ```bash
+    kubectl get --raw /healthz
+    ```
 
 3. Restart all controller pods:
 
-   ```bash
-   kubectl rollout restart deployment haptic-controller -n haptic
-   ```
+    ```bash
+    kubectl rollout restart deployment haptic-controller -n haptic
+    ```
 
 ### Frequent Leadership Changes
 
@@ -276,28 +276,28 @@ Check these areas in order of likelihood:
 
 1. **Resource contention** - Leader pod can't renew lease in time:
 
-   ```bash
-   kubectl top pods -n haptic
-   kubectl describe pod <leader-pod> | grep -A10 "Limits\|Requests"
-   ```
+    ```bash
+    kubectl top pods -n haptic
+    kubectl describe pod <leader-pod> | grep -A10 "Limits\|Requests"
+    ```
 
-   **Solution:** Increase CPU/memory limits
+    **Solution:** Increase CPU/memory limits
 
 2. **Network issues** - API server communication delays:
 
-   ```bash
-   kubectl logs -n haptic <pod-name> | grep "lease renew\|deadline"
-   ```
+    ```bash
+    kubectl logs -n haptic <pod-name> | grep "lease renew\|deadline"
+    ```
 
-   **Solution:** Increase `leaseDuration` and `renewDeadline`
+    **Solution:** Increase `leaseDuration` and `renewDeadline`
 
 3. **Node issues** - Leader pod node experiencing problems:
 
-   ```bash
-   kubectl describe node <node-name>
-   ```
+    ```bash
+    kubectl describe node <node-name>
+    ```
 
-   **Solution:** Drain and investigate node
+    **Solution:** Drain and investigate node
 
 ### Leader Not Deploying
 
@@ -340,11 +340,11 @@ kubectl logs -n haptic <leader-pod> | grep -i "deployer starting\|deployment sch
 - 2-3 replicas across multiple availability zones
 - A `PodDisruptionBudget` (`minAvailable: 1`) is created automatically once `replicaCount > 1` — no action needed. Tune or disable it via:
 
-  ```yaml
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 1
-  ```
+    ```yaml
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    ```
 
 ### Resource Allocation
 
@@ -415,38 +415,38 @@ To migrate an existing single-replica deployment to HA:
 
 2. **Update values.yaml:**
 
-   ```yaml
-   replicaCount: 2
-   controller:
-     config:
-       controller:
-         leaderElection:
-           enabled: true
-   ```
+    ```yaml
+    replicaCount: 2
+    controller:
+      config:
+        controller:
+          leaderElection:
+            enabled: true
+    ```
 
 3. **Upgrade with Helm:**
 
-   ```bash
-   helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-     -n haptic --reuse-values \
-     -f values.yaml
-   ```
+    ```bash
+    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      -n haptic --reuse-values \
+      -f values.yaml
+    ```
 
 4. **Verify leadership:**
 
-   ```bash
-   kubectl logs -f -n haptic deployment/haptic-controller | grep leader
-   ```
+    ```bash
+    kubectl logs -f -n haptic deployment/haptic-controller | grep leader
+    ```
 
 5. **Confirm one leader:**
 
-   ```bash
-   # Query each pod's metrics; exactly one should report is_leader 1
-   for pod in $(kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o name); do
-     echo "$pod:"
-     kubectl exec -n haptic $pod -- wget -qO- localhost:9090/metrics | grep is_leader
-   done
-   ```
+    ```bash
+    # Query each pod's metrics; exactly one should report is_leader 1
+    for pod in $(kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller -o name); do
+      echo "$pod:"
+      kubectl exec -n haptic $pod -- wget -qO- localhost:9090/metrics | grep is_leader
+    done
+    ```
 
 ## See Also
 
