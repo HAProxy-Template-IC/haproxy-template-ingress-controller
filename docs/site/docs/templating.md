@@ -498,11 +498,11 @@ Templates use Scriggo's template syntax. For complete syntax reference, see the 
 
 ### Helper Functions
 
-The most commonly needed helpers when writing HAPTIC templates. All can be called as functions or via the pipe operator (`x | fn()` is equivalent to `fn(x)`).
+The most commonly needed helpers when writing HAPTIC templates. All can be called as functions or via the pipe operator (`x | fn()` is equivalent to `fn(x)`) — except `len`, which is a language builtin: call `len(x)` directly.
 
 | Helper | Purpose | Example |
 |--------|---------|---------|
-| `fallback(value, default)` | Return `default` if `value` is nil / empty / zero | `fallback(svc.port.number, 80)` |
+| `fallback(value, default)` | Return `default` if `value` is nil. Empty strings and zeroes pass through — only `dig()` on optional typed fields normalises zero values to nil first | `fallback(svc.port.number, 80)` |
 | `dig(obj, "k1", "k2", ...)` | Walk a nested map / typed struct without nil-checking each level (navigates JSON tags on typed structs) | `dig(ing, "metadata", "annotations")` |
 | `toSlice(v)` | Coerce `any` to `[]any` (safe to range over even if nil) | `for _, r := range toSlice(ing.spec.rules)` |
 | `to_str_map(v)` | Normalise any string-keyed map (`map[string]string` from typegen, `map[string]any` from the untyped store path) to `map[string]string` — use on labels / matchLabels / annotations | `for k, v := range route.Metadata.Labels \| to_str_map()` |
@@ -512,10 +512,10 @@ The most commonly needed helpers when writing HAPTIC templates. All can be calle
 | `keys(m)` | Sorted keys of a map | `for _, k := range keys(annotations)` |
 | `merge(a, b)` | New map combining `a` and `b` (b wins on conflict) | `merge(defaults, overrides)` |
 | `toLower(s)` / `toUpper(s)` | Case conversion | `host = toLower(rule.host)` |
-| `replace(s, old, new)`, `split(s, sep)`, `join(slice, sep)`, `trim(s)`, `hasPrefix(s, p)`, `hasSuffix(s, p)` | String operations | `join(items, ", ")` |
+| `replace(s, old, new)`, `split(s, sep)`, `join(slice, sep)`, `strip(s)`, `trim(s, cutset)`, `hasPrefix(s, p)`, `hasSuffix(s, p)` | String operations (`strip` trims whitespace; `trim` takes an explicit cutset) | `join(items, ", ")` |
 | `first_seen(prefix, keys...)` | Returns `true` only the first time the key tuple is seen — for deduplicating | `if first_seen("backend", svc.namespace, svc.name)` |
 | `sanitize_regex(s)` | Escape regex metacharacters in user input | `sanitize_regex(annotation)` |
-| `semver_gte(version, "3.3")` | Compare HAProxy version (major.minor) | `if semver_gte(haproxyVersion, "3.3")` |
+| `semver_gte(version, "3.3")` | Compare HAProxy version (major.minor) | `if semver_gte(extraContext.haproxyVersion, "3.3")` |
 | `fail(msg)` | Abort rendering with an error message (surfaces in validation tests and webhooks) | `fail("missing required annotation")` |
 
 For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, `min`, `max`, `sprintf`, `now()`, etc.), see the [Scriggo built-ins reference](https://scriggo.com/templates/builtins).
@@ -637,7 +637,7 @@ use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map")
 {# General files — resolves to general/504.http (chart default GeneralStorageDir basename) #}
 errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
 
-{# SSL certificates — resolves to ssl/example.com.pem #}
+{# SSL certificates — resolves to ssl/example_com.pem (dots in cert/crt-list names are sanitized to _) #}
 bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 
 {# crt-list files — resolves to general/cert-list.txt (CRTListDir defaults to GeneralStorageDir basename) #}
@@ -652,9 +652,9 @@ bind *:443 ssl crt-list {{ pathResolver.GetPath("cert-list.txt", "crt-list") }}
 |--------|-------------|---------|
 | `b64decode` | Decode base64 strings | `{{ secret.data.password \| b64decode() }}` |
 | `glob_match` | Filter strings by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
-| `group_by` | Group items by JSONPath | `{{ ingresses \| group_by("$.metadata.namespace") }}` |
+| `group_by` | Group items by dotted key path | `{{ ingresses \| group_by("metadata.namespace") }}` |
 | `map_extract` | Pluck one field (dotted key path) from each item into a flat slice | `{{ routes \| map_extract("routeId") }}` |
-| `indent` | Indent each line by N spaces | `{{ render("snippet") \| indent(4) }}` |
+| `indent` | Indent lines by N spaces (first and blank lines excluded) | `{{ render "snippet" \| indent(4) }}` |
 | `sanitize_regex` | Escape regex special characters | `{{ path \| sanitize_regex() }}` |
 | `sort_by` | Sort by JSONPath expressions | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
 | `debug` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
@@ -687,7 +687,7 @@ All templates have access to the following top-level variables:
 | `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config — entries are wrappers exposing `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)` |
 | `controller` | map of stores | Controller-managed stores; currently only `controller.haproxy_pods` for the discovered HAProxy pod set |
 | `pathResolver` | object | Resolves filenames to HAProxy paths — use `GetPath(name, type)` |
-| `capabilities` | map of bools | HAProxy feature flags derived from the local HAProxy version (e.g. `capabilities.SupportsCrtList`). Use for `{% if capabilities.SupportsCrtList %}…{% end %}` branches. |
+| `capabilities` | map (bool values) | HAProxy feature flags derived from the local HAProxy version, snake_case keys (e.g. `capabilities.supports_crt_list`). Use for `{% if capabilities.supports_crt_list %}…{% end %}` branches — a mistyped key is silently falsy, not an error. |
 | `currentConfig` | parsed config (or nil) | The previously-deployed HAProxy configuration as a `*parser.StructuredConfig`. **Nil on first deployment** — guard with `{% if !isNil(currentConfig) %}`. Used for slot-preserving updates. |
 | `dataplane` | `config.Dataplane` block | The CRD's `spec.dataplane` block — port, timeouts, paths |
 | `shared` | `*SharedContext` | Thread-safe compute-once cache for expensive computations (`shared.ComputeIfAbsent(key, factory)` + `shared.Get(key)`; no `Set` — prevents racy check-then-act patterns) |
@@ -773,7 +773,7 @@ Without a schema (e.g. `haptic-controller validate` without `--schema-dir`), the
 
 The type-switch case-clause form is the canonical pattern for chart code that crosses a polymorphic `any` boundary — the chart's `gateway` library uses it inside `60-frontend.yaml` to dispatch on HTTPRoute / GRPCRoute / TLSRoute. `shard_slice` is type-preserving: when its input is a typed slice, the result is the same typed slice (not `[]any`), so the downstream loop variable stays statically typed.
 
-**Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation. The rule lives in `pkg/k8s/typegen/converter.go::goFieldName` and matters because chart authors are used to upstream Go-style names (`APIVersion`, `IPBlock`) — those don't apply here. (Where the JSON tag already has an uppercase acronym, like `loadBalancerIP`, the typed field keeps it — `LoadBalancerIP` — which happens to match upstream; only rune 0 is ever changed.)
+**Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation. The rule lives in `pkg/k8s/typegen/converter.go::GoFieldName` and matters because chart authors are used to upstream Go-style names (`APIVersion`, `IPBlock`) — those don't apply here. (Where the JSON tag already has an uppercase acronym, like `loadBalancerIP`, the typed field keeps it — `LoadBalancerIP` — which happens to match upstream; only rune 0 is ever changed.)
 
 | JSON tag (source YAML)   | Typed field          |
 |--------------------------|----------------------|
@@ -800,7 +800,7 @@ The no-acronym-dictionary choice is deliberate: there is no translation table to
 
 This repo's `tests/schemas/` bundles schemas for both the Gateway API CRDs / haptic CRDs *and* the K8s built-ins the chart watches (Namespace, Service, Secret, EndpointSlice, Ingress). All built-ins are CRD-wrapped so the offline GVK resolver picks up the (apiVersion, plural) mapping — `haptic-controller validate --schema-dir tests/schemas` therefore unlocks typed access for every chart-watched resource, not just the CRDs. The chart-test script auto-wires this directory; copy it into your own project's schema-dir if you reuse the bundled libraries. To refresh from a running cluster, run `scripts/fetch-k8s-openapi-schemas.sh` (queries `kubectl get --raw '/openapi/v3/...'`, inlines `$ref`s, emits CRD-wrapped YAML).
 
-**Worked example.** `charts/haptic/libraries/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example — emits one HAProxy comment per Gateway using `gw.Metadata.Namespace` / `gw.Metadata.Name`. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end (engine declarations + runtime bindings + actual render output) and acts as a regression canary for typed access generally.
+**Worked example.** `charts/haptic/charts/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example — emits one HAProxy comment per Gateway using `gw.Metadata.Namespace` / `gw.Metadata.Name`. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end (engine declarations + runtime bindings + actual render output) and acts as a regression canary for typed access generally.
 
 See also: [ADR-0010 — Typed Watched Resources](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0010-typed-watched-resources.md) for the design rationale and the alternatives considered.
 

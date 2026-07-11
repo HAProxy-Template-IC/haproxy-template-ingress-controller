@@ -738,7 +738,7 @@ Without a schema, the same calls fall back to `[]any` / `map[string]any` as befo
 
 The rule is canonicalised in `pkg/k8s/typegen/converter.go::goFieldName`. Templates write `gw.ApiVersion`, not `gw.APIVersion`. The reason for no acronym dictionary is in [ADR-0010](../docs/adr/0010-typed-watched-resources.md).
 
-**Worked example.** `charts/haptic/libraries/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end and is the regression canary for typed access generally — if it goes red, the offline validate path has drifted from the production renderer. For the polymorphic-dispatch pattern, see `libraries/gateway/60-frontend.yaml`'s route-emission switch.
+**Worked example.** `charts/haptic/charts/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end and is the regression canary for typed access generally — if it goes red, the offline validate path has drifted from the production renderer. For the polymorphic-dispatch pattern, see `charts/gateway/60-frontend.yaml`'s route-emission switch.
 
 **Schema source.**
 
