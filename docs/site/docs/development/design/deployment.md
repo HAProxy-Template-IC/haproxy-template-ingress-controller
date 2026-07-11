@@ -57,11 +57,6 @@ graph TB
     HAP1 --> PODS
     HAP2 --> PODS
 
-    style CTRL1 fill:#4CAF50
-    style CTRL2 fill:#A5D6A7
-    style HAP1 fill:#FF9800
-    style HAP2 fill:#FF9800
-    style HTPLCFG fill:#2196F3
 ```
 
 **Deployment Components:**
@@ -97,7 +92,7 @@ graph TB
 graph TB
     subgraph "Controller Pod"
         CTRL_MAIN[Controller Process<br/>:8080 healthz + /debug<br/>:9090 metrics<br/>:9443 webhook]
-        CTRL_TMP[/tmp emptyDir<br/>haproxy -c validation]
+        CTRL_TMP["/tmp emptyDir<br/>haproxy -c validation"]
     end
 
     subgraph "HAProxy Pod (Deployment member)"
@@ -114,9 +109,6 @@ graph TB
     HAP_VOL --> HAP_PROC
     HAP_VOL --> DP_PROC
 
-    style CTRL_MAIN fill:#4CAF50
-    style HAP_PROC fill:#FF9800
-    style DP_PROC fill:#FFB74D
 ```
 
 **Resource Requirements** (chart defaults; see [Performance Guide](../../operations/performance.md) for sizing by ingress count):
@@ -191,11 +183,6 @@ graph LR
     DP1 -.API.-> HAP1
     DP2 -.API.-> HAP2
 
-    style CTRL fill:#4CAF50
-    style HAP1 fill:#FF9800
-    style HAP2 fill:#FF9800
-    style HAP_LB fill:#2196F3
-    style CTRL_SVC_NET fill:#4CAF50
 ```
 
 **Network Flow:**

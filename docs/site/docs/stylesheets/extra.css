@@ -20,3 +20,11 @@
 .md-header__button.md-logo svg {
   height: 1.6rem;
 }
+
+/* Never shred identifiers: Material's `code { word-break: break-word }` lets a
+   value key wrap mid-token in narrow table columns (`haproxyVersio\nn`). Keep
+   inline-code tokens whole inside tables — wide tables scroll horizontally in
+   Material's scrollwrap instead. */
+.md-typeset table:not([class]) code {
+  word-break: normal;
+}
