@@ -152,16 +152,26 @@ for f in $VERSION_DOC_FILES; do
         -e "s|\\(haptic:\\)$PREV_ESC-haproxy[0-9.]*|\\1$VERSION-haproxy$DEFAULT_HAPROXY|g" \
         "$f"
 done
-# The chart README ships inside the released chart (Artifact Hub renders it),
-# so its hosted-docs links must point at the version being released, not the
-# moving dev docs. Two patterns keep this idempotent across releases: the
-# first release rewrites the initial /docs/dev/ links; every later release
+# These files ship inside the released chart (Artifact Hub renders README and
+# values.yaml; NOTES.txt prints after install; Chart.yaml carries the Artifact
+# Hub Documentation link), so their hosted-docs links must point at the version
+# being released, not the moving dev docs — and repo-blob links (e.g. the ADR
+# rationale pointer in values.yaml) must pin to the release tag, not the moving
+# main branch. Two patterns per link kind keep this idempotent across releases:
+# the first release rewrites the initial dev/main links; every later release
 # rewrites the previous version's links (same PREV->CURRENT keying as the
-# version-pin rewrites above).
+# version-pin rewrites above). The v$VERSION tag doesn't exist yet when this
+# runs (CI creates it after the release MR merges), but the chart is only
+# published by that tag's pipeline, so shipped links always resolve.
 sed -i \
     -e "s|haproxy-haptic.org/docs/dev/|haproxy-haptic.org/docs/$VERSION/|g" \
     -e "s|haproxy-haptic.org/docs/$PREV_ESC/|haproxy-haptic.org/docs/$VERSION/|g" \
-    charts/haptic/README.md
+    -e "s|gitlab.com/haproxy-haptic/haptic/-/blob/main/|gitlab.com/haproxy-haptic/haptic/-/blob/v$VERSION/|g" \
+    -e "s|gitlab.com/haproxy-haptic/haptic/-/blob/v$PREV_ESC/|gitlab.com/haproxy-haptic/haptic/-/blob/v$VERSION/|g" \
+    charts/haptic/README.md \
+    charts/haptic/values.yaml \
+    charts/haptic/Chart.yaml \
+    charts/haptic/templates/NOTES.txt
 # Landing page fallback (replaced client-side by the published-versions JS)
 sed -i -E "s|(<span id=\"helm-version\" class=\"t-num\">)[^<]*|\1$VERSION|" docs/landing/overrides/home.html
 

@@ -84,8 +84,8 @@ controller:
     metrics: 9090 # Prometheus metrics endpoint
     webhook: 9443 # Admission webhook HTTPS endpoint
   # Template libraries. Merge order is fixed in templates/_libraries.tpl
-  # (haptic.mergeLibraries) and documented in docs/template-libraries.md.
-  # Per-library reference docs live under docs/libraries/.
+  # (haptic.mergeLibraries). Merge-order docs and per-library references:
+  # https://haproxy-haptic.org/docs/dev/template-libraries/
   templateLibraries:
     # Resource-agnostic core. Defines the haproxyConfig template and the
     # render_glob extension points the other libraries plug into.
@@ -118,7 +118,8 @@ controller:
       # it just skips the experimental-field self-tests.
       experimentalChannel: false
     # Shared Ingress-scoped macros for the vendor annotation libraries
-    # below (level 2.5). See docs/adr/0003-annotation-compat-scaffold-level-2-5.md.
+    # below (level 2.5). Rationale:
+    # https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0003-annotation-compat-scaffold-level-2-5.md
     ingressAnnotationsCompat:
       enabled: true
     # haproxy.org/* annotation compatibility.
