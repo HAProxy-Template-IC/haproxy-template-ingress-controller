@@ -13,7 +13,7 @@ The controller operates through event-driven coordination, with one synchronous 
 5. **Deployer** (`pkg/controller/deployer.Component`, **leader-only**) subscribes to `DeploymentScheduledEvent`, executes parallel `dataplane.Sync` calls against every HAProxy endpoint, and publishes `DeploymentCompletedEvent` plus per-endpoint `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent`
 6. **All-replica observers** (Discovery, StatusApplier, ProposalValidator, HTTPStore, Metrics, Commentator) subscribe to relevant events for their specific purposes and either react locally or — if leader-only writes are involved — let the leader-only sister component pick up the work
 
-There is no event-adapter for rendering or HAProxy-config validation in production: the leader's synchronous `pkg/controller/pipeline.Pipeline` runs `RenderService` + three-phase `ValidationService` in one shot, with no event hop between them.
+There is no event-adapter for rendering or HAProxy-config validation in production: the leader's synchronous `pkg/controller/pipeline.Pipeline` runs `RenderService` + the fast `ValidationService` (syntax + schema) in one shot, with no event hop between them.
 
 **Key Design Principles:**
 
@@ -61,10 +61,6 @@ graph TB
     HAP1 -->|Stats/Health| DP1
     HAP2 -->|Stats/Health| DP2
 
-    style CTRL fill:#4CAF50
-    style VAL fill:#2196F3
-    style HAP1 fill:#FF9800
-    style HAP2 fill:#FF9800
 ```
 
 **Component Descriptions:**
@@ -139,13 +135,6 @@ graph TB
     K8S -->|Watch| RW
     DEPL -->|Deploy| HAP
 
-    style EB fill:#FFC107,stroke:#F57C00,stroke-width:4px
-    style watchers fill:#E3F2FD
-    style reconciliation fill:#F3E5F5
-    style pipeline fill:#C8E6C9
-    style deploy fill:#C8E6C9
-    style support fill:#FFF9C4
-    style ext fill:#F5F5F5
 ```
 
 The dashed arrows between Coordinator and the synchronous pipeline are direct function calls — there is no event hop for rendering or HAProxy validation. This synchronous render-validate design is recorded as an Architecture Decision Record (ADR); see [Design Decisions](design-decisions.md#event-driven-architecture) for the rationale. The Coordinator publishes `TemplateRenderedEvent` and `ValidationCompletedEvent` itself once the synchronous call returns.
@@ -189,11 +178,6 @@ graph TD
     BIN -->|Valid Semantics| DEPLOY
     BIN -->|Invalid| ERROR
 
-    style PARSE fill:#2196F3
-    style SCHEMA fill:#9C27B0
-    style BIN fill:#4CAF50
-    style DEPLOY fill:#FF9800
-    style ERROR fill:#F44336
 ```
 
 **Validation Strategy:**

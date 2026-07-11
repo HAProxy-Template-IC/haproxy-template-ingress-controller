@@ -64,7 +64,7 @@ The controller runs iterations that respond to configuration changes:
 3. **Resource Watchers**: Create bulk watchers for every `spec.watchedResources` entry and wait for initial sync.
 4. **Config/Secret SingleWatchers**: Create `pkg/k8s/watcher.SingleWatcher`s for the CRD and credentials Secret. These use immediate callbacks (no debouncing) so configuration updates reinitialize with no artificial delay.
 5. **EventBus Start**: Call `EventBus.Start()` to replay buffered events and begin normal operation.
-6. **Stage 5 — Reconciliation & Observability**: Start reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Rendering and three-phase HAProxy validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack (ADR-0001) — neither has its own goroutine or event subscription. The config validators (Basic, Template, JSONPath) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
+6. **Stage 5 — Reconciliation & Observability**: Start reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Rendering and fast (syntax + schema) HAProxy validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack (ADR-0001) — neither has its own goroutine or event subscription. The config validators (Basic, Template, JSONPath) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
 7. **Event Loop**: Wait for configuration changes or context cancellation.
 8. **Reinitialization**: When the CRD or Secret changes, cancel the iteration context to stop all components, then restart with the new settings.
 
@@ -90,7 +90,7 @@ sequenceDiagram
     ResourceWatcher->>EventBus: Publish(ResourceIndexUpdatedEvent)
 
     EventBus->>Reconciler: ResourceIndexUpdatedEvent
-    Note over Reconciler: Fires immediately on every event;<br/>no reconciler-level debounce or refractory window
+    Note over Reconciler: Fires immediately on every event —<br/>no reconciler-level debounce or refractory window
 
     Reconciler->>EventBus: Publish(ReconciliationTriggeredEvent)
 
@@ -98,7 +98,7 @@ sequenceDiagram
     Coordinator->>EventBus: Publish(ReconciliationStartedEvent)
 
     Coordinator->>Pipeline: Execute(ctx, storeProvider) — synchronous call
-    Note over Pipeline: 1. RenderService.Render (templates → HAProxy config)<br/>2. ComputeContentChecksum<br/>3. fast ValidationService.Validate (syntax + schema; haproxy -c ran at admission)
+    Note over Pipeline: 1. RenderService.Render (templates → HAProxy config)<br/>2. ComputeContentChecksum<br/>3. fast ValidationService.Validate (syntax + schema — haproxy -c ran at admission)
     Pipeline-->>Coordinator: *PipelineResult or *PipelineError
 
     alt Pipeline succeeded
@@ -166,7 +166,7 @@ sequenceDiagram
     Note over Validate: Per-instance cache (cacheMu, RWMutex)<br/>checksum hit → return cached parsed config
 
     Validate->>Validate: os.MkdirTemp("", "haproxy-validation-*")
-    Note over Validate: Per-call sandbox — every Validate gets<br/>its own /tmp/<unique>; file I/O is per-call<br/>but haproxy -c binary is serialised by<br/>a package-global haproxyCheckMutex
+    Note over Validate: Per-call sandbox — every Validate gets<br/>its own unique /tmp dir. File I/O is per-call,<br/>but the haproxy -c binary is serialised by<br/>a package-global haproxyCheckMutex
 
     Validate->>Parser: validateSyntax(config)
     alt Syntax error
@@ -222,7 +222,7 @@ sequenceDiagram
     Client->>Client: Parse + comparator.Compare
 
     alt Only runtime changes
-        Note over Client: Server weight/address/port/maintenance fields,<br/>and/or map &amp; cert content updates only
+        Note over Client: Server weight/address/port/maintenance fields,<br/>and/or map/cert content updates only
         Client->>DP: set map / set ssl cert (existing+referenced maps/certs)
         Client->>DP: POST /v3/services/haproxy/configuration/raw?skip_reload=true (+ X-Runtime-Actions header)
         DP->>HAProxy: Runtime API commands via master socket

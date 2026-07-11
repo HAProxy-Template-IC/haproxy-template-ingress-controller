@@ -296,7 +296,7 @@ When you created the Ingress resource, the controller:
 1. **Detected the change** via the Kubernetes watch API and updated its in-memory store
 2. **Triggered a reconciliation** through a leading-edge debouncer (so a single change fires immediately)
 3. **Rendered templates** using the default HAProxyTemplateConfig with your Ingress data
-4. **Validated the rendered config** in three phases: client-native syntax parse → OpenAPI schema check → `haproxy -c` semantic validation. All three must pass before the change reaches HAProxy.
+4. **Validated the rendered config**: client-native syntax parse → OpenAPI schema check. (The heavier `haproxy -c` semantic check already ran in the admission webhook when the Ingress was accepted, and the Dataplane API re-validates on push.) Both must pass before the change reaches HAProxy.
 5. **Compared the validated config** with each pod's live config to classify the change (runtime-eligible server-field updates vs structural changes)
 6. **Deployed the change** to all HAProxy pods in parallel via the Dataplane API, pushing the full rendered config in a single request per pod
 7. **Used the runtime API** where possible (server address/weight changes, map updates, etc.) to avoid HAProxy process reloads

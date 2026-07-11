@@ -55,10 +55,6 @@ graph TB
 
     EXT[External Clients<br/>Tests, Debug Tools] -->|HTTP| HTTP
 
-    style HTTP fill:#4CAF50
-    style SC fill:#2196F3
-    style EVB fill:#FF9800
-    style REG fill:#9C27B0
 ```
 
 ## Key Components
