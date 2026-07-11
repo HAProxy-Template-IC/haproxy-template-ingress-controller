@@ -129,7 +129,7 @@ kubectl describe haproxycfg -n haptic
 
 ### What Makes HAPTIC Different
 
-The killer feature is templates. Suppose your platform users want a custom annotation that injects an `X-Request-ID` header for tracing. Add a snippet to your Helm values — no controller fork, no waiting for a release:
+Templates are the difference. Suppose your platform users want a custom annotation that injects an `X-Request-ID` header for tracing. Add a snippet to your Helm values — no controller fork, no waiting for a release:
 
 ```yaml
 controller:
