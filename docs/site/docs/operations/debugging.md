@@ -11,7 +11,7 @@ kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 curl http://localhost:8080/debug/vars
 ```
 
-`/healthz` lives on the same listener, so setting `controller.debugPort: 0` disables both `/debug/*` and `/healthz` and breaks the liveness/readiness probes — restrict access with a NetworkPolicy instead (see [Security](./security.md#network-exposure)). To move both endpoints to a different port, set `controller.debugPort: <port>`.
+`/healthz` lives on the same listener, so setting `controller.debugPort: 0` disables both `/debug/*` and `/healthz` and breaks the liveness/readiness probes — restrict access with a NetworkPolicy instead (see [Security](./security.md#network-exposure)). To move both endpoints to a different port, set `controller.debugPort` **and** `controller.ports.healthz` to the same value — the probes target the `healthz` container port, so moving only `debugPort` breaks them.
 
 ## Debug Variables
 
@@ -20,14 +20,14 @@ curl http://localhost:8080/debug/vars
 | Path | What you get |
 |------|--------------|
 | `/debug/vars` | Listing of available names |
-| `/debug/vars/config` | Parsed `HAProxyTemplateConfig`, its version, and the load timestamp |
+| `/debug/vars/config` | Parsed `HAProxyTemplateConfig` and its version (`updated` is the request time, not the load time) |
 | `/debug/vars/credentials` | Metadata only (`version`, `has_dataplane_creds`) — **never** the passwords |
 | `/debug/vars/rendered` | Last rendered `haproxy.cfg`, its size, and timestamp |
 | `/debug/vars/auxfiles` | Last rendered SSL certs, map files, general files + a summary count |
 | `/debug/vars/resources` | Per-type counts for every `watchedResources` entry |
-| `/debug/vars/pipeline` | Per-phase status keyed `last_trigger`, `rendering`, `validation`, `deployment` (each carries its own status / timestamp / duration / error) — useful for "is reconciliation stuck?" checks. Config-parse failures don't show up here; they surface on `/debug/vars/errors` as `config_parse_error`. |
+| `/debug/vars/pipeline` | Per-phase status keyed `last_trigger`, `rendering`, `validation`, `deployment` (each carries its own status / timestamp / duration / error) — useful for "is reconciliation stuck?" checks. Config-parse failures don't show up here or on `/debug/vars/errors` — check the controller logs and `kubectl get htplcfg … -o yaml` status. |
 | `/debug/vars/validated` | Last successful render+validate output (`config`, `timestamp`, `config_bytes`, `validation_duration_ms`) |
-| `/debug/vars/errors` | Last error per phase, keyed by `config_parse_error` / `template_render_error` / `haproxy_validation_error` / `deployment_errors`, plus `last_error_timestamp` |
+| `/debug/vars/errors` | Last error per phase, keyed by `template_render_error` / `haproxy_validation_error` / `deployment_errors`, plus `last_error_timestamp` |
 | `/debug/vars/events` | Ring buffer of the most recent controller events |
 | `/debug/vars/state` | Aggregate of the above — large; prefer the specific paths for scripting |
 | `/debug/vars/uptime` | Process uptime since last reinitialisation |
@@ -62,7 +62,7 @@ curl 'http://localhost:8080/debug/events?limit=500'
 curl 'http://localhost:8080/debug/events?correlation_id=<id>'
 ```
 
-Pull a `correlation_id` out of `/debug/vars/events` (each entry exposes one) or out of structured logs, then use it here to fetch every related event in order.
+Pull a `correlation_id` out of `/debug/vars/events` (reconciliation-, render-, validation-, and deployment-related entries expose one; lifecycle and resource-index events don't) or out of structured logs, then use it here to fetch every related event in order.
 
 ## Go Profiling
 
@@ -100,11 +100,12 @@ curl -s 'http://localhost:8080/debug/vars/config?field={.version}'
 
 ```bash
 curl -s 'http://localhost:8080/debug/vars/rendered?field={.config}' | jq -r > current.cfg
-haproxy -c -f current.cfg
 diff expected.cfg current.cfg
 ```
 
-Or read the last *published* config straight from the `HAProxyCfg` CRD — this works even when the debug port is disabled, and the controller binary decompresses it for you (a raw `kubectl get haproxycfg -o yaml` only shows the zstd+base64 blob):
+Note that `haproxy -c` on the fetched file fails on a workstation: the rendered config sets `default-path origin /etc/haproxy` and references auxiliary files (`maps/*`, `general/*`) that only exist in the HAProxy pod — run the check inside the pod instead.
+
+Or read the last *published* config straight from the `HAProxyCfg` CRD — this works even when the debug port is disabled, and the controller binary decompresses it for you (a raw `kubectl get haproxycfg -o yaml` shows a zstd+base64 blob for configs above the 1 MiB compression threshold; smaller ones are stored as plaintext):
 
 ```bash
 kubectl exec -n haptic deployment/haptic-controller -- haptic-controller config view > current.cfg
@@ -118,7 +119,7 @@ curl -s http://localhost:8080/debug/vars/errors | jq '.'
 curl -s 'http://localhost:8080/debug/vars/errors?field={.haproxy_validation_error}'
 ```
 
-The keys (`config_parse_error`, `template_render_error`, `haproxy_validation_error`, `deployment_errors`) tell you which phase rejected the change; pair with `/debug/vars/pipeline` to see whether the controller has retried since.
+The keys (`template_render_error`, `haproxy_validation_error`, `deployment_errors`) tell you which phase rejected the change; pair with `/debug/vars/pipeline` to see whether the controller has retried since.
 
 **Is reconciliation happening?**
 
@@ -127,7 +128,7 @@ curl -s http://localhost:8080/debug/vars/events \
   | jq '[.[] | select(.type | test("reconciliation|deployment"))] | .[-20:]'
 ```
 
-If the stream is quiet for minutes even though Ingresses are changing, check `haptic_reconciliation_total` in Prometheus and the `pkg/controller/reconciler` debounce logs.
+If the stream is quiet for minutes even though Ingresses are changing, check `haptic_reconciliation_total` in Prometheus and the per-watcher debounce logs (`pkg/k8s/watcher` — the only debounce layer; the reconciler itself fires immediately).
 
 **Where is memory going?**
 

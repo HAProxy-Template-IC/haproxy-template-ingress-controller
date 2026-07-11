@@ -1356,7 +1356,7 @@ networkPolicy:
             protocol: TCP
           - port: 6443
             protocol: TCP
-    # HAProxy Dataplane API pods (in any namespace)
+    # HAProxy Dataplane API pods (release namespace unless namespaceSelector is set)
     haproxyPods:
       # Allow access to all pods matching the pod_selector
       enabled: true
@@ -1365,13 +1365,15 @@ networkPolicy:
         matchLabels:
           app.kubernetes.io/component: loadbalancer
           # app.kubernetes.io/name and app.kubernetes.io/instance are set dynamically by template
-      # Namespace selector - empty {} means all namespaces
+      # Namespace selector - empty {} emits no selector, restricting the rule to the
+      # release namespace; set a selector to reach HAProxy pods in other namespaces
       namespaceSelector: {}
       # Ports are defined in haproxy.ports (referenced in template)
     # Additional custom egress rules
     additionalRules:
-      # Allow HAProxy (load balancer) to connect to any backend service in the cluster
-      # This is required for HAProxy to proxy traffic and perform health checks
+      # Allow the controller to reach any in-cluster pod so template helpers like
+      # http.Fetch() work against cluster services out of the box.
+      # Set to [] to lock controller egress down to DNS, the Kubernetes API, and HAProxy pods.
       - to:
           - namespaceSelector: {} # All namespaces
           - podSelector: {} # All pods
