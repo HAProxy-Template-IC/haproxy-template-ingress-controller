@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{#- GitLab Pages serves the site-root 404.html for every missing path at any
+    depth (including /docs/... and /playground/...), so all links here must be
+    absolute. The docs link points at the moving dev docs; the shared
+    resolveDocsLinks pattern doesn't apply here because these are absolute
+    URLs, not ./docs/latest/ placeholders. -#}
+
+{% block tabs %}{% endblock %}
+
+{% block content %}
+<div style="text-align: center; padding: 4rem 1rem 6rem;">
+  <h1 style="font-size: 3rem; margin-bottom: 0.5rem;">404</h1>
+  <p style="font-size: 1.1rem; margin-bottom: 2rem;">
+    This page doesn't exist — it may have moved with a docs update.
+  </p>
+  <p>
+    <a class="md-button md-button--primary" href="/docs/dev/">Documentation</a>
+    <a class="md-button" href="/docs/dev/?q=">Search the docs</a>
+    <a class="md-button" href="/playground/dev/">Playground</a>
+    <a class="md-button" href="/">Home</a>
+  </p>
+</div>
+{% endblock %}
