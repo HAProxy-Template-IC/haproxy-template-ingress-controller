@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common issues and solutions for HAPTIC.
+Find your symptom in the quick reference below, then follow its diagnosis and fix.
 
 !!! note "Namespace"
     All `kubectl` commands below assume the default installation namespace `haptic`. Replace `-n haptic` with your namespace if you installed elsewhere.
@@ -76,7 +76,7 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 
 **Solution**:
 
-1. Check template syntax in HAProxyTemplateConfig
+1. Read the render error in the controller logs — it names the failing template and line — then open that template in your HAProxyTemplateConfig
 2. Inspect the last rendered output via the debug server — port-forward first (see [Debugging Guide](./operations/debugging.md)):
 
     ```bash
@@ -343,7 +343,7 @@ controller:
 ```
 
 !!! note
-    TRACE level produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Use only when debugging specific issues.
+    TRACE level produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Enable it only for short, targeted sessions and set the level back to INFO afterwards — TRACE volume drowns everything else.
 
 ### Access the Debug Server
 

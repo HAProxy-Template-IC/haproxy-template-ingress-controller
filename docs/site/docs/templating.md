@@ -171,7 +171,7 @@ spec:
 
 ### Map Files
 
-Map files generate HAProxy lookup tables. They are written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod. This template turns each Ingress host into a backend-name entry — switch to the **maps** tab to read the generated `host.map`.
+Each `maps` entry renders one HAProxy lookup table. They are written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod. This template turns each Ingress host into a backend-name entry — switch to the **maps** tab to read the generated `host.map`.
 
 <div class="pg-embed" markdown data-tab="maps" data-controls="tabs,resources" data-title="A host → backend map" data-height="440">
 
@@ -473,7 +473,7 @@ The `template` post-processor receives the fully rendered output as the `input` 
 
 ## Template Syntax
 
-Templates use Scriggo's template syntax. For complete syntax reference, see the [Scriggo documentation](https://scriggo.com/templates).
+For complete syntax reference, see the [Scriggo documentation](https://scriggo.com/templates).
 
 ### Control Structures
 

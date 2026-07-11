@@ -39,7 +39,6 @@
     - [Scriggo](https://scriggo.com/)
         - Go-native template engine with dynamic include support
         - Actively maintained with regular releases
-        - Recommended for Go template syntax with advanced features
 
 5. **Observability**
     - [Prometheus client_golang](https://github.com/prometheus/client_golang)

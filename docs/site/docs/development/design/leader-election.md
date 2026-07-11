@@ -14,10 +14,10 @@ The controller is a Kubernetes operator that pushes configuration to HAProxy via
 
 However, all replicas should:
 
-- Watch Kubernetes resources (to maintain hot cache for failover)
-- Render templates (to have configurations ready)
-- Validate configurations (to share the workload)
-- Handle webhook requests (for high availability)
+- Watch Kubernetes resources (to maintain a hot cache for failover)
+- Handle admission webhook requests (so the webhook stays available through a failover)
+
+Rendering and config validation run only on the leader: the synchronous render-validate pipeline lives inside the leader-only Coordinator (see the component list below), and a new leader's first reconciliation produces a fresh render.
 
 Only **deployment operations** (pushing configurations to HAProxy Dataplane API) need exclusivity.
 
@@ -28,7 +28,7 @@ Use `k8s.io/client-go/tools/leaderelection` with Lease-based resource locks, the
 ### Why Lease-based Locks?
 
 - **Lower overhead**: Leases create less watch traffic than ConfigMaps or Endpoints
-- **Purpose-built**: Designed specifically for leader election
+- **Purpose-built**: the `coordination.k8s.io` Lease API exists exactly for coordination locks — no ConfigMap or Endpoints semantics repurposed as a lock
 - **Reliable**: Used by core Kubernetes components (kube-controller-manager, kube-scheduler)
 - **Clock skew tolerant**: Configurable tolerance for node clock differences
 
@@ -452,7 +452,7 @@ func TestLeaderElection_DisabledMode(t *testing.T)
 - Use kind cluster with multi-node setup
 - Deploy controller with 3 replicas
 - Create test Ingress resources
-- Verify deployment behavior
+- Verify only the leader deploys: exactly one "deployment completed" log line per config change
 - Simulate pod failures
 
 ### Manual Testing

@@ -21,7 +21,7 @@ Structured logfmt logs on stdout (via `slog.NewTextHandler`) round out the opera
 - **Templates** — `haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`, `k8sResources` (declarative Kubernetes resources rendered and applied via Server-Side Apply).
 - **Validation** — `validationTests`, the per-resource `enableValidationWebhook` flag, and `validators` (pluggable external validator sidecars).
 
-The full field reference (types, defaults, validation rules) lives in [CRD Reference](../../crd-reference.md). This page focuses on how the pieces fit together; the reference page tells you what every field does.
+The full field reference (types, defaults, validation rules) lives in [CRD Reference](../../crd-reference.md); this page shows how the pieces fit together.
 
 ## Minimal Example
 

@@ -46,7 +46,7 @@ For kind clusters, ensure:
 
 - Calico or Cilium CNI is installed
 - DNS access is allowed
-- Kubernetes API CIDR is correct
+- The `networkPolicy.egress.kubernetesApi` CIDRs cover your API server (see [Networking](./networking.md))
 
 Debug NetworkPolicy:
 

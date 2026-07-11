@@ -1,6 +1,6 @@
 # Gateway API Library
 
-The Gateway API library provides support for Kubernetes Gateway API resources, enabling modern, expressive traffic routing through HAProxy.
+The Gateway API library compiles HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute resources into HAProxy routing configuration.
 
 ## Overview
 
@@ -725,7 +725,7 @@ Split the demo route's traffic and inspect the generated weight map:
 
 **Backend Deduplication:**
 
-The template automatically deduplicates backends when multiple routes reference the same service+port combination, preventing duplicate HAProxy backend definitions.
+When multiple routes reference the same service and port, the template emits a single shared HAProxy backend.
 
 **Route Key Generation:**
 
@@ -952,7 +952,7 @@ Status patches use outcome-keyed variants:
 
 ## Testing Coverage
 
-The gateway library includes comprehensive validation tests:
+The gateway library's validation tests pin the following behaviour:
 
 **Well-tested:**
 
@@ -982,7 +982,7 @@ The gateway library includes comprehensive validation tests:
 
 Priority areas for future enhancement:
 
-1. **ExtensionRef support** - Implement custom filter extension mechanism as the Gateway API equivalent of Ingress annotations. This will enable custom functionality beyond standard filters.
+1. **ExtensionRef support** - Implement custom filter extension mechanism as the Gateway API equivalent of Ingress annotations.
 
 2. **Per-backend filters** - Extend `backendRefs[].filters[]` beyond the already-supported `RequestHeaderModifier` to the remaining filter types, for different filter behavior per backend within the same rule.
 

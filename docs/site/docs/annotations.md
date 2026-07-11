@@ -10,7 +10,7 @@ HAPTIC supports annotations on Ingress resources through three template librarie
 | [jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) (community ingress controller) | `haproxy-ingress.github.io/` | [haproxy-ingress library →](./libraries/haproxy-ingress.md) |
 | [kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) (nginx ingress controller) | `nginx.ingress.kubernetes.io/` | [nginx-ingress library →](./libraries/nginx-ingress.md) |
 
-The two HAProxy libraries are enabled by default and work independently — you can use annotations from either prefix on the same Ingress. The nginx-ingress library is disabled by default and must be explicitly enabled. If you are migrating from a specific controller, its annotation prefix is the one you already know. If you are starting fresh, enabling the HAProxy libraries gives you the widest annotation coverage.
+The two HAProxy libraries are enabled by default and work independently — you can use annotations from either prefix on the same Ingress. The nginx-ingress library is disabled by default and must be explicitly enabled. If you're migrating from one of these controllers, enable the matching library and keep using its annotation prefix. If you are starting fresh, enabling the HAProxy libraries gives you the widest annotation coverage.
 
 See [Template Libraries](./template-libraries.md) for how to enable or disable individual libraries.
 
@@ -22,7 +22,7 @@ See the nginx-ingress compatibility verdict render live:
 
 ## Supported Features
 
-The libraries cover the following HAProxy feature areas through their respective annotation prefixes:
+The libraries cover the following HAProxy feature areas:
 
 | Feature | `haproxy.org/` | `haproxy-ingress.github.io/` | `nginx.ingress.kubernetes.io/` |
 |---------|----------------|-------------------------------|--------------------------------|

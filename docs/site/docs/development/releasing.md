@@ -93,8 +93,6 @@ After the MR is merged, CI automatically:
 3. Creates and pushes the `v<version>` tag
 4. Triggers the release pipeline
 
-No manual tagging is required.
-
 ??? note "Manual Tagging (Fallback)"
     If automatic tagging fails, you can create the tag manually:
 

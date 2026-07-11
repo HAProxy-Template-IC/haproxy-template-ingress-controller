@@ -1,6 +1,6 @@
 # Ingress Library
 
-The Ingress library provides support for Kubernetes `networking.k8s.io/v1` Ingress resources, enabling traditional Ingress-based traffic routing through HAProxy.
+The Ingress library turns `networking.k8s.io/v1` Ingress resources into HAProxy routing configuration.
 
 ## Overview
 
@@ -250,7 +250,7 @@ The Event's `metadata.creationTimestamp` tells you when the controller first obs
 
 ### Field Selector
 
-Ingresses are filtered by `spec.ingressClassName=haptic`. Only matching Ingresses are watched and processed.
+The library watches and processes only Ingresses with `spec.ingressClassName: haptic`.
 
 ## Generated Map Files
 

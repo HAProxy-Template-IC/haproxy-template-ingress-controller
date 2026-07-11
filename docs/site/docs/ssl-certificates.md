@@ -128,9 +128,6 @@ controller:
     enabled: false
 ```
 
-!!! warning
-    This disables HTTPS support entirely. HAProxy serves only HTTP traffic.
-
 ### Certificate Rotation
 
 **With cert-manager**: Certificates are automatically renewed before expiration.

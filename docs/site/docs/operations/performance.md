@@ -1,10 +1,8 @@
 # Performance
 
-This guide covers performance tuning and optimization for HAPTIC.
-
 ## Overview
 
-Performance optimization involves three areas:
+Tune HAPTIC in three areas:
 
 - **Controller performance** - Template rendering, reconciliation cycles
 - **HAProxy performance** - Load balancer throughput and latency

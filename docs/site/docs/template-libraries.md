@@ -1,6 +1,6 @@
 # Template Libraries
 
-Template libraries are modular, composable configuration packages that extend HAProxy functionality. Each library provides specific features that can be enabled or disabled based on your requirements.
+Template libraries are modular, composable configuration packages that extend HAProxy functionality. You enable or disable each library independently in values.yaml.
 
 ## Overview
 
@@ -8,7 +8,6 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 
 - **Modularity**: Enable only the features you need
 - **Extensibility**: Add custom configuration via extension points
-- **Maintainability**: Each library focuses on a specific concern
 - **Customization**: Override or extend library behavior through values.yaml
 
 See the full library stack compose into one HAProxy config live:
@@ -87,7 +86,7 @@ Your custom configuration in `controller.config` always takes precedence.
 
 ## Extension Points
 
-Extension points are the core mechanism for library extensibility. The base library defines **hook points** where other libraries (or your custom configuration) can inject content.
+Extension points are **hook points** the base library defines, where other libraries — or your own configuration — inject content.
 
 ### How Extension Points Work
 

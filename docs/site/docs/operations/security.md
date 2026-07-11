@@ -1,6 +1,6 @@
 # Security
 
-HAPTIC exposes a focused set of security-relevant knobs. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator (ESO), etc.) is left to the upstream project's docs.
+This page covers only the security settings HAPTIC itself owns. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator (ESO), etc.) is left to the upstream project's docs.
 
 ## What the Controller Needs
 

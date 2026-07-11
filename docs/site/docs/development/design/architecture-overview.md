@@ -11,7 +11,7 @@ The controller operates through event-driven coordination, with one synchronous 
 3. **Coordinator** (`pkg/controller/reconciler.Coordinator`, **leader-only**) subscribes to `ReconciliationTriggeredEvent`, calls `Pipeline.Execute` synchronously — no event hop. The pipeline runs `RenderService.Render` + the fast `ValidationService.Validate` (client-native parser syntax + OpenAPI schema; the `haproxy -c` semantic phase is skipped on the leader path — it already ran at admission via the `haproxytemplateconfigs` webhook, and the Dataplane API re-validates on push) in one shot. The Coordinator then publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream observers, and finally `ReconciliationCompletedEvent` (or `ReconciliationFailedEvent`) for metrics/commentator.
 4. **DeploymentScheduler** (`pkg/controller/deployer.DeploymentScheduler`, **leader-only**) subscribes to those events plus `HAProxyPodsDiscoveredEvent`, enforces rate limiting (`minDeploymentInterval`), implements latest-wins coalescing, and publishes `DeploymentScheduledEvent`
 5. **Deployer** (`pkg/controller/deployer.Component`, **leader-only**) subscribes to `DeploymentScheduledEvent`, executes parallel `dataplane.Sync` calls against every HAProxy endpoint, and publishes `DeploymentCompletedEvent` plus per-endpoint `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent`
-6. **All-replica observers** (Discovery, StatusApplier, ProposalValidator, HTTPStore, Metrics, Commentator) subscribe to relevant events for their specific purposes and either react locally or — if leader-only writes are involved — let the leader-only sister component pick up the work
+6. **All-replica observers** (Discovery, StatusApplier, ProposalValidator, HTTPStore, Metrics, Commentator) react locally to the events they consume; where a write is leader-only, the leader-only sister component picks up the work
 
 There is no event-adapter for rendering or HAProxy-config validation in production: the leader's synchronous `pkg/controller/pipeline.Pipeline` runs `RenderService` + the fast `ValidationService` (syntax + schema) in one shot, with no event hop between them.
 
@@ -68,7 +68,7 @@ graph TB
 - **Controller**: Main controller process that watches Kubernetes resources, renders templates, and orchestrates configuration deployment
 - **Validation Module**: Integrated validation using haproxytech/client-native library for parsing and haproxy binary for configuration checks
 - **Dataplane API**: HAProxy's management interface for receiving configuration updates and performing runtime operations
-- **HAProxy**: Production load balancer instances that serve traffic
+- **HAProxy**: The load balancer instances the controller configures — the deployment targets for every rendered config
 
 ### Controller Internal Architecture
 
@@ -157,7 +157,7 @@ The dashed arrows between Coordinator and the synchronous pipeline are direct fu
 - **Pure Libraries** (pkg/templating, pkg/dataplane, pkg/k8s) contain testable business logic with no event dependencies
 - **Event Adapters** translate between EventBus pub/sub and pure library function calls
 - **Extensibility** - new features can subscribe to existing events without modifying existing code
-- **Independent Testing** - pure libraries can be unit tested, event adapters can be integration tested
+- **Independent testing** - unit-test pure libraries with no event infrastructure; exercise event adapters in integration tests
 
 ### Validation Flow
 
@@ -188,6 +188,6 @@ Three phases run in-process, eliminating the need for a separate validation side
 2. **Phase 1.5 — OpenAPI schema check.** The parsed structure is cross-checked against the version-specific DataPlane API OpenAPI spec — catches out-of-range values, pattern violations, and missing required fields before they reach HAProxy.
 3. **Phase 2 — Semantic validation.** `haproxy -c -f config` performs full semantic validation including resource availability. Each call creates a per-process temp directory mirroring the production layout (`maps/`, `ssl/`, `general/`), writes the auxiliary files there, and rewrites the rendered config's `default-path origin <baseDir>` line to point at the temp dir — so file references resolve exactly like at runtime. File I/O is fully isolated per call, but the actual `haproxy -c` invocation is still serialised by a global `haproxyCheckMutex` (`pkg/dataplane/validate_haproxy.go`) because concurrent binary invocations have been observed to interfere with each other.
 
-Results are cached by an SHA-256 over (config + auxiliary files) per instance — repeat validations during drift-prevention cycles short-circuit before touching disk. This provides the same guarantees as a full HAProxy instance.
+Results are cached by an SHA-256 over (config + auxiliary files) per instance — repeat validations during drift-prevention cycles short-circuit before touching disk. Because Phase 2 runs the real `haproxy` binary against a mirror of the production file layout, a passing check means a live HAProxy instance would accept the config.
 
 Two service instances are wired (`pkg/controller/reconciliation.go`): the **strict** one (all three phases) serves the admission webhook and HTTP-store promotion, so invalid input never reaches the leader; the leader's reconcile pipeline uses the **fast** instance (`SkipSemanticValidation: true`), which runs only Phases 1 and 1.5 — semantic validity was already enforced at admission, and the Dataplane API re-checks server-side on every push.

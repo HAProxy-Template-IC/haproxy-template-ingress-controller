@@ -117,7 +117,7 @@ The following sections use **whole-section comparison** via the models' `.Equal(
 
 ## Reload Behavior
 
-The controller minimizes HAProxy reloads by leveraging the Runtime API when possible. However, only specific operations can avoid reloads.
+The controller skips the HAProxy reload when every change in a push can be applied through the Runtime API. The sections below list exactly which changes qualify.
 
 ### Zero-Reload Operations (Runtime API)
 
@@ -265,7 +265,7 @@ Keepalived sections support fine-grained management of VRRP configuration:
 
 ### Comparison Strategies
 
-The implementation uses two approaches for optimal performance:
+The comparator uses two comparison strategies:
 
 1. **Fine-Grained Child Resource Management** (frequently-changing resources)
     - Frontends and backends expose per-child operations (binds, ACLs, rules, servers, health checks, …)

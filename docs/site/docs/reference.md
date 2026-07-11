@@ -1,8 +1,6 @@
 # Chart Values Reference
 
-## Overview
-
-Complete reference of all Helm values with types, defaults, and descriptions.
+Every Helm value the chart accepts, with its type and default.
 
 ## Deployment & Image
 

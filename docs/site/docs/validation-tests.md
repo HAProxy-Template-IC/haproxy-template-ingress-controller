@@ -2,7 +2,7 @@
 
 ## Overview
 
-Validation tests verify that your templates render correctly and produce valid HAProxy configurations. Tests are embedded in the HAProxyTemplateConfig CRD and run locally using the CLI.
+Validation tests render your templates against fixture resources and assert on the output — broken templates and invalid HAProxy config fail before they reach a cluster. Tests are embedded in the HAProxyTemplateConfig CRD and run locally using the CLI.
 
 Beyond `run`, the controller binary provides `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
 
@@ -490,9 +490,8 @@ test-hostname-map:
 
 1. **Test early**: Add tests as you develop templates
 2. **Keep tests fast**: Use minimal fixtures
-3. **Be descriptive**: Clear names and descriptions
+3. **Be descriptive**: Name each test after the behaviour it checks and write the description as the requirement being verified
 4. **Test edge cases**: Empty inputs, many inputs, invalid data
-5. **Document behavior**: Use descriptions to explain expected behavior
 
 ```yaml
 # Good

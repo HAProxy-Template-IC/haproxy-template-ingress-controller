@@ -2,9 +2,9 @@
 
 ## Overview
 
-HAPTIC is a Kubernetes operator that manages HAProxy load balancer configurations through template-driven configuration generation, continuously monitoring Kubernetes resources and translating them into validated HAProxy configurations.
+HAPTIC is a Kubernetes operator that watches Kubernetes resources and renders them through templates into validated HAProxy configurations.
 
-The design follows event-driven architecture principles with clean component separation. Components communicate through a central EventBus using pub/sub and request-response patterns, enabling observability, testability, and loose coupling.
+Components communicate through a central EventBus using pub/sub and request-response patterns, enabling observability, testability, and loose coupling.
 
 **Why this architecture:**
 
@@ -45,7 +45,7 @@ The controller provides these capabilities:
 Generate HAProxy configurations using Scriggo templates with access to any Kubernetes resources you choose to watch. Templates give you complete control over the HAProxy configuration without annotation limitations.
 
 **Dynamic Resource Watching**
-Monitor any Kubernetes resource types (Ingress, Service, ConfigMap, custom CRDs) you specify. Resources are indexed using JSONPath expressions for fast template lookups. You define which resources to watch and how to index them.
+Monitor any Kubernetes resource types (Ingress, Service, ConfigMap, custom CRDs) you specify. Resources are indexed using JSONPath expressions for fast template lookups.
 
 **Validation-First Deployment**
 All generated configurations pass three validation phases before they can reach production, split across two gates: the admission webhook runs all three (client-native syntax parse, version-specific OpenAPI schema check, and the `haproxy -c` semantic check), so invalid input never lands in etcd; the leader's reconcile pipeline then re-runs syntax + schema on every render, and the Dataplane API re-validates server-side on push.

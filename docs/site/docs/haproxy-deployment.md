@@ -66,7 +66,6 @@ Valid range: `0.0 < AUTOMEMLIMIT <= 1.0`.
 
 - **Prevents OOM kills**: GOMEMLIMIT helps the Go GC keep heap memory under control
 - **Reduces CPU throttling**: Proper GOMAXPROCS prevents over-scheduling goroutines
-- **Improves performance**: Better GC tuning and reduced context switching
 
 ## Service Architecture
 

@@ -169,7 +169,7 @@ The cache:
 - Is process-local. A controller restart re-warms it.
 - Holds successful round-trips, including responses with `result: "warning"` or `result: "error"`. Validator output is a deterministic function of its input (per the protocol's purity contract).
 - Does NOT cache transport failures (connect refused, decode failure). A transient sidecar outage isn't allowed to poison subsequent admissions.
-- Is bounded at 256 entries with LRU eviction. Sized for a healthy reconciliation churn.
+- Is bounded at 256 entries with LRU eviction.
 
 ### Connection pooling and parallelism
 
