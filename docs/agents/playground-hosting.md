@@ -16,8 +16,8 @@ The `build-playground-wasm` job (`.gitlab-ci.yml`, `build` stage) runs
 `public/playground/` as a job artifact (`expire_in: 1 month`).
 
 - **Version identity**
-  - Release pipeline (`v*` tag): `<version>` = `${CI_COMMIT_TAG#v}` (e.g. `0.2.0-alpha.1`) — an **immutable** directory.
-  - Default branch (`main`): `<version>` = `dev` — a **moving** directory, overwritten each push.
+    - Release pipeline (`v*` tag): `<version>` = `${CI_COMMIT_TAG#v}` (e.g. `0.2.0-alpha.1`) — an **immutable** directory.
+    - Default branch (`main`): `<version>` = `dev` — a **moving** directory, overwritten each push.
 - **Bundle layout** (everything relative-linked, no absolute paths):
 
   ```

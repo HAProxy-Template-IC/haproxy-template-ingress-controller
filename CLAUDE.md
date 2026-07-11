@@ -578,8 +578,8 @@ The source hash is calculated from all `.go` files in `pkg/` and `cmd/`. It chan
 
 - `haproxyVersion` in `values.yaml` selects the version (must be one CI builds)
 - This single value drives both:
-  - Controller image tag: `registry.gitlab.com/.../haptic:0.1.0-haproxy3.4`
-  - HAProxy image tag: `haproxytech/haproxy-debian:3.4`
+    - Controller image tag: `registry.gitlab.com/.../haptic:0.1.0-haproxy3.4`
+    - HAProxy image tag: `haproxytech/haproxy-debian:3.4`
 - This guarantees the controller and HAProxy pod always use matching versions
 
 When updating default versions, update both:
@@ -737,28 +737,28 @@ func (c *Component) Start(ctx context.Context) error {
 **CRITICAL - Task Completion Standards:**
 
 - **NEVER mark a task as completed without verifying it actually works**
-  - Run tests to confirm the implementation is correct
-  - Test the actual behavior, not just that code compiles
-  - Verify edge cases and error conditions
+    - Run tests to confirm the implementation is correct
+    - Test the actual behavior, not just that code compiles
+    - Verify edge cases and error conditions
 
 - **NEVER take shortcuts by skipping hard parts of implementation**
-  - If a test fails, FIX the code to make it pass correctly
-  - Do NOT change the test to match broken behavior
-  - Do NOT add TODO comments for things that should be fixed immediately
-  - If something is genuinely out of scope, discuss with the user first
+    - If a test fails, FIX the code to make it pass correctly
+    - Do NOT change the test to match broken behavior
+    - Do NOT add TODO comments for things that should be fixed immediately
+    - If something is genuinely out of scope, discuss with the user first
 
 - **ALWAYS inform the user about incomplete or buggy implementations**
-  - If you discover a bug during implementation, fix it
-  - If you can't complete a task, explain why and what remains
-  - Do NOT hide problems behind TODO comments
-  - Transparency builds trust
+    - If you discover a bug during implementation, fix it
+    - If you can't complete a task, explain why and what remains
+    - Do NOT hide problems behind TODO comments
+    - Transparency builds trust
 
 - **FIX ALL test failures, lint errors, and runtime warnings/errors immediately**
-  - Do NOT speculate about whether your changes caused the issue
-  - Do NOT dismiss issues as "pre-existing" or "unrelated"
-  - If tests fail or logs show warnings/errors after your changes, fix them
-  - The dev environment must work correctly with no errors before task completion
-  - Run the full test suite and verify dev environment logs are clean
+    - Do NOT speculate about whether your changes caused the issue
+    - Do NOT dismiss issues as "pre-existing" or "unrelated"
+    - If tests fail or logs show warnings/errors after your changes, fix them
+    - The dev environment must work correctly with no errors before task completion
+    - Run the full test suite and verify dev environment logs are clean
 
 **Example of UNACCEPTABLE behavior:**
 

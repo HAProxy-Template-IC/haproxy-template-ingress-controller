@@ -1066,30 +1066,30 @@ This library watches the following additional resources:
 **Total annotations**: 57
 
 - ✅ **Fully Supported**: 57
-  - Timeouts: 3 annotations
-  - Load Balancing: 1 annotation
-  - Body Size Limit: 1 annotation
-  - Backend Protocol: 1 annotation
-  - Proxy Protocol: 1 annotation
-  - Rewrite Target: 1 annotation
-  - Upstream Hash: 1 annotation
-  - Config Snippet: 1 annotation
-  - Session Affinity: 4 annotations
-  - Rate Limiting: 2 annotations
-  - Access Control: 2 annotations
-  - SSL Redirect: 2 annotations
-  - HSTS: 4 annotations
-  - CORS: 7 annotations
-  - Custom Headers: 2 annotations
-  - App Root: 1 annotation
-  - Redirects: 2 annotations
-  - Authentication: 3 annotations
-  - External Authentication: 4 annotations (`auth-url`, `auth-signin`, `auth-method`, `auth-response-headers` — requires SPOA hub `external-auth` plugin)
-  - SSL Passthrough: 1 annotation
-  - Canary: 6 annotations
-  - mTLS: 4 annotations (`auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-pass-certificate-to-upstream`)
-  - WAF (ModSecurity): 2 annotations (`modsecurity-snippet`, `enable-modsecurity` — requires SPOA hub Coraza plugin)
-  - Request Mirroring: 1 annotation (`mirror-target` — requires SPOA hub mirror plugin)
+    - Timeouts: 3 annotations
+    - Load Balancing: 1 annotation
+    - Body Size Limit: 1 annotation
+    - Backend Protocol: 1 annotation
+    - Proxy Protocol: 1 annotation
+    - Rewrite Target: 1 annotation
+    - Upstream Hash: 1 annotation
+    - Config Snippet: 1 annotation
+    - Session Affinity: 4 annotations
+    - Rate Limiting: 2 annotations
+    - Access Control: 2 annotations
+    - SSL Redirect: 2 annotations
+    - HSTS: 4 annotations
+    - CORS: 7 annotations
+    - Custom Headers: 2 annotations
+    - App Root: 1 annotation
+    - Redirects: 2 annotations
+    - Authentication: 3 annotations
+    - External Authentication: 4 annotations (`auth-url`, `auth-signin`, `auth-method`, `auth-response-headers` — requires SPOA hub `external-auth` plugin)
+    - SSL Passthrough: 1 annotation
+    - Canary: 6 annotations
+    - mTLS: 4 annotations (`auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-pass-certificate-to-upstream`)
+    - WAF (ModSecurity): 2 annotations (`modsecurity-snippet`, `enable-modsecurity` — requires SPOA hub Coraza plugin)
+    - Request Mirroring: 1 annotation (`mirror-target` — requires SPOA hub mirror plugin)
 
 ## See Also
 
