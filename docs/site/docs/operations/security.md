@@ -20,6 +20,8 @@ The Helm chart provisions a `ServiceAccount`, a `ClusterRole`, and a namespace-s
 | `haproxycfgs`, `haproxygeneralfiles`, `haproxycrtlistfiles`, `haproxymapfiles` (.haproxy-haptic.org) | get, list, watch, create, update, patch, delete | Publish rendered config + auxiliary files as observable CRDs (full CRUD because the controller owns these resources and prunes stale entries) |
 | `<above CRDs>/status` | update, patch | Report deployment status on the published artifacts |
 | `services` | get, list, watch, create, update, patch, delete | **Gateway library only** — cluster-wide Service writes for Gateway-API templates that emit owned Services into a Gateway's own namespace (e.g. the per-Gateway infrastructure-propagation marker Service) |
+| `gatewayclasses` (gateway.networking.k8s.io) | create, update, patch, delete | **Gateway library only** — the GatewayClass is applied at runtime via Server-Side Apply, not by Helm (read verbs come from the watched-resource rules) |
+| `events` (core) | create, update, patch, delete | **Ingress library only** — Warning Events on Ingresses whose backend Service is missing |
 
 Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
 
@@ -56,7 +58,7 @@ The controller watches the Secret and picks up rotations live — no pod restart
 !!! warning "Set the Dataplane password explicitly under GitOps"
     If you install via the Helm chart and leave `credentials.dataplane.password` empty, the chart generates a **random** 32-char password and preserves it across upgrades by reading the existing Secret via `lookup`. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates on every sync and churns the credential — set `credentials.dataplane.password` explicitly (SealedSecret / external secret) for those deployments.
 
-Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/vars.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
+Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/setup.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
 
 ## Pod Hardening
 
@@ -91,15 +93,20 @@ The controller pod exposes three HTTP ports (all chart defaults):
 
 | Port | Endpoint | Notes |
 |------|----------|-------|
-| `8080` | `/healthz`, `/debug/vars`, `/debug/pprof/` | `/healthz` and `/debug/*` share the same listener; setting `controller.debugPort: 0` disables both and breaks the liveness/readiness probes. To shield `/debug/*` in production, restrict access with a NetworkPolicy (example below) instead of disabling the port |
-| `9090` | `/metrics` | Disable by setting the `METRICS_PORT=0` env var on the controller container (e.g. `extraEnv` in Helm); the `metricsPort` field on the CRD is *not* read by the controller — the chart strips it before serializing |
+| `8080` | `/healthz`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `/healthz` and `/debug/*` share the same listener; setting `controller.debugPort: 0` disables both and breaks the liveness/readiness probes. To shield `/debug/*` in production, restrict access with a NetworkPolicy (example below) instead of disabling the port |
+| `9090` | `/metrics` | Disable by setting the `METRICS_PORT=0` env var on the controller container (e.g. `extraEnv` in Helm); the `controller.config.controller.metricsPort` Helm value is display-only — the chart strips it before serializing |
 | `9443` | Validating webhook | Required when the webhook is enabled |
 
 Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, CNI encryption) rather than transport-level authentication for that hop.
 
 The Dataplane API is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release fullname, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
 
-**The chart already ships default-on `NetworkPolicy` resources** for both the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods — both default `true` — restricting ingress to the exposed ports and egress to DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports. Set the relevant flag to `false` to manage your own; the example below mirrors the controller policy's shape:
+**The chart already ships default-on `NetworkPolicy` resources** for both the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods — both default `true`. Know what the defaults actually allow before relying on them:
+
+- The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports, **plus a default `networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
+- The HAProxy policy defaults to `allowExternal: true`, which renders a permissive all-port ingress rule — deliberate, because Gateway listeners bind dynamic ports.
+
+Set the relevant flag to `false` to manage your own. The example below is a narrowed, controller-only variant — the shipped policy's selector matches **every** release pod (name + instance labels, no component discriminator) and therefore also carries the Dataplane port 5555 ingress allowance for the HAProxy pods; if you replace it, cover the HAProxy pods separately:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
