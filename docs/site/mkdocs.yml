@@ -133,10 +133,13 @@ nav:
     - Linting: development/linting.md
     - Releasing: development/releasing.md
     - Gateway API Upgrade Playbook: development/gateway-api-upgrade-playbook.md
+    # hooks/adrs.py appends an "Architecture Decision Records" group here,
+    # one entry per repo-root docs/adr/NNNN-*.md, titled from its H1.
   - Changelog: changelog.md
 
 hooks:
   - hooks/changelog.py
+  - hooks/adrs.py
   - hooks/llms.py
   - hooks/redirects.py
 
