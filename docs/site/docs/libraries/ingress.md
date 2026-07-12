@@ -8,7 +8,7 @@ The Ingress library enables HAProxy to route traffic based on Kubernetes Ingress
 
 - Path-based routing with Exact, Prefix, and ImplementationSpecific path types
 - Host-based routing via Ingress rules
-- TLS termination via Ingress `spec.tls` configuration
+- TLS termination — every Ingress is served over HTTPS with the default certificate by default, plus per-host certificates via `spec.tls`
 - Backend generation with automatic endpoint discovery
 - IngressClass filtering (default: `haptic`)
 
@@ -48,7 +48,7 @@ The Ingress library hooks into these extension points from base.yaml. Snippet na
 
 | Extension Point | Snippet | What It Generates |
 |-----------------|---------|-------------------|
-| `features-*` | `features-100-ingress-bind` | Sets `gf["bindHTTPDefault"]` / `gf["needHTTPFrontend"]`; for Ingresses with `spec.tls` also sets `gf["bindHTTPSDefault"]`, `gf["needHTTPSFrontend"]`, `gf["needHTTPSTermination"]` |
+| `features-*` | `features-100-ingress-bind` | Sets `gf["bindHTTPDefault"]` / `gf["needHTTPFrontend"]`; by default (or for Ingresses with `spec.tls`) also sets `gf["bindHTTPSDefault"]`, `gf["needHTTPSFrontend"]`, `gf["needHTTPSTermination"]` — see [HTTPS on by default](#https-on-by-default) |
 | `features-*` | `features-100-ingress-tls` | Registers TLS Secrets from `ingress.spec.tls[]` into `gf["tlsCertificates"]` for the SSL library's CRT-list |
 | `backends-*` | `backends-500-ingress` | Backend blocks per unique `(namespace, ingress, service, port)` referenced by an Ingress |
 | `map-host-*` | `map-host-500-ingress` | Host → group entries derived from `ingress.spec.rules[].host` |
@@ -295,6 +295,27 @@ type: kubernetes.io/tls
 data:
   tls.crt: <base64-encoded-certificate>
   tls.key: <base64-encoded-key>
+```
+
+#### HTTPS on by default
+
+Every Ingress is served over **both HTTP and HTTPS** out of the box, even without a `spec.tls` entry. HAPTIC binds the chart's https port (`haproxy.ports.https`, default `443`) and terminates TLS with the [default certificate](../ssl-certificates.md) — a self-signed cert out of the box — routing HTTPS requests through the same host and path rules as HTTP. A `spec.tls` entry layers a host-specific certificate on top: that host is served with its own certificate instead of the default.
+
+Two `extraContext` settings control the default HTTPS bind:
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `ingressDefaultHTTPS` | `true` | Bind the https port for every Ingress using the default certificate. Set `false` to serve Ingress over plain HTTP only until a host opts in with `spec.tls`. |
+| `default_ssl_cert_name` / `default_ssl_cert_namespace` | chart-set | The Secret backing the default certificate. When the default certificate is disabled (`defaultSSLCertificate.enabled=false`), there is no cert to bind, so the https port stays closed regardless of `ingressDefaultHTTPS`. |
+
+To serve Ingress over plain HTTP only, disable the default bind through the chart:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        ingressDefaultHTTPS: false
 ```
 
 ### Backend generation

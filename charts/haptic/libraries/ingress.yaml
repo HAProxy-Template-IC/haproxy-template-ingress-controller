@@ -10,6 +10,17 @@ _helm_load:
     - path: watchedResources.ingresses.fieldSelector
       value: 'spec.ingressClassName={{ .Values.ingressClass.name }}'
 
+# Library-declared extraContext defaults (merged at lowest precedence; an
+# operator override via controller.config.templatingSettings.extraContext wins).
+templatingSettings:
+  extraContext:
+    # Serve every Ingress over HTTPS on the chart's https port using the default
+    # certificate, even without spec.tls (features-100-ingress-bind). Set to
+    # false to keep Ingress plaintext-only until a host opts in via spec.tls.
+    # Has no effect when the default certificate is disabled
+    # (defaultSSLCertificate.enabled=false) — there is no cert to bind then.
+    ingressDefaultHTTPS: true
+
 watchedResources:
   ingresses:
     apiVersion: networking.k8s.io/v1
@@ -45,29 +56,42 @@ templateSnippets:
         * Any Ingress sets bindHTTPDefault — Ingress always serves
           plaintext on the chart's http port, so the http_frontend
           must bind there.
-        * An Ingress with spec.tls additionally sets
-          bindHTTPSDefault — the TLS-terminating listener lives on
-          the chart's https port.
+        * By default any Ingress ALSO sets bindHTTPSDefault, so the
+          chart's https port terminates TLS with the default
+          certificate and the Ingress is reachable over both HTTP and
+          HTTPS out of the box — no spec.tls required. Two conditions
+          gate this default-on HTTPS:
+            - extraContext.ingressDefaultHTTPS (bool, default true).
+              Set it false to keep Ingress plaintext-only until a
+              spec.tls entry opts a host into HTTPS.
+            - a default certificate must be configured — the chart
+              surfaces defaultSSLCertificate.enabled as
+              extraContext.default_ssl_cert_name. With the default cert
+              disabled the chart is HTTP-only and there is no cert to
+              bind, so the https port stays closed.
+          An Ingress WITH spec.tls sets bindHTTPSDefault regardless of
+          the toggle — its own cert terminates TLS.
 
-        Both flags also set the corresponding needHTTPFrontend /
-        needHTTPSFrontend so the surrounding frontend block renders.
-        Resource libraries other than ingress contribute to the same
-        flags from their own features-100-*-bind / -tls snippets;
-        first writer wins is fine because all flags are booleans.
+        All flags also set the corresponding needHTTPFrontend /
+        needHTTPSFrontend so the surrounding frontend block renders,
+        plus needHTTPSTermination so the terminating https frontend
+        claims unmatched SNIs (rather than the ssl-tcp passthrough
+        frontend rejecting them). Resource libraries other than ingress
+        contribute to the same flags from their own
+        features-100-*-bind / -tls snippets; first writer wins is fine
+        because all flags are booleans.
       -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var tlsDefault bool = extraContext | dig("ingressDefaultHTTPS") | fallback(true) %}
+      {%- var haveDefaultCert = tostring(extraContext | dig("default_ssl_cert_name") | fallback("")) != "" %}
+      {%- var httpsByDefault = tlsDefault && haveDefaultCert %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%%
         gf["bindHTTPDefault"] = true
         gf["needHTTPFrontend"] = true
-        if len(ingress.Spec.Tls) > 0 {
+        if httpsByDefault || len(ingress.Spec.Tls) > 0 {
           gf["bindHTTPSDefault"] = true
           gf["needHTTPSFrontend"] = true
-          // Ingress with spec.tls has HTTPS termination (the chart's
-          // HTTPS frontend hosts the cert). Light up
-          // needHTTPSTermination so chart-static ssl-tcp falls
-          // through to ssl-loopback for unmatched SNIs (current
-          // behaviour) rather than rejecting them.
           gf["needHTTPSTermination"] = true
         }
       %%}
@@ -1027,6 +1051,89 @@ validationTests:
       - type: contains
         target: cert:default_example-tls.pem
         pattern: "BEGIN CERTIFICATE"
+
+  test-ingress-default-https:
+    description: "A plain Ingress with no spec.tls is served over HTTPS by default — the chart binds its https port and terminates TLS with the default certificate (extraContext.ingressDefaultHTTPS defaults true). See features-100-ingress-bind."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: web
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: plain
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: web
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?m)^frontend https$"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "bind \\*:443 ssl crt-list"
+
+  test-ingress-default-https-disabled:
+    description: "extraContext.ingressDefaultHTTPS=false keeps a plain Ingress (no spec.tls) plaintext-only — no https frontend is emitted even though the default certificate is configured. See features-100-ingress-bind."
+    extraContext:
+      ingressDefaultHTTPS: false
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: web
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: plain
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: web
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "(?m)^frontend https$"
 
   test-ingress-slot-preservation:
     description: |

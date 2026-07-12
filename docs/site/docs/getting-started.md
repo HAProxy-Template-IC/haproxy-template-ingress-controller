@@ -256,7 +256,7 @@ kubectl apply -f echo-ingress.yaml
 The controller automatically detects this new Ingress, renders the HAProxy configuration, validates it, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
 
 !!! tip "TLS for a host"
-    This Ingress is served over HTTP only. The chart binds its HTTPS listener once at least one resource requests TLS — an Ingress with `spec.tls`, a Gateway HTTPS listener, or SSL passthrough. To terminate HTTPS for this host, add a `spec.tls` entry backed by a `kubernetes.io/tls` Secret — see [Ingress library — TLS configuration](./libraries/ingress.md#tls-configuration). Once the HTTPS listener is up, any host it serves that has no certificate of its own falls back to the chart's [default certificate](./ssl-certificates.md) (a self-signed cert out of the box).
+    This Ingress is already served over both HTTP and HTTPS. HTTPS uses the chart's [default certificate](./ssl-certificates.md) — a self-signed cert out of the box — which HAPTIC binds on the https port for every Ingress, no `spec.tls` required. To present a host-specific certificate instead of the default, add a `spec.tls` entry backed by a `kubernetes.io/tls` Secret; to serve plain HTTP only, turn off the default HTTPS bind. See [Ingress library — TLS configuration](./libraries/ingress.md#tls-configuration) for both.
 
 ### Verify the configuration
 
