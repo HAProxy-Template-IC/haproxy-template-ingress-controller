@@ -24,8 +24,11 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/tunnel"
 )
 
 // GatewayForward is a live kubectl port-forward tunnel to a Gateway's
@@ -148,12 +151,16 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 	for i, p := range servicePorts {
 		pinned[i] = strconv.Itoa(locals[i]) + ":" + strconv.Itoa(p)
 	}
+	var mu sync.Mutex // guards current: written by the supervisor, read by the watchdog
+	current := cmd
 	supervisorDone := make(chan struct{})
 	go func() {
 		defer close(supervisorDone)
-		current := cmd
 		for {
-			waitErr := current.Wait()
+			mu.Lock()
+			c := current
+			mu.Unlock()
+			waitErr := c.Wait()
 			if fwdCtx.Err() != nil {
 				return // torn down via t.Cleanup
 			}
@@ -161,7 +168,9 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 			for {
 				next, _, restartErr := startForwardTunnel(fwdCtx, svc, pinned, len(servicePorts))
 				if restartErr == nil {
+					mu.Lock()
 					current = next
+					mu.Unlock()
 					// Cooldown so a forward-then-immediately-die loop
 					// can't churn kubectl processes for the whole budget.
 					select {
@@ -183,8 +192,40 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 			}
 		}
 	}()
+	// Watchdog: exit-based supervision misses the tunnel's second failure
+	// mode — kubectl stays alive and keeps accepting on the local port while
+	// the apiserver stream is wedged, so every forwarded request hangs to
+	// its deadline. Probe the tunnel and kill kubectl on consecutive probe
+	// timeouts; the supervisor above then restarts it on the pinned ports.
+	watchdogDone := make(chan struct{})
+	go func() {
+		defer close(watchdogDone)
+		tunnel.Watch(fwdCtx, fwd.HTTPPort, fwd.HTTPSPort,
+			3*time.Second, 3*time.Second, 2,
+			func() any {
+				mu.Lock()
+				defer mu.Unlock()
+				return current.Process
+			},
+			func(id any) {
+				// Kill only the process the strikes were counted against —
+				// the supervisor may have already swapped in a fresh tunnel.
+				mu.Lock()
+				p := current.Process
+				mu.Unlock()
+				if p == id {
+					_ = p.Kill()
+				}
+			},
+			func(msg string) {
+				if fwdCtx.Err() == nil {
+					t.Logf("ForwardGateway %s: %s", svc, msg)
+				}
+			})
+	}()
 	t.Cleanup(func() {
 		stop()
+		<-watchdogDone   // stop probing before the tunnel goes away
 		<-supervisorDone // the supervisor reaps the current kubectl process
 	})
 	return fwd

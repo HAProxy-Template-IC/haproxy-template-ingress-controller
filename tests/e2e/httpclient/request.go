@@ -377,6 +377,7 @@ func (r *Request) poll(t *testing.T, description string, predicate func(*Respons
 			resp, err := r.Do(ctx)
 			if err != nil {
 				lastErr = err
+				r.client.transport.CloseIdleConnections()
 				return false, err
 			}
 			lastResp = resp
@@ -384,6 +385,15 @@ func (r *Request) poll(t *testing.T, description string, predicate func(*Respons
 			if predicate(resp) {
 				return true, nil
 			}
+			// Retry on a FRESH connection. A pooled keep-alive connection
+			// stays pinned to the HAProxy worker (and config generation) it
+			// was opened against — HAProxy reloads hitlessly, letting old
+			// workers serve established connections with the OLD routing
+			// tables — so a retry over the pooled connection can never
+			// observe a deploy that happened after the connection was
+			// opened. Observed in CI as 15s of identical 404s from one
+			// source port while both pods' new workers had the route live.
+			r.client.transport.CloseIdleConnections()
 			return false, fmt.Errorf("status=%d, body=%s", resp.Status, truncate(resp.Body, 200))
 		})
 
