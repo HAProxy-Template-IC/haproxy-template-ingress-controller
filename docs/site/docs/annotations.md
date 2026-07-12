@@ -26,24 +26,36 @@ The libraries cover the following HAProxy feature areas:
 
 | Feature | `haproxy.org/` | `haproxy-ingress.github.io/` | `nginx.ingress.kubernetes.io/` |
 |---------|----------------|-------------------------------|--------------------------------|
-| Basic authentication | `auth-type`, `auth-secret`, `auth-realm` | `auth-secret`, `auth-realm` | `auth-type`, `auth-secret`, `auth-realm` |
+| Basic authentication | `auth-type`, `auth-secret`, `auth-realm` | `auth-secret`, `auth-realm` | `auth-type`, `auth-secret`, `auth-secret-type`, `auth-realm`, `satisfy` |
 | External authentication ([SPOA hub](operations/spoa-hub.md)) | — | `auth-url`, `auth-signin`, `auth-method`, `auth-headers-request`, `auth-headers-succeed`, `auth-headers-fail` | `auth-url`, `auth-signin`, `auth-method`, `auth-response-headers` |
+| OAuth2 proxy | — | `oauth`, `oauth-uri-prefix`, `oauth-headers` | — |
 | Client certificate (incoming mTLS) | — | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-cert-header` | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-pass-certificate-to-upstream` |
 | Allowlist / Denylist | `allow-list`, `deny-list` | `allowlist-source-range`, `denylist-source-range` | `whitelist-source-range`, `denylist-source-range` |
-| SSL redirect | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect` |
+| SSL redirect | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `force-ssl-redirect` |
+| URL redirects | `request-redirect`, `request-redirect-code` | `redirect-to`, `redirect-to-code`, `app-root`, `default-backend-redirect`, … | `permanent-redirect`, `temporal-redirect`, `from-to-www-redirect`, `app-root`, … |
 | SSL passthrough | `ssl-passthrough` | `ssl-passthrough` | `ssl-passthrough` |
-| Backend SSL / mTLS | `server-ssl`, `server-proto`, `server-ca`, `server-crt` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret` | `backend-protocol` |
+| Backend SSL / mTLS | `server-ssl`, `server-proto`, `server-ca`, `server-crt` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret`, `ssl-ciphers-backend`, … | `backend-protocol`, `proxy-ssl-secret`, `proxy-ssl-verify`, `proxy-ssl-name`, … |
 | CORS | `cors-enable`, `cors-allow-origin`, … | `cors-enable`, `cors-allow-origin`, … | `enable-cors`, `cors-allow-origin`, … |
-| Load balancing | `load-balance` | `balance-algorithm` | `load-balance` |
+| Load balancing | `load-balance` | `balance-algorithm` | `load-balance`, `upstream-hash-by` |
 | Session affinity (cookies) | `cookie-persistence` | `affinity`, `session-cookie-*` | `affinity`, `session-cookie-*` |
-| Rate limiting | `rate-limit-requests`, `rate-limit-period`, … | — | `limit-rps`, `limit-rpm`, `limit-connections` |
+| Rate limiting | `rate-limit-requests`, `rate-limit-period`, … | `limit-rps`, `limit-rpm`, `limit-whitelist` | `limit-rps`, `limit-rpm`, `limit-connections`, `limit-whitelist` |
+| Bandwidth throttling | — | — | `limit-rate`, `limit-rate-after` |
+| Request body size limit | — | `proxy-body-size` | `proxy-body-size` |
 | Timeouts | `timeout-server`, `timeout-connect`, … | `timeout-server`, `timeout-connect`, … | `proxy-connect-timeout`, `proxy-read-timeout`, `proxy-send-timeout` |
+| Retries | — | — | `proxy-next-upstream`, `proxy-next-upstream-tries` |
 | Health checks | `check`, `check-http`, `check-interval` | `backend-check-interval`, `health-check-uri`, … | — |
-| HSTS | — | `hsts`, `hsts-max-age`, … | — |
-| Request / response headers | `request-set-header`, `response-set-header` | `headers` | `custom-request-headers`, `custom-response-headers` |
-| Path rewriting | `path-rewrite` | — | `rewrite-target` |
+| Agent checks | — | `agent-check-port`, `agent-check-addr`, … | — |
+| HSTS | — | `hsts`, `hsts-max-age`, … | `hsts`, `hsts-max-age`, … |
+| Request / response headers | `request-set-header`, `response-set-header` | `headers`, `forwardfor` | `custom-request-headers`, `custom-response-headers` |
+| Path rewriting | `path-rewrite` | `rewrite-target` | `rewrite-target` |
+| Server aliases | — | `server-alias`, `server-alias-regex` | `server-alias` |
+| Per-host default backend | — | — | `default-backend` |
+| Canary deployments | — | — | `canary`, `canary-by-header`, `canary-weight`, … |
+| Request mirroring | — | — | `mirror-target` |
+| WAF (ModSecurity) | — | `waf`, `waf-mode` | `modsecurity-snippet`, `enable-modsecurity` |
 | PROXY protocol | `send-proxy-protocol` | `proxy-protocol` | `use-proxy-protocol` |
 | Raw backend config | `backend-config-snippet` | `config-backend` | `configuration-snippet` |
+| Raw global / frontend / defaults config | — | `config-global`, `config-frontend`, `config-defaults` | — |
 
 For the complete per-annotation reference with examples and generated HAProxy configuration output, see the library docs:
 

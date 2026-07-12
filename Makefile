@@ -62,6 +62,8 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	./scripts/check-test-inventory.sh
 	@echo "Checking migration-coverage drift (declared vs. annotations read)..."
 	./scripts/check-migration-coverage.sh
+	@echo "Checking vendor annotation docs coverage..."
+	./scripts/check-annotation-docs.sh
 	@echo "Checking migrating.md generated tables are up-to-date..."
 	./scripts/gen-migration-docs.sh --check
 	@echo "Checking chart values docs coverage..."
