@@ -29,6 +29,36 @@ func getStatusPatchCollector(env native.Env) *StatusPatchCollector {
 	return getRenderContextValue[StatusPatchCollector](env, "statusPatchCollector")
 }
 
+// getEventCollector retrieves the EventCollector from the template render context.
+func getEventCollector(env native.Env) *EventCollector {
+	return getRenderContextValue[EventCollector](env, "recordEventCollector")
+}
+
+// scriggoRecordEvent registers a Kubernetes Warning Event during template
+// rendering. Like statusPatch, it is resource-agnostic: apiVersion/kind/
+// namespace/name identify the involved object, so it emits against any watched
+// resource or CRD without a typed client (RULE #1). Duplicate (resource, reason,
+// message) tuples collapse to one event.
+//
+// Usage in Scriggo templates:
+//
+//	{% recordEvent("default", "my-ingress", "networking.k8s.io/v1", "Ingress",
+//	    "RouteConflict", "host \"x\" path \"/\" is already served by another Ingress") %}
+func scriggoRecordEvent(env native.Env, namespace, name, apiVersion, kind, reason, message string) string {
+	// recordEvent is a best-effort observability signal, so — unlike
+	// statusPatch, whose status output is load-bearing — it never aborts the
+	// render. A missing collector (engine wired without event support) or an
+	// invalid argument (empty required field) simply drops the event rather
+	// than failing the config render and taking down the data path for a
+	// non-critical Event.
+	collector := getEventCollector(env)
+	if collector == nil {
+		return ""
+	}
+	_ = collector.Register(namespace, name, apiVersion, kind, EventTypeWarning, reason, message)
+	return "" // Side-effect only, no output
+}
+
 // scriggoStatusPatch registers a status patch during template rendering.
 // The function is resource-agnostic: apiVersion/kind/namespace/name and the
 // variant payload are all supplied by the template, so it works identically for

@@ -122,6 +122,14 @@ type ReconciliationCompletedEvent struct {
 	// lists labeled resources the moment Accepted turns True).
 	StatusPatches []templating.StatusPatch
 
+	// Events are the Kubernetes Events templates asked to emit this cycle via
+	// recordEvent() (e.g. a RouteConflict Warning on an Ingress). The
+	// EventEmitter (leader-only) reads them directly off this event and emits
+	// them via an EventRecorder. May be nil when no template recorded an event.
+	// The publisher sets this from a cloned slice before Publish; treat as
+	// read-only like every other event field.
+	Events []templating.RenderedEvent
+
 	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.

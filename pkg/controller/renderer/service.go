@@ -52,6 +52,11 @@ type RenderResult struct {
 	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
 	StatusPatches []templating.StatusPatch
 
+	// Events contains Kubernetes Events templates asked to emit via recordEvent()
+	// (e.g. a RouteConflict Warning on an Ingress whose route lost to an older
+	// one). Resource-agnostic — each carries its own apiVersion/kind/namespace/name.
+	Events []templating.RenderedEvent
+
 	// RenderedResources contains full Kubernetes resources the templates declared
 	// the controller should own and reconcile (e.g. an auxiliary Service or other
 	// object a template emits alongside the HAProxy config). The applier compares
@@ -224,6 +229,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	bctx := s.buildRenderingContext(ctx, provider)
 	renderContext, fileRegistry := bctx.Context, bctx.FileRegistry
 	statusPatchCollector, renderedResourceCollector := bctx.StatusPatchCollector, bctx.RenderedResourceCollector
+	eventCollector := bctx.EventCollector
 
 	// Render main HAProxy config. RenderWithProfiling is a superset of Render:
 	// it renders identically and, only when the engine was built with profiling
@@ -281,6 +287,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		HAProxyConfig:     haproxyConfig,
 		AuxiliaryFiles:    auxiliaryFiles,
 		StatusPatches:     statusPatchCollector.Patches(),
+		Events:            eventCollector.Events(),
 		RenderedResources: renderedResourceCollector.Resources(),
 		DurationMs:        time.Since(startTime).Milliseconds(),
 		AuxFileCount:      auxFileCount,

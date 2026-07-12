@@ -171,6 +171,7 @@ type BuildResult struct {
 	FileRegistry              *FileRegistry
 	StatusPatchCollector      *templating.StatusPatchCollector
 	RenderedResourceCollector *templating.RenderedResourceCollector
+	EventCollector            *templating.EventCollector
 }
 
 // Build creates the template rendering context, file registry, status patch
@@ -225,6 +226,11 @@ func (b *Builder) Build() *BuildResult {
 	// Create status patch collector for template-driven status updates
 	statusPatchCollector := templating.NewStatusPatchCollector()
 
+	// Create event collector for template-driven Kubernetes Events (recordEvent).
+	// Resource-agnostic like the status patch collector: templates pass any
+	// apiVersion / kind for the involved object.
+	eventCollector := templating.NewEventCollector()
+
 	// Create rendered resource collector for template-driven owned-resource
 	// reconciliation — anything where the chart needs the controller to spawn /
 	// update / prune Kubernetes resources alongside the HAProxy config. The
@@ -245,6 +251,7 @@ func (b *Builder) Build() *BuildResult {
 		"templateSnippets":          snippetNames,
 		"fileRegistry":              fileRegistry,
 		"statusPatchCollector":      statusPatchCollector,
+		"recordEventCollector":      eventCollector,
 		"renderedResourceCollector": renderedResourceCollector,
 		"pathResolver":              b.pathResolver,
 		"dataplane":                 b.config.Dataplane,
@@ -288,6 +295,7 @@ func (b *Builder) Build() *BuildResult {
 		FileRegistry:              fileRegistry,
 		StatusPatchCollector:      statusPatchCollector,
 		RenderedResourceCollector: renderedResourceCollector,
+		EventCollector:            eventCollector,
 	}
 }
 

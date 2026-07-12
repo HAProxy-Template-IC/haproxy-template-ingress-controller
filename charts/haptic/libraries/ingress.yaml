@@ -282,7 +282,37 @@ templateSnippets:
                     {%- if cslot == "ImplementationSpecific" -%}{%- cslot = "Prefix" -%}{%- end -%}
                     {%- var cpath = path.Path -%}
                     {%- if cslot != "Exact" && len(cpath) > 1 && hasSuffix(cpath, "/") -%}{%- cpath = cpath[:len(cpath)-1] -%}{%- end -%}
-                    {%- if owner[cslot + "|" + MapKeyForHost(rule.Host) + cpath] == id -%}{%- matchCount = matchCount + 1 -%}{%- end -%}
+                    {%- var cwinner = owner[cslot + "|" + MapKeyForHost(rule.Host) + cpath] -%}
+                    {%- if cwinner == id -%}
+                      {%- matchCount = matchCount + 1 -%}
+                    {%- else -%}
+                      {#- This Ingress lost this route to an older Ingress
+                          (oldest-wins). Emit a RouteConflict Warning on the
+                          loser so operators see it via `kubectl describe
+                          ingress` / events — unless the loser is a co-located
+                          Ingress (nginx canary) that intentionally shares its
+                          main's route (losing is by design). recordEvent uses
+                          the same context access as statusPatch, so it is safe
+                          in the sharded `go` render; the EventCollector dedups
+                          the repeat from the pfxexact + prefix map passes. This
+                          runs in the count loop (before the matchCount gate) so
+                          it fires even for an Ingress that owns none of its
+                          routes. -#}
+                      {%%
+                        var loserCoLocated = false
+                        if coLocated != nil {
+                          var _, lc = coLocated.(map[string]any)[id]
+                          loserCoLocated = lc
+                        }
+                        if !loserCoLocated {
+                          recordEvent(ingress.Metadata.Namespace, ingress.Metadata.Name,
+                            "networking.k8s.io/v1", "Ingress", "RouteConflict",
+                            "host \""+rule.Host+"\" path \""+path.Path+"\" ("+
+                              tostring(path.PathType)+") is already served by Ingress "+
+                              cwinner+", which takes precedence; this Ingress's route is not applied")
+                        }
+                      %%}
+                    {%- end -%}
                   {%- end -%}
                 {%- end -%}
               {%- end -%}
@@ -1955,6 +1985,14 @@ validationTests:
         target: map:path-prefix.map
         pattern: "alpha_route-new"
         description: "the newer Ingress (alpha/route-new) loses the route — no duplicate key in the map"
+      - type: contains
+        target: events
+        pattern: 'Warning RouteConflict networking\.k8s\.io/v1 Ingress alpha/route-new: .*served by Ingress zeta/route-old'
+        description: "the losing Ingress gets a RouteConflict Warning naming the winner"
+      - type: not_contains
+        target: events
+        pattern: "zeta/route-old:"
+        description: "the winning Ingress gets no conflict event"
 
   test-ingress-same-host-different-paths-coexist:
     description: "Two Ingresses on the same host but DIFFERENT paths are NOT a conflict — both routes render. Guards features-090-ingress-path-conflict against false positives."

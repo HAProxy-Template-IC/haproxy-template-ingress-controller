@@ -26,10 +26,17 @@ import (
 //
 // Target format: "haproxy.cfg", "map:<name>", "file:<name>", "cert:<name>",
 // "crt-list:<name>", "k8s:<template-name>", "status:<ns>/<name>:<phase>",
-// or "rendering_error".
-func (r *Runner) resolveTarget(target, haproxyConfig string, auxiliaryFiles *dataplane.AuxiliaryFiles, k8sResources, statusPatches map[string]string, renderError string) string {
+// "events", or "rendering_error".
+func (r *Runner) resolveTarget(target, haproxyConfig string, auxiliaryFiles *dataplane.AuxiliaryFiles, k8sResources, statusPatches map[string]string, renderedEvents, renderError string) string {
 	if target == "rendering_error" {
 		return renderError
+	}
+
+	// Kubernetes Events the templates recorded via recordEvent(), one per line
+	// (`<Type> <Reason> <apiVersion> <Kind> <ns>/<name>: <message>`). Assert on
+	// them with the standard contains / not_contains / match_count machinery.
+	if target == "events" {
+		return renderedEvents
 	}
 
 	if target == names.MainTemplateName || target == "" {

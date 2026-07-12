@@ -177,17 +177,26 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	// Path utility functions
 	decl[FuncBasename] = scriggoBasename
 
-	// Status patch functions
-	decl[FuncStatusPatch] = scriggoStatusPatch
-	decl[FuncCondition] = scriggoCondition
-	decl[FuncTransitionTime] = scriggoTransitionTime
-	decl[FilterToJSON] = scriggoToJSON
+	// Status-patch and Kubernetes-Event functions
+	registerStatusAndEventFunctions(decl)
 
 	// Version comparison functions
 	decl[FuncSemverGte] = scriggoSemverGte
 
 	// GUID functions
 	decl[FuncMakeGUID] = scriggoMakeGUID
+}
+
+// registerStatusAndEventFunctions registers the resource-agnostic status-patch
+// helpers (statusPatch/condition/transitionTime/toJSON) and the recordEvent
+// Kubernetes-Event function. Split out of registerScriggoCustomFunctions to
+// keep that function within the statement-count limit.
+func registerStatusAndEventFunctions(decl native.Declarations) {
+	decl[FuncStatusPatch] = scriggoStatusPatch
+	decl[FuncCondition] = scriggoCondition
+	decl[FuncTransitionTime] = scriggoTransitionTime
+	decl[FilterToJSON] = scriggoToJSON
+	decl[FuncRecordEvent] = scriggoRecordEvent
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.

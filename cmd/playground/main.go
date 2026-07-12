@@ -63,6 +63,7 @@ type renderResult struct {
 	CertsDecoded  any // certs path -> decoded x509 summary (certs/keys/errors) for the certs tab
 	CRTLists      map[string]string
 	StatusPatches map[string]string // target "<Kind> <ns>/<name>" -> rendered .status YAML
+	Events        []string          // Kubernetes Events templates recorded via recordEvent(), one formatted line each
 	Applied       map[string]string // target "<Kind> <ns>/<name>" -> full k8sResources object YAML the controller applies
 	DurationMs    int64
 	Bucket        *BucketReport // where each pasted resource landed / why it was dropped
@@ -168,6 +169,7 @@ func hapticRenderJS(_ js.Value, args []js.Value) any {
 		"bucketReport":  bucketReportToJS(res.Bucket),
 		"trace":         orEmptySlice(res.Trace),
 		"statusPatches": toAnyMap(res.StatusPatches),
+		"events":        stringsToAny(res.Events),
 		"applied":       toAnyMap(res.Applied),
 		"migration":     res.Migration,
 		"schemaCheck":   res.SchemaCheck,
@@ -259,6 +261,15 @@ func orEmptySlice(s []any) []any {
 		return []any{}
 	}
 	return s
+}
+
+// stringsToAny converts a []string to a []any (never nil) for the JS boundary.
+func stringsToAny(s []string) []any {
+	out := make([]any, len(s))
+	for i, v := range s {
+		out[i] = v
+	}
+	return out
 }
 
 // bucketReportToJS converts the bucketing report into js.ValueOf-compatible
@@ -693,6 +704,14 @@ func toRenderResult(out *renderer.RenderResult) *renderResult {
 		if b.Len() > 0 {
 			rr.StatusPatches[targetKey(sp.Kind, sp.Namespace, sp.Name)] = b.String()
 		}
+	}
+	// Kubernetes Events templates recorded via recordEvent() (e.g. a
+	// RouteConflict Warning on an Ingress that lost its route). Format matches
+	// what `kubectl get events` shows: "<Type> <Reason> <apiVersion> <Kind>
+	// <ns>/<name>: <message>".
+	for _, e := range out.Events {
+		rr.Events = append(rr.Events, fmt.Sprintf("%s %s %s %s %s/%s: %s",
+			e.Type, e.Reason, e.APIVersion, e.Kind, e.Namespace, e.Name, e.Message))
 	}
 	// Full Kubernetes objects the templates declare (spec.k8sResources) and the
 	// controller owns + applies via server-side apply (e.g. the HAProxy Service).

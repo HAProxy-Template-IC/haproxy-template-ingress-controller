@@ -955,7 +955,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       $('tick').textContent = ms + ' ms';
     }
 
-    const TAB_KEYS = ['haproxy.cfg', 'maps', 'files', 'certs', 'status', 'applied', 'resources', 'trace', 'migration', 'tests'];
+    const TAB_KEYS = ['haproxy.cfg', 'maps', 'files', 'certs', 'status', 'events', 'applied', 'resources', 'trace', 'migration', 'tests'];
     const MIG_ATTENTION = ['different', 'dropped', 'fails', 'unknown']; // statuses the user must review
     function migAttentionCount(counts) { return MIG_ATTENTION.reduce((n, k) => n + (counts[k] || 0), 0); }
     /* build per-tab text + counts from a render result. The 'resources' tab is
@@ -964,7 +964,8 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       const named = (obj) => Object.entries(obj || {}).map(([k, v]) => `# ${k}\n${v}`).join('\n\n');
       const tabs = {
         'haproxy.cfg': res.haproxyCfg || '', maps: named(res.maps), files: named(res.files),
-        certs: named(res.certs), status: named(res.statusPatches), applied: named(res.applied),
+        certs: named(res.certs), status: named(res.statusPatches),
+        events: (res.events || []).join('\n'), applied: named(res.applied),
       };
       const report = res.bucketReport || [];
       const drops = report.filter((o) => o.dropped).length;
@@ -973,6 +974,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         'haproxy.cfg': tabs['haproxy.cfg'] ? tabs['haproxy.cfg'].split('\n').length : 0,
         maps: Object.keys(res.maps || {}).length, files: Object.keys(res.files || {}).length,
         certs: Object.keys(res.certs || {}).length, status: Object.keys(res.statusPatches || {}).length,
+        events: (res.events || []).length,
         applied: Object.keys(res.applied || {}).length, resources: report.length,
         trace: (res.trace || []).length,
         migration: mig ? mig.totalIngresses : 0,
@@ -1005,7 +1007,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
         b.tabIndex = key === activeTab ? 0 : -1;
         b.textContent = key + ' ';
         const n = document.createElement('span'); n.className = 'n'; n.textContent = counts[key]; b.appendChild(n);
-        const warn = key === 'resources' ? drops : key === 'migration' ? migWarn : key === 'tests' ? (lastTestRes ? lastTestRes.failed : 0) : 0;
+        const warn = key === 'resources' ? drops : key === 'migration' ? migWarn : key === 'tests' ? (lastTestRes ? lastTestRes.failed : 0) : key === 'events' ? counts.events : 0;
         if (warn) { const w = document.createElement('span'); w.className = 'warn-n'; w.textContent = '⚠' + warn; b.appendChild(w); }
         b.onclick = () => { if (enabled) { activeTab = key; renderTabs(tabs, counts, drops, migWarn); paintOutput(tabs, false); $('output').focus(); } };
         strip.appendChild(b);
