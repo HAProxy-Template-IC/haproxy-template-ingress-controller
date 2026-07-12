@@ -23,6 +23,32 @@ All templates have access to the following top-level variables:
 
 Note: the controller doesn't inject a `haproxyVersion` variable on its own. The Helm chart populates `templatingSettings.extraContext.haproxyVersion` from its `haproxyVersion` value, so chart-deployed templates read it as `{{ extraContext.haproxyVersion }}`. If you bypass the chart, set the value yourself in `templatingSettings.extraContext.haproxyVersion`. For feature checks prefer `capabilities.*` flags, which the controller derives from the local HAProxy probe.
 
+## Reserved words
+
+The template language (Scriggo) reserves a fixed set of keywords. Naming a variable after one is a compile-time error, so pick a different identifier — `kind` instead of `type`, `rng` instead of `range`, and so on.
+
+**Go keywords** (reserved in every template):
+
+```text
+break     case      chan      const     continue
+default   defer     else      fallthrough  for
+func      go        goto      if        import
+interface map       package   range     return
+select    struct    switch    type      var
+```
+
+**Template keywords** (reserved on top of the Go keywords in every HAPTIC template):
+
+```text
+and   contains  end       extends  in
+macro not       or        raw      render
+render_glob     inherit_context    show     using
+```
+
+The ones authors trip over by accident are `type`, `range`, `map`, `default`, `end`, `macro`, and `raw`. `default` being reserved is why the nil-coalescing helper is named `fallback` rather than `default`.
+
+Reusing an injected context-variable name — `resources`, `pathResolver`, `capabilities`, `extraContext`, or any other row of the [Context variables](#context-variables) table — as a variable name isn't a keyword error, but it shadows the global for the rest of that scope, so the built-in value becomes unreachable. Choose variable names that don't collide with those.
+
 ## Functions and filters
 
 Every entry below is callable in two equivalent styles: as a plain function (`fn(x, args...)`) or via the pipe operator (`x | fn(args...)`), which passes the left-hand value as the first argument. The pipe requires parentheses on the right side — `{{ value | toLower() }}` works, `{{ value | toLower }}` is a parse error. The one exception is `len`, a language builtin: call `len(x)` directly.
@@ -59,6 +85,8 @@ For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, 
 
 `sort_by` criteria accept modifiers: `:desc` (descending), `:exists` (by field presence), `| length` (by length).
 
+`sort_by` is a stable sort: items whose criteria all compare equal keep their original input order. Route precedence sorting relies on this — when two routes tie on every criterion, their source order decides which one wins.
+
 **Example — route precedence sorting:**
 
 ```go
@@ -75,6 +103,9 @@ HAPTIC has two regex surfaces, and they use different engines:
 
 - **Template-level regex** — `regex_search`, `sanitize_regex`, and the `regex_replace` post-processor — runs on Go's `regexp` package, which implements RE2 syntax. RE2 has no backreferences and no look-around assertions; a pattern that needs those won't compile. The `regex_replace` post-processor also runs line by line, so a pattern can't span a newline, and `^` / `$` anchor to each line rather than the whole document.
 - **HAProxy-runtime regex** — patterns HAProxy evaluates itself, such as `map_reg` lookups or a Gateway API `RegularExpression` path match — uses HAProxy's Perl Compatible Regular Expressions (PCRE) engine, which does support backreferences and look-around. A pattern that works in one surface may be rejected by the other.
+
+!!! note "Regular-expression denial of service (ReDoS)"
+    The two engines differ in their denial-of-service exposure. Template-level regex is ReDoS-safe: RE2 matches in linear time and can't backtrack, so no pattern — however it's constructed — triggers catastrophic backtracking. HAProxy-runtime regex is different: PCRE can backtrack, so a crafted pattern reaching HAProxy — a Gateway API `RegularExpression` match, or a regex-bearing ingress annotation such as `haproxy-ingress`'s `server-alias-regex` — can make the matcher run long on adversarial input. HAPTIC doesn't bound that complexity; it relies on HAProxy's own PCRE match limits. Treat every regex-bearing annotation as trusted input and restrict who can set one with role-based access control (RBAC).
 
 ### Emitting warnings
 

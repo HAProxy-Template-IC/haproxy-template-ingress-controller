@@ -11,6 +11,9 @@ Templates are rendered automatically when any watched resource changes, during i
 
 Hit **Run live** above to render the bundled Ingress example entirely in your browser. Edit the template on the left and watch `haproxy.cfg` update on the right — then switch tabs to see the `maps`, `files`, and `status` it also produces. Click any output line to jump to the template line that produced it, or **Open in full playground** to bring your changes into the full editor.
 
+!!! note "Which HAProxy version the playground uses"
+    The playground renders against a HAProxy version you pick in the full editor's **HAProxy** dropdown (embeds default to 3.4). That version drives the version-gated template logic — `semver_gte` checks and the `capabilities.*` flags — so switching it changes what renders. Validation is a pure-Go syntax and schema check with no `haproxy` binary, because a browser can't run one, so the playground can accept or reject a config differently than your cluster's HAProxy. For a binary-level check, validate with the per-version controller image that matches your cluster's HAProxy — its `validate` subcommand runs `haproxy -c`. See [Validation tests](validation-tests.md).
+
 ## What you can template
 
 | Template Type | Use When |
@@ -707,6 +710,9 @@ Templates write `gw.ApiVersion`, not `gw.APIVersion`. Why the convention works t
 
 **Inside a typed scope** (typed for-range, typed macro parameter, type-switch case branch) use direct field access — no `dig()`, no `tostring()`, no `fallback()` on already-typed primitives. Reach for `dig()` only at genuine polymorphic boundaries (a `routeInfo["route"]` switch entry, an `any` macro parameter, a `shared.Get(...)` return, a ConfigMap with no schema bundled, a `listenerOwner` that may be a Gateway or a ListenerSet, etc.). Mixed-shape chart code — some snippets typed, some not — is the expected adoption pattern, and `dig()` navigates typed structs by JSON tag, so a snippet ported one at a time keeps working without churning its callers.
 
+!!! note "Ranging an optional typed slice"
+    Range an optional or absent typed slice — `ingress.spec.rules`, `gw.Spec.Listeners` — directly: a nil slice ranges zero times, so it needs no guard. Don't wrap it in `fallback(x, []any{})` to make it "safe" — `fallback` returns `any`, which boxes every element to `interface{}` and breaks typed field access on the loop variable, forcing you back to `dig()`. Reach for a guard like `len(ingress.spec.rules) > 0` only when you need a separate branch for the empty case; a value-struct field can't be compared to `nil`, so use `len(...)`, not a `!= nil` check.
+
 **Optional fields normalise to nil through `dig()`.** A typegen-produced struct field whose schema entry is *not* in the OpenAPI `required` list carries a `json:"…,omitempty"` tag; `dig()` returns nil when such a field's value is the type's zero value (`""`, `0`, `false`, empty slice). The universal `dig(obj, "field") | fallback(default)` chart pattern therefore behaves identically across typed and untyped shapes — without the normalisation, an unpopulated optional string would return `""`, `fallback()` would skip, and downstream key composition would silently produce malformed strings. Required fields keep their zero values intact.
 
 **Schema source.** Typed shapes are generated from each resource's OpenAPI v3 schema:
@@ -833,6 +839,9 @@ items:
 </div>
 
 `ingress.metadata.annotations` is a typed `map[string]string`, so indexing an absent key returns `""` — the `algo != ""` check covers both a missing annotation and an empty one. Pick an annotation prefix you own (here `haptic.example.com/`) so it can't collide with another controller's. The same read-and-branch pattern drives rate limits, header rewrites, custom ACLs — anything HAProxy can express. In the chart, place the snippet under a `features-*` or `backend-directives-*` extension point so the bundled libraries pick it up (see [Template Libraries](template-libraries.md#injecting-custom-configuration)).
+
+!!! warning "Validate user-supplied values before you emit them"
+    HAProxy config output isn't auto-escaped — whatever a template interpolates lands in `haproxy.cfg` verbatim. A value you control (a service name, a port number) is fine, but a value an application team can set — an annotation, a label, a header taken from a watched resource — can carry a newline or control character that breaks out of its line and injects an HAProxy directive. Validate such values before emitting them: reject control characters and newlines, constrain the value to the character set you expect, and pass anything used in an HAProxy regex context (a `map_reg` pattern) through [`sanitize_regex`](template-reference.md#functions-and-filters) so metacharacters are escaped. The bundled chart libraries do exactly this before interpolating annotation-derived values.
 
 ### Reserved server slots (avoid reloads)
 
@@ -1191,6 +1200,21 @@ server {{ env }}.svc:80
 ```
 
 </div>
+
+### Emitting literal delimiters
+
+To output a literal `{{` or `{%` — a log-format string, or output that itself contains template-looking text — wrap the text in a `{% raw %}…{% end raw %}` block. Everything between the markers passes through verbatim, delimiters included:
+
+```go
+{% raw %}http-response set-header X-Template "{{ page }}"{% end raw %}
+```
+
+That renders `http-response set-header X-Template "{{ page }}"` unchanged. For a single delimiter, output it as a string literal instead:
+
+```go
+{{ "{{" }}   {# emits {{ #}
+{{ "{%" }}   {# emits {% #}
+```
 
 ## Status patches
 
