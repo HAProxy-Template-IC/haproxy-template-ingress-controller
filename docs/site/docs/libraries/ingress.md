@@ -318,6 +318,25 @@ controller:
         ingressDefaultHTTPS: false
 ```
 
+#### Redirect HTTP to HTTPS
+
+To send all Ingress traffic to HTTPS, turn on the global redirect. HAPTIC then emits an `http-request redirect scheme https` rule for every Ingress host that's served over HTTPS (the default-HTTPS bind is on, or the host has its own `spec.tls`), so it never redirects to a closed port:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        ingressDefaultSSLRedirect: true
+```
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `ingressDefaultSSLRedirect` | `false` | Redirect every HTTPS-served Ingress host from HTTP to HTTPS. Opt-in. |
+| `ingressDefaultSSLRedirectCode` | `"308"` | HTTP status code for the redirect — one of `301`, `302`, `303`, `307`, `308`. |
+
+The global toggle redirects all HTTPS-served Ingress hosts at once. For per-host control, leave it off and use the vendor `ssl-redirect` / `force-ssl-redirect` annotations, which register hosts individually and keep working alongside the global toggle.
+
 ### Backend generation
 
 Backends are generated with:

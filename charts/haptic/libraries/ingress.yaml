@@ -20,6 +20,13 @@ templatingSettings:
     # Has no effect when the default certificate is disabled
     # (defaultSSLCertificate.enabled=false) — there is no cert to bind then.
     ingressDefaultHTTPS: true
+    # Redirect all HTTPS-served Ingress hosts from HTTP to HTTPS
+    # (features-105-ingress-ssl-redirect). Opt-in; per-host vendor `ssl-redirect`
+    # annotations still work independently. Only redirects hosts actually served
+    # over HTTPS (default-HTTPS bind on, or the Ingress has spec.tls).
+    ingressDefaultSSLRedirect: false
+    # HTTP status code for the redirect above: one of 301, 302, 303, 307, 308.
+    ingressDefaultSSLRedirectCode: "308"
 
 watchedResources:
   ingresses:
@@ -85,6 +92,10 @@ templateSnippets:
       {%- var tlsDefault bool = extraContext | dig("ingressDefaultHTTPS") | fallback(true) %}
       {%- var haveDefaultCert = tostring(extraContext | dig("default_ssl_cert_name") | fallback("")) != "" %}
       {%- var httpsByDefault = tlsDefault && haveDefaultCert %}
+      {#- Stash the default-HTTPS decision so features-105-ingress-ssl-redirect
+          reuses the exact same gate (an Ingress host is only redirected to
+          HTTPS when it is actually served over HTTPS). -#}
+      {%- gf["ingressHTTPSByDefault"] = httpsByDefault %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%%
         gf["bindHTTPDefault"] = true
@@ -164,6 +175,66 @@ templateSnippets:
             }
             gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), tlsCert)
           %%}
+        {%- end %}
+      {%- end %}
+
+  features-105-ingress-ssl-redirect:
+    template: |
+      {#-
+        Global HTTP→HTTPS redirect for Ingress (opt-in).
+
+        When extraContext.ingressDefaultSSLRedirect is true, every Ingress host
+        that is served over HTTPS is registered into gf["sslRedirectHosts"], so
+        the SSL library's features-160-ssl-redirect-map + frontend-filters-050
+        emit the shared `http-request redirect scheme https` rule for it. This
+        is the global counterpart to the per-host vendor `ssl-redirect`
+        annotations, which keep working and are additive.
+
+        A host is only redirected when it is actually reachable over HTTPS,
+        decided per host: either the default-HTTPS bind is on
+        (gf["ingressHTTPSByDefault"], set by features-100-ingress-bind from
+        ingressDefaultHTTPS + the default cert), which serves every host, or the
+        host carries its own certificate (it appears in a spec.tls[].hosts entry).
+        A bare host on a partly-TLS Ingress is therefore not redirected, so the
+        redirect never points a client at a port it isn't served on.
+
+        extraContext knobs:
+          - ingressDefaultSSLRedirect     (bool, default false) — turn it on.
+          - ingressDefaultSSLRedirectCode (default "308") — HTTP status code;
+            one of 301, 302, 303, 307, 308.
+
+        The global toggle redirects all HTTPS-served Ingress hosts. For per-host
+        control, leave it off and use the vendor `ssl-redirect` annotations.
+      -#}
+      {%- var redirectAll bool = extraContext | dig("ingressDefaultSSLRedirect") | fallback(false) %}
+      {%- if redirectAll %}
+        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+        {%- var code = extraContext | dig("ingressDefaultSSLRedirectCode") | fallback("308") | tostring() %}
+        {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" %}
+          {{- fail("Invalid extraContext.ingressDefaultSSLRedirectCode '" + code + "': must be one of 301, 302, 303, 307, 308.") -}}
+        {%- end %}
+        {%- var httpsByDefault bool = gf | dig("ingressHTTPSByDefault") | fallback(false) %}
+        {%- for _, ingress := range resources.ingresses.List() %}
+          {#- HTTPS availability is per-host: with the default-HTTPS bind on,
+              every host is served; otherwise only the hosts that carry their
+              own certificate (listed in a spec.tls[].hosts) are. Gate each host
+              on that, so a bare host on a partly-TLS Ingress is never redirected
+              to a port it isn't served on. -#}
+          {%- var tlsHosts = map[string]bool{} %}
+          {%- for _, tls := range ingress.Spec.Tls %}
+            {%- for _, h := range tls.Hosts %}
+              {%- tlsHosts[toLower(h)] = true %}
+            {%- end %}
+          {%- end %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}
+              {%- var host = toLower(rule.Host) %}
+              {%- if httpsByDefault || tlsHosts[host] %}
+                {%- var redirectHosts []any = gf["sslRedirectHosts"] %}
+                {%- gf["sslRedirectHosts"] = append(redirectHosts, map[string]any{"host": host, "code": code}) %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
         {%- end %}
       {%- end %}
 
@@ -1134,6 +1205,158 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: "(?m)^frontend https$"
+
+  test-ingress-default-ssl-redirect:
+    description: "extraContext.ingressDefaultSSLRedirect=true redirects every HTTPS-served Ingress host from HTTP to HTTPS with the configured code (default 308), reusing the shared ssl-redirect map. See features-105-ingress-ssl-redirect."
+    extraContext:
+      ingressDefaultSSLRedirect: true
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: web
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: plain
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: web
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect scheme https code 308 if !\\{ ssl_fc \\}"
+      - type: contains
+        target: map:ssl-redirect-308.map
+        pattern: "(?m)^plain\\.example\\.com 1$"
+
+  test-ingress-default-ssl-redirect-disabled:
+    description: "By default (ingressDefaultSSLRedirect unset) an HTTPS-served Ingress emits no global HTTP→HTTPS redirect — the feature is opt-in. See features-105-ingress-ssl-redirect."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: web
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: plain
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: web
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "redirect scheme https"
+
+  test-ingress-default-ssl-redirect-per-host:
+    description: "With the default-HTTPS bind off (ingressDefaultHTTPS=false), the global redirect only registers hosts that carry their own certificate: a partly-TLS Ingress redirects its spec.tls host but not its bare host, which isn't served over HTTPS. See features-105-ingress-ssl-redirect."
+    extraContext:
+      ingressDefaultHTTPS: false
+      ingressDefaultSSLRedirect: true
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: example-tls
+            namespace: default
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: web
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: partial-tls
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts:
+                  - secure.example.com
+                secretName: example-tls
+            rules:
+              - host: secure.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: web
+                          port:
+                            number: 80
+              - host: plain.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: web
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:ssl-redirect-308.map
+        pattern: "(?m)^secure\\.example\\.com 1$"
+      - type: not_contains
+        target: map:ssl-redirect-308.map
+        pattern: "plain\\.example\\.com"
 
   test-ingress-slot-preservation:
     description: |
