@@ -160,7 +160,7 @@ kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
 You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `3/3`).
 
 !!! note "HAProxy version"
-    The chart defaults to HAProxy 3.4. To select a different version (for example, 3.0 Long-Term Support (LTS) or 3.3), set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for details.
+    The chart defaults to HAProxy 3.4, the latest Long-Term Support (LTS) release. To pin a different series, set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for the full list and support status.
 
 ## Step 2: Deploy a sample application
 
@@ -243,8 +243,8 @@ kubectl apply -f echo-ingress.yaml
 
 The controller automatically detects this new Ingress, renders the HAProxy configuration, validates it, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
 
-!!! tip "Adding TLS"
-    This Ingress serves plain HTTP. To terminate HTTPS for a host, add a `spec.tls` entry backed by a `kubernetes.io/tls` Secret — see [Ingress library — TLS configuration](./libraries/ingress.md#tls-configuration). The chart's default certificate is covered in [SSL Certificates](./ssl-certificates.md).
+!!! tip "TLS for a host"
+    This Ingress is served over HTTP only. The chart binds its HTTPS listener once at least one resource requests TLS — an Ingress with `spec.tls`, a Gateway HTTPS listener, or SSL passthrough. To terminate HTTPS for this host, add a `spec.tls` entry backed by a `kubernetes.io/tls` Secret — see [Ingress library — TLS configuration](./libraries/ingress.md#tls-configuration). Once the HTTPS listener is up, any host it serves that has no certificate of its own falls back to the chart's [default certificate](./ssl-certificates.md) (a self-signed cert out of the box).
 
 ## Step 4: Verify the configuration
 
@@ -256,23 +256,20 @@ Watch the controller process the Ingress:
 kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=50 -f
 ```
 
-You should see log entries showing:
+At the default `info` log level, each change produces a single consolidated `Reconciliation` summary line from the leader replica, for example:
 
-- Ingress resource detected
-- Template rendering completed
-- Configuration validation passed
-- Deployment to HAProxy instances succeeded
+```text
+level=INFO msg=Reconciliation trigger=resource_change instances=2/2 reloads=2 ops=30 render_ms=1 validate_ms=1 deploy_ms=184 total_ms=289 backend_create=2 server_create=20 server_update=8 map_update=6
+```
 
-### Inspect HAProxy configuration
+It reports the trigger, how many HAProxy instances were updated (`instances`), the reloads and runtime operations applied (with a per-operation breakdown such as `backend_create` / `server_create`), and per-phase timings. For the individual stages — the resource change, template render, validation, and per-instance deploy — raise the controller to the `debug` level (see [Enable debug logging](./troubleshooting.md#enable-debug-logging)).
 
-Verify the generated HAProxy configuration was deployed:
+### Inspect the rendered HAProxy configuration
+
+The controller writes the rendered HAProxy config to a read-only `HAProxyCfg` resource on every reconciliation, so you can inspect exactly what it deployed straight from the Kubernetes API — no pod access needed:
 
 ```bash
-# Get one of the HAProxy pods
-HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
-
-# View the generated configuration
-kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg
+kubectl describe haproxycfg -n haptic
 ```
 
 You should see:
@@ -281,16 +278,8 @@ You should see:
 - A backend section referencing the echo service
 - Server entries pointing to the echo pod endpoints
 
-### Inspect the rendered configuration resource
-
-The controller also writes the rendered HAProxy config to a read-only `HAProxyCfg` resource on every reconciliation, so you can inspect it without pod access:
-
-```bash
-kubectl describe haproxycfg -n haptic
-```
-
-!!! note "CRD short names"
-    `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the *output*. The *input* — templates, watched resources, dataplane settings — lives in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Edit that one, not `HAProxyCfg`. Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
+!!! note "Output vs input"
+    `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the controller's *output* — it republishes it from the templates whenever the rendered configuration changes, so editing it directly has no lasting effect and isn't advised: the next config change overwrites your edit. To change the configuration, edit the *input* instead — the templates, watched resources, and dataplane settings in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
 
 ## Step 5: Test the routing
 
