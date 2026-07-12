@@ -1,4 +1,4 @@
-# Gateway API Upgrade Playbook
+# Gateway API upgrade playbook
 
 Mechanical checklist for bumping the `sigs.k8s.io/gateway-api` dependency.
 Distilled from the v1.6.0 upgrade retrospective
@@ -106,7 +106,7 @@ verification. Work through the sections in order.
 
 5. Leave the suite's consistency budgets alone. `MaxTimeToConsistency` and
     the object-status budgets stay at upstream defaults because they absorb
-    cluster-infra latency (kube-proxy DNAT programming, apiserver churn) that
+    cluster-infra latency (kube-proxy Destination Network Address Translation (DNAT) programming, apiserver churn) that
     HAPTIC can't control; HAPTIC's own latency contracts live in dedicated
     e2e assertions instead. The full rationale is encoded in the
     budget-doctrine comments in
@@ -123,7 +123,7 @@ verification. Work through the sections in order.
     ./scripts/test-templates.sh
     ```
 
-2. Trigger a nightly-style pipeline on the MR branch. It runs the full
+2. Trigger a nightly style pipeline on the MR branch. It runs the full
     heartbeat stack plus `nightly-gwapi-matrix` and `nightly-gwapi-canary`,
     proving the matrix and canary jobs live on the new release:
 
@@ -154,7 +154,7 @@ verification. Work through the sections in order.
   that pipeline's ID in every "green" claim. In the v1.6.0 campaign, fixes
   accumulated on a side branch for hours while the MR pipeline stayed red.
 - **Commit-content verification.** Before declaring a fix pushed, diff the
-  pushed commit against the intended change — the commit message is not the
+  pushed commit against the intended change — the commit message isn't the
   content. In the v1.6.0 campaign, a fix commit shipped only its CHANGELOG
   line (the `values.yaml` edit was never staged) and burned two CI rounds:
 

@@ -66,7 +66,7 @@ IngressClass is created only when both of the following are true:
 
 A third, internal condition — the chart checks that the `networking.k8s.io/v1/IngressClass` API exists — always holds on a supported (1.21+) cluster, since IngressClass reached v1 in Kubernetes 1.19.
 
-## Multi-Controller Environments
+## Multi-controller environments
 
 When running multiple ingress controllers:
 
@@ -103,7 +103,7 @@ spec:
 
 For a complete Ingress walkthrough, see [Getting Started](./getting-started.md#step-3-create-an-ingress-resource).
 
-## Disabling IngressClass Creation
+## Disabling IngressClass creation
 
 If you manage IngressClass resources separately or use an external tool:
 
@@ -112,7 +112,7 @@ ingressClass:
   enabled: false
 ```
 
-## See Also
+## See also
 
 - [Annotations](./annotations.md) — per-Ingress behavior via vendor annotation libraries
 - [Migrating to HAPTIC](./migrating.md) — matching the incumbent controller's class during cutover

@@ -36,7 +36,7 @@ gatewayClass:
 
 ## Creation conditions
 
-The chart creates the GatewayClass only when ALL of the following are true:
+The chart creates the GatewayClass only when **all** the following are true:
 
 1. `gatewayClass.enabled: true` (default)
 2. `controller.templateLibraries.gateway.enabled: true` (default)
@@ -44,7 +44,7 @@ The chart creates the GatewayClass only when ALL of the following are true:
 
 If the API is absent, the chart skips the GatewayClass without error and installs the rest normally.
 
-## parametersRef - Controller Configuration Link
+## `parametersRef` - controller configuration link
 
 The GatewayClass automatically references the HAProxyTemplateConfig created by this chart via `parametersRef`. The reference records which HAProxyTemplateConfig drives Gateways of this class — useful when you run several classes with different configs.
 
@@ -65,7 +65,7 @@ The GatewayClass automatically references the HAProxyTemplateConfig created by t
 kubectl get gatewayclass haptic -o yaml
 ```
 
-## Multi-Controller Environments
+## Multi-controller environments
 
 When running multiple Gateway API controllers:
 
@@ -93,7 +93,7 @@ gatewayClass:
 
 ## Advanced: Multiple GatewayClasses
 
-You can create multiple GatewayClasses pointing to different HAProxyTemplateConfig resources for different routing scenarios (e.g., internet-facing vs internal):
+You can create multiple GatewayClasses pointing to different HAProxyTemplateConfig resources for different routing scenarios (for example internet-facing vs internal):
 
 ```bash
 # Install chart with default config
@@ -140,7 +140,7 @@ spec:
 
 For the supported route types (HTTP, gRPC, TLS, TCP) and worked examples, see the [Gateway API library](./libraries/gateway.md).
 
-## Disabling GatewayClass Creation
+## Disabling GatewayClass creation
 
 If you manage GatewayClass resources separately:
 
@@ -149,7 +149,7 @@ gatewayClass:
   enabled: false
 ```
 
-## See Also
+## See also
 
 - [Gateway API library](./libraries/gateway.md) — route types, listeners, and annotation support
 - [Migrating to HAPTIC](./migrating.md) — running HAPTIC alongside another controller

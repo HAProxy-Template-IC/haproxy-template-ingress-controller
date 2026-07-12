@@ -1,15 +1,15 @@
-# SSL Certificates
+# SSL certificates
 
 By default, the [HAPTIC Helm chart](deploying-with-helm.md) provisions a default SSL certificate for HTTPS traffic — via cert-manager when it's installed, otherwise as a chart-generated self-signed Secret — and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
 
-## Default SSL Certificate
+## Default SSL certificate
 
-### Default Behavior (Development/Testing)
+### Default behavior (development/testing)
 
-A default install converges out of the box, with or without cert-manager:
+A default install converges out of the box with or without cert-manager:
 
 - **cert-manager installed** (the `cert-manager.io/v1` API is present when Helm renders): the chart creates a self-signed `Issuer` named `<release>-ssl-selfsigned` and a `Certificate` for `localdev.me` and `*.localdev.me`; cert-manager provisions the `default-ssl-cert` Secret and renews it before expiry.
-- **cert-manager absent**: the chart generates a self-signed `default-ssl-cert` Secret itself, for the same DNS names. This certificate is valid for 10 years and is **not** auto-rotated. The Secret survives uninstall and upgrade (`helm.sh/resource-policy: keep`), and the chart only generates it when the Secret doesn't already exist — a Secret you created out-of-band is left untouched.
+- **cert-manager absent**: the chart generates a self-signed `default-ssl-cert` Secret itself, for the same DNS names. This certificate is valid for 10 years and **isn't** auto-rotated. The Secret survives uninstall and upgrade (`helm.sh/resource-policy: keep`), and the chart only generates it when the Secret doesn't already exist — a Secret you created out-of-band is left untouched.
 
 The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local development. No additional configuration is required:
 
@@ -65,7 +65,7 @@ EOF
 
 The Helm chart creates a Certificate resource that cert-manager uses to automatically provision and renew the TLS Secret.
 
-### Alternative: Manual Certificate
+### Alternative: Manual certificate
 
 To manage certificates without cert-manager, disable cert-manager integration and create a TLS Secret manually:
 
@@ -83,7 +83,7 @@ kubectl create secret tls default-ssl-cert \
   --namespace=haptic
 ```
 
-### Custom Certificate Names
+### Custom certificate names
 
 To use a different Secret name or namespace:
 
@@ -96,7 +96,7 @@ controller:
 
 The controller references the Secret at `certificates/my-wildcard-cert`.
 
-### TLS Secret Format
+### TLS Secret format
 
 The Secret must be of type `kubernetes.io/tls` and contain two keys:
 
@@ -122,7 +122,7 @@ controller:
     enabled: false
 ```
 
-### Certificate Rotation
+### Certificate rotation
 
 **With cert-manager**: Certificates are automatically renewed before expiration.
 
@@ -141,11 +141,11 @@ kubectl create secret tls default-ssl-cert \
 
 The controller watches the Secret and automatically deploys the updated certificate to HAProxy.
 
-### SSL Troubleshooting
+### SSL troubleshooting
 
 For SSL symptom diagnosis — "Secret not found" errors, HAProxy failing to start with SSL errors, or a certificate that isn't updating — see [Troubleshooting → SSL/TLS Issues](./troubleshooting.md#ssltls-issues).
 
-## Webhook Certificates
+## Webhook certificates
 
 The admission webhook requires TLS certificates. By default the chart generates a self-signed certificate itself — no cert-manager required (`webhook.certManager.enabled` is `false`):
 
@@ -199,7 +199,7 @@ webhook:
   caBundle: "LS0tLS1CRUdJTi..."  # Base64-encoded CA certificate
 ```
 
-## See Also
+## See also
 
 - [Security](./operations/security.md) — webhook hardening, RBAC, and network exposure
 - [Troubleshooting](./troubleshooting.md) — SSL symptom diagnosis and general debugging

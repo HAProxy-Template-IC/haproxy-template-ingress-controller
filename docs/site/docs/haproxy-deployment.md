@@ -4,7 +4,7 @@
 
 The chart can deploy HAProxy pods alongside the controller, or you can manage HAProxy separately.
 
-## Resource Limits
+## Resource limits
 
 Controller-pod sizing — the chart's request/limit defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container awareness — is covered in [Performance — Controller Resource Sizing](operations/performance.md#controller-resource-sizing). HAProxy and the Dataplane API sidecar have their own resource blocks in the chart values: `haproxy.resources` and `haproxy.dataplane.resources`.
 
@@ -14,7 +14,7 @@ The chart deploys separate Services for the controller and HAProxy so data-plane
 
 ### Controller Service
 
-A single `ClusterIP` Service named after the chart's fullname (e.g. `<release>-haptic`) that exposes the controller's ports defined in `controller.ports`:
+A single `ClusterIP` Service named after the chart's `fullname` (for example `<release>-haptic`) that exposes the controller's ports defined in `controller.ports`:
 
 | Name | Container port | Values key | Purpose |
 |------|----------------|------------|---------|
@@ -32,7 +32,7 @@ service:
 
 ### HAProxy Service
 
-A Service (`<fullname>-haproxy`, e.g. `<release>-haptic-haproxy`, `NodePort` by default) that fronts the HAProxy pods. Port structure comes from `haproxy.service.*` and container ports from `haproxy.ports.*`:
+A Service (`<fullname>-haproxy`, for example `<release>-haptic-haproxy`, `NodePort` by default) that fronts the HAProxy pods. Port structure comes from `haproxy.service.*` and container ports from `haproxy.ports.*`:
 
 | Name | Service port | Container port | nodePort default |
 |------|--------------|----------------|------------------|
@@ -40,7 +40,7 @@ A Service (`<fullname>-haproxy`, e.g. `<release>-haptic-haproxy`, `NodePort` by 
 | `https` | 443 | 443 | 30443 |
 | `stats` | 8404 | 8404 | 30404 |
 
-The Dataplane API sidecar gets its own internal-only `ClusterIP` Service (`<fullname>-haproxy-dataplane`, e.g. `<release>-haptic-haproxy-dataplane`) on port 5555. Its type comes from `haproxy.dataplane.service.type`.
+The Dataplane API sidecar gets its own internal-only `ClusterIP` Service (`<fullname>-haproxy-dataplane`, for example `<release>-haptic-haproxy-dataplane`) on port 5555. Its type comes from `haproxy.dataplane.service.type`.
 
 **Development (kind cluster)** — NodePort default works out of the box; switch to LoadBalancer if you want `localhost` mapping via kind's port-forward:
 
@@ -67,7 +67,7 @@ haproxy:
   enabled: false
 ```
 
-### Full HAProxy Service Reference
+### Full HAProxy Service reference
 
 ```yaml
 haproxy:
@@ -94,11 +94,11 @@ haproxy:
       nodePort: 30404
 ```
 
-## Initial Bootstrap Config
+## Initial bootstrap config
 
 When the chart manages HAProxy, the pod boots with a minimal `haproxy.cfg` rendered from `haproxy.initialConfig` into the `<release>-haptic-haproxy-config` ConfigMap. The controller replaces this config via the Dataplane API on its first reconcile, so the bootstrap only matters during the seconds between pod start and controller handoff (and on pod restart before the controller reconciles again).
 
-The default keeps `/healthz` returning 200 on the stats port and `/ready` returning 503 ("waiting for controller config"), so the pod stays NotReady until the controller pushes its first real config. To customise (for example, to add a cluster-internal ACL, an extra logging directive, or pre-bind a port the controller doesn't manage), copy the default from `values.yaml` into your own values file and edit it:
+The default keeps `/healthz` returning 200 on the stats port and `/ready` returning 503 ("waiting for controller config"), so the pod stays NotReady until the controller pushes its first real config. To customise (for example, to add cluster-internal ACLs, an extra logging directive, or pre-bind a port the controller doesn't manage), copy the default from `values.yaml` into your own values file and edit it:
 
 ```yaml
 haproxy:
@@ -125,9 +125,9 @@ haproxy:
 The string is processed through Helm's `tpl`, so chart helpers and `.Values` references are available. Editing this value bumps the bootstrap-config checksum on the HAProxy Deployment, which rolls HAProxy pods on the next `helm upgrade`.
 
 !!! warning "Keep /ready returning 503 until the controller takes over"
-    An override that returns 200 on `/ready` will let the Service route traffic to HAProxy before any backends exist — clients will see 404s. Replicate the 503 behaviour, or accept the gap.
+    An override that returns 200 on `/ready` lets the Service route traffic to HAProxy before any backends exist — clients see 404 responses. Replicate the 503 behaviour, or accept the gap.
 
-## HAProxy Pod Requirements
+## HAProxy Pod requirements
 
 When `haproxy.enabled: false`, you're responsible for deploying HAProxy pods yourself. The controller discovers them via the pod selector at `controller.config.podSelector`, which defaults to:
 
@@ -150,7 +150,9 @@ Each discovered pod must:
 3. **Run the Dataplane API sidecar** in the same pod, sharing the config volume with HAProxy
 4. **Expose Dataplane API** on `haproxy.ports.dataplane` (default 5555)
 
-### Example HAProxy Pod Deployment (BYO HAProxy)
+<a id="example-haproxy-pod-deployment-byo-haproxy"></a>
+
+### Example HAProxy Pod Deployment (bring-your-own HAProxy)
 
 ```yaml
 apiVersion: apps/v1

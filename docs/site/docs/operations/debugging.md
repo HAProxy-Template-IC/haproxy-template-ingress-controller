@@ -2,7 +2,7 @@
 
 The controller serves a debug HTTP server that exposes internal state, recent events, and Go profiling. Use it when logs aren't enough — you can see exactly what config is loaded, what it rendered to, and what's happened in the last ~1000 events without having to correlate timestamps.
 
-## Accessing the Server
+## Accessing the server
 
 The Helm chart enables the debug server on port `8080` (same port as `/healthz`, same mux). Port-forward to reach it:
 
@@ -13,7 +13,7 @@ curl http://localhost:8080/debug/vars
 
 `/healthz` lives on the same listener, so setting `controller.debugPort: 0` disables both `/debug/*` and `/healthz` and breaks the liveness/readiness probes — restrict access with a NetworkPolicy instead (see [Security](./security.md#network-exposure)). To move both endpoints to a different port, set `controller.debugPort` **and** `controller.ports.healthz` to the same value — the probes target the `healthz` container port, so moving only `debugPort` breaks them.
 
-## Debug Variables
+## Debug variables
 
 `GET /debug/vars` lists the available paths; `GET /debug/vars/<name>` fetches one:
 
@@ -30,7 +30,7 @@ curl http://localhost:8080/debug/vars
 | `/debug/vars/errors` | Last error per phase, keyed by `template_render_error` / `haproxy_validation_error` / `deployment_errors`, plus `last_error_timestamp` |
 | `/debug/vars/events` | Ring buffer of the most recent controller events |
 | `/debug/vars/state` | Aggregate of the above — large; prefer the specific paths for scripting |
-| `/debug/vars/uptime` | Process uptime since last reinitialisation |
+| `/debug/vars/uptime` | Process uptime since last reinitialization |
 
 Every endpoint supports JSONPath field selection via `?field={...}`:
 
@@ -64,7 +64,7 @@ curl 'http://localhost:8080/debug/events?correlation_id=<id>'
 
 Pull a `correlation_id` out of `/debug/vars/events` (reconciliation-, render-, validation-, and deployment-related entries expose one; lifecycle and resource-index events don't) or out of structured logs, then use it here to fetch every related event in order.
 
-## Go Profiling
+## Go profiling
 
 `/debug/pprof/*` is the standard `net/http/pprof` handler:
 
@@ -87,16 +87,16 @@ Analyse with `go tool pprof -http=:8081 cpu.pprof`.
 !!! note
     `/debug/pprof/block` and `/debug/pprof/mutex` are registered but always return empty profiles: the controller never calls `runtime.SetBlockProfileRate` / `runtime.SetMutexProfileFraction`, so no data is collected. Enabling them requires a custom build that turns on sampling, which carries measurable runtime overhead — do it only for a targeted investigation.
 
-## Common Recipes
+## Common recipes
 
-**Did my config actually load?**
+**Did your config actually load?**
 
 ```bash
 curl -s 'http://localhost:8080/debug/vars/config?field={.version}'
 # empty / error → check `kubectl logs … | grep -i error` and `kubectl get htplcfg -n haptic`
 ```
 
-**Is the current HAProxy config what I expect?**
+**Is the current HAProxy config what you expect?**
 
 ```bash
 curl -s 'http://localhost:8080/debug/vars/rendered?field={.config}' | jq -r > current.cfg
@@ -130,7 +130,7 @@ curl -s http://localhost:8080/debug/vars/events \
 
 If the stream is quiet for minutes even though Ingresses are changing, check `haptic_reconciliation_total` in Prometheus and the per-watcher debounce logs (`pkg/k8s/watcher` — the only debounce layer; the reconciler itself fires immediately).
 
-**Where is memory going?**
+**Where's memory going?**
 
 ```bash
 curl http://localhost:8080/debug/pprof/heap > heap.pprof
@@ -153,13 +153,13 @@ curl -s http://localhost:8080/debug/vars/events \
 
 More than a few reconciliations per second under stable input usually means a watcher's debounce is undersized for the cluster's resource churn — see [Performance — Reconciliation Tuning](./performance.md#reconciliation-tuning) for the levers.
 
-## Security Reminders
+## Security reminders
 
 - `/debug/vars/credentials` returns metadata only — the controller never exposes the actual DataPlane passwords here, the state dump, or any other endpoint.
 - `/debug/vars/state` includes the full rendered `haproxy.cfg` (which may reference internal hostnames and backend addresses). Restrict reachability, don't forward the port from CI systems you wouldn't trust with the rendered output.
 - See [Security — Network Exposure](./security.md#network-exposure) for a NetworkPolicy pinning the debug port to your observability namespace.
 
-## See Also
+## See also
 
 - [Monitoring](./monitoring.md) — Prometheus-side view of the same signals
 - [Troubleshooting](../troubleshooting.md) — symptom → fix table

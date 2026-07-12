@@ -47,7 +47,7 @@ New to HAPTIC? [Getting Started](getting-started.md) walks through a first insta
 
 Jump to what you need:
 
-| I want to… | See |
+| Task | See |
 |------------|-----|
 | Configure or filter the ingress class | [IngressClass](./ingress-class.md) |
 | Set up TLS/HTTPS | [SSL Certificates](./ssl-certificates.md) |

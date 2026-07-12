@@ -1,4 +1,4 @@
-# haproxytech Library
+# haproxytech library
 
 The haproxytech library implements `haproxy.org/*` annotations compatible with [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress), the official HAProxy ingress controller by HAProxy Technologies.
 
@@ -8,7 +8,7 @@ Supported features:
 
 - Basic authentication
 - SSL/TLS redirection
-- CORS configuration
+- Cross-Origin Resource Sharing (CORS) configuration
 - Rate limiting
 - Session persistence
 - Path rewriting
@@ -53,18 +53,18 @@ controller:
       enabled: true  # Enabled by default
 ```
 
-## Extension Points
+## Extension points
 
 The haproxytech library implements these extension points from base.yaml. All snippets follow the `<extension-point>-<NNN>-haproxytech-*` naming convention, where `NNN` is the numeric priority (see [Template Libraries → Snippet Priority](../template-libraries.md#snippet-priority)).
 
-### features-* (shared-state initialization)
+### `features-*` (shared-state initialization)
 
 | Snippet | Purpose |
 |---------|---------|
 | `features-100-haproxytech-ssl-redirect` | Registers SSL-redirect host/code pairs in `gf["sslRedirectHosts"]` |
 | `features-100-haproxytech-ssl-passthrough` | Scans ingresses for `haproxy.org/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
 
-### frontend-filters-* (HTTP-frontend request/response filters)
+### `frontend-filters-*` (HTTP-frontend request/response filters)
 
 | Snippet | Annotations Processed |
 |---------|----------------------|
@@ -73,7 +73,7 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | `frontend-filters-300-haproxytech-cors` | `haproxy.org/cors-*` |
 | `frontend-filters-500-haproxytech-logging` | `haproxy.org/request-capture`, `haproxy.org/request-capture-len` |
 
-### backend-directives-* (per-backend directives)
+### `backend-directives-*` (per-backend directives)
 
 | Snippet | Annotations Processed |
 |---------|----------------------|
@@ -99,7 +99,7 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | `features-130-haproxytech-request-redirect` | `features-*` | Registers host→location for `haproxy.org/request-redirect` / `haproxy.org/request-redirect-code` in the shared `redirect-loc-<code>.map` |
 | `map-reqhdr-host-250-haproxytech` | `map-reqhdr-host-*` | Relocates `haproxy.org/set-host` to `reqhdr-host.map` + a shared frontend rule |
 
-### Injecting Custom Annotations
+### Injecting custom annotations
 
 You can extend annotation processing by adding snippets with the right prefix and priority:
 
@@ -118,9 +118,9 @@ controller:
           {%- end %}
 ```
 
-## Access Control & IP Filtering
+## Access control & IP filtering
 
-### haproxy.org/allow-list
+### `haproxy.org/allow-list`
 
 **Status**: ✅ Supported
 
@@ -164,7 +164,7 @@ http-request deny if !allowlist_192_168_1_0_24 !allowlist_10_0_0_1
 
 ---
 
-### haproxy.org/deny-list
+### `haproxy.org/deny-list`
 
 **Status**: ✅ Supported
 
@@ -208,7 +208,7 @@ http-request deny if denylist_203_0_113_0_24 or denylist_198_51_100_50
 
 ---
 
-### haproxy.org/whitelist
+### `haproxy.org/whitelist`
 
 **Status**: ✅ Supported (deprecated alias)
 
@@ -218,7 +218,7 @@ http-request deny if denylist_203_0_113_0_24 or denylist_198_51_100_50
 
 ---
 
-### haproxy.org/blacklist
+### `haproxy.org/blacklist`
 
 **Status**: ✅ Supported (deprecated alias)
 
@@ -228,9 +228,9 @@ http-request deny if denylist_203_0_113_0_24 or denylist_198_51_100_50
 
 ---
 
-## CORS Configuration
+## CORS configuration
 
-### haproxy.org/cors-enable
+### `haproxy.org/cors-enable`
 
 **Status**: ✅ Supported
 
@@ -281,7 +281,7 @@ This mirrors the upstream HAProxy Kubernetes Ingress Controller. By default the 
 
 ---
 
-### haproxy.org/cors-allow-origin
+### `haproxy.org/cors-allow-origin`
 
 **Status**: ✅ Supported
 
@@ -315,7 +315,7 @@ http-after-response set-header Access-Control-Allow-Origin '%[var(txn.cors_origi
 
 ---
 
-### haproxy.org/cors-allow-methods
+### `haproxy.org/cors-allow-methods`
 
 **Status**: ✅ Supported
 
@@ -339,7 +339,7 @@ http-after-response set-header Access-Control-Allow-Methods "GET, POST, PUT, DEL
 
 ---
 
-### haproxy.org/cors-allow-headers
+### `haproxy.org/cors-allow-headers`
 
 **Status**: ✅ Supported
 
@@ -361,7 +361,7 @@ http-after-response set-header Access-Control-Allow-Headers "Content-Type, Autho
 
 ---
 
-### haproxy.org/cors-allow-credentials
+### `haproxy.org/cors-allow-credentials`
 
 **Status**: ✅ Supported
 
@@ -381,11 +381,11 @@ http-after-response set-header Access-Control-Allow-Credentials "true"
 
 **Dependencies**: Requires `cors-enable: "true"`
 
-**Note**: When `cors-allow-credentials: "true"`, `cors-allow-origin` cannot be `*` (must be specific origin)
+**Note**: When `cors-allow-credentials: "true"`, `cors-allow-origin` can't be `*` (must be specific origin)
 
 ---
 
-### haproxy.org/cors-max-age
+### `haproxy.org/cors-max-age`
 
 **Status**: ✅ Supported
 
@@ -407,7 +407,7 @@ http-after-response set-header Access-Control-Max-Age "3600"
 
 ---
 
-### haproxy.org/cors-respond-to-options
+### `haproxy.org/cors-respond-to-options`
 
 **Status**: ✅ Supported
 
@@ -431,13 +431,13 @@ http-request return status 204 if { var(txn.host) -m str api.example.com } METH_
 
 ---
 
-## Rate Limiting
+## Rate limiting
 
-### haproxy.org/rate-limit-requests
+### `haproxy.org/rate-limit-requests`
 
 **Status**: ✅ Supported
 
-**Description**: Maximum number of requests allowed in the specified time period (per source IP).
+**Description**: Maximum number of requests allowed in the specified period (per source IP).
 
 **Usage**:
 
@@ -480,11 +480,11 @@ backend api-backend
 
 ---
 
-### haproxy.org/rate-limit-period
+### `haproxy.org/rate-limit-period`
 
 **Status**: ✅ Supported
 
-**Description**: Time window for rate limiting. Supports duration format (e.g., `10s`, `1m`, `1h`).
+**Description**: Time window for rate limiting. Supports duration format (for example, `10s`, `1m`, `1h`).
 
 **Default**: `1s` (1 second)
 
@@ -498,7 +498,7 @@ haproxy.org/rate-limit-period: "1m"
 
 ---
 
-### haproxy.org/rate-limit-size
+### `haproxy.org/rate-limit-size`
 
 **Status**: ✅ Supported
 
@@ -517,7 +517,7 @@ haproxy.org/rate-limit-size: "1000000"  # Track 1 million IPs
 
 ---
 
-### haproxy.org/rate-limit-status-code
+### `haproxy.org/rate-limit-status-code`
 
 **Status**: ✅ Supported
 
@@ -537,7 +537,7 @@ haproxy.org/rate-limit-status-code: "429"
 
 ---
 
-### haproxy.org/rate-limit-whitelist
+### `haproxy.org/rate-limit-whitelist`
 
 **Status**: ✅ Supported
 
@@ -582,9 +582,9 @@ The trailing `!{ src … }` guard makes the deny fire only for non-whitelisted s
 
 ---
 
-## Request/Response Header Manipulation
+## Request/response header manipulation
 
-### haproxy.org/request-set-header
+### `haproxy.org/request-set-header`
 
 **Status**: ✅ Supported
 
@@ -628,7 +628,7 @@ http-request set-header X-Custom-Header "custom-value"
 
 ---
 
-### haproxy.org/response-set-header
+### `haproxy.org/response-set-header`
 
 **Status**: ✅ Supported
 
@@ -674,7 +674,7 @@ http-response set-header X-Content-Type-Options "nosniff"
 
 ---
 
-### haproxy.org/set-host
+### `haproxy.org/set-host`
 
 **Status**: ✅ Supported
 
@@ -698,7 +698,7 @@ http-request set-header Host "internal-api.example.svc.cluster.local"
 
 ---
 
-### haproxy.org/forwarded-for
+### `haproxy.org/forwarded-for`
 
 **Status**: ✅ Supported
 
@@ -722,9 +722,9 @@ option forwardfor
 
 ---
 
-## Path Manipulation
+## Path manipulation
 
-### haproxy.org/path-rewrite
+### `haproxy.org/path-rewrite`
 
 **Status**: ✅ Supported
 
@@ -767,9 +767,9 @@ http-request replace-path ^/api/v1/(.*) /\1
 
 ---
 
-## Request Redirect
+## Request redirect
 
-### haproxy.org/request-redirect
+### `haproxy.org/request-redirect`
 
 **Status**: ✅ Supported
 
@@ -811,7 +811,7 @@ http-request redirect location https://new.example.com code 301
 
 ---
 
-### haproxy.org/request-redirect-code
+### `haproxy.org/request-redirect-code`
 
 **Status**: ✅ Supported
 
@@ -833,7 +833,7 @@ haproxy.org/request-redirect-code: "301"
 
 ## SSL/TLS Configuration
 
-### haproxy.org/ssl-redirect
+### `haproxy.org/ssl-redirect`
 
 **Status**: ✅ Supported
 
@@ -879,7 +879,7 @@ http-request redirect scheme https code 301 if !{ ssl_fc }
 
 ---
 
-### haproxy.org/ssl-redirect-code
+### `haproxy.org/ssl-redirect-code`
 
 **Status**: ✅ Supported
 
@@ -899,7 +899,7 @@ haproxy.org/ssl-redirect-code: "301"
 
 ---
 
-### haproxy.org/ssl-redirect-port
+### `haproxy.org/ssl-redirect-port`
 
 **Status**: ❌ Not Implemented
 
@@ -909,11 +909,11 @@ haproxy.org/ssl-redirect-code: "301"
 
 ---
 
-### haproxy.org/ssl-passthrough
+### `haproxy.org/ssl-passthrough`
 
 **Status**: ✅ Supported
 
-**Description**: Enable TCP mode SSL passthrough (Layer 4) for specific ingresses while allowing SSL termination for others. Uses SNI-based routing with unix socket loopback to support mixed passthrough and termination traffic.
+**Description**: Enable TCP mode SSL passthrough (Layer 4) for specific ingresses while allowing SSL termination for others. Uses SNI-based routing with Unix socket loopback to support mixed passthrough and termination traffic.
 
 **Usage**:
 
@@ -974,10 +974,10 @@ backend ssl-loopback
 
 **Implementation Notes**:
 
-- Uses unix socket loopback pattern to support mixed passthrough and termination
+- Uses Unix socket loopback pattern to support mixed passthrough and termination
 - TCP frontend extracts SNI without terminating SSL
 - Passthrough traffic routes directly to backend pods
-- Non-passthrough traffic routes to unix socket frontend for SSL termination
+- Non-passthrough traffic routes to Unix socket frontend for SSL termination
 - PROXY protocol v2 preserves client IP information
 
 **Dependencies**: None
@@ -986,7 +986,7 @@ backend ssl-loopback
 
 ---
 
-### haproxy.org/server-ssl
+### `haproxy.org/server-ssl`
 
 **Status**: ✅ Supported
 
@@ -1010,7 +1010,7 @@ server pod1 10.0.1.5:8443 ssl verify none
 
 ---
 
-### haproxy.org/server-proto
+### `haproxy.org/server-proto`
 
 **Status**: ✅ Supported
 
@@ -1033,7 +1033,7 @@ server pod1 10.0.1.5:8443 ssl verify none proto h2
 
 ---
 
-### haproxy.org/server-crt
+### `haproxy.org/server-crt`
 
 **Status**: ✅ Supported
 
@@ -1059,7 +1059,7 @@ server pod1 10.0.1.5:8443 ssl crt /etc/haproxy/ssl/client-cert.pem ca-file /etc/
 
 ---
 
-### haproxy.org/server-ca
+### `haproxy.org/server-ca`
 
 **Status**: ✅ Supported
 
@@ -1084,9 +1084,9 @@ server pod1 10.0.1.5:8443 ssl ca-file /etc/haproxy/ssl/ca-cert.pem verify requir
 
 ---
 
-## Backend Health Checks & Connection Management
+## Backend health checks & connection management
 
-### haproxy.org/check
+### `haproxy.org/check`
 
 **Status**: ⚠️ Partial — value validated but not honoured
 
@@ -1110,7 +1110,7 @@ server SRV_1 10.0.1.5:8080 enabled
 
 ---
 
-### haproxy.org/check-http
+### `haproxy.org/check-http`
 
 **Status**: ✅ Supported
 
@@ -1141,11 +1141,11 @@ option httpchk HEAD /health HTTP/1.1
 
 ---
 
-### haproxy.org/check-interval
+### `haproxy.org/check-interval`
 
 **Status**: ❌ Not Implemented
 
-**Description**: Intended to set the health-check interval (e.g., `10s`, `1m`), but the library only emits a `# Note: check-interval annotation value: ...` comment — no `inter <duration>` flag is added to `default-server`. The annotation is silently ignored. To set a custom interval today, use `haproxy.org/backend-config-snippet` with an override of `default-server`.
+**Description**: Intended to set the health-check interval (for example, `10s`, `1m`), but the library only emits a `# Note: check-interval annotation value: ...` comment — no `inter <duration>` flag is added to `default-server`. The annotation is silently ignored. To set a custom interval today, use `haproxy.org/backend-config-snippet` with an override of `default-server`.
 
 **Usage** (no effect):
 
@@ -1155,7 +1155,7 @@ haproxy.org/check-interval: "10s"
 
 ---
 
-### haproxy.org/timeout-check
+### `haproxy.org/timeout-check`
 
 **Status**: ✅ Supported
 
@@ -1179,7 +1179,7 @@ timeout check 3s
 
 ---
 
-### haproxy.org/pod-maxconn
+### `haproxy.org/pod-maxconn`
 
 **Status**: ✅ Supported
 
@@ -1201,7 +1201,7 @@ The annotation value represents the **total** maximum connections across all HAP
 - Applies the per-pod value to each server line
 
 !!! note
-    The power-of-2 quantization means the effective per-pod maxconn only changes when the ready pod count crosses a power-of-2 boundary (1, 2, 4, 8, 16, ...). This prevents unnecessary HAProxy reloads during scaling events. The trade-off is that the actual total capacity may be lower than the annotation value when the pod count is not an exact power of 2.
+    The power-of-2 quantization means the effective per-pod `maxconn` only changes when the ready pod count crosses a power-of-2 boundary (1, 2, 4, 8, 16, and so on). This prevents unnecessary HAProxy reloads during scaling events. The trade-off is that the actual total capacity may be lower than the annotation value when the pod count isn't an exact power of 2.
 
 **Examples**:
 
@@ -1253,7 +1253,7 @@ server SRV_1 10.0.1.5:8080 enabled
 
 **Quantization reference** (for `pod-maxconn: 200`):
 
-| Ready pods | Effective count | maxconn per pod |
+| Ready pods | Effective count | `maxconn` per pod |
 |------------|-----------------|-----------------|
 | 1          | 1               | 200             |
 | 2          | 2               | 100             |
@@ -1261,17 +1261,17 @@ server SRV_1 10.0.1.5:8080 enabled
 | 5-8        | 8               | 25              |
 | 9-16       | 16              | 13              |
 
-**Fallback behavior**: If no Running and Ready HAProxy pods are discovered yet (e.g., during initial startup), the full annotation value is used temporarily until pod discovery completes.
+**Fallback behavior**: If no Running and Ready HAProxy pods are discovered yet (for example, during initial startup), the full annotation value is used temporarily until pod discovery completes.
 
 **Dependencies**: Requires HAProxy pod discovery to be operational for automatic division
 
 ---
 
-### haproxy.org/scale-server-slots
+### `haproxy.org/scale-server-slots`
 
 **Status**: ❌ Not Implemented
 
-**Description**: Intended to override the number of pre-allocated server slots, but the annotation is currently a silent no-op. The library reads it in `backend-directives-900-haproxytech-advanced`, validates it (must be a positive integer), and writes the value to `serverOpts["serverSlotsValue"]`. However, `backends-500-ingress` calls `BackendServers(svcName, 0, port, nil, portName, backendKey, ns)` with `nil` instead of `serverOpts` for the 4th argument, so the macro never consults the value and falls back to the default 10 slots.
+**Description**: Intended to override the number of pre-allocated server slots, but the annotation is currently a silent no-op. The library reads it in `backend-directives-900-haproxytech-advanced`, validates it (must be a positive integer), and writes the value to `serverOpts["serverSlotsValue"]`. However, `backends-500-ingress` calls `BackendServers(svcName, 0, port, nil, portName, backendKey, ns)` with `nil` instead of `serverOpts` for the fourth argument, so the macro never consults the value and falls back to the default 10 slots.
 
 **Default**: `10` slots (always — overrides via this annotation are dropped today).
 
@@ -1285,9 +1285,9 @@ haproxy.org/scale-server-slots: "100"
 
 ---
 
-## Load Balancing Algorithms
+## Load balancing algorithms
 
-### haproxy.org/load-balance
+### `haproxy.org/load-balance`
 
 **Status**: ✅ Supported
 
@@ -1331,9 +1331,9 @@ backend api-backend
 
 ---
 
-## Session Persistence
+## Session persistence
 
-### haproxy.org/cookie-persistence
+### `haproxy.org/cookie-persistence`
 
 **Status**: ✅ Supported
 
@@ -1376,7 +1376,7 @@ backend app-backend
 
 ---
 
-### haproxy.org/cookie-persistence-no-dynamic
+### `haproxy.org/cookie-persistence-no-dynamic`
 
 **Status**: ✅ Supported
 
@@ -1417,13 +1417,13 @@ backend app-backend
 
 **Note**: Mutually exclusive with `cookie-persistence`. For multi-instance deployments, use `cookie-persistence` (dynamic mode) instead to ensure consistent cookie values across controller instances.
 
-**Warning**: Static cookies will differ across controller instances, breaking session affinity. Only use in single-instance deployments.
+**Warning**: Static cookies differ across controller instances, breaking session affinity. Only use in single-instance deployments.
 
 ---
 
 ## Timeouts
 
-### haproxy.org/timeout-server
+### `haproxy.org/timeout-server`
 
 **Status**: ✅ Supported
 
@@ -1447,17 +1447,17 @@ timeout server 30s
 
 ---
 
-### haproxy.org/timeout-client
+### `haproxy.org/timeout-client`
 
 **Status**: ❌ Not Implemented
 
-**Description**: Maximum inactivity time on the client side. The haproxytech library does not emit a per-backend `timeout client` (it would have no effect — `timeout client` only applies in frontend/defaults sections).
+**Description**: Maximum inactivity time on the client side. The haproxytech library doesn't emit a per-backend `timeout client` (it would have no effect — `timeout client` only applies in frontend/defaults sections).
 
 **Workaround**: Set the global `timeout client` via the `defaults-settings-300-timeouts` snippet override. See [Base Library](base.md#injecting-custom-configuration).
 
 ---
 
-### haproxy.org/timeout-connect
+### `haproxy.org/timeout-connect`
 
 **Status**: ✅ Supported
 
@@ -1481,27 +1481,27 @@ timeout connect 10s
 
 ---
 
-### haproxy.org/timeout-http-request
+### `haproxy.org/timeout-http-request`
 
 **Status**: ❌ Not Implemented
 
-**Description**: The haproxytech library does not process this annotation. The equivalent exists in the `haproxy-ingress` library as `haproxy-ingress.github.io/timeout-http-request`.
+**Description**: The haproxytech library doesn't process this annotation. The equivalent exists in the `haproxy-ingress` library as `haproxy-ingress.github.io/timeout-http-request`.
 
 **Workaround**: Either add the `haproxy-ingress.github.io/timeout-http-request` annotation (see [haproxy-ingress library](haproxy-ingress.md)), or override `defaults-settings-300-timeouts` globally.
 
 ---
 
-### haproxy.org/timeout-http-keep-alive
+### `haproxy.org/timeout-http-keep-alive`
 
 **Status**: ❌ Not Implemented
 
-**Description**: The haproxytech library does not process this annotation. The equivalent exists in the `haproxy-ingress` library as `haproxy-ingress.github.io/timeout-keep-alive`.
+**Description**: The haproxytech library doesn't process this annotation. The equivalent exists in the `haproxy-ingress` library as `haproxy-ingress.github.io/timeout-keep-alive`.
 
 **Workaround**: Either add the `haproxy-ingress.github.io/timeout-keep-alive` annotation (see [haproxy-ingress library](haproxy-ingress.md)), or override `defaults-settings-300-timeouts` globally.
 
 ---
 
-### haproxy.org/timeout-queue
+### `haproxy.org/timeout-queue`
 
 **Status**: ✅ Supported
 
@@ -1525,7 +1525,7 @@ timeout queue 30s
 
 ---
 
-### haproxy.org/timeout-tunnel
+### `haproxy.org/timeout-tunnel`
 
 **Status**: ✅ Supported
 
@@ -1549,9 +1549,9 @@ timeout tunnel 2h
 
 ---
 
-## Request Capture & Logging
+## Request capture & logging
 
-### haproxy.org/request-capture
+### `haproxy.org/request-capture`
 
 **Status**: ✅ Supported
 
@@ -1599,7 +1599,7 @@ capture request header Cookie len 256
 
 ---
 
-### haproxy.org/request-capture-len
+### `haproxy.org/request-capture-len`
 
 **Status**: ✅ Supported
 
@@ -1617,9 +1617,9 @@ haproxy.org/request-capture-len: "256"
 
 ---
 
-## Source IP Detection
+## Source IP detection
 
-### haproxy.org/src-ip-header
+### `haproxy.org/src-ip-header`
 
 **Status**: ✅ Supported
 
@@ -1650,9 +1650,9 @@ http-request set-src hdr(CF-Connecting-IP)
 
 ---
 
-## Advanced Backend Configuration
+## Advanced backend configuration
 
-### haproxy.org/backend-config-snippet
+### `haproxy.org/backend-config-snippet`
 
 **Status**: ✅ Supported
 
@@ -1700,7 +1700,7 @@ backend app-backend
 
 ---
 
-### haproxy.org/send-proxy-protocol
+### `haproxy.org/send-proxy-protocol`
 
 **Status**: ✅ Supported
 
@@ -1726,19 +1726,19 @@ server pod1 10.0.1.5:8080 send-proxy-v2
 
 ---
 
-### haproxy.org/standalone-backend
+### `haproxy.org/standalone-backend`
 
 **Status**: ❌ Not Implemented (Not Planned)
 
 **Description**: Create a dedicated backend for this ingress instead of sharing backends across ingresses.
 
-**Note**: This controller's architecture already generates standalone backends (one backend per ingress+service+port combination) rather than sharing backends across ingresses. Each unique combination of `<namespace>_<ingress-name>_svc_<service-name>_<port-name>` gets its own dedicated backend, making this annotation redundant. Implementation is not planned.
+**Note**: This controller's architecture already generates standalone backends (one backend per ingress+service+port combination) rather than sharing backends across ingresses. Each unique combination of `<namespace>_<ingress-name>_svc_<service-name>_<port-name>` gets its own dedicated backend, making this annotation redundant. Implementation isn't planned.
 
 ---
 
 ## Authentication
 
-### haproxy.org/auth-type
+### `haproxy.org/auth-type`
 
 **Status**: ✅ Supported
 
@@ -1792,14 +1792,14 @@ http-request auth realm "API-Access" unless { http_auth(auth_default_auth-creden
 - Secret format: Opaque secret where key=username, value=base64-encoded password hash
 - Supports cross-namespace secrets: `namespace/secretname`
 - Automatic deduplication: multiple ingresses sharing the same secret generate a single userlist
-- HAProxy parses `$1$` (MD5 crypt), `$5$` (SHA-256), `$6$` (SHA-512), and `$2y$` (bcrypt). It does **not** parse `$apr1$` (Apache MD5 — the htpasswd *default* without `-B` / `-5` / `-6`); generate hashes with `htpasswd -nbB` (bcrypt), `-nb5` (SHA-256), or `-nb6` (SHA-512). See [Performance — Password hash validation](../operations/performance.md#password-hash-performance) for the cost/perf trade-off.
+- HAProxy parses `$1$` (MD5 crypt), `$5$` (SHA-256), `$6$` (SHA-512), and `$2y$` (bcrypt). It **doesn't** parse `$apr1$` (Apache MD5 — the htpasswd *default* without `-B` / `-5` / `-6`); generate hashes with `htpasswd -nbB` (bcrypt), `-nb5` (SHA-256), or `-nb6` (SHA-512). See [Performance — Password hash validation](../operations/performance.md#password-hash-performance) for the cost/perf trade-off.
 
 !!! note "Implementation Difference from HAProxy Ingress Controller"
-    This controller uses **per-secret** userlist naming (`auth_{secretNs}_{secretName}`) rather than the official HAProxy Ingress Controller's per-ingress naming (`{namespace}-{ingressName}`). This deduplicates userlists when multiple Ingresses reference the same secret, significantly improving configuration validation performance for expensive password hashes like bcrypt (~85ms per hash validation).
+    This controller uses **per-secret** userlist naming (`auth_{secretNs}_{secretName}`) rather than the official HAProxy Ingress Controller's per-ingress naming (`{namespace}-{ingressName}`). This deduplicates userlists when multiple Ingresses reference the same secret, significantly improving configuration validation performance for expensive password hashes like bcrypt (~85 ms per hash validation).
 
 ---
 
-### haproxy.org/auth-secret
+### `haproxy.org/auth-secret`
 
 **Status**: ✅ Supported
 
@@ -1846,13 +1846,13 @@ Validation cost matters because HAProxy re-runs the hash at every config parse, 
 
 **Implementation notes**:
 
-- Value must be ONLY the password hash, NOT "username:hash" (htpasswd format)
+- Value must be **only** the password hash, **not** "username:hash" (htpasswd format)
 - Multiple usernames supported: add multiple keys to the secret
-- The hash must be in a format HAProxy parses (`$1$` MD5 crypt, `$5$` SHA-256, `$6$` SHA-512, or `$2y$` bcrypt). `$apr1$` (Apache MD5 — what plain `htpasswd -nb` produces) is **not** parsed; pass `-B`, `-5`, or `-6` to `htpasswd` instead.
+- The hash must be in a format HAProxy parses (`$1$` MD5 crypt, `$5$` SHA-256, `$6$` SHA-512, or `$2y$` bcrypt). `$apr1$` (Apache MD5 — what plain `htpasswd -nb` produces) **isn't** parsed; pass `-B`, `-5`, or `-6` to `htpasswd` instead.
 
 ---
 
-### haproxy.org/auth-realm
+### `haproxy.org/auth-realm`
 
 **Status**: ✅ Supported
 
@@ -1872,17 +1872,17 @@ haproxy.org/auth-realm: "API Access"
 
 ---
 
-## Known Limitations
+## Known limitations
 
-### Not Implemented
+### Not implemented
 
-1. **Service-level annotations** - Annotations on Service resources are not supported. Only Ingress annotations are implemented.
+1. **Service-level annotations** - Annotations on Service resources aren't supported. Only Ingress annotations are implemented.
 
-2. **Deprecated annotations** - `whitelist` and `blacklist` are honoured as deprecated aliases of `allow-list` / `deny-list` (only when the canonical key is absent). `ingress.class` is not implemented — set `spec.ingressClassName` instead.
+2. **Deprecated annotations** - `whitelist` and `blacklist` are honoured as deprecated aliases of `allow-list` / `deny-list` (only when the canonical key is absent). `ingress.class` isn't implemented — set `spec.ingressClassName` instead.
 
-3. **RequestMirror equivalent** - No annotation-based traffic mirroring. Consider using Gateway API with external SPOE agent for this feature.
+3. **RequestMirror equivalent** - No annotation-based traffic mirroring. Consider using Gateway API with an external Stream Processing Offload Engine (SPOE) agent for this feature.
 
-### Implementation Differences from HAProxy Tech
+### Implementation differences from HAProxy Tech
 
 1. **Template-based approach** - This implementation uses Scriggo templates rather than Go code, allowing users to customize behavior through template overrides.
 
@@ -1898,7 +1898,7 @@ This library watches the following additional resources:
 
 - **Secrets** (`v1/secrets`) — read for basic-auth credentials (`auth-secret`) and backend TLS material (`server-ca`, `server-crt`)
 
-## Implementation Status Summary
+## Implementation status summary
 
 The library supports **47** `haproxy.org/*` annotations, grouped by category below. Deprecated aliases (`whitelist`, `blacklist`) and parsed-but-no-op annotations (`check-interval`, `scale-server-slots`) are excluded from this count.
 
@@ -1935,7 +1935,7 @@ The library supports **47** `haproxy.org/*` annotations, grouped by category bel
 - `check-interval`, `scale-server-slots` — parsed but silent no-ops today (see their sections above for the current behavior and workarounds)
 - `standalone-backend` — not needed; this controller already emits a dedicated backend per `<namespace>_<ingress-name>_svc_<service-name>_<port>` tuple
 
-## See Also
+## See also
 
 - [HAProxy Ingress Controller Documentation](https://www.haproxy.com/documentation/kubernetes-ingress/community/configuration-reference/ingress)
 - [HAProxy Ingress Controller Source Code](https://github.com/haproxytech/kubernetes-ingress)

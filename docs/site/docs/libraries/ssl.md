@@ -1,4 +1,4 @@
-# SSL Library
+# SSL library
 
 The SSL library provides TLS certificate management, HTTPS frontend configuration, and SSL passthrough infrastructure for HAProxy.
 
@@ -9,7 +9,7 @@ The SSL library provides:
 - HTTPS frontend with TLS termination
 - Dynamic TLS certificate loading from Kubernetes Secrets
 - CRT-list generation for SNI-based certificate selection
-- OCSP stapling configuration
+- Online Certificate Status Protocol (OCSP) stapling configuration
 - SSL passthrough infrastructure (TCP mode for end-to-end encryption)
 
 This library is enabled by default and works in conjunction with resource libraries (ingress, gateway) that register TLS certificates.
@@ -38,7 +38,7 @@ controller:
       enabled: true  # Enabled by default
 ```
 
-### Default SSL Certificate
+### Default SSL certificate
 
 Configure the default certificate used when no SNI match is found via the chart-level values (recommended):
 
@@ -53,9 +53,9 @@ The chart wires those values into the template engine as `extraContext.default_s
 
 The referenced Secret must be of type `kubernetes.io/tls` with `tls.crt` and `tls.key` fields. For the full configuration surface (cert-manager integration, disabling HTTPS, manual certificates) see [SSL Certificates](../ssl-certificates.md).
 
-## Extension Points
+## Extension points
 
-### Extension Points Used
+### Extension points used
 
 The SSL library implements these extension points from base.yaml:
 
@@ -72,7 +72,7 @@ The SSL library implements these extension points from base.yaml:
 
 Snippet names reflect their real numeric-prefix values in `libraries/ssl.yaml`; lower-numbered `features-050-*` snippets run before higher-numbered `features-150-*` ones, which is how SSL initializes shared state before resource libraries populate it and before the CRT-list is emitted.
 
-### Extension Points Provided
+### Extension points provided
 
 The SSL library provides infrastructure for other libraries to register TLS features:
 
@@ -80,20 +80,20 @@ The SSL library provides infrastructure for other libraries to register TLS feat
 |----------------|---------|------------|
 | `gf["tlsCertificates"]` | Array of TLS certificates to include in CRT-list | Append `{secret_namespace, secret_name, sni_patterns[]}` |
 | `gf["sslPassthroughBackends"]` | Array of SSL passthrough backends | Append `{name, sni}` |
-| `https-bind-extra-*` | Glob extension point inside the HTTPS frontend, *after* the chart-static `bind` line. Resource libraries emit one TLS bind per non-default Gateway HTTPS listener port via this hook. See "Adding HTTPS binds" below. | Provide a snippet matching the glob; render `{{ render "util-ssl-bind-options" }}` to reuse the chart-static SSL options (crt-list + ALPN). |
+| `https-bind-extra-*` | Glob extension point inside the HTTPS frontend, *after* the chart-static `bind` line. Resource libraries emit one TLS bind per non-default Gateway HTTPS listener port via this hook. See "Adding HTTPS binds" below. | Provide a snippet matching the glob; render `{{ render "util-ssl-bind-options" }}` to reuse the chart-static SSL options (crt-list + Application-Layer Protocol Negotiation (ALPN)). |
 
 #### Adding HTTPS binds via `https-bind-extra-*`
 
 The HTTPS frontend (`frontends-500-https`) emits its chart-static `bind *:<httpsPort> ssl crt-list ... alpn h2,http/1.1`, then runs `render_glob "https-bind-extra-*"` so resource libraries can contribute additional TLS binds without forking the frontend or duplicating SSL options.
 
-The Gateway library uses this hook to support Gateway listeners on non-default HTTPS ports (e.g. `port: 9443`). Its `https-bind-extra-050-gateway-multi-port-bind` snippet:
+The Gateway library uses this hook to support Gateway listeners on non-default HTTPS ports (for example, `port: 9443`). Its `https-bind-extra-050-gateway-multi-port-bind` snippet:
 
 1. Walks `Gateway.spec.listeners` and admitted `XListenerSet.spec.listeners`.
 2. Filters to `protocol: HTTPS`.
 3. Skips the chart-static https port (`extraContext.httpsPort`) and the chart-static http port (`extraContext.httpPort`) so duplicate binds don't break HAProxy startup.
 4. Emits one `bind *:<port>{{ render "util-ssl-bind-options" }}` per remaining unique port.
 
-Custom libraries that need additional TLS binds (e.g. for protocol-specific extensions) follow the same pattern. Always reuse `util-ssl-bind-options` so the SSL handshake behaves identically across all binds — direct use of literal SSL options would drift from chart-static if the operator overrides crt-list path or ALPN settings.
+Custom libraries that need additional TLS binds (for example, for protocol-specific extensions) follow the same pattern. Always reuse `util-ssl-bind-options` so the SSL handshake behaves identically across all binds — direct use of literal SSL options would drift from chart-static if the operator overrides crt-list path or ALPN settings.
 
 The HTTP frontend has a sibling hook `http-bind-extra-*` for plain-HTTP Gateway listener ports. See the [base library extension points](base.md#extension-points) for the full list.
 
@@ -112,7 +112,7 @@ The HTTP frontend has a sibling hook `http-bind-extra-*` for plain-HTTP Gateway 
 
 ## Features
 
-### HTTPS Frontend
+### HTTPS frontend
 
 The SSL library generates an HTTPS frontend that:
 
@@ -136,7 +136,7 @@ frontend https
 
 The `general/` prefix is the basename of `dataplane.generalStorageDir` (chart default `/etc/haproxy/general`); HAProxy resolves it via the `default-path origin` directive in the global section.
 
-### CRT-List Certificate Management
+### CRT-list certificate management
 
 TLS certificates are managed via HAProxy's crt-list feature:
 
@@ -151,7 +151,7 @@ namespace_secretname.pem [ocsp-update on] host1.example.com host2.example.com
 default.pem [ocsp-update on]
 ```
 
-### OCSP Stapling
+### OCSP stapling
 
 Every certificate line in the generated `certificate-list.txt` is emitted with the `[ocsp-update on]` option, which instructs HAProxy to fetch and cache OCSP responses for that certificate:
 
@@ -162,7 +162,7 @@ default.pem [ocsp-update on]
 
 There is no separate global OCSP configuration — the per-certificate option is all that's needed with HAProxy 3.0+.
 
-### SSL Passthrough
+### SSL passthrough
 
 When resource libraries register SSL passthrough backends (via `haproxy.org/ssl-passthrough: "true"` annotation), the SSL library generates a dual-frontend architecture:
 
@@ -194,15 +194,15 @@ When resource libraries register SSL passthrough backends (via `haproxy.org/ssl-
 1. TCP frontend receives all port 443 traffic
 2. Extracts SNI (Server Name Indication) without terminating TLS
 3. Routes passthrough traffic directly to backend pods (TCP mode)
-4. Routes termination traffic to unix socket → HTTPS frontend
+4. Routes termination traffic to Unix socket → HTTPS frontend
 
-## Watched Resources
+## Watched resources
 
 | Resource | API Version | Purpose |
 |----------|-------------|---------|
 | Secrets | v1 | Load TLS certificates (`kubernetes.io/tls` type) |
 
-## Validation Tests
+## Validation tests
 
 The SSL library includes these validation tests:
 
@@ -229,7 +229,7 @@ Run tests with:
     - OCSP stapling (`ocsp-update` directive)
     - HTTP/2 ALPN negotiation
 
-## See Also
+## See also
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Core configuration infrastructure

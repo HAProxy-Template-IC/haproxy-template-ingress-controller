@@ -1,4 +1,4 @@
-# Linting and Code Quality
+# Linting and code quality
 
 Three checkers run against every commit:
 
@@ -10,7 +10,7 @@ Three checkers run against every commit:
 
 `make check-all` runs all three plus the full test suite — the same set of checks CI runs on every MR. `make lint-fix` applies golangci-lint's auto-fixes where possible.
 
-## golangci-lint
+## `golangci-lint`
 
 The config is in v2 format (`version: "2"`), so formatters and linters are separated:
 
@@ -25,7 +25,7 @@ The config is in v2 format (`version: "2"`), so formatters and linters are separ
 | Style | `revive`, `gocritic`, `misspell`, `unconvert`, `unparam`, `nakedret`, `whitespace`, `godot`, `importas`, `goprintffuncname` |
 | Complexity | `gocyclo`, `goconst`, `dupl` |
 | Performance | `prealloc`, `copyloopvar` |
-| Hygiene | `godox` (BUG/FIXME/HACK), `asciicheck`, `bidichk`, `dogsled`, `makezero`, `nolintlint` |
+| Hygiene | `godox` (`BUG`/`FIXME`/`HACK`), `asciicheck`, `bidichk`, `dogsled`, `makezero`, `nolintlint` |
 | Tests | `thelper` |
 
 Plus one project-local analyzer built in `tools/linters/eventimmutability` that enforces the event immutability contract — it flags assignments that mutate the fields of an event struct in `pkg/controller/events` after creation. The analyzer is compiled and invoked as part of `make lint`.
@@ -35,10 +35,10 @@ Plus one project-local analyzer built in `tools/linters/eventimmutability` that 
 - **`importas`** enforces canonical aliases for Kubernetes and haproxytech packages (`corev1`, `metav1`, `apierrors`, `corev1client`, `haproxy`). Deviations fail CI.
 - **`revive`** caps function length at 50 lines and cognitive complexity at 20. `exported` and `package-comments` rules are off for internal packages.
 - **`gocyclo`** rejects cyclomatic complexity > 20.
-- **`gosec`** allowlists G114 (HTTP timeout — set at infra level), G204 (the only `exec` binary name is the hardcoded `"haproxy"` resolved via `LookPath`), and G404 (non-crypto RNG — not used for secrets). G304, G118, and G108 are allowlisted on specific file paths/messages, not globally.
+- **`gosec`** allowlists G114 (HTTP timeout — set at infra level), G204 (the only `exec` binary name is the hardcoded `"haproxy"` resolved via `LookPath`), and G404 (non-crypto random-number generation — not used for secrets). G304, G118, and G108 are allowlisted on specific file paths/messages, not globally.
 - Generated code (`zz_generated.*.go`, `codegen/**/*.gen.go`, `pkg/generated/**`) and test files run with relaxed rules; see the per-path overrides at the bottom of `.golangci.yml`.
 
-Never add a global ignore rule to silence findings, and do not suppress them with `nolint` directives on individual lines — fix the code, or add a scoped per-path exclusion in `.golangci.yml` if the rule is genuinely wrong for that file.
+Never add a global ignore rule to silence findings, and don't suppress them with `nolint` directives on individual lines — fix the code, or add a scoped per-path exclusion in `.golangci.yml` if the rule is genuinely wrong for that file.
 
 ## arch-go
 
@@ -80,7 +80,7 @@ pre-commit run --all-files
 ```
 
 !!! warning
-    Do not bypass the hooks with `git commit --no-verify`. CI runs the same checks, so a bypassed commit just turns into a failed pipeline. If a hook fails spuriously, fix the root cause — see [CLAUDE.md](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/CLAUDE.md) for the project-wide policy.
+    Don't bypass the hooks with `git commit --no-verify`. CI runs the same checks, so a bypassed commit just turns into a failed pipeline. If a hook fails spuriously, fix the root cause — see [CLAUDE.md](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/CLAUDE.md) for the project-wide policy.
 
 ## Tooling
 

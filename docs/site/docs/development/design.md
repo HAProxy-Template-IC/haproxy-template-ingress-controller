@@ -1,4 +1,4 @@
-# Design Documentation
+# Design documentation
 
 ## Overview
 
@@ -45,7 +45,7 @@ The design documentation is organized the way the sidebar groups it:
 
 Process pages — [Linting](linting.md), [Releasing](releasing.md), and the [Gateway API Upgrade Playbook](gateway-api-upgrade-playbook.md) — cover the contributor workflow rather than the design.
 
-## Core Capabilities
+## Core capabilities
 
 The controller provides these capabilities:
 
@@ -65,9 +65,9 @@ Configuration changes that only modify server weight, address, port, or maintena
 The controller parses both current and desired configurations into structured representations and performs fine-grained comparison at the attribute level. This minimizes unnecessary deployments and maximizes use of runtime API operations.
 
 **Declarative Kubernetes Resource Emission**
-Templates declared under `spec.k8sResources` produce one or more Kubernetes resources per render (multi-doc YAML, `---`-separated). The renderer parses the rendered YAML, validates required fields, and feeds the result into the controller's `resourceapplier`, which reconciles the set to the cluster via Server-Side Apply with field manager `haptic`, prunes orphans across renders, and injects an `OwnerReference` to the `HAProxyTemplateConfig` CR so cascade-delete (e.g. `helm uninstall`) GCs the rendered resources. Same engine context as the main `haproxyConfig` template (resources, filters, snippets, file registry, shared cache) — chart libraries can compose extension points and shared state across the two passes.
+Templates declared under `spec.k8sResources` produce one or more Kubernetes resources per render (multi-doc YAML, `---`-separated). The renderer parses the rendered YAML, validates required fields, and feeds the result into the controller's `resourceapplier`, which reconciles the set to the cluster via Server-Side Apply with field manager `haptic`, prunes orphans across renders, and injects an `OwnerReference` to the `HAProxyTemplateConfig` CR so cascade-delete (for example, `helm uninstall`) GCs the rendered resources. Same engine context as the main `haproxyConfig` template (resources, filters, snippets, file registry, shared cache) — chart libraries can compose extension points and shared state across the two passes.
 
-## Design Principles
+## Design principles
 
 **Resource-Agnostic Engine**
 The Go code must be agnostic to every Kubernetes resource you choose to watch. If you decide to use some CRD instead of Gateway or Ingress resources, you should only need to touch HAPTIC templates and config — **no Go code**. Writing templates for an arbitrary CRD must be just as comfortable as for Ingress or Gateway API resources, with **no preferential treatment for well-known resources**. Resource shape comes from the kube-apiserver (live) or `--schema-dir` (offline) at runtime; the controller never bakes in a fixed list of supported kinds. This applies to all Go-side machinery — engine filters, runtime-context types, generated wrappers, helpers — and to chart-side scaffolding that crosses the Go/template boundary. The corollary on the chart side: resource-specific behavior lives in resource-specific template libraries (`ingress.yaml`, `gateway/*.yaml`, vendor annotation libs), never in `base.yaml`.
@@ -82,11 +82,11 @@ Resource indexing using JSONPath expressions enables O(1) lookups in templates. 
 All component interactions flow through the EventBus. The Event Commentator subscribes to all events and produces structured logs with contextual insights. Metrics track reconciliation cycles, validation results, and deployment success rates.
 
 **Clean Component Separation**
-Pure business logic components (templating, k8s, dataplane) have no event dependencies and can be tested in isolation. Event adapters in the controller package coordinate these pure components through EventBus messages.
+Pure business logic components (`templating`, `k8s`, `dataplane`) have no event dependencies and can be tested in isolation. Event adapters in the controller package coordinate these pure components through EventBus messages.
 
-## See Also
+## See also
 
-### User Guides
+### User guides
 
 - [Templating Guide](../templating.md) - User guide for writing templates
 - [CRD Reference](../crd-reference.md) - HAProxyTemplateConfig CRD documentation
@@ -100,7 +100,7 @@ Pure business logic components (templating, k8s, dataplane) have no event depend
 - [Security](../operations/security.md) - RBAC and security best practices
 - [Performance](../operations/performance.md) - Resource sizing and optimization
 
-### Package Documentation
+### Package documentation
 
 - [Controller Package](https://gitlab.com/haproxy-haptic/haptic/blob/main/pkg/controller/README.md) - Event-driven controller implementation
 - [Template Engine](https://gitlab.com/haproxy-haptic/haptic/blob/main/pkg/templating/README.md) - Template engine API reference

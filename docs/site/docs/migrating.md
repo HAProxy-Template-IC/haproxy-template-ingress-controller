@@ -25,7 +25,9 @@ defaults that most often trip up a migration.
 - You have Helm and cluster access. Step 1 below installs HAPTIC with the migration-specific flags. If HAPTIC is *already* installed, that's fine — it adopts nothing until you point Ingresses at its class; just apply the same flags with `helm upgrade` instead.
 - You can edit Ingress manifests (to change `ingressClassName`) or you accept renaming HAPTIC's class to match — see below.
 
-## Step 0: Check what will change
+<a id="step-0-check-what-will-change"></a>
+
+## Step 0: Check what changes
 
 Two ways to see how your current setup fares under HAPTIC, before you change
 anything:
@@ -45,7 +47,7 @@ The same classification runs live below on a preset ingress-nginx setup — the
 
 <div class="pg-embed" markdown data-scenario="nginx-ingress" data-facade="resources" data-tab="migration" data-controls="tabs,resources" data-title="ingress-nginx annotation migration report" data-height="440">
 
-<p class="pg-task" markdown>In the **Resources** panel, add `nginx.ingress.kubernetes.io/server-snippet: "more_set_headers X-From: nginx;"` to the `shop` Ingress, then watch a new **dropped** verdict appear in the **migration** report.</p>
+<p class="pg-task" markdown>In the **Resources** panel, add <code>nginx.ingress.kubernetes.io/server-snippet: "more_set_headers X-From: nginx;"</code> to the `shop` Ingress, then watch a new **dropped** verdict appear in the **migration** report.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
@@ -170,7 +172,7 @@ Useful flags:
 | Setting | Default | Why it matters |
 |---------|---------|----------------|
 | `ingressClass.name` | `haptic` | Only Ingresses with this exact `ingressClassName` are served. |
-| `ingressClass.default` | `false` | Class-less Ingresses are **not** adopted; leave `false` during migration. |
+| `ingressClass.default` | `false` | Class-less Ingresses **aren't** adopted; leave `false` during migration. |
 | `controller.templateLibraries.nginxIngress.enabled` | `false` | Turn on for `nginx.ingress.kubernetes.io/*` annotations. |
 | `controller.templateLibraries.haproxyIngress.enabled` | `true` | `haproxy-ingress.github.io/*` annotations (already on). |
 | `controller.templateLibraries.haproxytech.enabled` | `true` | `haproxy.org/*` annotations (already on). |
@@ -205,7 +207,7 @@ its store). Your Ingresses carry `ingressClassName: nginx`, so pick one:
 
 !!! note
     Marking HAPTIC's IngressClass cluster-default (`ingressClass.default: true`)
-    does **not** help: the match is on the literal `spec.ingressClassName` value,
+    **doesn't** help: the match is on the literal `spec.ingressClassName` value,
     so default-class resolution and class-less Ingresses are never picked up.
 
 ### Enable the annotation library
@@ -214,12 +216,12 @@ its store). Your Ingresses carry `ingressClassName: nginx`, so pick one:
 --set controller.templateLibraries.nginxIngress.enabled=true
 ```
 
-!!! warning "The flag is camelCase"
+!!! warning "The flag is `camelCase`"
     It's `nginxIngress`, not `nginx-ingress`. `--set …nginx-ingress.enabled=true`
-    silently does nothing.
+    silently has no effect.
 
-Enabling it also auto-enables the Coraza WAF and external-auth plugins in the
-[SPOA-hub sidecar](operations/spoa-hub.md); with default chart values the sidecar
+Enabling it also auto-enables the Coraza Web Application Firewall (WAF) and external-auth plugins in the
+[Stream Processing Offload Agent (SPOA) hub sidecar](operations/spoa-hub.md); with default chart values the sidecar
 is already running (the default-on haproxy-ingress and gateway libraries
 auto-enable plugins of their own). Basic host/path routing works without this
 library; only the `nginx.ingress.kubernetes.io/*` annotations need it.
@@ -228,19 +230,19 @@ library; only the `nginx.ingress.kubernetes.io/*` annotations need it.
 
 Keep `controller.statusPatches.enabled=false` until you've verified routing.
 With it on, the moment HAPTIC's HAProxy Service has an address it stamps
-`.status.loadBalancer` onto every adopted Ingress, and `external-dns` will
-repoint DNS — a premature, unverified cutover.
+`.status.loadBalancer` onto every adopted Ingress, and `external-dns`
+switches DNS to it — a premature, unverified cutover.
 
 ### Annotation support
 
 The library covers the common `nginx.ingress.kubernetes.io/*` annotations —
 backend timeouts, `load-balance`, `proxy-body-size`, `rewrite-target`,
-`ssl-redirect`/`force-ssl-redirect`, HSTS, CORS, `whitelist`/`denylist-source-range`,
+`ssl-redirect`/`force-ssl-redirect`, HTTP Strict Transport Security (HSTS), Cross-Origin Resource Sharing (CORS), `whitelist`/`denylist-source-range`,
 custom headers, basic + external auth, `ssl-passthrough`, canary, client mTLS,
 request mirroring (`mirror-target`), and ModSecurity. Full per-annotation reference:
 [nginx-ingress library docs](libraries/nginx-ingress.md).
 
-The table below lists every annotation that does **not** carry over unchanged —
+The table below lists every annotation that **doesn't** carry over unchanged —
 generated from the library's declared migration coverage, so it can't drift from
 the template code. Anything not listed is fully supported.
 
@@ -250,16 +252,16 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 suppo
 | Annotation | Status | What to check |
 |------------|--------|---------------|
 | `nginx.ingress.kubernetes.io/auth-method` | Behaviour differs | Overrides the auth subrequest method; POST/PUT/PATCH are sent with an empty body. |
-| `nginx.ingress.kubernetes.io/auth-secret` | Behaviour differs | Two divergences to note. (1) A missing Secret disables auth for the route until the Secret appears (fail-open); ingress-nginx serves 503 instead. (2) Hashes are verified by HAProxy's crypt(3), which supports $2y$/$6$/$5$/$1$ but NOT Apache apr1 ($apr1$) or {SHA} — an htpasswd Secret using those verifies under ingress-nginx but rejects every login here; regenerate with a crypt(3) algorithm. |
-| `nginx.ingress.kubernetes.io/auth-signin` | Behaviour differs | nginx variables ($escaped_request_uri, …) are not expanded — the URL is used verbatim. |
+| `nginx.ingress.kubernetes.io/auth-secret` | Behaviour differs | Two divergences to note. (1) A missing Secret disables auth for the route until the Secret appears (fail-open); ingress-nginx serves 503 instead. (2) Hashes are verified by HAProxy's crypt(3), which supports $2y$/$6$/$5$/$1$ but **not** Apache apr1 ($apr1$) or {SHA} — an htpasswd Secret using those verifies under ingress-nginx but rejects every login here; regenerate with a crypt(3) algorithm. |
+| `nginx.ingress.kubernetes.io/auth-signin` | Behaviour differs | nginx variables (`$escaped_request_uri`, …) aren't expanded — the URL is used verbatim. |
 | `nginx.ingress.kubernetes.io/auth-snippet` | Not carried over | Freeform nginx configuration can't be translated to HAProxy; the haproxy-ingress library's auth-headers-request annotation covers the common use case. |
 | `nginx.ingress.kubernetes.io/auth-tls-error-page` | Behaviour differs | 302 redirect on client-certificate verification failure, applied reload-free via a map — but it only fires when auth-tls-verify-client is optional/optional_no_ca. Under the default "on" (HAProxy verify required) an invalid/missing client cert aborts the TLS handshake, so the request never reaches the redirect and the client sees a TLS error instead of the page. |
-| `nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream` | Behaviour differs | Forwards ssl-client-cert (base64 DER — ingress-nginx sends URL-encoded PEM) and ssl-client-subject-dn; ssl-client-verify and ssl-client-issuer-dn are not set. |
+| `nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream` | Behaviour differs | Forwards ssl-client-cert (base64 DER — ingress-nginx sends URL-encoded PEM) and ssl-client-subject-dn; ssl-client-verify and ssl-client-issuer-dn aren't set. |
 | `nginx.ingress.kubernetes.io/auth-tls-secret` | Behaviour differs | Client-CA verification is keyed by SNI — every rule needs an explicit host or the render fails; a missing Secret (or missing ca.crt) skips mTLS for the Ingress with a rendered warning. |
 | `nginx.ingress.kubernetes.io/auth-tls-verify-client` | Behaviour differs | "on"→required; "optional" and "optional_no_ca"→optional (HAProxy has no verify-but-accept-invalid mode); other values fail the render. |
 | `nginx.ingress.kubernetes.io/auth-tls-verify-depth` | Not carried over | HAProxy has no per-server/per-crt-list chain-depth option; a warning comment is rendered and the CA bundle scope bounds the accepted chain instead. |
 | `nginx.ingress.kubernetes.io/auth-type` | Behaviour differs | Only "basic" is supported; "digest" fails the render. |
-| `nginx.ingress.kubernetes.io/backend-protocol` | Behaviour differs | HTTP, HTTPS, GRPC and GRPCS map to HAProxy server options; AJP and FCGI have no HAProxy equivalent and fail the render with an error. |
+| `nginx.ingress.kubernetes.io/backend-protocol` | Behaviour differs | HTTP, HTTPS, `GRPC` and `GRPCS` map to HAProxy server options; `AJP` and `FCGI` have no HAProxy equivalent and fail the render with an error. |
 | `nginx.ingress.kubernetes.io/canary-weight-total` | Not carried over | The weight base is fixed at 100. |
 | `nginx.ingress.kubernetes.io/configuration-snippet` | Behaviour differs | Injected verbatim into the backend section — the value must contain HAProxy directives, not nginx configuration; existing nginx snippets need rewriting. |
 | `nginx.ingress.kubernetes.io/cors-allow-credentials` | Behaviour differs | The header is only sent when explicitly "true" — ingress-nginx defaults it to true. |
@@ -267,7 +269,7 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 suppo
 | `nginx.ingress.kubernetes.io/enable-modsecurity` | Behaviour differs | "false" opts the route out of the WAF; "true" is accepted as a no-op (dispatch is default-on when the coraza plugin is enabled); other values fail the render. |
 | `nginx.ingress.kubernetes.io/enable-opentelemetry` | Not carried over | Requires the nginx OpenTelemetry module; no HAProxy-side tracing is wired. |
 | `nginx.ingress.kubernetes.io/enable-opentracing` | Not carried over | Requires the nginx OpenTracing module; no HAProxy-side tracing is wired. |
-| `nginx.ingress.kubernetes.io/hsts` | Behaviour differs | By default the header is emitted only when the Ingress sets hsts "true", whereas ingress-nginx enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching ingress-nginx); a per-Ingress hsts annotation still overrides the value for its hosts. |
+| `nginx.ingress.kubernetes.io/hsts` | Behaviour differs | By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas ingress-nginx enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching ingress-nginx); a per-Ingress `hsts` annotation still overrides the value for its hosts. |
 | `nginx.ingress.kubernetes.io/hsts-include-subdomains` | Behaviour differs | includeSubDomains is added only when explicitly "true" — ingress-nginx defaults it to true. |
 | `nginx.ingress.kubernetes.io/limit-connections` | Behaviour differs | Rejects with 429, and ignored when limit-rps or limit-rpm is set (one stick-table per backend). |
 | `nginx.ingress.kubernetes.io/limit-rpm` | Behaviour differs | Same hard-cap/429 semantics as limit-rps, and ignored when limit-rps is also set (HAProxy stores one request-rate counter per backend). |
@@ -281,16 +283,16 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 suppo
 | `nginx.ingress.kubernetes.io/proxy-cookie-domain` | Behaviour differs | Only the "<from> <to>" rewrite form is supported; any other value (including "off") fails the render. |
 | `nginx.ingress.kubernetes.io/proxy-cookie-path` | Behaviour differs | Only the "<from> <to>" rewrite form is supported; any other value (including "off") fails the render. |
 | `nginx.ingress.kubernetes.io/proxy-max-temp-file-size` | Not carried over | HAProxy buffers in memory; there is no temp-file spooling. |
-| `nginx.ingress.kubernetes.io/proxy-next-upstream` | Behaviour differs | Maps to HAProxy retry-on (error→conn-failure, timeout→response-timeout, invalid_header→junk-response, http_NNN→NNN); non_idempotent has no equivalent and is ignored; "off" emits retries 0. |
+| `nginx.ingress.kubernetes.io/proxy-next-upstream` | Behaviour differs | Maps to HAProxy retry-on (error→conn-failure, timeout→response-timeout, invalid_header→junk-response, `http_NNN`→`NNN`); `non_idempotent` has no equivalent and is ignored; "off" emits retries 0. |
 | `nginx.ingress.kubernetes.io/proxy-read-timeout` | Behaviour differs | Collapses with proxy-send-timeout into HAProxy's single timeout server — the larger value wins, asymmetric read/send timeouts are lost. |
-| `nginx.ingress.kubernetes.io/proxy-redirect-from` | Behaviour differs | "default" is not supported (warning comment, no rewrite); requires proxy-redirect-to; values must be space-free. |
+| `nginx.ingress.kubernetes.io/proxy-redirect-from` | Behaviour differs | "default" isn't supported (warning comment, no rewrite); requires proxy-redirect-to; values must be space-free. |
 | `nginx.ingress.kubernetes.io/proxy-send-timeout` | Behaviour differs | Collapses with proxy-read-timeout into HAProxy's single timeout server — the larger value wins, asymmetric read/send timeouts are lost. |
 | `nginx.ingress.kubernetes.io/proxy-ssl-server-name` | Not carried over | Not read; SNI toward the upstream is controlled via proxy-ssl-name instead. |
 | `nginx.ingress.kubernetes.io/proxy-ssl-verify-depth` | Not carried over | HAProxy has no per-server chain-depth option; a warning comment is rendered. |
-| `nginx.ingress.kubernetes.io/satisfy` | Behaviour differs | "any" OR-combines whitelist-source-range with basic auth only; unlike ingress-nginx it does not extend to external auth (auth-url). |
+| `nginx.ingress.kubernetes.io/satisfy` | Behaviour differs | "any" OR-combines whitelist-source-range with basic auth only; unlike ingress-nginx it doesn't extend to external auth (`auth-url`). |
 | `nginx.ingress.kubernetes.io/server-snippet` | Not carried over | nginx server-level directives have no HAProxy equivalent. |
 | `nginx.ingress.kubernetes.io/session-cookie-expires` | Behaviour differs | Emitted as a Max-Age attribute — HAProxy can't compute an absolute Expires date; browsers treat both equivalently. |
-| `nginx.ingress.kubernetes.io/session-cookie-hash` | Not carried over | HAProxy's dynamic-cookie hashing is not selectable; the value is ignored and a warning comment is rendered. |
+| `nginx.ingress.kubernetes.io/session-cookie-hash` | Not carried over | HAProxy's dynamic-cookie hashing isn't selectable; the value is ignored and a warning comment is rendered. |
 | `nginx.ingress.kubernetes.io/ssl-redirect` | Behaviour differs | Redirects only when explicitly "true" — ingress-nginx redirects TLS-enabled Ingresses by default; the code comes from extraContext.nginxHttpRedirectCode (default 308, matching ingress-nginx's http-redirect-code). |
 | `nginx.ingress.kubernetes.io/stream-snippet` | Not carried over | nginx stream directives have no HAProxy equivalent. |
 | `nginx.ingress.kubernetes.io/whitelist-source-range` | Behaviour differs | Host-scoped — the allowlist only gates rules with an explicit host, so an Ingress without rule hosts gets no filtering; invalid CIDRs fail the render. |
@@ -298,7 +300,7 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 suppo
 
 ---
 
-## From haproxy-ingress
+## From `haproxy-ingress`
 
 The `haproxy-ingress.github.io/*` library is **enabled by default**, so
 jcmoraisjr/haproxy-ingress annotations work with no flag change. You still need
@@ -311,7 +313,7 @@ basic/external auth, client-mTLS, and WAF annotations are supported. Full
 reference:
 [haproxy-ingress library docs](libraries/haproxy-ingress.md).
 
-The table below lists every annotation that does **not** carry over unchanged —
+The table below lists every annotation that **doesn't** carry over unchanged —
 generated from the library's declared migration coverage. Anything not listed is
 fully supported.
 
@@ -325,22 +327,22 @@ The library classifies 92 `haproxy-ingress.github.io/*` annotations: 62 supporte
 | `haproxy-ingress.github.io/agent-check-send` | Behaviour differs | Has no effect without agent-check-port — and setting it without agent-check-port fails the render. |
 | `haproxy-ingress.github.io/allowlist-source-range` | Behaviour differs | Host-scoped — only gates rules with an explicit host; invalid CIDRs fail the render. |
 | `haproxy-ingress.github.io/auth-method` | Behaviour differs | Overrides the auth subrequest method; POST/PUT/PATCH are sent with an empty body. |
-| `haproxy-ingress.github.io/auth-tls-cert-header` | Behaviour differs | Forwards X-SSL-Client-CN, X-SSL-Client-DN and X-SSL-Client-Cert when "true"; jcmoraisjr/haproxy-ingress additionally forwards the SHA1 and serial headers, which are not set. |
-| `haproxy-ingress.github.io/auth-tls-secret` | Behaviour differs | Verification is keyed by SNI — every rule needs an explicit host or the render fails. A missing Secret (or missing ca.crt) currently SKIPS mTLS for the Ingress (fail-open — requests with no/any client cert pass), where upstream with auth-tls-strict defaulting to true installs a fake CA and rejects all clients (fail-closed). |
-| `haproxy-ingress.github.io/auth-tls-strict` | Not carried over | Accepted for compatibility but has no separate effect. Upstream defaults it to true (fail-closed on a missing/invalid CA); here a missing CA fails open (see auth-tls-secret), and this annotation cannot restore fail-closed. For soft verification use auth-tls-verify-client optional instead. |
+| `haproxy-ingress.github.io/auth-tls-cert-header` | Behaviour differs | Forwards X-SSL-Client-CN, X-SSL-Client-DN and X-SSL-Client-Cert when "true"; jcmoraisjr/haproxy-ingress additionally forwards the SHA-1 and serial headers, which aren't set. |
+| `haproxy-ingress.github.io/auth-tls-secret` | Behaviour differs | Verification is keyed by SNI — every rule needs an explicit host or the render fails. A missing Secret (or missing ca.crt) currently **skips** mTLS for the Ingress (fail-open — requests with no/any client cert pass), where upstream with auth-tls-strict defaulting to true installs a fake CA and rejects all clients (fail-closed). |
+| `haproxy-ingress.github.io/auth-tls-strict` | Not carried over | Accepted for compatibility but has no separate effect. Upstream defaults it to true (fail-closed on a missing/invalid CA); here a missing CA fails open (see auth-tls-secret), and this annotation can't restore fail-closed. For soft verification use auth-tls-verify-client optional instead. |
 | `haproxy-ingress.github.io/auth-tls-verify-client` | Behaviour differs | "on"→required; "optional"/"optional_no_ca"→optional (HAProxy has no verify-but-accept-invalid mode); other values fail the render. |
-| `haproxy-ingress.github.io/auth-url` | Behaviour differs | External auth via the SPOA hub external-auth plugin, which (unlike the nginx-ingress library) is NOT auto-enabled — enable spoaHub.plugins.external-auth, otherwise the auth is silently not enforced. |
-| `haproxy-ingress.github.io/backend-protocol` | Behaviour differs | h1, h2, h1-ssl and h2-ssl are accepted (h1-ssl/h2-ssl enable TLS); other values fail the render — note this is a different value set from ingress-nginx's HTTP/HTTPS/GRPC/GRPCS. |
+| `haproxy-ingress.github.io/auth-url` | Behaviour differs | External auth via the SPOA hub external-auth plugin, which (unlike the nginx-ingress library) **isn't** auto-enabled — enable spoaHub.plugins.external-auth, otherwise the auth is silently not enforced. |
+| `haproxy-ingress.github.io/backend-protocol` | Behaviour differs | h1, h2, h1-ssl and h2-ssl are accepted (h1-ssl/h2-ssl enable TLS); other values fail the render — note this is a different value set from ingress-nginx's `HTTP/HTTPS/GRPC/GRPCS`. |
 | `haproxy-ingress.github.io/config-frontend` | Behaviour differs | Injected into HAPTIC's shared HTTP frontend (before routing), not a per-Ingress frontend — directives apply process-wide; deduplication is the operator's responsibility. |
 | `haproxy-ingress.github.io/default-backend-redirect-code` | Behaviour differs | Default 302; an invalid code fails the render. |
 | `haproxy-ingress.github.io/denylist-source-range` | Behaviour differs | Host-scoped — only gates rules with an explicit host; invalid CIDRs fail the render. |
 | `haproxy-ingress.github.io/docs` | Not carried over | A pointer to jcmoraisjr/haproxy-ingress documentation, not a configuration key; not read. |
-| `haproxy-ingress.github.io/hsts` | Behaviour differs | By default the header is emitted only when the Ingress sets hsts "true", whereas jcmoraisjr/haproxy-ingress enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching that default); a per-Ingress hsts annotation still overrides the value for its hosts. |
-| `haproxy-ingress.github.io/limit-connections` | Behaviour differs | Maps to backend fullconn (a soft full-queue threshold) rather than a hard per-server connection cap; must be a positive integer. |
+| `haproxy-ingress.github.io/hsts` | Behaviour differs | By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas jcmoraisjr/haproxy-ingress enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching that default); a per-Ingress `hsts` annotation still overrides the value for its hosts. |
+| `haproxy-ingress.github.io/limit-connections` | Behaviour differs | Maps to backend `fullconn` (a soft full-queue threshold) rather than a hard per-server connection cap; must be a positive integer. |
 | `haproxy-ingress.github.io/limit-rpm` | Behaviour differs | Same hard-cap/429 semantics, and ignored when limit-rps is also set (one stick-table per backend). |
 | `haproxy-ingress.github.io/limit-rps` | Behaviour differs | Hard per-source-IP cap rejecting with 429 — jcmoraisjr/haproxy-ingress applies a burst allowance. |
-| `haproxy-ingress.github.io/oauth` | Behaviour differs | Only "oauth2_proxy"/"oauth2-proxy" is supported and requires an Ingress path (oauth-uri-prefix, default /oauth2) routing to the oauth2-proxy Service — otherwise the render fails; auth-url takes precedence; needs the external-auth plugin (not auto-enabled) with plaintext allowed. |
-| `haproxy-ingress.github.io/path-type` | Behaviour differs | regex, exact, prefix and begin are honoured, but only for paths with pathType ImplementationSpecific — the annotation is ignored on Prefix/Exact-typed paths. |
+| `haproxy-ingress.github.io/oauth` | Behaviour differs | Only "oauth2_proxy"/"oauth2-proxy" is supported and requires an Ingress path (oauth-uri-prefix, default /oauth2) routing to the oauth2-proxy Service — otherwise the render fails; `auth-url` takes precedence; needs the external-auth plugin (not auto-enabled) with plaintext allowed. |
+| `haproxy-ingress.github.io/path-type` | Behaviour differs | regex, exact, prefix and begin are honoured, but only for paths with `pathType` ImplementationSpecific — the annotation is ignored on Prefix/Exact-typed paths. |
 | `haproxy-ingress.github.io/redirect-to-code` | Behaviour differs | Default 302; an out-of-range code silently falls back to 302 rather than failing. |
 | `haproxy-ingress.github.io/secure-crt-secret` | Behaviour differs | Presents a client certificate to the upstream from the Secret; a missing Secret or missing tls.crt/tls.key renders a warning comment and skips the client cert instead of failing. |
 | `haproxy-ingress.github.io/secure-verify-ca-secret` | Behaviour differs | Verifies the upstream certificate against the Secret's ca.crt; a missing Secret or missing ca.crt renders a warning comment and silently downgrades to no verification instead of failing. |
@@ -348,13 +350,13 @@ The library classifies 92 `haproxy-ingress.github.io/*` annotations: 62 supporte
 | `haproxy-ingress.github.io/ssl-ciphers-backend` | Behaviour differs | Cipher list for upstream TLS — only applied when backend TLS is enabled (secure-backends or an -ssl backend-protocol); otherwise silently ignored. |
 | `haproxy-ingress.github.io/ssl-redirect-code` | Behaviour differs | Default 302 (jcmoraisjr/haproxy-ingress redirects with 302); an out-of-range code silently falls back to 302 rather than failing. |
 | `haproxy-ingress.github.io/waf` | Behaviour differs | Only "modsecurity" is supported (enforced by the bundled Coraza WAF via the SPOA hub); requires the coraza plugin (auto-enabled with this library) or the render fails. |
-| `haproxy-ingress.github.io/waf-mode` | Behaviour differs | "deny" (default) enforces, "detect" runs in shadow mode; other values, or waf-mode without waf, fail the render. |
+| `haproxy-ingress.github.io/waf-mode` | Behaviour differs | "deny" (default) enforces, "detect" runs in shadow mode; other values, or `waf-mode` without `waf`, fail the render. |
 | `haproxy-ingress.github.io/whitelist-source-range` | Behaviour differs | Deprecated alias of allowlist-source-range, honoured only when allowlist-source-range is absent; host-scoped. |
 <!-- END generated: migration-coverage haproxy-ingress -->
 
 ---
 
-## From haproxytech/kubernetes-ingress
+## From `haproxytech/kubernetes-ingress`
 
 The `haproxy.org/*` library (the official haproxytech/kubernetes-ingress
 annotation set) is **enabled by default**, so those annotations work with no flag
@@ -364,10 +366,10 @@ change. You still need to [match the IngressClass](#match-the-ingressclass)
 
 HAPTIC reads these annotations on **Ingress** resources only. haproxytech's
 controller also reads many of them on Service and ConfigMap resources; that
-Service/ConfigMap-level configuration does not carry over. Full reference:
+Service/ConfigMap-level configuration doesn't carry over. Full reference:
 [haproxytech library docs](libraries/haproxytech.md).
 
-The table below lists every annotation that does **not** carry over unchanged —
+The table below lists every annotation that **doesn't** carry over unchanged —
 generated from the library's declared migration coverage. Anything not listed is
 fully supported.
 

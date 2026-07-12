@@ -1,4 +1,4 @@
-# Deployment Diagrams
+# Deployment diagrams
 
 ## Kubernetes Deployment Architecture
 
@@ -113,7 +113,7 @@ graph TB
 
 **Resource Requirements**: chart defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container-awareness mechanics live in [Performance — Controller Resource Sizing](../../operations/performance.md#controller-resource-sizing). Diagram-relevant specifics: the controller writes transient `haproxy -c` validation files to a `/tmp` emptyDir (root filesystem is read-only), and both HAProxy-pod containers share the config `emptyDir` mounted at `/etc/haproxy`.
 
-## Network Topology
+## Network topology
 
 ```mermaid
 graph LR
@@ -184,9 +184,9 @@ graph LR
 
 **Scaling Considerations**: HAProxy scales horizontally via `haproxy.replicaCount` (pods are auto-discovered through `controller.config.podSelector`); the controller scales for availability, not throughput — see [Performance — Scaling Strategies](../../operations/performance.md#scaling-strategies) and [High Availability](../../operations/high-availability.md). NetworkPolicy must allow the controller to reach Dataplane API port 5555 on each HAProxy pod ([Networking](../../operations/networking.md)).
 
-## Build Optimizations (Contributors)
+## Build optimizations (contributors)
 
-Controller images are built with Go's Profile-Guided Optimization (PGO), which typically provides 2-7% CPU improvement by optimizing frequently-called functions. A baseline CPU profile (`cmd/controller/default.pgo`) is committed to the repository; Go automatically uses it during builds to optimize hot paths.
+Controller images are built with Go's Profile-Guided Optimization (PGO), which typically provides 2-7% CPU improvement by optimizing frequently called functions. A baseline CPU profile (`cmd/controller/default.pgo`) is committed to the repository; Go automatically uses it during builds to optimize hot paths.
 
 **Updating the profile** from the development environment:
 

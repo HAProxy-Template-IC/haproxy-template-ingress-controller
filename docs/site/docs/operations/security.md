@@ -2,25 +2,25 @@
 
 This page covers only the security settings HAPTIC itself owns. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator (ESO), etc.) is left to the upstream project's docs.
 
-## What the Controller Needs
+## What the controller needs
 
 ### RBAC
 
-The Helm chart provisions a `ServiceAccount`, a `ClusterRole`, and a namespace-scoped `Role` (names derive from the Helm release fullname). The ClusterRole grants:
+The Helm chart provisions a `ServiceAccount`, a `ClusterRole`, and a namespace-scoped `Role` (names derive from the Helm release `fullname`). The ClusterRole grants:
 
 | Resource | Verbs | Why |
 |----------|-------|-----|
 | `pods`, `namespaces` | get, list, watch | Discover HAProxy pods, target namespaces |
 | `<each watched resource>` | get, list, watch | Generated per `watchedResources` entry — Ingress, Service, EndpointSlice, Secret, etc. depending on the enabled libraries |
-| `<watched resource>/status` | patch | Generated for watched resources with `statusPatch: true` (e.g. Ingress LoadBalancer status, Gateway / HTTPRoute conditions) |
-| `leases` (coordination.k8s.io) | get, create, update | Leader election |
-| `customresourcedefinitions` (apiextensions.k8s.io) | get, list, watch | Fetch watched-resource OpenAPI schemas from their CRDs so typed template access stays full-fidelity (degrades to the public OpenAPI endpoint otherwise) |
+| `<watched resource>/status` | patch | Generated for watched resources with `statusPatch: true` (for example, Ingress LoadBalancer status, Gateway / HTTPRoute conditions) |
+| `leases` (`coordination.k8s.io`) | get, create, update | Leader election |
+| `customresourcedefinitions` (`apiextensions.k8s.io`) | get, list, watch | Fetch watched-resource OpenAPI schemas from their CRDs so typed template access stays full-fidelity (degrades to the public OpenAPI endpoint otherwise) |
 | `haproxytemplateconfigs.haproxy-haptic.org` | get, list, watch | Primary config CRD |
 | `haproxytemplateconfigs/status` | update, patch | Report validation status back onto the CRD |
-| `haproxycfgs`, `haproxygeneralfiles`, `haproxycrtlistfiles`, `haproxymapfiles` (.haproxy-haptic.org) | get, list, watch, create, update, patch, delete | Publish rendered config + auxiliary files as observable CRDs (full CRUD because the controller owns these resources and prunes stale entries) |
+| `haproxycfgs`, `haproxygeneralfiles`, `haproxycrtlistfiles`, `haproxymapfiles` (.haproxy-haptic.org) | get, list, watch, create, update, patch, delete | Publish rendered config + auxiliary files as observable CRDs (full read-write access because the controller owns these resources and prunes stale entries) |
 | `<above CRDs>/status` | update, patch | Report deployment status on the published artifacts |
-| `services` | get, list, watch, create, update, patch, delete | **Gateway library only** — cluster-wide Service writes for Gateway-API templates that emit owned Services into a Gateway's own namespace (e.g. the per-Gateway infrastructure-propagation marker Service) |
-| `gatewayclasses` (gateway.networking.k8s.io) | create, update, patch, delete | **Gateway library only** — the GatewayClass is applied at runtime via Server-Side Apply, not by Helm (read verbs come from the watched-resource rules) |
+| `services` | get, list, watch, create, update, patch, delete | **Gateway library only** — cluster-wide Service writes for Gateway-API templates that emit owned Services into a Gateway's own namespace (for example, the per-Gateway infrastructure-propagation marker Service) |
+| `gatewayclasses` (`gateway.networking.k8s.io`) | create, update, patch, delete | **Gateway library only** — the GatewayClass is applied at runtime via Server-Side Apply, not by Helm (read verbs come from the watched-resource rules) |
 | `events` (core) | create, update, patch, delete | **Ingress library only** — Warning Events on Ingresses whose backend Service is missing |
 
 Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
@@ -53,14 +53,14 @@ stringData:
   dataplane_password: <random>
 ```
 
-The controller watches the Secret and picks up rotations live — no pod restart needed. Use whatever secret-management tool you already run (ESO, Vault agent, SOPS, …); the controller just reads the Secret.
+The controller watches the Secret and picks up rotations live — no pod restart needed. Use whatever secret-management tool you already run (ESO, Vault agent, `SOPS`, …); the controller just reads the Secret.
 
 !!! warning "Set the Dataplane password explicitly under GitOps"
     If you install via the Helm chart and leave `credentials.dataplane.password` empty, the chart generates a **random** 32-char password and preserves it across upgrades by reading the existing Secret via `lookup`. GitOps tools that render without cluster access (ArgoCD/Flux) can't `lookup`, so an empty value regenerates on every sync and churns the credential — set `credentials.dataplane.password` explicitly (SealedSecret / external secret) for those deployments.
 
 Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/setup.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
 
-## Pod Hardening
+## Pod hardening
 
 The chart ships with a restrictive default pod spec. The relevant `securityContext` (container-level) / `controller.podSpec.podSecurityContext` (pod-level) defaults:
 
@@ -87,19 +87,19 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
 ```
 
-## Network Exposure
+## Network exposure
 
 The controller pod exposes three HTTP ports (all chart defaults):
 
 | Port | Endpoint | Notes |
 |------|----------|-------|
 | `8080` | `/healthz`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `/healthz` and `/debug/*` share the same listener; setting `controller.debugPort: 0` disables both and breaks the liveness/readiness probes. To shield `/debug/*` in production, restrict access with a NetworkPolicy (example below) instead of disabling the port |
-| `9090` | `/metrics` | Disable by setting the `METRICS_PORT=0` env var on the controller container (e.g. `extraEnv` in Helm); the `controller.config.controller.metricsPort` Helm value is display-only — the chart strips it before serializing |
+| `9090` | `/metrics` | Disable by setting the `METRICS_PORT=0` env var on the controller container (for example, `extraEnv` in Helm); the `controller.config.controller.metricsPort` Helm value is display-only — the chart strips it before serializing |
 | `9443` | Validating webhook | Required when the webhook is enabled |
 
-Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, CNI encryption) rather than transport-level authentication for that hop.
+Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, Container Network Interface (CNI) encryption) rather than transport-level authentication for that hop.
 
-The Dataplane API is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release fullname, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
+The Dataplane API is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release `fullname`, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
 
 **The chart already ships default-on `NetworkPolicy` resources** for both the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods — both default `true`. Know what the defaults actually allow before relying on them:
 
@@ -108,7 +108,7 @@ The Dataplane API is authenticated with a basic-auth password stored in the `<re
 
 To tighten, replace, or debug these policies — including a copy-pastable replacement policy and its selector caveat — see [Networking](./networking.md#replacing-the-shipped-policies). If you keep the debug port enabled, pair it with a NetworkPolicy that restricts ingress to your observability namespace.
 
-## Secrets in Templates
+## Secrets in templates
 
 Templates read watched Secrets like any other resource. Decode with `b64decode` (values in `.data` are base64-encoded by Kubernetes):
 
@@ -168,7 +168,7 @@ kubectl create secret generic basic-auth -n auth \
 
 Bcrypt is slow to verify on every request; for large userbases use `htpasswd -n -5` (SHA-512 crypt) and see [Performance](./performance.md#password-hash-performance) for the trade-off.
 
-## Audit Trail
+## Audit trail
 
 A minimal audit policy that records who touched `HAProxyTemplateConfig` and which Secrets the controller reads:
 
@@ -187,7 +187,7 @@ rules:
         resources: ["secrets"]
 ```
 
-Replace `<namespace>`/`<release>` with your Helm release. The SA name is the release fullname `<release>-haptic` (collapsing to `<release>` only when the release name already contains `haptic`) unless you overrode `serviceAccount.name` — get the exact value with `kubectl -n <namespace> get sa`. A rule keyed on the wrong SA name silently never matches, so the controller's Secret reads go unaudited.
+Replace `<namespace>`/`<release>` with your Helm release. The SA name is the release `fullname` `<release>-haptic` (collapsing to `<release>` only when the release name already contains `haptic`) unless you overrode `serviceAccount.name` — get the exact value with `kubectl -n <namespace> get sa`. A rule keyed on the wrong SA name silently never matches, so the controller's Secret reads go unaudited.
 
 ## Checklist
 
@@ -201,7 +201,7 @@ Before exposing a HAPTIC deployment to production traffic:
 - [ ] Audit policy in place for `HAProxyTemplateConfig` changes.
 - [ ] Image signature verification (`cosign verify …`) wired into your admission policy — see [Releasing](../development/releasing.md#supply-chain-security).
 
-## See Also
+## See also
 
 - [Networking](./networking.md) — NetworkPolicy mechanics: default rules, hardening, replacement policies
 - [Monitoring](./monitoring.md) — signals for auth failures, webhook drops, leader flaps

@@ -11,7 +11,7 @@ Templates are rendered automatically when any watched resource changes, during i
 
 Hit **Run live** above to render the bundled Ingress example entirely in your browser. Edit the template on the left and watch `haproxy.cfg` update on the right — then switch tabs to see the `maps`, `files`, and `status` it also produces. Click any output line to jump to the template line that produced it, or **Open in full playground** to bring your changes into the full editor.
 
-## What You Can Template
+## What you can template
 
 | Template Type | Use When |
 |---------------|----------|
@@ -169,9 +169,9 @@ spec:
 </details>
 </div>
 
-### Map Files
+### Map files
 
-Each `maps` entry renders one HAProxy lookup table. They are written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod. This template turns each Ingress host into a backend-name entry — switch to the **maps** tab to read the generated `host.map`.
+Each `maps` entry renders one HAProxy lookup table. They're written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod. This template turns each Ingress host into a backend-name entry — switch to the **maps** tab to read the generated `host.map`.
 
 <div class="pg-embed" markdown data-tab="maps" data-controls="tabs,resources" data-title="A host → backend map" data-height="440">
 
@@ -252,7 +252,7 @@ items:
 
 </div>
 
-### General Files
+### General files
 
 Auxiliary files like custom error pages. Written to `spec.dataplane.generalStorageDir` (default `/etc/haproxy/general/`). The `errorfile` directive points HAProxy at the rendered file — open the **files** tab to see `503.http`.
 
@@ -293,7 +293,7 @@ spec:
 
 </div>
 
-### SSL Certificates
+### SSL certificates
 
 SSL/TLS certificate files are assembled from Kubernetes Secrets. Written to `spec.dataplane.sslCertsDir` (default `/etc/haproxy/ssl/`). This reads a TLS Secret and concatenates its certificate and key into one PEM — the **certs** tab shows the result.
 
@@ -357,7 +357,7 @@ items:
 !!! note
     Certificate data in Secrets is base64-encoded. Use the `b64decode` filter to decode it.
 
-### Template Snippets
+### Template snippets
 
 Reusable template fragments are included via `{{ render "snippet-name" }}` — or `{{ render_glob "pattern" }}` to pull in every match at once. This config keeps each backend in its own snippet and stitches them into the config with `render_glob`, which renders matches in alphabetical order.
 
@@ -415,7 +415,7 @@ Pass local variables to rendered snippets with `inherit_context`:
 {{ render "backend-servers" inherit_context }}
 ```
 
-### Post-Processing
+### Post-processing
 
 The `haproxyConfig` section supports a `postProcessing` list that transforms the rendered output before deployment. Post-processors run sequentially on the rendered configuration.
 
@@ -471,11 +471,11 @@ spec:
 
 The `template` post-processor receives the fully rendered output as the `input` variable and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, etc.). Its output becomes the new rendered content.
 
-## Template Syntax
+## Template syntax
 
 For complete syntax reference, see the [Scriggo documentation](https://scriggo.com/templates).
 
-### Control Structures
+### Control structures
 
 ```go
 {# Loops #}
@@ -496,7 +496,7 @@ For complete syntax reference, see the [Scriggo documentation](https://scriggo.c
 {# This is a comment #}
 ```
 
-### Helper Functions
+### Helper functions
 
 Beyond Scriggo's built-ins, HAPTIC adds helpers for the patterns ingress templates need: nil-safe navigation (`dig`, `fallback`, `toSlice`), string and map utilities, deduplication (`first_seen`), sorting (`sort_by`), and version gates (`semver_gte`). The [Template Reference](./template-reference.md#functions-and-filters) lists every function with its calling styles and an example each.
 
@@ -604,17 +604,17 @@ backend {{ svc }}
 
 </div>
 
-### Path Resolution
+### Path resolution
 
 `pathResolver.GetPath(filename, type)` returns the path HAProxy should use to reference a rendered auxiliary file — `type` is one of `"map"`, `"file"`, `"cert"`, or `"crt-list"`. Use it instead of writing paths by hand so the controller and HAProxy agree on where files live. The [Template Reference](./template-reference.md#pathresolver) shows one example per file type and explains how the returned paths resolve against HAProxy's `default-path` directive (and what to keep if you replace the chart's base library).
 
-## Available Template Data
+## Available template data
 
-### Context Variables
+### Context variables
 
-Templates receive a set of top-level variables: `resources` (the watched-resource stores), `pathResolver`, `capabilities` (HAProxy feature flags), `currentConfig` (the previously-deployed config), `shared` (a compute-once cache), `extraContext`, and more. The [Template Reference](./template-reference.md#context-variables) documents each one. The one you'll use constantly is `resources`, covered next.
+Templates receive a set of top-level variables: `resources` (the watched-resource stores), `pathResolver`, `capabilities` (HAProxy feature flags), `currentConfig` (the previously deployed config), `shared` (a compute-once cache), `extraContext`, and more. The [Template Reference](./template-reference.md#context-variables) documents each one. The one you'll use constantly is `resources`, covered next.
 
-### The `resources` Variable
+### The `resources` variable
 
 Templates access watched resources through the `resources` variable. Each store provides `List()`, `Fetch()`, and `GetSingle()` methods.
 
@@ -632,9 +632,9 @@ Templates access watched resources through the `resources` variable. Each store 
 {% var secret = resources.secrets.GetSingle("default", "my-secret") %}
 ```
 
-### Typed Resource Access
+### Typed resource access
 
-When a schema is loaded for a watched resource (live in production, or via `--schema-dir` offline), both the `resources.<name>` store wrapper **and** a top-level global named `<name>` return typed pointers instead of `map[string]any`. Field access goes through the strongly-typed struct, so a misspelled field is a compile-time error rather than a silently-`nil` `dig()`.
+When a schema is loaded for a watched resource (live in production, or via `--schema-dir` offline), both the `resources.<name>` store wrapper **and** a top-level global named `<name>` return typed pointers instead of `map[string]any`. Field access goes through the strongly typed struct, so a misspelled field is a compile-time error rather than a silently-`nil` `dig()`.
 
 A typed field resolves by **either** its Go-PascalCase name **or** its lowercase JSON tag: `gw.metadata.name` and `gw.Metadata.Name` reach the same field, because the engine falls back to the JSON tag when the Go field name doesn't match. That's why the lowercase `ingress.spec.rules` / `ingress.metadata.name` examples elsewhere on this page are typed access too — not untyped `dig()`. The code blocks below use the PascalCase form to make the struct mapping explicit, but either spelling compiles.
 
@@ -658,7 +658,7 @@ A typed field resolves by **either** its Go-PascalCase name **or** its lowercase
 | `resources.<name>.Fetch(keys...)` | `[]*resources.<name>.T` |
 | `resources.<name>.GetSingle(keys...)` | `*resources.<name>.T` (nil if not found) |
 
-Without a schema (e.g. `haptic-controller validate` without `--schema-dir`), the same calls fall back to `[]any` / `map[string]any` exactly as before. The chart's `dig()`-based snippets work in either mode.
+Without a schema (for example, `haptic-controller validate` without `--schema-dir`), the same calls fall back to `[]any` / `map[string]any` exactly as before. The chart's `dig()`-based snippets work in either mode.
 
 **`<name>.T` is a usable type expression.** Macros, var declarations, type assertions, slice types, and type-switch case clauses all accept it:
 
@@ -708,16 +708,16 @@ Templates write `gw.ApiVersion`, not `gw.APIVersion`. Why the convention works t
 
 **Schema source.** Typed shapes are generated from each resource's OpenAPI v3 schema:
 
-- **Production:** the controller fetches schemas live from the kube-apiserver — CRDs via their embedded `openAPIV3Schema`, K8s core resources via the apiserver's OpenAPI v3 endpoint.
-- **Offline (`haptic-controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from a directory passed via `--schema-dir` (or `HAPTIC_SCHEMA_DIR` env var). The directory accepts full CRD YAMLs (`kubectl get crd X -o yaml` output) and bare OpenAPI v3 spec.Schema files with an `x-kubernetes-group-version-kind` extension. Without `--schema-dir`, no resources receive typed support; templates that reach for typed access in that case fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
+- **Production:** the controller fetches schemas live from the kube-apiserver — CRDs via their embedded `openAPIV3Schema`, Kubernetes core resources via the apiserver's OpenAPI v3 endpoint.
+- **Offline (`haptic-controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from a directory passed via `--schema-dir` (or `HAPTIC_SCHEMA_DIR` env var). The directory accepts full CRD YAMLs (`kubectl get crd X -o yaml` output) and bare OpenAPI v3 `spec.Schema` files with an `x-kubernetes-group-version-kind` extension. Without `--schema-dir`, no resources receive typed support; templates that reach for typed access in that case fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
 
-This repo's `tests/schemas/` bundles schemas for both the Gateway API CRDs / haptic CRDs *and* the K8s built-ins the chart watches (Namespace, Service, Secret, EndpointSlice, Ingress). All built-ins are CRD-wrapped so the offline GVK resolver picks up the (apiVersion, plural) mapping — `haptic-controller validate --schema-dir tests/schemas` therefore unlocks typed access for every chart-watched resource, not just the CRDs. The chart-test script auto-wires this directory; copy it into your own project's schema-dir if you reuse the bundled libraries. To refresh from a running cluster, run `scripts/fetch-k8s-openapi-schemas.sh` (queries `kubectl get --raw '/openapi/v3/...'`, inlines `$ref`s, emits CRD-wrapped YAML).
+This repo's `tests/schemas/` bundles schemas for both the Gateway API CRDs / haptic CRDs *and* the Kubernetes built-ins the chart watches (Namespace, Service, Secret, EndpointSlice, Ingress). All built-ins are CRD-wrapped so the offline GVK resolver picks up the (`apiVersion`, plural) mapping — `haptic-controller validate --schema-dir tests/schemas` therefore unlocks typed access for every chart-watched resource, not just the CRDs. The chart-test script auto-wires this directory; copy it into your own project's schema-dir if you reuse the bundled libraries. To refresh from a running cluster, run `scripts/fetch-k8s-openapi-schemas.sh` (queries `kubectl get --raw '/openapi/v3/...'`, inlines `$ref`s, emits CRD-wrapped YAML).
 
 ### Index Configuration
 
 The `indexBy` field on a `watchedResources` entry determines what parameters `Fetch()` expects — see [Watching Resources — Indexing](./watching-resources.md#indexing-indexby) for index shapes, prefix scans, and the dot-escaping rule for label keys.
 
-## Custom Template Variables
+## Custom template variables
 
 Add custom variables via `templatingSettings.extraContext`:
 
@@ -742,9 +742,9 @@ global
   maxconn {{ extraContext.limits.maxConn }}
 ```
 
-## Common Patterns
+## Common patterns
 
-### Reserved Server Slots (Avoid Reloads)
+### Reserved server slots (avoid reloads)
 
 Pre-allocate server slots so endpoint changes update server addresses through the runtime API instead of triggering a reload. Run this to watch the active endpoints fill the low-numbered slots while the spares stay `disabled`:
 
@@ -899,7 +899,7 @@ server srv {{ addr }}:80
 
 </div>
 
-### Filtering with Conditionals
+### Filtering with conditionals
 
 Test a field before you use it to skip resources that lack it. Only the rule with an `http` section produces a backend line; the bare TCP host is filtered out:
 
@@ -920,7 +920,7 @@ backend {{ dig(rule, "host") | tostring() }}
 
 </div>
 
-### Challenge: Add Health Checks
+### Challenge: Add health checks
 
 Put the loop-and-`dig` pattern to work:
 
@@ -999,7 +999,7 @@ spec:
 
 </div>
 
-### Challenge: Default a Missing Port
+### Challenge: Default a missing port
 
 Combine `dig()` with `fallback()` to supply a default when a field is absent:
 
@@ -1044,7 +1044,7 @@ server {{ name }} {{ name }}.svc:{{ port }}{% if portVal == nil %}  # default po
 
 </div>
 
-### Mutable Variables
+### Mutable variables
 
 Accumulate values across nested loops with `append`, then emit the collected result. This flattens every endpoint address into one numbered server list:
 
@@ -1077,7 +1077,7 @@ server srv{{ i + 1 }} {{ addr }}:80
 
 </div>
 
-### Whitespace Control
+### Whitespace control
 
 Add `-` inside a tag to trim adjacent whitespace: `{%-` strips whitespace before the tag, `-%}` strips whitespace after it.
 
@@ -1102,15 +1102,15 @@ server {{ env }}.svc:80
 
 </div>
 
-## Status Patches
+## Status patches
 
 Templates can register status patches for Kubernetes resources using the `statusPatch()` function. The controller applies these patches to the `/status` subresource via Server-Side Apply (SSA) after each reconciliation phase.
 
-This allows templates to report processing results back to resources (e.g., setting `Accepted` and `Programmed` conditions on Gateways, or propagating LoadBalancer addresses to Ingress status) without the controller needing to understand any specific resource's status schema.
+This allows templates to report processing results back to resources (for example, setting `Accepted` and `Programmed` conditions on Gateways, or propagating LoadBalancer addresses to Ingress status) without the controller needing to understand any specific resource's status schema.
 
-### statusPatch()
+### `statusPatch()`
 
-Registers a status patch for a Kubernetes resource with outcome-keyed variants. Each variant's value is the resource's `.status` content directly (e.g. `conditions`, `loadBalancer`) — the controller writes it under `.status` via SSA, so don't wrap it in another `status` key:
+Registers a status patch for a Kubernetes resource with outcome-keyed variants. Each variant's value is the resource's `.status` content directly (for example, `conditions`, `loadBalancer`) — the controller writes it under `.status` via SSA, so don't wrap it in another `status` key:
 
 ```go
 {% statusPatch(namespace, name, apiVersion, kind, map[string]any{
@@ -1130,7 +1130,7 @@ Registers a status patch for a Kubernetes resource with outcome-keyed variants. 
 
 Templates render all variants upfront; the controller selects the variant matching the pipeline outcome (`rendered`, `deployed`, `renderFailed`, or `deployFailed`). The [Template Reference](./template-reference.md#statuspatch) lists the parameters and when each variant applies.
 
-### condition()
+### `condition()`
 
 Creates a `metav1.Condition`-compatible map. Run it — `toJSON` makes the returned map visible:
 
@@ -1145,7 +1145,7 @@ Creates a `metav1.Condition`-compatible map. Run it — `toJSON` makes the retur
 
 The parameter list is in the [Template Reference](./template-reference.md#condition).
 
-### transitionTime()
+### `transitionTime()`
 
 Returns the correct `lastTransitionTime` for a condition: preserves the existing timestamp if the condition status hasn't changed, or returns the current time if it has changed or doesn't exist yet. The first argument is the resource's existing conditions list — navigate to it yourself with `dig(resource, "status", "conditions")`, so the helper stays agnostic to where a given resource keeps its conditions. Run the demo with a literal conditions list:
 
@@ -1165,9 +1165,9 @@ changed:   {{ transitionTime(existing, "Accepted", "False") }}
 
 </div>
 
-For resources with nested condition arrays (e.g., Gateway API Route `parents[]`), navigate to the parent's conditions first — see the [Template Reference](./template-reference.md#transitiontime) for the pattern.
+For resources with nested condition arrays (for example, Gateway API Route `parents[]`), navigate to the parent's conditions first — see the [Template Reference](./template-reference.md#transitiontime) for the pattern.
 
-### Using Status Patches in Custom Templates
+### Using status patches in custom templates
 
 In the chart, status patch snippets should use the `status-patches-*` extension point (priority 200). This renders after feature analysis but before complex config generation, ensuring patches are captured even if later rendering fails.
 
@@ -1246,7 +1246,7 @@ items:
 
 The built-in Ingress and Gateway API libraries already include status patch snippets. You only need custom status patches for resources not covered by the default libraries.
 
-## Complete Example
+## Complete example
 
 Full ingress → service → endpoints chain with reserved slots, using typed access throughout. Press **Run live**, open the **maps** tab for the host map, and edit the resources to add or remove endpoints:
 
@@ -1357,7 +1357,7 @@ items:
 
 </div>
 
-## See Also
+## See also
 
 - [Template Reference](./template-reference.md) — context variables, functions and filters, `pathResolver`, status-patch parameters
 - [Validation Tests](./validation-tests.md) — assert on rendered output before it reaches a cluster

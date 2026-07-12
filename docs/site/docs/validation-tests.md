@@ -1,4 +1,4 @@
-# Validation Tests
+# Validation tests
 
 ## Overview
 
@@ -6,7 +6,7 @@ Validation tests render your templates against fixture resources and assert on t
 
 Beyond running the controller (`haptic-controller run`), the controller binary provides `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
 
-## Quick Start
+## Quick start
 
 1. Add a `validationTests` section to your HAProxyTemplateConfig:
 
@@ -130,13 +130,13 @@ The **tests** tab auto-runs on load: all three assertions pass (green). In the b
 
 </div>
 
-## Test Structure
+## Test structure
 
 Each test consists of:
 
 | Component | Description |
 |-----------|-------------|
-| **Name** | Unique identifier (kebab-case, e.g., `test-ingress-tls-routing`) |
+| **Name** | Unique identifier (kebab-case, for example `test-ingress-tls-routing`) |
 | **Description** | What the test verifies |
 | **Fixtures** | Simulated Kubernetes resources |
 | **Assertions** | Checks on rendered output |
@@ -181,7 +181,7 @@ fixtures:
                         number: 80
 ```
 
-### HTTP Fixtures
+### HTTP fixtures
 
 Mock HTTP responses for templates using `http.Fetch()`:
 
@@ -217,7 +217,7 @@ When any listed field is absent from the resolved schema generation of its
 watched resource, the test is stripped at load time. This covers clusters
 that serve the resource at the same API version as newer releases but with
 an older schema generation lacking the field (for example, Gateway API v1.1
-serves `httproutes` at `v1` without the CORS filter — the apiserver prunes
+serves `httproutes` at `v1` without the Cross-Origin Resource Sharing (CORS) filter — the apiserver prunes
 the field from fixtures, the feature never activates, and without stripping
 the test would fail the fail-closed load gate). The first dot-segment must
 name a `watchedResources` key; array levels in the remaining path are
@@ -225,7 +225,7 @@ descended transparently (`spec.rules.filters.cors` matches the field inside
 the `rules[]` / `filters[]` items). The current stripping outcome is visible
 at `/debug/vars/effectiveConfigResolution`.
 
-## Assertion Types
+## Assertion types
 
 ### Assertion Targets
 
@@ -245,7 +245,7 @@ The `contains`, `not_contains`, `match_count`, `equals`, and `match_order` asser
 !!! warning "Unknown targets fall back to `haproxy.cfg` silently"
     Typos in `target:` won't error — they'll just match the wrong content. Sanity-check via `--dump-rendered` if an assertion behaves unexpectedly.
 
-### haproxy_valid
+### `haproxy_valid`
 
 Validates HAProxy configuration syntax using the HAProxy binary:
 
@@ -256,7 +256,7 @@ Validates HAProxy configuration syntax using the HAProxy binary:
 
 Every test should include this assertion.
 
-### contains
+### `contains`
 
 Verifies target content matches a regex pattern:
 
@@ -267,9 +267,9 @@ Verifies target content matches a regex pattern:
   description: Must create backend for API service
 ```
 
-### not_contains
+### `not_contains`
 
-Verifies target content does NOT match a pattern:
+Verifies target content **doesn't** match a pattern:
 
 ```yaml
 - type: not_contains
@@ -278,7 +278,7 @@ Verifies target content does NOT match a pattern:
   description: Must not disable SSL verification
 ```
 
-### equals
+### `equals`
 
 Checks entire content matches exactly:
 
@@ -293,7 +293,7 @@ Checks entire content matches exactly:
 
 Use for small, deterministic files. Not recommended for large configs.
 
-### jsonpath
+### `jsonpath`
 
 Evaluates a JSONPath expression against the template rendering context and compares the single result to `expected`. JSONPath reads plain values from the context — it can't invoke the store methods templates use (`resources.services.List()`), so it fits scalar context values (for example a `spec.templatingSettings.extraContext` key, which is injected into the context by name):
 
@@ -306,7 +306,7 @@ Evaluates a JSONPath expression against the template rendering context and compa
 
 To assert on watched resources or rendered output, use `contains`, `match_count`, or `equals` against `haproxy.cfg` (or a `map:` / `file:` target) instead.
 
-### match_count
+### `match_count`
 
 Asserts that a regex pattern matches an exact number of times in the target. Useful for catching duplicate or missing entries:
 
@@ -318,9 +318,9 @@ Asserts that a regex pattern matches an exact number of times in the target. Use
   description: Exactly 3 backends must be generated
 ```
 
-### match_order
+### `match_order`
 
-Asserts that multiple patterns appear in the target in the listed order. Critical for HAProxy first-match-wins constructs (Gateway API route precedence, ACL ordering):
+Asserts that multiple patterns appear in the target in the listed order. Critical for HAProxy first-match-wins constructs (Gateway API route precedence, ordering of ACLs):
 
 ```yaml
 - type: match_order
@@ -332,7 +332,7 @@ Asserts that multiple patterns appear in the target in the listed order. Critica
   description: Path map entries must be sorted most-specific-first
 ```
 
-### deterministic
+### `deterministic`
 
 Renders the templates a second time with the same inputs and asserts the output is byte-for-byte identical. Catches unstable map ordering, time-dependent values, and other sources of non-determinism:
 
@@ -343,7 +343,7 @@ Renders the templates a second time with the same inputs and asserts the output 
 
 The check covers `haproxy.cfg` and every auxiliary file the template produced; no `target` or `pattern` is needed.
 
-## Running Tests
+## Running tests
 
 ```bash
 # Run all tests
@@ -364,13 +364,13 @@ haptic-controller validate -f config.yaml --schema-dir tests/schemas
 # Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic-controller validate ...
 ```
 
-The `haptic-controller validate` command shells out to the `haproxy` binary on your `PATH` — both to detect the HAProxy version during setup (`haproxy -v`) and for the `haproxy_valid` assertions (`haproxy -c`). Install HAProxy locally (e.g. via your package manager) and ensure it is on `PATH`; if no `haproxy` is found, `validate` fails fast with a clear error (it does not silently fall back to a syntax-only check). To validate against a specific HAProxy version, run the matching per-version controller image, which bundles that version.
+The `haptic-controller validate` command shells out to the `haproxy` binary on your `PATH` — both to detect the HAProxy version during setup (`haproxy -v`) and for the `haproxy_valid` assertions (`haproxy -c`). Install HAProxy locally (for example via your package manager) and ensure it's on `PATH`; if no `haproxy` is found, `validate` fails fast with a clear error (it doesn't silently fall back to a syntax-only check). To validate against a specific HAProxy version, run the matching per-version controller image, which bundles that version.
 
 Templates that use typed watched-resource access need `--schema-dir` (or `HAPTIC_SCHEMA_DIR`); without it they fail at engine compile time with a "no schema for X" error, while untyped `dig()`-based templates validate fine — see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for where schemas come from and what the repo's bundled `tests/schemas/` directory covers.
 
 Exit code 0 means all tests passed.
 
-### Output Example
+### Output example
 
 ```
 ✓ test-basic-routing (0.125s)
@@ -384,9 +384,9 @@ Exit code 0 means all tests passed.
 Tests: 1 passed, 1 failed, 2 total (0.214s)
 ```
 
-## Debugging Failed Tests
+## Debugging failed tests
 
-### --verbose
+### `--verbose`
 
 Shows content preview for failed assertions:
 
@@ -402,7 +402,7 @@ haptic-controller validate -f config.yaml --verbose
       split.example.com/app MULTIBACKEND:0:default_split-route_0/
 ```
 
-### --dump-rendered
+### `--dump-rendered`
 
 Shows all rendered content after test results:
 
@@ -410,7 +410,7 @@ Shows all rendered content after test results:
 haptic-controller validate -f config.yaml --dump-rendered
 ```
 
-### --trace-templates
+### `--trace-templates`
 
 Shows top-level template execution order and timing:
 
@@ -433,7 +433,7 @@ Completed: path-prefix.map (3.347ms)
     haptic-controller validate -f config.yaml --trace-templates --profile-includes
     ```
 
-### --profile-includes
+### `--profile-includes`
 
 Lists the slowest 20 `render` / `render_glob` / macro invocations with cumulative timing — useful when `--trace-templates` shows a slow top-level template and you need to find which include is responsible:
 
@@ -441,7 +441,7 @@ Lists the slowest 20 `render` / `render_glob` / macro invocations with cumulativ
 haptic-controller validate -f config.yaml --profile-includes
 ```
 
-### --debug-filters
+### `--debug-filters`
 
 Logs every comparison made by sort filters (`sort_by`) and similar operations, with the input types and the comparison result. Useful when route precedence or map ordering doesn't match what you expected:
 
@@ -449,7 +449,7 @@ Logs every comparison made by sort filters (`sort_by`) and similar operations, w
 haptic-controller validate -f config.yaml --debug-filters
 ```
 
-### Combining Flags
+### Combining flags
 
 ```bash
 # Comprehensive end-to-end debugging
@@ -458,9 +458,9 @@ haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-temp
 
 **Workflow**: start with `--verbose` to see *what* failed, add `--dump-rendered` to see the *full content* you produced, add `--trace-templates` (and optionally `--profile-includes`) to see *where* time is spent, and reach for `--debug-filters` only when sort behaviour itself is suspect.
 
-## Testing Strategies
+## Testing strategies
 
-### Test Organization
+### Test organization
 
 Group tests by feature:
 
@@ -479,7 +479,7 @@ validationTests:
     description: Handle case with no backend services
 ```
 
-### Testing Template Errors
+### Testing template errors
 
 A negative test passes when the render fails *as expected*. Assert on the `rendering_error` target (see [Assertion Targets](#assertion-targets)) so the deliberate `fail()` is treated as the pass condition — without it, the failed render marks the whole test red:
 
@@ -495,7 +495,7 @@ test-no-services-error:
       description: Render is rejected with the expected fail() message
 ```
 
-### Testing Auxiliary Files
+### Testing auxiliary files
 
 ```yaml
 test-hostname-map:
@@ -513,7 +513,7 @@ test-hostname-map:
       pattern: "api.example.com"
 ```
 
-## Best Practices
+## Best practices
 
 1. **Test early**: Add tests as you develop templates
 2. **Keep tests fast**: Use minimal fixtures
@@ -537,9 +537,9 @@ test1:
 | "haproxy: command not found" | Install HAProxy locally (the validator invokes `haproxy -c` on your `PATH`) |
 | "template rendering failed" | Check for undefined variables, missing filters |
 | Pattern not matching | Escape regex chars, check whitespace, use simpler patterns |
-| JSONPath returns no results | Check the path; jsonpath reads scalar context values (e.g. `extraContext` keys), not the resource stores — assert on resources with `contains` / `match_count` |
+| JSONPath returns no results | Check the path; `jsonpath` reads scalar context values (for example `extraContext` keys), not the resource stores — assert on resources with `contains` / `match_count` |
 
-## Complete Example
+## Complete example
 
 A full Ingress → Service routing config with its tests. Press **Run live**, then open the **tests** tab to watch every assertion evaluate:
 
@@ -641,7 +641,7 @@ validationTests:
 
 </div>
 
-## See Also
+## See also
 
 - [Templating Guide](./templating.md) - Template syntax
 - [Supported Configuration](./supported-configuration.md) - HAProxy directives

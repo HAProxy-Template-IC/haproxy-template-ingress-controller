@@ -23,5 +23,6 @@ ignore:
   - pkg/generated/
   - node_modules/
   - vendor/
+  - docs/vale/styles/Google/     # Vendored Vale style package (vale sync), kept byte-identical to upstream
   - debug-logs/               # Test failure artifacts (tests/e2e/cleanup.go), captured for CI
   - .cache/                   # CI go module/build cache; contains 3rd-party YAML

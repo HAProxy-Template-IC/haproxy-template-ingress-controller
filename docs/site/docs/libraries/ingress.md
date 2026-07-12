@@ -1,4 +1,4 @@
-# Ingress Library
+# Ingress library
 
 The Ingress library turns `networking.k8s.io/v1` Ingress resources into HAProxy routing configuration.
 
@@ -38,11 +38,11 @@ controller:
       enabled: true  # Enabled by default
 ```
 
-### Ingress Class Filtering
+### Ingress class filtering
 
 By default, only Ingresses with `spec.ingressClassName: haptic` are processed. This is configured via field selector in the library's watched resources. Override `ingressClass.name` to match an incumbent controller's class (often `haproxy`) when replacing one in-place.
 
-## Extension Points
+## Extension points
 
 The Ingress library hooks into these extension points from base.yaml. Snippet names match what's emitted in `libraries/ingress.yaml`.
 
@@ -57,11 +57,11 @@ The Ingress library hooks into these extension points from base.yaml. Snippet na
 | `map-path-prefix-*` | `map-path-prefix-500-ingress` | Prefix entries for `pathType: Prefix` paths |
 | `status-patches-*` | `status-patches-200-ingress` | Patches the LoadBalancer status on each matched Ingress |
 
-Regex-path matching is not emitted by this library directly — it comes from the `haproxy-ingress` library's `map-path-regex-600-haproxy-ingress` snippet (enabled by default) which handles the `haproxy-ingress.github.io/path-type: regex` annotation.
+Regex-path matching isn't emitted by this library directly — it comes from the `haproxy-ingress` library's `map-path-regex-600-haproxy-ingress` snippet (enabled by default) which handles the `haproxy-ingress.github.io/path-type: regex` annotation.
 
-### Injecting Custom Configuration
+### Injecting custom configuration
 
-You can extend Ingress functionality by adding snippets with the right extension-point prefix and a priority that places them correctly alongside the built-in 500-range entries:
+You can extend Ingress support by adding snippets with the right extension-point prefix and a priority that places them correctly alongside the built-in 500-range entries:
 
 ```yaml
 controller:
@@ -76,7 +76,7 @@ controller:
 
 ## Features
 
-### Path Types
+### Path types
 
 The Ingress library supports all standard Kubernetes Ingress path types:
 
@@ -178,12 +178,12 @@ data:
   tls.key: <base64-encoded-key>
 ```
 
-### Backend Generation
+### Backend generation
 
 Backends are generated with:
 
 - Automatic endpoint discovery via EndpointSlices
-- TCP-connect health checks (`default-server check`) — the Ingress path is not used as an HTTP health-check URI
+- TCP-connect health checks (`default-server check`) — the Ingress path isn't used as an HTTP health-check URI
 - Round-robin load balancing
 - Backend deduplication (multiple paths to same service share one backend)
 
@@ -193,7 +193,7 @@ Backends are generated with:
 <namespace>_<ingress-name>_svc_<service-name>_<port-name>
 ```
 
-`<port-name>` is the Service port's name when the port is named (e.g. `http`, `https`). When the Service port is unnamed — or the Service isn't yet in the controller's store — it falls back to the numeric port number (e.g. `..._svc_shop_80`).
+`<port-name>` is the Service port's name when the port is named (for example `http`, `https`). When the Service port is unnamed — or the Service isn't yet in the controller's store — it falls back to the numeric port number (for example `..._svc_shop_80`).
 
 **Example generated configuration:**
 
@@ -207,7 +207,7 @@ backend default_my-app_svc_api-service_http
 
 `check` lives on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Reserved `disabled` slots get filled in at runtime when the backend scales up.
 
-### Backend Config Snippet
+### Backend config snippet
 
 Custom HAProxy backend directives can be injected per-Ingress via the
 `haproxy.org/backend-config-snippet` annotation. Processing of `haproxy.org/*`
@@ -215,13 +215,13 @@ annotations lives in the [haproxytech library](haproxytech.md), so the
 annotation is honoured whenever `haproxytech` is enabled (default). See that
 library's docs for the complete annotation reference.
 
-## Status Reporting
+## Status reporting
 
 The Ingress library automatically propagates LoadBalancer addresses to Ingress `.status.loadBalancer` fields. This enables DNS controllers (like external-dns) and `kubectl get ingress` to display the correct external address.
 
 Addresses are discovered from the controller's LoadBalancer Service. Once an address is available, each Ingress processed by the controller receives its `status.loadBalancer.ingress` entries. If deployment fails, the status is cleared to empty.
 
-### Degraded backend Events
+### Degraded backend events
 
 An Ingress backend that references its Service port **by name** renders in a degraded shape while that Service is absent from the controller's store: the backend gets placeholder-only server slots and serves 503 until the Service appears. The render doesn't fail because an Ingress may legally be created before the Service it references — the base library resolves the missing reference to a port-less value and lets the backend converge on a later reconcile. That's correct during a propagation race — but a permanent Service-name typo looks exactly the same.
 
@@ -244,15 +244,15 @@ The Event's `metadata.creationTimestamp` tells you when the controller first obs
 
 | Resource | API Version | Purpose |
 |----------|-------------|---------|
-| Ingresses | networking.k8s.io/v1 | Traffic routing rules |
+| Ingresses | `networking.k8s.io/v1` | Traffic routing rules |
 | Services | v1 | Service discovery |
-| EndpointSlices | discovery.k8s.io/v1 | Backend endpoint discovery |
+| EndpointSlices | `discovery.k8s.io/v1` | Backend endpoint discovery |
 
-### Field Selector
+### Field selector
 
 The library watches and processes only Ingresses with `spec.ingressClassName: haptic`.
 
-## Generated Map Files
+## Generated map files
 
 The Ingress library contributes to these map files:
 
@@ -263,7 +263,7 @@ The Ingress library contributes to these map files:
 | path-prefix-exact.map | `hostpath BACKEND:backendname` for Prefix paths (exact match) |
 | path-prefix.map | `hostpath/ BACKEND:backendname` for Prefix paths (prefix match) |
 
-## Validation Tests
+## Validation tests
 
 The Ingress library includes these validation tests:
 
@@ -287,7 +287,7 @@ Run a specific test with:
 ./scripts/test-templates.sh --test test-ingress-tls-basic
 ```
 
-## See Also
+## See also
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Extension points and routing infrastructure

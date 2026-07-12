@@ -1,20 +1,20 @@
-# Key Design Decisions
+# Key design decisions
 
 This page summarizes the standing architectural choices: what was decided and
 why it holds, one screen per decision. Point-in-time decisions with full
-context, alternatives, and "do not re-suggest" guards live in the
+context, alternatives, and "don't re-suggest" guards live in the
 Architecture Decision Records (published under *Development → Architecture
-Decision Records*); each summary links the governing ADR where one exists.
+Decision Records*); each summary links the governing Architecture Decision Record (ADR) where one exists.
 Mechanism detail — API surfaces, metric catalogues, event-type lists — lives
 in the package READMEs referenced below, not here.
 
-## Configuration Validation Strategy
+## Configuration validation strategy
 
 **Decision**: Validate rendered configs in-process with three phases —
 client-native syntax parse, OpenAPI schema check, `haproxy -c` semantic
 check — instead of running a validation sidecar.
 
-The parse phase takes ~10ms and the binary check ~50–100ms, so full
+The parse phase takes ~10 ms and the binary check ~50–100 ms, so full
 validation fits inside the reconciliation hot path. There is no sidecar to
 build, schedule, or keep version-matched with the controller, and the
 verdict still comes from a real `haproxy -c` run. Two content-addressed
@@ -30,7 +30,7 @@ the Dataplane API server's resource configuration, and `haproxy -c`
 invocations are serialized process-wide because concurrent runs interfere
 with each other even when their temp directories are isolated.
 
-## Template Engine Selection
+## Template engine selection
 
 **Decision**: Use Scriggo (consumed via the `gitlab.com/haproxy-haptic/scriggo`
 fork) as the template engine.
@@ -45,13 +45,13 @@ Related: [ADR-0010](../adr/0010-typed-watched-resources.md) records the
 follow-on decision to expose watched resources as typed top-level globals
 instead of `dig()` chains.
 
-## Kubernetes Client Architecture
+## Kubernetes client architecture
 
 **Decision**: Use client-go with `SharedInformerFactory` directly — no
 controller framework.
 
 The watched resource set is operator-defined and only known at runtime
-(RULE #1: the Go code is resource-agnostic), so a framework's generated
+(**Rule #1**: the Go code is resource-agnostic), so a framework's generated
 per-kind scaffolding buys nothing. Direct informer usage keeps the
 controller in charge of informer lifecycle, custom indexing, and cache
 behaviour without fighting framework defaults.
@@ -60,7 +60,7 @@ Related: [ADR-0012](../adr/0012-on-demand-projection-and-access-gated-reconcile.
 refines the store layer behind the informers — `store: on-demand` kinds
 project informer bodies down to metadata to bound memory.
 
-## Concurrency Model
+## Concurrency model
 
 **Decision**: Goroutines and channels with structured concurrency — every
 component runs a `Start(ctx)` loop, lifecycles compose via `errgroup`, and
@@ -88,7 +88,7 @@ subscriber on the same stream. The metric catalogue lives in
 `pkg/controller/metrics/README.md`; `metrics.go` in that package is the
 authoritative list.
 
-## Error Handling Strategy
+## Error handling strategy
 
 **Decision**: Wrapped errors (`fmt.Errorf` + `%w`) with a small set of
 custom error types at package boundaries.
@@ -100,7 +100,7 @@ syntax / schema / semantic) and `*ParseError`; `pkg/templating` defines
 `Unwrap()`, so `errors.Is` / `errors.As` chains work end to end and callers
 can branch on failure mode without string matching.
 
-## Event-Driven Architecture
+## Event-driven architecture
 
 **Decision**: Components coordinate through a homegrown EventBus
 (`pkg/events`): async pub/sub, scatter-gather requests, pre-start
@@ -143,7 +143,7 @@ Two invariants keep the pattern safe in practice:
   `eventimmutability` linter in `tools/linters/`), and consumers treat
   events as read-only.
 
-## Request-Response Pattern (Scatter-Gather)
+## Request-response pattern (scatter-gather)
 
 **Decision**: Configuration validation coordinates through the EventBus's
 scatter-gather `Request()` API rather than hand-rolled response aggregation.
@@ -166,7 +166,7 @@ exactly one callee and no coordination —
 [ADR-0001](../adr/0001-renderer-is-synchronous-not-event-adapter.md) is
 that rule applied to the renderer.
 
-## Event Commentator Pattern
+## Event commentator pattern
 
 **Decision**: A dedicated component (`pkg/controller/commentator`)
 subscribes to the full event stream and produces domain-aware log lines,

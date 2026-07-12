@@ -6,7 +6,7 @@ The controller and the Helm chart are released together: one version number, one
 
 Versions follow [Semantic Versioning](https://semver.org/) with support for pre-release suffixes.
 
-## Version Numbering
+## Version numbering
 
 **Format:** `MAJOR.MINOR.PATCH[-PRERELEASE]`
 
@@ -17,7 +17,7 @@ Versions follow [Semantic Versioning](https://semver.org/) with support for pre-
 | Beta | `0.1.0-beta.1` | Feature complete, needs testing |
 | Release candidate | `0.1.0-rc.1` | Final testing before release |
 
-## CHANGELOG Conventions
+## `CHANGELOG` conventions
 
 There is one changelog file, `CHANGELOG.md` at the repository root, covering the controller and the Helm chart. It follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format with an `## [Unreleased]` header at the top.
 
@@ -34,7 +34,7 @@ Before releasing:
 2. **All tests passing** - CI pipeline green on main branch
 3. **Documentation updated** - Any new features documented
 
-## Release Process
+## Release process
 
 The main branch is protected, so releases are made via merge requests. CI automatically creates the tag when the `VERSION` file changes on main.
 
@@ -68,9 +68,9 @@ The script:
 - Updates the `helm install ... --version <version>` examples in the READMEs and docs, and the landing page's fallback version
 - Stages and commits everything as `release: haptic v<version>`
 
-The docs-site changelog page needs no release-time sync: it is generated from `CHANGELOG.md` on every mkdocs build (`docs/site/hooks/changelog.py`).
+The docs-site changelog page needs no release-time sync: it's generated from `CHANGELOG.md` on every mkdocs build (`docs/site/hooks/changelog.py`).
 
-The script does **not** create a tag — that happens in CI after the MR merges.
+The script **doesn't** create a tag — that happens in CI after the MR merges.
 
 ### Step 4: Push and open the MR
 
@@ -84,7 +84,7 @@ glab mr create --title "release: haptic v<version>" \
 
 Review and merge through GitLab.
 
-### Automatic Tag Creation
+### Automatic tag creation
 
 After the MR is merged, CI automatically:
 
@@ -103,9 +103,9 @@ After the MR is merged, CI automatically:
     git push origin v<version>
     ```
 
-### What CI Does Automatically
+### What CI does automatically
 
-When a `v*` tag is pushed, CI will:
+When a `v*` tag is pushed, CI does the following:
 
 1. **Build binaries** for linux/amd64, linux/arm64, linux/arm/v7
 2. **Create the GitLab release** with:
@@ -116,11 +116,11 @@ When a `v*` tag is pushed, CI will:
 3. **Build Docker images** for every supported HAProxy series (3.0-3.4)
 4. **Build the spoa-hub image** (`spoa-hub:<version>`)
 5. **Package the Helm chart** and push it as a signed OCI artifact to `registry.gitlab.com/haproxy-haptic/haptic/charts`
-6. **Sign all artifacts** with Cosign (keyless OIDC)
-7. **Generate SBOM** (Software Bill of Materials) for each image and attach it as a Cosign attestation
+6. **Sign all artifacts** with Cosign using keyless OpenID Connect (OIDC)
+7. **Generate a Software Bill of Materials (SBOM)** for each image and attach it as a Cosign attestation
 8. **Trigger the versioned documentation build** (the `/docs/` site)
 
-## Documentation Versioning
+## Documentation versioning
 
 Each release creates a versioned snapshot of the documentation site:
 
@@ -136,7 +136,7 @@ Each release creates a versioned snapshot of the documentation site:
 2. `0.1.0-alpha.2` released -> Docs at `/v0.1.0-alpha.2/`
 3. `0.1.0` released -> Docs at `/v0.1.0/` with `latest` alias, alpha versions removed
 
-## Pre-release vs Final Release
+## Pre-release vs final release
 
 ### Pre-releases
 
@@ -147,7 +147,7 @@ Pre-releases (alpha, beta, rc) have these differences:
 - GitLab release marked as **pre-release**
 - Not recommended for production use
 
-### Final Releases
+### Final releases
 
 Final releases (no suffix):
 
@@ -158,21 +158,21 @@ Final releases (no suffix):
 
 ## Troubleshooting
 
-### Release Script Fails
+### Release script fails
 
 | Error | Solution |
 |-------|----------|
-| "Working directory is not clean" | Commit or stash changes |
-| "CHANGELOG.md has no [Unreleased] section" | Restore the `## [Unreleased]` header |
-| "Invalid version format" | Use `X.Y.Z` or `X.Y.Z-suffix.N` |
+| `Working directory is not clean` | Commit or stash changes |
+| `CHANGELOG.md has no [Unreleased] section` | Restore the `## [Unreleased]` header |
+| `Invalid version format` | Use `X.Y.Z` or `X.Y.Z-suffix.N` |
 
-### CI Pipeline Fails
+### CI pipeline fails
 
 1. **Check GitLab CI logs** for specific error
 2. **Verify tests pass locally** with `make test`
 3. **Check Docker builds** work locally
 
-### Docker Image Missing
+### Docker image missing
 
 If images don't appear after release:
 
@@ -180,11 +180,11 @@ If images don't appear after release:
 2. Verify registry authentication succeeded
 3. Check for build errors in job logs
 
-## Supply Chain Security
+## Supply chain security
 
 All release artifacts are signed and include security metadata:
 
-### Artifact Signing
+### Artifact signing
 
 All artifacts are signed with [Cosign](https://github.com/sigstore/cosign) using keyless OIDC:
 
@@ -203,9 +203,9 @@ cosign verify \
   registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.4
 ```
 
-### SBOM (Software Bill of Materials)
+### SBOM (software bill of materials)
 
-Each controller image includes an SBOM attestation in SPDX format (the spoa-hub image uses CycloneDX — see [SPOA Hub](../operations/spoa-hub.md)):
+Each controller image includes an SBOM attestation in Software Package Data Exchange (SPDX) format (the `spoa-hub` image uses CycloneDX — see [Stream Processing Offload Agent (SPOA) Hub](../operations/spoa-hub.md)):
 
 **View SBOM:**
 
@@ -220,7 +220,7 @@ cosign verify-attestation \
 
 The SBOM lists all packages, libraries, and dependencies in the container image.
 
-## Version Files Reference
+## Version files reference
 
 | File | Content | Updated By |
 |------|---------|------------|

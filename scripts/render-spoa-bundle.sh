@@ -34,14 +34,14 @@ ${BEGIN_MARK}
 
 | Component       | Pinned version                          |
 | --------------- | --------------------------------------- |
-| Hub             | \`${SPOA_HUB_VERSION}\`                     |
-| coraza          | \`${SPOA_PLUGIN_CORAZA_VERSION}\`           |
-| external-auth   | \`${SPOA_PLUGIN_EXTERNAL_AUTH_VERSION}\`    |
-| fingerprinting  | \`${SPOA_PLUGIN_FINGERPRINTING_VERSION}\`   |
-| maxmind         | \`${SPOA_PLUGIN_MAXMIND_VERSION}\`          |
-| mirror          | \`${SPOA_PLUGIN_MIRROR_VERSION}\`           |
-| otel            | \`${SPOA_PLUGIN_OTEL_VERSION}\`             |
-| sso-auth        | \`${SPOA_PLUGIN_SSO_AUTH_VERSION}\`         |
+| Hub               | \`${SPOA_HUB_VERSION}\`                     |
+| \`coraza\`          | \`${SPOA_PLUGIN_CORAZA_VERSION}\`           |
+| \`external-auth\`   | \`${SPOA_PLUGIN_EXTERNAL_AUTH_VERSION}\`    |
+| \`fingerprinting\`  | \`${SPOA_PLUGIN_FINGERPRINTING_VERSION}\`   |
+| \`maxmind\`         | \`${SPOA_PLUGIN_MAXMIND_VERSION}\`          |
+| \`mirror\`          | \`${SPOA_PLUGIN_MIRROR_VERSION}\`           |
+| \`otel\`            | \`${SPOA_PLUGIN_OTEL_VERSION}\`             |
+| \`sso-auth\`        | \`${SPOA_PLUGIN_SSO_AUTH_VERSION}\`         |
 
 Plugin \`.so\` files target glibc \`${SPOA_PLUGIN_GLIBC_VERSION}\` (Debian bookworm).
 
