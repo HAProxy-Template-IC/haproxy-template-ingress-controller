@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `HAProxyFleetDiverged` PrometheusRule alert (toggleable) and a Grafana fleet-convergence panel, built on the new fleet-convergence metrics.
 - New `haproxy.org/cors-respond-to-options` annotation: when `"true"`, HAProxy answers the CORS preflight (OPTIONS) with a 204 instead of forwarding it to the backend, matching the upstream HAProxy Kubernetes Ingress Controller.
 - New `extraContext.hstsEnabled` opt-in (default off, declared by the SSL library) sends `Strict-Transport-Security` on every TLS response, matching ingress-nginx's and haproxy-ingress's global HSTS default; `hstsMaxAge`/`hstsIncludeSubdomains`/`hstsPreload` tune the value, and a per-Ingress `hsts` annotation still overrides it per host. Because HSTS is only effective over HTTPS, the rendered config emits a warning when it is enabled without an HTTP→HTTPS redirect. The nginx-ingress and haproxy-ingress migration coverage now points to this knob.
+- New `extraContext.ingressDefaultSSLRedirect` opt-in (default off): redirects every HTTPS-served Ingress host from HTTP to HTTPS with a single global toggle, complementing the per-host `ssl-redirect` annotations. Only hosts actually served over HTTPS are redirected (the default-HTTPS bind is on, or the host has `spec.tls`), so it never points a client at a closed port. `ingressDefaultSSLRedirectCode` (default `308`) sets the status code.
 
 #### Changed
 
