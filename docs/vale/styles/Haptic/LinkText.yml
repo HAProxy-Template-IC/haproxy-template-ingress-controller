@@ -1,0 +1,7 @@
+extends: existence
+message: "Generic link text — link the thing itself (CLAUDE.md: descriptive link text, never 'click here')."
+level: error
+scope: raw
+raw:
+  - '\[(?:[Cc]lick )?[Hh]ere\]\('
+  - '\[[Tt]his (?:page|link|document)\]\('

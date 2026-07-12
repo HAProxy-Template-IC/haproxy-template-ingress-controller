@@ -9,11 +9,13 @@ site_description: "Documentation for HAPTIC, a template-driven HAProxy ingress c
 
 repo_name: haproxy-haptic/haptic
 repo_url: https://gitlab.com/haproxy-haptic/haptic
+edit_uri: -/edit/main/docs/site/docs/
 
 docs_dir: docs
 
 theme:
   name: material
+  custom_dir: overrides
   logo: assets/logo-icon.svg
   favicon: assets/logo-icon.svg
   icon:
@@ -45,6 +47,7 @@ theme:
     - search.suggest
     - content.code.copy
     - content.tabs.link
+    - content.action.edit
     - toc.follow
 
 extra_css:
@@ -137,6 +140,7 @@ nav:
 
 hooks:
   - hooks/changelog.py
+  - hooks/llms.py
 
 plugins:
   - search

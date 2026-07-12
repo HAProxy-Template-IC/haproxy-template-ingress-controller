@@ -1,0 +1,13 @@
+extends: existence
+message: "Cut the filler word '%s' — it carries no information (CLAUDE.md: every sentence must instruct, warn, or inform)."
+level: error
+ignorecase: true
+tokens:
+  - simply
+  - obviously
+  - of course
+  - needless to say
+  - as you'd expect
+  - as you would expect
+  - it goes without saying
+  - as we all know
