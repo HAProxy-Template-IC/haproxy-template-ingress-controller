@@ -93,39 +93,7 @@ graph TB
 
 ## HTTP Endpoints
 
-The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`). `/healthz` shares the same listener — see [Configuration](#configuration) for why setting the port to `0` breaks Kubernetes probes.
-
-```bash
-# List all available variables
-curl http://localhost:8080/debug/vars
-
-# Get current configuration
-curl http://localhost:8080/debug/vars/config
-
-# Get just the config version using JSONPath
-curl 'http://localhost:8080/debug/vars/config?field={.version}'
-
-# Get rendered HAProxy configuration
-curl http://localhost:8080/debug/vars/rendered
-
-# Get resource counts
-curl http://localhost:8080/debug/vars/resources
-
-# Get the most recent 100 events (the defaultLimit baked into EventsVar)
-curl http://localhost:8080/debug/vars/events
-
-# Tune the count or search by correlation ID via the separate /debug/events endpoint
-curl 'http://localhost:8080/debug/events?limit=500'
-curl 'http://localhost:8080/debug/events?correlation_id=<id>'
-
-# Get complete state dump
-curl http://localhost:8080/debug/vars/state
-
-# Go profiling
-curl http://localhost:8080/debug/pprof/
-curl http://localhost:8080/debug/pprof/heap
-curl http://localhost:8080/debug/pprof/goroutine
-```
+The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`; `/healthz` shares the same listener, so setting the port to `0` breaks Kubernetes probes). The endpoint reference — every `/debug/vars/*` path, JSONPath field selection, `/debug/events` correlation-ID search, and `pprof` usage — lives in the [Debugging Guide](../../operations/debugging.md).
 
 ## Event History
 
@@ -185,44 +153,12 @@ client := acceptance.NewDebugClient(clientset, namespace, serviceName, acceptanc
 
 Tests observe controller state directly — no log parsing, no timing heuristics.
 
-## Security Considerations
+## Security and Configuration
 
-Debug variables never expose secret material — credential variables return metadata only:
+Two design constraints matter here; everything operational about them lives elsewhere:
 
-```go
-// CredentialsVar returns metadata only
-func (v *CredentialsVar) Get() (any, error) {
-    creds, version, err := v.provider.GetCredentials()
-    if err != nil {
-        return nil, err
-    }
-
-    return map[string]any{
-        "version":             version,
-        "has_dataplane_creds": creds.DataplanePassword != "",
-        // NEVER expose actual passwords
-    }, nil
-}
-```
-
-The debug server should be:
-
-- Accessible on all interfaces (0.0.0.0); restrict access via NetworkPolicy rather than relying on bind-address filtering
-- Protected by network policies
-- Disabled or restricted in multi-tenant environments
-
-## Configuration
-
-The debug server is configured by the controller binary at startup, not via the `HAProxyTemplateConfig` CRD:
-
-| Setting | Source | Notes |
-|---------|--------|-------|
-| Port | `--debug-port` flag, `DEBUG_PORT` env, or Helm `controller.debugPort` value | Default `0` = disabled; the chart sets it to `8080` by default |
-| Bind address | Hardcoded `0.0.0.0:<port>` | So kubelet health probes and the Kubernetes API service-proxy (used by acceptance tests) can reach it on the pod IP; `kubectl port-forward` works regardless |
-| Event-buffer size | Compile-time constant (`pkg/controller/debug`) | Not tunable per-deployment |
-| Go profiling | Always mounted at `/debug/pprof/*` when the debug port is enabled | See [Debugging Guide](../../operations/debugging.md#go-profiling) |
-
-Setting `controller.debugPort: 0` disables the introspection server entirely. `/healthz` lives on the same listener, so disabling it also drops health-check responses and breaks the Kubernetes liveness/readiness probes — restrict `/debug/*` via NetworkPolicy instead (see [Security — Network Exposure](../../operations/security.md#network-exposure)).
+- **Debug variables never expose secret material.** Credential variables return metadata only (`version`, `has_dataplane_creds`) — `pkg/controller/debug/setup.go` enforces this. Access control and NetworkPolicy examples: [Security — Network Exposure](../../operations/security.md#network-exposure).
+- **The server binds `0.0.0.0:<port>` deliberately**, so kubelet health probes and the Kubernetes API service-proxy (used by acceptance tests) can reach it on the pod IP; restrict access via NetworkPolicy, not bind-address filtering. Port configuration, the shared `/healthz` listener, and the probe-breaking caveat of `controller.debugPort: 0`: [Debugging — Accessing the Server](../../operations/debugging.md#accessing-the-server).
 
 For detailed implementation and API documentation, see:
 

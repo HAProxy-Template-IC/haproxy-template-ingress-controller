@@ -1,41 +1,34 @@
-# Leader Election for High Availability
+# Leader Election
 
-## Overview
+HAPTIC runs multiple controller replicas for high availability. This page explains the mechanism: which components run on every replica, which run only on the leader, and how a new leader starts with warm state. Operator-facing setup, tuning, and troubleshooting live in [High Availability](../../operations/high-availability.md).
 
-This document describes the leader election system for HAPTIC, which enables running multiple controller replicas for high availability while preventing conflicting updates to HAProxy instances.
+## Why Only the Leader Deploys
 
-## Problem Statement
+The controller pushes configuration to HAProxy via the Dataplane API. Multiple replicas doing that in parallel without coordination would cause:
 
-The controller is a Kubernetes operator that pushes configuration to HAProxy via the Dataplane API. Running multiple replicas in parallel without coordination would cause:
+1. **Resource waste**: multiple replicas performing identical Dataplane API calls
+2. **Potential conflicts**: race conditions when multiple controllers push updates simultaneously
+3. **Unnecessary HAProxy reloads**: multiple deployments of the same configuration
 
-1. **Resource waste**: Multiple replicas performing identical dataplane API calls
-2. **Potential conflicts**: Race conditions when multiple controllers push updates simultaneously
-3. **Unnecessary HAProxy reloads**: Multiple deployments of the same configuration
+All replicas, however, do useful work:
 
-However, all replicas should:
+- Watch Kubernetes resources, keeping a hot cache for failover
+- Handle admission webhook requests, so the webhook stays available through a failover
 
-- Watch Kubernetes resources (to maintain a hot cache for failover)
-- Handle admission webhook requests (so the webhook stays available through a failover)
+Rendering and config validation run only on the leader: the synchronous render-validate pipeline lives inside the leader-only Coordinator (see the component split below), and a new leader's first reconciliation produces a fresh render. Only **deployment operations** strictly need exclusivity, but co-locating rendering with deployment keeps the pipeline synchronous and simple.
 
-Rendering and config validation run only on the leader: the synchronous render-validate pipeline lives inside the leader-only Coordinator (see the component list below), and a new leader's first reconciliation produces a fresh render.
+## Lease-Based Election
 
-Only **deployment operations** (pushing configurations to HAProxy Dataplane API) need exclusivity.
-
-## State-of-the-Art Solution
-
-Use `k8s.io/client-go/tools/leaderelection` with Lease-based resource locks, the industry standard for Kubernetes operator high availability.
-
-### Why Lease-based Locks?
+HAPTIC uses `k8s.io/client-go/tools/leaderelection` with a `coordination.k8s.io` Lease lock — the industry standard for Kubernetes operator high availability:
 
 - **Lower overhead**: Leases create less watch traffic than ConfigMaps or Endpoints
-- **Purpose-built**: the `coordination.k8s.io` Lease API exists exactly for coordination locks — no ConfigMap or Endpoints semantics repurposed as a lock
-- **Reliable**: Used by core Kubernetes components (kube-controller-manager, kube-scheduler)
-- **Clock skew tolerant**: Configurable tolerance for node clock differences
+- **Purpose-built**: the Lease API exists exactly for coordination locks — no ConfigMap or Endpoints semantics repurposed as a lock
+- **Reliable**: used by core Kubernetes components (kube-controller-manager, kube-scheduler)
+- **Clock skew tolerant**: configurable tolerance for node clock differences
 
-### Default Configuration
+### Timing Defaults
 
-The defaults applied by `pkg/core/config` (used unless the CRD's
-`spec.controller.leaderElection` overrides them):
+The defaults applied by `pkg/core/config` (used unless the CRD's `spec.controller.leaderElection` overrides them):
 
 ```go
 LeaderElectionConfig{
@@ -52,9 +45,7 @@ These are deliberately 2x the values `kube-controller-manager` and `kube-schedul
 
 With 30s/20s the system tolerates nodes progressing 1.5× faster than others. Workloads on hosts with large clock skew should override these via the CRD; controllers that need a longer warm-up after election can raise both numbers proportionally so the ratio stays close to 1.5.
 
-## Architecture Changes
-
-### Component Classification
+## Component Classification
 
 The actual classification lives in `pkg/controller/reconciliation.go` (search for `registerLifecycleComponents`, which registers all-replica components via `reg.Register(c, false)` and leader-only ones via `reg.Register(c, true)`); this section reflects that registration list.
 
@@ -86,20 +77,18 @@ The renderer is **not** a registered component. It lives in `pkg/controller/rend
 - **ConfigPublisher** (`pkg/controller/configpublisher`) — Publishes rendered config + per-pod status as `HAProxyCfg` / `HAProxyMapFile` / `HAProxyGeneralFile` / `HAProxyCRTListFile` CRDs
 - **StatusUpdater** (`pkg/controller/configchange`) — Writes validation results back onto the `HAProxyTemplateConfig` CRD's status subresource
 
-### New Component: LeaderElector
+## The LeaderElector Component
 
 **Package**: `pkg/controller/leaderelection/`
 
 **Responsibilities**:
 
-- Create and manage Lease lock in controller namespace
-- Use pod name as unique identity (via POD_NAME env var)
-- Publish leader election events to EventBus
+- Create and manage the Lease lock in the controller namespace
+- Use the pod name as unique identity (via the `POD_NAME` env var)
+- Publish leader election events to the EventBus
 - Handle graceful leadership release on shutdown
 
-**Event integration**:
-
-The real adapter wraps callbacks to publish events *before* invoking the user-supplied callback (see `pkg/controller/leaderelection/component.go`); below is a sketch of the publish side:
+The adapter wraps client-go's callbacks to publish events *before* invoking the user-supplied callback (see `pkg/controller/leaderelection/component.go`); a sketch of the publish side:
 
 ```go
 // Inside the event-adapter's wrapped callbacks (real signatures):
@@ -118,9 +107,9 @@ OnNewLeader: func(observed string) {
 }
 ```
 
-### New Events
+## Events
 
-**Leader election events** (`pkg/controller/events/leader.go`):
+Leader election events live in `pkg/controller/events/leader.go`:
 
 ```go
 // LeaderElectionStartedEvent is published when leader election begins
@@ -154,412 +143,34 @@ type NewLeaderObservedEvent struct {
 
 `Timestamp()` is supplied by the embedded `timestamped` mixin, not by an exported field — so `evt.Timestamp` in code is a method call, not a struct read. There is no `PreviousLeader` field on `NewLeaderObservedEvent`; the adapter only knows the *new* leader's identity.
 
-These events enable:
+The Commentator logs all transitions, Metrics tracks leadership duration and transition count (`haptic_leader_election_is_leader`, `haptic_leader_election_transitions_total`, `haptic_leader_election_time_as_leader_seconds_total` — reference and alerting in [Monitoring](../../operations/monitoring.md#leader-election-metrics)), and the debug server exposes lease status under `/debug/vars`.
 
-- **Observability**: Commentator logs all transitions
-- **Metrics**: Track leadership duration, transition count
-- **Debugging**: Understand which replica is active
+## Startup and Leadership Transitions
 
-### Controller Startup Changes
+The controller starts in stages — components subscribe in their constructors, `EventBus.Start()` releases the pre-start buffer, and the lease-backed elector starts last. The full staged-startup walkthrough lives in [Sequence Diagrams](./sequence-diagrams.md); the leader-election-relevant part is the ordering guarantee: every component's subscriptions exist *before* the elector can publish `BecameLeaderEvent`, so no replica misses a leadership event.
 
-**Startup sequence** (`pkg/controller/iteration.go` + `pkg/controller/infrastructure.go`):
+**Becoming leader.** On `BecameLeaderEvent`, the leader-only components start their goroutines and subscribe via `SubscribeTypesLeaderOnly` (which suppresses the late-subscription warning that normally guards against missed events). They don't start cold: all-replica components cache their latest state and replay it to the new leader — Discovery re-publishes the discovered HAProxy pod set for the new leader's DeploymentScheduler, the StatusApplier clears its checksum cache, and the Reconciler treats `BecameLeaderEvent` as an immediate trigger so the new leader produces a fresh render right away. This bootstrap-replay pattern is what makes failover instant despite the leader-only components being constructed on demand.
 
-```
-Stage 1: Config Management Components
-  - ConfigLoader, CredentialsLoader (all replicas)
-  - BasicValidator + TemplateValidator + JSONPathValidator
-    (all replicas, scatter-gather over ConfigValidationRequest)
-  - ConfigChangeHandler (orchestrates the scatter-gather)
+**Losing leadership.** On `LostLeadershipEvent`, the lifecycle registry cancels the leader-only components' context and tears them down. The replica keeps watching resources and serving webhooks as a follower.
 
-Stage 2: Wait for Valid Config
-  - All replicas block here
+**Graceful transition** (rolling update, voluntary handoff):
 
-Stage 3: Resource Watchers
-  - Create ResourceWatcher (all replicas)
-  - Start IndexSynchronizationTracker (all replicas)
+1. Old leader releases the lease on shutdown (`ReleaseOnCancel`) and stops deployment components
+2. New leader acquires the lease immediately — no lease-expiry wait
+3. New leader starts deployment components with hot cache and replayed state → immediate reconciliation
 
-Stage 4: Wait for Index Sync
-  - All replicas block here
+A leader *crash* instead costs up to `LeaseDuration` + one `RetryPeriod` before a follower takes over; failure behaviour and recovery steps are covered in [High Availability](../../operations/high-availability.md#troubleshooting).
 
-Stage 5: Reconciliation Components (all components subscribe in their
-constructors before EventBus.Start() is called)
-  - Reconciler (all replicas)
-  - Coordinator (LEADER ONLY) — runs the synchronous render+validate Pipeline
-  - Discovery, HTTPStore, ProposalValidator (all replicas)
-  - DeploymentScheduler, Deployer, DriftPreventionMonitor,
-    ConfigPublisher (LEADER ONLY)
-  - StatusApplier (all replicas — subscribes to pipeline lifecycle events carrying status patches; only the leader applies writes)
-  - Metrics, Commentator (all replicas)
-  → EventBus.Start() runs here, releasing the pre-start buffer to every
-    subscriber that registered during construction.
+## Testing
 
-Stage 6: Leader Election (lease-backed elector started after EventBus.Start();
-  on BecameLeaderEvent the LEADER ONLY components above start their goroutines
-  and subscribe via SubscribeTypesLeaderOnly).
-
-Stage 7: Webhook Validation (only when at least one watched resource has
-enableValidationWebhook: true)
-  - Webhook HTTPS server (all replicas)
-  - DryRunValidator was already created in Stage 5 so its subscriptions
-    were in place before EventBus.Start().
-
-Stage 8: Debug & Metrics Wiring
-  - Register debug variables with the introspection server
-  - Start the pre-created EventBuffer goroutine
-  - Swap the bootstrap health checker for one backed by the lifecycle registry
-```
-
-### Conditional Component Startup
-
-**Implementation pattern**:
-
-```go
-// Create separate context for leader-only components
-leaderCtx, leaderCancel := context.WithCancel(iterCtx)
-
-// Track leader-only components
-var leaderComponents struct {
-    sync.Mutex
-    deployer            *deployer.Component
-    deploymentScheduler *deployer.DeploymentScheduler
-    driftMonitor        *deployer.DriftPreventionMonitor
-    cancel              context.CancelFunc
-}
-
-// Leadership callbacks
-OnStartedLeading: func(ctx context.Context) {
-    logger.Info("Became leader, starting deployment components")
-
-    leaderComponents.Lock()
-    defer leaderComponents.Unlock()
-
-    // Create fresh context for leader components
-    leaderComponents.cancel = leaderCancel
-
-    // Create and start leader-only components (real signatures take more knobs;
-    // see pkg/controller/deployer for the production constructors).
-    leaderComponents.deployer = deployer.New(bus, logger, syncOpts)
-    leaderComponents.deploymentScheduler = deployer.NewDeploymentScheduler(bus, logger, minInterval, deploymentTimeout)
-    leaderComponents.driftMonitor = deployer.NewDriftPreventionMonitor(bus, logger, driftInterval)
-
-    go leaderComponents.deployer.Start(leaderCtx)
-    go leaderComponents.deploymentScheduler.Start(leaderCtx)
-    go leaderComponents.driftMonitor.Start(leaderCtx)
-}
-
-OnStoppedLeading: func() {
-    logger.Warn("Lost leadership, stopping deployment components")
-
-    leaderComponents.Lock()
-    defer leaderComponents.Unlock()
-
-    if leaderComponents.cancel != nil {
-        leaderComponents.cancel()
-        leaderComponents.cancel = nil
-    }
-}
-```
-
-**Graceful transition**:
-
-1. Old leader loses lease → stops deployment components
-2. Brief pause (lease expiry time)
-3. New leader acquires lease → starts deployment components
-4. New leader has hot cache and rendered config → immediate reconciliation
-
-## Configuration
-
-**New configuration section** (`LeaderElectionConfig` in `pkg/core/config/types.go`, defaults in `pkg/core/config/defaults.go`):
-
-```yaml
-controller:
-  # ... existing fields ...
-
-  leaderElection:
-    enabled: true   # Enable leader election (default: true)
-    leaseName: ""   # Empty = controller default "haptic-leader"; Helm rewrites empty to the release fullname
-    leaseDuration: 30s   # chart default; 2x client-go's convention for starvation headroom
-    renewDeadline: 20s   # must be < leaseDuration
-    retryPeriod: 5s      # must be < renewDeadline
-```
-
-**Backwards compatibility**:
-
-- `enabled: false` → Run without leader election (single replica mode)
-- Existing single-replica deployments work unchanged
-
-## RBAC Requirements
-
-**New permissions** (`charts/haptic/templates/clusterrole.yaml`, bound by `clusterrolebinding.yaml`):
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: haptic
-rules:
-  # ... existing rules ...
-
-  # Leader election
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "create", "update"]
-```
-
-The controller creates a Lease in its own namespace (not cluster-wide).
-
-## Deployment Changes
-
-**Environment variables** (`charts/haptic/templates/deployment.yaml`):
-
-```yaml
-spec:
-  template:
-    spec:
-      containers:
-      - name: controller
-        env:
-        # ... existing env vars ...
-
-        # Pod identity for leader election
-        - name: POD_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
-```
-
-**Multiple replicas**:
-
-```yaml
-spec:
-  replicas: 2  # Change from 1 to 2+ for HA
-```
-
-**Resource adjustments**:
-
-No changes needed - non-leader replicas consume similar resources since they perform all read-only work.
-
-## Observability
-
-### Metrics
-
-**New Prometheus metrics** (`pkg/controller/metrics/metrics.go`):
-
-```go
-// haptic_leader_election_transitions_total
-// Counter of leadership changes (acquire + lose)
-haptic_leader_election_transitions_total counter
-
-// haptic_leader_election_is_leader
-// Gauge indicating current leadership status (1=leader, 0=follower)
-haptic_leader_election_is_leader gauge
-
-// haptic_leader_election_time_as_leader_seconds_total
-// Counter of cumulative seconds spent as leader
-haptic_leader_election_time_as_leader_seconds_total counter
-```
-
-**Usage**:
-
-- Alert on frequent transitions (indicates instability)
-- Dashboard showing current leader identity
-- Track leadership duration distribution
-
-### Logging
-
-**Commentator enhancements** (`pkg/controller/commentator/commentator.go`):
-
-```go
-case LeaderElectionStartedEvent:
-    c.logger.Info("leader election started",
-        "identity", e.Identity,
-        "lease", e.LeaseName,
-        "namespace", e.LeaseNamespace)
-
-case BecameLeaderEvent:
-    c.logger.Info("became leader",
-        "identity", e.Identity)
-
-case LostLeadershipEvent:
-    c.logger.Warn("lost leadership",
-        "identity", e.Identity,
-        "reason", e.Reason)
-
-case *NewLeaderObservedEvent:
-    c.logger.Info("new leader observed",
-        "leader_identity", e.NewLeaderIdentity,
-        "is_self", e.IsSelf)
-```
-
-### Debug Endpoints
-
-**Lease status** (via debug server):
-
-```json
-GET /debug/vars
-
-{
-  "leader_election": {
-    "enabled": true,
-    "is_leader": true,
-    "identity": "haptic-7f8d9c5b-abc123",
-    "lease_name": "my-controller",
-    "lease_holder": "haptic-7f8d9c5b-abc123",
-    "time_as_leader": "45m32s",
-    "transitions": 2
-  }
-}
-```
-
-## Testing Strategy
-
-### Unit Tests
-
-**LeaderElector tests** — pure-component tests live in `pkg/k8s/leaderelection/elector_test.go`; the event-adapter wrapping is covered by `pkg/controller/leaderelection/component_test.go`:
-
-```go
-// Test leader election configuration
-func TestLeaderElector_Config(t *testing.T)
-
-// Test event publishing on leadership changes
-func TestLeaderElector_EventPublishing(t *testing.T)
-
-// Test graceful shutdown
-func TestLeaderElector_GracefulShutdown(t *testing.T)
-```
-
-### Integration Tests
-
-**Multi-replica tests** (`tests/acceptance/leader_election_test.go` — these run against a real Kind cluster, not the unit-style fixtures in `tests/integration/`):
-
-```go
-// Deploy 2 replicas, verify leader election behavior
-func TestLeaderElection_TwoReplicas(t *testing.T)
-
-// Kill leader pod, verify follower takes over
-func TestLeaderElection_Failover(t *testing.T)
-
-// Verify behavior when leader election is disabled
-func TestLeaderElection_DisabledMode(t *testing.T)
-```
-
-**Test setup**:
-
-- Use kind cluster with multi-node setup
-- Deploy controller with 3 replicas
-- Create test Ingress resources
-- Verify only the leader deploys: exactly one "deployment completed" log line per config change
-- Simulate pod failures
-
-### Manual Testing
-
-**Verification steps**:
-
-```bash
-# Set your Helm release name once; both the deployment and the lease are
-# derived from the chart fullname (deployment: "$RELEASE-controller", lease:
-# "$RELEASE"). These short forms hold because the release name contains
-# "haptic" — otherwise the chart prefixes names as "<release>-haptic".
-RELEASE=haptic
-
-# Deploy with 3 replicas
-kubectl scale deployment "$RELEASE-controller" --replicas=3
-
-# Check lease status
-kubectl get lease -n haptic "$RELEASE" -o yaml
-
-# Verify leader via metrics
-kubectl port-forward deployment/"$RELEASE-controller" 9090:9090
-curl http://localhost:9090/metrics | grep haptic_leader_election_is_leader
-
-# Check logs for leadership events
-kubectl logs -l app.kubernetes.io/name=haptic --tail=100 | grep -i leader
-
-# Simulate failover
-kubectl delete pod <leader-pod>
-
-# Verify new leader takes over
-watch kubectl get lease -n haptic "$RELEASE"
-
-# Check HAProxy configs only deployed once per change
-kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
-```
-
-## Failure Scenarios
-
-### Leader Pod Crashes
-
-**Behavior**:
-
-1. Leader lease expires (30s after last renewal)
-2. Followers detect expired lease
-3. First follower to update lease becomes new leader
-4. New leader starts deployment components
-5. Reconciliation continues from hot cache
-
-**Downtime**: ~30-35 seconds (LeaseDuration + startup time)
-
-### Network Partition
-
-**Scenario**: Leader pod loses connectivity to Kubernetes API
-
-**Behavior**:
-
-1. Leader cannot renew lease
-2. After RenewDeadline (20s), leader voluntarily releases leadership
-3. Leader stops deployment components
-4. Connected replica acquires lease
-5. System continues with new leader
-
-**Protection**: Split-brain prevented by Kubernetes API acting as coordination point
-
-### Clock Skew
-
-**Scenario**: Nodes have different clock speeds
-
-**Tolerance**: Configured ratio of LeaseDuration/RenewDeadline
-
-- With the default 30s/20s: Tolerates a 1.5× clock-speed difference between nodes
-- If exceeded: May experience frequent leadership changes
-
-**Mitigation**: Run NTP on cluster nodes (Kubernetes best practice)
-
-### All Replicas Down
-
-**Behavior**:
-
-1. Lease expires
-2. No deployments occur (expected behavior)
-3. HAProxy continues serving with last known configuration
-4. When replica starts, acquires lease and reconciles
-
-**Impact**: No new configuration updates until controller recovers
-
-## Status
-
-Leader election is fully implemented and enabled by default in the Helm chart (`controller.config.controller.leaderElection.enabled: true`, 2 replicas by default). The opt-in/opt-out switch lives on the CRD; the chart RBAC ships with the lease permissions required. Operator-facing setup, tuning, and troubleshooting live in [High Availability](../../operations/high-availability.md).
+Pure-component tests live in `pkg/k8s/leaderelection/elector_test.go`; the event-adapter wrapping is covered by `pkg/controller/leaderelection/component_test.go`. Multi-replica behaviour (two replicas, failover, disabled mode) runs against a real kind cluster in `tests/acceptance/leader_election_test.go`.
 
 ## Alternatives Considered
 
-### Single Active Replica with Pod Disruption Budget
-
-**Rejected**: Doesn't provide HA, just prevents voluntary disruptions
-
-### Active-Active with Distributed Locking per HAProxy Instance
-
-**Rejected**: More complex, potential deadlocks, not idiomatic for Kubernetes
-
-### External Coordination (etcd, Consul)
-
-**Rejected**: Adds operational complexity, Kubernetes API sufficient
-
-### Config Generation Only (No Deployment)
-
-**Rejected**: Requires external system to deploy, doesn't solve core problem
+- **Single active replica with PodDisruptionBudget** — rejected: doesn't provide HA, just prevents voluntary disruptions
+- **Active-active with distributed locking per HAProxy instance** — rejected: more complex, potential deadlocks, not idiomatic for Kubernetes
+- **External coordination (etcd, Consul)** — rejected: adds operational complexity, the Kubernetes API is sufficient
+- **Config generation only (no deployment)** — rejected: requires an external system to deploy, doesn't solve the core problem
 
 ## References
 

@@ -102,6 +102,18 @@ kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
 curl http://localhost:9090/metrics
 ```
 
+### Other Scrapers
+
+Victoria Metrics accepts the same Prometheus scrape configuration shown above. For Datadog, configure the Datadog Agent to scrape Prometheus metrics:
+
+```yaml
+# datadog-agent values
+datadog:
+  prometheusScrape:
+    enabled: true
+    serviceEndpoints: true
+```
+
 ## Metrics Reference
 
 ### Reconciliation Metrics
@@ -682,28 +694,6 @@ avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
 1. Check if `sum(haptic_leader_election_is_leader) != 1`
 2. Review `rate(haptic_leader_election_transitions_total[1h])` for instability
 3. See [High Availability Guide](./high-availability.md) for troubleshooting
-
-## Integration with Existing Monitoring
-
-### Prometheus Operator
-
-Enable the bundled `ServiceMonitor` as shown in [ServiceMonitor (Prometheus Operator)](#servicemonitor-prometheus-operator) above. The chart renders it to target the controller Service in the release namespace — no explicit namespace selector is needed.
-
-### Victoria Metrics
-
-Use the same Prometheus scrape configuration — Victoria Metrics is compatible.
-
-### Datadog
-
-Configure Datadog Agent to scrape Prometheus metrics:
-
-```yaml
-# datadog-agent values
-datadog:
-  prometheusScrape:
-    enabled: true
-    serviceEndpoints: true
-```
 
 ## See Also
 

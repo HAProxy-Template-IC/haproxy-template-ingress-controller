@@ -1,6 +1,6 @@
 # Watching Resources
 
-`spec.watchedResources` tells the controller which Kubernetes resources to subscribe to and how to make them available inside templates. This page explains the mental model. For field types, defaults, and validation rules see [CRD Reference](./crd-reference.md#watchedresources-required).
+`spec.watchedResources` tells the controller which Kubernetes resources to subscribe to and how to make them available inside templates. This page explains the mental model. For field types, defaults, and validation rules see [CRD Reference](./crd-reference.md#watchedresources).
 
 Watch it end-to-end — a watched Ingress feeding the render:
 
@@ -8,48 +8,7 @@ Watch it end-to-end — a watched Ingress feeding the render:
 
 </div>
 
-When a schema is loaded — the norm in production, where the controller fetches it live from the kube-apiserver — watched resources arrive as strongly-typed values you navigate with dotted field access (`ing.spec.rules`), covered in [Typed Access in Templates](#typed-access-in-templates) below. For the cases where you're working with untyped data — an inline `map[string]any` literal, a schema-less custom resource, or a genuinely-optional field that may be absent — navigate with `dig(...)` and supply a default with `fallback(...)` so a missing field never breaks the render. Try that below.
-
-<div class="pg-embed" markdown data-scriggo data-title="Challenge: default a missing port to 80" data-difficulty="2" data-height="380">
-
-<p class="pg-task" markdown>One service omits `spec.port`; give every `server` line a port, defaulting to 80 when the field is absent.</p>
-
-```go
-{%- var services = []any{
-    map[string]any{"name": "api",   "spec": map[string]any{"port": 8080}},
-    map[string]any{"name": "web",   "spec": map[string]any{"port": 3000}},
-    map[string]any{"name": "cache", "spec": map[string]any{}},
-} -%}
-{% for _, svc := range services -%}
-{%- var name = svc | dig("name") | fallback("") -%}
-{#- TODO: cache has no spec.port — dig() returns nil and the port comes out blank -#}
-{%- var port = svc | dig("spec", "port") -%}
-server {{ name }} {{ name }}.svc:{{ port }}
-{% end -%}
-```
-
-<details class="pg-solution" markdown>
-<summary>Peek at the solution</summary>
-
-Keep the raw `dig` result, pipe it through `fallback(80)`, and use a `nil` check to flag the line that was defaulted.
-
-```go
-{%- var services = []any{
-    map[string]any{"name": "api",   "spec": map[string]any{"port": 8080}},
-    map[string]any{"name": "web",   "spec": map[string]any{"port": 3000}},
-    map[string]any{"name": "cache", "spec": map[string]any{}},
-} -%}
-{% for _, svc := range services -%}
-{%- var name = svc | dig("name") | fallback("") -%}
-{%- var portVal = svc | dig("spec", "port") -%}
-{%- var port = portVal | fallback(80) -%}
-server {{ name }} {{ name }}.svc:{{ port }}{% if portVal == nil %}  # default port{% end %}
-{% end -%}
-```
-
-</details>
-
-</div>
+When a schema is loaded — the norm in production, where the controller fetches it live from the kube-apiserver — watched resources arrive as strongly-typed values you navigate with dotted field access (`ing.spec.rules`), covered in [Typed Access in Templates](#typed-access-in-templates) below. For the cases where you're working with untyped data — an inline `map[string]any` literal, a schema-less custom resource, or a genuinely-optional field that may be absent — navigate with `dig(...)` and supply a default with `fallback(...)` so a missing field never breaks the render. The [Templating Guide](./templating.md#safe-iteration) teaches both patterns with runnable challenges.
 
 ## Anatomy of an Entry
 
@@ -97,7 +56,7 @@ Every entry is exposed to templates **two equivalent ways** when a schema is loa
 
 Both surfaces share the same typed pointer; iterating either way yields `*resources.<key>.T` with strongly-typed `.Metadata.Namespace`, `.Spec.X`, etc. Without a schema, both surfaces fall back to `[]any` / `map[string]any` and the chart's `dig()`-based snippets work unchanged.
 
-The typed shape comes from the resource's OpenAPI v3 schema. In production the controller fetches schemas live from the kube-apiserver. Offline (`haptic-controller validate`), schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`. The repo's `tests/schemas/` directory bundles schemas for the chart's Gateway API CRDs, haptic CRDs, **and** the K8s built-ins it watches (Namespace, Service, Secret, EndpointSlice, Ingress) — `--schema-dir tests/schemas` unlocks typed access for every chart-watched resource.
+The typed shape comes from the resource's OpenAPI v3 schema — fetched live from the kube-apiserver in production, or from `--schema-dir` when running offline; see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for the full schema-source story and the repo's bundled `tests/schemas/` directory.
 
 A misspelled field name in a template fails when the controller boots (or when `validate` runs against a schema-dir), not at the next reconcile. The `<key>.T` type expression also works in macro signatures, type-switch case clauses (`case *resources.<key>.T`), and slice types for sharded rendering.
 
@@ -322,7 +281,7 @@ Empty / invalid strings fall back to the 2s default silently — the validating 
 ## See Also
 
 - [Bring-your-own-CRD example](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd) — a runnable, self-validating example: watch a custom CRD, route on it, and write status back, with no Go
-- [CRD Reference](./crd-reference.md#watchedresources-required) — field-level documentation
+- [CRD Reference](./crd-reference.md#watchedresources) — field-level documentation
 - [Templating Guide — The `resources` Variable](./templating.md#the-resources-variable) — `.List()` / `.Fetch()` / `.GetSingle()` semantics from the template side
 - [Performance](./operations/performance.md) — deciding when to narrow the watch versus scale the controller
 - `pkg/k8s` README — store implementation details

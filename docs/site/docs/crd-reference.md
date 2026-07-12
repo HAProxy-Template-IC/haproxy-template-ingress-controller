@@ -53,105 +53,33 @@ spec:
 
 </div>
 
-## Try it: add health checks to the servers
-
-<div class="pg-embed" markdown data-tab="haproxy.cfg" data-focus="13-16" data-title="Challenge: give every server a health check" data-difficulty="1">
-
-<p class="pg-task" markdown>This config renders two backends from an inline list, but the generated `server` lines have no health checking — HAProxy keeps routing to a pod even after it dies. Add `check` to the generated `server` line so every server gets an active health check.</p>
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: health-check-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-        default_backend web
-      {%- var backends = []any{
-        map[string]any{"name": "web", "servers": []any{"10.0.0.1:8080", "10.0.0.2:8080"}},
-        map[string]any{"name": "api", "servers": []any{"10.0.1.5:9000"}},
-      } %}
-      {%- for _, be := range backends %}
-      backend {{ be | dig("name") | tostring() }}
-      {%- for i, addr := range be | dig("servers") | toSlice() %}
-        server srv{{ i }} {{ addr | tostring() }}
-      {%- end %}
-      {%- end %}
-```
-
-<details class="pg-solution" markdown>
-<summary>Peek at the solution</summary>
-
-Append `check` to the `server` line inside the loop, so HAProxy health-checks each pod and stops sending traffic to unhealthy ones. Pair it with `init-addr last` when a server address is a DNS name, so HAProxy still starts if the name is briefly unresolvable.
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: health-check-demo
-spec:
-  haproxyConfig:
-    template: |
-      global
-        log stdout format raw local0
-        daemon
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
-      frontend http
-        bind *:80
-        default_backend web
-      {%- var backends = []any{
-        map[string]any{"name": "web", "servers": []any{"10.0.0.1:8080", "10.0.0.2:8080"}},
-        map[string]any{"name": "api", "servers": []any{"10.0.1.5:9000"}},
-      } %}
-      {%- for _, be := range backends %}
-      backend {{ be | dig("name") | tostring() }}
-      {%- for i, addr := range be | dig("servers") | toSlice() %}
-        server srv{{ i }} {{ addr | tostring() }} check
-      {%- end %}
-      {%- end %}
-```
-
-</details>
-
-</div>
-
 ## Spec Fields
 
-### credentialsSecretRef (required)
+The four required fields come first (`credentialsSecretRef`, `podSelector`, `watchedResources`, `haproxyConfig`), followed by the template entries and the operational tuning fields.
 
-References a Secret containing Dataplane API credentials.
+### credentialsSecretRef
+
+References a Secret containing Dataplane API credentials. **Required.**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `name` | string | Yes | — |
+| `namespace` | string | No | The config's namespace |
 
 ```yaml
 credentialsSecretRef:
   name: haproxy-credentials
-  namespace: default  # Optional, defaults to config namespace
 ```
 
-**Required Secret keys:**
+The Secret must contain the keys `dataplane_username` and `dataplane_password`. Credentials are used only for the production Dataplane API; config validation runs locally against the `haproxy` binary and needs no credentials. See [Security — Credentials](./operations/security.md#credentials) for rotation and GitOps caveats.
 
-- `dataplane_username` - Dataplane API username
-- `dataplane_password` - Dataplane API password
+### podSelector
 
-Credentials are used only for the production Dataplane API; config validation runs locally against the `haproxy` binary and needs no credentials.
+Labels that identify which HAProxy pods the controller manages. **Required.**
 
-### podSelector (required)
-
-Labels that identify which HAProxy pods the controller should manage. The Helm chart ships `app.kubernetes.io/component: loadbalancer` (plus dynamically-set `app.kubernetes.io/name` / `app.kubernetes.io/instance`); use any labels your HAProxy pods actually carry.
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `matchLabels` | `map[string]string` | Yes (at least one label) | — |
 
 ```yaml
 podSelector:
@@ -159,124 +87,33 @@ podSelector:
     app.kubernetes.io/component: loadbalancer
 ```
 
-At least one label must be specified.
+The Helm chart ships `app.kubernetes.io/component: loadbalancer` (plus dynamically-set `app.kubernetes.io/name` / `app.kubernetes.io/instance`); use any labels your HAProxy pods actually carry. See [HAProxy Deployment — Pod Requirements](./haproxy-deployment.md#haproxy-pod-requirements) for what discovered pods must provide.
 
-### controller
+### watchedResources
 
-Controller-level settings for leader election and config publishing.
+Defines which Kubernetes resources to watch. Each map key is an arbitrary name that appears in templates as `resources.<key>`. **Required** (at least one entry).
 
-```yaml
-controller:
-  leaderElection:
-    enabled: true
-    leaseName: ""        # empty = defaults to "haptic-leader"; the Helm chart sets this to the release fullname
-    leaseDuration: 30s   # default (DefaultLeaderElectionLeaseDuration)
-    renewDeadline: 20s   # default (DefaultLeaderElectionRenewDeadline)
-    retryPeriod: 5s      # default (DefaultLeaderElectionRetryPeriod)
-```
-
-!!! note
-    There is no reconciler-level debounce knob. The Reconciler fires immediately on every resource/HTTP event; batching is per-watcher (`spec.watchedResources.<name>.debounceInterval`, default 2s) and reload throttling is the deployer's `spec.dataplane.minDeploymentInterval`.
-
-!!! note
-    These are the controller's built-in defaults from `pkg/core/config/defaults.go` — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (15s/10s/2s), so the leader rides out multi-second API-server or CPU starvation stalls without losing the lease. The Helm chart sets the same values; setting any of these fields on the CRD only matters if you need different values (e.g. faster crash-failover, or clusters with significant clock skew).
-
-See [High Availability](./operations/high-availability.md) for leader election details.
-
-#### configPublishing
-
-Controls how rendered configurations are stored in `HAProxyCfg` CRD resources.
-
-```yaml
-controller:
-  configPublishing:
-    compressionThreshold: 1048576  # 1 MiB (default)
-```
-
-| Field                  | Type  | Default   | Description                                                                      |
-|------------------------|-------|-----------|----------------------------------------------------------------------------------|
-| `compressionThreshold` | int64 | 1048576   | Compress content when size exceeds this threshold (bytes). A value of `0` is treated as unset — the 1 MiB default applies (compression can't currently be disabled) |
-
-**How compression works:**
-
-- When HAProxy configuration exceeds the threshold, it's compressed using zstd and base64-encoded
-- The `HAProxyCfg` resource stores compressed content with `spec.compressed: true`
-- Reduces etcd storage and speeds up watch events for large configurations
-
-**Fetching decompressed content:**
-
-```bash
-# View HAProxyCfg resources
-kubectl get haproxycfg -n haptic
-
-# Fetch and decompress content (requires zstd)
-kubectl get haproxycfg <name> -n haptic -o jsonpath='{.spec.content}' | base64 -d | zstd -d
-
-# If not compressed (spec.compressed is false), content is plain text
-kubectl get haproxycfg <name> -n haptic -o jsonpath='{.spec.content}'
-```
-
-### logging
-
-Log level configuration.
-
-```yaml
-logging:
-  level: DEBUG  # TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
-```
-
-If not set (empty string), the controller uses the `LOG_LEVEL` environment variable. If neither is set, defaults to INFO.
-
-### dataplane
-
-Dataplane API connection, deployment, and validation settings.
-
-```yaml
-dataplane:
-  port: 5555                         # Dataplane API port (default 5555)
-  minDeploymentInterval: 2s          # Minimum gap between deployments (default 2s)
-  driftPreventionInterval: 60s       # Periodic redeploy to correct drift (default 60s)
-  deploymentTimeout: 30s             # Safety net for lost deployments (default 30s)
-  configPublishInterval: 10s         # Throttle for HAProxyCfg CRD republishes (default 10s)
-  reloadVerificationTimeout: 10s     # Wait for HAProxy to confirm graceful reload (default 10s)
-  syncTimeout: 2m                    # Per-endpoint sync timeout (default 2m)
-  mapsDir: /etc/haproxy/maps         # Used for both validation and deployment
-  sslCertsDir: /etc/haproxy/ssl      # chart-set; the controller's built-in default is /etc/haproxy/certs
-  generalStorageDir: /etc/haproxy/general
-  configFile: /etc/haproxy/haproxy.cfg
-```
-
-The three `*Dir` paths are used by the controller's local `haproxy -c` validation step as well as for deployment — they must match the paths the Dataplane API server is configured to manage (`configFile` is used only by local validation; the Dataplane API manages its own config-file path). The Helm chart keeps them in sync by deriving both sides from a single set of chart values.
-
-### watchedResourcesIgnoreFields
-
-JSONPath expressions for fields to remove from all watched resources.
-
-```yaml
-watchedResourcesIgnoreFields:
-  - metadata.managedFields
-  - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
-```
-
-Reduces memory usage by filtering unnecessary data.
-
-### watchedResources (required)
-
-Defines which Kubernetes resources to watch.
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `apiVersion` | string | Exactly one of `apiVersion` / `apiVersions` | — |
+| `apiVersions` | `[]string` | Exactly one of `apiVersion` / `apiVersions` | — |
+| `optional` | bool | No | `false` |
+| `resources` | string | Yes | — |
+| `indexBy` | `[]string` | No | — |
+| `labelSelector` | string | No | `""` (equality-only, `"k=v[,k=v]"`; set-based syntax not supported) |
+| `fieldSelector` | string | No | `""` (client-side JSONPath equality, `"field.path=value"`; matches any field) |
+| `store` | string (`full` / `on-demand`) | No | `full` |
+| `enableValidationWebhook` | bool | No | `false` |
+| `debounceInterval` | string | No | `""` — empty / invalid uses the 2s default; an explicit `"0"` disables debouncing |
 
 ```yaml
 watchedResources:
   ingresses:
     apiVersion: networking.k8s.io/v1
     resources: ingresses
-    enableValidationWebhook: true  # Optional
     indexBy:
       - metadata.namespace
       - metadata.name
-    labelSelector: "app=myapp"  # Optional, equality-only ("k=v[,k=v]"); set-based syntax not supported
-    fieldSelector: "spec.ingressClassName=haproxy"  # Optional, client-side JSONPath equality ("field.path=value"); matches any field
-    store: full  # or "on-demand" for cached store
-    debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 2s default, an explicit "0" disables debouncing
 ```
 
 Instead of a single `apiVersion`, an entry can declare an ordered
@@ -310,31 +147,83 @@ Rules:
 - Templates read the resolved version via `resources.<name>.APIVersion()`.
 - The current resolution is visible at `/debug/vars/effectiveConfigResolution`.
 
-See [Watching Resources](./watching-resources.md) for detailed configuration.
+See [Watching Resources](./watching-resources.md) for the store types, indexing semantics, and selector behaviour.
+
+### watchedResourcesIgnoreFields
+
+JSONPath expressions for fields to remove from all watched resources before they are indexed, reducing memory usage.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `watchedResourcesIgnoreFields` | `[]string` | No | — |
+
+```yaml
+watchedResourcesIgnoreFields:
+  - metadata.managedFields
+  - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
+```
+
+Applies uniformly to every watched resource; fields referenced by `indexBy` must not be trimmed. See [Watching Resources — Trimming Fields](./watching-resources.md#trimming-fields).
+
+### haproxyConfig
+
+The main HAProxy configuration template. **Required.**
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `template` | string | Yes | — |
+| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
+
+```yaml
+haproxyConfig:
+  template: |
+    global
+        daemon
+        maxconn 4096
+
+    defaults
+        mode http
+        timeout connect 5s
+
+    frontend http
+        bind *:80
+        use_backend %[req.hdr(host),map({{ pathResolver.GetPath("host.map", "map") }})]
+```
+
+See the [Templating Guide](./templating.md) for syntax, loops, and helper functions.
 
 ### templateSnippets
 
-Reusable template fragments.
+Reusable template fragments, included in other templates via `{{ render "snippet-name" }}`.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `template` | string | Yes | — |
+| `requires` | `[]string` | No | — (names of `watchedResources` keys) |
 
 ```yaml
 templateSnippets:
   backend-name:
-    requires: [ingresses]  # Optional: strip this snippet when the named optional watched resources are unavailable
+    requires: [ingresses]
     template: |
       ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
 ```
 
-Include in templates: `{{ render "backend-name" }}`
-
-`requires` entries must name `watchedResources` keys. A snippet that must
-survive stripping may reach a stripped resource only through compile-safe
-seams — `render "..." default ""`, `render_glob` extension points, or shared
-state — never a direct typed `resources.<name>` reference. `validationTests`
-entries accept the same `requires` field.
+`requires` entries must name `watchedResources` keys: when an optional watched
+resource named there is unavailable, the snippet is stripped from the effective
+configuration. A snippet that must survive stripping may reach a stripped
+resource only through compile-safe seams — `render "..." default ""`,
+`render_glob` extension points, or shared state — never a direct typed
+`resources.<name>` reference. See [Templating — Template Snippets](./templating.md#template-snippets).
 
 ### maps
 
-HAProxy map file templates.
+HAProxy map file templates. Each key is a map filename, referenced in config via `{{ pathResolver.GetPath("host.map", "map") }}`.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `template` | string | Yes | — |
+| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
 
 ```yaml
 maps:
@@ -347,11 +236,16 @@ maps:
       {% end %}
 ```
 
-Reference in config: `{{ pathResolver.GetPath("host.map", "map") }}`
+See [Templating — Map Files](./templating.md#map-files).
 
 ### files
 
-General auxiliary files (error pages, etc.).
+General auxiliary file templates (error pages, etc.). Each key is a filename, referenced in config via `{{ pathResolver.GetPath("503.http", "file") }}`.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `template` | string | Yes | — |
+| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
 
 ```yaml
 files:
@@ -361,11 +255,16 @@ files:
       <html><body><h1>503</h1></body></html>
 ```
 
-Reference in config: `errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}`
+See [Templating — General Files](./templating.md#general-files).
 
 ### sslCertificates
 
-SSL certificate templates.
+SSL certificate templates, typically assembled from watched Secrets. Each key is a certificate name, referenced in config via `{{ pathResolver.GetPath("example-com", "cert") }}`.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `template` | string | Yes | — |
+| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
 
 ```yaml
 sslCertificates:
@@ -376,11 +275,16 @@ sslCertificates:
       {{ b64decode(secret.data["tls.key"]) }}
 ```
 
-Reference in config: `bind :443 ssl crt {{ pathResolver.GetPath("example-com", "cert") }}`
+See [Templating — SSL Certificates](./templating.md#ssl-certificates).
 
 ### k8sResources
 
 Templates that emit Kubernetes resources for the controller to apply via Server-Side Apply. Each entry's rendered output is parsed as one or more YAML documents (multi-doc supported via `---` separators); each document must declare `apiVersion`, `kind`, and `metadata.name` (plus `metadata.namespace` for namespaced kinds).
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `template` | string | Yes | — |
+| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
 
 The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every full-ownership applied resource, so cascade-delete (e.g. `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the SSA payload omits the `managed-by` label **and** the `OwnerReference`, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly-owned objects on which HAPTIC only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
 
@@ -423,88 +327,80 @@ k8sResources:
 
 Use this when the resource shape derives from observed cluster state (Ingresses, Gateways, Endpoints, …); use the chart's own static `templates/*.yaml` for fixed install-time wiring (RBAC, the dataplane Service, etc.). The chart's `libraries/base.yaml` ships a canonical example: the `haproxy-service` entry that renders the user-facing HAProxy LoadBalancer Service from listener state.
 
-### haproxyConfig (required)
+### postProcessing (all template entries)
 
-Main HAProxy configuration template.
+Every template-bearing entry — `haproxyConfig` and each entry under `maps`, `files`, `sslCertificates`, and `k8sResources` — accepts an optional `postProcessing` list that transforms the rendered output before it is used. Processors run sequentially.
 
-```yaml
-haproxyConfig:
-  template: |
-    global
-        daemon
-        maxconn 4096
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `type` | string (`regex_replace` / `template`) | Yes | — |
+| `params` | `map[string]string` | Yes | — |
 
-    defaults
-        mode http
-        timeout connect 5s
+Params per type:
 
-    frontend http
-        bind *:80
-        use_backend %[req.hdr(host),map({{ pathResolver.GetPath("host.map", "map") }})]
-```
-
-See [Templating Guide](./templating.md) for syntax and filters.
-
-Every template-bearing entry (`haproxyConfig`, and each entry under `maps`, `files`, `sslCertificates`, and `k8sResources`) also accepts an optional `postProcessing` list applied to the rendered output:
+| Type | Params |
+|------|--------|
+| `regex_replace` | `pattern` (regular expression), `replace` (replacement string) — applied line by line |
+| `template` | `source` (a Scriggo template; the rendered output is available as the `input` variable) |
 
 ```yaml
 haproxyConfig:
   template: |
     ...
   postProcessing:
-    - type: regex_replace          # params: pattern, replace
+    - type: regex_replace
       params:
         pattern: '\n{3,}'
         replace: "\n\n"
-    # or a Scriggo transform — the rendered output is available as `input`:
-    # - type: template
-    #   params:
-    #     source: "{{ input }}"
+    - type: template
+      params:
+        source: "{{ replace(input, \"__REGION__\", \"eu-west-1\") }}"
 ```
+
+See [Templating — Post-Processing](./templating.md#post-processing) for a runnable example.
 
 ### templatingSettings
 
 Template rendering configuration and custom variables.
 
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `extraContext` | object (any JSON value) | No | — |
+| `engine` | string (`scriggo`) | No | `scriggo` (the only valid value) |
+
 ```yaml
 templatingSettings:
   extraContext:
-    debug:
-      enabled: true
-      verboseHeaders: false
     environment: production
     featureFlags:
       rateLimiting: true
-      caching: false
-    customTimeout: 30
 ```
 
-**Fields:**
-
-| Field          | Type                   | Required | Description                                                              |
-|----------------|------------------------|----------|--------------------------------------------------------------------------|
-| `extraContext` | `map[string]any` | No       | Custom variables, exposed to templates as the `extraContext` map. Read a key with `extraContext["key"]`, or `extraContext \| dig("key") \| fallback(default)` when it may be unset |
-| `engine`       | string                 | No       | Template engine. Only valid value (and default): `scriggo` |
-
-**Usage in templates:**
-
-Custom variables are exposed as the `extraContext` map. Read a key with bracket access, or `dig` + `fallback` when it might be absent:
+Custom variables are exposed to templates as the `extraContext` map. Read a key with `extraContext["key"]`, or `extraContext | dig("key") | fallback(default)` when it may be unset:
 
 ```go
 {% if extraContext["environment"] == "production" %}
   timeout client {{ extraContext | dig("customTimeout") | fallback("300") }}s
-{% else %}
-  timeout client 300s
 {% end %}
 ```
 
-The `extraContext` field accepts any valid JSON value (strings, numbers, booleans, objects, arrays). This allows you to configure template behavior for different environments, enable feature flags, or inject custom metadata without modifying controller code.
-
-See [Templating Guide - Custom Template Variables](./templating.md#custom-template-variables) for detailed examples and use cases.
+See [Templating — Custom Template Variables](./templating.md#custom-template-variables) for detailed examples.
 
 ### validationTests
 
 Embedded validation tests (optional; run by the admission webhook, the `validate` CLI, and the controller itself on config load).
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `description` | string | No | — |
+| `fixtures` | `map[string][]object` | Yes | — (keys must name `watchedResources` entries) |
+| `assertions` | `[]Assertion` | Yes | — |
+| `httpResources` | `[]object` | No | — (mocked responses for `http.Fetch()` calls) |
+| `currentConfig` | string | No | — (simulated live HAProxy config for runtime-context assertions) |
+| `extraContext` | object | No | — (per-test overrides of `templatingSettings.extraContext`) |
+| `minHAProxyVersion` | string | No | — (skip the test on older HAProxy) |
+| `requires` | `[]string` | No | — (strip the test when a named optional watched resource is unavailable) |
+| `requiresFields` | `[]string` | No | — (strip the test when a schema field path is absent) |
 
 ```yaml
 validationTests:
@@ -539,44 +435,19 @@ validationTests:
         description: Config must include host
 ```
 
-Tests accept the same `requires` field as [templateSnippets](#templatesnippets):
-when an optional watched resource named there is unavailable, the test is
-stripped from the effective configuration at load time.
-
-Tests additionally accept `requiresFields` — a list of schema field paths in
-the form `<watchedResourceKey>.<field.path>`:
-
-```yaml
-validationTests:
-  test-httproute-cors-filter:
-    requires: [httproutes]
-    requiresFields: [httproutes.spec.rules.filters.cors]
-    # ...
-```
-
-When any listed field is absent from the resolved schema generation of its
-watched resource, the test is stripped at load time. This covers clusters
-that serve the resource at the same API version as newer releases but with
-an older schema generation lacking the field (for example, Gateway API v1.1
-serves `httproutes` at `v1` without the CORS filter — the apiserver prunes
-the field from fixtures, the feature never activates, and without stripping
-the test would fail the fail-closed load gate). The first dot-segment must
-name a `watchedResources` key; array levels in the remaining path are
-descended transparently (`spec.rules.filters.cors` matches the field inside
-the `rules[]` / `filters[]` items). The current stripping outcome is visible
-at `/debug/vars/effectiveConfigResolution`.
-
-Beyond `description`/`fixtures`/`assertions`/`requires`/`requiresFields`, each test also accepts `httpResources` (mocked responses for `http.Fetch()` calls), `currentConfig` (a simulated live HAProxy config for runtime-context assertions), `extraContext` (per-test overrides of `templatingSettings.extraContext`), and `minHAProxyVersion` (skip the test on older HAProxy).
-
-See [Validation Tests](./validation-tests.md) for the full test-framework reference (fixtures, assertion types, CLI usage) and [CRD & Validation Design](./development/crd-validation-design.md) for the design rationale.
-
-### migrationCoverage
-
-Per-migration-source annotation coverage declarations (optional). Each entry names a source controller (`source`, unique), how to recognise resources it manages (`detect.ingressClasses`, `detect.annotationPrefixes`), and a map of the source's annotation keys to their migration classification (`annotations`). The controller treats this as opaque data — it's contributed by the template libraries, merged by the Helm chart, and consumed by tooling such as `migrate-check`; no entry influences rendering or reconciliation. See [Migrating](./migrating.md) for the tooling that reads it.
+See [Validation Tests](./validation-tests.md) for the full test-framework reference — fixtures, assertion types, CLI usage, and the [`requires` / `requiresFields` stripping semantics](./validation-tests.md#conditional-tests-requires-and-requiresfields) — and [CRD & Validation Design](./development/crd-validation-design.md) for the design rationale.
 
 ### validators
 
-Pluggable validator sidecars consulted by the admission webhook (optional). Each entry names a validator (RFC 1123 label), points at a Unix domain socket inside the controller pod, and lists file-glob patterns matched against rendered file paths to decide which files to send to that validator.
+Pluggable validator sidecars consulted by the admission webhook (optional).
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `name` | string | Yes | — (RFC 1123 label, unique across the array) |
+| `socketPath` | string | Yes | — (absolute path to a Unix domain socket inside the controller pod) |
+| `files` | `[]string` | Yes (at least one) | — (glob patterns matched against rendered file paths) |
+| `timeoutMs` | integer | No | `5000` (range 1–60000) |
+| `maxConnections` | integer | No | `4` (range 1–32) |
 
 ```yaml
 validators:
@@ -584,32 +455,134 @@ validators:
     socketPath: /var/run/haptic-validators/spoa-hub.sock
     files:
       - "/etc/haproxy-spoa-hub/*.toml"
-    timeoutMs: 5000        # optional per-call deadline
-    maxConnections: 4      # optional connection-pool ceiling
 ```
 
-See [Pluggable Validators](./operations/pluggable-validators.md) for the wire protocol, sidecar wiring, and full field reference.
+See [Pluggable Validators](./operations/pluggable-validators.md) for the wire protocol, sidecar wiring, and routing examples.
+
+### migrationCoverage
+
+Per-migration-source annotation coverage declarations (optional).
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `source` | string | Yes | — (source controller name, unique) |
+| `detect` | object | No | — (`ingressClasses`, `annotationPrefixes`) |
+| `annotations` | `map[string]object` | No | — (source annotation keys → migration classification) |
+
+The controller treats this as opaque data — it's contributed by the template libraries, merged by the Helm chart, and consumed by tooling such as `migrate-check`; no entry influences rendering or reconciliation. See [Migrating](./migrating.md) for the tooling that reads it.
+
+### controller
+
+Controller-level settings for leader election and config publishing.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `leaderElection.enabled` | bool | No | `true` |
+| `leaderElection.leaseName` | string | No | `""` → `haptic-leader` (the Helm chart sets the release fullname) |
+| `leaderElection.leaseDuration` | string | No | `30s` |
+| `leaderElection.renewDeadline` | string | No | `20s` |
+| `leaderElection.retryPeriod` | string | No | `5s` |
+
+```yaml
+controller:
+  leaderElection:
+    enabled: true
+    leaseDuration: 30s
+    renewDeadline: 20s
+    retryPeriod: 5s
+```
+
+!!! note
+    There is no reconciler-level debounce knob. The Reconciler fires immediately on every resource/HTTP event; batching is per-watcher (`spec.watchedResources.<name>.debounceInterval`, default 2s) and reload throttling is the deployer's `spec.dataplane.minDeploymentInterval`.
+
+!!! note
+    These are the controller's built-in defaults from `pkg/core/config/defaults.go` — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (15s/10s/2s), so the leader rides out multi-second API-server or CPU starvation stalls without losing the lease. The Helm chart sets the same values; setting any of these fields on the CRD only matters if you need different values (e.g. faster crash-failover, or clusters with significant clock skew).
+
+See [High Availability](./operations/high-availability.md) for leader election details.
+
+#### configPublishing
+
+Controls how rendered configurations are stored in `HAProxyCfg` CRD resources.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `compressionThreshold` | int64 | No | `1048576` (1 MiB). A value of `0` is treated as unset — the 1 MiB default applies (compression can't currently be disabled) |
+
+```yaml
+controller:
+  configPublishing:
+    compressionThreshold: 1048576
+```
+
+When the rendered configuration exceeds the threshold, it's compressed with zstd and base64-encoded; the `HAProxyCfg` resource stores it with `spec.compressed: true`, reducing etcd storage and speeding up watch events for large configurations. To read a published config back in plaintext, use `haptic-controller config view` — see [Debugging](./operations/debugging.md#common-recipes).
+
+### logging
+
+Log level configuration.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `level` | string (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`; case-insensitive) | No | `""` → the `LOG_LEVEL` environment variable → `INFO` |
+
+```yaml
+logging:
+  level: DEBUG
+```
+
+### dataplane
+
+Dataplane API connection, deployment, and validation settings.
+
+| Field | Type | Required | Default |
+|-------|------|----------|---------|
+| `port` | integer (1–65535) | No | `5555` |
+| `minDeploymentInterval` | string | No | `2s` (the Helm chart ships `5s`) |
+| `driftPreventionInterval` | string | No | `60s` |
+| `deploymentTimeout` | string | No | `30s` |
+| `configPublishInterval` | string | No | `10s` |
+| `reloadVerificationTimeout` | string | No | `10s` |
+| `syncTimeout` | string | No | `2m` |
+| `mapsDir` | string | No | `/etc/haproxy/maps` |
+| `sslCertsDir` | string | No | `/etc/haproxy/certs` (the Helm chart sets `/etc/haproxy/ssl`) |
+| `generalStorageDir` | string | No | `/etc/haproxy/general` |
+| `configFile` | string | No | `/etc/haproxy/haproxy.cfg` |
+
+```yaml
+dataplane:
+  port: 5555
+  minDeploymentInterval: 2s
+  driftPreventionInterval: 60s
+```
+
+The three `*Dir` paths are used by the controller's local `haproxy -c` validation step as well as for deployment — they must match the paths the Dataplane API server is configured to manage (`configFile` is used only by local validation; the Dataplane API manages its own config-file path). The Helm chart keeps them in sync by deriving both sides from a single set of chart values. For tuning guidance on the interval fields, see [Performance — Deployment Pacing](./operations/performance.md#deployment-pacing).
 
 ## Status Subresource
 
-The controller updates the status field with validation results. Real fields are documented in `pkg/apis/haproxytemplate/v1alpha1/types_config.go`:
+The controller updates the status field with validation results:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `observedGeneration` | int64 | The `.metadata.generation` the status reflects |
+| `lastValidated` | timestamp | Last successful validation |
+| `validationStatus` | string | `Valid`, `Invalid`, or `Unknown` — the printer column shown by `kubectl get htplcfg` |
+| `validationMessage` | string | Human-readable summary |
+| `validationErrors` | `[]string` | Populated when `Invalid`; each entry names the template and error context |
+| `conditions` | `[]Condition` | Standard `metav1.Condition` list (e.g. `Ready`) |
 
 ```yaml
 status:
-  observedGeneration: 1                              # tracks .metadata.generation
-  lastValidated: "2025-01-27T10:00:00Z"              # last successful validation timestamp
-  validationStatus: Valid                            # Valid, Invalid, or Unknown
-  validationMessage: "All validation tests passed"   # human-readable summary
-  validationErrors:                                  # populated when Invalid; each entry names template + error context
-    - "haproxy.cfg: parse error at line 12: …"
+  observedGeneration: 1
+  lastValidated: "2025-01-27T10:00:00Z"
+  validationStatus: Valid
+  validationMessage: "All validation tests passed"
+  validationErrors:
+    - "haproxy.cfg: parse error at line 12: …"   # only when Invalid
   conditions:
     - type: Ready
       status: "True"
       reason: ValidationSucceeded
       lastTransitionTime: "2025-01-27T10:00:00Z"
 ```
-
-`validationStatus` is the printer column shown by `kubectl get htplcfg`.
 
 ## Command-Line Management
 
@@ -654,48 +627,6 @@ spec:
     level: DEBUG
 '
 ```
-
-## Migration from ConfigMap
-
-Earlier pre-release builds accepted configuration as a `ConfigMap` with snake_case field names. That path was removed before the first tagged release. If you're still on an unreleased build that ships the old format, the mapping is:
-
-**Old (ConfigMap):**
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: haproxy-config
-data:
-  config: |
-    pod_selector:
-      match_labels:
-        app: haproxy
-    # ... rest of YAML config
-```
-
-**New (CRD):**
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: haproxy-config
-spec:
-  credentialsSecretRef:
-    name: haproxy-credentials
-  podSelector:
-    matchLabels:
-      app: haproxy
-  # ... rest of configuration as spec fields
-```
-
-**Key differences:**
-
-- Configuration is now strongly typed with validation
-- Credentials moved to separate Secret reference
-- Field names use camelCase (e.g., `podSelector` vs `pod_selector`)
-- Validation tests can be embedded inline
 
 ## Validation
 
@@ -743,7 +674,8 @@ Additional validation occurs when:
 
 ## See Also
 
-- [Templating Guide](./templating.md) — template syntax, filters, context variables
+- [Templating Guide](./templating.md) — template syntax, loops, status patches
+- [Template Reference](./template-reference.md) — context variables, functions, `pathResolver`
 - [Watching Resources](./watching-resources.md) — store types, indexing, selectors
 - [Validation Tests](./validation-tests.md) — writing and running embedded tests
 - [CRD & Validation Design](./development/crd-validation-design.md) — rationale behind the CRD shape and validation layers

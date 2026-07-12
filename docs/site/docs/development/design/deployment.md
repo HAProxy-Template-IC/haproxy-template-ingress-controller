@@ -111,19 +111,7 @@ graph TB
 
 ```
 
-**Resource Requirements** (chart defaults; see [Performance Guide](../../operations/performance.md) for sizing by ingress count):
-
-Controller Pod:
-
-- CPU request `100m` (no CPU limit — avoids throttling; GOMAXPROCS auto-derived)
-- Memory `512Mi` request = limit, so GOMEMLIMIT is auto-derived via automemlimit (the pod is Burstable, not Guaranteed QoS, because there's no CPU limit by design)
-- `/tmp` emptyDir for transient `haproxy -c` validation; root filesystem is read-only
-
-HAProxy Pod:
-
-- HAProxy container: tuned by the chart; the main consumer is connection buffers
-- Dataplane API sidecar: `50m` CPU request, `256Mi` memory request = limit
-- Shared config volume (`emptyDir`) mounted at `/etc/haproxy`; both containers read/write it
+**Resource Requirements**: chart defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container-awareness mechanics live in [Performance — Controller Resource Sizing](../../operations/performance.md#controller-resource-sizing). Diagram-relevant specifics: the controller writes transient `haproxy -c` validation files to a `/tmp` emptyDir (root filesystem is read-only), and both HAProxy-pod containers share the config `emptyDir` mounted at `/etc/haproxy`.
 
 ## Network Topology
 
@@ -194,9 +182,44 @@ graph LR
 5. **Monitoring**: Prometheus → Controller Service (ClusterIP) → Controller Pod (metrics endpoint)
 6. **Health Checks**: Kubernetes → Controller Service → Controller Pod (healthz endpoint)
 
-**Scaling Considerations:**
+**Scaling Considerations**: HAProxy scales horizontally via `haproxy.replicaCount` (pods are auto-discovered through `controller.config.podSelector`); the controller scales for availability, not throughput — see [Performance — Scaling Strategies](../../operations/performance.md#scaling-strategies) and [High Availability](../../operations/high-availability.md). NetworkPolicy must allow the controller to reach Dataplane API port 5555 on each HAProxy pod ([Networking](../../operations/networking.md)).
 
-- **HAProxy horizontal scaling**: set `haproxy.replicaCount=N` (or scale the Deployment directly — its name is `<release-fullname>-haproxy`, where the fullname is `<release>-haptic` unless the release name already contains `haptic`). Find it with `kubectl get deploy -l app.kubernetes.io/component=loadbalancer`. Pods are auto-discovered via `controller.config.podSelector`.
-- **Controller horizontal scaling**: Run 2+ replicas with leader election (the chart default). Only the leader pushes configuration; followers are hot standby.
-- **Resource sizing**: Scales with the number of watched resources and template complexity — see [Performance Guide](../../operations/performance.md) for per-size profiles.
-- **Network topology**: Ensure LoadBalancer/NodePort can distribute traffic across all HAProxy replicas and that NetworkPolicy allows the controller to reach Dataplane API port 5555 on each HAProxy pod.
+## Build Optimizations (Contributors)
+
+Controller images are built with Go's Profile-Guided Optimization (PGO), which typically provides 2-7% CPU improvement by optimizing frequently-called functions. A baseline CPU profile (`cmd/controller/default.pgo`) is committed to the repository; Go automatically uses it during builds to optimize hot paths.
+
+**Updating the profile** from the development environment:
+
+1. Start the dev environment:
+
+    ```bash
+    ./scripts/start-dev-env.sh
+    ```
+
+2. Port-forward to the controller's debug port:
+
+    ```bash
+    kubectl -n haptic port-forward deploy/haptic-controller 8080:8080
+    ```
+
+3. Generate workload (trigger reconciliation by modifying resources).
+
+4. Collect a 30-second CPU profile:
+
+    ```bash
+    make pgo-profile
+    # Or manually:
+    curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
+    ```
+
+5. Rebuild with the new profile:
+
+    ```bash
+    make build
+    ```
+
+For optimal results, collect profiles from production during representative workloads and merge multiple profiles for broader coverage:
+
+```bash
+make pgo-merge PROFILES='profile1.pgo profile2.pgo'
+```

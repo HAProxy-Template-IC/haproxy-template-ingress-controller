@@ -380,32 +380,7 @@ affinity:
 
 ### Monitoring and Alerts
 
-Set up Prometheus alerts for leader election health:
-
-```yaml
-groups:
-  - name: haproxy-ic-leader-election
-    rules:
-      # No leader
-      - alert: NoLeaderElected
-        expr: sum(haptic_leader_election_is_leader) < 1
-        for: 1m
-        annotations:
-          summary: "No HAProxy controller leader elected"
-
-      # Multiple leaders (split-brain)
-      - alert: MultipleLeaders
-        expr: sum(haptic_leader_election_is_leader) > 1
-        annotations:
-          summary: "Multiple HAProxy controller leaders detected (split-brain)"
-
-      # Frequent transitions
-      - alert: FrequentLeadershipChanges
-        expr: rate(haptic_leader_election_transitions_total[1h]) > 5
-        for: 15m
-        annotations:
-          summary: "HAProxy controller experiencing frequent leadership changes"
-```
+The leader-election alerts (no leader, split-brain, frequent transitions) are part of the recommended alert set in [Monitoring — Alerting Rules](./monitoring.md#alerting-rules). The Helm chart ships them as a built-in `PrometheusRule` — enable it with `monitoring.prometheusRule.enabled`.
 
 ## Migration from Single-Replica
 

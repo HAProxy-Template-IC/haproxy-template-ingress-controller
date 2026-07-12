@@ -82,6 +82,7 @@ nav:
   - Migrating: migrating.md
   - Using HAPTIC:
     - Templating: templating.md
+    - Template Reference: template-reference.md
     - Watching Resources: watching-resources.md
     - CRD Reference: crd-reference.md
     - Validation Tests: validation-tests.md

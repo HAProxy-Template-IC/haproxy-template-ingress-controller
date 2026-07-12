@@ -2,9 +2,9 @@
 
 ## Overview
 
-The controller requires network access to the Kubernetes API, HAProxy pods, and DNS.
+This page covers the chart's `NetworkPolicy` configuration: what the default policies allow, how to harden them, and how to replace them with your own. For exposing HAProxy traffic to the outside world (Services, ports, LoadBalancer setup), see [HAProxy Deployment](../haproxy-deployment.md).
 
-For all NetworkPolicy-related Helm values, see the [Configuration Reference](../reference.md).
+The controller requires network access to the Kubernetes API, HAProxy pods, and DNS. For all NetworkPolicy-related Helm values, see the [Configuration Reference](../reference.md); for the security rationale behind these policies, see [Security — Network Exposure](./security.md#network-exposure).
 
 ## Default configuration
 
@@ -70,6 +70,39 @@ networkPolicy:
             protocol: TCP
           - port: 6443
             protocol: TCP
+```
+
+## Replacing the shipped policies
+
+Set `networkPolicy.enabled: false` (controller) or `haproxy.networkPolicy.enabled: false` (HAProxy) to manage your own policies. The example below is a narrowed, controller-only variant — the shipped policy's selector matches **every** release pod (name + instance labels, no component discriminator) and therefore also carries the Dataplane port 5555 ingress allowance for the HAProxy pods; if you replace it, cover the HAProxy pods separately:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: haptic-controller
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: haptic
+      app.kubernetes.io/component: controller
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - port: 8080   # /healthz, /debug/*
+        - port: 9090   # /metrics
+        - port: 9443   # webhook
+  egress:
+    - to:
+        - namespaceSelector: {}   # kube-apiserver is in every cluster, tighten if you know the selector
+      ports:
+        - port: 443
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: loadbalancer
+      ports:
+        - port: 5555   # Dataplane API
 ```
 
 ## Allowing Prometheus scraping

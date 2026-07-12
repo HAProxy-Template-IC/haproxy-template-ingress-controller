@@ -25,7 +25,7 @@ The Helm chart provisions a `ServiceAccount`, a `ClusterRole`, and a namespace-s
 
 Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
 
-Narrow the cluster-wide watch to a single namespace by pinning `namespace:` on each watched-resource entry — see [Watching Resources](../watching-resources.md). For multi-namespace filtering by labels, fall back to per-namespace `Role`/`RoleBinding` instead of a `ClusterRole`, or filter inside the template against a watched `namespaces` resource.
+Narrow the cluster-wide watch to a single namespace with `fieldSelector: "metadata.namespace=<ns>"` on each watched-resource entry — see [Watching Resources](../watching-resources.md#narrowing-the-watch). For label-based namespace filtering, see [Performance — Resource Watching Optimization](./performance.md#resource-watching-optimization).
 
 A namespace-scoped `Role` (bound only in the controller's own namespace) additionally grants the writes the controller performs locally — kept off the `ClusterRole` to tighten the blast radius:
 
@@ -106,38 +106,7 @@ The Dataplane API is authenticated with a basic-auth password stored in the `<re
 - The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports, **plus a default `networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
 - The HAProxy policy defaults to `allowExternal: true`, which renders a permissive all-port ingress rule — deliberate, because Gateway listeners bind dynamic ports.
 
-Set the relevant flag to `false` to manage your own. The example below is a narrowed, controller-only variant — the shipped policy's selector matches **every** release pod (name + instance labels, no component discriminator) and therefore also carries the Dataplane port 5555 ingress allowance for the HAProxy pods; if you replace it, cover the HAProxy pods separately:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: haptic-controller
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: haptic
-      app.kubernetes.io/component: controller
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - ports:
-        - port: 8080   # /healthz, /debug/*
-        - port: 9090   # /metrics
-        - port: 9443   # webhook
-  egress:
-    - to:
-        - namespaceSelector: {}   # kube-apiserver is in every cluster, tighten if you know the selector
-      ports:
-        - port: 443
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: loadbalancer
-      ports:
-        - port: 5555   # Dataplane API
-```
-
-If you keep the debug port enabled, pair it with a NetworkPolicy that restricts ingress to your observability namespace.
+To tighten, replace, or debug these policies — including a copy-pastable replacement policy and its selector caveat — see [Networking](./networking.md#replacing-the-shipped-policies). If you keep the debug port enabled, pair it with a NetworkPolicy that restricts ingress to your observability namespace.
 
 ## Secrets in Templates
 
@@ -234,6 +203,7 @@ Before exposing a HAPTIC deployment to production traffic:
 
 ## See Also
 
+- [Networking](./networking.md) — NetworkPolicy mechanics: default rules, hardening, replacement policies
 - [Monitoring](./monitoring.md) — signals for auth failures, webhook drops, leader flaps
 - [Debugging](./debugging.md) — accessing `/debug/*` safely
 - [High Availability](./high-availability.md) — leader election RBAC and lease ownership
