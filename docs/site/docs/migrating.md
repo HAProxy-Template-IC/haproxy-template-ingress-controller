@@ -181,7 +181,7 @@ Useful flags:
 
 ## From ingress-nginx
 
-### 1. Match the IngressClass
+### Match the IngressClass
 
 HAPTIC scopes Ingresses with a field selector on
 `spec.ingressClassName=<ingressClass.name>` (a client-side filter — the
@@ -208,7 +208,7 @@ its store). Your Ingresses carry `ingressClassName: nginx`, so pick one:
     does **not** help: the match is on the literal `spec.ingressClassName` value,
     so default-class resolution and class-less Ingresses are never picked up.
 
-### 2. Enable the annotation library
+### Enable the annotation library
 
 ```bash
 --set controller.templateLibraries.nginxIngress.enabled=true
@@ -224,7 +224,7 @@ is already running (the default-on haproxy-ingress and gateway libraries
 auto-enable plugins of their own). Basic host/path routing works without this
 library; only the `nginx.ingress.kubernetes.io/*` annotations need it.
 
-### 3. Control the DNS cutover
+### Control the DNS cutover
 
 Keep `controller.statusPatches.enabled=false` until you've verified routing.
 With it on, the moment HAPTIC's HAProxy Service has an address it stamps
@@ -302,9 +302,9 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 suppo
 
 The `haproxy-ingress.github.io/*` library is **enabled by default**, so
 jcmoraisjr/haproxy-ingress annotations work with no flag change. You still need
-to [match the IngressClass](#1-match-the-ingressclass) (your Ingresses likely
+to [match the IngressClass](#match-the-ingressclass) (your Ingresses likely
 use `ingressClassName: haproxy` — either edit them or `--set ingressClass.name=haproxy`)
-and [control the DNS cutover](#3-control-the-dns-cutover) the same way.
+and [control the DNS cutover](#control-the-dns-cutover) the same way.
 
 Most routing, SSL, session-affinity, redirect, HSTS, CORS, access-control,
 basic/external auth, client-mTLS, and WAF annotations are supported. Full
@@ -358,9 +358,9 @@ The library classifies 92 `haproxy-ingress.github.io/*` annotations: 62 supporte
 
 The `haproxy.org/*` library (the official haproxytech/kubernetes-ingress
 annotation set) is **enabled by default**, so those annotations work with no flag
-change. You still need to [match the IngressClass](#1-match-the-ingressclass)
+change. You still need to [match the IngressClass](#match-the-ingressclass)
 (your Ingresses likely use `ingressClassName: haproxy`) and
-[control the DNS cutover](#3-control-the-dns-cutover) the same way.
+[control the DNS cutover](#control-the-dns-cutover) the same way.
 
 HAPTIC reads these annotations on **Ingress** resources only. haproxytech's
 controller also reads many of them on Service and ConfigMap resources; that
@@ -406,20 +406,18 @@ reports. Each fails quietly, so check them first.
 - **Existing Ingresses aren't being routed.** HAPTIC only serves Ingresses whose
   `spec.ingressClassName` equals `ingressClass.name` (default **`haptic`**) —
   an `ingressClassName: nginx` Ingress is filtered out before it reaches the
-  controller's store. Fix: [match the IngressClass](#1-match-the-ingressclass).
+  controller's store. Fix: [match the IngressClass](#match-the-ingressclass).
 
 - **Annotations seem to be ignored.** The `nginx.ingress.kubernetes.io/*`
   compatibility library is **disabled by default**, so those annotations
   (timeouts, auth, CORS, rate-limits, redirects) are silent no-ops until you turn
-  it on. Fix: [enable the annotation library](#2-enable-the-annotation-library).
+  it on. Fix: [enable the annotation library](#enable-the-annotation-library).
   (The `haproxy-ingress.github.io/*` and `haproxy.org/*` libraries are on by
   default.)
 
 - **DNS cut over before you were ready.** Ingress status writes are **on by
-  default**: as soon as HAPTIC's HAProxy Service has an address it stamps
-  `.status.loadBalancer` onto every adopted Ingress, and `external-dns` can act
-  on that to repoint DNS. Keep it off until you've verified routing. Fix:
-  [control the DNS cutover](#3-control-the-dns-cutover).
+  default** — install with them off and enable them only after you've verified
+  routing. Fix: [control the DNS cutover](#control-the-dns-cutover).
 
 For symptoms beyond these three, see the general
 [troubleshooting](troubleshooting.md) guide.

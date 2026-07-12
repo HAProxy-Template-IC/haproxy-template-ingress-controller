@@ -9,6 +9,9 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 
 | Symptom | Section |
 |---------|---------|
+| Pods stuck in ImagePullBackOff | [Image Pull Errors](#image-pull-errors) |
+| "no kind HAProxyTemplateConfig is registered" | [CRD Not Found](#crd-not-found) |
+| No DNS or API connectivity on a kind cluster | [NetworkPolicy Issues in kind](#networkpolicy-issues-in-kind) |
 | Pod in CrashLoopBackOff | [Controller Not Starting](#controller-not-starting) |
 | Pods running, no reconciliation activity | [Controller Running But Not Processing](#controller-running-but-not-processing) |
 | "template rendering failed" in logs | [Invalid Template Syntax](#invalid-template-syntax) |
@@ -20,6 +23,61 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 | High CPU or slow reconciliation | [Slow Reconciliation](#slow-reconciliation) |
 | OOMKilled / gradual memory growth | [High Memory Usage](#high-memory-usage) |
 | "shm-stats-file-max-objects" / reload failures | [Shared Memory Stats Limit](#shared-memory-stats-limit) |
+
+## Install Issues
+
+Problems that surface while the Helm chart installs, before the controller does any work.
+
+### Image Pull Errors
+
+If pods are stuck in `ImagePullBackOff`:
+
+```bash
+kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic
+```
+
+Verify the `haproxyVersion` value matches an available image tag:
+
+```bash
+helm get values haptic -n haptic | grep haproxyVersion
+```
+
+The controller image tag is derived from both the chart `version` and `haproxyVersion`. If pulling from a private registry, configure `controller.podSpec.imagePullSecrets` (and `haproxy.podSpec.imagePullSecrets` if the chart's HAProxy pods need the same registry).
+
+### CRD Not Found
+
+If the controller fails with "no kind HAProxyTemplateConfig is registered":
+
+```bash
+kubectl get crd haproxytemplateconfigs.haproxy-haptic.org
+```
+
+CRDs are installed by the chart. If missing, reinstall:
+
+```bash
+helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version <version> --namespace haptic
+```
+
+### NetworkPolicy Issues in kind
+
+For kind clusters, ensure:
+
+- Calico or Cilium CNI is installed
+- DNS access is allowed
+- The `networkPolicy.egress.kubernetesApi` CIDRs cover your API server (see [Networking](./operations/networking.md))
+
+Debug NetworkPolicy:
+
+```bash
+# Check controller can resolve DNS
+kubectl exec -n haptic <controller-pod> -- nslookup kubernetes.default
+
+# Check controller can reach HAProxy pod
+kubectl exec -n haptic <controller-pod> -- curl http://<haproxy-pod-ip>:5555/v3/info
+```
+
+For NetworkPolicy configuration details, see [Networking](./operations/networking.md).
 
 ## Controller Issues
 
@@ -248,6 +306,34 @@ openssl s_client -connect localhost:443 -servername your-host.example.com < /dev
 | Certificate not deployed | Check `sslCertificates` section | Define template, watch secret, use `b64decode` |
 | Wrong cert path | `grep "bind.*ssl.*crt" haproxy.cfg` | Use `pathResolver.GetPath("cert.pem", "cert")` |
 
+**"Secret not found" errors:**
+
+Check that the Secret exists in the correct namespace:
+
+```bash
+kubectl get secret default-ssl-cert -n haptic
+```
+
+**HAProxy fails to start with SSL errors:**
+
+Verify the certificate and key are valid:
+
+```bash
+# Extract and verify certificate
+kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
+
+# Verify key
+kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.key}' | base64 -d | openssl rsa -check -noout
+```
+
+**Certificate not being updated:**
+
+The controller watches the Secret and deploys certificate changes automatically within seconds. If HAProxy keeps serving the old certificate, check the controller logs for render or deployment errors.
+
+By default the chart watches Secrets with an **on-demand** store (`controller.config.watchedResources.secrets.store: on-demand`), so cert bodies aren't kept resident in memory. Override it to `full` if you'd rather hold Secrets in the in-memory store.
+
+For certificate provisioning and rotation (cert-manager, manual Secrets, the chart-generated default), see [SSL Certificates](./ssl-certificates.md).
+
 ## Performance Issues
 
 ### Slow Reconciliation
@@ -353,19 +439,13 @@ The Helm chart enables the debug server on port `8080` by default (same port as 
 kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 ```
 
-`/healthz` and `/debug/*` share the same listener, so setting `controller.debugPort: 0` disables both and breaks the Kubernetes liveness/readiness probes — restrict access via NetworkPolicy instead. To move both endpoints to a different port, set `controller.debugPort: <port>` (and update the forward accordingly).
-
-**Available endpoints**:
-
-- `/debug/vars` — internal state (config, credentials metadata, rendered output, resources, events, uptime)
-- `/debug/vars/<name>` — a single variable; supports `?field={.jsonpath}` for subselection
-- `/debug/pprof/` — Go profiling
-
-See the [Debugging Guide](./operations/debugging.md) for the full endpoint catalogue.
+Don't disable it with `controller.debugPort: 0` — `/healthz` shares the listener, so that breaks the liveness/readiness probes; restrict access via NetworkPolicy instead. See the [Debugging Guide](./operations/debugging.md) for the endpoint catalogue and usage.
 
 ## See Also
 
 - [Getting Started](./getting-started.md)
+- [Debugging](./operations/debugging.md)
+- [Monitoring](./operations/monitoring.md)
 - [CRD Reference](./crd-reference.md)
 - [Validation Tests](./validation-tests.md)
 - [Templating Guide](./templating.md)

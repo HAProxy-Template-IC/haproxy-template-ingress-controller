@@ -278,6 +278,17 @@ You should see:
 - A backend section referencing the echo service
 - Server entries pointing to the echo pod endpoints
 
+### Inspect the rendered configuration resource
+
+The controller also writes the rendered HAProxy config to a read-only `HAProxyCfg` resource on every reconciliation, so you can inspect it without pod access:
+
+```bash
+kubectl describe haproxycfg -n haptic
+```
+
+!!! note "CRD short names"
+    `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the *output*. The *input* — templates, watched resources, dataplane settings — lives in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Edit that one, not `HAProxyCfg`. Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
+
 ## Step 5: Test the routing
 
 ### Port-forward to HAProxy
@@ -316,83 +327,33 @@ You should see responses from different echo pods.
 
 ## What's happening behind the scenes
 
-When you created the Ingress resource, the controller:
-
-1. **Detected the change** via the Kubernetes watch API and updated its in-memory store
-2. **Triggered a reconciliation** through a leading-edge debouncer (so a single change fires immediately)
-3. **Rendered templates** using the default HAProxyTemplateConfig with your Ingress data
-4. **Validated the rendered config**: client-native syntax parse → OpenAPI schema check. (The heavier `haproxy -c` semantic check already ran in the admission webhook when the Ingress was accepted, and the Dataplane API re-validates on push.) Both must pass before the change reaches HAProxy.
-5. **Compared the validated config** with each pod's live config to classify the change (runtime-eligible server-field updates vs structural changes)
-6. **Deployed the change** to all HAProxy pods in parallel via the Dataplane API, pushing the full rendered config in a single request per pod
-7. **Used the runtime API** where possible (server address/weight changes, map updates, etc.) to avoid HAProxy process reloads
-
-The entire process typically completes in under 1 second.
+When you created the Ingress, the controller detected the change via the Kubernetes watch API and rendered the templates from the default HAProxyTemplateConfig with your Ingress data. The rendered config then passed validation (syntax parse and schema check) before anything reached HAProxy. Finally, the controller deployed the change to all HAProxy pods in parallel via the Dataplane API — using HAProxy's runtime API where possible to avoid process reloads — typically completing the whole cycle in under 1 second. For the full pipeline, see the [Architecture Overview](./development/design/architecture-overview.md).
 
 ## Next steps
 
 Now that you have a working setup, explore these topics:
 
-### Migrating from another ingress controller
+### Learn templating
 
-Replacing ingress-nginx or haproxy-ingress? See [Migrating to HAPTIC](./migrating.md)
+The [Templating Guide](./templating.md) is the natural next step: it covers the template language, the resource context your templates see, and how to add custom behavior. The default [template libraries](template-libraries.md) already handle path-based routing, SSL termination, and annotation-driven configuration — you only write templates to go beyond them (custom annotations, domain-specific logic, HAProxy features they don't cover).
+
+### Replacing another ingress controller?
+
+See [Migrating to HAPTIC](./migrating.md)
 for the zero-downtime, one-Ingress-at-a-time cutover — and the three settings
 that silently break a migration if you miss them.
 
 ### Customize the configuration
 
-The default configuration is generated from the HAProxyTemplateConfig CRD created by Helm. To customize:
+The running configuration is the HAProxyTemplateConfig resource Helm created — `kubectl edit haproxytemplateconfig -n haptic haptic-config` — and the [CRD Reference](./crd-reference.md) documents every field.
 
-```bash
-# View the current configuration
-kubectl get haproxytemplateconfig -n haptic haptic-config -o yaml
+### Watch additional resources
 
-# Edit the configuration
-kubectl edit haproxytemplateconfig -n haptic haptic-config
-```
+Extend the controller to watch EndpointSlices, Secrets, ConfigMaps, or your own CRDs — see [Watching Resources](./watching-resources.md).
 
-See [CRD Reference](./crd-reference.md) for all available options.
+### Run in production
 
-### Template customization
-
-The default [template libraries](template-libraries.md) already cover many common use cases: path-based routing, SSL termination, and annotation-driven configuration. You do not need to write or modify templates to use these features.
-
-When you need to go beyond the default libraries — custom annotations, domain-specific logic, or HAProxy features not covered — see the [Templating Guide](./templating.md).
-
-### Watched resources
-
-Extend the controller to watch additional Kubernetes resources:
-
-- **EndpointSlices**: Use actual pod IPs instead of service DNS
-- **Secrets**: Load TLS certificates dynamically
-- **ConfigMaps**: Inject custom HAProxy configuration snippets
-- **Custom CRDs**: Define your own resource types
-
-See [Watching Resources](./watching-resources.md) for configuration details.
-
-### High availability
-
-Configure the controller for production deployments:
-
-- Scale to 3+ replicas across availability zones
-- Configure PodDisruptionBudgets
-- Set up monitoring and alerting
-- Keep leader election enabled (the default) so exactly one replica deploys
-
-See [High Availability](./operations/high-availability.md) for HA configuration.
-
-### Monitoring
-
-Set up Prometheus monitoring for the controller:
-
-```bash
-# Enable ServiceMonitor if using Prometheus Operator
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.1 --reuse-values -n haptic \
-  --set monitoring.serviceMonitor.enabled=true \
-  --set monitoring.serviceMonitor.interval=30s
-```
-
-See [Monitoring Guide](./operations/monitoring.md) for metrics and dashboards.
+For 3+ replicas, PodDisruptionBudgets, and leader election, see [High Availability](./operations/high-availability.md). For Prometheus metrics and dashboards, see [Monitoring](./operations/monitoring.md).
 
 ## Troubleshooting
 

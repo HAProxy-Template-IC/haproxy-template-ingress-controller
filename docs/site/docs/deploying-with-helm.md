@@ -10,10 +10,9 @@ The Helm chart is the supported way to install HAPTIC. A default install deploys
 
 - Kubernetes 1.21+ (the default `PodDisruptionBudget` uses `policy/v1` and the controller watches `discovery.k8s.io/v1` EndpointSlices)
 - Helm 3.0+
-- **HAProxy 3.0 or newer** (the chart deploys HAProxy by default; template libraries require 3.0+ for SSL/TLS features)
 
 !!! note
-    The `haproxyVersion` value controls both the controller image tag and the HAProxy image tag, ensuring version compatibility between the two. See the [configuration reference](./reference.md) for details.
+    The `haproxyVersion` value controls both the controller image tag and the HAProxy image tag, ensuring version compatibility between the two. Supported versions start at HAProxy 3.0 — the template libraries require 3.0+ for their SSL/TLS features. See the [Chart Values Reference](./reference.md) for details.
 
 ## Installation
 
@@ -50,7 +49,7 @@ Jump to what you need:
 
 | I want to… | See |
 |------------|-----|
-| Configure ingress class or filter namespaces | [Configuration](./configuration.md) |
+| Configure or filter the ingress class | [IngressClass](./ingress-class.md) |
 | Set up TLS/HTTPS | [SSL Certificates](./ssl-certificates.md) |
 | Use Ingress annotations (auth, rate limiting, etc.) | [Annotations](./annotations.md) |
 | Tune HAProxy resource limits or service type | [HAProxy Deployment](./haproxy-deployment.md) |
@@ -58,7 +57,7 @@ Jump to what you need:
 | Run multiple controller replicas | [High Availability](./operations/high-availability.md) |
 | Set up Prometheus scraping | [Monitoring](./operations/monitoring.md) |
 | Restrict network access with NetworkPolicy | [Networking](./operations/networking.md) |
-| Diagnose problems | [Troubleshooting](./operations/troubleshooting.md) |
+| Diagnose problems | [Troubleshooting](./troubleshooting.md) |
 
 ## Upgrading
 
