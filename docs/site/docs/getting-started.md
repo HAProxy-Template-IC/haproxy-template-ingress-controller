@@ -8,13 +8,12 @@ hide:
 
 ## Overview
 
-This guide walks you through deploying HAPTIC and creating your first template-driven configuration. You'll learn how to:
+This guide installs HAPTIC and shows it turning an Ingress into a live HAProxy configuration. You'll:
 
-- Install the controller and HAProxy using Helm
-- Create a basic Ingress configuration
-- Verify the deployment and test routing
+- Install the controller and HAProxy with Helm
+- Point an Ingress at HAPTIC and inspect the config it generates
 
-The entire process takes approximately 15-20 minutes on a local Kubernetes cluster.
+Installing takes a few minutes on a local Kubernetes cluster. The sample-app walkthrough that follows is optional.
 
 Want a taste first? This is a complete, minimal HAPTIC config rendering an Ingress
 into an HAProxy config — in your browser, no install. Click **Run live**, then edit
@@ -115,7 +114,7 @@ spec:
     # ... as above ...
 ```
 
-The Helm chart installs a complete resource of this shape for you (Step 1); see
+The Helm chart installs a complete resource of this shape for you; see
 the [CRD Reference](./crd-reference.md) for every field.
 
 ## Prerequisites
@@ -127,7 +126,7 @@ the [CRD Reference](./crd-reference.md) for every field.
 !!! note "Webhook validation"
     A validating admission webhook is **enabled by default and works out of the box** — it rejects Ingress, HTTPRoute, and GRPCRoute changes that would break template rendering, using a self-signed certificate the chart issues itself (no cert-manager required). For rotation and certificate alternatives, see [Webhook certificates](./ssl-certificates.md#webhook-certificates).
 
-## Step 1: Install with Helm
+## Install with Helm
 
 Install the controller and HAProxy using Helm:
 
@@ -162,9 +161,22 @@ You should see two controller pods (the chart defaults to two replicas with lead
 !!! note "HAProxy version"
     The chart defaults to HAProxy 3.4, the latest Long-Term Support (LTS) release. To pin a different series, set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for the full list and support status.
 
-## Step 2: Deploy a sample application
+## HAPTIC is running
 
-Create a simple echo service to test routing:
+That's the whole install. HAPTIC now watches Ingress and Gateway API resources with a production-ready default configuration — **no templating required**:
+
+- **Ingress** — any Ingress with `ingressClassName: haptic` is picked up automatically. The [HAProxy Technologies](./libraries/haproxytech.md) and [haproxy-ingress](./libraries/haproxy-ingress.md) annotation libraries are on by default; [ingress-nginx](./libraries/nginx-ingress.md) compatibility is available as an opt-in. See the [Ingress library](./libraries/ingress.md).
+- **Gateway API** — create a `Gateway` with `gatewayClassName: haptic` and attach `HTTPRoute` resources; see the [Gateway library](./libraries/gateway.md) and [GatewayClass setup](./gateway-class.md).
+
+Point your existing resources at HAPTIC and they route immediately. You only reach for [templating](./templating.md) to go beyond what these libraries already do.
+
+## Optional walkthrough: route a sample app
+
+The rest of this guide deploys a sample app and confirms routing end to end. Skip it if you'll use your own Ingress or Gateway resources.
+
+### Deploy a sample app
+
+Create a simple echo service:
 
 ```yaml
 apiVersion: apps/v1
@@ -210,7 +222,7 @@ Save as `echo-app.yaml` and apply:
 kubectl apply -f echo-app.yaml
 ```
 
-## Step 3: Create an Ingress resource
+### Create an Ingress
 
 Create an Ingress that routes your test hostname to the echo service:
 
@@ -246,9 +258,9 @@ The controller automatically detects this new Ingress, renders the HAProxy confi
 !!! tip "TLS for a host"
     This Ingress is served over HTTP only. The chart binds its HTTPS listener once at least one resource requests TLS — an Ingress with `spec.tls`, a Gateway HTTPS listener, or SSL passthrough. To terminate HTTPS for this host, add a `spec.tls` entry backed by a `kubernetes.io/tls` Secret — see [Ingress library — TLS configuration](./libraries/ingress.md#tls-configuration). Once the HTTPS listener is up, any host it serves that has no certificate of its own falls back to the chart's [default certificate](./ssl-certificates.md) (a self-signed cert out of the box).
 
-## Step 4: Verify the configuration
+### Verify the configuration
 
-### Check controller logs
+#### Check the controller logs
 
 Watch the controller process the Ingress:
 
@@ -264,7 +276,7 @@ level=INFO msg=Reconciliation trigger=resource_change instances=2/2 reloads=2 op
 
 It reports the trigger, how many HAProxy instances were updated (`instances`), the reloads and runtime operations applied (with a per-operation breakdown such as `backend_create` / `server_create`), and per-phase timings. For the individual stages — the resource change, template render, validation, and per-instance deploy — raise the controller to the `debug` level (see [Enable debug logging](./troubleshooting.md#enable-debug-logging)).
 
-### Inspect the rendered HAProxy configuration
+#### Inspect the rendered HAProxy configuration
 
 The controller writes the rendered HAProxy config to a read-only `HAProxyCfg` resource on every reconciliation, so you can inspect exactly what it deployed straight from the Kubernetes API — no pod access needed:
 
@@ -281,9 +293,9 @@ You should see:
 !!! note "Output vs input"
     `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the controller's *output* — it republishes it from the templates whenever the rendered configuration changes, so editing it directly has no lasting effect and isn't advised: the next config change overwrites your edit. To change the configuration, edit the *input* instead — the templates, watched resources, and dataplane settings in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
 
-## Step 5: Test the routing
+### Test the routing
 
-### Port-forward to HAProxy
+#### Port-forward to HAProxy
 
 HAProxy is running inside the cluster and isn't directly reachable from your machine. Port-forward creates a temporary tunnel from your local port to the HAProxy service:
 
@@ -291,31 +303,15 @@ HAProxy is running inside the cluster and isn't directly reachable from your mac
 kubectl port-forward -n haptic svc/haptic-haproxy 8080:80
 ```
 
-### Test the endpoint
+#### Test the endpoint
 
 In another terminal:
 
 ```bash
-# Test with Host header
 curl -H "Host: echo.example.local" http://localhost:8080/
-
-# You should receive a response from the echo server showing:
-# - Request headers
-# - Host information
-# - Environment variables
 ```
 
-### Test load balancing
-
-Make multiple requests to see load balancing across echo pods:
-
-```bash
-for i in {1..10}; do
-  curl -s -H "Host: echo.example.local" http://localhost:8080/ | grep -o '"HOSTNAME":"[^"]*"'
-done
-```
-
-You should see responses from different echo pods.
+The echo server echoes back the request it saw. Repeat the request a few times to watch HAProxy balance across the echo pods — the `HOSTNAME` field (the serving pod's name) changes between responses.
 
 ## What's happening behind the scenes
 
@@ -323,11 +319,12 @@ When you created the Ingress, the controller detected the change via the Kuberne
 
 ## Next steps
 
-Now that you have a working setup, explore these topics:
+### Route with Ingress or Gateway API
 
-### Learn templating
+The default [template libraries](template-libraries.md) already handle path-based routing, TLS termination, and annotation-driven configuration — no templating needed. Point your resources at HAPTIC and read the reference for what each supports:
 
-The [Templating Guide](./templating.md) is the natural next step: it covers the template language, the resource context your templates see, and how to add custom behavior. The default [template libraries](template-libraries.md) already handle path-based routing, SSL termination, and annotation-driven configuration — you only write templates to go beyond them ([custom annotations](./templating.md#reading-a-custom-annotation), domain-specific logic, HAProxy features they don't cover).
+- **Ingress** — the [Ingress library](./libraries/ingress.md), with annotation compatibility for [HAProxy Technologies](./libraries/haproxytech.md) and [haproxy-ingress](./libraries/haproxy-ingress.md) on by default, and [ingress-nginx](./libraries/nginx-ingress.md) available opt-in.
+- **Gateway API** — the [Gateway library](./libraries/gateway.md) and [GatewayClass setup](./gateway-class.md).
 
 ### Replacing another Ingress controller?
 
@@ -342,6 +339,10 @@ The running configuration is the HAProxyTemplateConfig resource Helm created —
 ### Watch additional resources
 
 Extend the controller to watch EndpointSlices, Secrets, ConfigMaps, or your own CRDs — see [Watching Resources](./watching-resources.md).
+
+### Extend with templates (advanced)
+
+When the default libraries don't cover a case — a [custom annotation](./templating.md#reading-a-custom-annotation), domain-specific logic, or an HAProxy feature they don't emit — the [Templating Guide](./templating.md) covers the template language and the resource context your templates see.
 
 ### Run in production
 

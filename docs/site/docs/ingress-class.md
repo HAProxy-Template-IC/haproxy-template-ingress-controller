@@ -109,7 +109,7 @@ spec:
   ingressClassName: haptic  # References IngressClass.metadata.name
 ```
 
-For a complete Ingress walkthrough, see [Getting Started](./getting-started.md#step-3-create-an-ingress-resource).
+For a complete Ingress walkthrough, see [Getting Started](./getting-started.md#create-an-ingress).
 
 ## Disabling IngressClass creation
 

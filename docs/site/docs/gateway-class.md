@@ -18,7 +18,7 @@ If the CRDs are absent, the chart skips the GatewayClass and installs everything
 
 ## Expose a Service through a Gateway
 
-This quickstart routes a test hostname to a sample app through a Gateway and an HTTPRoute — the Gateway API counterpart to the [Ingress walkthrough](./getting-started.md#step-3-create-an-ingress-resource). It assumes HAPTIC is installed (see [Getting started, Step 1](./getting-started.md#step-1-install-with-helm)) and the Gateway API CRDs are installed (see [Prerequisites](#prerequisites) above), which together create the `haptic` GatewayClass.
+This quickstart routes a test hostname to a sample app through a Gateway and an HTTPRoute — the Gateway API counterpart to the [Ingress walkthrough](./getting-started.md#create-an-ingress). It assumes HAPTIC is installed (see [Getting started — Install with Helm](./getting-started.md#install-with-helm)) and the Gateway API CRDs are installed (see [Prerequisites](#prerequisites) above), which together create the `haptic` GatewayClass.
 
 ### Step 1: Deploy a sample application
 
