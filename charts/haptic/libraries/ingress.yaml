@@ -195,14 +195,96 @@ templateSnippets:
       {%- import "util-host-key" for MapKeyForHost -%}
 
       {% macro PathMapEntryIngressShard(ingresses []*resources.ingresses.T, pathTypes []string, suffix string) string %}
+        {#- Oldest-wins route ownership. When two Ingresses claim the same
+            host+path+slot, the older one (by creationTimestamp, tie-broken by
+            namespace/name) owns the route and the newer one's entry is dropped,
+            so the emitted map file has no duplicate keys and routing is
+            deterministic — an Ingress that was there first keeps its route when
+            a later one collides (matches ingress-nginx). Ingresses registered in
+            gf["coLocatedIngresses"] (nginx canary Ingresses, which overlay a
+            use_backend split onto their main's route instead of claiming a base
+            route) are excluded, so the main owns the route alone. gf is
+            populated during the haproxy.cfg render, which runs before this
+            aux-file render (renderer/service.go), so the exclusion is in place.
+            Recomputed per shard call (each shard needs the global owner view);
+            the computation is cheap string/map work. -#}
+        {%%
+          var owner = map[string]string{}
+          var ownerTs = map[string]string{}
+          var ownerIsCanary = map[string]bool{}
+          var gf = shared.Get("globalFeatures").(map[string]any)
+          var coLocated = gf["coLocatedIngresses"]
+          for _, ing := range resources.ingresses.List() {
+            var oid = ing.Metadata.Namespace + "/" + ing.Metadata.Name
+            var isCanary = false
+            if coLocated != nil {
+              var _, present = coLocated.(map[string]any)[oid]
+              isCanary = present
+            }
+            var ts = ing.Metadata.CreationTimestamp
+            for _, rule := range ing.Spec.Rules {
+              for _, path := range rule.Http.Paths {
+                if path.Path != "" {
+                  var oslot = tostring(path.PathType)
+                  if oslot == "ImplementationSpecific" {
+                    oslot = "Prefix"
+                  }
+                  // Prefix "/foo" and "/foo/" render into the SAME map keys
+                  // (the emit stage strips the trailing slash for the Prefix
+                  // slot), so they must share an owner key. Exact is
+                  // character-exact and keeps its trailing slash.
+                  var opath = path.Path
+                  if oslot != "Exact" && len(opath) > 1 && hasSuffix(opath, "/") {
+                    opath = opath[:len(opath)-1]
+                  }
+                  var okey = oslot + "|" + MapKeyForHost(rule.Host) + opath
+                  var curId, seen = owner[okey]
+                  var take = false
+                  if !seen {
+                    take = true
+                  } else if ownerIsCanary[okey] && !isCanary {
+                    // A non-canary (main) Ingress always beats a canary
+                    // incumbent: the canary only overlays a split, the main
+                    // owns the base route.
+                    take = true
+                  } else if ownerIsCanary[okey] == isCanary {
+                    // Same class (main vs main, or canary vs canary): oldest
+                    // wins, tie-broken by namespace/name.
+                    if ts < ownerTs[okey] || (ts == ownerTs[okey] && oid < curId) {
+                      take = true
+                    }
+                  }
+                  // A canary never displaces a non-canary owner: when both a
+                  // main and a canary claim the route the main wins, but a
+                  // canary with no main still owns (and serves) its own route.
+                  if take {
+                    owner[okey] = oid
+                    ownerTs[okey] = ts
+                    ownerIsCanary[okey] = isCanary
+                  }
+                }
+              }
+            }
+          }
+        %%}
         {%- for _, ingress := range ingresses -%}
+          {%- var id = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- var matchCount = 0 -%}
-          {#- Count matching paths. The outer rule loop's body uses
-              only path-level fields — flatten via `[*]`. -#}
-          {%- for _, path := range ingress.Spec.Rules[*].Http.Paths -%}
-            {%- if path.Path != "" -%}
-              {%- for _, checkType := range pathTypes -%}
-                {%- if path.PathType == checkType -%}{%- matchCount = matchCount + 1 -%}{%- end -%}
+          {#- Count only paths this Ingress OWNS for the given pathType(s); a
+              path lost to an older Ingress on the same host+path is neither
+              counted nor emitted below. -#}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- if path.Path != "" -%}
+                {%- for _, checkType := range pathTypes -%}
+                  {%- if path.PathType == checkType -%}
+                    {%- var cslot = tostring(path.PathType) -%}
+                    {%- if cslot == "ImplementationSpecific" -%}{%- cslot = "Prefix" -%}{%- end -%}
+                    {%- var cpath = path.Path -%}
+                    {%- if cslot != "Exact" && len(cpath) > 1 && hasSuffix(cpath, "/") -%}{%- cpath = cpath[:len(cpath)-1] -%}{%- end -%}
+                    {%- if owner[cslot + "|" + MapKeyForHost(rule.Host) + cpath] == id -%}{%- matchCount = matchCount + 1 -%}{%- end -%}
+                  {%- end -%}
+                {%- end -%}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -213,6 +295,11 @@ templateSnippets:
                 {%- if path.Path != "" -%}
                   {%- for _, checkType := range pathTypes -%}
                     {%- if path.PathType == checkType -%}
+                      {%- var eslot = tostring(path.PathType) -%}
+                      {%- if eslot == "ImplementationSpecific" -%}{%- eslot = "Prefix" -%}{%- end -%}
+                      {%- var epath = path.Path -%}
+                      {%- if eslot != "Exact" && len(epath) > 1 && hasSuffix(epath, "/") -%}{%- epath = epath[:len(epath)-1] -%}{%- end -%}
+                      {%- if owner[eslot + "|" + MapKeyForHost(rule.Host) + epath] != id -%}{%- continue -%}{%- end -%}
                       {%- var pathStr = path.Path -%}
                       {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
                       {%- var actualSuffix = suffix -%}
@@ -1794,6 +1881,303 @@ validationTests:
       - type: not_contains
         target: map:path-prefix.map
         pattern: "(?m)^/ BACKEND:default_with-default_svc_fallback-svc_http$"
+
+  test-ingress-host-path-conflict-oldest-wins:
+    description: "Two Ingresses in different namespaces declare the same host+path. HAProxy maps keep one entry per key, so we resolve deterministically: the OLDER Ingress (by creationTimestamp) keeps the route; the newer one's route is dropped. The older Ingress is in the alphabetically LAST namespace (zeta) and the newer in the FIRST (alpha), so only genuine timestamp ordering — not a namespace/name tiebreak — can make the older one win. Matches ingress-nginx's oldest-wins; an Ingress that was there first is not hijacked by a later conflicting one."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-old
+            namespace: zeta
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-new
+            namespace: alpha
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: route-old
+            namespace: zeta
+            creationTimestamp: "2020-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shop.example.com
+                http:
+                  paths:
+                    - path: /checkout
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-old
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: route-new
+            namespace: alpha
+            creationTimestamp: "2026-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shop.example.com
+                http:
+                  paths:
+                    - path: /checkout
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-new
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^shop\\.example\\.com/checkout/ BACKEND:zeta_route-old_svc_svc-old_http$"
+        description: "the older Ingress (zeta/route-old) owns the route, despite being alphabetically last"
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "alpha_route-new"
+        description: "the newer Ingress (alpha/route-new) loses the route — no duplicate key in the map"
+
+  test-ingress-same-host-different-paths-coexist:
+    description: "Two Ingresses on the same host but DIFFERENT paths are NOT a conflict — both routes render. Guards features-090-ingress-path-conflict against false positives."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-a
+            namespace: team-a
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-b
+            namespace: team-b
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: route-a
+            namespace: team-a
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shop.example.com
+                http:
+                  paths:
+                    - path: /cart
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-a
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: route-b
+            namespace: team-b
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shop.example.com
+                http:
+                  paths:
+                    - path: /account
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-b
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^shop\\.example\\.com/cart/ BACKEND:team-a_route-a_svc_svc-a_http$"
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^shop\\.example\\.com/account/ BACKEND:team-b_route-b_svc_svc-b_http$"
+
+  test-ingress-implementation-specific-shares-slot-oldest-wins:
+    description: "pathType Prefix and ImplementationSpecific render into the same path maps (they share a routing slot), so two Ingresses claiming the same host+path with those two path types collide. The owner computation collapses ImplementationSpecific to Prefix, so oldest-wins resolves the collision to a single map entry — the older Prefix Ingress here. If the two path types were treated as distinct slots, both would emit into path-prefix.map, producing a duplicate key."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-a
+            namespace: team-a
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-b
+            namespace: team-b
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: route-a
+            namespace: team-a
+            creationTimestamp: "2020-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shop.example.com
+                http:
+                  paths:
+                    - path: /checkout
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-a
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: route-b
+            namespace: team-b
+            creationTimestamp: "2026-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shop.example.com
+                http:
+                  paths:
+                    - path: /checkout
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: svc-b
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^shop\\.example\\.com/checkout/ BACKEND:team-a_route-a_svc_svc-a_http$"
+        description: "the older Prefix Ingress owns the shared slot"
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "team-b_route-b"
+        description: "the newer ImplementationSpecific Ingress collapses to the same slot and loses — no duplicate key"
+
+  test-ingress-prefix-trailing-slash-oldest-wins:
+    description: "Prefix paths '/checkout' and '/checkout/' render into the same map keys (the emit stage strips the trailing slash for the Prefix slot), so they collide. The owner key applies the same trailing-slash normalization, so oldest-wins resolves them to a single map entry instead of emitting a duplicate key. The older Ingress ('/checkout') wins; the newer ('/checkout/') is dropped."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-a
+            namespace: team-a
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-b
+            namespace: team-b
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: route-a
+            namespace: team-a
+            creationTimestamp: "2020-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shop.example.com
+                http:
+                  paths:
+                    - path: /checkout
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-a
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: route-b
+            namespace: team-b
+            creationTimestamp: "2026-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shop.example.com
+                http:
+                  paths:
+                    - path: /checkout/
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-b
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: match_count
+        target: map:path-prefix.map
+        pattern: "(?m)^shop\\.example\\.com/checkout/ BACKEND:"
+        expected: "1"
+        description: "exactly one entry for the shared route — no duplicate key from the trailing-slash variant"
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^shop\\.example\\.com/checkout/ BACKEND:team-a_route-a_svc_svc-a_http$"
+        description: "the older '/checkout' Ingress owns the route"
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "team-b_route-b"
+        description: "the newer '/checkout/' variant normalizes to the same key and loses"
 
   test-ingress-default-backend-newest-wins-per-host:
     description: "Two Ingresses in different namespaces both declare defaultBackend for the same host. HAProxy maps keep only one entry per key, so we MUST pick deterministically; the newest Ingress wins per host (matches operator intent on rollout + avoids stale-Ingress 503s during scenario churn)."
