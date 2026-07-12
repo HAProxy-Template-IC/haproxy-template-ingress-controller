@@ -702,6 +702,8 @@ The gateway library uses HAProxy's `rand()` function and map-based selection for
 - Entry 0-69 map to backend 1, entries 70-99 map to backend 2
 - HAProxy generates random number % `total_weight` and looks up backend in map
 
+Weights are **relative shares, not percentages** — they don't need to sum to 100. HAPTIC sums the weights in a rule and gives each backend that fraction of the traffic: a `3` / `1` split sends 75% and 25% (denominator 4), while `70` / `30` sends 70% and 30% only because they happen to total 100. A `backendRef` with no `weight` counts as 1.
+
 **Example - Weighted traffic splitting:**
 
 ```yaml
@@ -734,6 +736,9 @@ spec:
         - name: backend-b
           port: 80
 ```
+
+!!! note "Zero-weight backends"
+    In a rule with two or more `backendRefs`, `weight: 0` drops that backend from the split — it receives no traffic, matching the Gateway API spec. A rule with a **single** `backendRef` ignores `weight` entirely (the weighted path only applies to multi-backend rules), so `weight: 0` on a lone backend still sends it 100% of the traffic. To drain a backend to zero, keep a second `backendRef` in the rule — for example a sink that returns an error — rather than setting the only backend's weight to 0.
 
 Split the demo route's traffic and inspect the generated weight map:
 
@@ -939,6 +944,9 @@ A TLSRoute attaches to a Gateway listener when every check in this table passes:
 - **Backends**: one `mode tcp` backend per route rule, named `gtw_tls_<namespace>_<route>_<ruleIndex>`; all SNIs of a rule share it. Traffic goes to the rule's **first** `backendRef` (default port 443).
 - A Gateway TLS listener on the chart-static HTTPS port is dropped when the chart already binds that port (chart-static HTTPS frontend or Ingress SSL passthrough active). Move the listener to another port or override `httpsPort`.
 
+!!! note "Terminated and passthrough listeners on one Gateway"
+    One Gateway can serve HTTPS-terminated and TLS-passthrough listeners at the same time, as long as each uses a different port. Give the passthrough listener a port other than the chart-static HTTPS port (`haproxy.ports.https`, default 443), since a `TLS` listener on that port is dropped to avoid a duplicate bind. A single *port* still can't host both a `Passthrough` and a `Terminate` listener — that's a protocol conflict, and no route attaches to either listener.
+
 ### TLSRoute status
 
 Each `parentRef` targeting a Gateway owned by this controller receives two conditions:
@@ -1035,6 +1043,14 @@ TCPRoutes count toward `attachedRoutes` on TCP listeners only. Status is written
 - **One backend per port**: TCP can't be multiplexed by hostname or path; a port maps to a single route rule, and competing claims resolve oldest-first.
 - `backendRefs` must be core/v1 Services.
 - Listener ports colliding with the chart-static `httpPort` / `httpsPort` are dropped.
+
+---
+
+## Misdirected requests on HTTPS listeners
+
+When several HTTPS listeners share a bind and are told apart by TLS SNI, a client can finish the TLS handshake against one listener's certificate and then send a `Host` header that belongs to a different listener. HAPTIC detects this and returns **HTTP 421 (Misdirected Request)**, implementing the Gateway API `SupportGatewayHTTPSListenerDetectMisdirectedRequests` feature.
+
+The check runs only on the HTTPS path and only when the connection carries an SNI: HAPTIC maps both the SNI and the `Host` header to their owning listeners and returns 421 when the two differ. A request whose SNI matches no configured listener (served by the default certificate) is left alone rather than rejected. Plain-HTTP listeners and Ingress traffic are unaffected — the behavior is scoped to Gateway API HTTPS listeners.
 
 ---
 
@@ -1207,12 +1223,23 @@ Each Gateway receives:
 - **Addresses**: LoadBalancer addresses from the controller Service, converted to Gateway API format (`IPAddress` or `Hostname`)
 - **Listener status**: Per-listener conditions (`Accepted`, `Programmed`, `ResolvedRefs`, `Conflicted`), `supportedKinds` based on protocol, and `attachedRoutes` count
 
+### Listener conflicts
+
+When two listeners on one Gateway — or on a Gateway plus a ListenerSet attached to it — claim the same port, HAPTIC resolves the conflict deterministically and marks the losing listener `Conflicted=True`:
+
+- **`ProtocolConflict`** — the listeners share a port but declare different protocols (for example an `HTTP` and an `HTTPS` listener both on port 8080).
+- **`HostnameConflict`** — the listeners share both a port and a hostname.
+
+Precedence runs in a fixed order: the Gateway's own listeners rank first, in the order they appear in `spec.listeners`; listeners contributed by ListenerSets follow, ordered by `creationTimestamp` (oldest first), then by `namespace/name`. The first listener to claim a port keeps it. A later listener that collides on protocol is marked `Conflicted=True` with reason `ProtocolConflict`; one that collides on the same `(port, hostname)` gets reason `HostnameConflict`. A conflicted listener attaches no routes.
+
+Listeners that share a port and protocol but declare *different* hostnames don't conflict — they coexist and are told apart by the `Host` header (`HTTP` and `HTTPS`) or the TLS SNI (`TLS`). Two separate Gateways can also serve the same listener port at once: HAPTIC binds each Gateway's `HTTP` and `HTTPS` listeners on their own isolated port, so their routing stays independent.
+
 ### HTTPRoute and GRPCRoute status
 
 Each route receives a `parents[]` entry for each `parentRef` that matches a Gateway managed by this controller:
 
 - **Accepted**: True if the parentRef references a known Gateway
-- **ResolvedRefs**: True if all backend Service references can be resolved; False with reason `BackendNotFound` if a referenced Service doesn't exist
+- **ResolvedRefs**: `True` when every backend reference resolves; `False` with reason `InvalidKind` (a `backendRef` isn't a core/v1 Service), `RefNotPermitted` (a cross-namespace ref without a matching ReferenceGrant), or `BackendNotFound` (the referenced Service doesn't exist — message `Backend not found: <namespace>/<name>`). The reasons are checked in that order, so the first failing `backendRef` sets the condition.
 
 The `controllerName` in route status is set from `gatewayClass.controllerName` in the Helm values — see [GatewayClass](../gateway-class.md) for the class configuration and ownership rules.
 
