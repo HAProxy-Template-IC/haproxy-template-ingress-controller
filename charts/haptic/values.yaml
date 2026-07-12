@@ -464,7 +464,8 @@ controller:
         # HAProxy bind ports are defined in haproxy.ports (referenced by templates)
         # Password hash validation regex - validates password hashes in auth secrets
         # Default "^.*$" allows all hashes for backward compatibility.
-        # Example to block bcrypt: "^(?!\$2[ayb]\$).*$"
+        # Go RE2 syntax (no lookaheads): express the policy as the allowed
+        # format, e.g. restrict to MD5-crypt (apr1) hashes: "^\$apr1\$"
         password_hash_validation_regex: "^.*$"
         # Error message shown when password hash validation fails.
         # The actual error will include username, secret name, and pattern.
