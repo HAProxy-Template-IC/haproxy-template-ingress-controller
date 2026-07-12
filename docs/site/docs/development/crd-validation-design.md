@@ -39,7 +39,7 @@ The validating webhook runs inside the controller pod rather than a dedicated de
 - **No extra moving parts.** One deployment, one Service, one Lease, one cert.
 - **Shared store.** The webhook reuses the watched-resource store to build a realistic render context with proposed changes overlaid (see `pkg/stores/overlay.go`).
 
-TLS certificates are provided by cert-manager (recommended) or supplied manually; the chart wires both options.
+TLS certificates come from the chart's own self-signed issuance (the default), from cert-manager (`webhook.certManager.enabled=true`, auto-rotating), or supplied manually via `webhook.caBundle`; the chart wires all three options.
 
 ### Multi-Controller Isolation
 

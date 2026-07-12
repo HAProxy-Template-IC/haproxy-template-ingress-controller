@@ -19,28 +19,28 @@ sequenceDiagram
     loop Until Context Cancelled
         Main->>Iteration: Run iteration
 
-        Note over Iteration: 1. Fetch & Validate Initial Config
-        Iteration->>Iteration: Fetch HAProxyTemplateConfig CRD & credentials Secret
-        Iteration->>Iteration: Parse & Validate
-
-        Note over Iteration,EventBus: 2. Setup Components
+        Note over Iteration,EventBus: 1. Setup Components (Stage 1)
         Iteration->>EventBus: Create EventBus(100)
         Iteration->>Components: Start validators, loaders, commentator
 
-        Note over Iteration,ResourceWatcher: 3. Setup Resource Watchers
+        Note over Iteration: 2. Fetch & Validate Initial Config (Stage 2)
+        Iteration->>Iteration: Fetch HAProxyTemplateConfig CRD & credentials Secret
+        Iteration->>Iteration: Parse & Validate
+
+        Note over Iteration,ResourceWatcher: 3. Setup Resource Watchers (Stage 3)
         Iteration->>ResourceWatcher: Create & Start
         Iteration->>ResourceWatcher: WaitForAllSync()
 
-        Note over Iteration,CRDSingleWatcher: 4. Setup CRD + Secret SingleWatchers
+        Note over Iteration,CRDSingleWatcher: 4. Setup CRD + Secret SingleWatchers (Stage 4)
         Iteration->>CRDSingleWatcher: Create & Start
         Iteration->>CRDSingleWatcher: WaitForSync()
 
-        Note over Iteration,EventBus: 5. Start EventBus
-        Iteration->>EventBus: Start() (replay buffered events)
+        Note over Iteration,Reconciler: 5. Reconciliation & Observability Components (Stage 5)
+        Iteration->>Reconciler: Create Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, Metrics
+        Iteration->>EventBus: Publish initial ReconciliationTriggeredEvent (buffered)
 
-        Note over Iteration,Reconciler: 6. Reconciliation & Observability Components
-        Iteration->>Reconciler: Start Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, Metrics
-        Iteration->>EventBus: Publish initial ReconciliationTriggeredEvent
+        Note over Iteration,EventBus: 6. Start EventBus
+        Iteration->>EventBus: Start() (replay buffered events)
 
         Note over Iteration: 7. Event Loop
         Iteration->>Iteration: Wait for config change or cancellation
@@ -59,16 +59,17 @@ sequenceDiagram
 
 The controller runs iterations that respond to configuration changes:
 
-1. **Initial Config Fetch**: Fetch and validate the `HAProxyTemplateConfig` CRD named by `--crd-name` (env `CRD_NAME`, default `haproxy-config`) and the credentials `Secret` referenced via `spec.credentialsSecretRef`, synchronously, before starting components.
-2. **Component Setup**: Create EventBus and start config-management components (validators, loaders, commentator).
-3. **Resource Watchers**: Create bulk watchers for every `spec.watchedResources` entry and wait for initial sync.
-4. **Config/Secret SingleWatchers**: Create `pkg/k8s/watcher.SingleWatcher`s for the CRD and credentials Secret. These use immediate callbacks (no debouncing) so configuration updates reinitialize with no artificial delay.
-5. **EventBus Start**: Call `EventBus.Start()` to replay buffered events and begin normal operation.
-6. **Stage 5 — Reconciliation & Observability**: Start reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Rendering and fast (syntax + schema) HAProxy validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack (ADR-0001) — neither has its own goroutine or event subscription. The config validators (Basic, Template, JSONPath) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
-7. **Event Loop**: Wait for configuration changes or context cancellation.
-8. **Reinitialization**: When the CRD or Secret changes, cancel the iteration context to stop all components, then restart with the new settings.
+1. **Component Setup (Stage 1)**: Create the EventBus and the config-management components (validators, loaders, commentator), plus the early infrastructure servers, so health and debug endpoints respond before the config is loaded.
+2. **Initial Config Fetch (Stage 2)**: Fetch and validate the `HAProxyTemplateConfig` CRD named by `--crd-name` (env `CRD_NAME`, default `haproxy-config`) and the credentials `Secret` referenced via `spec.credentialsSecretRef`, synchronously.
+3. **Resource Watchers (Stage 3)**: Create bulk watchers for every `spec.watchedResources` entry and wait for initial sync.
+4. **Config/Secret SingleWatchers (Stage 4)**: Create `pkg/k8s/watcher.SingleWatcher`s for the CRD and credentials Secret. These use immediate callbacks (no debouncing) so configuration updates reinitialize with no artificial delay.
+5. **Reconciliation & Observability (Stage 5)**: Create reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Each subscribes in its constructor, and the initial trigger events are published — buffered — before the bus starts. Rendering and fast (syntax + schema) HAProxy validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack (ADR-0001) — neither has its own goroutine or event subscription. The config validators (Basic, Template, JSONPath) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
+6. **EventBus Start**: Call `EventBus.Start()` to replay the buffered events and begin normal operation.
+7. **Leader Election, Webhook, Debug (Stages 6–8)**: Start leader election (Stage 6), the admission webhook when a TLS cert directory is mounted (Stage 7), and register debug variables and the full health checker (Stage 8).
+8. **Event Loop**: Wait for configuration changes or context cancellation.
+9. **Reinitialization**: When the CRD or Secret changes, cancel the iteration context to stop all components, then restart with the new settings.
 
-The Stage 5 label is explicitly used in code for reconciliation components; earlier stages are implicit in the initialization sequence. Metrics collection starts in Stage 5 after `EventBus.Start()` to ensure all event subscriptions are registered before metrics begin tracking events.
+The stage numbers are the code's startup log labels (`Stage 1: Creating config management components` through `Stage 8: Registering debug variables and updating health checker` — see `pkg/controller/iteration.go` and its callees). `EventBus.Start()` carries no stage label of its own; it runs between Stages 5 and 6, after every component has subscribed.
 
 ## Resource Change Handling
 

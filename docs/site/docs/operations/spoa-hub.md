@@ -6,6 +6,24 @@ HAPTIC ships a `spoa-hub` container image that bundles the [haproxy-spoa-hub](ht
 
 This page documents the exact components bundled with the version of HAPTIC you are reading docs for, how to verify them end-to-end, and how to tune the HAProxy-side SPOE (Stream Processing Offload Engine) wiring the chart emits when the sidecar is enabled.
 
+## Enabling the hub
+
+The sidecar renders whenever at least one plugin is enabled: with the default `spoaHub.enabled: null`, the chart derives the master switch from the per-plugin `spoaHub.plugins.<name>.enabled` values. To enable a plugin directly:
+
+```bash
+--set spoaHub.plugins.fingerprinting.enabled=true
+```
+
+Some plugins auto-enable with the template library that consumes them — each per-plugin `enabled` default is a chart-evaluated template string:
+
+- **coraza** follows `controller.templateLibraries.nginxIngress.enabled` or `controller.templateLibraries.haproxyIngress.enabled`,
+- **external-auth** follows `controller.templateLibraries.nginxIngress.enabled`,
+- **mirror** follows `controller.templateLibraries.gateway.enabled`.
+
+The haproxy-ingress and gateway libraries are on by default, so a default install already runs the hub with the coraza and mirror plugins; fingerprinting, maxmind, otel, and sso-auth stay off until you enable them.
+
+An explicit boolean on `spoaHub.enabled` always wins: `false` forces the sidecar off even with plugins enabled; `true` renders it with none. See the [Chart Values Reference](../reference.md#spoa-hub-sidecar) for every `spoaHub.*` value.
+
 ## Bundled components
 
 The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<HAPTIC version>` and is built from the following pinned upstream releases:
@@ -77,4 +95,5 @@ The `spoaHub.plugins.<name>.timeoutMs` field on the chart side is independent �
 ## See also
 
 - [haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) — upstream hub binary and SPOP gateway.
+- [Chart Values Reference — SPOA Hub Sidecar](../reference.md#spoa-hub-sidecar) — every `spoaHub.*` value.
 - [HAProxy versions matrix](./haproxy-versions.md) — supported HAProxy versions for the controller image.
