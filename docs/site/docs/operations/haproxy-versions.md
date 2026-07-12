@@ -14,10 +14,12 @@ The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) 
 | Series | Status | Community image | Enterprise image |
 |--------|--------|-----------------|------------------|
 | 3.0 | Supported (LTS) | `haproxytech/haproxy-debian:3.0.x` | `...:3.0r1` |
-| 3.1 | Supported | `haproxytech/haproxy-debian:3.1.x` | `...:3.1r1` |
-| 3.2 | Supported | `haproxytech/haproxy-debian:3.2.x` | `...:3.2r1` |
-| 3.3 | Supported | `haproxytech/haproxy-debian:3.3.x` | — |
-| 3.4 | Supported (default) | `haproxytech/haproxy-debian:3.4.x` | — |
+| 3.1 | Supported (non-LTS) | `haproxytech/haproxy-debian:3.1.x` | `...:3.1r1` |
+| 3.2 | Supported (LTS) | `haproxytech/haproxy-debian:3.2.x` | `...:3.2r1` |
+| 3.3 | Supported (non-LTS) | `haproxytech/haproxy-debian:3.3.x` | — |
+| 3.4 | Supported (LTS, default) | `haproxytech/haproxy-debian:3.4.x` | — |
+
+HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of support; odd-numbered series (3.1, 3.3) get a shorter maintenance window. The chart's default is always the latest LTS — currently 3.4.
 
 !!! note "HAProxy version vs DataPlane API version"
     The series above is the **HAProxy binary** version. HAPTIC talks to each pod's
