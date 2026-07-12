@@ -88,36 +88,34 @@ nav:
     - Supported Configuration: supported-configuration.md
   - Deploying with Helm:
     - Overview: deploying-with-helm.md
-    - Configuration: configuration.md
     - IngressClass: ingress-class.md
     - GatewayClass: gateway-class.md
     - SSL Certificates: ssl-certificates.md
-    - Annotations: annotations.md
     - HAProxy Deployment: haproxy-deployment.md
     - Chart Values Reference: reference.md
-    - Troubleshooting the Install: operations/troubleshooting.md
   - Template Libraries:
     - Overview: template-libraries.md
     - Base: libraries/base.md
     - SSL: libraries/ssl.md
     - Ingress: libraries/ingress.md
     - Gateway API: libraries/gateway.md
-    - ingress-annotations-compat (scaffold): libraries/ingress-annotations-compat.md
+    - ingress-annotations-compat (internals): libraries/ingress-annotations-compat.md
+    - Annotations: annotations.md
     - haproxytech (haproxy.org/*): libraries/haproxytech.md
-    - haproxy-ingress: libraries/haproxy-ingress.md
-    - nginx-ingress: libraries/nginx-ingress.md
+    - haproxy-ingress (haproxy-ingress.github.io/*): libraries/haproxy-ingress.md
+    - nginx-ingress (nginx.ingress.kubernetes.io/*): libraries/nginx-ingress.md
   - Operations:
-    - HAProxy Versions: operations/haproxy-versions.md
-    - SPOA Hub: operations/spoa-hub.md
-    - Pluggable Validators: operations/pluggable-validators.md
     - High Availability: operations/high-availability.md
     - Monitoring: operations/monitoring.md
     - Security: operations/security.md
     - Networking: operations/networking.md
-    - SPIFFE/SPIRE mTLS: operations/spiffe-mtls.md
     - Performance: operations/performance.md
     - Debugging: operations/debugging.md
     - Troubleshooting: troubleshooting.md
+    - HAProxy Versions: operations/haproxy-versions.md
+    - SPOA Hub: operations/spoa-hub.md
+    - Pluggable Validators: operations/pluggable-validators.md
+    - SPIFFE/SPIRE mTLS: operations/spiffe-mtls.md
   - Development:
     - Design Overview: development/design.md
     - Architecture:
@@ -125,14 +123,12 @@ nav:
       - Package Structure: development/design/package-structure.md
       - Sequence Diagrams: development/design/sequence-diagrams.md
     - Components:
-      - Configuration: development/design/configuration.md
+      - Configuration Model: development/design/configuration.md
       - Deployment: development/design/deployment.md
       - Leader Election: development/design/leader-election.md
       - Introspection: development/design/introspection.md
     - CRD Validation: development/crd-validation-design.md
     - Design Decisions: development/design/design-decisions.md
-    - Considerations: development/design/considerations.md
-    - Appendices: development/design/appendices.md
     - Linting: development/linting.md
     - Releasing: development/releasing.md
     - Gateway API Upgrade Playbook: development/gateway-api-upgrade-playbook.md
@@ -141,6 +137,7 @@ nav:
 hooks:
   - hooks/changelog.py
   - hooks/llms.py
+  - hooks/redirects.py
 
 plugins:
   - search

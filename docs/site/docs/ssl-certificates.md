@@ -1,8 +1,6 @@
 # SSL Certificates
 
-## Overview
-
-By default, the chart provisions a default SSL certificate for HTTPS traffic — via cert-manager when it's installed, otherwise as a chart-generated self-signed Secret — and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
+By default, the [HAPTIC Helm chart](deploying-with-helm.md) provisions a default SSL certificate for HTTPS traffic — via cert-manager when it's installed, otherwise as a chart-generated self-signed Secret — and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
 
 ## Default SSL Certificate
 
@@ -145,31 +143,7 @@ The controller watches the Secret and automatically deploys the updated certific
 
 ### SSL Troubleshooting
 
-**"Secret not found" errors:**
-
-Check that the Secret exists in the correct namespace:
-
-```bash
-kubectl get secret default-ssl-cert -n haptic
-```
-
-**HAProxy fails to start with SSL errors:**
-
-Verify the certificate and key are valid:
-
-```bash
-# Extract and verify certificate
-kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
-
-# Verify key
-kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.key}' | base64 -d | openssl rsa -check -noout
-```
-
-**Certificate not being updated:**
-
-The controller watches Secrets and detects changes immediately, triggering a reconciliation within the 2s per-watcher debounce window; HAProxy deployment then follows the configured `dataplane.minDeploymentInterval` (5s in the chart's default values; the controller's own field default is 2s) plus the normal render → validate → deploy pipeline. If deployments appear stuck, the `dataplane.driftPreventionInterval` (60s default) will also force a push.
-
-By default the chart watches Secrets with an **on-demand** store (`controller.config.watchedResources.secrets.store: on-demand`), so cert bodies aren't kept resident in memory. Override it to `full` if you'd rather hold Secrets in the in-memory store.
+For SSL symptom diagnosis — "Secret not found" errors, HAProxy failing to start with SSL errors, or a certificate that isn't updating — see [Troubleshooting → SSL/TLS Issues](./troubleshooting.md#ssltls-issues).
 
 ## Webhook Certificates
 
@@ -224,3 +198,8 @@ webhook:
     enabled: false
   caBundle: "LS0tLS1CRUdJTi..."  # Base64-encoded CA certificate
 ```
+
+## See Also
+
+- [Security](./operations/security.md) — webhook hardening, RBAC, and network exposure
+- [Troubleshooting](./troubleshooting.md) — SSL symptom diagnosis and general debugging

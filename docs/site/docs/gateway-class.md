@@ -1,8 +1,6 @@
 # GatewayClass
 
-## Overview
-
-The chart automatically creates a GatewayClass resource when the gateway library is enabled and Gateway API CRDs are installed.
+The [HAPTIC Helm chart](deploying-with-helm.md) automatically creates a GatewayClass resource when the gateway library is enabled and Gateway API CRDs are installed.
 
 ## Prerequisites
 
@@ -133,44 +131,14 @@ EOF
 
 ## Using GatewayClass
 
-Gateway resources reference the GatewayClass, and HTTPRoutes attach to Gateways:
-
-**1. Create a Gateway:**
+Gateway resources opt in to HAPTIC by referencing the class via `spec.gatewayClassName`; routes then attach to the Gateway via `spec.parentRefs`:
 
 ```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: example-gateway
 spec:
   gatewayClassName: haptic  # References GatewayClass.metadata.name
-  listeners:
-    - name: http
-      protocol: HTTP
-      port: 80
 ```
 
-**2. Create HTTPRoutes that attach to the Gateway:**
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: example-route
-spec:
-  parentRefs:
-    - name: example-gateway  # References Gateway.metadata.name
-  hostnames:
-    - "example.com"
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
-        - name: example-service
-          port: 80
-```
+For the supported route types (HTTP, gRPC, TLS, TCP) and worked examples, see the [Gateway API library](./libraries/gateway.md).
 
 ## Disabling GatewayClass Creation
 
@@ -180,3 +148,8 @@ If you manage GatewayClass resources separately:
 gatewayClass:
   enabled: false
 ```
+
+## See Also
+
+- [Gateway API library](./libraries/gateway.md) — route types, listeners, and annotation support
+- [Migrating to HAPTIC](./migrating.md) — running HAPTIC alongside another controller

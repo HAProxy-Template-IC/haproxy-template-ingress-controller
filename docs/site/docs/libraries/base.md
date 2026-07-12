@@ -519,4 +519,4 @@ Each `global-settings-*` and `defaults-settings-*` snippet can be individually o
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [SSL Library](ssl.md) - TLS certificate management and HTTPS frontend
-- [Configuration Reference](../configuration.md#path-matching-order) - Switching path-matching order
+- [Template Libraries → Path Matching Order](../template-libraries.md#path-matching-order) - Switching path-matching order

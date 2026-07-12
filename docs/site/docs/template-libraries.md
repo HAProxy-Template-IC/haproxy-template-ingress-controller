@@ -41,7 +41,7 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 
 ## Enabling and Disabling Libraries
 
-Configure libraries in your values.yaml:
+Configure libraries in your values.yaml (see the [Chart Values Reference](./reference.md#template-libraries) for every `controller.templateLibraries.*` value):
 
 ```yaml
 controller:
@@ -62,8 +62,19 @@ controller:
       enabled: false  # nginx-ingress annotation compatibility
   config:
     routing:
-      regexMatchOrder: default  # "default" or "last" — see configuration.md
+      regexMatchOrder: default  # "default" or "last" — see Path Matching Order below
 ```
+
+## Path Matching Order
+
+Path-based routing inside the rendered `frontend-routing-logic` snippet evaluates four map types: exact, regex, prefix-exact, and prefix. The evaluation order is selected by `controller.config.routing.regexMatchOrder`:
+
+| Value | Order | Use case |
+|-------|-------|----------|
+| `default` (default) | Exact > Regex > Prefix-exact > Prefix | De-facto standard; matches typical Ingress controller behaviour |
+| `last` | Exact > Prefix-exact > Prefix > Regex | Performance-first; evaluates faster matchers before regex |
+
+The chart swaps in the `frontend-routing-logic-regex-last` variant of the snippet at Helm load time when `last` is set. No runtime difference.
 
 ## Library Merge Order
 
@@ -380,3 +391,9 @@ It plugs into the same extension points as the level-3 libraries
 above.
 
 Each library's own page (linked from the [Available Libraries](#available-libraries) table above) documents its snippets, tunables, and extension points in detail.
+
+## See Also
+
+- [Annotations](./annotations.md) — which vendor annotation library covers which annotation prefix
+- [Templating Guide](./templating.md) — writing your own snippets and templates
+- [Chart Values Reference → Template Libraries](./reference.md#template-libraries) — every `controller.templateLibraries.*` value

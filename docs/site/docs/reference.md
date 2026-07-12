@@ -536,3 +536,9 @@ No CPU limit is set by default to avoid throttling; HAProxy's `nbthread` auto-ca
 | `networkPolicy.ingress.webhook.enabled` | bool | `true` | Allow webhook access |
 | `networkPolicy.ingress.webhook.from` | list | IPv4+IPv6 `ipBlock` catch-alls | NetworkPolicy peers allowed to reach the webhook port (`controller.ports.webhook`). Defaults to `ipBlock` catch-alls because the kube-apiserver runs host-network on most distributions — a pod/namespace selector would silently fail to match it and the webhook would return 502s. Both `0.0.0.0/0` and `::/0` appear because `ipBlock.cidr` is single-family. Tighten to your apiserver/node CIDRs for production |
 | `networkPolicy.ingress.additionalRules` | list | `[]` | Additional ingress rules |
+
+## See Also
+
+- [Deploying with Helm](./deploying-with-helm.md) — install, upgrade, and a task-based tour of the chart
+- [Template Libraries](./template-libraries.md) — what each `controller.templateLibraries.*` toggle loads
+- [CRD Reference](./crd-reference.md) — every field of the `HAProxyTemplateConfig` the chart renders from `controller.config`

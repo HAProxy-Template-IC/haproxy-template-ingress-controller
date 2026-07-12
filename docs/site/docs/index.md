@@ -114,20 +114,9 @@ Key components:
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1 --namespace haptic --create-namespace
 ```
 
-This installs both the controller and a 2-replica HAProxy Deployment, plus the default template libraries that cover Ingress and Gateway API out of the box. For the full walkthrough — including a sample app and end-to-end verification — see [Getting Started](getting-started.md).
+This installs both the controller and a 2-replica HAProxy Deployment, plus the default template libraries that cover Ingress and Gateway API out of the box. For the full walkthrough — including a sample app, end-to-end verification, and inspecting the rendered config the controller publishes as a `HAProxyCfg` resource — see [Getting Started](getting-started.md).
 
-### Inspect the Deployed Configuration
-
-Once you have an Ingress (or Gateway, HTTPRoute, …) the controller writes the rendered HAProxy config to a read-only `HAProxyCfg` CRD on every reconciliation:
-
-```bash
-kubectl describe haproxycfg -n haptic
-```
-
-!!! note "CRD short names"
-    `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the *output*. The *input* — templates, watched resources, dataplane settings — lives in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Edit that one, not `HAProxyCfg`. Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
-
-### What Makes HAPTIC Different
+## What Makes HAPTIC Different
 
 Templates are the difference. Suppose your platform users want a custom annotation that injects an `X-Request-ID` header for tracing. One snippet — no controller fork, no waiting for a release (with the Helm chart you'd place it under `controller.config.templateSnippets` in your values):
 
@@ -159,6 +148,7 @@ Users opt in per-Ingress with `example.com/request-id-header: "X-Request-ID"`. T
 ## Where to Go Next
 
 - **Essential**: [Getting Started](getting-started.md) → [Templating](templating.md) → [CRD Reference](crd-reference.md)
+- **Replacing ingress-nginx or haproxy-ingress?** [Migrating](migrating.md)
 - **Custom resources beyond Ingress**: [Watching Resources](watching-resources.md)
 - **Template tests for CI/CD**: [Validation Tests](validation-tests.md)
 - **Reference**: [Supported Configuration](supported-configuration.md), [Troubleshooting](troubleshooting.md)

@@ -15,27 +15,35 @@ Components communicate through a central EventBus using pub/sub and request-resp
 
 ## Navigation
 
-The design documentation is organized into focused documents:
+This section is for people changing HAPTIC's Go code and charts; if you run HAPTIC rather than develop it, the Operations guides (starting with [High Availability](../operations/high-availability.md)) are for you.
 
-- **[Considerations](design/considerations.md)** - Assumptions about the operating environment, constraints imposed by HAProxy Dataplane API, and Kubernetes cluster requirements
+The design documentation is organized the way the sidebar groups it:
 
-- **[Architecture Overview](design/architecture-overview.md)** - High-level system architecture with component diagrams showing the controller's internal event-driven structure and validation flow
+**Architecture**
+
+- **[Architecture Overview](design/architecture-overview.md)** - High-level system architecture with component diagrams showing the controller's internal event-driven structure, validation flow, and the operating assumptions and constraints the design rests on
 
 - **[Package Structure](design/package-structure.md)** - Go package organization including directory structure, package dependencies, and key interfaces
 
 - **[Sequence Diagrams](design/sequence-diagrams.md)** - Dynamic behavior including startup initialization, resource change handling, configuration validation, and zero-reload deployment
 
+**Components**
+
+- **[Configuration Model](design/configuration.md)** - User interface design showing how you configure the controller through HAProxyTemplateConfig CRD
+
 - **[Deployment](design/deployment.md)** - Kubernetes deployment architecture showing controller pods, HAProxy pods, container configuration, and network topology
-
-- **[Design Decisions](design/design-decisions.md)** - Key architectural choices with rationale covering validation strategy, template engine selection, concurrency model, and observability integration
-
-- **[Runtime Introspection](design/introspection.md)** - Debug HTTP endpoints for runtime state inspection, event history tracking, and integration with acceptance testing
 
 - **[Leader Election](design/leader-election.md)** - Lease-based leader election, the leader-only vs all-replica component split, and the bootstrap pattern that prevents missed events on leadership transitions
 
-- **[Configuration](design/configuration.md)** - User interface design showing how you configure the controller through HAProxyTemplateConfig CRD
+- **[Runtime Introspection](design/introspection.md)** - Debug HTTP endpoints for runtime state inspection, event history tracking, and integration with acceptance testing
 
-- **[Appendices](design/appendices.md)** - Definitions, abbreviations, and external references
+**Validation and decisions**
+
+- **[CRD Validation](crd-validation-design.md)** - Durable design decisions behind the `HAProxyTemplateConfig` CRD and the three-layer validation stack (OpenAPI schema, admission webhooks, runtime validation)
+
+- **[Design Decisions](design/design-decisions.md)** - Key architectural choices with rationale covering validation strategy, template engine selection, concurrency model, and observability integration
+
+Process pages — [Linting](linting.md), [Releasing](releasing.md), and the [Gateway API Upgrade Playbook](gateway-api-upgrade-playbook.md) — cover the contributor workflow rather than the design.
 
 ## Core Capabilities
 
