@@ -1892,6 +1892,12 @@ haproxy.org/auth-realm: "API Access"
 
 4. **Secret format for auth** - Password values must be base64-encoded hashes only, not htpasswd format (`username:hash`). The key is the username and the value is the hash — templates need no string parsing.
 
+## Watched Resources
+
+This library watches the following additional resources:
+
+- **Secrets** (`v1/secrets`) — read for basic-auth credentials (`auth-secret`) and backend TLS material (`server-ca`, `server-crt`)
+
 ## Implementation Status Summary
 
 The library supports **47** `haproxy.org/*` annotations, grouped by category below. Deprecated aliases (`whitelist`, `blacklist`) and parsed-but-no-op annotations (`check-interval`, `scale-server-slots`) are excluded from this count.

@@ -22,7 +22,7 @@ The `backend storefront_shop_svc_shop_http` section changes `option httpchk GET 
 </div>
 
 !!! note "Migrating from jcmoraisjr/haproxy-ingress"
-    If you are migrating from jcmoraisjr/haproxy-ingress, your existing `haproxy-ingress.github.io/*` annotations work without changes. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
+    If you are migrating from jcmoraisjr/haproxy-ingress, your existing `haproxy-ingress.github.io/*` annotations work without changes. See [Migrating from haproxy-ingress](../migrating.md#from-haproxy-ingress) for the cutover guide and the per-annotation verdict table, and [Annotations](../annotations.md) for the feature comparison between annotation libraries.
 
 ## Configuration
 
@@ -69,6 +69,9 @@ The haproxy-ingress library hooks into these extension points. Snippet names enc
 | `backend-directives-660-haproxy-ingress-server-options` | `initial-weight`, other server-line options |
 | `backend-directives-670-haproxy-ingress-session-affinity` | `affinity`, `session-cookie-*` |
 | `backend-directives-680-haproxy-ingress-auth` | `auth-secret`, `auth-realm` (attaches userlist to the backend) |
+| `backend-directives-685-haproxy-ingress-rate-limiting` | `limit-rps`, `limit-rpm`, `limit-whitelist` |
+| `backend-directives-690-haproxy-ingress-rewrite-target` | `rewrite-target` (capture-group rewrites; literal rewrites go to `path-rewrite.map`) |
+| `backend-directives-695-haproxy-ingress-agent-check` | `agent-check-port`, `agent-check-addr`, `agent-check-interval`, `agent-check-send` |
 | `backend-directives-900-haproxy-ingress-config-backend` | `config-backend` |
 
 ### frontend-filters-* (HTTP-frontend request/response filters)
@@ -76,9 +79,10 @@ The haproxy-ingress library hooks into these extension points. Snippet names enc
 | Snippet | Annotations Processed |
 |---------|----------------------|
 | `frontend-filters-600-haproxy-ingress-forwardfor` | `forwardfor` |
-| `frontend-filters-610-haproxy-ingress-access-control` | `allowlist-source-range`, `denylist-source-range` |
+| `frontend-filters-610-haproxy-ingress-access-control` | `allowlist-source-range` (or its deprecated alias `whitelist-source-range`), `denylist-source-range` |
 | `frontend-filters-660-haproxy-ingress-cors` | `cors-enable`, `cors-*` |
 | `frontend-filters-670-haproxy-ingress-headers` | `headers` |
+| `frontend-filters-680-haproxy-ingress-default-backend-redirect` | `default-backend-redirect`, `default-backend-redirect-code` |
 
 ### Other extension points
 
@@ -86,6 +90,13 @@ The haproxy-ingress library hooks into these extension points. Snippet names enc
 |---------|-----------------|---------|
 | `global-top-600-haproxy-ingress-auth` | `global-top-*` | Emits a `userlist auth_<secretNs>_<secretName>` per unique auth secret (deduplicated) |
 | `backends-501-haproxy-ingress-ssl-passthrough` | `backends-*` | TCP-mode passthrough backends for hosts with `ssl-passthrough: "true"` |
+| `map-host-650-haproxy-ingress-alias` | `map-host-*` | `server-alias` hostnames → the primary host's routing key in `host.map` |
+| `map-hostregex-650-haproxy-ingress-alias` | `map-hostregex-*` | `server-alias-regex` patterns → the primary host's routing key in `host-regex.map` |
+| `map-body-size-680-haproxy-ingress` | `map-body-size-*` | `proxy-body-size` limits as per-backend `body-size.map` entries |
+| `map-path-rewrite-690-haproxy-ingress` | `map-path-rewrite-*` | Literal `rewrite-target` values as per-backend `path-rewrite.map` entries |
+| `frontend-extra-650-haproxy-ingress-config-frontend` | `frontend-extra-*` | `config-frontend` raw directives in the HTTP frontend |
+| `global-settings-650-haproxy-ingress-config-global` | `global-settings-*` | `config-global` raw directives in the `global` section |
+| `defaults-settings-650-haproxy-ingress-config-defaults` | `defaults-settings-*` | `config-defaults` raw directives in the `defaults` section |
 
 ---
 
@@ -263,6 +274,42 @@ backend my-backend
 
 ---
 
+### haproxy-ingress.github.io/agent-check-port
+
+**Status**: ✅ Supported
+
+**Description**: Enable HAProxy's auxiliary agent check: HAProxy connects to an agent on each server at the given port, and the agent's reply can adjust the server's weight or state. `agent-check-port` is the enabler — setting `agent-check-addr`, `agent-check-interval`, or `agent-check-send` without it fails the render, because HAProxy disables an agent check that has no port.
+
+**Related annotations**:
+
+| Annotation | Description | Default |
+|------------|-------------|---------|
+| `agent-check-port` | Port the agent listens on (required to enable) | - |
+| `agent-check-addr` | Address the agent listens on | server address |
+| `agent-check-interval` | Interval between agent checks | HAProxy's `agent-inter` default |
+| `agent-check-send` | String sent to the agent on connect | - |
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/agent-check-port: "9998"
+  haproxy-ingress.github.io/agent-check-addr: "10.0.0.50"
+  haproxy-ingress.github.io/agent-check-interval: "5s"
+  haproxy-ingress.github.io/agent-check-send: "check"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+backend my-backend
+    default-server check agent-check agent-port 9998 agent-addr 10.0.0.50 agent-inter 5s agent-send check
+```
+
+Like the health-check options, the agent-check parameters live on the `default-server` line, so they are runtime-safe.
+
+---
+
 ### haproxy-ingress.github.io/proxy-protocol
 
 **Status**: ✅ Supported
@@ -300,6 +347,8 @@ server SRV_1 10.0.0.1:8080 send-proxy-v2
 | `secure-verify-hostname` | Hostname for certificate verification |
 | `secure-verify-ca-secret` | CA secret for backend verification |
 | `secure-crt-secret` | Client certificate for mTLS |
+| `ssl-ciphers-backend` | Cipher list (TLS ≤ 1.2) for the backend connection |
+| `ssl-cipher-suites-backend` | Cipher suites (TLS 1.3) for the backend connection |
 
 **Usage**:
 
@@ -309,13 +358,16 @@ annotations:
   haproxy-ingress.github.io/backend-protocol: "h2"
   haproxy-ingress.github.io/secure-verify-ca-secret: "backend-ca"
   haproxy-ingress.github.io/secure-crt-secret: "client-cert"
+  haproxy-ingress.github.io/ssl-ciphers-backend: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
 ```
 
 **Generated HAProxy Configuration**:
 
 ```haproxy
-server SRV_1 10.0.0.1:8443 ssl alpn h2 ca-file /path/to/ca.pem crt /path/to/client.pem verify required
+server SRV_1 10.0.0.1:8443 ssl alpn h2 ca-file /path/to/ca.pem crt /path/to/client.pem verify required ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256
 ```
+
+`ssl-ciphers-backend` (HAProxy's `ciphers` server option) and `ssl-cipher-suites-backend` (`ciphersuites`) apply only when TLS to the backend is on — `secure-backends: "true"` or an `-ssl` `backend-protocol`. Without backend TLS they are ignored, because HAProxy rejects the keywords on a plaintext server line.
 
 ---
 
@@ -334,11 +386,117 @@ annotations:
 
 ---
 
+### haproxy-ingress.github.io/proxy-body-size
+
+**Status**: ✅ Supported
+
+**Description**: Maximum allowed request body size. Requests exceeding the limit receive a 413 response.
+
+**Valid values**: Plain number (bytes), or with `k`/`m`/`g` suffix (case-insensitive). Value `0` (the upstream default) means unlimited — no limit is emitted.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/proxy-body-size: "10m"
+```
+
+**Generated configuration**: the per-backend limit is written to `body-size.map`
+(keyed on the resolved backend), not into the backend section. A shared,
+resource-agnostic frontend rule (base.yaml `frontend-filters-250-request-body-size`)
+enforces it, so adding or changing the limit is a map-only, reload-free update.
+
+```text
+# body-size.map
+default_my-ingress_svc_my-service_80 10485760
+```
+
+```haproxy
+# frontend (shared, static — emitted once regardless of how many backends set a limit)
+http-request set-var(txn.haptic_body_limit) var(txn.backend_name),map(maps/body-size.map,0),add(0)
+http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } { req.body_size,sub(txn.haptic_body_limit) -m int gt 0 }
+```
+
+---
+
+## Rate Limiting
+
+### haproxy-ingress.github.io/limit-rps
+
+**Status**: ✅ Supported
+
+**Description**: Reject a source IP's requests with HTTP 429 once it exceeds the configured rate.
+
+**Related annotations**:
+
+| Annotation | Description |
+|------------|-------------|
+| `limit-rps` | Maximum requests per second per source IP |
+| `limit-rpm` | Maximum requests per minute per source IP |
+| `limit-whitelist` | Comma-separated CIDRs exempt from the limit |
+
+The cap is hard — jcmoraisjr/haproxy-ingress grants a burst allowance on top of the configured rate, so expect stricter enforcement at the same value after migrating. HAProxy stores one request-rate counter per backend, so when both are set `limit-rps` wins and `limit-rpm` is ignored (the rendered config notes it in a comment). Invalid CIDRs in `limit-whitelist` fail the render.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/limit-rps: "10"
+  haproxy-ingress.github.io/limit-whitelist: "10.0.0.0/8"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+backend my-backend
+    stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
+    http-request track-sc0 src
+    http-request deny deny_status 429 if { sc_http_req_rate(0) gt 10 } !{ src 10.0.0.0/8 }
+```
+
+The `peers localinstance` reference carries the per-source counters across HAProxy reloads, so accumulated rates survive config churn.
+
+---
+
+## URL Rewriting
+
+### haproxy-ingress.github.io/rewrite-target
+
+**Status**: ✅ Supported
+
+**Description**: Rewrite the request path before forwarding to the backend. Capture groups written in the nginx-compatible `$1`–`$9` form are translated to HAProxy's `\1`–`\9` backreferences.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/rewrite-target: "/$1"
+```
+
+**Generated HAProxy Configuration**:
+
+Capture rewrites (the value contains `$N`) stay as a per-backend `replace-path`:
+
+```haproxy
+backend my-backend
+    http-request replace-path (.*) /\1
+```
+
+A **literal** rewrite (no capture, e.g. `rewrite-target: "/new"`) is instead written to
+`path-rewrite.map` (`<backend_name> /new`) and applied by a shared frontend `set-path` rule,
+so changing it is a map-only, reload-free update.
+
+---
+
+## Raw Configuration Injection
+
+The four `config-*` annotations inject operator-authored HAProxy directives verbatim into a configuration section. HAPTIC validates the resulting config before deploying it, but the directives are yours — a typo fails the render.
+
 ### haproxy-ingress.github.io/config-backend
 
 **Status**: ✅ Supported
 
-**Description**: Raw HAProxy configuration to inject into the backend section.
+**Description**: Raw HAProxy directives injected into each of the Ingress's backend sections.
 
 **Usage**:
 
@@ -347,6 +505,54 @@ annotations:
   haproxy-ingress.github.io/config-backend: |
     http-send-name-header X-Backend-Server
     retries 5
+```
+
+---
+
+### haproxy-ingress.github.io/config-global
+
+**Status**: ✅ Supported
+
+**Description**: Raw HAProxy directives injected into the `global` section. The section is process-wide: every Ingress carrying the annotation contributes its block (prefixed with an `# Ingress: <namespace>/<name>` comment), and deduplication across Ingresses is your responsibility.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/config-global: |
+    tune.bufsize 65536
+```
+
+---
+
+### haproxy-ingress.github.io/config-frontend
+
+**Status**: ✅ Supported
+
+**Description**: Raw HAProxy directives injected into HAPTIC's shared HTTP frontend — not a per-Ingress frontend, so the directives apply to all HTTP traffic. They render before the routing logic, so captures, ACLs, and early `http-request` rules you inject are in scope for the routing that follows. Like `config-global`, every annotated Ingress contributes its block.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/config-frontend: |
+    capture request header X-Request-Id len 64
+```
+
+---
+
+### haproxy-ingress.github.io/config-defaults
+
+**Status**: ✅ Supported
+
+**Description**: Raw HAProxy directives injected into the `defaults` section. Same process-wide semantics as `config-global`.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/config-defaults: |
+    option httplog
 ```
 
 ---
@@ -413,6 +619,14 @@ annotations:
 ```haproxy
 http-request deny unless { src 10.0.0.0/8 } or { src 192.168.0.0/16 }
 ```
+
+---
+
+### haproxy-ingress.github.io/whitelist-source-range
+
+**Status**: ✅ Supported (deprecated alias)
+
+**Description**: Deprecated alias of `allowlist-source-range`, honoured only when `allowlist-source-range` is absent on the same Ingress. Prefer `allowlist-source-range` for new Ingresses.
 
 ---
 
@@ -491,6 +705,37 @@ annotations:
   haproxy-ingress.github.io/redirect-to: "https://new.example.com"
   haproxy-ingress.github.io/redirect-to-code: "301"
 ```
+
+---
+
+### haproxy-ingress.github.io/default-backend-redirect
+
+**Status**: ✅ Supported
+
+**Description**: Redirect requests that match one of the Ingress's hosts but none of its paths, instead of letting them fall through to the default backend.
+
+**Related annotations**:
+
+| Annotation | Description | Default |
+|------------|-------------|---------|
+| `default-backend-redirect` | Target URL | - |
+| `default-backend-redirect-code` | HTTP status code: 301, 302, 303, 307, or 308 (other values fail the render) | `302` |
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/default-backend-redirect: "https://landing.example.com"
+  haproxy-ingress.github.io/default-backend-redirect-code: "301"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request redirect location %[var(txn.host),map(maps/default-backend-redirect-301.map)] code 301 if !{ var(txn.backend_name) -m found } { var(txn.host),map(maps/default-backend-redirect-301.map) -m found }
+```
+
+The host→URL pairs live in a per-code map, so changing the target URL is a map-only, reload-free update. The `!{ var(txn.backend_name) -m found }` guard fires exactly when the routing cascade matched no path — the same condition that otherwise selects the default backend.
 
 ---
 
@@ -590,6 +835,51 @@ annotations:
 ```yaml
 annotations:
   haproxy-ingress.github.io/headers: "X-Custom-Header:value|X-Another:test"
+```
+
+---
+
+## Server Alias
+
+### haproxy-ingress.github.io/server-alias
+
+**Status**: ✅ Supported
+
+**Description**: Comma-separated extra exact hostnames that route like the Ingress's first rule host. Each alias becomes a `host.map` entry pointing at the primary host's routing key, so every path already registered for that host applies to the alias — no backend or path duplication.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/server-alias: "example.org, www.example.org"
+```
+
+**Generated configuration** (`host.map` entries, for an Ingress whose first rule host is `example.com`):
+
+```text
+example.org example.com
+www.example.org example.com
+```
+
+---
+
+### haproxy-ingress.github.io/server-alias-regex
+
+**Status**: ✅ Supported
+
+**Description**: A regular expression matching extra hostnames, routed to the Ingress's first rule host via `host-regex.map`. The routing cascade consults `host-regex.map` after an exact `host.map` miss, so one entry routes every matching hostname. The value is emitted verbatim and must be a HAProxy-compatible PCRE.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/server-alias-regex: "^www\\.example\\.(com|org)$"
+```
+
+**Generated configuration** (`host-regex.map` entry):
+
+```text
+^www\.example\.(com|org)$ example.com
 ```
 
 ---
@@ -697,6 +987,9 @@ spoaHub:
 ```
 
 The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. See the [SPOA Hub operations guide](../operations/spoa-hub.md) for the full deployment surface.
+
+!!! warning "Not auto-enabled with this library"
+    Unlike the nginx-ingress library, enabling the haproxy-ingress library does not auto-enable the `external-auth` plugin (the library is on by default, and auto-enabling would deploy the SPOA hub sidecar for everyone). Without the plugin, `auth-url` is silently not enforced — set `spoaHub.plugins.external-auth.enabled=true` explicitly.
 
 !!! warning "Host-less rules error at render time"
     All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` cannot be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress; add a `host:` to the rule to fix.
@@ -860,6 +1153,67 @@ The conditions ensure the directive only fires on the deny response (auth path r
 
 ---
 
+### haproxy-ingress.github.io/oauth
+
+**Status**: ✅ Supported
+
+**Description**: Convenience wiring for [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/). Setting `oauth: "oauth2_proxy"` (or `"oauth2-proxy"` — the only accepted values) desugars onto the external-auth machinery: it derives the auth URL, sign-in redirect, subrequest method, and success-header forwarding that you would otherwise wire via `auth-url`, `auth-signin`, `auth-method`, and `auth-headers-succeed`. The Ingress must route the `oauth-uri-prefix` path (default `/oauth2`) to the oauth2-proxy Service — the auth URL is derived from that path's Service, and the render fails without such a path.
+
+**Related annotations**:
+
+| Annotation | Description | Default |
+|------------|-------------|---------|
+| `oauth` | `oauth2_proxy` / `oauth2-proxy` (other values fail the render) | - |
+| `oauth-uri-prefix` | The Ingress path routing to the oauth2-proxy Service | `/oauth2` |
+| `oauth-headers` | Auth-reply headers forwarded to the backend on success | `X-Auth-Request-Email` |
+
+**Usage**:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oauth-protected
+  annotations:
+    haproxy-ingress.github.io/oauth: "oauth2_proxy"
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app-backend
+                port:
+                  number: 80
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth2-proxy
+                port:
+                  number: 4180
+```
+
+**Effective external-auth configuration** (what the desugaring derives):
+
+```text
+auth-url     http://oauth2-proxy.<namespace>.svc:4180/oauth2/auth
+auth-signin  /oauth2/start?rd=%[path]
+auth-method  HEAD
+forwarded success headers: X-Auth-Request-Email
+```
+
+An explicit `auth-url` on the same Ingress takes precedence and disables the oauth desugaring entirely; an explicit `auth-signin`, `auth-method`, or `auth-headers-succeed` overrides only its derived value.
+
+!!! warning "Plaintext auth URL"
+    The derived auth URL is plain `http://` toward the in-cluster oauth2-proxy Service, so the external-auth plugin must allow plaintext: set `allow_plaintext = true` in `spoaHub.plugins.external-auth.params`.
+
+---
+
 ### Combined example
 
 End-to-end: a protected API route with browser sign-in, custom request header forwarding, identity propagation to the backend, and a Bearer challenge on failure.
@@ -933,9 +1287,18 @@ data:
 
 **Status**: ✅ Supported
 
-**Description**: Client certificate verification mode. Same value semantics as the nginx-ingress flavour; see [auth-tls-verify-client in the nginx-ingress library](nginx-ingress.md#nginxingresskubernetesioauth-tls-verify-client) for the value mapping table.
+**Description**: Client certificate verification mode.
 
-**Valid values**: `on` (default), `off`, `optional`, `optional_no_ca`.
+**Valid values**:
+
+| Value | HAProxy verify mode | Behaviour |
+|-------|---------------------|-----------|
+| `on` (default) | `required` | Reject connections without a valid client cert |
+| `off` | (no-op) | Don't enable verification on this host — the entry is skipped, falling through to the default crt-list line |
+| `optional` | `optional` | Verify when a cert is presented; allow connections without |
+| `optional_no_ca` | `optional` | Same as `optional` — HAProxy doesn't have a distinct mode for "verify but accept invalid"; operators wanting to accept self-signed certs should set `optional` and inspect `ssl_c_used` in their `auth-tls-error-page` logic |
+
+Other values fail the render.
 
 **Usage**:
 
@@ -1006,41 +1369,28 @@ Opt an Ingress into the SPOA hub **Coraza** WAF with `haproxy-ingress.github.io/
 
 ---
 
+## Unsupported Annotations
+
+The library reads only the annotations documented on this page; it ignores any other `haproxy-ingress.github.io/*` key. Two annotations are accepted for compatibility but have no effect:
+
+| Annotation | Reason |
+|------------|--------|
+| `auth-tls-strict` | Upstream defaults it to true (fail-closed on a missing/invalid client CA); here a missing CA skips mTLS for the Ingress (fail-open), and this annotation can't restore fail-closed. For soft verification use `auth-tls-verify-client: optional` instead. |
+| `docs` | A pointer to jcmoraisjr/haproxy-ingress documentation, not a configuration key. |
+
+Before cutting over, run `migrate-check` against your manifests to get a per-annotation verdict for exactly the annotations you use — see [Check what will change](../migrating.md#step-0-check-what-will-change).
+
+---
+
 ## Watched Resources
 
-This library does not add additional watched resources. It uses Ingress resources already watched by the [Ingress library](ingress.md).
+This library watches the following additional resources:
 
-## Implementation Status Summary
+- **Secrets** (`v1/secrets`) — read for basic-auth credentials (`auth-secret`), backend TLS material (`secure-verify-ca-secret`, `secure-crt-secret`), and incoming client-CA bundles (`auth-tls-secret`)
 
-The library processes **68** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress/`).
+## Annotation Inventory
 
-**Supported by category:**
-
-| Category | Count | Notes |
-|----------|-------|-------|
-| Path matching | 1 | `path-type` (four values: regex, exact, prefix, begin) |
-| Timeouts | 6 | `timeout-connect`, `timeout-server`, `timeout-queue`, `timeout-http-request`, `timeout-keep-alive`, `timeout-tunnel` |
-| Load balancing | 1 | `balance-algorithm` |
-| Connection limits | 4 | `maxconn-server`, `maxqueue-server`, `initial-weight`, `limit-connections` |
-| Health checks | 5 | `backend-check-interval`, `health-check-uri`, `health-check-port`, `health-check-fall-count`, `health-check-rise-count` |
-| Backend SSL / mTLS | 6 | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret`, `secure-verify-hostname` |
-| PROXY protocol | 1 | `proxy-protocol` |
-| Session affinity | 8 | `affinity`, `session-cookie-name`, `session-cookie-domain`, `session-cookie-strategy`, `session-cookie-same-site`, `session-cookie-keywords`, `session-cookie-preserve`, `session-cookie-dynamic` |
-| Access control | 2 | `allowlist-source-range`, `denylist-source-range` |
-| SSL redirect | 2 | `ssl-redirect`, `ssl-redirect-code` |
-| HSTS | 4 | `hsts`, `hsts-max-age`, `hsts-include-subdomains`, `hsts-preload` |
-| App root | 1 | `app-root` |
-| Redirects | 2 | `redirect-to`, `redirect-to-code` |
-| CORS | 7 | `cors-enable`, `cors-allow-origin`, `cors-allow-methods`, `cors-allow-headers`, `cors-allow-credentials`, `cors-max-age`, `cors-expose-headers` |
-| Headers | 2 | `headers`, `forwardfor` |
-| SSL passthrough | 1 | `ssl-passthrough` |
-| Basic auth | 2 | `auth-secret`, `auth-realm` |
-| External auth | 6 | `auth-url`, `auth-signin`, `auth-method`, `auth-headers-request`, `auth-headers-succeed`, `auth-headers-fail` (requires SPOA hub `external-auth` plugin) |
-| Client mTLS | 4 | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-cert-header` (incoming client-cert verification via crt-list per-line ca-file/verify options) |
-| WAF | 2 | `waf` (opt-in, only `"modsecurity"`), `waf-mode` (`deny`/`detect` shadow mode, default `deny`) — ModSecurity `SecRule` enforcement via the SPOA hub `coraza` plugin |
-| Backend config | 1 | `config-backend` |
-
-All annotations are fully supported.
+The machine-readable source of truth for this page is the library's migration coverage declaration in the chart (`charts/haptic/charts/haproxy-ingress/90-migration-coverage.yaml`). It classifies every `haproxy-ingress.github.io/*` annotation the library reads, and CI checks that each annotation it classifies as carried over has a reference entry above. The [migration guide](../migrating.md#from-haproxy-ingress) renders the same data as a per-annotation support table.
 
 ## See Also
 
