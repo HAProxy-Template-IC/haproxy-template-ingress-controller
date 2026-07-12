@@ -28,6 +28,23 @@ The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) 
     validated against the matching HAProxy binary via `haproxy -c`, which is why a
     per-series controller image exists.
 
+## Feature availability by version
+
+A few capabilities depend on the HAProxy image series, because the series also
+selects the DataPlane API version the pod reports (see the note above). Each row
+is the lowest series that enables the feature.
+
+| Feature | Available from |
+|---------|----------------|
+| Reload-free runtime map content updates (`set map` / `add map` / `del map`), HTTP/2, QUIC/HTTP3, runtime map and server operations | 3.0+ |
+| Log profiles, traces, QUIC initial rules; the Stream Processing Offload Agent (SPOA) hub `mode spop` backend | 3.1+ |
+| Reload-free TLS certificate content rotation (`set ssl cert`), CRT-list storage, SSL CA-file and Certificate Revocation List (CRL) file runtime endpoints, Automated Certificate Management Environment (ACME) certificate providers | 3.2+ |
+
+Where a newer series only makes an operation faster, older series still work:
+below 3.2 a TLS certificate rotation that keeps the same filename takes a full
+(hitless) reload instead of the reload-free runtime update, and the SPOA hub's
+`mode spop` backend falls back to `mode tcp` below 3.1.
+
 ## Selecting a version
 
 Set `haproxyVersion` to your desired series. The chart defaults to `3.4`:

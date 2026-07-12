@@ -244,7 +244,11 @@ request mirroring (`mirror-target`), and ModSecurity. Full per-annotation refere
 
 The table below lists every annotation that **doesn't** carry over unchanged —
 generated from the library's declared migration coverage, so it can't drift from
-the template code. Anything not listed is fully supported.
+the template code. Annotations the library classifies as supported aren't shown
+here and carry over unchanged. An annotation the library doesn't classify at all
+— a key outside its coverage — isn't silently supported: `migrate-check` reports
+it as **unknown** (review needed, exit code `1`) and HAPTIC may ignore it, so
+verify each one.
 
 <!-- BEGIN generated: migration-coverage ingress-nginx -->
 The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 supported, 29 with behaviour differences, 16 not carried over, 0 failing.
@@ -298,6 +302,15 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 suppo
 | `nginx.ingress.kubernetes.io/whitelist-source-range` | Behaviour differs | Host-scoped — the allowlist only gates rules with an explicit host, so an Ingress without rule hosts gets no filtering; invalid CIDRs fail the render. |
 <!-- END generated: migration-coverage ingress-nginx -->
 
+!!! note "Regex paths (`use-regex`) aren't in the coverage"
+    HAPTIC doesn't read `nginx.ingress.kubernetes.io/use-regex`, so `migrate-check`
+    reports it as **unknown**. Path matching follows the Ingress `pathType`
+    (`Prefix`, `Exact`, `ImplementationSpecific`), so a path that relied on nginx
+    regex semantics routes differently. For regex routing, give the path
+    `pathType: ImplementationSpecific` and set
+    `haproxy-ingress.github.io/path-type: regex` (the `haproxy-ingress` library is
+    on by default).
+
 ---
 
 ## From `haproxy-ingress`
@@ -314,8 +327,11 @@ reference:
 [haproxy-ingress library docs](libraries/haproxy-ingress.md).
 
 The table below lists every annotation that **doesn't** carry over unchanged —
-generated from the library's declared migration coverage. Anything not listed is
-fully supported.
+generated from the library's declared migration coverage. Annotations the library
+classifies as supported aren't shown here and carry over unchanged. An annotation
+the library doesn't classify at all — a key outside its coverage — isn't silently
+supported: `migrate-check` reports it as **unknown** (review needed, exit code
+`1`) and HAPTIC may ignore it, so verify each one.
 
 <!-- BEGIN generated: migration-coverage haproxy-ingress -->
 The library classifies 92 `haproxy-ingress.github.io/*` annotations: 62 supported, 28 with behaviour differences, 2 not carried over, 0 failing.
@@ -370,8 +386,11 @@ Service/ConfigMap-level configuration doesn't carry over. Full reference:
 [haproxytech library docs](libraries/haproxytech.md).
 
 The table below lists every annotation that **doesn't** carry over unchanged —
-generated from the library's declared migration coverage. Anything not listed is
-fully supported.
+generated from the library's declared migration coverage. Annotations the library
+classifies as supported aren't shown here and carry over unchanged. An annotation
+the library doesn't classify at all — a key outside its coverage — isn't silently
+supported: `migrate-check` reports it as **unknown** (review needed, exit code
+`1`) and HAPTIC may ignore it, so verify each one.
 
 <!-- BEGIN generated: migration-coverage haproxytech -->
 The library classifies 56 `haproxy.org/*` annotations: 38 supported, 14 with behaviour differences, 4 not carried over, 0 failing.

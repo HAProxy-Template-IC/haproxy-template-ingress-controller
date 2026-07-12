@@ -384,6 +384,8 @@ Custom variables are exposed to templates as the `extraContext` map. Read a key 
 {% end %}
 ```
 
+Custom variables belong only under `templatingSettings.extraContext` (and, per test, under each `validationTests.<name>.extraContext`). A top-level `spec.extraContext` — or `controller.config.extraContext` in Helm values — isn't a schema field: the apiserver prunes it and templates never see it, with no error to signal the mistake.
+
 See [Templating — Custom Template Variables](./templating.md#custom-template-variables) for detailed examples.
 
 ### `validationTests`
@@ -515,6 +517,26 @@ controller:
 ```
 
 When the rendered configuration exceeds the threshold, it's compressed with zstd and base64-encoded; the `HAProxyCfg` resource stores it with `spec.compressed: true`, reducing etcd storage and speeding up watch events for large configurations. To read a published config back in plaintext, use `haptic-controller config view` — see [Debugging](./operations/debugging.md#common-recipes).
+
+!!! note "`HAProxyCfg` is an observability output, not the delivery path"
+    HAPTIC delivers the rendered config to HAProxy over the Dataplane API; the
+    `HAProxyCfg`, `HAProxyMapFile`, `HAProxyCRTListFile`, and `HAProxyGeneralFile`
+    resources are published copies for viewing, GitOps diffing, and slot
+    preservation across restarts. Two consequences:
+
+    - **Object-size ceiling.** `HAProxyCfg` and `HAProxyMapFile` are Kubernetes
+      objects, so after zstd compression they're still bounded by the apiserver
+      per-object limit (about 1.5 MiB). A config or map that stays over the limit
+      even compressed fails only its CRD publish — the observability copy — while
+      the Dataplane API delivery to HAProxy is unaffected and traffic keeps
+      serving. If you hit this, narrow the watch or split the resources.
+    - **Hand edits don't reach HAProxy.** These outputs are read-only: the config
+      publisher owns them via Server-Side Apply and reverts any manual `kubectl
+      edit` on the next publish, and HAProxy is never configured from them. To
+      change what HAProxy serves, edit the templates or watched resources, not the
+      published `HAProxyCfg`. On-disk edits to `haproxy.cfg` on a HAProxy pod are
+      likewise overwritten within `dataplane.driftPreventionInterval` (default
+      `60s`), which re-deploys the last known-good config.
 
 ### `logging`
 

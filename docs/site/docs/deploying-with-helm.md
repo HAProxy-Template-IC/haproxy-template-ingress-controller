@@ -112,6 +112,35 @@ helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
   --version 0.2.0-alpha.1
 ```
 
+!!! note "Values win — don't hand-edit the live `HAProxyTemplateConfig`"
+    Under the chart there's exactly one `HAProxyTemplateConfig`, generated from
+    your values: `controller.config.*` is merged last, on top of the template
+    libraries' defaults, so it's the highest-priority layer. The chart owns the
+    resource, so a `kubectl edit` on the live CRD is reverted on the next `helm
+    upgrade`. To change any field, set `controller.config.*` in your values and
+    upgrade.
+
+### What an upgrade restarts
+
+A chart upgrade rolls the HAProxy pods only when their pod template changes —
+when you change:
+
+- `haproxyVersion` or `haproxy.image.*` (the pod image tag), or
+- the Dataplane API credentials (`credentials.dataplane.*`), or
+- `haproxy.initialConfig` or `haproxy.shmStats.*` (the bootstrap config).
+
+These feed the HAProxy Deployment's image tag and its `checksum/secret` /
+`checksum/config` annotations, so Kubernetes rolls the pods. The roll is hitless:
+the strategy is `maxUnavailable: 0`, `maxSurge: 1`, so a new pod passes readiness
+before an old one stops — keep `haproxy.replicaCount` at 2 or more.
+
+Every other change — template libraries, `controller.config.*`, watched
+resources, annotations — flows through the controller instead: it re-renders and
+applies the result over the Dataplane API as an in-place hitless reload (or a
+reload-free runtime update), with **no** HAProxy pod restart. See [HAProxy
+versions — upgrading to a new series](./operations/haproxy-versions.md#upgrading-to-a-new-series)
+for the image-series case.
+
 ## Uninstalling
 
 ```bash

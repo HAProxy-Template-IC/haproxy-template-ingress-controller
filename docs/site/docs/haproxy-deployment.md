@@ -177,6 +177,30 @@ To change the log destination or facility instead, override `global-settings-100
 !!! note "This isn't the Dataplane API log"
     `haproxy.dataplane.aclFormat` configures the **Dataplane API sidecar's own** access log, not HAProxy's traffic logs. HAProxy request logging is controlled by the `log`, `option httplog`, and `log-format` directives above.
 
+## Pod security context
+
+The chart-managed HAProxy pods run hardened to the Pod Security Standards (PSS)
+Restricted profile, and the controller never runs as root.
+
+**HAProxy container:**
+
+- Runs non-root with all Linux capabilities dropped (`capabilities.drop: [ALL]`,
+  `allowPrivilegeEscalation: false`, seccomp `RuntimeDefault`).
+- The user, group, and `fsGroup` are auto-derived from
+  `haproxy.enterprise.enabled`: **UID 99** (the `haproxy` user) for community
+  images, **UID 1000** (the `hapee-lb` user) for enterprise images.
+- **Community images bind the literal ports 80 and 443 without any capability**,
+  relying on the node permitting non-root processes to bind low ports
+  (`net.ipv4.ip_unprivileged_port_start` ≤ 80, the default in kind and Docker). A
+  cluster that keeps the kernel default of `1024` won't let HAProxy bind 80/443 —
+  add `NET_BIND_SERVICE` to `haproxy.podSpec.podSecurityContext` or lower the
+  `sysctl`. **Enterprise images add `NET_BIND_SERVICE`** because their binaries
+  carry file capabilities that require it.
+
+**Controller container:** runs non-root as UID 65532 with `capabilities.drop:
+[ALL]`, `allowPrivilegeEscalation: false`, and a read-only root filesystem (see
+[`securityContext.*`](./reference.md#container-security-context)).
+
 ## HAProxy Pod requirements
 
 When `haproxy.enabled: false`, you're responsible for deploying HAProxy pods yourself. The controller discovers them via the pod selector at `controller.config.podSelector`, which defaults to:

@@ -128,6 +128,8 @@ Every Helm value the chart accepts, with its type and default.
 | `controller.config.templatingSettings.extraContext.coraza.dispatch.defaultEnforcement` | string | `deny` | WAF enforcement (`deny` or `detect`) for requests dispatched by `mode: default-on`; a per-path `haproxy-ingress.github.io/waf-mode: "detect"` annotation overrides it. Ignored when `mode: opt-in` |
 | `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields, metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']]` | Fields to ignore in watched resources |
 
+Custom template variables live only under `controller.config.templatingSettings.extraContext`. There's no top-level `controller.config.extraContext` (it maps to `spec.extraContext`, which the apiserver prunes as unknown), so abbreviating the path silently drops your variables — templates never see them.
+
 ## Webhook Configuration
 
 | Parameter | Type | Default | Description |
