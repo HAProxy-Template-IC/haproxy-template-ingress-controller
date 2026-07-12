@@ -159,7 +159,7 @@ backend my-backend
 
 **Status**: ✅ Supported
 
-**Description**: Maximum allowed request body size. Requests exceeding this limit receive a 413 response.
+**Description**: Maximum allowed request body size. Requests exceeding this limit receive a 413 response. With no `proxy-body-size` annotation there's no body-size limit — HAProxy accepts requests of any size.
 
 **Valid values**: Plain number (bytes), or with `k`/`m`/`g` suffix. Value `0` means unlimited (no map entry emitted).
 
@@ -380,6 +380,8 @@ default_my-ingress_svc_my-service_80 internal.example.com
 
 Exceeding a limit returns HTTP 429 — ingress-nginx allows a 5x burst and rejects with 503, so expect stricter enforcement at the same value after migrating. HAProxy stores one counter per backend stick-table, so the three limits are mutually exclusive with precedence `limit-rps` > `limit-rpm` > `limit-connections` (the rendered config notes ignored ones in a comment). Invalid CIDRs in `limit-whitelist` fail the render.
 
+Each limit is a per-backend stick-table, so rate limiting composes with [canary routing](#canary-deployments): a limit annotation throttles the backend of the Ingress that carries it. Set it on the canary Ingress to limit canary traffic, or on the main Ingress to limit the rest.
+
 **Usage**:
 
 ```yaml
@@ -429,6 +431,8 @@ backend my-backend
     filter bwlim-out ni_limitrate_default_my-ingress default-limit 100k default-period 1s min-size 1m
     http-request set-bandwidth-limit ni_limitrate_default_my-ingress
 ```
+
+This uses HAProxy's outbound bandwidth-limit filter (`bwlim-out`), which needs HAProxy 2.7 or later. Every HAPTIC-supported HAProxy version (3.0+) qualifies, so `limit-rate` always works.
 
 ---
 
@@ -1095,6 +1099,9 @@ The independent frontend whitelist deny and the unconditional backend auth chall
 
 The library wires the `nginx.ingress.kubernetes.io/auth-*` family to the SPOA hub's `external-auth` plugin (v0.3.0+). When set, each request hits an HTTP auth subrequest before reaching the backend; the auth service's status code decides whether HAProxy forwards the request, redirects to a sign-in URL, or returns 401.
 
+!!! note "Combining external auth with basic auth and gRPC"
+    Set both `auth-url` and `auth-type: basic` on one Ingress and the two gates are enforced together: external auth runs as a frontend deny rule and basic auth as a backend `http-request auth`, so a request must pass both. `satisfy: any` only relaxes the source-IP-or-basic-auth gate — it never includes external auth. Because the external-auth gate is a frontend HTTP rule, it also applies to gRPC backends (`backend-protocol: "GRPC"` or `"GRPCS"`). Gateway API GRPCRoute has no external-auth filter.
+
 ### Prerequisites
 
 The SPOA hub sidecar with the `external-auth` plugin must be enabled:
@@ -1435,6 +1442,8 @@ http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { hdr(host) -i ex
 `nginx.ingress.kubernetes.io/mirror-target` **is** supported, via the bundled SPOA hub **mirror** plugin (the same machinery the Gateway API `RequestMirror` filter uses) — enable it with `spoaHub.plugins.mirror`. Mirroring is fire-and-forget: a copy of each matching request is sent to the target and its response is discarded. Only the authority (`host[:port]`) of the `scheme://host[:port]$request_uri` value is used; the plugin re-attaches the live request path/query. Each mirror-target Ingress gets its own mirror slot, capped at `spoaHub.mirrorStaticMinSlots` (default 4).
 
 These constraints **fail the config** with an actionable message rather than silently doing nothing: the mirror plugin must be enabled, the Ingress must define a `host` (host-less / default-backend mirroring is unsupported), and the number of mirror-target Ingresses must not exceed the slot count (raise `spoaHub.mirrorStaticMinSlots`). `mirror-host` and `mirror-request-body: off` **aren't** honoured — the plugin always forces the mirrored Host to the target authority and always forwards the buffered request body.
+
+Mirroring is orthogonal to [rate limiting](#rate-limiting): both can apply to one backend at once. Only the real request counts toward the rate-limit stick-table — the discarded mirror copy isn't counted separately.
 
 ---
 

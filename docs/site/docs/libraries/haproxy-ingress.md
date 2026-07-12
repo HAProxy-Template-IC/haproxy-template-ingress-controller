@@ -390,7 +390,7 @@ annotations:
 
 **Status**: ✅ Supported
 
-**Description**: Maximum allowed request body size. Requests exceeding the limit receive a 413 response.
+**Description**: Maximum allowed request body size. Requests exceeding the limit receive a 413 response. With no `proxy-body-size` annotation there's no body-size limit — HAProxy accepts requests of any size.
 
 **Valid values**: Plain number (bytes), or with `k`/`m`/`g` suffix (case-insensitive). Value `0` (the upstream default) means unlimited — no limit is emitted.
 
@@ -596,8 +596,10 @@ annotations:
 ```haproxy
 backend my-backend
     cookie SERVERID insert indirect nocache dynamic attr "SameSite=Lax"
-    dynamic-cookie-key <generated-key>
 ```
+
+!!! note "Affinity is per-instance and resets on reload"
+    `insert … dynamic` makes HAProxy derive the cookie value by hashing each server's address with a per-process key. No `dynamic-cookie-key` is emitted, so each HAProxy instance uses its own key — affinity holds per instance, not across instances, and a reload starts a fresh worker with a new key, so cookies issued before the reload stop matching. For affinity that survives reloads and spans every replica, pin a fixed key with a [`config-backend`](#haproxy-ingressgithubioconfig-backend) snippet that sets `dynamic-cookie-key`.
 
 ---
 
@@ -976,6 +978,9 @@ htpasswd -nbB admin mypassword | cut -d: -f2 | base64 -w0
 ## External authentication
 
 The library wires the `haproxy-ingress.github.io/auth-*` annotation family to the Stream Processing Offload Agent (SPOA) hub's `external-auth` plugin (v0.3.0+). When set, each request hits an HTTP auth subrequest before reaching the backend; the auth service's status code decides whether HAProxy forwards the request, redirects to a sign-in URL, or returns 401.
+
+!!! note "Combining external auth with basic auth and gRPC"
+    Set both `auth-url` and `auth-secret` on one Ingress and the two gates are enforced together: external auth runs as a frontend deny rule and basic auth as a backend `http-request auth`, so a request must pass both. There's no knob to relax them to an either-or check. Because the external-auth gate is a frontend HTTP rule, it also applies to gRPC backends (`backend-protocol: "h2"` or `h2-ssl`). Gateway API GRPCRoute has no external-auth filter.
 
 ### Prerequisites
 

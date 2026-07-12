@@ -1413,6 +1413,9 @@ server SRV_4 192.0.2.1:1 disabled
 server SRV_5 192.0.2.1:1 disabled
 ```
 
+!!! warning "Endpoints beyond the slot count get no traffic"
+    HAProxy can only route to the pre-allocated slots. When a Service has more ready endpoints than slots (the default is 10), the excess endpoints get no `server` line and receive no traffic — with no error, event, or log line to flag it. Set `scale-server-slots` above your backend's peak replica count so every pod gets a slot.
+
 **Dependencies**: None
 
 ---

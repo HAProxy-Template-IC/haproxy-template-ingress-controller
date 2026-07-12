@@ -31,7 +31,7 @@ The libraries cover the following HAProxy feature areas:
 | OAuth2 proxy | — | `oauth`, `oauth-uri-prefix`, `oauth-headers` | — |
 | Client certificate (incoming mTLS) | — | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-cert-header` | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-pass-certificate-to-upstream` |
 | Allowlist / Denylist | `allow-list`, `deny-list` | `allowlist-source-range`, `denylist-source-range` | `whitelist-source-range`, `denylist-source-range` |
-| SSL redirect | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `force-ssl-redirect` |
+| SSL redirect | `ssl-redirect`, `ssl-redirect-code`, `ssl-redirect-port` | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `force-ssl-redirect` |
 | URL redirects | `request-redirect`, `request-redirect-code` | `redirect-to`, `redirect-to-code`, `app-root`, `default-backend-redirect`, … | `permanent-redirect`, `temporal-redirect`, `from-to-www-redirect`, `app-root`, … |
 | SSL passthrough | `ssl-passthrough` | `ssl-passthrough` | `ssl-passthrough` |
 | Backend SSL / mTLS | `server-ssl`, `server-proto`, `server-ca`, `server-crt` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret`, `ssl-ciphers-backend`, … | `backend-protocol`, `proxy-ssl-secret`, `proxy-ssl-verify`, `proxy-ssl-name`, … |
@@ -62,6 +62,31 @@ For the complete per-annotation reference with examples and generated HAProxy co
 - [haproxytech library →](./libraries/haproxytech.md)
 - [haproxy-ingress library →](./libraries/haproxy-ingress.md)
 - [nginx-ingress library →](./libraries/nginx-ingress.md)
+
+## Reload-free and reload-inducing annotation changes
+
+HAPTIC applies most per-route annotation changes without reloading HAProxy — it pushes the new value through the Runtime API instead of forking a new worker. See [Reload behavior](./supported-configuration.md#reload-behavior) for how the controller classifies each push.
+
+Changes applied **without a reload** are the per-route policies HAPTIC relocates to runtime maps, whichever library sets them:
+
+- Request body size (`proxy-body-size`)
+- Path rewrites (`rewrite-target`, `path-rewrite`) and app root (`app-root`)
+- Upstream request-header overrides (`set-host`, `upstream-vhost`, forwarded prefix, connection)
+- SSL redirect and its port and code (`ssl-redirect`, `ssl-redirect-port`, `ssl-redirect-code`, `force-ssl-redirect`)
+- Host-keyed URL redirects (`redirect-to`, `request-redirect`, `permanent-redirect`, `temporal-redirect`, `from-to-www-redirect`, `default-backend-redirect`)
+- HSTS headers (`hsts` and its tuning)
+- Client-certificate (mTLS) error redirect (`auth-tls-error-page`)
+
+Endpoint changes (pods scaling up or down) and their reserved server slots also apply through the Runtime API without a reload.
+
+Changes that **require a reload** rewrite the structure of a frontend or backend section:
+
+- Rate limiting (`limit-rps`, `rate-limit-requests`, …) — adds a stick-table
+- Basic authentication (`auth-type`, `auth-secret`, …) — adds a userlist
+- Backend settings: timeouts, load-balancing algorithm, health checks, backend protocol, session-affinity cookies, PROXY protocol
+- Source-IP allow and deny lists (`allowlist-source-range`, `denylist-source-range`, `whitelist-source-range`)
+
+Each library's per-annotation reference marks the reload-free ones with the phrase "map-only, reload-free update."
 
 ## Quick start: Basic authentication
 
