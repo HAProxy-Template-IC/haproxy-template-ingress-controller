@@ -125,7 +125,7 @@ the [CRD Reference](./crd-reference.md) for every field.
 - Helm 3.0+
 
 !!! note "Webhook validation"
-    The validating admission webhook is **enabled by default and works out of the box** — the chart generates a self-signed TLS certificate for it, with no cert-manager required. It intercepts CREATE/UPDATE on Ingresses, HTTPRoutes, and GRPCRoutes (the kinds the chart libraries opt in via `enableValidationWebhook: true`) and rejects changes that would break template rendering. The self-signed cert is long-lived and **not auto-rotated**; for automatic rotation set `webhook.certManager.enabled=true` (requires [cert-manager](https://cert-manager.io/docs/installation/)) — see [Security](./operations/security.md) for details.
+    A validating admission webhook is **enabled by default and works out of the box** — it rejects Ingress, HTTPRoute, and GRPCRoute changes that would break template rendering, using a self-signed certificate the chart issues itself (no cert-manager required). For rotation and certificate alternatives, see [Webhook certificates](./ssl-certificates.md#webhook-certificates).
 
 ## Step 1: Install with Helm
 
@@ -145,7 +145,7 @@ The Helm chart deploys:
 - **RBAC**: Permissions for watching Ingress, Service, and EndpointSlice resources
 - **HAProxyTemplateConfig**: CRD resource with the default template configuration, including [template libraries](template-libraries.md) for Ingress and Gateway API out of the box
 
-The chart's default HTTPS certificate works out of the box: with [cert-manager](https://cert-manager.io/docs/installation/) installed, the chart hands it a `Certificate` to issue and renew; without it, the chart generates a self-signed `default-ssl-cert` Secret itself (valid 10 years, not auto-rotated). Use cert-manager for real domains and automatic rotation. If a GitOps tool renders the chart without cluster access (`helm template`, Argo CD), the self-signed fallback regenerates the Secret on every sync — install cert-manager or provide the certificate explicitly instead. See [SSL Certificates](./ssl-certificates.md) for details and production options.
+The chart provisions a default HTTPS certificate out of the box — a self-signed one, or a cert-manager-issued, auto-rotated one when cert-manager is present. For production domains, GitOps caveats, and alternatives, see [SSL Certificates](./ssl-certificates.md).
 
 Verify both components are running:
 

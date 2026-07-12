@@ -50,14 +50,7 @@ controller:
 
 A `controller.config.watchedResources.ingresses.fieldSelector` value takes precedence over the filter derived from `ingressClass.name`, but it changes only the watch filter — the created IngressClass keeps the name from `ingressClass.name` (default `haptic`). Prefer `ingressClass.name` unless you need a filter that isn't a plain class-name match.
 
-`fieldSelector` here is client-side JSONPath filtering, not the Kubernetes
-server-side `fieldSelector` (which only supports a handful of fields like
-`metadata.name`). The controller fetches all Ingresses the API server returns
-and drops the ones whose `spec.ingressClassName` doesn't match before adding
-them to the store. To narrow the watch *server-side* — the cheaper option
-when you can use it — set `labelSelector` (server-side label match) on the
-same entry. See [Watching Resources →
-Narrowing the Watch](watching-resources.md#narrowing-the-watch).
+The `fieldSelector` here is client-side JSONPath filtering (it can match any field), not Kubernetes' server-side field selector; for the cheaper server-side option, filter with `labelSelector` on the same entry. See [Watching Resources → Narrowing the Watch](watching-resources.md#narrowing-the-watch).
 
 ### Ingresses without a class
 
