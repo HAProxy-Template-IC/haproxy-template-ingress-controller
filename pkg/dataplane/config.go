@@ -135,6 +135,15 @@ type SyncOptions struct {
 	// worker the reload replaces, and a re-stamped header would let the next
 	// sync trust an empty diff over that lost update.
 	RestampVersionHeader bool
+
+	// RenderSuperseded (SyncRuntimeFast only) reports that a newer render now
+	// exists for this endpoint. The bounded retry-across-reload loop consults
+	// it between attempts and abandons the push when it returns true: a body
+	// derived from a superseded render must not keep re-pushing across a
+	// reload window when a fresher render is already pending — the 50+×
+	// identical stale-body storms of issue #84. Nil means never superseded.
+	// Must be safe to call from any goroutine.
+	RenderSuperseded func() bool
 }
 
 // DefaultSyncOptions returns sensible default sync options.

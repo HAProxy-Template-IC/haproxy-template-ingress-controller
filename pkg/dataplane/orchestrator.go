@@ -16,6 +16,8 @@ package dataplane
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -130,10 +132,16 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		return nil, err
 	}
 
+	// A headerless on-disk config (no `# _version=N` header) means the last
+	// write was a skip_version push (the runtime bypass) — unverified content
+	// no versioned, reload-coupled push vouches for. Both branches below must
+	// treat it as such (see the comments at their use sites).
+	currentIsHeaderless := currentConfigIsHeaderless(preCachedVersion, currentConfigStr)
+
 	if !auxDiffs.hasChanges {
-		// A headerless on-disk config (no `# _version=N` header) means the
-		// last write was a skip_version push — the runtime bypass, or the
-		// scheduler's fast-track apply of a pending render's runtime subset.
+		// A headerless on-disk config means the last write was a skip_version
+		// push — the runtime bypass, or the scheduler's fast-track apply of a
+		// pending render's runtime subset.
 		// Those pushes write the body VERBATIM without a reload, and the
 		// dataplane writes the file even when the accompanying X-Runtime-
 		// Actions FAIL. So "disk == desired" proves nothing about the
@@ -146,7 +154,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		// diff is only trustworthy when the config was written by a
 		// versioned, reload-coupled push — otherwise force one reload to
 		// activate whatever is on disk, which also re-stamps the header.
-		if currentConfigIsHeaderless(preCachedVersion, currentConfigStr) {
+		if currentIsHeaderless {
 			o.logger.Info("No diff against a headerless on-disk config; forcing a reload to activate potentially parked skip_version content")
 			version := o.resolveCurrentVersion(ctx, preCachedVersion)
 			if version <= 0 {
@@ -172,7 +180,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		return result, nil
 	}
 
-	return o.applyChanges(ctx, desiredConfig, diff, auxDiffs, opts, preCachedVersion, startTime)
+	return o.applyChanges(ctx, desiredConfig, diff, auxDiffs, opts, preCachedVersion, currentIsHeaderless, startTime)
 }
 
 // applyChanges executes the config + aux changes against the dataplane API
@@ -184,6 +192,7 @@ func (o *orchestrator) applyChanges(
 	auxDiffs *auxiliaryFileDiffs,
 	opts *SyncOptions,
 	preCachedVersion int64,
+	currentIsHeaderless bool,
 	startTime time.Time,
 ) (*SyncResult, error) {
 	// PhasePreConfig: create/update aux files before the config that
@@ -206,6 +215,24 @@ func (o *orchestrator) applyChanges(
 	// file create/delete keep forcing one.
 	mapRuntimeUpdates, certRuntimeUpdates, caRuntimeUpdates, auxNeedsReload := auxDiffs.runtimeEligibleAuxUpdates(o.client.Capabilities())
 	needsReload := len(structuralOps) > 0 || auxNeedsReload
+
+	// A runtime/aux-only delta against a HEADERLESS on-disk config must still
+	// reload (issue #84 mode B): headerless means the last write was an
+	// unverified skip_version push — the dataplane writes such bodies to disk
+	// even when their runtime actions FAIL, so the file can carry structural
+	// content no worker ever loaded while the diff against it reads only
+	// runtime deltas. A reload-free apply here would stamp the version header
+	// over that parked content and report success without ever activating it
+	// (routes 404 until an unrelated change reloads). Only a reload makes the
+	// success truthful — the same rationale as the empty-diff headerless guard
+	// in sync(). Endpoint-change latency is unaffected: the runtime bypass
+	// never takes this path, and this full sync is already the interval-gated
+	// structural deploy.
+	if !needsReload && currentIsHeaderless {
+		o.logger.Info("Runtime/aux-only delta against a headerless on-disk config; forcing a reload to activate potentially parked skip_version content")
+		needsReload = true
+	}
+
 	actions := buildRuntimeActions(runtimeOps)
 
 	version := o.resolveCurrentVersion(ctx, preCachedVersion)
@@ -438,6 +465,35 @@ func (o *orchestrator) applyWithReload(
 		reloadVerified = true
 	}
 
+	// Post-reload read-back (issue #84): a synchronous 2xx — or even a
+	// verified async reload — only proves the dataplane processed OUR push,
+	// not that the body it wrote is what the master's re-exec actually read.
+	// A concurrent skip_version writer can clobber the file between this
+	// deploy's write and the re-exec read (observed: the deploy's 201 echoed
+	// 97,996 B when 111,893 B was pushed — three consecutive fresh workers
+	// activated pre-route configs while status.deployedToPods advanced).
+	// Read the disk back and refuse to report success when it STRUCTURALLY
+	// diverged from the pushed body; the fast deploy retry (#72) then
+	// redeploys. Runtime-only byte divergence is tolerated — a concurrent
+	// runtime-bypass push legitimately patches server fields onto this very
+	// body. Runs before the orphan aux-file delete: on divergence the worker's
+	// loaded config is unknown, so deleting files it may reference is unsafe.
+	readBackParsed, readBackErr := o.verifyPostReloadReadBack(ctx, desiredConfig, reloadID, opts)
+	if readBackErr != nil {
+		o.logger.Error("Post-reload read-back failed; skipping orphan aux-file delete and reporting the deploy failed",
+			"reload_id", reloadID, "error", readBackErr)
+		return &SyncResult{
+			Success:           false,
+			AppliedOperations: o.buildAppliedOps(runtimeOps, structuralOps, auxDiffs),
+			ReloadTriggered:   true,
+			ReloadID:          reloadID,
+			ReloadVerified:    reloadVerified,
+			SyncMode:          SyncModeReload,
+			Duration:          time.Since(startTime),
+			Details:           o.buildDetails(diff, auxDiffs),
+		}, readBackErr
+	}
+
 	// Safe to delete orphaned aux files only after the reload is verified.
 	o.deleteUnreferencedFilesPostConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff)
 
@@ -452,8 +508,156 @@ func (o *orchestrator) applyWithReload(
 		Duration:          time.Since(startTime),
 		Details:           o.buildDetails(diff, auxDiffs),
 		PostSyncVersion:   version + 1,
-		Message:           fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
+		// The read-back already fetched + parsed the pod's actual post-sync
+		// config; hand it to the caller's cache so populatePostSyncParsedConfig
+		// doesn't fetch a second time. Nil when the read-back parse failed
+		// (best-effort — the deferred populate then retries).
+		PostSyncParsedConfig: readBackParsed,
+		Message:              fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
 	}, nil
+}
+
+// verifyPostReloadReadBack fetches the pod's on-disk config after a reload and
+// verifies it still matches the pushed body (issue #84). Returns the parsed
+// read-back config for the caller's post-sync cache (parsed may be nil on
+// success when parsing failed on byte-identical content — best-effort).
+//
+// Verdicts:
+//   - byte-identical (ignoring the `# _version`/`# _md5hash` header lines the
+//     versioned push prepends): success.
+//   - byte-divergent but structurally identical (only runtime-eligible server
+//     field diffs): success — a concurrent runtime-bypass push patched pod
+//     addresses onto this body after our write; the reload truthfully
+//     activated this render's structural content.
+//   - structurally divergent (or unparseable/uncomparable): a
+//     stagePostReloadDivergence SyncError — a concurrent writer replaced the
+//     config between this deploy's write and the read-back, so success would
+//     be untruthful.
+//   - fetch failure after retries: a stagePostReloadReadback SyncError — the
+//     pod's state is unknown; the retry re-syncs it.
+//
+// Each per-deploy read-back logs the pushed and on-disk checksums so a
+// divergence is diagnosable from the controller log alone.
+func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody, reloadID string, opts *SyncOptions) (parsed *parserconfig.StructuredConfig, err error) {
+	retry := client.RetryConfig{
+		MaxAttempts: 4,
+		// The reload already succeeded and was verified; this read is purely
+		// observational (clobber detection). The dataplane API can briefly 5xx
+		// while HAProxy re-execs right after the reload, so retry transient
+		// server errors too — not just connection failures. A read that keeps
+		// failing across all attempts is genuine unknown-state and re-syncs.
+		RetryIf:   client.IsTransientReadError(),
+		Backoff:   client.BackoffExponential,
+		BaseDelay: 100 * time.Millisecond,
+		Logger:    o.logger.With("operation", "post_reload_readback"),
+	}
+	readBack, err := client.WithRetry(ctx, retry, func(int) (string, error) {
+		return o.client.GetRawConfiguration(ctx)
+	})
+	if err != nil {
+		return nil, &SyncError{
+			Stage:   stagePostReloadReadback,
+			Message: "failed to read back on-disk config after reload",
+			Cause:   err,
+			Hints: []string{
+				"Dataplane API stopped answering right after a verified reload",
+				hintCheckHAProxyLogs,
+			},
+		}
+	}
+
+	pushedChecksum := configTextChecksum(pushedBody)
+	readBackChecksum := configTextChecksum(stripVersionHeaderLines(readBack))
+	o.logger.Info("Post-reload config read-back",
+		"pushed_checksum", pushedChecksum,
+		"readback_checksum", readBackChecksum,
+		"match", pushedChecksum == readBackChecksum,
+		"reload_id", reloadID,
+		"endpoint", o.client.Endpoint.URL)
+
+	readBackParsed, parseErr := o.parser.ParseFromString(readBack)
+	if pushedChecksum == readBackChecksum {
+		if parseErr != nil {
+			// Bytes match the pushed body, so the deploy is truthful; the
+			// parse failure only loses the post-sync cache entry.
+			o.logger.Debug("Post-reload read-back parse failed on byte-identical content",
+				"error", parseErr)
+		}
+		return readBackParsed, nil
+	}
+	if err := o.checkReadBackDivergence(readBackParsed, parseErr, pushedBody, opts, pushedChecksum, readBackChecksum); err != nil {
+		return nil, err
+	}
+	// Byte divergence with structural equality: tolerated (see doc).
+	return readBackParsed, nil
+}
+
+// checkReadBackDivergence decides whether a byte-divergent read-back is
+// tolerable (only runtime-eligible server field diffs — a concurrent runtime
+// bypass) or a real structural divergence, returning the
+// stagePostReloadDivergence SyncError for the latter.
+func (o *orchestrator) checkReadBackDivergence(readBackParsed *parserconfig.StructuredConfig, parseErr error, pushedBody string, opts *SyncOptions, pushedChecksum, readBackChecksum string) error {
+	divergence := func(message string, cause error) error {
+		return &SyncError{
+			Stage:   stagePostReloadDivergence,
+			Message: message,
+			Cause:   cause,
+			Hints: []string{
+				"A concurrent writer replaced the on-disk config between this deploy's write and the read-back",
+				"The fast deploy retry redeploys this render",
+			},
+		}
+	}
+	if parseErr != nil {
+		return divergence(
+			fmt.Sprintf("on-disk config after reload diverged from the pushed body and cannot be parsed (pushed %s, on disk %s)", pushedChecksum, readBackChecksum),
+			parseErr)
+	}
+	desiredParsed := opts.PreParsedConfig
+	if desiredParsed == nil {
+		var err error
+		desiredParsed, err = o.parser.ParseFromString(pushedBody)
+		if err != nil {
+			return divergence("cannot parse the pushed body to prove read-back equivalence", err)
+		}
+	}
+	diff, err := o.comparator.Compare(readBackParsed, desiredParsed)
+	if err != nil {
+		return divergence("cannot compare the read-back config against the pushed body", err)
+	}
+	if _, structuralOps := partitionByRuntimeEligibility(diff.Operations); len(structuralOps) > 0 {
+		logOperationDetail(o.logger, "post_reload_divergence", structuralOps)
+		return divergence(
+			fmt.Sprintf("on-disk config after reload structurally diverged from the pushed body (%d structural ops; pushed %s, on disk %s)", len(structuralOps), pushedChecksum, readBackChecksum),
+			nil)
+	}
+	return nil
+}
+
+// configTextChecksum returns a short sha256 hex digest of the config text with
+// surrounding whitespace trimmed — the pushed-vs-on-disk comparison unit for
+// the post-reload read-back.
+func configTextChecksum(config string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(config)))
+	return hex.EncodeToString(sum[:8])
+}
+
+// stripVersionHeaderLines drops the leading `# _version=N` / `# _md5hash=…`
+// header lines a versioned dataplane push prepends, so the remaining text is
+// comparable to the body the caller pushed.
+func stripVersionHeaderLines(config string) string {
+	for {
+		line, rest, found := strings.Cut(config, "\n")
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# _version=") || strings.HasPrefix(trimmed, "# _md5hash=") {
+			if !found {
+				return ""
+			}
+			config = rest
+			continue
+		}
+		return config
+	}
 }
 
 func (o *orchestrator) buildAppliedOps(runtimeOps, structuralOps []comparator.Operation, auxDiffs *auxiliaryFileDiffs) []AppliedOperation {
@@ -565,8 +769,13 @@ func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []s
 
 // populatePostSyncParsedConfig fetches the pod's actual configuration after a
 // successful sync and parses it into result.PostSyncParsedConfig. Best-effort:
-// a failed fetch or parse logs at Debug and leaves the field nil.
+// a failed fetch or parse logs at Debug and leaves the field nil. No-op when
+// the field is already set (applyWithReload's post-reload read-back captured
+// it — no second fetch needed).
 func (o *orchestrator) populatePostSyncParsedConfig(ctx context.Context, result *SyncResult) {
+	if result.PostSyncParsedConfig != nil {
+		return
+	}
 	rawConfig, err := o.client.GetRawConfiguration(ctx)
 	if err != nil {
 		o.logger.Debug("Failed to fetch post-sync config for caller's cache",

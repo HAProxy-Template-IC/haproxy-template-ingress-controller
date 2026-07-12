@@ -78,14 +78,18 @@ func ComputeRuntimeServerUpdates(prev, current *parser.StructuredConfig) (*Runti
 }
 
 // syncRuntimeRawPush applies the shared render diff to the live worker without
-// fetching: it pushes body (the desired render) with the runtime `set server`
-// actions derived from updates, via a single skip_reload+skip_version push. Only
-// the live worker is updated by the actions; the disk gains the desired config
-// body without a reload. When body also carries structural changes (the
-// scheduler's pre-interval apply of a structural render's runtime subset), those
-// land on disk un-activated — and HEADERLESS, so the next structural sync
-// refuses to trust its empty diff against them and force-reloads (see sync()) —
-// they are never hidden from a reload indefinitely.
+// fetching: it pushes body with the runtime `set server` actions derived from
+// updates, via a single skip_reload+skip_version push. Only the live worker is
+// updated by the actions; the disk gains body without a reload. body MUST be
+// derived from the last reload-ACTIVATED config — for a pure runtime-raw
+// render that is the render itself (structurally identical to the baseline by
+// lane construction); for the scheduler's fast-track apply of a structural
+// render's runtime subset it is the baseline patched with ONLY the
+// runtime-eligible server lines (BuildRuntimeBypassBody). Pushing a body with
+// un-activated structural content is the issue #84 defect: the dataplane
+// writes it to disk verbatim (even when the actions fail), where it either
+// clobbers a concurrent force_reload deploy's write before the master re-exec
+// reads it, or parks content a later sync's empty diff skips the reload for.
 // There is no server-state-file (ADR-0011); the change persists across any later
 // reload because that deploy re-renders the current endpoints.
 //
@@ -104,7 +108,11 @@ func (o *orchestrator) syncRuntimeRawPush(ctx context.Context, body string, upda
 	o.logger.Debug("Runtime fast-path raw-push: shared render-diff actions, no fetch",
 		"server_op_count", len(updates.runtimeOps), "action_count", actionCount(actions))
 
-	if err := o.client.PushRawConfigurationSkipReloadSkipVersion(ctx, body, actions); err != nil {
+	var superseded func() bool
+	if opts != nil {
+		superseded = opts.RenderSuperseded
+	}
+	if err := o.client.PushRawConfigurationSkipReloadSkipVersion(ctx, body, actions, superseded); err != nil {
 		return nil, wrapApplyError(err)
 	}
 	if opts != nil && opts.RestampVersionHeader && updates.StructuralOpCount() == 0 {

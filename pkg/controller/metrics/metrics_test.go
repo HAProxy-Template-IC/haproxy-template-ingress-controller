@@ -284,6 +284,7 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 		"haptic_haproxy_fleet_converged",
 		"haptic_last_full_sync_timestamp_seconds",
 		"haptic_deployment_consecutive_failures",
+		"haptic_deploy_runtime_divergence_total",
 	}
 
 	// Collect registered metric names

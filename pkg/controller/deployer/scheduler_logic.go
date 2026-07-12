@@ -196,11 +196,46 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 // next structural deploy re-renders the body WITH the new address — never permanently
 // lost (config-driven; no server-state-file — ADR-0011). Best-effort: applyRuntimeRaw
 // swallows per-endpoint failures and the scheduled deploy converges the pods.
+//
+// The push body is NOT the pending render (issue #84): dep may be structural
+// (a pod rotation coalesced with another tenant's new routes), and the
+// dataplane writes the skip_version body to disk verbatim without a reload —
+// where it can clobber an in-flight force_reload deploy's write between the
+// write and the master's re-exec read (mode A: fresh workers activating
+// pre-route configs) or park un-activated structural content that a later
+// sync's runtime-only diff "successfully" skips the reload for (mode B: routes
+// 404 until an unrelated reload). The body is the last-DISPATCHED config —
+// which dep.runtimeUpdates was diffed against — patched with ONLY the
+// runtime-eligible server lines from the pending render, so disk always stays
+// "last activated config + runtime updates". Computed once per apply, shared
+// across pods. Same wire behavior as before (one skip_version push + actions);
+// only the body content differs.
 func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *scheduledDeployment) {
 	if dep == nil || dep.runtimeUpdates.ServerOpCount() == 0 {
 		return
 	}
-	s.runtimeBypass.applyRuntimeRaw(ctx, dep, true /* partial */)
+
+	s.schedulerMutex.Lock()
+	baseline := s.lastDispatchedConfig
+	s.schedulerMutex.Unlock()
+	if baseline == "" {
+		// No dispatched baseline (cold start, or invalidated after a failed
+		// deploy): nothing activated exists to patch, and the pending is (or
+		// will be re-classified) structural — the scheduled deploy converges.
+		return
+	}
+
+	s.runtimeBypass.applyRuntimeRaw(ctx, dep, bypassPush{
+		body:    dep.runtimeUpdates.BuildRuntimeBypassBody(baseline, dep.config),
+		partial: true,
+		// Abandon retry storms once a newer render replaced this pending: its
+		// own apply (or the authoritative dispatch) carries fresher state.
+		superseded: func() bool {
+			s.schedulerMutex.Lock()
+			defer s.schedulerMutex.Unlock()
+			return s.state.pending != dep
+		},
+	})
 }
 
 // waitDeployInterval enforces minDeploymentInterval before a STRUCTURAL deploy,
@@ -297,8 +332,21 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 		dep.runtimeConfigName, dep.runtimeConfigNamespace = s.resolveRuntimeConfigName()
 
 		// Not partial: a pure runtime-raw deploy reloads nothing and is the complete
-		// deploy, so it publishes the deployed config + per-pod status.
-		s.runtimeBypass.applyRuntimeRaw(ctx, dep, false)
+		// deploy, so it publishes the deployed config + per-pod status. The body is
+		// the render itself — by lane construction it differs from the activated
+		// baseline ONLY in runtime-eligible server fields, so it already IS
+		// "baseline + runtime patches" (the issue #84 bypass-body invariant), and
+		// pushing the full fresh render lets the restamp prove disk == running.
+		s.runtimeBypass.applyRuntimeRaw(ctx, dep, bypassPush{
+			body: dep.config,
+			// Abandon retry storms once a newer render is pending: it will be
+			// dispatched right after this apply returns.
+			superseded: func() bool {
+				s.schedulerMutex.Lock()
+				defer s.schedulerMutex.Unlock()
+				return s.state.pending != nil
+			},
+		})
 		return true
 	}
 

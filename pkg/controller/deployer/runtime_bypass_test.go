@@ -84,7 +84,7 @@ func TestRuntimeBypass_AppliesPerEndpoint(t *testing.T) {
 		}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 
 	// applyRuntimeRaw is synchronous — every endpoint has applied by the time it
 	// returns.
@@ -94,7 +94,7 @@ func TestRuntimeBypass_AppliesPerEndpoint(t *testing.T) {
 	assert.Equal(t, int32(0), closes.Load(), "clients are persistent — not closed per apply")
 
 	// A second apply over the same endpoints reuses the cached clients.
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 	assert.Equal(t, int32(6), calls.Load())
 	assert.Equal(t, int32(3), opens.Load(), "second apply reuses persistent clients — no reopen")
 
@@ -126,7 +126,7 @@ func TestRuntimeBypass_RestampOnlyOnAuthoritativeApply(t *testing.T) {
 				}}, nil
 			})
 
-			b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}), tc.partial)
+			b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}), bypassPush{body: "config", partial: tc.partial})
 
 			assert.Equal(t, tc.wantRestamp, gotRestamp.Load())
 		})
@@ -170,7 +170,7 @@ func TestRuntimeBypass_BlocksUntilAllEndpointsDone(t *testing.T) {
 		}}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 
 	// On return, all three applies have finished (the call blocked on them).
 	assert.Equal(t, int32(3), completed.Load(), "applyRuntimeRaw must block until every endpoint completes")
@@ -190,13 +190,13 @@ func TestRuntimeBypass_EvictsStaleClients(t *testing.T) {
 		}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 	b.mu.Lock()
 	require.Len(t, b.clients, 3, "three clients cached")
 	b.mu.Unlock()
 
 	// Next apply only mentions endpoint a — b and c are stale and must be closed.
-	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}), false)
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}), bypassPush{body: "config"})
 	assert.Equal(t, int32(2), closes.Load(), "the two absent endpoints' clients are closed")
 	b.mu.Lock()
 	_, hasA := b.clients["http://a"]
@@ -222,7 +222,7 @@ func TestRuntimeBypass_SwallowsSyncError(t *testing.T) {
 		}}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 
 	assert.Equal(t, int32(3), calls.Load(),
 		"the failing endpoint must not prevent the others from applying")
@@ -243,7 +243,7 @@ func TestRuntimeBypass_SwallowsClientOpenError(t *testing.T) {
 		}}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 
 	assert.Equal(t, int32(2), calls.Load(),
 		"two endpoints apply; the one whose client failed to open is skipped")
@@ -267,7 +267,7 @@ func TestRuntimeBypass_RecoversPanic(t *testing.T) {
 
 	// Must not panic out of applyRuntimeRaw (the per-endpoint recover catches it).
 	require.NotPanics(t, func() {
-		b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
+		b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), bypassPush{body: "config"})
 	})
 	assert.Equal(t, int32(2), calls.Load(),
 		"the panicking endpoint is recovered; the others apply")
@@ -287,7 +287,7 @@ func TestRuntimeBypass_CancelledParentStopsSpawning(t *testing.T) {
 		}}, nil
 	})
 
-	b.applyRuntimeRaw(ctx, depFor(threeEndpoints()), false)
+	b.applyRuntimeRaw(ctx, depFor(threeEndpoints()), bypassPush{body: "config"})
 
 	assert.Equal(t, int32(0), calls.Load(), "a cancelled parent context must stop spawning applies")
 }
@@ -319,7 +319,7 @@ func TestRuntimeBypass_PublishesConfigAppliedForRuntimeLane(t *testing.T) {
 			{URL: "http://b", PodName: "pod-b", PodNamespace: "haptic"},
 		},
 	}
-	b.applyRuntimeRaw(context.Background(), dep, false)
+	b.applyRuntimeRaw(context.Background(), dep, bypassPush{body: dep.config})
 
 	got := map[string]string{} // podName -> reported checksum
 	timeout := time.After(2 * time.Second)
@@ -366,7 +366,7 @@ func TestRuntimeBypass_NoConfigAppliedForStructuralPreInterval(t *testing.T) {
 		runtimeConfigNamespace: "haptic",
 		endpoints:              []dataplane.Endpoint{{URL: "http://a", PodName: "pod-a", PodNamespace: "haptic"}},
 	}
-	b.applyRuntimeRaw(context.Background(), dep, false)
+	b.applyRuntimeRaw(context.Background(), dep, bypassPush{body: dep.config})
 
 	select {
 	case ev := <-appliedCh:
@@ -403,7 +403,7 @@ func TestRuntimeBypass_PublishesDeployedConfigForRuntimeLane(t *testing.T) {
 			{URL: "http://b", PodName: "pod-b", PodNamespace: "haptic"},
 		},
 	}
-	b.applyRuntimeRaw(context.Background(), dep, false)
+	b.applyRuntimeRaw(context.Background(), dep, bypassPush{body: dep.config})
 
 	select {
 	case ev := <-reqCh:
@@ -447,7 +447,7 @@ func TestRuntimeBypass_StructuralPreInterval_NoDeployedConfigPublish(t *testing.
 		runtimeConfigNamespace: "haptic",
 		endpoints:              []dataplane.Endpoint{{URL: "http://a", PodName: "pod-a", PodNamespace: "haptic"}},
 	}
-	b.applyRuntimeRaw(context.Background(), dep, false)
+	b.applyRuntimeRaw(context.Background(), dep, bypassPush{body: dep.config})
 
 	select {
 	case ev := <-reqCh:
@@ -486,7 +486,7 @@ func TestRuntimeBypass_PartialSuppressesDeployPublishes(t *testing.T) {
 		runtimeConfigNamespace: "haptic",
 		endpoints:              []dataplane.Endpoint{{URL: "http://a", PodName: "pod-a", PodNamespace: "haptic"}},
 	}
-	b.applyRuntimeRaw(context.Background(), dep, true) // partial
+	b.applyRuntimeRaw(context.Background(), dep, bypassPush{body: dep.config, partial: true})
 
 	// The metric event still fires (fire-vs-apply accounting stays correct).
 	select {

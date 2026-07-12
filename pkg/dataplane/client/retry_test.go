@@ -280,6 +280,65 @@ func TestIsConnectionError(t *testing.T) {
 	}
 }
 
+func TestIsTransientReadError(t *testing.T) {
+	condition := IsTransientReadError()
+
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{name: "nil error", err: nil, expected: false},
+		{
+			name:     "connection refused is transient",
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			expected: true,
+		},
+		{
+			name:     "http 500 is transient",
+			err:      errors.New("get raw configuration failed with status 500: internal error"),
+			expected: true,
+		},
+		{
+			name:     "http 502 is transient",
+			err:      errors.New("get raw configuration failed with status 502"),
+			expected: true,
+		},
+		{
+			name:     "http 503 is transient",
+			err:      errors.New("get raw configuration failed with status 503"),
+			expected: true,
+		},
+		{
+			name:     "http 504 is transient",
+			err:      errors.New("get raw configuration failed with status 504"),
+			expected: true,
+		},
+		{
+			name:     "http 404 is not transient",
+			err:      errors.New("get raw configuration failed with status 404"),
+			expected: false,
+		},
+		{
+			name:     "http 400 is not transient",
+			err:      errors.New("get raw configuration failed with status 400: bad request"),
+			expected: false,
+		},
+		{
+			name:     "context canceled is not transient",
+			err:      context.Canceled,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, condition(tt.err),
+				"IsTransientReadError(%v) = %v, want %v", tt.err, condition(tt.err), tt.expected)
+		})
+	}
+}
+
 func TestWithRetry_RetriesOnConnectionError(t *testing.T) {
 	config := RetryConfig{
 		MaxAttempts: 3,
@@ -434,4 +493,95 @@ func TestIsReloadInProgress(t *testing.T) {
 			assert.Equal(t, tt.expected, cond(tt.err))
 		})
 	}
+}
+
+// TestRetryWhileReloadInProgress_SupersededAbandons pins the issue #84 retry
+// bound: the retry-across-reload loop must abandon a body whose render has
+// been superseded by a newer pending render — instead of re-pushing the same
+// stale body at HTTP round-trip pace for the whole reloadInProgressTimeout
+// (observed: 50+ identical stale-body pushes across one reload window). The
+// first attempt always fires (happy path unchanged); superseded is consulted
+// only after a reload-signature failure.
+func TestRetryWhileReloadInProgress_SupersededAbandons(t *testing.T) {
+	reloadErr := errors.New("cannot execute SetServerAddr: haproxy-master.sock: connect: connection refused")
+
+	tests := []struct {
+		name string
+		// supersededAfter is the fn-call count after which superseded flips
+		// true; 0 means superseded from the start, -1 means nil probe.
+		supersededAfter int
+		fnErr           error
+		wantAttempts    int
+		wantErr         error
+	}{
+		{
+			name:            "superseded from the start still fires the first attempt",
+			supersededAfter: 0,
+			fnErr:           reloadErr,
+			wantAttempts:    1,
+			wantErr:         reloadErr,
+		},
+		{
+			name:            "superseded after the second attempt abandons the third",
+			supersededAfter: 2,
+			fnErr:           reloadErr,
+			wantAttempts:    2,
+			wantErr:         reloadErr,
+		},
+		{
+			name:            "success on the first attempt never consults superseded",
+			supersededAfter: 0,
+			fnErr:           nil,
+			wantAttempts:    1,
+			wantErr:         nil,
+		},
+		{
+			name:            "non-reload error returns immediately regardless of superseded",
+			supersededAfter: -1,
+			fnErr:           errors.New("raw config push failed with status 409"),
+			wantAttempts:    1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attempts := 0
+			fn := func() error {
+				attempts++
+				return tt.fnErr
+			}
+			var superseded func() bool
+			if tt.supersededAfter >= 0 {
+				superseded = func() bool { return attempts >= tt.supersededAfter }
+			}
+
+			err := retryWhileReloadInProgress(context.Background(), nil, superseded, fn)
+
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			} else if tt.fnErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			assert.Equal(t, tt.wantAttempts, attempts)
+		})
+	}
+}
+
+// TestRetryWhileReloadInProgress_NilSupersededKeepsRetrying verifies a nil
+// probe preserves the pre-existing behavior: the loop keeps retrying a
+// reload-signature failure until it clears (here: on the third attempt).
+func TestRetryWhileReloadInProgress_NilSupersededKeepsRetrying(t *testing.T) {
+	reloadErr := errors.New("cannot execute SetServerState: haproxy-master.sock: connect: connection refused")
+	attempts := 0
+	err := retryWhileReloadInProgress(context.Background(), nil, nil, func() error {
+		attempts++
+		if attempts < 3 {
+			return reloadErr
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, attempts)
 }

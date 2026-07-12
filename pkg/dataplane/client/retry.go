@@ -103,6 +103,24 @@ func IsConnectionError() RetryCondition {
 	}
 }
 
+// IsTransientReadError retries connection-level failures AND transient
+// server-side errors (HTTP 5xx). Meant for observational reads whose target
+// is expected to answer momentarily — e.g. the post-reload config read-back,
+// where the dataplane API can briefly 5xx while HAProxy re-execs.
+func IsTransientReadError() RetryCondition {
+	conn := IsConnectionError()
+	return func(err error) bool {
+		if err == nil {
+			return false
+		}
+		if conn(err) {
+			return true
+		}
+		return containsAny(err.Error(),
+			"status 500", "status 502", "status 503", "status 504")
+	}
+}
+
 // IsReloadInProgress returns a RetryCondition that retries a runtime apply that
 // failed because HAProxy was mid-reload. While the dataplaneapi drives a reload
 // its master socket is briefly unavailable, so runtime commands fail transiently
@@ -156,7 +174,8 @@ const reloadInProgressTimeout = 2 * time.Second
 // retryWhileReloadInProgress re-runs fn with NO backoff — the dataplaneapi HTTP
 // round-trip is the natural spacing — while fn keeps failing with a reload-in-
 // progress signature, until fn succeeds, returns any other error, ctx is
-// cancelled, or reloadInProgressTimeout elapses.
+// cancelled, superseded reports a newer render, or reloadInProgressTimeout
+// elapses.
 //
 // While HAProxy re-execs its master on reload, mworker_cli_proxy_stop() closes
 // the -S master CLI socket listener, so a fresh connect gets ECONNREFUSED until
@@ -166,12 +185,27 @@ const reloadInProgressTimeout = 2 * time.Second
 // fixed delay isn't needed: the round-trip (even a refused one goes
 // controller→dataplaneapi→controller) already paces the loop. The scheduled
 // deploy is the correctness floor if the budget is exhausted.
-func retryWhileReloadInProgress(ctx context.Context, logger *slog.Logger, fn func() error) error {
+//
+// superseded (nil = never) reports that the render fn's body was derived from
+// has been superseded by a newer pending render. It is consulted only AFTER a
+// reload-signature failure — the first attempt always fires, so the happy path
+// is unchanged — and abandons the remaining retries: re-pushing a superseded
+// body across a reload window at HTTP round-trip pace is the identical
+// stale-body storm of issue #84, and the newer render's own apply carries the
+// fresher state within milliseconds anyway.
+func retryWhileReloadInProgress(ctx context.Context, logger *slog.Logger, superseded func() bool, fn func() error) error {
 	deadline := time.Now().Add(reloadInProgressTimeout)
 	isReload := IsReloadInProgress()
 	for attempt := 1; ; attempt++ {
 		err := fn()
 		if err == nil || !isReload(err) {
+			return err
+		}
+		if superseded != nil && superseded() {
+			if logger != nil {
+				logger.Debug("Reload-in-progress retry abandoned; a newer render supersedes this body",
+					"attempts", attempt, "error", err.Error())
+			}
 			return err
 		}
 		if ctx.Err() != nil || time.Now().After(deadline) {

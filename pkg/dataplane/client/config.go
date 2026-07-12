@@ -210,7 +210,7 @@ func (c *DataplaneClient) PushRawConfigurationSkipReload(ctx context.Context, co
 	// change lands inside option redispatch's window instead of waiting for the
 	// next reconcile. A version conflict (409) is NOT a reload signature, so it
 	// still returns immediately.
-	return retryWhileReloadInProgress(ctx, c.logger, func() error {
+	return retryWhileReloadInProgress(ctx, c.logger, nil, func() error {
 		skipReload := true
 		resp, err := c.postHAProxyConfiguration(ctx, config, version, &skipReload, nil, nil, &runtimeActions)
 		if err != nil {
@@ -229,9 +229,17 @@ func (c *DataplaneClient) PushRawConfigurationSkipReload(ctx context.Context, co
 // produces runtime-eligible server changes, OUTSIDE the deployment scheduler's
 // serialization — so a pod-IP rotation reaches the live worker in ~ms instead
 // of waiting in the pending slot behind an in-flight ~200ms structural reload.
-// The caller passes the CURRENT on-disk config as the body (so a co-batched
-// reconcile's structural changes are NOT written to disk without a reload); only
-// the runtime actions take effect on the live worker.
+// The body the caller passes MUST be derived from the last reload-ACTIVATED
+// config (baseline + runtime-eligible server patches, see
+// RuntimeServerUpdates.BuildRuntimeBypassBody) — never a pending render with
+// structural content: the dataplane writes the body to disk VERBATIM without a
+// reload even when the runtime actions fail, so a structural body would either
+// clobber a concurrent force_reload deploy's disk write before the master's
+// re-exec read or park un-activated content behind a later empty diff
+// (issue #84).
+//
+// superseded (nil = never) lets the retry-across-reload loop abandon when a
+// newer render exists for the endpoint — see retryWhileReloadInProgress.
 //
 // NB: skip_version does NOT bump the config version — the dataplane writes the
 // pushed body VERBATIM, without the `# _version=N` header and without
@@ -245,9 +253,9 @@ func (c *DataplaneClient) PushRawConfigurationSkipReload(ctx context.Context, co
 // change persists across the scheduled deploy's structural reload because that
 // deploy re-renders the current endpoints (config-driven; no server-state-file
 // — ADR-0011).
-func (c *DataplaneClient) PushRawConfigurationSkipReloadSkipVersion(ctx context.Context, config, runtimeActions string) error {
+func (c *DataplaneClient) PushRawConfigurationSkipReloadSkipVersion(ctx context.Context, config, runtimeActions string, superseded func() bool) error {
 	// Same reload-clobber retry as PushRawConfigurationSkipReload (see there).
-	return retryWhileReloadInProgress(ctx, c.logger, func() error {
+	return retryWhileReloadInProgress(ctx, c.logger, superseded, func() error {
 		skipReload := true
 		skipVersion := true
 		resp, err := c.postHAProxyConfiguration(ctx, config, 0, &skipReload, nil, &skipVersion, &runtimeActions)

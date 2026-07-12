@@ -41,3 +41,30 @@ func NewRuntimeFastPathResultEvent(serverUpdates int, failed bool) *RuntimeFastP
 
 // EventType returns the event type identifier.
 func (e *RuntimeFastPathResultEvent) EventType() string { return EventTypeRuntimeFastPathResult }
+
+// DeployRuntimeDivergenceEvent reports one endpoint whose post-reload
+// read-back found the on-disk config STRUCTURALLY diverged from the body the
+// deploy pushed (issue #84): a concurrent writer replaced the file between
+// the deploy's write and the read-back, so the worker may be running
+// pre-route content while the deploy would otherwise have reported success.
+// The deployer publishes it alongside the endpoint's failure events; the
+// metrics component counts it as haptic_deploy_runtime_divergence_total.
+// Steady growth means bypass pushes are clobbering structural deploys — the
+// defect class the baseline-derived bypass body is supposed to make
+// impossible.
+type DeployRuntimeDivergenceEvent struct {
+	// PodName identifies the HAProxy pod whose read-back diverged.
+	PodName string
+	timestamped
+}
+
+// NewDeployRuntimeDivergenceEvent builds a DeployRuntimeDivergenceEvent.
+func NewDeployRuntimeDivergenceEvent(podName string) *DeployRuntimeDivergenceEvent {
+	return &DeployRuntimeDivergenceEvent{
+		PodName:     podName,
+		timestamped: newTimestamped(),
+	}
+}
+
+// EventType returns the event type identifier.
+func (e *DeployRuntimeDivergenceEvent) EventType() string { return EventTypeDeployRuntimeDivergence }
