@@ -12,7 +12,133 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 
 Check [Gateway API releases](https://github.com/kubernetes-sigs/gateway-api/releases) for newer versions.
 
+The v1.6.0 standard channel ships every route kind HAPTIC supports — HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute. On older Gateway API releases some kinds live only in the experimental channel (`experimental-install.yaml`): TLSRoute before v1.5 and TCPRoute before v1.6. See [Supported Gateway API versions and channels](./libraries/gateway.md#supported-gateway-api-versions-and-channels) for the full split.
+
 If the CRDs are absent, the chart skips the GatewayClass and installs everything else normally. Install the CRDs later and re-run `helm upgrade` to create it.
+
+## Expose a Service through a Gateway
+
+This quickstart routes a test hostname to a sample app through a Gateway and an HTTPRoute — the Gateway API counterpart to the [Ingress walkthrough](./getting-started.md#step-3-create-an-ingress-resource). It assumes HAPTIC is installed (see [Getting started, Step 1](./getting-started.md#step-1-install-with-helm)) and the Gateway API CRDs are installed (see [Prerequisites](#prerequisites) above), which together create the `haptic` GatewayClass.
+
+### Step 1: Deploy a sample application
+
+Create an echo Deployment and Service in the `default` namespace:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: echo
+  template:
+    metadata:
+      labels:
+        app: echo
+    spec:
+      containers:
+        - name: echo
+          image: ealen/echo-server:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: PORT
+              value: "80"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: default
+spec:
+  selector:
+    app: echo
+  ports:
+    - port: 80
+      targetPort: 80
+EOF
+```
+
+### Step 2: Create a Gateway
+
+Create a Gateway that references the `haptic` GatewayClass and opens an HTTP listener on port 80:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: default
+spec:
+  gatewayClassName: haptic
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+EOF
+```
+
+The listener's `allowedRoutes.namespaces.from: Same` lets routes in the Gateway's own namespace (`default`) attach. HAPTIC serves Gateway listeners on the chart-static HTTP port (`haproxy.ports.http`, default 80) through the shared HAProxy pods, so no per-Gateway address is needed to test locally.
+
+### Step 3: Create an HTTPRoute
+
+Attach an HTTPRoute to the Gateway that forwards `echo.example.local` to the echo Service:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: echo
+  namespace: default
+spec:
+  parentRefs:
+    - name: edge
+  hostnames:
+    - echo.example.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: echo
+          port: 80
+EOF
+```
+
+The controller detects the Gateway and HTTPRoute, renders the HAProxy configuration, and deploys it to the HAProxy pods.
+
+### Step 4: Test the routing
+
+Port-forward to the shared HAProxy Service and send a request with the route's hostname:
+
+```bash
+kubectl port-forward -n haptic svc/haptic-haproxy 8080:80
+```
+
+In another terminal:
+
+```bash
+curl -H "Host: echo.example.local" http://localhost:8080/
+```
+
+You receive a response from the echo server. Confirm the controller wrote `Accepted` and `Programmed` conditions back to the Gateway:
+
+```bash
+kubectl get gateway edge -n default -o yaml
+```
+
+For every route type (HTTP, gRPC, TLS, TCP), listener option, and status condition, see the [Gateway API library](./libraries/gateway.md).
 
 ## Configuration
 

@@ -169,6 +169,9 @@ spec:
 </details>
 </div>
 
+!!! note "Named and multiple `defaults` sections"
+    The `haproxyConfig` template's rendered text *is* the HAProxy configuration — HAPTIC parses, validates, and deploys it as written, so any construct your HAProxy version accepts is available. That includes multiple named `defaults` sections: a `defaults <name>` block that later `frontend`, `backend`, or `listen` sections opt into with `from <name>`. HAPTIC's config comparator tracks each `defaults` section by name and creates, updates, or deletes them independently. The bundled `base` library ships a single unnamed `defaults` section; add named ones in your own template or snippets when a subset of sections needs different defaults.
+
 ### Map files
 
 Each `maps` entry renders one HAProxy lookup table. They're written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod. This template turns each Ingress host into a backend-name entry — switch to the **maps** tab to read the generated `host.map`.
@@ -743,6 +746,93 @@ global
 ```
 
 ## Common patterns
+
+### Reading a custom annotation
+
+Custom annotations are the usual way to let application teams opt individual Ingresses into behavior your templates control, without a controller fork or a new release. Read the annotation off the resource and branch on its value.
+
+The config below defines the `haptic.example.com/balance` annotation: when an Ingress carries it, its backend uses that load-balancing algorithm; otherwise it falls back to `roundrobin`. The `shop` Ingress sets `leastconn`; `blog` sets nothing. Run it, then edit either Ingress's annotation in the **Resources** panel and watch the `balance` line follow.
+
+<div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="A custom annotation drives the balance algorithm" data-height="480">
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: custom-annotation-demo
+spec:
+  watchedResources:
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      indexBy: ["metadata.namespace", "metadata.name"]
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+        daemon
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      {%- for _, ingress := range resources.ingresses.List() %}
+      backend {{ ingress.metadata.name }}
+        {%- var algo = ingress.metadata.annotations["haptic.example.com/balance"] %}
+        {%- if algo != "" %}
+        balance {{ algo }}
+        {%- else %}
+        balance roundrobin
+        {%- end %}
+        server app {{ ingress.metadata.name }}.svc:80 check
+      {%- end %}
+```
+
+```yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: shop
+      namespace: default
+      annotations:
+        haptic.example.com/balance: leastconn
+    spec:
+      rules:
+        - host: shop.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: shop
+                    port:
+                      number: 80
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: blog
+      namespace: default
+    spec:
+      rules:
+        - host: blog.example.com
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: blog
+                    port:
+                      number: 80
+```
+
+</div>
+
+`ingress.metadata.annotations` is a typed `map[string]string`, so indexing an absent key returns `""` — the `algo != ""` check covers both a missing annotation and an empty one. Pick an annotation prefix you own (here `haptic.example.com/`) so it can't collide with another controller's. The same read-and-branch pattern drives rate limits, header rewrites, custom ACLs — anything HAProxy can express. In the chart, place the snippet under a `features-*` or `backend-directives-*` extension point so the bundled libraries pick it up (see [Template Libraries](template-libraries.md#injecting-custom-configuration)).
 
 ### Reserved server slots (avoid reloads)
 

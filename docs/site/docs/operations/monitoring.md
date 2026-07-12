@@ -437,7 +437,40 @@ The full metric set is HAProxy's own, not HAPTIC's — see the [HAProxy Promethe
 
 ## Alerting rules
 
-If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `monitoring.prometheusRule.enabled`) covering a core set of nine controller alerts, each individually toggleable via `monitoring.prometheusRule.defaultRules.*`. The rules below are a broader recommended set you can copy and adapt for any Prometheus setup.
+If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `monitoring.prometheusRule.enabled`) covering the nine controller alerts in [Shipped alerts](#shipped-alerts) below. The [Recommended alerts](#recommended-alerts) further down are a separate, broader example set you copy and adapt for any Prometheus setup — they're **not** what the chart deploys, and most use distinct `HAProxyIC*` names so you can run them alongside the shipped rules (`HAProxyFleetDiverged` is the one alert both sets define).
+
+### Shipped alerts
+
+The chart's `PrometheusRule` deploys these nine alerts when `monitoring.prometheusRule.enabled: true`. Each is toggled by its own `monitoring.prometheusRule.defaultRules.<key>` flag (all default to `true`):
+
+| Alert | Toggle key (`defaultRules.<key>`) | Fires when |
+|-------|-----------------------------------|------------|
+| `HAProxyControllerReconciliationErrors` | `reconciliationErrors` | `rate(haptic_reconciliation_errors_total[5m]) > 0` for 5m |
+| `HAProxyControllerDeploymentFailures` | `deploymentFailures` | `rate(haptic_deployment_errors_total[5m]) > 0` for 2m |
+| `HAProxyFleetDiverged` | `fleetDiverged` | `haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size` for 5m |
+| `HAProxyControllerHighQueueDepth` | `highQueueDepth` | p95 `haptic_reconciliation_queue_wait_seconds` over `5s` for 5m |
+| `HAProxyControllerNoLeader` | `leaderElectionLost` | `sum(haptic_leader_election_is_leader) == 0` for 1m |
+| `HAProxyControllerConfigRejected` | `configRejected` | `increase(haptic_config_rejected_total[5m]) > 0` for 1m |
+| `HAProxyControllerHAProxyPodsRejected` | `haproxyPodsRejected` | `increase(haptic_haproxy_pods_rejected_total[5m]) > 0` for 5m |
+| `HAProxyControllerNoHAProxyPods` | `noHAProxyPods` | `haptic_resource_count{type="haproxy-pods"} < 1` for 5m |
+| `HAProxyControllerCriticalEventsDropped` | `criticalEventsDropped` | `increase(haptic_events_dropped_critical_total[5m]) > 0` |
+
+Turn one rule off, or replace the whole set with your own:
+
+```yaml
+# values.yaml
+monitoring:
+  prometheusRule:
+    enabled: true
+    defaultRules:
+      highQueueDepth: false   # drop a single shipped rule; the other eight stay
+    # Or set `rules:` to a non-empty list to replace ALL default rules with your own:
+    # rules:
+    #   - alert: MyCustomAlert
+    #     expr: ...
+```
+
+The full names, toggle keys, and default thresholds also appear on the [Chart Values Reference](../reference.md#monitoring).
 
 ### Recommended alerts
 

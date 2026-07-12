@@ -69,6 +69,26 @@ For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, 
 }) %}
 ```
 
+### Regex flavor
+
+HAPTIC has two regex surfaces, and they use different engines:
+
+- **Template-level regex** — `regex_search`, `sanitize_regex`, and the `regex_replace` post-processor — runs on Go's `regexp` package, which implements RE2 syntax. RE2 has no backreferences and no look-around assertions; a pattern that needs those won't compile. The `regex_replace` post-processor also runs line by line, so a pattern can't span a newline, and `^` / `$` anchor to each line rather than the whole document.
+- **HAProxy-runtime regex** — patterns HAProxy evaluates itself, such as `map_reg` lookups or a Gateway API `RegularExpression` path match — uses HAProxy's Perl Compatible Regular Expressions (PCRE) engine, which does support backreferences and look-around. A pattern that works in one surface may be rejected by the other.
+
+### Emitting warnings
+
+There is no `warn()` function. `fail(msg)` is the only helper that interrupts a render, and it aborts outright — the message surfaces in validation tests and admission webhooks. To emit a non-fatal warning, write an HAProxy comment line yourself and let the render continue:
+
+```go
+{%- var region = ingress.metadata.annotations["haptic.example.com/region"] %}
+{%- if region == "" %}
+# WARNING: {{ ingress.metadata.name }} has no haptic.example.com/region annotation; using default
+{%- end %}
+```
+
+The comment travels into the deployed config, where it stays visible in the rendered `HAProxyCfg` resource and HAProxy's own config dump. `debug(value, label)` is the other non-fatal option — it renders a value as a JSON comment for troubleshooting.
+
 ## `pathResolver`
 
 `pathResolver` is available in every template. Its `GetPath(filename, type)` method returns the path that HAProxy should use to reference an auxiliary file (map, error file, certificate, crt-list). Use it instead of writing paths by hand so the controller and HAProxy agree on where files live.

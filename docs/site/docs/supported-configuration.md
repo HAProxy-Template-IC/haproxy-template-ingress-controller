@@ -119,6 +119,9 @@ The following sections use **whole-section comparison** via the models' `.Equal(
 
 The controller skips the HAProxy reload when every change in a push can be applied through the Runtime API. The sections below list exactly which changes qualify.
 
+!!! note "Reloads are seamless"
+    When a change *does* require a reload, HAProxy reloads seamlessly: the new worker takes over new connections while established connections keep running on the old worker, which drains them before exiting. Requests aren't dropped, so even reload-required changes are effectively zero-downtime. Skipping the reload (above) still matters — it avoids forking a fresh worker process at all — but a reload isn't a traffic outage.
+
 ### Zero-reload operations (runtime API)
 
 The following changes are applied **without reloading HAProxy**:

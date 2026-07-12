@@ -243,6 +243,9 @@ kubectl apply -f echo-ingress.yaml
 
 The controller automatically detects this new Ingress, renders the HAProxy configuration, validates it, and deploys it to the HAProxy pods. See [What's Happening Behind the Scenes](#whats-happening-behind-the-scenes) for details.
 
+!!! tip "Adding TLS"
+    This Ingress serves plain HTTP. To terminate HTTPS for a host, add a `spec.tls` entry backed by a `kubernetes.io/tls` Secret — see [Ingress library — TLS configuration](./libraries/ingress.md#tls-configuration). The chart's default certificate is covered in [SSL Certificates](./ssl-certificates.md).
+
 ## Step 4: Verify the configuration
 
 ### Check controller logs
@@ -335,7 +338,7 @@ Now that you have a working setup, explore these topics:
 
 ### Learn templating
 
-The [Templating Guide](./templating.md) is the natural next step: it covers the template language, the resource context your templates see, and how to add custom behavior. The default [template libraries](template-libraries.md) already handle path-based routing, SSL termination, and annotation-driven configuration — you only write templates to go beyond them (custom annotations, domain-specific logic, HAProxy features they don't cover).
+The [Templating Guide](./templating.md) is the natural next step: it covers the template language, the resource context your templates see, and how to add custom behavior. The default [template libraries](template-libraries.md) already handle path-based routing, SSL termination, and annotation-driven configuration — you only write templates to go beyond them ([custom annotations](./templating.md#reading-a-custom-annotation), domain-specific logic, HAProxy features they don't cover).
 
 ### Replacing another Ingress controller?
 

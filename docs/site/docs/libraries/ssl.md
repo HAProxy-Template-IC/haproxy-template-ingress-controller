@@ -162,6 +162,30 @@ default.pem [ocsp-update on]
 
 There is no separate global OCSP configuration — the per-certificate option is all that's needed with HAProxy 3.0+.
 
+### Restricting frontend TLS versions and ciphers
+
+The client-facing HTTPS listener inherits HAProxy's default cipher list and protocol versions. To harden it, emit `ssl-default-bind-*` directives into the `global` section through a `global-settings-*` snippet (the same [extension point](base.md#extension-points) the base library uses for `tune.ssl.default-dh-param`). These directives set the defaults for every frontend `bind ... ssl` line:
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      global-settings-450-tls-hardening:
+        template: |
+          ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305
+          ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+          ssl-default-bind-options ssl-min-ver TLSv1.2
+```
+
+- `ssl-default-bind-ciphers` sets the cipher list for TLS 1.2 and below.
+- `ssl-default-bind-ciphersuites` sets the cipher suites for TLS 1.3.
+- `ssl-default-bind-options ssl-min-ver TLSv1.2` rejects handshakes below TLS 1.2.
+
+The `450` prefix places the snippet after the built-in `global-settings-400-ssl`, so it doesn't collide with any bundled snippet.
+
+!!! warning "These harden the client-facing listener, not the backend"
+    `ssl-default-bind-*` directives apply to the frontend — traffic between clients and HAProxy. They don't affect TLS between HAProxy and your upstream pods. Backend TLS ciphers and versions are set per route with vendor annotations instead: `nginx.ingress.kubernetes.io/proxy-ssl-ciphers` / `proxy-ssl-protocols` (see [nginx-ingress library](nginx-ingress.md)) or haproxy-ingress `ssl-ciphers-backend` (see [haproxy-ingress library](haproxy-ingress.md)).
+
 ### SSL passthrough
 
 When resource libraries register SSL passthrough backends (via `haproxy.org/ssl-passthrough: "true"` annotation), the SSL library generates a dual-frontend architecture:

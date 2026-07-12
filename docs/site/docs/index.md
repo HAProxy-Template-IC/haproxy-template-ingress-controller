@@ -72,6 +72,9 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 - **Layered validation** - Admission webhook, template validation, and tests you can run in CI before anything reaches a cluster
 - **Observability** - Prometheus metrics, structured logging, and debug endpoints
 
+!!! warning "Project maturity"
+    The current release is `0.2.0-alpha.1`, a pre-1.0 alpha, and the custom resources are served at API version `v1alpha1` — their schemas can still change before 1.0. The high-availability, validation, and observability features above are implemented and covered by tests, but pin an exact chart version (`--version 0.2.0-alpha.1`) and read the [changelog](changelog.md) before you upgrade.
+
 !!! note "Ready to use out of the box"
     The [Helm chart](deploying-with-helm.md) ships with [Template Libraries](template-libraries.md) enabled by default. They cover Kubernetes Ingress and Gateway API resources with annotation support comparable to existing HAProxy ingress controllers — no template authoring required. Customizing or extending the templates is entirely optional.
 
@@ -155,3 +158,25 @@ Users opt in per-Ingress with `example.com/request-id-header: "X-Request-ID"`. T
 - **Template tests for CI/CD**: [Validation Tests](validation-tests.md)
 - **Reference**: [Supported Configuration](supported-configuration.md), [Troubleshooting](troubleshooting.md)
 - **Helm chart configuration**: [Deploying with Helm](deploying-with-helm.md)
+
+## Reading the docs as an AI agent
+
+Every page is also served as raw Markdown: append `index.md` to any page URL (for example this page's Markdown is at [`index.md`](index.md)). Two site-wide maps help agents crawl the whole site:
+
+- `llms.txt` — a link index of every page's Markdown endpoint, following the [llmstxt.org](https://llmstxt.org/) convention
+- `llms-full.txt` — every page's Markdown concatenated into one document
+
+Fetch them at the site root, for example `https://haproxy-haptic.org/docs/llms.txt`.
+
+## Contributing to the docs
+
+For a quick fix — a typo or a clearer sentence — click the pencil icon above any page title. It opens that page's Markdown in GitLab's web editor and turns your change into a merge request.
+
+For larger changes, edit the sources under `docs/site/docs/` in the [repository](https://gitlab.com/haproxy-haptic/haptic) and preview them locally:
+
+```bash
+cd docs/site
+mkdocs serve
+```
+
+This serves the site at `http://127.0.0.1:8000/` and reloads on save.

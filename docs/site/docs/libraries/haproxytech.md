@@ -801,8 +801,16 @@ spec:
 
 **Generated HAProxy Configuration**:
 
+The library records each host→location pair in a per-code map, then base.yaml emits one host-keyed redirect rule per code in the HTTP frontend, so adding or changing a redirect target is a reload-free map update:
+
 ```haproxy
-http-request redirect location https://new.example.com code 301
+# maps/redirect-loc-301.map
+old.example.com https://new.example.com
+```
+
+```haproxy
+# base/redirect-location (code 301)
+http-request redirect location %[var(txn.host),map(maps/redirect-loc-301.map)] code 301 if { var(txn.host),map(maps/redirect-loc-301.map) -m found }
 ```
 
 **Dependencies**: None
@@ -901,11 +909,53 @@ haproxy.org/ssl-redirect-code: "301"
 
 ### `haproxy.org/ssl-redirect-port`
 
-**Status**: ❌ Not Implemented
+**Status**: ✅ Supported
 
-**Description**: Target HTTPS port for the SSL redirect. The haproxytech library always redirects to the scheme (`https://`) without an explicit port.
+**Description**: Redirect HTTP requests to HTTPS on an explicit port instead of the default `https://` scheme. The original request URI is preserved. Requires `ssl-redirect: "true"` (or the `ssl_redirect_default` extra-context flag), and uses `ssl-redirect-code` for the status code (default `302`). Must be a positive integer port — other values fail the render.
 
-**Workaround**: Override the `frontend-filters-050-ssl-redirect` snippet (from the [SSL library](ssl.md)) to emit a `redirect location https://…:<port>` line instead of `redirect scheme https`.
+**Usage**:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ssl-redirect-port-example
+  annotations:
+    haproxy.org/ssl-redirect: "true"
+    haproxy.org/ssl-redirect-port: "8443"
+spec:
+  rules:
+    - host: secure.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: secure-service
+                port:
+                  number: 80
+```
+
+**Generated HAProxy Configuration**:
+
+The library records each host→port pair in a per-code map (`ssl-redirect-port-302.map` for the default code), so changing a port is a reload-free map update:
+
+```haproxy
+# maps/ssl-redirect-port-302.map
+secure.example.com 8443
+```
+
+It then emits one host-keyed redirect rule per code in the HTTP frontend:
+
+```haproxy
+# haproxytech/ssl-redirect-port (code 302)
+http-request redirect location https://%[hdr(host),field(1,:)]:%[var(txn.host),map(maps/ssl-redirect-port-302.map)]%[capture.req.uri] code 302 if !{ ssl_fc } { var(txn.host),map(maps/ssl-redirect-port-302.map) -m found }
+```
+
+**Dependencies**: Requires `ssl-redirect: "true"`
+
+**Related annotations**: `ssl-redirect`, `ssl-redirect-code`
 
 ---
 
@@ -1088,25 +1138,50 @@ server pod1 10.0.1.5:8443 ssl ca-file /etc/haproxy/ssl/ca-cert.pem verify requir
 
 ### `haproxy.org/check`
 
-**Status**: ⚠️ Partial — value validated but not honoured
+**Status**: ✅ Supported
 
-**Description**: Health checks are emitted unconditionally as `default-server check` by `backends-500-ingress`. This annotation is parsed (it errors on values other than `"true"` / `"false"`) but only adds a `# Note: check annotation value: ...` comment to the rendered config — there is no code path that disables checks when set to `"false"`. To disable health checks for a single backend, supply a `haproxy.org/backend-config-snippet` annotation that overrides `default-server`.
+**Description**: Toggle active health checks for the backend's servers. Health checks are on by default; set the value to `"false"` to turn them off. Only `"true"` and `"false"` are accepted — any other value fails the render. The toggle renders as the first token of the backend's `default-server` line, so it applies to every server in the pool and endpoint changes still avoid a reload.
 
-**Usage** (informational only):
+**Usage**:
 
 ```yaml
-haproxy.org/check: "true"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: no-check-backend
+  annotations:
+    haproxy.org/check: "false"
+spec:
+  rules:
+    - host: internal.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: internal-service
+                port:
+                  number: 8080
 ```
 
 **Generated HAProxy Configuration**:
 
+With `haproxy.org/check: "false"`, the backend's `default-server` carries `no-check`:
+
 ```haproxy
-default-server check
-server SRV_1 10.0.1.5:8080 enabled
-# Note: check annotation value: true
+default-server no-check
 ```
 
-**Related annotations**: `check-http` (works), `check-interval` (silent no-op — see below), `timeout-check`
+With `haproxy.org/check: "true"` (or the annotation absent), health checks stay on — the default:
+
+```haproxy
+default-server check
+```
+
+**Dependencies**: None
+
+**Related annotations**: `check-http`, `check-interval`, `timeout-check`
 
 ---
 
@@ -1143,15 +1218,42 @@ option httpchk HEAD /health HTTP/1.1
 
 ### `haproxy.org/check-interval`
 
-**Status**: ❌ Not Implemented
+**Status**: ✅ Supported
 
-**Description**: Intended to set the health-check interval (for example, `10s`, `1m`), but the library only emits a `# Note: check-interval annotation value: ...` comment — no `inter <duration>` flag is added to `default-server`. The annotation is silently ignored. To set a custom interval today, use `haproxy.org/backend-config-snippet` with an override of `default-server`.
+**Description**: Set the interval between active health checks (for example, `10s`, `1m`). The value becomes the `inter` parameter on the backend's `default-server`. Ignored when health checks are disabled with `haproxy.org/check: "false"`, since an interval on an unchecked server has no meaning.
 
-**Usage** (no effect):
+**Usage**:
 
 ```yaml
-haproxy.org/check-interval: "10s"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: slow-check-backend
+  annotations:
+    haproxy.org/check-interval: "10s"
+spec:
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 8080
 ```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+default-server check inter 10s
+```
+
+**Dependencies**: None (has no effect when `haproxy.org/check: "false"`)
+
+**Related annotations**: `check`, `check-http`, `timeout-check`
 
 ---
 
@@ -1269,19 +1371,49 @@ server SRV_1 10.0.1.5:8080 enabled
 
 ### `haproxy.org/scale-server-slots`
 
-**Status**: ❌ Not Implemented
+**Status**: ✅ Supported
 
-**Description**: Intended to override the number of pre-allocated server slots, but the annotation is currently a silent no-op. The library reads it in `backend-directives-900-haproxytech-advanced`, validates it (must be a positive integer), and writes the value to `serverOpts["serverSlotsValue"]`. However, `backends-500-ingress` calls `BackendServers(svcName, 0, port, nil, portName, backendKey, ns)` with `nil` instead of `serverOpts` for the fourth argument, so the macro never consults the value and falls back to the default 10 slots.
+**Description**: Override the number of pre-allocated server slots for the backend. HAProxy reserves this many `server` lines so endpoints can be added or removed via the runtime API without a reload. Must be a positive integer — other values fail the render.
 
-**Default**: `10` slots (always — overrides via this annotation are dropped today).
+**Default**: `10` slots (when the annotation is absent).
 
-**Usage** (no effect):
+**Usage**:
 
 ```yaml
-haproxy.org/scale-server-slots: "100"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scaled-backend
+  annotations:
+    haproxy.org/scale-server-slots: "5"
+spec:
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 8080
 ```
 
-**Workaround**: To change the slot count, replace `backends-500-ingress` with a custom snippet that passes a non-zero `maxServerSlots` argument to `BackendServers`, or restructure `ingress.yaml`'s call to forward `serverOpts` to `BackendServers`.
+**Generated HAProxy Configuration**:
+
+With `scale-server-slots: "5"`, the backend pre-allocates five slots (`SRV_1`–`SRV_5`); active endpoints fill the leading slots and the rest stay reserved as disabled placeholders (RFC 5737 `192.0.2.1:1`):
+
+```haproxy
+default-server check
+server SRV_1 10.0.1.5:8080 enabled
+server SRV_2 192.0.2.1:1 disabled
+server SRV_3 192.0.2.1:1 disabled
+server SRV_4 192.0.2.1:1 disabled
+server SRV_5 192.0.2.1:1 disabled
+```
+
+**Dependencies**: None
 
 ---
 
@@ -1900,7 +2032,7 @@ This library watches the following additional resources:
 
 ## Implementation status summary
 
-The library supports **47** `haproxy.org/*` annotations, grouped by category below. Deprecated aliases (`whitelist`, `blacklist`) and parsed-but-no-op annotations (`check-interval`, `scale-server-slots`) are excluded from this count.
+The library supports **50** `haproxy.org/*` annotations, grouped by category below. Deprecated aliases (`whitelist`, `blacklist`) are excluded from this count. The generated migration-coverage table on the [Migrating from other controllers](../migrating.md) page is the machine-readable source of truth for each annotation's status.
 
 **Supported by category:**
 
@@ -1913,8 +2045,8 @@ The library supports **47** `haproxy.org/*` annotations, grouped by category bel
 | Header manipulation | 3 | `forwarded-for`, `request-set-header`, `response-set-header` |
 | Path manipulation | 1 | `path-rewrite` |
 | Request redirect | 2 | `request-redirect`, `request-redirect-code` |
-| SSL/TLS | 3 | `ssl-redirect`, `ssl-redirect-code`, `ssl-passthrough` |
-| Health checks | 2 | `check`, `check-http` |
+| SSL/TLS | 4 | `ssl-redirect`, `ssl-redirect-code`, `ssl-redirect-port`, `ssl-passthrough` |
+| Health checks | 3 | `check`, `check-http`, `check-interval` |
 | Load balancing | 1 | `load-balance` |
 | Session persistence | 2 | `cookie-persistence`, `cookie-persistence-no-dynamic` |
 | Timeouts | 5 | `timeout-server`, `timeout-connect`, `timeout-queue`, `timeout-tunnel`, `timeout-check` |
@@ -1923,7 +2055,7 @@ The library supports **47** `haproxy.org/*` annotations, grouped by category bel
 | Connection management | 1 | `pod-maxconn` |
 | Backend server options | 4 | `server-ssl`, `server-proto`, `server-crt`, `server-ca` |
 | Proxy protocol | 1 | `send-proxy-protocol` |
-| Advanced backend config | 1 | `backend-config-snippet` |
+| Advanced backend config | 2 | `backend-config-snippet`, `scale-server-slots` |
 
 **Supported deprecated aliases** (honoured only when the canonical key is absent on the same Ingress):
 
@@ -1931,8 +2063,7 @@ The library supports **47** `haproxy.org/*` annotations, grouped by category bel
 
 **Not implemented in the `haproxy.org/*` namespace:**
 
-- `ssl-redirect-port`, `timeout-client`, `timeout-http-request`, `timeout-http-keep-alive` — four of these timeouts are available under `haproxy-ingress.github.io/*` instead (see [haproxy-ingress library](haproxy-ingress.md))
-- `check-interval`, `scale-server-slots` — parsed but silent no-ops today (see their sections above for the current behavior and workarounds)
+- `timeout-client`, `timeout-http-request`, `timeout-http-keep-alive` — `timeout-http-request` and `timeout-http-keep-alive` are available under `haproxy-ingress.github.io/*` instead (see [haproxy-ingress library](haproxy-ingress.md)); `timeout-client` only takes effect in a global override (see [Base Library](base.md#injecting-custom-configuration))
 - `standalone-backend` — not needed; this controller already emits a dedicated backend per `<namespace>_<ingress-name>_svc_<service-name>_<port>` tuple
 
 ## See also

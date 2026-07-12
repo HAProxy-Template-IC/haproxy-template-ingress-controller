@@ -16,29 +16,29 @@ The default name is `haptic` (not `haproxy`) so the chart can be installed along
 
 ## Ingress class filtering
 
-By default, the controller only watches Ingress resources with `spec.ingressClassName: haptic`.
+By default, the controller watches only Ingress resources with `spec.ingressClassName: haptic`.
 
-**Default behavior:**
+### Changing the class name
 
-```yaml
-controller:
-  config:
-    watchedResources:
-      ingresses:
-        fieldSelector: "spec.ingressClassName=haptic"
+`ingressClass.name` is the single knob. The chart uses one value for two things at once:
+
+- It names the created IngressClass resource (`metadata.name`).
+- It derives the watch filter, injecting `spec.ingressClassName=<name>` as the `watchedResources.ingresses.fieldSelector` the controller applies.
+
+So setting `ingressClass.name` keeps the IngressClass name and the watch filter in sync — you don't edit the field selector by hand. Install or upgrade with the class you want:
+
+```bash
+helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.1 \
+  --namespace haptic --create-namespace \
+  --set ingressClass.name=haproxy
 ```
 
-**To change the ingress class name:**
+Your Ingresses then opt in with `spec.ingressClassName: haproxy`.
 
-```yaml
-controller:
-  config:
-    watchedResources:
-      ingresses:
-        fieldSelector: "spec.ingressClassName=my-custom-class"
-```
+### Watching all Ingresses regardless of class
 
-**To watch all ingresses regardless of class:**
+To watch every Ingress the API server returns, override the derived filter directly with an empty `fieldSelector`:
 
 ```yaml
 controller:
@@ -48,6 +48,8 @@ controller:
         fieldSelector: ""
 ```
 
+A `controller.config.watchedResources.ingresses.fieldSelector` value takes precedence over the filter derived from `ingressClass.name`, but it changes only the watch filter — the created IngressClass keeps the name from `ingressClass.name` (default `haptic`). Prefer `ingressClass.name` unless you need a filter that isn't a plain class-name match.
+
 `fieldSelector` here is client-side JSONPath filtering, not the Kubernetes
 server-side `fieldSelector` (which only supports a handful of fields like
 `metadata.name`). The controller fetches all Ingresses the API server returns
@@ -56,6 +58,19 @@ them to the store. To narrow the watch *server-side* — the cheaper option
 when you can use it — set `labelSelector` (server-side label match) on the
 same entry. See [Watching Resources →
 Narrowing the Watch](watching-resources.md#narrowing-the-watch).
+
+### Ingresses without a class
+
+An Ingress that omits `spec.ingressClassName` doesn't match the default `spec.ingressClassName=haptic` filter, so the controller doesn't watch it — its rules never reach HAProxy.
+
+To make HAPTIC adopt class-less Ingresses, mark its IngressClass as the cluster default:
+
+```yaml
+ingressClass:
+  default: true
+```
+
+This adds the `ingressclass.kubernetes.io/is-default-class: "true"` annotation to the IngressClass. The Kubernetes API server then stamps the class name (`haptic` by default, or whatever you set as `ingressClass.name`) into `spec.ingressClassName` on any Ingress **created** without a class — at creation time only. Ingresses that already exist without a class aren't rewritten, so the controller keeps ignoring them; set their `spec.ingressClassName` explicitly to adopt them. Mark only one IngressClass as the cluster default.
 
 ## Creation conditions
 

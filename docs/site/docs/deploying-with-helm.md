@@ -59,6 +59,42 @@ Jump to what you need:
 | Restrict network access with NetworkPolicy | [Networking](./operations/networking.md) |
 | Diagnose problems | [Troubleshooting](./troubleshooting.md) |
 
+## Running multiple HAPTIC instances in one cluster
+
+Running more than one HAPTIC release in the same cluster is supported — for example, one release per team, or one handling `Ingress` while another handles a custom resource. The releases stay independent as long as a few identifiers don't overlap. Give each additional release its own values for all of these:
+
+| Setting | Values key | Why it must differ |
+|---------|-----------|--------------------|
+| Release name and namespace | `helm install <name> --namespace <ns>` | Scopes every Kubernetes object the chart creates, and the leader-election lease |
+| Ingress class | `ingressClass.name` | The controller watches only Ingresses whose `spec.ingressClassName` equals this value. Two releases sharing it would both process the same Ingresses |
+| Gateway class | `gatewayClass.name` | The controller watches only Gateways whose `spec.gatewayClassName` equals this value |
+| Controller identifier | `ingressClass.controllerName` and `gatewayClass.controllerName` | The `GatewayClass` watch is filtered to `spec.controllerName`; two releases sharing it would fight over the same GatewayClasses' status. Default: `haproxy-haptic.org/controller` |
+
+You don't edit any watch `fieldSelector` by hand — the chart derives each resource's `fieldSelector` from the class names above, so a unique `ingressClass.name` and `gatewayClass.name` is enough to scope a release's watches.
+
+The leader-election lease name (`controller.config.controller.leaderElection.leaseName`) defaults to the release's full name, so distinct release names already produce distinct leases. Set it explicitly only if you deliberately reuse a name.
+
+Example values for a second release with its own classes:
+
+```yaml
+# team-b-values.yaml
+ingressClass:
+  name: haptic-team-b
+  controllerName: haproxy-haptic.org/team-b
+gatewayClass:
+  name: haptic-team-b
+  controllerName: haproxy-haptic.org/team-b
+```
+
+```bash
+helm install haptic-team-b oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  --version 0.2.0-alpha.1 \
+  --namespace haptic-team-b --create-namespace \
+  -f team-b-values.yaml
+```
+
+Ingress and Gateway authors then select this release with `ingressClassName: haptic-team-b` or `gatewayClassName: haptic-team-b`.
+
 ## Upgrading
 
 If you installed with a values file, re-pass it so your custom values survive the upgrade:
