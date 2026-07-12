@@ -2,8 +2,8 @@
 
 By default, the [HAPTIC Helm chart](deploying-with-helm.md) provisions a default SSL certificate for HTTPS traffic — via cert-manager when it's installed, otherwise as a chart-generated self-signed Secret — and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
 
-!!! tip "Adding TLS to a single Ingress"
-    This page covers the chart's **default** certificate — the fallback HAProxy serves when no Server Name Indication (SNI) match is found. To serve a specific certificate for one host, add a `spec.tls` entry and a `kubernetes.io/tls` Secret to the Ingress itself. See [Ingress library — TLS configuration](libraries/ingress.md#tls-configuration) for the complete example.
+!!! tip "The default certificate and per-host TLS"
+    This page covers the chart's **default** certificate. HAPTIC serves it for every Ingress over HTTPS by default, and as the fallback when a Server Name Indication (SNI) match isn't found. To serve a specific certificate for one host, add a `spec.tls` entry and a `kubernetes.io/tls` Secret to the Ingress itself. See [Ingress library — TLS configuration](libraries/ingress.md#tls-configuration) for per-host certificates and the `ingressDefaultHTTPS` toggle.
 
 ## Default SSL certificate
 
