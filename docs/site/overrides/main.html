@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block content %}
+  {{ super() }}
+  <div class="hx-feedback">
+    Found a problem on this page?
+    <a href="https://gitlab.com/haproxy-haptic/haptic/-/issues/new?issue[title]={{ ('docs: ' ~ page.title) | urlencode }}&amp;issue[description]={{ ('Page: ' ~ config.site_url ~ page.url) | urlencode }}%0A%0A"
+       target="_blank" rel="noopener">Report it</a>
+    or edit the page with the pencil icon above the title.
+  </div>
+{% endblock %}

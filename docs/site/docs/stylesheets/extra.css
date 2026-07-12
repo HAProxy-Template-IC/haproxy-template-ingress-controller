@@ -123,6 +123,13 @@
   .hx-arch .hx-group { flex-direction: column; }
 }
 
+/* ---- per-page feedback line (overrides/main.html) ------------------------ */
+.hx-feedback {
+  margin-top: 2.4em; padding-top: .8em;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  font-size: .64rem; color: var(--md-default-fg-color--light);
+}
+
 /* ---- mobile: keep code blocks and tables inside the text margins -------- */
 /* Material full-bleeds .highlight / pre / table scrollwraps edge-to-edge on
    phones (margin: 0 -.8rem). Every other element keeps the 16px side margin,

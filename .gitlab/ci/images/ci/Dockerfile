@@ -40,6 +40,8 @@ ARG KUBECONFORM_VERSION=0.8.0
 ARG YAMLLINT_VERSION=1.38.0
 # markdownlint-cli2 pinned to 0.14.0 - newer versions require Node.js 20+
 ARG MARKDOWNLINT_VERSION=0.14.0
+# renovate: datasource=github-releases depName=errata-ai/vale
+ARG VALE_VERSION=3.15.1
 # renovate: datasource=github-releases depName=goreleaser/goreleaser
 ARG GORELEASER_VERSION=2.17.0
 # renovate: datasource=github-releases depName=sigstore/cosign
@@ -76,6 +78,10 @@ RUN apt-get update \
 # Pin markdownlint-cli2@0.14.0 - newer versions pull string-width 7.x which requires Node.js 20+
 RUN pip3 install --break-system-packages yamllint==${YAMLLINT_VERSION} yamale \
     && npm install -g markdownlint-cli2@${MARKDOWNLINT_VERSION}
+
+# Install vale (prose linter for the docs site)
+RUN curl -fsSL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+    | tar -xz -C /usr/local/bin vale
 
 # Install kind
 RUN curl -fsSL -o /usr/local/bin/kind \
@@ -128,4 +134,4 @@ RUN curl -fsSL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSIO
     | tar xzf - -C /usr/local/bin syft
 
 # Verify installations
-RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help | head -1 && kubeconform -v && goreleaser --version && cosign version && syft version
+RUN go version && haproxy -v && docker --version && kind version && kubectl version --client && helm version && yq --version && jq --version && gocover-cobertura -h 2>&1 | head -1 && yamllint --version && markdownlint-cli2 --help | head -1 && ct version && helm unittest --help | head -1 && kubeconform -v && goreleaser --version && cosign version && syft version && vale --version

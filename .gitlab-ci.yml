@@ -101,6 +101,7 @@ variables:
         - "**/*.json"
         - "**/*.md"
         - .markdownlint-cli2.jsonc
+        - .vale.ini
 
 .rules-helm:
   rules:

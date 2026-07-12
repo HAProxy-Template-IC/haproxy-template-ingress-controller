@@ -75,6 +75,10 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	done
 	@echo "Linting Markdown files..."
 	markdownlint-cli2 "**/*.md" "#node_modules" "#.claude" "#vendor" "#.cache" "#.remember"
+	@echo "Linting docs prose (vale)..."
+	@command -v vale >/dev/null 2>&1 \
+		|| { echo "vale not found — install it (Arch: pacman -S vale; other: https://vale.sh)"; exit 1; }
+	vale docs/site/docs
 	@echo "Running golangci-lint..."
 ifdef CI
 	$(GOLANGCI_LINT) run --output.code-climate.path=gl-code-quality-report.json \
