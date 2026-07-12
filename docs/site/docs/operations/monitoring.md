@@ -150,6 +150,7 @@ rate(haptic_reconciliation_duration_seconds_count[5m])
 | `haptic_deployment_errors_total` | Counter | Failed deployments |
 | `haptic_haproxy_reloads_total` | Counter | HAProxy reloads triggered by deployments. A reload forks the HAProxy process; reload rate (vs runtime-API updates) is the canonical capacity and Service Level Objective (SLO) signal |
 | `haptic_dataplane_api_operations_total` | Counter | DataPlane API operations issued across deployments (structural changes applied to HAProxy) |
+| `haptic_deploy_runtime_divergence_total` | Counter | Pods whose post-reload read-back found the on-disk config structurally diverged from the pushed body — a concurrent writer clobbered a just-activated config. The fast deploy retry self-heals the pod, so a rare, isolated increment is expected; sustained growth on one pod points at out-of-band edits to `/etc/haproxy/haproxy.cfg` |
 
 **Key queries:**
 
@@ -202,6 +203,12 @@ haptic_deployment_consecutive_failures
 
 The bundled `HAProxyFleetDiverged` alert (see [Alerting Rules](#alerting-rules)) fires when pods stay behind the desired config — the robust, cadence-independent signal. A staleness alert on `time() - haptic_last_full_sync_timestamp_seconds` is left to you: in steady state that value tracks the drift-prevention cadence, so a safe threshold depends on your configured `driftPreventionInterval` (a fixed default would false-fire for operators who raise it).
 
+#### Why converged can lag the ready pod count
+
+Every pod receives the *same* rendered config, but not at the same instant. The leader pushes to each discovered HAProxy pod on its own goroutine, in parallel, and each pod converges on its own timeline — one may reload while another applies the change at runtime. So during a deploy the pods can transiently differ: `haptic_haproxy_fleet_converged` reads below `haptic_haproxy_fleet_size` until the last pod catches up. This is the window the two gauges exist to report, not a fault.
+
+A deploy that succeeds on some pods and fails on others isn't rolled back. The pods that succeeded keep the new config; the pods that failed keep their last-good config and are automatically retried — first through a fast exponential backoff (up to five attempts per render), then by the `driftPreventionInterval` backstop — until the whole fleet converges. Watch `haptic_haproxy_fleet_converged < haptic_haproxy_fleet_size` for the un-converged window and `haptic_deployment_consecutive_failures` for a deploy that keeps failing to converge back to back. A confirmed post-reload divergence on one pod (`haptic_deploy_runtime_divergence_total`) self-heals the same way — the fast retry re-pushes, and the periodic drift-prevention deploy re-pushes the last-known-good config to every pod within `driftPreventionInterval`, overwriting any out-of-band edit.
+
 ### Runtime fast-path metrics
 
 The runtime fast path applies runtime-eligible server changes (weight, address, port, admin state) directly to the running HAProxy worker via the Dataplane API, bypassing a config reload. `applies` stuck at 0 while `fires` climbs means the fast path runs but the render diff never carries a runtime-eligible change.
@@ -223,6 +230,20 @@ rate(haptic_runtime_fast_path_fires_total[5m])
 # Runtime server updates applied without a reload
 rate(haptic_runtime_fast_path_server_updates_total[5m])
 ```
+
+#### Telling a runtime update from a full reload
+
+No single gauge announces "the last deploy reloaded." Read it from the two counters instead:
+
+- A rise in `haptic_haproxy_reloads_total` over the deploy means at least one pod forked its HAProxy process — a full reload. `increase(haptic_haproxy_reloads_total[5m]) > 0` answers "did anything reload recently?"
+- A rise **only** in `haptic_runtime_fast_path_server_updates_total`, with `haptic_haproxy_reloads_total` flat, means the change applied at runtime through the Dataplane API with no reload — the reload-free fast path.
+
+```promql
+# Reloads in the last 5 minutes (0 = every recent deploy applied at runtime)
+increase(haptic_haproxy_reloads_total[5m])
+```
+
+For a specific deploy, the deployer also logs a per-pod `reload_triggered` field at `DEBUG` level (see [Enable debug logging](../troubleshooting.md#enable-debug-logging)).
 
 ### Validation metrics
 

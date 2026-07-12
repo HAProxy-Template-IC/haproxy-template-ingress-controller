@@ -28,6 +28,9 @@ watchedResources:
 
 All selector fields are plain label-selector strings — the `matchLabels`/`matchExpressions` object form that Prometheus Operator and others use is *not* accepted here.
 
+!!! note "No fixed limit on the number of watched kinds"
+    `watchedResources` has no cap — declare as many kinds as your templates need. Each kind does spawn its own informer, which costs controller memory plus one apiserver watch connection, so the practical bound is resource cost, not a fixed number. Watch only the kinds your templates actually consume.
+
 ## Two store types
 
 Every entry uses one of two store backends. The choice controls memory footprint and rendering latency.
@@ -238,6 +241,27 @@ watchedResourcesIgnoreFields:
 
 Applies uniformly to every watched-resource store. Fields that are referenced by `indexBy` must not be trimmed.
 
+## Watched CRDs that aren't installed
+
+Each entry names a resource by `apiVersion` and `resources`. The controller resolves that to a live schema and GroupVersionResource at startup — from the kube-apiserver, or from `--schema-dir` when offline.
+
+A **required** entry (a plain `apiVersion`, no `optional`) whose CRD or schema can't be resolved fails controller startup with an explicit `schema not available for <kind>` error, so the pod lands in `CrashLoopBackOff`. This is deliberate: a template that references a kind the cluster can't serve is a configuration mistake, caught at boot rather than silently rendering nothing.
+
+To make an absent kind a skip instead of a fatal error, declare an ordered `apiVersions` candidate list with `optional: true`. The controller resolves the entry to the first candidate the cluster serves; if none is served, it drops the watch and strips the features that depend on it, and re-resolves whenever a matching CRD is later installed, upgraded, or removed:
+
+```yaml
+watchedResources:
+  httproutes:
+    apiVersions:
+      - gateway.networking.k8s.io/v1
+      - gateway.networking.k8s.io/v1beta1
+    resources: httproutes
+    optional: true          # no served candidate → drop the watch instead of crashing
+    indexBy: ["metadata.namespace", "metadata.name"]
+```
+
+See [CRD Reference — `watchedResources`](./crd-reference.md#watchedresources) for the full `apiVersions` / `optional` resolution rules. For the bundled Gateway API and Ingress libraries, the chart already gates each library on whether the CRDs are present at render time, so a cluster without the Gateway API CRDs doesn't watch them — see [GatewayClass](./gateway-class.md).
+
 ## HTTP Resources
 
 Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts, auth)` template function — a separate mechanism from Kubernetes watching. The controller auto-registers any URL that appears in an `http.Fetch()` call during template rendering, periodically refreshes it at a per-URL `delay`, and surfaces the cached body back to the template on the next render. `Fetch` returns the response body as a string.
@@ -254,6 +278,9 @@ The second argument is an options map. All keys are optional:
 | `critical` | boolean | `false` | Failure mode. With `false`, a failed fetch returns an empty string and rendering continues (a warning is logged). With `true`, a failed fetch aborts the render with an error, like [`fail()`](./template-reference.md#functions-and-filters). |
 
 Set `critical: true` only when an empty body would produce a dangerously wrong config (for example, a security blocklist that must not silently become empty); leave it `false` when a stale-or-empty body is safer than blocking every render on one unreachable URL.
+
+!!! note "Responses are capped at 10 MiB"
+    A response body larger than 10 MiB fails the fetch — it's rejected outright, not truncated. The cap is fixed and has no per-call override. The failure is handled like any other fetch failure: with `critical: false` the template gets an empty string and a warning; with `critical: true` the render aborts.
 
 A third optional argument supplies authentication: `{"type": "bearer", "token": "..."}`, `{"type": "basic", "username": "...", "password": "..."}`, or `{"type": "header", "headers": {"X-API-Key": "..."}}`.
 
@@ -310,6 +337,12 @@ watchedResources:
 ```
 
 Empty / invalid strings fall back to the `2s` default silently — the validating webhook doesn't reject unparseable values, so a typo just leaves you with the default. Format is any Go duration string (`"500ms"`, `"10s"`, `"1m30s"`, …); `"0"` disables debouncing so every change fires immediately.
+
+### How fast a deleted or added Ingress takes effect
+
+Deleting (or adding) an Ingress changes the set of routes and backends, so it's a **structural** change that needs an HAProxy reload. The end-to-end latency is roughly the Ingress watcher's `debounceInterval` (default `2s`) plus the deployer's `minDeploymentInterval` (CRD default `2s`, the bundled chart ships `5s`) — a few seconds, not instant.
+
+Endpoint changes are different: the chart sets `debounceInterval: "0"` on EndpointSlice and they apply through the reload-free [runtime fast path](./operations/monitoring.md#runtime-fast-path-metrics), so a pod coming or going updates HAProxy near-instantly. Only structural changes — routes, backends, whole Ingresses — pay the debounce-plus-`minDeploymentInterval` reload latency.
 
 ## Troubleshooting
 

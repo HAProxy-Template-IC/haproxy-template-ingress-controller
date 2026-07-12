@@ -49,13 +49,19 @@ The table is generated from `versions-spoa.env` at the repository root. CI fails
 
 ## What each plugin does
 
-- **coraza** — embeds the [Coraza WAF](https://coraza.io/) engine and runs HTTP request/response inspection against the Open Worldwide Application Security Project (OWASP) Core Rule Set v4.
+- **coraza** — embeds the [Coraza WAF](https://coraza.io/) engine and inspects each incoming HTTP request against the Open Worldwide Application Security Project (OWASP) Core Rule Set v4. HAPTIC wires the request phase only — see [Request inspection order](#request-inspection-order).
 - **external-auth** — implements nginx-style `auth_request` semantics: makes an HTTP subrequest to an upstream auth service and returns allow/deny plus identity headers to HAProxy.
 - **fingerprinting** — computes JA3, JA3N, and JA4 TLS fingerprints from the ClientHello.
 - **maxmind** — performs in-memory MaxMind MMDB lookups against operator-provided database files: City, Country, Autonomous System Number (ASN), and so on.
 - **otel** — emits OpenTelemetry traces, metrics, and log records via OpenTelemetry Protocol (OTLP) gRPC or HTTP.
 - **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
 - **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
+
+## Request inspection order
+
+The Coraza WAF inspects each request **before** authentication. On the frontend, the chart emits the WAF dispatch as `frontend-spoe-filters-050-coraza` and the nginx-style external-auth subrequest as `frontend-spoe-filters-100-external-auth`; the lower priority runs first, so `050` (WAF) precedes `100` (auth). HAProxy basic auth (`http-request auth`) is also an `http-request` rule the frontend evaluates after that WAF dispatch. So a request the WAF blocks never reaches the external-auth service or the basic-auth check — WAF first, auth second.
+
+HAPTIC dispatches the **request phase only**. The bundled Coraza integration emits a single `check-request` SPOE message; no response-phase message (`check-response`) is wired anywhere in the chart, so response-body WAF rules don't run. That has one practical consequence: response compression is something you add yourself with HAProxy `compression` directives (see [Performance — response compression](./performance.md#response-compression)), and because the WAF never inspects response bodies, there's no ordering interaction between compression and the WAF to reason about.
 
 ## Geolocation lookups
 

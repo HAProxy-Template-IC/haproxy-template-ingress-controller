@@ -15,6 +15,7 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 | Pod in CrashLoopBackOff | [Controller Not Starting](#controller-not-starting) |
 | Pod stuck Running but not Ready (0/1, 1/2, 2/3) | [Pods stuck not Ready](#pods-stuck-not-ready) |
 | Pods running, no reconciliation activity | [Controller Running But Not Processing](#controller-running-but-not-processing) |
+| `watch error (Reflector will retry)` warnings for one kind | [A watched CRD was removed at runtime](#a-watched-crd-was-removed-at-runtime) |
 | "template rendering failed" in logs | [Invalid Template Syntax](#invalid-template-syntax) |
 | "validation failed" / HAProxy errors | [Configuration Validation Failures](#configuration-validation-failures) |
 | `kubectl apply` denied by an admission webhook | [Admission webhook denied the apply](#admission-webhook-denied-the-apply) |
@@ -139,6 +140,18 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 | Ingress class mismatch | `kubectl get ingress <name> -o jsonpath='{.spec.ingressClassName}'` | The Ingress must reference the class the chart created; also check any `watchedResources.*.fieldSelector` namespace filter |
 | Leader election (HA) | `kubectl get lease -n haptic` (the Lease is named after the Helm release) | Ensure one pod shows `is_leader=1` |
 
+### A watched CRD was removed at runtime
+
+**Symptoms**: Repeated `SingleWatcher watch error (Reflector will retry)` warnings in the controller logs for one watched kind; that kind's resources stop updating in rendered config, but the controller keeps running.
+
+Deleting the `CustomResourceDefinition` for a kind the controller watches breaks that kind's watch connection. The informer's Reflector retries with exponential backoff and logs a `WARN` on each failure — the controller doesn't crash. It keeps serving with whatever it last held in that kind's store, so existing routes stay live; only changes to the removed kind stop being observed.
+
+```bash
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "watch error"
+```
+
+Reinstall the CRD to resume watching — the Reflector reconnects on its next retry, no controller restart needed. If instead the entry declared `apiVersions` with `optional: true`, removing the CRD triggers a clean re-resolution that drops the watch (and strips its dependent features) rather than logging retry warnings — see [Watching Resources — a watched CRD that can't resolve](./watching-resources.md#watched-crds-that-arent-installed).
+
 ## Configuration Issues
 
 ### Invalid template syntax
@@ -162,6 +175,15 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
     ```
 
 3. See [Templating Guide](./templating.md)
+
+!!! note "A render failure at runtime keeps the last-good config serving"
+    If a template renders cleanly at admission but a later change makes it fail at runtime (for example a watched resource grows a shape the template doesn't handle), the reconciler refuses to deploy the broken output and keeps serving the last config that rendered and validated — live traffic is unaffected. The failure surfaces only in the controller logs and in the resource status; it isn't on the debug server's `/debug/vars`. Read the status with:
+
+    ```bash
+    kubectl get htplcfg -n haptic -o yaml
+    ```
+
+    The controller writes the `renderFailed` status variant there; fix the template and the next successful render deploys normally.
 
 ### Configuration validation failures
 
@@ -242,6 +264,8 @@ curl -u admin:<password> http://localhost:5555/v3/info
 | Dataplane not running | `kubectl logs $HAPROXY_POD -c dataplane` | Verify container started, check port conflicts |
 | Wrong credentials | Compare secret vs dataplaneapi.yaml | Update the credentials Secret — `credentialsloader` picks it up live; also rotate the matching `dataplaneapi.yaml` on the HAProxy sidecar |
 | Network policy | `kubectl get networkpolicy` | Update egress rules for controller → HAProxy |
+
+While the Dataplane API is unreachable, HAProxy keeps serving its last committed config — nothing is reloaded and nothing new is committed, so live traffic is unaffected. The pending deploy isn't lost: the controller retries the failed pod with a fast exponential backoff (up to five attempts per render), then hands off to the `driftPreventionInterval` backstop (default `60s`), so the change converges automatically once the API returns. You'll see `haptic_haproxy_fleet_converged` sit below `haptic_haproxy_fleet_size` until then — see [Fleet convergence](./operations/monitoring.md#fleet-convergence-config-staleness).
 
 ### Configuration not updating
 
