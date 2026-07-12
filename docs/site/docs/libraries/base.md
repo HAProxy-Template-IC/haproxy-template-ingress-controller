@@ -128,27 +128,42 @@ The base library defines extension points using the `render_glob "prefix-*"` ope
 
 ### Available Extension Points
 
+This table is the authoritative registry of every `render_glob` extension point `base.yaml` defines. The [Template Libraries overview](../template-libraries.md#available-extension-points) lists the commonly used subset.
+
 | Extension Point | Prefix Pattern | Location in Config | Purpose |
 |-----------------|----------------|-------------------|---------|
 | Global Settings | `global-settings-*` | Inside `global` section | Global directives (logging, process, paths, SSL tuning) |
 | Defaults Settings | `defaults-settings-*` | Inside `defaults` section | Defaults directives (options, balance, timeouts, errorfiles) |
 | Features | `features-*` | Early in config generation | Feature initialization and registration |
 | Global Top | `global-top-*` | After `defaults` section | Top-level HAProxy elements (userlists, peers, etc.) |
+| HTTP Bind Extra | `http-bind-extra-*` | Inside the outer plaintext TCP frontend, after the chart-static bind | Additional plaintext-HTTP `bind` lines (e.g. Gateway HTTP listeners on non-default ports); every added port goes through the same [h2c detection](#h2c-cleartext-detection) |
 | Frontend Extra | `frontend-extra-*` | After frontend bind, before routing | Early frontend directives (options, captures, ACLs) |
+| Listener Port Translation | `frontend-routing-listener-port-*` | Routing prologue, after `txn.listener_port` is seeded from `dst_port` | Remap `txn.listener_port` when a library binds a pod port that differs from the user-facing listener port (e.g. Gateway per-Gateway HTTPS binds) |
 | Frontend Matchers | `frontend-matchers-advanced-*` | Within frontend routing logic | Advanced request matching (method, headers, query params) |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend, after routing | Request/response filters (header modification, redirects) |
 | Custom Frontends | `frontends-*` | After HTTP frontend | Additional frontend definitions |
 | Custom Backends | `backends-*` | Before default_backend | Backend definitions from resource libraries |
 | Host Map | `map-host-*` | host.map file | Host-to-group mapping entries |
+| Host Regex Map | `map-hostregex-*` | host-regex.map file | Regex hostname fallback entries, tried after the exact and wildcard host lookups miss |
 | Path Exact Map | `map-path-exact-*` | path-exact.map file | Exact path match entries |
 | Path Prefix Exact Map | `map-pfxexact-*` | path-prefix-exact.map file | Prefix-exact path match entries |
 | Path Prefix Map | `map-path-prefix-*` | path-prefix.map file | Prefix path match entries |
 | Path Regex Map | `map-path-regex-*` | path-regex.map file | Regex path match entries |
 | Weighted Backend Map | `map-weighted-backend-*` | weighted-multi-backend.map file | Weighted routing entries |
+| Body Size Map | `map-body-size-*` | body-size.map file | Per-backend request body-size limits (bytes), enforced by `frontend-filters-250-request-body-size` |
+| Request Host Map | `map-reqhdr-host-*` | reqhdr-host.map file | Per-backend upstream `Host` header override, applied by `frontend-filters-260-request-set-host` |
+| X-Forwarded-Prefix Map | `map-reqhdr-xfwd-prefix-*` | reqhdr-xfwd-prefix.map file | Per-backend `X-Forwarded-Prefix` header, applied by `frontend-filters-261-request-set-xfwd-prefix` |
+| Connection Header Map | `map-reqhdr-connection-*` | reqhdr-connection.map file | Per-backend `Connection` header override, applied by `frontend-filters-262-request-set-connection` |
+| Path Rewrite Map | `map-path-rewrite-*` | path-rewrite.map file | Per-backend literal full-path rewrite, applied by `frontend-filters-400-path-rewrite` (capture/regex rewrites stay in the backend) |
 | Status Patches | `status-patches-*` | After features, before backends | Resource status patch registration (side effects only) |
 | Status Extra | `status-extra-*` | Inside the status frontend | Extra status-frontend directives (Prometheus exporter, custom endpoints) |
 
-`backend-directives-*` is **not** a base-library extension point. It is invoked by `ingress.yaml`'s `backends-500-ingress` snippet (with `inherit_context`) so per-backend annotation libraries can extend each backend block; see [haproxytech library](haproxytech.md) for the producer side. Templates outside the ingress backend loop won't see it.
+The `map-body-size-*` through `map-path-rewrite-*` family shares one design: a resource library writes a per-backend value into a map keyed by backend name, and a static base-library filter looks it up at request time. A backend with no entry is unaffected, so adding or changing one of these values is a map-only (reload-free) change.
+
+Two extension points are defined by other bundled libraries, not by `base.yaml`:
+
+- `https-bind-extra-*` — invoked by the SSL library's HTTPS frontend for additional TLS `bind` lines; see [SSL Library](ssl.md).
+- `backend-directives-*` — invoked by `ingress.yaml`'s `backends-500-ingress` snippet (with `inherit_context`) so per-backend annotation libraries can extend each Ingress backend block; see [haproxytech library](haproxytech.md) for the producer side. Templates outside the ingress backend loop won't see it.
 
 ### How Extension Points Work
 
@@ -446,11 +461,22 @@ The base library generates these map files for routing:
 | Map File | Purpose | Matcher |
 |----------|---------|---------|
 | host.map | Host header to group mapping | Exact match |
+| host-regex.map | Regex hostname fallback (multi-label hosts under a wildcard listener) | `map_reg()` |
 | path-exact.map | Exact path matching | `map()` |
 | path-prefix-exact.map | Prefix paths that should match exactly | `map()` |
 | path-prefix.map | Prefix path matching | `map_beg()` |
 | path-regex.map | Regex path matching | `map_reg()` |
 | weighted-multi-backend.map | Weighted backend selection | `map()` |
+
+And these per-backend feature maps, all keyed by backend name and looked up with `map()`:
+
+| Map File | Purpose |
+|----------|---------|
+| body-size.map | Request body-size limit in bytes |
+| reqhdr-host.map | Upstream `Host` header override |
+| reqhdr-xfwd-prefix.map | `X-Forwarded-Prefix` header value |
+| reqhdr-connection.map | `Connection` header override |
+| path-rewrite.map | Literal full-path rewrite |
 
 ## HAProxy Configuration Structure
 

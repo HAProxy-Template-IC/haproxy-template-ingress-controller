@@ -37,7 +37,7 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 | [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
 | [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) |
-| spoa-hub | Auto | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
+| [spoa-hub](operations/spoa-hub.md) | Auto | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
 ## Enabling and Disabling Libraries
 
@@ -112,6 +112,8 @@ This includes all snippets whose names start with `backends-` (e.g. `backends-50
 
 ### Available Extension Points
 
+These are the extension points custom snippets most commonly target. The authoritative full registry — including the bind hooks, listener-port translation, and the per-backend feature maps (body size, header overrides, path rewrite) — is [Base Library → Available Extension Points](libraries/base.md#available-extension-points).
+
 | Extension Point | Prefix Pattern | Where Included | Purpose |
 |-----------------|----------------|----------------|---------|
 | Global Settings | `global-settings-*` | Inside `global` section | Global directives (logging, process, paths, SSL tuning) |
@@ -123,7 +125,7 @@ This includes all snippets whose names start with `backends-` (e.g. `backends-50
 | Frontend Filters | `frontend-filters-*` | HTTP frontend | Request/response processing |
 | Custom Frontends | `frontends-*` | After HTTP frontend | HTTPS, TCP frontends |
 | Custom Backends | `backends-*` | Before default backend | Backend definitions |
-| Backend Directives | `backend-directives-*` | Within backends | Per-backend configuration |
+| Backend Directives | `backend-directives-*` | Within Ingress backends | Per-backend configuration (defined by the ingress library, not base) |
 | Host Map | `map-host-*` | host.map | Host routing entries |
 | Path Exact Map | `map-path-exact-*` | path-exact.map | Exact path entries |
 | Path Prefix Exact Map | `map-pfxexact-*` | path-prefix-exact.map | Prefix exact entries |
@@ -233,8 +235,11 @@ Reserved numeric ranges used by the built-in libraries:
 | 100-199 | Feature registration |
 | 200-499 | Security, CORS, header manipulation, redirects |
 | 500-599 | Core functionality (ingress, gateway) |
-| 600-799 | Compatibility layers (haproxy-ingress, nginx-ingress) |
+| 600-699 | haproxy-ingress (`haproxy-ingress.github.io/*`) compatibility |
+| 700-799 | nginx-ingress (`nginx.ingress.kubernetes.io/*`) compatibility |
 | 900-999 | Finalization / cleanup |
+
+The haproxytech (`haproxy.org/*`) library is the exception among the vendor annotation libraries: its snippets sit in the 100–500 band rather than a dedicated block. The haproxy-ingress (600) and nginx-ingress (700) ranges deliberately sort after it, so when two vendor annotations target the same directive on one Ingress, the later library's snippet wins.
 
 To override a built-in snippet, use the **same key name**; values-file entries take precedence over library entries during merge.
 

@@ -51,7 +51,8 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 | `features-*` | `features-100-gateway-ssl-passthrough` | Populates `gf["sslPassthroughBackends"]` from HTTPRoutes annotated for SNI passthrough |
 | `features-*` | `features-100-gateway-tls` | Registers TLS certificates from Gateway listeners into `gf["tlsCertificates"]` |
 | `backends-*` | `backends-500-gateway` | HTTP backend blocks for every unique `(namespace, service, port)` touched by an HTTPRoute or GRPCRoute |
-| `backends-*` | `backends-501-gateway-ssl-passthrough` | TCP-mode passthrough backends for listeners with `tls.mode: Passthrough` |
+| `backends-*` | `backends-501-gateway-ssl-passthrough` | TCP-mode backends for SSL-passthrough HTTPRoutes and for TLSRoute rules (`gtw_tls_*`) |
+| `backends-*` | `backends-502-gateway-tcproute` | TCP-mode backends for TCPRoute rules (`gtw_tcp_*`), with weighted server pools when a rule has several `backendRefs` |
 | `map-host-*` | `map-host-500-gateway` | Host → group mapping entries derived from `spec.hostnames` |
 | `map-path-exact-*` | `map-path-exact-500-gateway` | Entries for `path.type: Exact` matches |
 | `map-pfxexact-*` | `map-pfxexact-500-gateway` | Prefix-exact entries (e.g. matching `/foo` but not `/foobar`) |
@@ -67,7 +68,11 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 | `frontend-filters-*` | `frontend-filters-500-gateway-urlrewrite` | `URLRewrite` filter |
 | `http-bind-extra-*` | `http-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port>` per non-default Gateway HTTP listener port (skips chart-static `httpPort` and `httpsPort` to avoid duplicate-bind errors) |
 | `https-bind-extra-*` | `https-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port> ssl crt-list ...` per non-default Gateway HTTPS listener port (skips chart-static `httpsPort` and `httpPort` to avoid duplicate-bind errors); reuses `util-ssl-bind-options` so the SSL handshake matches the chart-static HTTPS bind |
+| `frontends-*` | `frontends-600-gateway-tls-listener` | One `mode tcp` frontend per Gateway TLS listener port — SNI dispatch for TLSRoutes, with an `ssl crt-list` bind for `Terminate` listeners |
+| `frontends-*` | `frontends-700-gateway-tcp-listener` | One `mode tcp` frontend per TCPRoute-claimed TCP listener port |
 | `status-patches-*` | `status-patches-200-gateway` | Patches Gateway / HTTPRoute / GRPCRoute `status` (Accepted, ResolvedRefs, attachedRoutes, addresses) |
+| `status-patches-*` | `status-patches-205-gateway-tlsroute` | Patches TLSRoute `status` (Accepted, ResolvedRefs) |
+| `status-patches-*` | `status-patches-210-gateway-tcproute` | Patches TCPRoute `status` (Accepted, ResolvedRefs) |
 
 ### Injecting Custom Configuration
 
@@ -97,7 +102,7 @@ you install or upgrade Gateway API; support activates by itself.
 
 | Resource | API version candidates (preferred first) | Purpose |
 |----------|-------------------------------------------|---------|
-| Gateways | v1, v1beta1 | Gateway definitions (filtered by `gatewayClass.name`) |
+| Gateways | v1, v1beta1 | Gateway definitions (filtered by `gatewayClass.name` — see [GatewayClass](../gateway-class.md)) |
 | GatewayClasses | v1, v1beta1 | GatewayClass definitions (field-selector scoped to owned class) |
 | HTTPRoutes | v1, v1beta1 | HTTP routing rules |
 | GRPCRoutes | v1, v1alpha2 | gRPC routing rules |
@@ -839,6 +844,89 @@ spec:
 
 ---
 
+## TLSRoute Support
+
+TLSRoute routes TLS connections by SNI. Depending on the listener's TLS mode, HAProxy either forwards the still-encrypted stream to the backend (`tls.mode: Passthrough`) or terminates TLS and forwards the decrypted stream (`tls.mode: Terminate`).
+
+### Attachment Semantics
+
+A TLSRoute attaches to a Gateway listener when every check in this table passes:
+
+| Check | Behavior |
+|-------|----------|
+| `parentRefs[]` kind | Must reference a `Gateway` in group `gateway.networking.k8s.io` (both default when omitted) |
+| `parentRefs[].sectionName` | When set, only the named listener is considered |
+| `parentRefs[].port` | When set, only listeners on that port are considered |
+| Listener protocol | Must be `TLS`; both `tls.mode: Passthrough` and `tls.mode: Terminate` accept TLSRoutes (an empty mode defaults to `Terminate`) |
+| Mixed modes on one port | A port hosting both a `Passthrough` and a `Terminate` listener is a protocol conflict — no route attaches to either listener |
+| `allowedRoutes.kinds` | Honored; when omitted, the protocol default (TLSRoute on TLS listeners) applies |
+| `allowedRoutes.namespaces.from` | `Same`, `All`, and `Selector` (with `matchLabels`; `matchExpressions` isn't supported) |
+| `spec.hostnames` | The route needs at least one hostname — routing is SNI-based, so a TLSRoute without hostnames attaches nowhere. Each route hostname is intersected with the listener hostname (wildcards supported); the intersection becomes the SNI the frontend matches |
+
+### Forwarding Behavior
+
+- **Passthrough on the chart-static HTTPS port**: the route's SNIs join the shared `ssl-tcp` frontend alongside Ingress SSL-passthrough entries, dispatched with `use_backend ... if { req_ssl_sni -m str <host> }`.
+- **TLS listeners on other ports**: each port gets a dedicated `mode tcp` frontend (`frontend gateway-tls-port-<port>`). `Terminate` listeners bind with `ssl crt-list` and dispatch on `ssl_fc_sni` (the SNI HAProxy consumed during the handshake); `Passthrough` listeners bind plain and dispatch on `req_ssl_sni` read from the buffered ClientHello. Wildcard SNIs (`*.example.com`) match by suffix.
+- **Reject by default**: an SNI no attached TLSRoute claims is rejected at the TCP level. A rule whose `backendRefs` don't all resolve still claims its SNIs, so connections to them are refused rather than silently passed through — the behavior the upstream `TLSRouteInvalidBackendRef*` conformance tests mandate.
+- **Backends**: one `mode tcp` backend per route rule, named `gtw_tls_<namespace>_<route>_<ruleIndex>`; all SNIs of a rule share it. Traffic goes to the rule's **first** `backendRef` (default port 443).
+- A Gateway TLS listener on the chart-static HTTPS port is dropped when the chart already binds that port (chart-static HTTPS frontend or Ingress SSL passthrough active). Move the listener to another port or override `httpsPort`.
+
+### TLSRoute Status
+
+Each `parentRef` targeting a Gateway owned by this controller receives two conditions:
+
+- **Accepted**: `True`, or `False` with reason `NoMatchingParent` (`sectionName` or `port` matched no listener), `NoMatchingListenerHostname`, or `NotAllowedByListeners`
+- **ResolvedRefs**: `True`, or `False` with reason `InvalidKind` (a `backendRef` isn't a core/v1 Service), `RefNotPermitted` (cross-namespace ref without a ReferenceGrant), or `BackendNotFound`
+
+TLSRoutes count toward `attachedRoutes` on TLS listeners only; listeners on a mixed-mode port count zero. Status is written on the `deployed` outcome — `Accepted` turns `True` once HAProxy serves the route, not at render time.
+
+### TLSRoute Limitations
+
+- **Single backend per rule**: traffic goes to the first `backendRef`; `weight` isn't honored for TLSRoute (TCPRoute rules do support weighted refs).
+- `backendRefs` must be core/v1 Services.
+- At least one `spec.hostnames` entry is required.
+
+---
+
+## TCPRoute Support
+
+TCPRoute forwards raw TCP: each claimed listener port becomes a dedicated `mode tcp` frontend whose `default_backend` is the route's backend. There is no per-connection matching — TCP carries no hostname or SNI, so a port forwards to exactly one backend.
+
+### Attachment Semantics
+
+| Check | Behavior |
+|-------|----------|
+| `parentRefs[]` kind | Must reference a `Gateway` in group `gateway.networking.k8s.io` (both default when omitted) |
+| `parentRefs[].sectionName` / `parentRefs[].port` | When set, restrict which listeners are considered |
+| Listener protocol | Must be `TCP` |
+| `allowedRoutes.kinds` | Honored; when omitted, the protocol default (TCPRoute on TCP listeners) applies |
+| `allowedRoutes.namespaces.from` | `Same`, `All`, and `Selector` (with `matchLabels`; `matchExpressions` isn't supported) |
+| Port ownership | Each listener port belongs to exactly one route rule. When several TCPRoutes claim the same port, the **oldest** route wins (`creationTimestamp`, then `namespace/name` as tie-breaker) |
+
+### Forwarding Behavior
+
+- **One frontend per claimed port**: `frontend gateway-tcp-port-<port>` with `mode tcp`, `bind *:<port>`, and a `default_backend` — no ACLs.
+- **Backends**: `mode tcp` blocks named `gtw_tcp_<namespace>_<route>_<ruleIndex>`. A single `backendRef` gets the standard reserved-slot server pool; multiple `backendRefs` get `balance roundrobin` with each Service in its own slot range carrying its `weight` (default 1; a `weight: 0` ref stays in the config but takes no traffic).
+- A route without `sectionName` attaches to every TCP listener on the Gateway: each port gets its own frontend, all sharing one backend.
+- TCP listeners whose port equals the chart-static `httpPort` or `httpsPort` are dropped to avoid a duplicate bind.
+
+### TCPRoute Status
+
+Each `parentRef` targeting a Gateway owned by this controller receives two conditions:
+
+- **Accepted**: `True`, or `False` with reason `NoMatchingParent` (`sectionName` or `port` matched no listener) or `NotAllowedByListeners`
+- **ResolvedRefs**: `True`, or `False` with reason `InvalidKind`, `RefNotPermitted`, or `BackendNotFound` (same semantics as TLSRoute)
+
+TCPRoutes count toward `attachedRoutes` on TCP listeners only. Status is written on the `deployed` outcome, as for TLSRoute.
+
+### TCPRoute Limitations
+
+- **One backend per port**: TCP can't be multiplexed by hostname or path; a port maps to a single route rule, and competing claims resolve oldest-first.
+- `backendRefs` must be core/v1 Services.
+- Listener ports colliding with the chart-static `httpPort` / `httpsPort` are dropped.
+
+---
+
 ## Debug Headers
 
 When debug headers are enabled, the gateway library adds response headers to help troubleshoot routing decisions:
@@ -884,6 +972,8 @@ These templates replace the previous in-template `renderResource()` calls. The s
 |---------|---------|-------|
 | HTTPRoute | Full | All matching types, filters |
 | GRPCRoute | Full | HTTP/2 protocol |
+| TLSRoute | Full | SNI routing on TLS listeners, `Passthrough` and `Terminate`; first `backendRef` takes traffic |
+| TCPRoute | Full | One frontend per claimed TCP listener port; weighted `backendRefs` |
 | Path Matching | Exact, PathPrefix, RegularExpression | |
 | Method Matching | Full | GET, POST, etc. |
 | Header Matching | Exact, RegularExpression | Request headers |
@@ -899,7 +989,7 @@ These templates replace the previous in-template `renderResource()` calls. The s
 
 ## Status Reporting
 
-The Gateway API library automatically updates the `.status` of Gateway, HTTPRoute, and GRPCRoute resources to reflect their processing state. Status is applied via Server-Side Apply with field manager `haptic`.
+The Gateway API library automatically updates the `.status` of Gateway, HTTPRoute, GRPCRoute, TLSRoute, and TCPRoute resources to reflect their processing state. Status is applied via Server-Side Apply with field manager `haptic`. TLSRoute and TCPRoute conditions are listed in their sections above; this section covers the rest.
 
 ### Gateway Status
 
@@ -916,7 +1006,7 @@ Each route receives a `parents[]` entry for each `parentRef` that matches a Gate
 - **Accepted**: True if the parentRef references a known Gateway
 - **ResolvedRefs**: True if all backend Service references can be resolved; False with reason `BackendNotFound` if a referenced Service does not exist
 
-The `controllerName` in route status is set from `gatewayClass.controllerName` in the Helm values.
+The `controllerName` in route status is set from `gatewayClass.controllerName` in the Helm values — see [GatewayClass](../gateway-class.md) for the class configuration and ownership rules.
 
 ### Address Discovery
 
@@ -931,70 +1021,33 @@ Status patches use outcome-keyed variants:
 | `deployed` | Programmed=True, addresses populated | Accepted=True, ResolvedRefs checked |
 | `deployFailed` | Programmed=False, empty addresses | Same as deployed (route acceptance is deployment-independent) |
 
+TLSRoute and TCPRoute status is written on the `deployed` outcome only (see their sections above).
+
 ---
 
 ## Known Limitations
 
-### Not Implemented
+**Not implemented:**
 
-1. **ExtensionRef filter** - General custom-filter extension mechanism not yet implemented (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
+1. **ExtensionRef filter** — the general custom-filter extension mechanism (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
+2. **Per-backend filters** (`backendRefs[].filters[]`) beyond `RequestHeaderModifier` — a `RequestHeaderModifier` on a backendRef **is** emitted per-backend (rule-scoped via `gw_rule_id`; see `test-httproute-backend-request-header-modifier`). The other filter types (ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only.
+3. **Listener-specific HTTP route isolation** — `sectionName` drives `attachedRoutes` status counting, but HTTP/HTTPS routing itself is not isolated per listener. (TLSRoute and TCPRoute do route per listener; see their sections.)
 
-2. **Per-backend filters** (`backendRefs[].filters[]`) - Partially implemented: a `RequestHeaderModifier` on a backendRef **is** emitted per-backend (rule-scoped via `gw_rule_id`; see `test-httproute-backend-request-header-modifier`). Other filter types (ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only, not per-backend.
+**Implemented but not pinned by this library's validationTests:**
 
-### Partially Covered Features
+- Cross-namespace **backend** references (`backendRef.namespace` honored, gated by `ReferenceGrant`) — exercised by the upstream Gateway API conformance suite instead.
+- Cross-namespace **parent** Gateway references.
+- Wildcard hostname patterns (regex host-map support exists).
 
-- Cross-namespace **backend** references are implemented (`backendRef.namespace` honored, gated by `ReferenceGrant`) and exercised by the upstream Gateway API conformance suite — they aren't pinned by this library's own validationTests.
-- Cross-namespace **parent** Gateway references — not pinned by a validationTest.
-- Wildcard hostname patterns — regex host-map support exists; not pinned by a validationTest.
-- Listener-specific route attachment — `sectionName` drives `attachedRoutes` status counting, but per-listener routing isolation is not implemented.
-
----
-
-## Testing Coverage
-
-The gateway library's validation tests pin the following behaviour:
-
-**Well-tested:**
-
-- HTTPRoute path matching (Exact, PathPrefix, RegularExpression)
-- HTTPRoute method matching (GET, POST, etc.)
-- HTTPRoute header matching (Exact and RegularExpression types)
-- HTTPRoute query parameter matching (Exact and RegularExpression types)
-- HTTPRoute weighted backends (various weight combinations, defaults)
-- HTTPRoute default behaviors (no matches → PathPrefix /)
-- HTTPRoute match precedence and tie-breaking rules
-- HTTPRoute filters (RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror — single/percent/fraction/multiple)
-- Backend deduplication (multiple routes to same service+port)
-- GRPCRoute backend generation with HTTP/2
-- GRPCRoute method-based routing (service and method matching)
-- GRPCRoute filters (RequestHeaderModifier, ResponseHeaderModifier)
-- Complex route conflict resolution with VAR qualifiers
-
-**Untested:**
-
-- Cross-namespace references
-- Wildcard hostnames
-- ExtensionRef filter (general mechanism not yet implemented)
-
----
-
-## Future Development
-
-Priority areas for future enhancement:
-
-1. **ExtensionRef support** - Implement custom filter extension mechanism as the Gateway API equivalent of Ingress annotations.
-
-2. **Per-backend filters** - Extend `backendRefs[].filters[]` beyond the already-supported `RequestHeaderModifier` to the remaining filter types, for different filter behavior per backend within the same rule.
-
-3. **Cross-namespace validationTests** - Add library validationTests pinning cross-namespace **parent** Gateway references (cross-namespace backend refs via `ReferenceGrant` are already implemented and conformance-covered).
-
-4. **Wildcard hostname tests** - Pin the existing regex host-map wildcard support (e.g., `*.example.com`) with validationTests.
+TLSRoute- and TCPRoute-specific limitations are listed in their sections above. If one of these gaps matters to you, [open an issue](https://gitlab.com/haproxy-haptic/haptic/-/issues).
 
 ---
 
 ## See Also
 
 - [Gateway API Documentation](https://gateway-api.sigs.k8s.io/)
+- [GatewayClass](../gateway-class.md) - Configuring the class this controller owns (`gatewayClass.name`, `gatewayClass.controllerName`)
+- [Template Reference](../template-reference.md) - Template context, typed resource access, and functions the library's snippets build on
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Extension points and routing infrastructure
 - [SSL Library](ssl.md) - TLS certificate management
