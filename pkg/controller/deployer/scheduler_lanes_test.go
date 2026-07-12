@@ -369,9 +369,12 @@ func TestSchedulerLanes_Case6_StructuralWithRuntimeSubset_AppliesPreInterval(t *
 	require.Greater(t, upd.StructuralOpCount(), 0, "mixed render must carry a structural op")
 
 	// A deploy just ended → a structural deploy here is gated for the full 5s
-	// interval. Seed the baseline so the render diffs against it (not cold-start).
+	// interval. Seed the baseline (parsed + raw text, written together like
+	// dispatchPending does) so the render diffs against it (not cold-start)
+	// and the fast-track apply can build its baseline-derived body.
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
+	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
 	s.state.lastDeploymentEndTime = time.Now()
 	s.schedulerMutex.Unlock()
 
@@ -417,8 +420,10 @@ func TestSchedulerLanes_Case7_MidIntervalRuntimeChange_AppliesResponsively(t *te
 		"\nbackend api3\n  default-server check\n  server SRV_1 10.9.9.9:8080 enabled\n")
 
 	// A deploy just ended → structural renders here are gated for the full 5s.
+	// Parsed + raw baseline seeded together, like dispatchPending writes them.
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
+	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
 	s.state.lastDeploymentEndTime = time.Now()
 	s.schedulerMutex.Unlock()
 
@@ -478,10 +483,12 @@ func TestSchedulerLanes_Case8_StructuralWaitZero_AppliesRuntimeSubset(t *testing
 	require.Greater(t, upd.StructuralOpCount(), 0, "mixed render must carry a structural op")
 
 	// The last deploy ended 2 intervals ago → remainingInterval returns 0, so the
-	// structural deploy is NOT gated (wait<=0). Seed the baseline so the render
-	// diffs against it (not cold-start).
+	// structural deploy is NOT gated (wait<=0). Seed the baseline (parsed + raw,
+	// written together like dispatchPending does) so the render diffs against it
+	// (not cold-start) and the fast-track apply can build its body.
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
+	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
 	s.state.lastDeploymentEndTime = time.Now().Add(-2 * interval)
 	s.schedulerMutex.Unlock()
 
@@ -605,10 +612,12 @@ func TestSchedulerLanes_Case10_RuntimeRawDuringStructuralInterval_AppliesImmedia
 
 	_, _, structural := laneRenders(t) // laneConfigBase(10.0.0.1) + api2
 
-	// Simulate "a structural deploy just completed": lastDispatchedParsed has
-	// advanced to the structural config and the interval window is open.
+	// Simulate "a structural deploy just completed": the dispatch baseline
+	// (parsed + raw, written together like dispatchPending does) has advanced
+	// to the structural config and the interval window is open.
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = structural
+	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080") + laneStructuralExtra
 	s.state.lastDeploymentEndTime = time.Now()
 	s.schedulerMutex.Unlock()
 

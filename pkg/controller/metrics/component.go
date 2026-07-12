@@ -73,6 +73,7 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeInstanceDeploymentFailed,
 		events.EventTypeRuntimeFastPathResult,
+		events.EventTypeDeployRuntimeDivergence,
 		events.EventTypeValidationCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeIndexSynchronized,
@@ -156,6 +157,8 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.metrics.RecordDeployment(0, false)
 	case *events.RuntimeFastPathResultEvent:
 		c.metrics.RecordRuntimeFastPath(e.ServerUpdates, e.Failed)
+	case *events.DeployRuntimeDivergenceEvent:
+		c.metrics.RecordDeployRuntimeDivergence()
 	case *events.ValidationCompletedEvent:
 		c.metrics.RecordValidation(true)
 	case *events.ValidationFailedEvent:

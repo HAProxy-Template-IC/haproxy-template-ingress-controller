@@ -17,9 +17,31 @@ const (
 	configTypeCurrent = "current"
 	stageApply        = "apply"
 
+	// stagePostReloadReadback marks a failure to READ BACK the on-disk config
+	// after a verified reload (fetch/transport failure — the pod's state is
+	// unknown, retry re-syncs it).
+	stagePostReloadReadback = "post_reload_readback"
+
+	// stagePostReloadDivergence marks a CONFIRMED read-back divergence: the
+	// on-disk config after a verified reload differs STRUCTURALLY from the
+	// pushed body — a concurrent writer clobbered the file between our write
+	// and the read-back (issue #84). The deploy did not truthfully land;
+	// returning it as an error makes the fast retry redeploy.
+	stagePostReloadDivergence = "post_reload_divergence"
+
 	hintCheckHAProxyLogs = "Check HAProxy logs for detailed error information"
 	hintValidateConfig   = "Validate the configuration with: haproxy -c -f <config>"
 )
+
+// IsPostReloadDivergence reports whether err is (or wraps) the confirmed
+// post-reload read-back divergence failure — the on-disk config structurally
+// diverged from the body a verified reload pushed (issue #84). Callers use it
+// to count divergences (haptic_deploy_runtime_divergence_total) separately
+// from ordinary retryable sync failures.
+func IsPostReloadDivergence(err error) bool {
+	syncErr, ok := errors.AsType[*SyncError](err)
+	return ok && syncErr.Stage == stagePostReloadDivergence
+}
 
 // SyncError represents a synchronization failure with actionable context.
 // It provides detailed information about what stage failed and suggestions
@@ -30,7 +52,7 @@ type SyncError struct {
 	//   "compare", "compare_files", "compare_ssl", "compare_ssl_ca", "compare_maps", "compare_crtlists",
 	//   "sync_ssl_pre", "sync_ssl_ca_pre", "sync_files_pre", "sync_maps_pre",
 	//   "apply", "commit", "reload_verification", "auxiliary_reload_verification",
-	//   "fallback"
+	//   "post_reload_readback", "post_reload_divergence", "fallback"
 	Stage string
 
 	// Message provides a detailed error description

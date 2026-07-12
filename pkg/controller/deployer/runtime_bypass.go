@@ -38,7 +38,7 @@ const (
 // runtimeSyncer is the narrow slice of *dataplane.Client the bypass needs.
 // Declared at the use site so tests can substitute a fake.
 type runtimeSyncer interface {
-	SyncRuntimeFast(ctx context.Context, updates *dataplane.RuntimeServerUpdates, desiredConfig string, opts *dataplane.SyncOptions) (*dataplane.SyncResult, error)
+	SyncRuntimeFast(ctx context.Context, updates *dataplane.RuntimeServerUpdates, body string, opts *dataplane.SyncOptions) (*dataplane.SyncResult, error)
 	Close() error
 }
 
@@ -89,22 +89,44 @@ func newRuntimeBypass(logger *slog.Logger, eventBus *busevents.EventBus) *runtim
 	}
 }
 
+// bypassPush bundles the per-apply parameters shared by every endpoint of one
+// applyRuntimeRaw call.
+type bypassPush struct {
+	// body is the config the skip_version push writes to disk. It MUST be
+	// derived from the last reload-ACTIVATED config (issue #84): the
+	// authoritative runtime-raw lane passes the render itself (structurally
+	// identical to the activated baseline by lane construction); the partial
+	// fast-track apply passes the baseline patched with only the
+	// runtime-eligible server lines (BuildRuntimeBypassBody) — never the
+	// pending render, whose structural content would clobber a concurrent
+	// force_reload deploy's disk write or park un-activated on disk.
+	body string
+	// partial marks a fast-track apply whose deploy is owned by someone else —
+	// the eventual authoritative dispatch of this pending, or an
+	// in-flight/just-completed structural deploy (applyRuntimeSubset): it
+	// suppresses the deploy-owning publishes so that owner remains the single
+	// authority for completion + CR status.
+	partial bool
+	// superseded (nil = never) reports that a newer render now exists; the
+	// push's retry-across-reload loop abandons when it returns true so a
+	// superseded body can't storm identical pushes across a reload window.
+	superseded func() bool
+}
+
 // applyRuntimeRaw fans out one goroutine per endpoint to apply the runtime-raw
 // change and WAITS for all of them (sync.WaitGroup), so the deploy loop sees this
 // call as synchronous — the runtime-raw apply completes before the loop advances.
 //
 // dep carries the precomputed render diff (dep.runtimeUpdates, NOT recomputed
-// here) and the desired config body (dep.config); the diff is render-vs-render,
-// identical for every pod, so it is shared across the per-pod pushes. parentCtx
-// is the scheduler's loop context, so applies are cancelled on shutdown.
+// here); push.body is the config body the push carries (see bypassPush). The
+// diff is render-vs-render, identical for every pod, so diff and body are
+// shared across the per-pod pushes. parentCtx is the scheduler's loop context,
+// so applies are cancelled on shutdown.
 //
-// partial marks a fast-track apply whose deploy is owned by someone else — the
-// eventual authoritative dispatch of this pending, or an in-flight/just-completed
-// structural deploy (applyRuntimeSubset): it suppresses the deploy-owning publishes
-// so that owner remains the single authority for completion + CR status. The sole
-// non-partial caller is the runtime-raw lane dispatch (dispatchPending), where this
-// apply IS the complete deploy and publishes per the lane gate.
-func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *scheduledDeployment, partial bool) {
+// The sole non-partial caller is the runtime-raw lane dispatch
+// (dispatchPending), where this apply IS the complete deploy and publishes per
+// the lane gate.
+func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *scheduledDeployment, push bypassPush) {
 	b.evictStaleClients(dep.endpoints)
 
 	var wg sync.WaitGroup
@@ -123,7 +145,7 @@ func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *schedule
 						"endpoint", ep.URL, "panic", r)
 				}
 			}()
-			b.applyToEndpoint(parentCtx, dep, &ep, &successes, partial)
+			b.applyToEndpoint(parentCtx, dep, &ep, &successes, push)
 		}()
 	}
 	wg.Wait()
@@ -135,15 +157,15 @@ func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *schedule
 	// spec.Checksum. Excluded: the pre-interval partial apply of a STRUCTURAL render
 	// (laneStructural, gated by lane), and the in-flight partial apply (partial=true)
 	// whose owning structural deploy publishes after its reload.
-	if !partial && dep.lane == laneRuntimeRaw && successes.Load() > 0 {
+	if !push.partial && dep.lane == laneRuntimeRaw && successes.Load() > 0 {
 		b.publishDeployedConfig(dep)
 	}
 }
 
 // applyToEndpoint runs one endpoint's runtime-raw apply under a bounded timeout.
-// dep.runtimeUpdates is the shared precomputed render diff; dep.config is the
-// desired render body the raw push carries (no per-pod fetch).
-func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *scheduledDeployment, ep *dataplane.Endpoint, successes *atomic.Int32, partial bool) {
+// dep.runtimeUpdates is the shared precomputed render diff; push.body is the
+// baseline-derived config body the raw push carries (no per-pod fetch).
+func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *scheduledDeployment, ep *dataplane.Endpoint, successes *atomic.Int32, push bypassPush) {
 	ctx, cancel := context.WithTimeout(parentCtx, runtimeBypassTimeout)
 	defer cancel()
 
@@ -164,9 +186,10 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 	// on the worker the reload replaces) and must leave the config headerless
 	// so the next structural sync force-reloads instead of trusting an empty
 	// diff (see SyncOptions.RestampVersionHeader).
-	opts.RestampVersionHeader = !partial
+	opts.RestampVersionHeader = !push.partial
+	opts.RenderSuperseded = push.superseded
 
-	result, err := syncer.SyncRuntimeFast(ctx, dep.runtimeUpdates, dep.config, opts)
+	result, err := syncer.SyncRuntimeFast(ctx, dep.runtimeUpdates, push.body, opts)
 	if err != nil {
 		b.publishResult(0, true)
 		b.logger.Debug("Bypass apply failed; scheduled deploy will converge",
@@ -178,7 +201,7 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 		ops = len(result.AppliedOperations)
 	}
 	b.publishResult(ops, false)
-	b.publishConfigApplied(dep, ep, result, partial)
+	b.publishConfigApplied(dep, ep, result, push.partial)
 	successes.Add(1)
 	if ops > 0 {
 		b.logger.Debug("Bypass applied runtime server changes ahead of scheduled deploy",

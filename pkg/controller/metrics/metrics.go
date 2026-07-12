@@ -77,6 +77,13 @@ type Metrics struct {
 	RuntimeFastPathFailures      prometheus.Counter
 	RuntimeFastPathServerUpdates prometheus.Counter
 
+	// DeployRuntimeDivergence counts endpoints whose post-reload read-back
+	// found the on-disk config structurally diverged from the pushed body
+	// (issue #84) — a concurrent writer clobbered a just-activated config.
+	// The fast deploy retry self-heals each occurrence, but steady growth
+	// means runtime-bypass pushes are racing structural deploys.
+	DeployRuntimeDivergence prometheus.Counter
+
 	// Validation metrics
 	ValidationTotal  prometheus.Counter
 	ValidationErrors prometheus.Counter
@@ -236,6 +243,11 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_runtime_fast_path_server_updates_total",
 			"Total runtime-eligible server updates applied via the fast path",
+		),
+		DeployRuntimeDivergence: pkgmetrics.NewCounter(
+			registry,
+			"haptic_deploy_runtime_divergence_total",
+			"Endpoints whose post-reload read-back found the on-disk config structurally diverged from the pushed body (a concurrent writer clobbered a just-activated config; the fast deploy retry self-heals it).",
 		),
 
 		// Validation metrics
@@ -476,6 +488,13 @@ func (m *Metrics) RecordRuntimeFastPath(serverUpdates int, failed bool) {
 		m.RuntimeFastPathApplies.Inc()
 		m.RuntimeFastPathServerUpdates.Add(float64(serverUpdates))
 	}
+}
+
+// RecordDeployRuntimeDivergence counts one endpoint whose post-reload
+// read-back found the on-disk config structurally diverged from the pushed
+// body (issue #84).
+func (m *Metrics) RecordDeployRuntimeDivergence() {
+	m.DeployRuntimeDivergence.Inc()
 }
 
 // RecordValidation records a validation attempt.

@@ -532,7 +532,8 @@ func TestApplyChanges_ServerOnlyUpdate_NoReload(t *testing.T) {
 		diff,
 		auxDiffs,
 		opts,
-		42, // preCachedVersion: bypass GetVersion HTTP call
+		42,    // preCachedVersion: bypass GetVersion HTTP call
+		false, // on-disk config carries a version header — runtime-only path stays reload-free
 		time.Now(),
 	)
 	require.NoError(t, err)

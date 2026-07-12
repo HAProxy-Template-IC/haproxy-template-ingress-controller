@@ -305,6 +305,15 @@ func (c *Component) handleEndpointFailure(
 		events.WithCorrelation(correlationID, correlationID),
 	))
 
+	// A confirmed post-reload read-back divergence (issue #84) gets its own
+	// counter (haptic_deploy_runtime_divergence_total): unlike ordinary
+	// transient sync failures, it means a concurrent writer clobbered the
+	// on-disk config a reload had just activated — a defect signal to alert
+	// on, even though the fast retry self-heals the pod.
+	if dataplane.IsPostReloadDivergence(err) {
+		c.EventBus().Publish(events.NewDeployRuntimeDivergenceEvent(ep.PodName))
+	}
+
 	// Publish ConfigAppliedToPodEvent with error info (for status tracking)
 	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
 		syncMetadata := &events.SyncMetadata{

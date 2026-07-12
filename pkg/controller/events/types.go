@@ -103,6 +103,7 @@ const (
 	EventTypeDeploymentSkipped        = "deployment.skipped"
 	EventTypeDeploymentCancelRequest  = "deployment.cancel.request"
 	EventTypeRuntimeFastPathResult    = "runtime.fastpath.result"
+	EventTypeDeployRuntimeDivergence  = "deploy.runtime.divergence"
 	EventTypeDriftPreventionTriggered = "drift.prevention.triggered"
 
 	// HAProxy pod event types.
