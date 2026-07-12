@@ -1,0 +1,18 @@
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: error
+ignorecase: false
+# Curated replacement pairs (Google.WordList fork): only entries whose
+# replacement is an improvement for THIS project's audience. The stock list
+# bans domain-standard terms (disable, regex, CLI, application) and is
+# disabled in .vale.ini.
+swap:
+  k8s: Kubernetes
+  K8s: Kubernetes
+  functionality: feature
+  '\burl\b': URL
+  'as per': per
+  'time period': period
+  'all of the': all the
+  'in between': between
+  SHA1: SHA-1

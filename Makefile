@@ -78,7 +78,7 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 		jq empty "$$f" || exit 1; \
 	done
 	@echo "Linting Markdown files..."
-	markdownlint-cli2 "**/*.md" "#node_modules" "#.claude" "#vendor" "#.cache" "#.remember"
+	markdownlint-cli2 "**/*.md" "#node_modules" "#**/node_modules" "#.claude" "#vendor" "#.cache" "#.remember"
 	@echo "Linting docs prose (vale)..."
 	@command -v vale >/dev/null 2>&1 \
 		|| { echo "vale not found — install it (Arch: pacman -S vale; other: https://vale.sh)"; exit 1; }

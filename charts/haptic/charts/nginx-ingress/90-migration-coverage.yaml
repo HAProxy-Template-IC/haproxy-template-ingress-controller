@@ -43,7 +43,7 @@ migrationCoverage:
         note: Enforced as a 413 via a reload-free map entry; "0" disables the limit.
       nginx.ingress.kubernetes.io/backend-protocol:
         status: different
-        note: HTTP, HTTPS, GRPC and GRPCS map to HAProxy server options; AJP and FCGI have no HAProxy equivalent and fail the render with an error.
+        note: HTTP, HTTPS, `GRPC` and `GRPCS` map to HAProxy server options; `AJP` and `FCGI` have no HAProxy equivalent and fail the render with an error.
         doc: annotation-support
       nginx.ingress.kubernetes.io/use-proxy-protocol:
         status: supported
@@ -57,7 +57,7 @@ migrationCoverage:
         note: $request_uri, $remote_addr, $cookie_*, $http_* and $arg_* translate to HAProxy fetches with consistent hashing; other $variables fail the render; non-$ values pass through as HAProxy fetch expressions.
       nginx.ingress.kubernetes.io/proxy-next-upstream:
         status: different
-        note: Maps to HAProxy retry-on (error→conn-failure, timeout→response-timeout, invalid_header→junk-response, http_NNN→NNN); non_idempotent has no equivalent and is ignored; "off" emits retries 0.
+        note: Maps to HAProxy retry-on (error→conn-failure, timeout→response-timeout, invalid_header→junk-response, `http_NNN`→`NNN`); `non_idempotent` has no equivalent and is ignored; "off" emits retries 0.
         doc: annotation-support
       nginx.ingress.kubernetes.io/proxy-next-upstream-tries:
         status: supported
@@ -121,7 +121,7 @@ migrationCoverage:
         doc: annotation-support
       nginx.ingress.kubernetes.io/session-cookie-hash:
         status: dropped
-        note: HAProxy's dynamic-cookie hashing is not selectable; the value is ignored and a warning comment is rendered.
+        note: HAProxy's dynamic-cookie hashing isn't selectable; the value is ignored and a warning comment is rendered.
         doc: annotation-support
       # --- URL rewriting / redirects ---
       nginx.ingress.kubernetes.io/rewrite-target:
@@ -155,7 +155,7 @@ migrationCoverage:
       # --- HSTS ---
       nginx.ingress.kubernetes.io/hsts:
         status: different
-        note: By default the header is emitted only when the Ingress sets hsts "true", whereas ingress-nginx enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching ingress-nginx); a per-Ingress hsts annotation still overrides the value for its hosts.
+        note: By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas ingress-nginx enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching ingress-nginx); a per-Ingress `hsts` annotation still overrides the value for its hosts.
         doc: annotation-support
       nginx.ingress.kubernetes.io/hsts-max-age:
         status: supported
@@ -215,7 +215,7 @@ migrationCoverage:
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-secret:
         status: different
-        note: Two divergences to note. (1) A missing Secret disables auth for the route until the Secret appears (fail-open); ingress-nginx serves 503 instead. (2) Hashes are verified by HAProxy's crypt(3), which supports $2y$/$6$/$5$/$1$ but NOT Apache apr1 ($apr1$) or {SHA} — an htpasswd Secret using those verifies under ingress-nginx but rejects every login here; regenerate with a crypt(3) algorithm.
+        note: Two divergences to note. (1) A missing Secret disables auth for the route until the Secret appears (fail-open); ingress-nginx serves 503 instead. (2) Hashes are verified by HAProxy's crypt(3), which supports $2y$/$6$/$5$/$1$ but **not** Apache apr1 ($apr1$) or {SHA} — an htpasswd Secret using those verifies under ingress-nginx but rejects every login here; regenerate with a crypt(3) algorithm.
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-secret-type:
         status: supported
@@ -225,7 +225,7 @@ migrationCoverage:
         note: Default "Restricted".
       nginx.ingress.kubernetes.io/satisfy:
         status: different
-        note: '"any" OR-combines whitelist-source-range with basic auth only; unlike ingress-nginx it does not extend to external auth (auth-url).'
+        note: '"any" OR-combines whitelist-source-range with basic auth only; unlike ingress-nginx it doesn''t extend to external auth (`auth-url`).'
         doc: annotation-support
       # --- External authentication (SPOA hub external-auth plugin) ---
       nginx.ingress.kubernetes.io/auth-url:
@@ -233,7 +233,7 @@ migrationCoverage:
         note: External auth via the SPOA hub external-auth plugin (auto-enabled with this library); 2xx allows, otherwise 401 or the auth-signin redirect.
       nginx.ingress.kubernetes.io/auth-signin:
         status: different
-        note: nginx variables ($escaped_request_uri, …) are not expanded — the URL is used verbatim.
+        note: nginx variables (`$escaped_request_uri`, …) aren't expanded — the URL is used verbatim.
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-method:
         status: different
@@ -260,7 +260,7 @@ migrationCoverage:
         note: 302 redirect on client-certificate verification failure, applied reload-free via a map — but it only fires when auth-tls-verify-client is optional/optional_no_ca. Under the default "on" (HAProxy verify required) an invalid/missing client cert aborts the TLS handshake, so the request never reaches the redirect and the client sees a TLS error instead of the page.
       nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream:
         status: different
-        note: Forwards ssl-client-cert (base64 DER — ingress-nginx sends URL-encoded PEM) and ssl-client-subject-dn; ssl-client-verify and ssl-client-issuer-dn are not set.
+        note: Forwards ssl-client-cert (base64 DER — ingress-nginx sends URL-encoded PEM) and ssl-client-subject-dn; ssl-client-verify and ssl-client-issuer-dn aren't set.
         doc: annotation-support
       nginx.ingress.kubernetes.io/auth-tls-verify-depth:
         status: dropped
@@ -301,7 +301,7 @@ migrationCoverage:
         doc: annotation-support
       nginx.ingress.kubernetes.io/proxy-redirect-from:
         status: different
-        note: '"default" is not supported (warning comment, no rewrite); requires proxy-redirect-to; values must be space-free.'
+        note: '"default" isn''t supported (warning comment, no rewrite); requires proxy-redirect-to; values must be space-free.'
         doc: annotation-support
       nginx.ingress.kubernetes.io/proxy-redirect-to:
         status: supported

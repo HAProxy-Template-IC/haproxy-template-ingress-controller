@@ -9,7 +9,7 @@ Use [SPIFFE/SPIRE](https://spiffe.io/) to give HAProxy automatic mutual TLS (mTL
 When integrated with HAPTIC, SPIRE enables zero-trust mTLS to backends without managing certificates manually:
 
 - **Automatic identity** — SPIRE attests HAProxy pods and issues X.509-SVIDs based on Kubernetes service account identity
-- **Short-lived certificates** — SVIDs are automatically rotated at half of their TTL (e.g. every 12 hours with a 24h TTL), reducing the impact of credential compromise
+- **Short-lived certificates** — each SPIFFE Verifiable Identity Document (SVID) is automatically rotated at half of its TTL (for example every 12 hours with a `24h` TTL), reducing the impact of credential compromise
 - **No secrets in cluster** — Private keys are generated in-memory by the SPIRE agent and never stored as Kubernetes Secrets
 - **Zero-reload rotation** — Certificate updates are pushed to HAProxy via the Runtime API (`set ssl cert`/`set ssl ca-file`), avoiding process restarts entirely
 
@@ -18,7 +18,7 @@ When integrated with HAPTIC, SPIRE enables zero-trust mTLS to backends without m
 Before following this guide, ensure:
 
 - **SPIRE server and agents** are deployed in your cluster
-- **SPIRE CSI driver** (`csi.spiffe.io`) is installed for exposing the Workload API socket to pods
+- **SPIRE Container Storage Interface (CSI) driver** (`csi.spiffe.io`) is installed for exposing the Workload API socket to pods
 - **Workload registration** exists for the HAProxy pod's service account and namespace
 - **HAPTIC Helm chart** version with `podAnnotations` and `sidecars` support
 
@@ -64,7 +64,7 @@ The integration uses four components working together inside the HAProxy pod:
 
 ## Configuration
 
-### HAProxy pod setup
+### HAProxy Pod setup
 
 Add the following to your Helm values to configure the HAProxy pod with spiffe-helper:
 
@@ -199,11 +199,11 @@ haproxy:
 !!! note
     The spiffe-helper container image tags do **not** use a `v` prefix — use `0.11.0`, not `v0.11.0`.
 
-The cert-reloader sidecar reuses the `haproxytech/haproxy-debian` image, which includes `socat` and `stat`. Pin its tag to the same version as `haproxyVersion` (the example uses `3.4`, the chart default) so the sidecar shares the image already pulled for the main container and avoids version skew. It uses the `@1` prefix to route Runtime API commands to the current HAProxy worker process via the master socket. If the SPIFFE certificate is not loaded in HAProxy (e.g. no Ingress uses the annotation), it logs a skip message and waits for the next change.
+The cert-reloader sidecar reuses the `haproxytech/haproxy-debian` image, which includes `socat` and `stat`. Pin its tag to the same version as `haproxyVersion` (the example uses `3.4`, the chart default) so the sidecar shares the image already pulled for the main container and avoids version skew. It uses the `@1` prefix to route Runtime API commands to the current HAProxy worker process via the master socket. If the SPIFFE certificate isn't loaded in HAProxy (for example, no Ingress uses the annotation), it logs a skip message and waits for the next change.
 
-### spiffe-helper configuration
+### `spiffe-helper` configuration
 
-Create a ConfigMap with the spiffe-helper configuration using `extraDeploy`. The configuration format is [HCL](https://github.com/hashicorp/hcl) (not TOML or INI):
+Create a ConfigMap with the spiffe-helper configuration using `extraDeploy`. The configuration format is [HashiCorp Configuration Language (HCL)](https://github.com/hashicorp/hcl) (not TOML or `.ini` syntax):
 
 ```yaml
 extraDeploy:
@@ -237,7 +237,7 @@ extraDeploy:
 
 ### Backend mTLS via custom annotation
 
-To enable per-Ingress backend mTLS using the SPIRE certificates, add a custom `templateSnippet` that processes an annotation (e.g., `example.com/server-mtls-spire`):
+To enable per-Ingress backend mTLS using the SPIRE certificates, add a custom `templateSnippet` that processes an annotation (for example, `example.com/server-mtls-spire`):
 
 ```yaml
 controller:
@@ -290,9 +290,9 @@ controller:
 This snippet:
 
 - Runs at **priority 800** (before `backend-directives-900-haproxytech-advanced`), so conflicts are detected before the built-in annotations are processed
-- Uses **absolute paths** for the certificate files because HAProxy's `crt-base` directive points to the `ssl/` directory, and the SPIRE certs are in `/etc/haproxy/spiffe/`. HAProxy auto-discovers the private key at `<certfile>.key` (i.e. `svid.pem.key`), so no explicit `key` keyword is needed
+- Uses **absolute paths** for the certificate files because HAProxy's `crt-base` directive points to the `ssl/` directory, and the SPIRE certs are in `/etc/haproxy/spiffe/`. HAProxy auto-discovers the private key at `<certfile>.key` (here `svid.pem.key`), so no explicit `key` keyword is needed
 - **Fails the render** if the annotation is used together with `haproxy.org/server-ssl`, `haproxy.org/server-crt`, or `haproxy.org/server-ca`, since these configure conflicting SSL modes
-- Sets **`sni str(<service>.<namespace>.svc)`** to send the Kubernetes service DNS name as SNI, enabling hostname verification against DNS SANs populated by SPIRE's `autoPopulateDNSNames` (see [DNS SAN configuration](#dns-san-configuration) below)
+- Sets **`sni str(<service>.<namespace>.svc)`** to send the Kubernetes service DNS name as SNI, enabling hostname verification against DNS Subject Alternative Name (SAN) entries populated by SPIRE's `autoPopulateDNSNames` (see [DNS SAN configuration](#dns-san-configuration) below)
 
 !!! note "Why explicit SNI matters"
     HAProxy 3.3+ automatically sends the server address as SNI (`sni-auto`). In Kubernetes, backends are addressed by pod IP, so the verify callback tries to match the IP against DNS-type SANs — which SPIFFE certificates don't have. Setting `sni str(...)` explicitly overrides `sni-auto` on all HAProxy versions and provides proper hostname verification via the service DNS name.
@@ -329,7 +329,7 @@ backend default_my-backend_svc_my-backend_https
 
 ### DNS SAN configuration
 
-The `sni str(...)` directive in the snippet above requires that backend SVIDs include DNS SANs matching the Kubernetes service name. Enable [`autoPopulateDNSNames`](https://github.com/spiffe/spire-controller-manager/blob/main/docs/clusterspiffeid-crd.md) on the default ClusterSPIFFEID so that SPIRE automatically adds service DNS names (e.g. `my-backend`, `my-backend.default.svc`, `my-backend.default.svc.cluster.local`) as DNS SANs in all SVIDs:
+The `sni str(...)` directive in the snippet above requires that backend SVIDs include DNS SANs matching the Kubernetes service name. Enable [`autoPopulateDNSNames`](https://github.com/spiffe/spire-controller-manager/blob/main/docs/clusterspiffeid-crd.md) on the default ClusterSPIFFEID so that SPIRE automatically adds service DNS names (for example `my-backend`, `my-backend.default.svc`, `my-backend.default.svc.cluster.local`) as DNS SANs in all SVIDs:
 
 ```yaml
 apiVersion: spire.spiffe.io/v1alpha1
@@ -353,7 +353,7 @@ spire-server:
 ```
 
 !!! note
-    `autoPopulateDNSNames` populates DNS SANs based on the Kubernetes services each pod is an endpoint of. Both HAProxy and backend pods receive DNS SANs for their respective services. Since certificate updates are pushed via the Runtime API without process restarts, using the default SVID TTL (typically 1h) is fine.
+    `autoPopulateDNSNames` populates DNS SANs based on the Kubernetes services each pod is an endpoint of. Both HAProxy and backend pods receive DNS SANs for their respective services. Since certificate updates are pushed via the Runtime API without process restarts, using the default SVID TTL (typically `1h`) is fine.
 
 ## Controller validation
 
@@ -466,7 +466,9 @@ kubectl -n haptic logs <haproxy-pod> -c cert-reloader
 
 ## Troubleshooting
 
-### spiffe-helper cannot connect to SPIRE agent
+<a id="spiffe-helper-cannot-connect-to-spire-agent"></a>
+
+### `spiffe-helper` can't connect to SPIRE agent
 
 ```
 Error while watching x509 context: ... dial unix /spiffe-workload-api/agent.sock: no such file or directory
@@ -480,7 +482,7 @@ kubectl -n haptic exec <haproxy-pod> -c spiffe-helper -- ls /spiffe-workload-api
 
 Update `agent_address` in your spiffe-helper config to match.
 
-### spiffe-helper config parse error
+### `spiffe-helper` config parse error
 
 ```
 failed to parse configuration ... got: LBRACK
@@ -499,15 +501,17 @@ health_checks {
 }
 ```
 
-### Certificate directory does not exist
+<a id="certificate-directory-does-not-exist"></a>
+
+### Certificate directory doesn't exist
 
 ```
 Unable to dump bundle ... open /etc/haproxy/spiffe/svid.pem: no such file or directory
 ```
 
-The `haproxy-runtime` emptyDir does not include the `spiffe/` subdirectory by default. Ensure the init container is configured to create it before spiffe-helper starts. The example init container above already sets `resources.requests` and `resources.limits`; keep them in place if you customized it, so the init container isn't rejected by a namespace ResourceQuota.
+The `haproxy-runtime` emptyDir doesn't include the `spiffe/` subdirectory by default. Ensure the init container is configured to create it before spiffe-helper starts. The example init container above already sets `resources.requests` and `resources.limits`; keep them in place if you customized it, so the init container isn't rejected by a namespace ResourceQuota.
 
-### ImagePullBackOff for spiffe-helper
+### `ImagePullBackOff` for `spiffe-helper`
 
 ```
 Back-off pulling image "ghcr.io/spiffe/spiffe-helper:v0.11.0"
@@ -517,7 +521,7 @@ The spiffe-helper container image uses tags **without** the `v` prefix. Use `0.1
 
 ### Controller rejects config with cert path errors
 
-If the controller logs show validation failures referencing `/etc/haproxy/spiffe/*.pem`, the validation placeholder ConfigMap is not mounted on the controller pod. Verify:
+If the controller logs show validation failures referencing `/etc/haproxy/spiffe/*.pem`, the validation placeholder ConfigMap isn't mounted on the controller pod. Verify:
 
 ```bash
 kubectl -n haptic exec <controller-pod> -- ls /etc/haproxy/spiffe/

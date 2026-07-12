@@ -4,7 +4,7 @@ hide:
   - navigation
 ---
 
-# Getting Started
+# Getting started
 
 ## Overview
 
@@ -160,7 +160,7 @@ kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer
 You should see two controller pods (the chart defaults to two replicas with leader election) and two HAProxy pods, all in `Running` state with full readiness (`2/2` and `3/3`).
 
 !!! note "HAProxy version"
-    The chart defaults to HAProxy 3.4. To select a different version (e.g. 3.0 LTS or 3.3), set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for details.
+    The chart defaults to HAProxy 3.4. To select a different version (for example, 3.0 Long-Term Support (LTS) or 3.3), set `--set haproxyVersion=3.0`. See [HAProxy Versions](./operations/haproxy-versions.md) for details.
 
 ## Step 2: Deploy a sample application
 
@@ -337,7 +337,7 @@ Now that you have a working setup, explore these topics:
 
 The [Templating Guide](./templating.md) is the natural next step: it covers the template language, the resource context your templates see, and how to add custom behavior. The default [template libraries](template-libraries.md) already handle path-based routing, SSL termination, and annotation-driven configuration — you only write templates to go beyond them (custom annotations, domain-specific logic, HAProxy features they don't cover).
 
-### Replacing another ingress controller?
+### Replacing another Ingress controller?
 
 See [Migrating to HAPTIC](./migrating.md)
 for the zero-downtime, one-Ingress-at-a-time cutover — and the three settings

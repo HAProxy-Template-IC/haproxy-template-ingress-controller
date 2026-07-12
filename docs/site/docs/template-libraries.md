@@ -1,6 +1,6 @@
-# Template Libraries
+# Template libraries
 
-Template libraries are modular, composable configuration packages that extend HAProxy functionality. You enable or disable each library independently in values.yaml.
+Template libraries are modular, composable configuration packages that extend HAProxy's capabilities. You enable or disable each library independently in values.yaml.
 
 ## Overview
 
@@ -25,7 +25,7 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 
 </div>
 
-## Available Libraries
+## Available libraries
 
 | Library | Default | Purpose |
 |---------|---------|---------|
@@ -37,9 +37,9 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 | [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
 | [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) |
-| [spoa-hub](operations/spoa-hub.md) | Auto | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
+| [spoa-hub](operations/spoa-hub.md) | Auto | HAProxy-side wiring for the Stream Processing Offload Agent (SPOA) hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
-## Enabling and Disabling Libraries
+## Enabling and disabling libraries
 
 Configure libraries in your values.yaml (see the [Chart Values Reference](./reference.md#template-libraries) for every `controller.templateLibraries.*` value):
 
@@ -65,7 +65,7 @@ controller:
       regexMatchOrder: default  # "default" or "last" — see Path Matching Order below
 ```
 
-## Path Matching Order
+## Path matching order
 
 Path-based routing inside the rendered `frontend-routing-logic` snippet evaluates four map types: exact, regex, prefix-exact, and prefix. The evaluation order is selected by `controller.config.routing.regexMatchOrder`:
 
@@ -76,7 +76,7 @@ Path-based routing inside the rendered `frontend-routing-logic` snippet evaluate
 
 The chart swaps in the `frontend-routing-logic-regex-last` variant of the snippet at Helm load time when `last` is set. No runtime difference.
 
-## Library Merge Order
+## Library merge order
 
 Libraries are merged in a specific order, with later libraries overriding earlier ones:
 
@@ -95,11 +95,11 @@ Libraries are merged in a specific order, with later libraries overriding earlie
 
 Your custom configuration in `controller.config` always takes precedence.
 
-## Extension Points
+## Extension points
 
 Extension points are **hook points** the base library defines, where other libraries — or your own configuration — inject content.
 
-### How Extension Points Work
+### How extension points work
 
 The base library uses `render_glob "prefix-*"` to automatically include all template snippets matching a glob pattern:
 
@@ -108,9 +108,9 @@ The base library uses `render_glob "prefix-*"` to automatically include all temp
 {{ render_glob "backends-*" }}
 ```
 
-This includes all snippets whose names start with `backends-` (e.g. `backends-500-ingress`, `backends-500-gateway`, any user-provided `backends-*`). Snippets render in alphabetical order, so numeric prefixes control execution order — see the [snippet priority numbering table](#snippet-priority) below.
+This includes all snippets whose names start with `backends-` (for example `backends-500-ingress`, `backends-500-gateway`, any user-provided `backends-*`). Snippets render in alphabetical order, so numeric prefixes control execution order — see the [snippet priority numbering table](#snippet-priority) below.
 
-### Available Extension Points
+### Available extension points
 
 These are the extension points custom snippets most commonly target. The authoritative full registry — including the bind hooks, listener-port translation, and the per-backend feature maps (body size, header overrides, path rewrite) — is [Base Library → Available Extension Points](libraries/base.md#available-extension-points).
 
@@ -134,7 +134,7 @@ These are the extension points custom snippets most commonly target. The authori
 | Weighted Backend Map | `map-weighted-backend-*` | weighted-multi-backend.map | Weighted routing |
 | Status Patches | `status-patches-*` | After features, before backends | Resource status updates (side effects only, no config output) |
 
-### Injecting Custom Configuration
+### Injecting custom configuration
 
 Add custom snippets in your values.yaml to inject configuration at extension points:
 
@@ -208,7 +208,7 @@ read any key the same way:
 {%- var code = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
 ```
 
-### Snippet Priority
+### Snippet priority
 
 Snippets within a `render_glob` pattern execute in **alphabetical order**. Priority is encoded in the snippet name via a numeric prefix:
 
@@ -233,8 +233,8 @@ Reserved numeric ranges used by the built-in libraries:
 |-------|---------|
 | 000-099 | Infrastructure / initialization |
 | 100-199 | Feature registration |
-| 200-499 | Security, CORS, header manipulation, redirects |
-| 500-599 | Core functionality (ingress, gateway) |
+| 200-499 | Security, Cross-Origin Resource Sharing (CORS), header manipulation, redirects |
+| 500-599 | Core features (ingress, gateway) |
 | 600-699 | haproxy-ingress (`haproxy-ingress.github.io/*`) compatibility |
 | 700-799 | nginx-ingress (`nginx.ingress.kubernetes.io/*`) compatibility |
 | 900-999 | Finalization / cleanup |
@@ -243,7 +243,7 @@ The haproxytech (`haproxy.org/*`) library is the exception among the vendor anno
 
 To override a built-in snippet, use the **same key name**; values-file entries take precedence over library entries during merge.
 
-### Which Libraries Use Which Extension Points
+### Which libraries use which extension points
 
 | Library | Extension Points Used |
 |---------|----------------------|
@@ -255,7 +255,7 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 | haproxy-ingress | `features-*`, `map-path-*`, `map-pfxexact-*`, `backend-directives-*`, `frontend-filters-*`, `global-top-*`, `backends-*` |
 | nginx-ingress | `features-*`, `backends-*`, `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
 
-## Custom Libraries
+## Custom libraries
 
 You can create custom libraries by watching any Kubernetes resource and implementing extension point patterns against it. Because HAPTIC is resource-agnostic, a plain ConfigMap becomes HAProxy config the same way an Ingress does — watch it, then emit into `backends-*` and `map-host-*` from a template snippet.
 
@@ -397,7 +397,7 @@ above.
 
 Each library's own page (linked from the [Available Libraries](#available-libraries) table above) documents its snippets, tunables, and extension points in detail.
 
-## See Also
+## See also
 
 - [Annotations](./annotations.md) — which vendor annotation library covers which annotation prefix
 - [Templating Guide](./templating.md) — writing your own snippets and templates

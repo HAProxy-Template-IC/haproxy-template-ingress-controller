@@ -1,10 +1,10 @@
-# nginx-ingress Library
+# `nginx-ingress` library
 
 The Nginx Ingress library provides compatibility with the [nginx-ingress controller](https://kubernetes.github.io/ingress-nginx/) annotations for Kubernetes Ingress resources.
 
 ## Overview
 
-This library enables `nginx.ingress.kubernetes.io/*` annotations on Ingress resources, providing a migration path for users coming from the nginx-ingress controller. It supports backend configuration, session affinity, rate limiting, URL rewriting, redirects, CORS, access control, canary deployments, authentication, SSL passthrough, and mTLS certificate passthrough.
+This library enables `nginx.ingress.kubernetes.io/*` annotations on Ingress resources, providing a migration path for users coming from the nginx-ingress controller. It supports backend configuration, session affinity, rate limiting, URL rewriting, redirects, Cross-Origin Resource Sharing (CORS), access control, canary deployments, authentication, SSL passthrough, and mTLS certificate passthrough.
 
 This library is disabled by default.
 
@@ -12,7 +12,7 @@ Because the preset mixes annotations that HAPTIC supports, maps differently, and
 
 <div class="pg-embed" markdown data-scenario="nginx-ingress" data-facade="resources" data-tab="migration" data-controls="tabs,resources" data-title="ingress-nginx annotation migration report" data-height="440">
 
-<p class="pg-task" markdown>In the **Resources** panel, add `nginx.ingress.kubernetes.io/server-snippet: "more_set_headers X-From: nginx;"` to the `shop` Ingress, then watch a new **dropped** verdict appear in the **migration** report.</p>
+<p class="pg-task" markdown>In the **Resources** panel, add <code>nginx.ingress.kubernetes.io/server-snippet: "more_set_headers X-From: nginx;"</code> to the `shop` Ingress, then watch a new **dropped** verdict appear in the **migration** report.</p>
 
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
@@ -35,11 +35,11 @@ controller:
       enabled: true  # Disabled by default
 ```
 
-Enabling the library also auto-enables two SPOA hub plugins — `external-auth` (backing the `auth-url` family) and `coraza` (the WAF backing `modsecurity-snippet`) — which deploys the [SPOA hub sidecar](../operations/spoa-hub.md) in the HAProxy pod. An explicit `spoaHub.plugins.<name>.enabled` value overrides the auto-enable in either direction.
+Enabling the library also auto-enables two Stream Processing Offload Agent (SPOA) hub plugins — `external-auth` (backing the `auth-url` family) and `coraza` (the Web Application Firewall (WAF) backing `modsecurity-snippet`) — which deploys the [SPOA hub sidecar](../operations/spoa-hub.md) in the HAProxy pod. An explicit `spoaHub.plugins.<name>.enabled` value overrides the auto-enable in either direction.
 
-## Extension Points
+## Extension points
 
-### Extension Points Used
+### Extension points used
 
 The Nginx Ingress library implements these extension points:
 
@@ -62,12 +62,12 @@ The Nginx Ingress library implements these extension points:
 | Backend Directives | `backend-directives-790-nginx-ingress-proxy-cookie` | Upstream `Set-Cookie` rewriting (`proxy-cookie-domain`, `proxy-cookie-path`) |
 | Backend Directives | `backend-directives-795-nginx-ingress-proxy-redirect` | Upstream `Location`/`Refresh` rewriting (`proxy-redirect-from`, `proxy-redirect-to`) |
 | Backend Directives | `backend-directives-900-nginx-ingress-config-snippet` | Raw backend config injection |
-| Map (request headers) | `map-reqhdr-host-760-nginx-ingress`, `map-reqhdr-xfwd-prefix-760-nginx-ingress`, `map-reqhdr-connection-760-nginx-ingress` | `upstream-vhost` / `x-forwarded-prefix` / `connection-proxy-header` as per-backend map entries |
+| Map (request headers) | `map-reqhdr-host-760-nginx-ingress`, `map-reqhdr-xfwd-prefix-760-nginx-ingress`, `map-reqhdr-connection-760-nginx-ingress` | per-backend map entries for `upstream-vhost` / `x-forwarded-prefix` / `connection-proxy-header` |
 | Map (host) | `map-host-720-nginx-ingress-server-alias` | `server-alias` hostnames → the rule host's routing key in `host.map` |
 | Backends | `backends-510-nginx-ingress-default-backend` | Per-Ingress `default-backend` pools (+ catch-all path entries via `map-path-prefix-510-nginx-ingress-default-backend`) |
 | Frontend Filters | `frontend-filters-700-nginx-ingress-access-control` | IP allowlist/denylist |
 | Features | `features-105-nginx-ingress-ssl-redirect` | HTTP to HTTPS redirect (registers hosts into the shared `ssl-redirect-<code>.map`; ssl.yaml emits the rule) |
-| Features | `features-155-nginx-ingress-hsts` | HSTS header — registers host→value into the shared `hsts.map` |
+| Features | `features-155-nginx-ingress-hsts` | HTTP Strict Transport Security (HSTS) header — registers host→value into the shared `hsts.map` |
 | Frontend Filters | `frontend-filters-730-nginx-ingress-cors` | CORS headers |
 | Frontend Filters | `frontend-filters-740-nginx-ingress-custom-headers` | Custom request/response headers |
 | Features | `features-145-nginx-ingress-app-root` | Root path redirect — registers host→path into the shared `app-root.map` |
@@ -82,7 +82,7 @@ The Nginx Ingress library implements these extension points:
 
 ---
 
-## Backend Configuration
+## Backend configuration
 
 ### Timeouts
 
@@ -97,7 +97,7 @@ The Nginx Ingress library implements these extension points:
 | `proxy-send-timeout` | Backend send timeout (seconds) | - |
 
 !!! note "Timeout Value Format"
-    Nginx-ingress timeout values are plain seconds (e.g., `"60"`). The library automatically appends the `s` suffix for HAProxy.
+    Nginx-ingress timeout values are plain seconds (for example, `"60"`). The library automatically appends the `s` suffix for HAProxy.
 
 !!! note "Server Timeout Mapping"
     Both `proxy-read-timeout` and `proxy-send-timeout` map to HAProxy's single `timeout server` directive. If both are set, the larger value is used.
@@ -121,7 +121,7 @@ backend my-backend
 
 ---
 
-### nginx.ingress.kubernetes.io/load-balance
+### `nginx.ingress.kubernetes.io/load-balance`
 
 **Status**: ✅ Supported
 
@@ -155,7 +155,7 @@ backend my-backend
 
 ---
 
-### nginx.ingress.kubernetes.io/proxy-body-size
+### `nginx.ingress.kubernetes.io/proxy-body-size`
 
 **Status**: ✅ Supported
 
@@ -188,7 +188,7 @@ http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } 
 
 ---
 
-### nginx.ingress.kubernetes.io/backend-protocol
+### `nginx.ingress.kubernetes.io/backend-protocol`
 
 **Status**: ✅ Supported
 
@@ -206,7 +206,7 @@ http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } 
 | `GRPCS` | `ssl verify none proto h2` |
 
 !!! warning "Unsupported Protocols"
-    `AJP` and `FCGI` are not supported by HAProxy and fail with an error.
+    `AJP` and `FCGI` aren't supported by HAProxy and fail with an error.
 
 **Usage**:
 
@@ -217,7 +217,7 @@ annotations:
 
 ---
 
-### nginx.ingress.kubernetes.io/use-proxy-protocol
+### `nginx.ingress.kubernetes.io/use-proxy-protocol`
 
 **Status**: ✅ Supported
 
@@ -238,7 +238,7 @@ server SRV_1 10.0.0.1:8080 send-proxy-v2
 
 ---
 
-### nginx.ingress.kubernetes.io/configuration-snippet
+### `nginx.ingress.kubernetes.io/configuration-snippet`
 
 **Status**: ✅ Supported
 
@@ -255,7 +255,7 @@ annotations:
 
 ---
 
-### nginx.ingress.kubernetes.io/upstream-hash-by
+### `nginx.ingress.kubernetes.io/upstream-hash-by`
 
 **Status**: ✅ Supported
 
@@ -290,7 +290,7 @@ backend my-backend
 
 ---
 
-### nginx.ingress.kubernetes.io/proxy-next-upstream
+### `nginx.ingress.kubernetes.io/proxy-next-upstream`
 
 **Status**: ✅ Supported
 
@@ -303,7 +303,7 @@ backend my-backend
 | `error` | `conn-failure` |
 | `timeout` | `response-timeout` |
 | `invalid_header` | `junk-response` |
-| `http_<NNN>` (e.g. `http_503`) | `<NNN>` |
+| `http_<NNN>` (for example `http_503`) | `<NNN>` |
 | `off` | `retries 0` (retries disabled) |
 | `non_idempotent` | ignored (no HAProxy equivalent) |
 
@@ -333,7 +333,7 @@ backend my-backend
 
 ---
 
-### Upstream Request Headers
+### Upstream request headers
 
 **Status**: ✅ Supported
 
@@ -365,7 +365,7 @@ default_my-ingress_svc_my-service_80 internal.example.com
 
 ---
 
-### Rate Limiting
+### Rate limiting
 
 **Status**: ✅ Supported
 
@@ -401,7 +401,7 @@ The `peers localinstance` reference carries the per-source counters across HAPro
 
 ---
 
-### nginx.ingress.kubernetes.io/limit-rate
+### `nginx.ingress.kubernetes.io/limit-rate`
 
 **Status**: ✅ Supported
 
@@ -432,11 +432,11 @@ backend my-backend
 
 ---
 
-## Backend TLS (proxy-ssl-*)
+## Backend TLS (`proxy-ssl-*`)
 
 The `proxy-ssl-*` family configures TLS toward the upstream: a client certificate, a CA to verify the upstream's certificate against, SNI, ciphers, and protocol bounds. The whole family requires backend TLS to be on — set `backend-protocol: "HTTPS"` (or `"GRPCS"`), otherwise the annotations have no effect.
 
-### nginx.ingress.kubernetes.io/proxy-ssl-secret
+### `nginx.ingress.kubernetes.io/proxy-ssl-secret`
 
 **Status**: ✅ Supported
 
@@ -462,7 +462,7 @@ default-server check ssl verify required ca-file <upstream-tls-ca.pem> crt <upst
 
 ---
 
-### nginx.ingress.kubernetes.io/proxy-ssl-verify
+### `nginx.ingress.kubernetes.io/proxy-ssl-verify`
 
 **Status**: ✅ Supported
 
@@ -470,7 +470,7 @@ default-server check ssl verify required ca-file <upstream-tls-ca.pem> crt <upst
 
 ---
 
-### nginx.ingress.kubernetes.io/proxy-ssl-name
+### `nginx.ingress.kubernetes.io/proxy-ssl-name`
 
 **Status**: ✅ Supported
 
@@ -478,7 +478,7 @@ default-server check ssl verify required ca-file <upstream-tls-ca.pem> crt <upst
 
 ---
 
-### nginx.ingress.kubernetes.io/proxy-ssl-ciphers
+### `nginx.ingress.kubernetes.io/proxy-ssl-ciphers`
 
 **Status**: ✅ Supported
 
@@ -486,20 +486,20 @@ default-server check ssl verify required ca-file <upstream-tls-ca.pem> crt <upst
 
 ---
 
-### nginx.ingress.kubernetes.io/proxy-ssl-protocols
+### `nginx.ingress.kubernetes.io/proxy-ssl-protocols`
 
 **Status**: ✅ Supported
 
-**Description**: Space-separated list of enabled TLS versions, e.g. `"TLSv1.2 TLSv1.3"`. HAProxy expresses a version span, not a list: the lowest listed version becomes `ssl-min-ver` and the highest `ssl-max-ver`, so gaps in the list can't be expressed.
+**Description**: Space-separated list of enabled TLS versions, for example `"TLSv1.2 TLSv1.3"`. HAProxy expresses a version span, not a list: the lowest listed version becomes `ssl-min-ver` and the highest `ssl-max-ver`, so gaps in the list can't be expressed.
 
 !!! note "proxy-ssl-verify-depth and proxy-ssl-server-name not wired"
-    `proxy-ssl-verify-depth` has no per-server HAProxy equivalent (chain depth is a bind-line option) — a warning comment is rendered and the CA bundle scope bounds the accepted chain instead. `proxy-ssl-server-name` is not read; control SNI via `proxy-ssl-name`.
+    `proxy-ssl-verify-depth` has no per-server HAProxy equivalent (chain depth is a bind-line option) — a warning comment is rendered and the CA bundle scope bounds the accepted chain instead. `proxy-ssl-server-name` isn't read; control SNI via `proxy-ssl-name`.
 
 ---
 
-## Upstream Response Rewriting
+## Upstream response rewriting
 
-### nginx.ingress.kubernetes.io/proxy-cookie-domain
+### `nginx.ingress.kubernetes.io/proxy-cookie-domain`
 
 **Status**: ✅ Supported
 
@@ -521,7 +521,7 @@ backend my-backend
 
 ---
 
-### nginx.ingress.kubernetes.io/proxy-cookie-path
+### `nginx.ingress.kubernetes.io/proxy-cookie-path`
 
 **Status**: ✅ Supported
 
@@ -543,7 +543,7 @@ backend my-backend
 
 ---
 
-### nginx.ingress.kubernetes.io/proxy-redirect-from
+### `nginx.ingress.kubernetes.io/proxy-redirect-from`
 
 **Status**: ✅ Supported
 
@@ -573,9 +573,9 @@ backend my-backend
 
 ---
 
-## Session Affinity
+## Session affinity
 
-### nginx.ingress.kubernetes.io/affinity
+### `nginx.ingress.kubernetes.io/affinity`
 
 **Status**: ✅ Supported
 
@@ -618,9 +618,9 @@ backend my-backend
 
 ---
 
-## URL Rewriting
+## URL rewriting
 
-### nginx.ingress.kubernetes.io/rewrite-target
+### `nginx.ingress.kubernetes.io/rewrite-target`
 
 **Status**: ✅ Supported
 
@@ -645,13 +645,13 @@ backend my-backend
     http-request replace-path (.*) /\1
 ```
 
-A **literal** rewrite (no capture, e.g. `rewrite-target: "/new"`) is instead written to
+A **literal** rewrite (no capture, for example `rewrite-target: "/new"`) is instead written to
 `path-rewrite.map` (`<backend_name> /new`) and applied by a shared frontend `set-path` rule,
-so changing it is a map-only, reload-free update.
+so a rewrite change is a map-only, reload-free update.
 
 ---
 
-### nginx.ingress.kubernetes.io/app-root
+### `nginx.ingress.kubernetes.io/app-root`
 
 **Status**: ✅ Supported
 
@@ -683,7 +683,7 @@ http-request redirect location %[var(txn.host),map(maps/app-root.map)] code 302 
 
 ## Redirects
 
-### nginx.ingress.kubernetes.io/ssl-redirect
+### `nginx.ingress.kubernetes.io/ssl-redirect`
 
 **Status**: ✅ Supported
 
@@ -734,7 +734,7 @@ http-request redirect scheme https code 308 if !{ ssl_fc } { var(txn.host),map_s
 
 ---
 
-### nginx.ingress.kubernetes.io/permanent-redirect
+### `nginx.ingress.kubernetes.io/permanent-redirect`
 
 **Status**: ✅ Supported
 
@@ -756,7 +756,7 @@ annotations:
 
 ---
 
-### nginx.ingress.kubernetes.io/temporal-redirect
+### `nginx.ingress.kubernetes.io/temporal-redirect`
 
 **Status**: ✅ Supported
 
@@ -777,7 +777,7 @@ annotations:
 
 ---
 
-### nginx.ingress.kubernetes.io/from-to-www-redirect
+### `nginx.ingress.kubernetes.io/from-to-www-redirect`
 
 **Status**: ✅ Supported
 
@@ -806,9 +806,9 @@ http-request redirect prefix http://%[var(txn.host),map(maps/from-to-www.map)] c
 
 ---
 
-## HSTS
+## `hsts`
 
-### nginx.ingress.kubernetes.io/hsts
+### `nginx.ingress.kubernetes.io/hsts`
 
 **Status**: ✅ Supported
 
@@ -850,9 +850,9 @@ http-response set-header Strict-Transport-Security %[var(txn.host),map(maps/hsts
 
 ---
 
-## CORS
+## `cors`
 
-### nginx.ingress.kubernetes.io/enable-cors
+### `nginx.ingress.kubernetes.io/enable-cors`
 
 **Status**: ✅ Supported
 
@@ -881,9 +881,9 @@ annotations:
 
 ---
 
-## Access Control
+## Access control
 
-### nginx.ingress.kubernetes.io/whitelist-source-range
+### `nginx.ingress.kubernetes.io/whitelist-source-range`
 
 **Status**: ✅ Supported
 
@@ -905,7 +905,7 @@ http-request deny if { hdr(host) -i example.com } !ni_allowlist_default_my-ingre
 
 ---
 
-### nginx.ingress.kubernetes.io/denylist-source-range
+### `nginx.ingress.kubernetes.io/denylist-source-range`
 
 **Status**: ✅ Supported
 
@@ -920,9 +920,9 @@ annotations:
 
 ---
 
-## Custom Headers
+## Custom headers
 
-### Custom Request and Response Headers
+### Custom request and response headers
 
 **Status**: ✅ Supported
 
@@ -951,9 +951,9 @@ http-response set-header X-Frame-Options 'DENY' if { hdr(host) -i example.com }
 
 ---
 
-## Server Alias and Default Backend
+## Server alias and default backend
 
-### nginx.ingress.kubernetes.io/server-alias
+### `nginx.ingress.kubernetes.io/server-alias`
 
 **Status**: ✅ Supported
 
@@ -975,7 +975,7 @@ www.example.org example.com
 
 ---
 
-### nginx.ingress.kubernetes.io/default-backend
+### `nginx.ingress.kubernetes.io/default-backend`
 
 **Status**: ✅ Supported
 
@@ -1007,7 +1007,7 @@ backend default_my-ingress_default-backend_error-pages
 
 ## Authentication
 
-### nginx.ingress.kubernetes.io/auth-type
+### `nginx.ingress.kubernetes.io/auth-type`
 
 **Status**: ✅ Supported
 
@@ -1061,7 +1061,7 @@ backend my-backend
 
 ---
 
-### nginx.ingress.kubernetes.io/satisfy
+### `nginx.ingress.kubernetes.io/satisfy`
 
 **Status**: ✅ Supported
 
@@ -1089,7 +1089,7 @@ The independent frontend whitelist deny and the unconditional backend auth chall
 
 ---
 
-## External Authentication
+## External authentication
 
 The library wires the `nginx.ingress.kubernetes.io/auth-*` family to the SPOA hub's `external-auth` plugin (v0.3.0+). When set, each request hits an HTTP auth subrequest before reaching the backend; the auth service's status code decides whether HAProxy forwards the request, redirects to a sign-in URL, or returns 401.
 
@@ -1104,14 +1104,14 @@ spoaHub:
       enabled: true
 ```
 
-The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. Note: enabling `controller.templateLibraries.nginxIngress.enabled` ALSO auto-enables `external-auth` (the nginx-ingress library is opt-in for this reason). See the [SPOA Hub operations guide](../operations/spoa-hub.md) for the full deployment surface.
+The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. Note: enabling `controller.templateLibraries.nginxIngress.enabled` **also** auto-enables `external-auth` (the nginx-ingress library is opt-in for this reason). See the [SPOA Hub operations guide](../operations/spoa-hub.md) for the full deployment surface.
 
 !!! warning "Host-less rules error at render time"
-    All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` cannot be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress.
+    All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` can't be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress.
 
 ---
 
-### nginx.ingress.kubernetes.io/auth-url
+### `nginx.ingress.kubernetes.io/auth-url`
 
 **Status**: ✅ Supported
 
@@ -1134,11 +1134,11 @@ http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.h
 
 ---
 
-### nginx.ingress.kubernetes.io/auth-signin
+### `nginx.ingress.kubernetes.io/auth-signin`
 
 **Status**: ✅ Supported
 
-**Description**: Browser-flow sign-in URL. When set, an auth failure produces a 302 redirect instead of a 401 — the standard pattern for OIDC / SAML flows. The deny rule still emits, so routes without `auth-signin` keep the API-friendly 401.
+**Description**: Browser-flow sign-in URL. When set, an auth failure produces a 302 redirect instead of a 401 — the standard pattern for OpenID Connect (OIDC) / Security Assertion Markup Language (SAML) flows. The deny rule still emits, so routes without `auth-signin` keep the API-friendly 401.
 
 **Usage**:
 
@@ -1148,12 +1148,12 @@ annotations:
   nginx.ingress.kubernetes.io/auth-signin: "https://login.example.com/oauth2/start?rd=$escaped_request_uri"
 ```
 
-!!! note "nginx variables in the URL are not expanded"
-    HAProxy doesn't substitute `$escaped_request_uri` and friends at redirect time; the URL is used verbatim. Operators wanting the original-request preservation pattern should either set the param via the auth service (e.g. oauth2-proxy handles it server-side) or extend the SPOE message body with the bits they need.
+!!! note "nginx variables in the URL aren't expanded"
+    HAProxy doesn't substitute `$escaped_request_uri` and friends at redirect time; the URL is used verbatim. Operators wanting the original-request preservation pattern should either set the param via the auth service (for example, oauth2-proxy handles it server-side) or extend the Stream Processing Offload Engine (SPOE) message body with the bits they need.
 
 ---
 
-### nginx.ingress.kubernetes.io/auth-method
+### `nginx.ingress.kubernetes.io/auth-method`
 
 **Status**: ✅ Supported
 
@@ -1170,11 +1170,11 @@ annotations:
 ```
 
 !!! note "Body-having methods carry an empty body"
-    `POST` / `PUT` / `PATCH` go to the auth service with an empty body — the plugin does not forward the original request payload.
+    `POST` / `PUT` / `PATCH` go to the auth service with an empty body — the plugin doesn't forward the original request payload.
 
 ---
 
-### nginx.ingress.kubernetes.io/auth-response-headers
+### `nginx.ingress.kubernetes.io/auth-response-headers`
 
 **Status**: ✅ Supported
 
@@ -1195,19 +1195,19 @@ http-request set-header X-Auth-User %[var(txn.hub.external_auth.x_auth_user)] if
 http-request set-header X-Auth-Roles %[var(txn.hub.external_auth.x_auth_roles)] if { var(txn.hub.external_auth.x_auth_roles) -m found } { var(txn.hub.external_auth.allowed) -m bool }
 ```
 
-One `set-header` directive per unique header across all ingresses; per-route gating happens via the plugin's per-ingress `extract_headers` SPOE arg — routes that didn't list a header have its txn var unset, so the `var ... -m found` gate skips them.
+One `set-header` directive per unique header across all ingresses; per-route gating happens via the plugin's per-ingress `extract_headers` SPOE arg — routes that didn't list a header have its `txn` var unset, so the `var ... -m found` gate skips them.
 
 !!! note "Failure-path response headers"
-    nginx-ingress doesn't expose an annotation for "headers to send back to the client on auth failure" (the haproxy-ingress equivalent is `auth-headers-fail`). If you need that — e.g. `WWW-Authenticate` for Bearer challenges — switch to or add the haproxy-ingress library and use its annotation prefix.
+    nginx-ingress doesn't expose an annotation for "headers to send back to the client on auth failure" (the haproxy-ingress equivalent is `auth-headers-fail`). If you need that — for example `WWW-Authenticate` for Bearer challenges — switch to or add the haproxy-ingress library and use its annotation prefix.
 
 !!! note "auth-snippet not wired"
-    `nginx.ingress.kubernetes.io/auth-snippet` (used in nginx-ingress for arbitrary nginx config injection in the auth subrequest) is freeform nginx syntax with no parsable structure, so it cannot be templated to HAProxy. The haproxy-ingress prefix has a typed `auth-headers-request` annotation that covers the most common use case.
+    `nginx.ingress.kubernetes.io/auth-snippet` (used in nginx-ingress for arbitrary nginx config injection in the auth subrequest) is freeform nginx syntax with no parsable structure, so it can't be templated to HAProxy. The haproxy-ingress prefix has a typed `auth-headers-request` annotation that covers the most common use case.
 
 ---
 
-## SSL Features
+## SSL features
 
-### nginx.ingress.kubernetes.io/ssl-passthrough
+### `nginx.ingress.kubernetes.io/ssl-passthrough`
 
 **Status**: ✅ Supported
 
@@ -1243,13 +1243,13 @@ spec:
 
 - Uses SNI-based routing in TCP mode
 - Backend receives encrypted traffic and terminates SSL
-- HTTP-level features (headers, path rewriting) are not available for passthrough traffic
+- HTTP-level features (headers, path rewriting) aren't available for passthrough traffic
 
 ---
 
-## Canary Deployments
+## Canary deployments
 
-### nginx.ingress.kubernetes.io/canary
+### `nginx.ingress.kubernetes.io/canary`
 
 **Status**: ✅ Supported
 
@@ -1305,11 +1305,11 @@ use_backend default_my-app-canary_svc_my-app-canary_http if { rand(100) lt 20 } 
 
 ---
 
-## Client Certificate Auth (mTLS)
+## Client certificate auth (mTLS)
 
 The library wires the four `auth-tls-*` annotations that nginx-ingress uses for incoming client-cert verification. The CA bundle from the referenced Secret lands in the SSL cert dir and is referenced from the HAProxy `crt-list` line for the matching SNI as `[ca-file <path> verify <mode>]`, so HAProxy verifies incoming client certs at the TLS layer. The error-page and cert-passthrough annotations then react to the verification result via `ssl_c_verify`.
 
-### nginx.ingress.kubernetes.io/auth-tls-secret
+### `nginx.ingress.kubernetes.io/auth-tls-secret`
 
 **Status**: ✅ Supported
 
@@ -1347,7 +1347,7 @@ default_server-tls.pem [ocsp-update on ca-file ssl/default-client-ca-client-ca.p
 
 ---
 
-### nginx.ingress.kubernetes.io/auth-tls-verify-client
+### `nginx.ingress.kubernetes.io/auth-tls-verify-client`
 
 **Status**: ✅ Supported
 
@@ -1371,11 +1371,11 @@ annotations:
 ```
 
 !!! note "auth-tls-verify-depth not wired"
-    HAProxy's `crt-list` exposes per-line `ca-file` and `verify` but no per-line verify-depth — depth is global. Operators needing strict depth control should rely on the CA bundle scope instead (only certs signed within the bundle's chain depth will validate).
+    HAProxy's `crt-list` exposes per-line `ca-file` and `verify` but no per-line verify-depth — depth is global. Operators needing strict depth control should rely on the CA bundle scope instead (only certs signed within the bundle's chain depth validate).
 
 ---
 
-### nginx.ingress.kubernetes.io/auth-tls-error-page
+### `nginx.ingress.kubernetes.io/auth-tls-error-page`
 
 **Status**: ✅ Supported
 
@@ -1399,7 +1399,7 @@ The `ssl_c_verify gt 0` condition matches any verification error (including miss
 
 ---
 
-### nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream
+### `nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream`
 
 **Status**: ✅ Supported
 
@@ -1422,23 +1422,23 @@ http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { hdr(host) -i ex
 
 ---
 
-## Web Application Firewall (ModSecurity)
+## Web application firewall (`modsecurity`)
 
 `nginx.ingress.kubernetes.io/modsecurity-snippet` and `enable-modsecurity` **are** supported, via the bundled SPOA hub **Coraza** WAF plugin (auto-enabled when the nginx-ingress or haproxy-ingress library is on). The `modsecurity-snippet` body (ModSecurity `SecRule` directives) is scanned into a per-Ingress `coraza-app.map` entry; `enable-modsecurity: "false"` adds the route to `coraza-disabled.map` so the WAF skips it. See the [SPOA Hub operations guide](../operations/spoa-hub.md) for the Coraza plugin's full configuration surface.
 
 ---
 
-## Request Mirroring
+## Request mirroring
 
 `nginx.ingress.kubernetes.io/mirror-target` **is** supported, via the bundled SPOA hub **mirror** plugin (the same machinery the Gateway API `RequestMirror` filter uses) — enable it with `spoaHub.plugins.mirror`. Mirroring is fire-and-forget: a copy of each matching request is sent to the target and its response is discarded. Only the authority (`host[:port]`) of the `scheme://host[:port]$request_uri` value is used; the plugin re-attaches the live request path/query. Each mirror-target Ingress gets its own mirror slot, capped at `spoaHub.mirrorStaticMinSlots` (default 4).
 
-These constraints **fail the config** with an actionable message rather than silently doing nothing: the mirror plugin must be enabled, the Ingress must define a `host` (host-less / default-backend mirroring is unsupported), and the number of mirror-target Ingresses must not exceed the slot count (raise `spoaHub.mirrorStaticMinSlots`). `mirror-host` and `mirror-request-body: off` are **not** honoured — the plugin always forces the mirrored Host to the target authority and always forwards the buffered request body.
+These constraints **fail the config** with an actionable message rather than silently doing nothing: the mirror plugin must be enabled, the Ingress must define a `host` (host-less / default-backend mirroring is unsupported), and the number of mirror-target Ingresses must not exceed the slot count (raise `spoaHub.mirrorStaticMinSlots`). `mirror-host` and `mirror-request-body: off` **aren't** honoured — the plugin always forces the mirrored Host to the target authority and always forwards the buffered request body.
 
 ---
 
-## Unsupported Annotations
+## Unsupported annotations
 
-The following nginx-ingress annotations are not supported:
+The following nginx-ingress annotations aren't supported:
 
 | Annotation | Reason |
 |------------|--------|
@@ -1468,7 +1468,7 @@ This library watches the following additional resources:
 
 The machine-readable source of truth for this page is the library's migration coverage declaration in the chart (`charts/haptic/charts/nginx-ingress/90-migration-coverage.yaml`). It classifies every `nginx.ingress.kubernetes.io/*` annotation the library reads, and CI checks that each annotation it classifies as carried over has a reference entry above. The [migration guide](../migrating.md#from-ingress-nginx) renders the same data as a per-annotation support table.
 
-## See Also
+## See also
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [Base Library](base.md) - Core HAProxy template

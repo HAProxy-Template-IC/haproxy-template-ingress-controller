@@ -46,7 +46,7 @@ migrationCoverage:
         note: Per-server maxqueue; must be a positive integer.
       haproxy-ingress.github.io/limit-connections:
         status: different
-        note: Maps to backend fullconn (a soft full-queue threshold) rather than a hard per-server connection cap; must be a positive integer.
+        note: Maps to backend `fullconn` (a soft full-queue threshold) rather than a hard per-server connection cap; must be a positive integer.
         doc: annotation-support
       # --- Health / agent checks ---
       haproxy-ingress.github.io/backend-check-interval:
@@ -92,7 +92,7 @@ migrationCoverage:
         note: '"true" enables TLS to the upstream (ssl verify none unless a CA is supplied).'
       haproxy-ingress.github.io/backend-protocol:
         status: different
-        note: h1, h2, h1-ssl and h2-ssl are accepted (h1-ssl/h2-ssl enable TLS); other values fail the render — note this is a different value set from ingress-nginx's HTTP/HTTPS/GRPC/GRPCS.
+        note: h1, h2, h1-ssl and h2-ssl are accepted (h1-ssl/h2-ssl enable TLS); other values fail the render — note this is a different value set from ingress-nginx's `HTTP/HTTPS/GRPC/GRPCS`.
         doc: annotation-support
       haproxy-ingress.github.io/secure-sni:
         status: supported
@@ -151,7 +151,7 @@ migrationCoverage:
       # --- Path type ---
       haproxy-ingress.github.io/path-type:
         status: different
-        note: regex, exact, prefix and begin are honoured, but only for paths with pathType ImplementationSpecific — the annotation is ignored on Prefix/Exact-typed paths.
+        note: regex, exact, prefix and begin are honoured, but only for paths with `pathType` ImplementationSpecific — the annotation is ignored on Prefix/Exact-typed paths.
         doc: annotation-support
       # --- Session affinity ---
       haproxy-ingress.github.io/affinity:
@@ -237,7 +237,7 @@ migrationCoverage:
       # --- HSTS ---
       haproxy-ingress.github.io/hsts:
         status: different
-        note: By default the header is emitted only when the Ingress sets hsts "true", whereas jcmoraisjr/haproxy-ingress enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching that default); a per-Ingress hsts annotation still overrides the value for its hosts.
+        note: By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas jcmoraisjr/haproxy-ingress enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching that default); a per-Ingress `hsts` annotation still overrides the value for its hosts.
         doc: annotation-support
       haproxy-ingress.github.io/hsts-max-age:
         status: supported
@@ -283,7 +283,7 @@ migrationCoverage:
       # --- Client certificate auth (mTLS) ---
       haproxy-ingress.github.io/auth-tls-secret:
         status: different
-        note: Verification is keyed by SNI — every rule needs an explicit host or the render fails. A missing Secret (or missing ca.crt) currently SKIPS mTLS for the Ingress (fail-open — requests with no/any client cert pass), where upstream with auth-tls-strict defaulting to true installs a fake CA and rejects all clients (fail-closed).
+        note: Verification is keyed by SNI — every rule needs an explicit host or the render fails. A missing Secret (or missing ca.crt) currently **skips** mTLS for the Ingress (fail-open — requests with no/any client cert pass), where upstream with auth-tls-strict defaulting to true installs a fake CA and rejects all clients (fail-closed).
         doc: annotation-support
       haproxy-ingress.github.io/auth-tls-verify-client:
         status: different
@@ -294,16 +294,16 @@ migrationCoverage:
         note: 302 redirect on client-certificate verification failure, applied reload-free via a map.
       haproxy-ingress.github.io/auth-tls-cert-header:
         status: different
-        note: Forwards X-SSL-Client-CN, X-SSL-Client-DN and X-SSL-Client-Cert when "true"; jcmoraisjr/haproxy-ingress additionally forwards the SHA1 and serial headers, which are not set.
+        note: Forwards X-SSL-Client-CN, X-SSL-Client-DN and X-SSL-Client-Cert when "true"; jcmoraisjr/haproxy-ingress additionally forwards the SHA-1 and serial headers, which aren't set.
         doc: annotation-support
       haproxy-ingress.github.io/auth-tls-strict:
         status: dropped
-        note: Accepted for compatibility but has no separate effect. Upstream defaults it to true (fail-closed on a missing/invalid CA); here a missing CA fails open (see auth-tls-secret), and this annotation cannot restore fail-closed. For soft verification use auth-tls-verify-client optional instead.
+        note: Accepted for compatibility but has no separate effect. Upstream defaults it to true (fail-closed on a missing/invalid CA); here a missing CA fails open (see auth-tls-secret), and this annotation can't restore fail-closed. For soft verification use auth-tls-verify-client optional instead.
         doc: annotation-support
       # --- External authentication (SPOA hub external-auth plugin) ---
       haproxy-ingress.github.io/auth-url:
         status: different
-        note: External auth via the SPOA hub external-auth plugin, which (unlike the nginx-ingress library) is NOT auto-enabled — enable spoaHub.plugins.external-auth, otherwise the auth is silently not enforced.
+        note: External auth via the SPOA hub external-auth plugin, which (unlike the nginx-ingress library) **isn't** auto-enabled — enable spoaHub.plugins.external-auth, otherwise the auth is silently not enforced.
         doc: annotation-support
       haproxy-ingress.github.io/auth-signin:
         status: supported
@@ -324,7 +324,7 @@ migrationCoverage:
       # --- OAuth2 proxy convenience ---
       haproxy-ingress.github.io/oauth:
         status: different
-        note: Only "oauth2_proxy"/"oauth2-proxy" is supported and requires an Ingress path (oauth-uri-prefix, default /oauth2) routing to the oauth2-proxy Service — otherwise the render fails; auth-url takes precedence; needs the external-auth plugin (not auto-enabled) with plaintext allowed.
+        note: Only "oauth2_proxy"/"oauth2-proxy" is supported and requires an Ingress path (oauth-uri-prefix, default /oauth2) routing to the oauth2-proxy Service — otherwise the render fails; `auth-url` takes precedence; needs the external-auth plugin (not auto-enabled) with plaintext allowed.
         doc: annotation-support
       haproxy-ingress.github.io/oauth-uri-prefix:
         status: supported
@@ -339,7 +339,7 @@ migrationCoverage:
         doc: annotation-support
       haproxy-ingress.github.io/waf-mode:
         status: different
-        note: '"deny" (default) enforces, "detect" runs in shadow mode; other values, or waf-mode without waf, fail the render.'
+        note: '"deny" (default) enforces, "detect" runs in shadow mode; other values, or `waf-mode` without `waf`, fail the render.'
         doc: annotation-support
       # --- Documentation-only annotation ---
       haproxy-ingress.github.io/docs:

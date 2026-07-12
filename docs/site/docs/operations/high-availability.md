@@ -1,4 +1,4 @@
-# High Availability with Leader Election
+# High availability with leader election
 
 Run multiple controller replicas so a leader crash, node drain, or upgrade never stalls HAProxy configuration delivery.
 
@@ -22,7 +22,7 @@ The controller supports running multiple replicas for high availability using le
 
 ## Configuration
 
-### Enable Leader Election
+### Enable leader election
 
 Leader election is **enabled by default** when deploying with 2+ replicas via Helm:
 
@@ -42,9 +42,9 @@ controller:
 ```
 
 !!! note
-    These match the controller's built-in defaults (`pkg/core/config/defaults.go`: 30s / 20s / 5s) — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (15s / 10s / 2s). The extra `renewDeadline` headroom lets the leader ride out multi-second API-server or CPU starvation stalls without losing the lease; losing it costs a full controller reinitialization before the replica can lead again. Tune down toward the client-go convention if you prefer faster crash-failover over starvation headroom.
+    These match the controller's built-in defaults (`pkg/core/config/defaults.go`: `30s` / `20s` / `5s`) — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s` / `10s` / `2s`). The extra `renewDeadline` headroom lets the leader ride out multi-second API-server or CPU starvation stalls without losing the lease; losing it costs a full controller reinitialization before the replica can lead again. Tune down toward the client-go convention if you prefer faster crash-failover over starvation headroom.
 
-### Disable Leader Election
+### Disable leader election
 
 For development or single-replica deployments:
 
@@ -65,9 +65,9 @@ The timing parameters control failover speed and tolerance:
 
 | Parameter | Chart default | Purpose | Recommendations |
 |-----------|---------------|---------|-----------------|
-| `leaseDuration` | 30s | Max time followers wait before taking over | Increase for flaky networks (60s+) |
-| `renewDeadline` | 20s | How long leader retries before giving up | Must be < `leaseDuration` |
-| `retryPeriod` | 5s | Interval between leader renewal attempts | Should be < `renewDeadline` |
+| `leaseDuration` | `30s` | Max time followers wait before taking over | Increase for flaky networks (`60s`+) |
+| `renewDeadline` | `20s` | How long leader retries before giving up | Must be < `leaseDuration` |
+| `retryPeriod` | `5s` | Interval between leader renewal attempts | Should be < `renewDeadline` |
 
 **Failover time calculation:**
 
@@ -76,7 +76,7 @@ Worst-case failover = leaseDuration + retryPeriod
 Chart default       = 30s + 5s = ~35s (typically faster)
 ```
 
-When the leader crashes without releasing, followers must wait for the lease to expire (leaseDuration from the last renewal) plus at most one acquire retry (retryPeriod) before one of them takes over; renewDeadline only bounds when the failed leader itself gives up, it does not gate the standby. During this window, HAProxy continues serving traffic with its last known configuration — no traffic is dropped, but new resource changes are not processed until a new leader is elected.
+When the leader crashes without releasing, followers must wait for the lease to expire (`leaseDuration` from the last renewal) plus at most one acquire retry (`retryPeriod`) before one of them takes over; `renewDeadline` only bounds when the failed leader itself gives up, it doesn't gate the standby. During this window, HAProxy continues serving traffic with its last known configuration — no traffic is dropped, but new resource changes aren't processed until a new leader is elected.
 
 **Clock skew tolerance:**
 
@@ -85,11 +85,13 @@ Skew tolerance = leaseDuration - renewDeadline
 Chart default  = 30s - 20s = 10s
 ```
 
-If clock skew exceeds this tolerance, brief split-brain may occur where two replicas both believe they are leader. NTP-synchronized nodes typically have sub-second skew, well within the default tolerance. In environments with looser time sync, raise `leaseDuration` (and `renewDeadline` proportionally).
+If clock skew exceeds this tolerance, brief split-brain may occur where two replicas both believe they're leader. NTP-synchronized nodes typically have sub-second skew, well within the default tolerance. In environments with looser time sync, raise `leaseDuration` (and `renewDeadline` proportionally).
 
 ## Deployment
 
-### Standard HA Deployment
+<a id="standard-ha-deployment"></a>
+
+### Standard high-availability Deployment
 
 Deploy with 2-3 replicas (default Helm configuration):
 
@@ -124,7 +126,7 @@ autoscaling:
 
 Because the controller is leader-elected, autoscaling adds webhook-serving and warm-cache capacity (and faster failover) — **not** render/validate/deploy throughput. The reconciliation pipeline always runs on the single elected leader regardless of replica count, so CPU-based scaling driven by the leader's reconcile load adds standbys rather than parallel workers. To scale HAProxy data-plane throughput, scale HAProxy instead (`haproxy.keda` autoscaling or more HAProxy replicas).
 
-### RBAC Requirements
+### RBAC requirements
 
 The controller requires these additional permissions for leader election:
 
@@ -136,11 +138,11 @@ verbs: ["get", "create", "update"]
 
 These are automatically configured in the Helm chart's ClusterRole.
 
-## Monitoring Leadership
+## Monitoring leadership
 
-### Check Current Leader
+### Check current leader
 
-The Lease resource is named after the chart fullname — `haptic` for `helm install haptic …`, but `<release>-haptic` when the release name doesn't contain "haptic". Override by setting `controller.config.controller.leaderElection.leaseName`.
+The Lease resource is named after the chart `fullname` — `haptic` for `helm install haptic …`, but `<release>-haptic` when the release name doesn't contain `haptic`. Override by setting `controller.config.controller.leaderElection.leaseName`.
 
 ```bash
 # List leases in the release namespace
@@ -154,7 +156,7 @@ kubectl get lease -n haptic <release> -o yaml
 #   holderIdentity: <release>-controller-7d9f8b4c6d-abc12
 ```
 
-### View Leadership Status in Logs
+### View leadership status in logs
 
 ```bash
 # Leader logs show:
@@ -165,7 +167,7 @@ kubectl logs -n haptic deployment/haptic-controller | grep -E "leader|election"
 # level=INFO msg="Became leader: pod-abc12" identity=pod-abc12
 ```
 
-### Prometheus Metrics
+### Prometheus metrics
 
 Monitor leader election via metrics endpoint:
 
@@ -196,7 +198,7 @@ Check these areas in order of likelihood:
 3. **API server connectivity** -- network policies or firewall blocking access
 4. **Clock skew** -- NTP not configured or excessive drift between nodes
 
-### No Leader Elected
+### No leader elected
 
 **Symptoms:**
 
@@ -208,7 +210,7 @@ Check these areas in order of likelihood:
 
 1. **Missing RBAC permissions:**
 
-    The controller's ServiceAccount name is the Helm release fullname (unless you overrode `serviceAccount.name`):
+    The controller's ServiceAccount name is the Helm release `fullname` (unless you overrode `serviceAccount.name`):
 
     ```bash
     SA=$(kubectl get deployment haptic-controller -n haptic -o jsonpath='{.spec.template.spec.serviceAccountName}')
@@ -235,7 +237,7 @@ Check these areas in order of likelihood:
     kubectl logs <pod-name> | grep "connection refused\|timeout"
     ```
 
-### Multiple Leaders (Split-Brain)
+### Multiple leaders (split-brain)
 
 **Symptoms:**
 
@@ -264,7 +266,7 @@ Lease-based election rules this out unless clocks are badly skewed or the API se
     kubectl rollout restart deployment haptic-controller -n haptic
     ```
 
-### Frequent Leadership Changes
+### Frequent leadership changes
 
 **Symptoms:**
 
@@ -299,7 +301,9 @@ Lease-based election rules this out unless clocks are badly skewed or the API se
 
     **Solution:** Drain and investigate node
 
-### Leader Not Deploying
+<a id="leader-not-deploying"></a>
+
+### Leader isn't deploying
 
 **Symptoms:**
 
@@ -323,9 +327,9 @@ kubectl logs -n haptic <leader-pod> | grep -i "deployer starting\|deployment sch
 - Rate limiting preventing deployment (check drift prevention interval)
 - HAProxy instances unreachable (check network connectivity)
 
-## Best Practices
+## Best practices
 
-### Replica Count
+### Replica count
 
 **Development:**
 
@@ -346,9 +350,9 @@ kubectl logs -n haptic <leader-pod> | grep -i "deployer starting\|deployment sch
       minAvailable: 1
     ```
 
-### Resource Allocation
+### Resource allocation
 
-The leader does the heavy lifting (render + validate + deploy + status writes), but every replica still has the full Kubernetes-resource cache loaded in memory. CPU usage is markedly higher on the leader; memory is similar across leader and followers. Size them all the same so a freshly-elected follower handles peak load without resizing — the chart defaults already do this:
+The leader does the heavy lifting (render + validate + deploy + status writes), but every replica still has the full Kubernetes-resource cache loaded in memory. CPU usage is markedly higher on the leader; memory is similar across leader and followers. Size them all the same so a freshly elected follower handles peak load without resizing — the chart defaults already do this:
 
 ```yaml
 # chart default — sized for the typical 50–200 Ingress range
@@ -360,9 +364,9 @@ resources:
     memory: 512Mi      # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
 ```
 
-For larger or smaller workloads see the sizing table in [Performance — Controller Resource Sizing](./performance.md#controller-resource-sizing). Don't shrink memory below what the watch-set needs (rule of thumb: ~1KB per Ingress + EndpointSlice churn) or the leader will OOMKill mid-deploy and the lease will flap.
+For larger or smaller workloads see the sizing table in [Performance — Controller Resource Sizing](./performance.md#controller-resource-sizing). Don't shrink memory below what the watch-set needs (rule of thumb: ~1KB per Ingress + EndpointSlice churn) or the leader gets OOMKilled mid-deploy and the lease flaps.
 
-### Anti-Affinity
+### Anti-affinity
 
 Distribute replicas across nodes for better availability:
 
@@ -378,11 +382,11 @@ affinity:
           topologyKey: kubernetes.io/hostname
 ```
 
-### Monitoring and Alerts
+### Monitoring and alerts
 
 The leader-election alerts (no leader, split-brain, frequent transitions) are part of the recommended alert set in [Monitoring — Alerting Rules](./monitoring.md#alerting-rules). The Helm chart ships them as a built-in `PrometheusRule` — enable it with `monitoring.prometheusRule.enabled`.
 
-## Migration from Single-Replica
+## Migration from single-replica
 
 To migrate an existing single-replica deployment to HA:
 
@@ -423,7 +427,7 @@ To migrate an existing single-replica deployment to HA:
     done
     ```
 
-## See Also
+## See also
 
 - [Leader Election Design](../development/design/leader-election.md) - Architecture and implementation details
 - [Monitoring Guide](./monitoring.md) - Prometheus metrics and alerting

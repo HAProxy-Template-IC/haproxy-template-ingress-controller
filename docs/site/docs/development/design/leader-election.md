@@ -1,8 +1,8 @@
-# Leader Election
+# Leader election
 
 HAPTIC runs multiple controller replicas for high availability. This page explains the mechanism: which components run on every replica, which run only on the leader, and how a new leader starts with warm state. Operator-facing setup, tuning, and troubleshooting live in [High Availability](../../operations/high-availability.md).
 
-## Why Only the Leader Deploys
+## Why only the leader deploys
 
 The controller pushes configuration to HAProxy via the Dataplane API. Multiple replicas doing that in parallel without coordination would cause:
 
@@ -17,7 +17,7 @@ All replicas, however, do useful work:
 
 Rendering and config validation run only on the leader: the synchronous render-validate pipeline lives inside the leader-only Coordinator (see the component split below), and a new leader's first reconciliation produces a fresh render. Only **deployment operations** strictly need exclusivity, but co-locating rendering with deployment keeps the pipeline synchronous and simple.
 
-## Lease-Based Election
+## Lease-based election
 
 HAPTIC uses `k8s.io/client-go/tools/leaderelection` with a `coordination.k8s.io` Lease lock — the industry standard for Kubernetes operator high availability:
 
@@ -26,7 +26,7 @@ HAPTIC uses `k8s.io/client-go/tools/leaderelection` with a `coordination.k8s.io`
 - **Reliable**: used by core Kubernetes components (kube-controller-manager, kube-scheduler)
 - **Clock skew tolerant**: configurable tolerance for node clock differences
 
-### Timing Defaults
+### Timing defaults
 
 The defaults applied by `pkg/core/config` (used unless the CRD's `spec.controller.leaderElection` overrides them):
 
@@ -39,13 +39,13 @@ LeaderElectionConfig{
 }
 ```
 
-These are deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (15s/10s/2s). The renew deadline is the leader's budget for riding out apiserver unavailability or CPU starvation without losing the lease; multi-second stalls of 10s+ have been observed on loaded nodes, and a lost lease costs a full controller reinitialization before the replica can lead again (client-go's `LeaderElector.Run` returns permanently on a lost lease). The trade-off is hard-failover latency after a leader crash that never releases the lease: up to `LeaseDuration` (+ one `RetryPeriod`) instead of ~17s. Voluntary handoffs release the lease immediately and are unaffected.
+These are deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s`/`10s`/`2s`). The renew deadline is the leader's budget for riding out apiserver unavailability or CPU starvation without losing the lease; multi-second stalls of 10 seconds or more have been observed on loaded nodes, and a lost lease costs a full controller reinitialization before the replica can lead again (client-go's `LeaderElector.Run` returns permanently on a lost lease). The trade-off is hard-failover latency after a leader crash that never releases the lease: up to `LeaseDuration` (+ one `RetryPeriod`) instead of ~17 seconds. Voluntary handoffs release the lease immediately and are unaffected.
 
 **Tolerance formula**: `LeaseDuration / RenewDeadline = clock skew tolerance ratio`
 
-With 30s/20s the system tolerates nodes progressing 1.5× faster than others. Workloads on hosts with large clock skew should override these via the CRD; controllers that need a longer warm-up after election can raise both numbers proportionally so the ratio stays close to 1.5.
+With `30s`/`20s` the system tolerates nodes progressing 1.5× faster than others. Workloads on hosts with large clock skew should override these via the CRD; controllers that need a longer warm-up after election can raise both numbers proportionally so the ratio stays close to 1.5.
 
-## Component Classification
+## Component classification
 
 The actual classification lives in `pkg/controller/reconciliation.go` (search for `registerLifecycleComponents`, which registers all-replica components via `reg.Register(c, false)` and leader-only ones via `reg.Register(c, true)`); this section reflects that registration list.
 
@@ -58,7 +58,7 @@ The actual classification lives in `pkg/controller/reconciliation.go` (search fo
 - Discovery (`pkg/controller/discovery`) — Discovers HAProxy pod endpoints; caches `HAProxyPodsDiscoveredEvent` for replay
 - HTTPStore (`pkg/controller/httpstore`) — Periodic HTTP refresh + two-version cache for content used in templates
 - ProposalValidator (`pkg/controller/proposalvalidator`) — Speculative render+validate driven by HTTPStore (async) and DryRunValidator (sync)
-- StatusApplier (`pkg/controller/statusapplier`) — Applies template-driven status patches via SSA (only the leader actually writes; followers cache state to take over instantly)
+- StatusApplier (`pkg/controller/statusapplier`) — Applies template-driven status patches via Server-Side Apply (SSA) (only the leader actually writes; followers cache state to take over instantly)
 - Validators (`pkg/controller/validator`) — Basic / Template / JSONPath validators participating in the config-validation scatter-gather
 - DryRunValidator (`pkg/controller/dryrunvalidator`) — Bridges admission-webhook requests into the proposal validator
 - Commentator (`pkg/controller/commentator`) — Logs events for observability
@@ -66,7 +66,7 @@ The actual classification lives in `pkg/controller/reconciliation.go` (search fo
 - StateCache (`pkg/controller/statecache.go`) — Maintains live state snapshot for debug introspection
 - DebugServer (`pkg/introspection`) — Serves `/debug/vars` and `/debug/pprof` endpoints
 
-The renderer is **not** a registered component. It lives in `pkg/controller/renderer` as the synchronous `RenderService` that the leader-only Coordinator drives via `pkg/controller/pipeline`; rendering therefore runs only on the leader, even though the engine itself is a pure library.
+The renderer **isn't** a registered component. It lives in `pkg/controller/renderer` as the synchronous `RenderService` that the leader-only Coordinator drives via `pkg/controller/pipeline`; rendering therefore runs only on the leader, even though the engine itself is a pure library.
 
 **Leader-only components** (lifecycle registry's `LeaderOnly(...)` group; only constructed and started while leadership is held, torn down on `LostLeadershipEvent`):
 
@@ -77,7 +77,7 @@ The renderer is **not** a registered component. It lives in `pkg/controller/rend
 - **ConfigPublisher** (`pkg/controller/configpublisher`) — Publishes rendered config + per-pod status as `HAProxyCfg` / `HAProxyMapFile` / `HAProxyGeneralFile` / `HAProxyCRTListFile` CRDs
 - **StatusUpdater** (`pkg/controller/configchange`) — Writes validation results back onto the `HAProxyTemplateConfig` CRD's status subresource
 
-## The LeaderElector Component
+## The `LeaderElector` component
 
 **Package**: `pkg/controller/leaderelection/`
 
@@ -145,7 +145,7 @@ type NewLeaderObservedEvent struct {
 
 The Commentator logs all transitions, Metrics tracks leadership duration and transition count (`haptic_leader_election_is_leader`, `haptic_leader_election_transitions_total`, `haptic_leader_election_time_as_leader_seconds_total` — reference and alerting in [Monitoring](../../operations/monitoring.md#leader-election-metrics)), and the debug server exposes lease status under `/debug/vars`.
 
-## Startup and Leadership Transitions
+## Startup and leadership transitions
 
 The controller starts in stages — components subscribe in their constructors, `EventBus.Start()` releases the pre-start buffer, and the lease-backed elector starts last. The full staged-startup walkthrough lives in [Sequence Diagrams](./sequence-diagrams.md); the leader-election-relevant part is the ordering guarantee: every component's subscriptions exist *before* the elector can publish `BecameLeaderEvent`, so no replica misses a leadership event.
 
@@ -165,7 +165,7 @@ A leader *crash* instead costs up to `LeaseDuration` + one `RetryPeriod` before 
 
 Pure-component tests live in `pkg/k8s/leaderelection/elector_test.go`; the event-adapter wrapping is covered by `pkg/controller/leaderelection/component_test.go`. Multi-replica behaviour (two replicas, failover, disabled mode) runs against a real kind cluster in `tests/acceptance/leader_election_test.go`.
 
-## Alternatives Considered
+## Alternatives considered
 
 - **Single active replica with PodDisruptionBudget** — rejected: doesn't provide HA, just prevents voluntary disruptions
 - **Active-active with distributed locking per HAProxy instance** — rejected: more complex, potential deadlocks, not idiomatic for Kubernetes

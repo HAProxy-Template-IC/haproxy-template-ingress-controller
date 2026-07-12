@@ -1,4 +1,4 @@
-# Package Structure
+# Package structure
 
 The controller is split into small Go packages with one of three roles:
 
@@ -8,7 +8,7 @@ The controller is split into small Go packages with one of three roles:
 
 This split keeps the libraries reusable and independently testable; all event choreography is confined to `pkg/controller`.
 
-## Repository Layout
+## Repository layout
 
 ```
 haptic/
@@ -110,18 +110,18 @@ haptic/
 
 Each package has its own `README.md` (user-facing API) and `CLAUDE.md` (developer context). Prefer those as the authoritative reference — this file only orients new contributors.
 
-## Dependency Rules
+## Dependency rules
 
 The packages form a DAG, enforced at build time by `arch-go.yml`:
 
-1. `pkg/events` depends on nothing in `pkg/` — it is plain pub/sub plumbing.
+1. `pkg/events` depends on nothing in `pkg/` — it's plain pub/sub plumbing.
 2. Domain libraries (`pkg/k8s`, `pkg/dataplane`, `pkg/templating`, `pkg/stores`, `pkg/httpstore`, `pkg/webhook`) depend only on `pkg/core`, `pkg/events` (for optional observability hooks), and each other through narrow interfaces. They have no knowledge of the controller.
 3. `pkg/controller` is the only package allowed to import everything. It owns the event adapters and the startup/shutdown choreography.
 4. Domain event types live in `pkg/controller/events`, never in `pkg/events`.
 
 `pkg/stores` is deliberately isolated from `pkg/k8s` (see `arch-go.yml`); the two declare the same `Store` interface shape, and `pkg/stores.TypesStoreAdapter` bridges across the package boundary.
 
-## Key Patterns
+## Key patterns
 
 **Shared component scaffold.** `pkg/controller/component.Base` implements the event-loop boilerplate (subscribe-on-construction, single-flight dispatch, panic recovery, ready/done signalling). Components embed `*Base` and implement `EventHandler`. It consolidates what used to be two copies of the same scaffold in `BaseLoader` and `BaseValidator`; those types still exist as thin wrappers for familiarity.
 
@@ -135,7 +135,7 @@ The packages form a DAG, enforced at build time by `arch-go.yml`:
 
 **Component lifecycle.** `pkg/lifecycle` centralises registration, dependency ordering, leader-only flags, and health tracking; the controller registers every component there instead of starting goroutines directly.
 
-## Finding Things
+## Finding things
 
 - **Public API of a library** → `pkg/<name>/README.md`.
 - **Developer guidance when editing a package** → `pkg/<name>/CLAUDE.md`.

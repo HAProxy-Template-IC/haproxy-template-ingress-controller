@@ -1,8 +1,8 @@
-# Runtime Introspection and Debugging
+# Runtime introspection and debugging
 
 The controller exposes its live state — config, rendered output, resources, events — over an HTTP debug server, so you can debug production issues and drive acceptance tests without parsing logs.
 
-## Architecture Overview
+## Architecture overview
 
 ```mermaid
 graph TB
@@ -57,7 +57,7 @@ graph TB
 
 ```
 
-## Key Components
+## Key components
 
 **pkg/introspection** - Generic debug HTTP server infrastructure:
 
@@ -91,11 +91,11 @@ graph TB
 - Implements StateProvider interface for debug endpoints
 - Prevents need to query EventBus for historical state
 
-## HTTP Endpoints
+## HTTP endpoints
 
 The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`; `/healthz` shares the same listener, so setting the port to `0` breaks Kubernetes probes). The endpoint reference — every `/debug/vars/*` path, JSONPath field selection, `/debug/events` correlation-ID search, and `pprof` usage — lives in the [Debugging Guide](../../operations/debugging.md).
 
-## Event History
+## Event history
 
 Two independent event tracking mechanisms:
 
@@ -115,7 +115,7 @@ Two independent event tracking mechanisms:
 
 This separation allows different buffer sizes, retention policies, and use cases without coupling logging to debugging infrastructure.
 
-## Integration with Acceptance Testing
+## Integration with acceptance testing
 
 Acceptance tests drive the controller and assert on its state through these endpoints. `tests/acceptance/debug_client.go` provides a `*DebugClient` that talks to the controller via the Kubernetes API server's service-proxy, so tests don't need to manage `kubectl port-forward` themselves:
 

@@ -8,9 +8,9 @@ Tune HAPTIC in three areas:
 - **HAProxy performance** - Load balancer throughput and latency
 - **Kubernetes integration** - Resource watching and event handling
 
-## Controller Resource Sizing
+## Controller resource sizing
 
-### Recommended Resources
+### Recommended resources
 
 | Deployment Size | CPU Request | CPU Limit | Memory Request | Memory Limit |
 |-----------------|-------------|-----------|----------------|--------------|
@@ -21,7 +21,7 @@ Tune HAPTIC in three areas:
 These recommendations are based on the controller's primary memory consumers (watched resource caches, template rendering buffers, event history) and CPU consumers (template rendering, API server watch streams). Adjust based on your actual resource counts and template complexity.
 
 !!! note "Chart defaults differ — deliberately"
-    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Burstable QoS — no CPU limit, by design), which differs from the table above for two reasons: omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel OOM killer from preferring this pod over Burstable neighbours (see [Robusta on Kubernetes memory limits](https://home.robusta.dev/blog/kubernetes-memory-limit) for the rationale). The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
+    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Burstable QoS — no CPU limit, by design), which differs from the table above for two reasons: omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel's out-of-memory killer from preferring this pod over Burstable neighbours (see [Robusta on Kubernetes memory limits](https://home.robusta.dev/blog/kubernetes-memory-limit) for the rationale). The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
 
 Configure via Helm values. Top-level `resources:` applies to the controller pod; HAProxy and the Dataplane API sidecar have their own blocks under `haproxy.resources` and `haproxy.dataplane.resources` (see [HAProxy Deployment](../haproxy-deployment.md)):
 
@@ -36,12 +36,12 @@ resources:
     memory: 512Mi   # memory request == limit; no CPU limit → Burstable QoS (by design)
 ```
 
-### Container Awareness (GOMAXPROCS and GOMEMLIMIT)
+### Container awareness (`GOMAXPROCS` and `GOMEMLIMIT`)
 
 The controller automatically detects and respects the limits you set above — no tuning env vars are needed:
 
 - **CPU limits (GOMAXPROCS):** native cgroup-aware GOMAXPROCS (added upstream in Go 1.25; the controller currently builds with Go 1.26). The Go runtime detects cgroup CPU limits (v1 and v2), sets GOMAXPROCS to match the container's CPU limit rather than the host's core count, and adjusts dynamically if the limit changes at runtime. Proper GOMAXPROCS prevents over-scheduling goroutines and the CPU throttling that comes with it.
-- **Memory limits (GOMEMLIMIT):** the controller uses the `automemlimit` library to set GOMEMLIMIT to 90% of the container memory limit (10% headroom for non-heap memory), with both cgroups v1 and v2. GOMEMLIMIT helps the Go GC keep heap memory under control and prevents OOM kills.
+- **Memory limits (GOMEMLIMIT):** the controller uses the `automemlimit` library to set GOMEMLIMIT to 90% of the container memory limit (10% headroom for non-heap memory), with both cgroups v1 and v2. GOMEMLIMIT helps the Go GC keep heap memory under control and prevents out-of-memory kills.
 
 At startup the controller logs the detected limits, for example:
 
@@ -59,7 +59,7 @@ extraEnv:
     value: "0.8"   # Set GOMEMLIMIT to 80% of container memory limit
 ```
 
-### Memory Considerations
+### Memory considerations
 
 Memory usage scales with:
 
@@ -74,7 +74,7 @@ Monitor memory usage:
 container_memory_working_set_bytes{container="haptic"}
 ```
 
-### CPU Considerations
+### CPU considerations
 
 CPU spikes occur during:
 
@@ -88,9 +88,9 @@ Monitor CPU usage:
 rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
 ```
 
-## Reconciliation Tuning
+## Reconciliation tuning
 
-### Debounce Interval (per-resource override, 2s default)
+### Debounce interval (per-resource override, `2s` default)
 
 The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 2-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 2 s are batched.
 
@@ -108,18 +108,18 @@ watchedResources:
     debounceInterval: "0"      # fire immediately — pod-IP rotations reach HAProxy instantly (chart default)
 ```
 
-Empty / invalid strings fall back to the 2s default silently; `"0"` disables debouncing so every change fires immediately. This is the only debounce layer — the Reconciler fires immediately on every event with no separate refractory window, and reload throttling lives in the deployer (see [Deployment Pacing](#deployment-pacing) below and [architecture-overview](../development/design/architecture-overview.md)).
+Empty / invalid strings fall back to the `2s` default silently; `"0"` disables debouncing so every change fires immediately. This is the only debounce layer — the Reconciler fires immediately on every event with no separate refractory window, and reload throttling lives in the deployer (see [Deployment Pacing](#deployment-pacing) below and [architecture-overview](../development/design/architecture-overview.md)).
 
-### Deployment Pacing
+### Deployment pacing
 
 CRD fields on `spec.dataplane` bound how often the controller pushes configuration to HAProxy and how each push behaves:
 
 | Field | Default | Purpose |
 |-------|---------|---------|
-| `dataplane.minDeploymentInterval` | 2s (Helm chart ships `5s`) | Minimum time between consecutive deployments; rate-limits rapid-fire pushes |
-| `dataplane.driftPreventionInterval` | 60s | Forces a deployment if none has happened within this window; corrects external drift |
-| `dataplane.configPublishInterval` | 10s | Throttle for republishing the rendered config as the `HAProxyCfg` observability CRD; not on the deployment hot path |
-| `dataplane.reloadVerificationTimeout` | 10s | Maximum time the sync waits for HAProxy to confirm a graceful reload completed |
+| `dataplane.minDeploymentInterval` | `2s` (Helm chart ships `5s`) | Minimum time between consecutive deployments; rate-limits rapid-fire pushes |
+| `dataplane.driftPreventionInterval` | `60s` | Forces a deployment if none has happened within this window; corrects external drift |
+| `dataplane.configPublishInterval` | `10s` | Throttle for republishing the rendered config as the `HAProxyCfg` observability CRD; not on the deployment hot path |
+| `dataplane.reloadVerificationTimeout` | `10s` | Maximum time the sync waits for HAProxy to confirm a graceful reload completed |
 | `dataplane.syncTimeout` | 2m | Overall per-endpoint sync timeout (parse + diff + apply + reload-verify) |
 
 ```yaml
@@ -136,10 +136,10 @@ spec:
 **Tuning guidelines:**
 
 - Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per push (trades latency for fewer Dataplane API calls).
-- Keep `driftPreventionInterval` at or below 2 minutes so that a misbehaving external client cannot hold HAProxy in a drifted state for long.
+- Keep `driftPreventionInterval` at or below 2 minutes so that a misbehaving external client can't hold HAProxy in a drifted state for long.
 - Raise `reloadVerificationTimeout` if your Dataplane API has a high `reload-delay` setting; the verification timeout must exceed it.
 
-### Reconciliation Metrics
+### Reconciliation metrics
 
 Monitor reconciliation performance:
 
@@ -157,13 +157,13 @@ histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m])
 
 **Target metrics:**
 
-- Average reconciliation: <500ms
-- P95 reconciliation: <2s
+- Average reconciliation: <500 ms
+- P95 reconciliation: <2 s
 - Error rate: <1%
 
-## Template Optimization
+## Template optimization
 
-### Efficient Template Patterns
+### Efficient template patterns
 
 **Use early filtering:**
 
@@ -227,7 +227,7 @@ There is no `Set` method on the shared cache — this is deliberate and prevents
 {%- end %}
 ```
 
-### Template Debugging
+### Template debugging
 
 Profile template rendering with the `validate` subcommand's tracing flags (output goes to stderr):
 
@@ -242,9 +242,9 @@ Profile template rendering with the `validate` subcommand's tracing flags (outpu
 ./bin/haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
 ```
 
-## HAProxy Optimization
+## HAProxy optimization
 
-### Configuration Parameters
+### Configuration parameters
 
 Key HAProxy parameters for performance. Surface them as `extraContext` values in your HAProxyTemplateConfig so they can be tuned without editing templates:
 
@@ -275,9 +275,9 @@ defaults
     timeout queue 60s
 ```
 
-### Connection Limits
+### Connection limits
 
-Calculate maxconn based on expected load:
+Calculate `maxconn` based on expected load:
 
 ```
 maxconn = (expected_concurrent_connections * safety_factor) / num_haproxy_pods
@@ -288,9 +288,9 @@ Example:
 - Expected: 10,000 concurrent connections
 - Safety factor: 1.5
 - HAProxy pods: 3
-- maxconn = (10,000 * 1.5) / 3 = 5,000
+- `maxconn` = (10,000 * 1.5) / 3 = 5,000
 
-### Thread Configuration
+### Thread configuration
 
 Match `nbthread` to available CPU cores:
 
@@ -307,7 +307,7 @@ global
     nbthread 4  # Match CPU limit
 ```
 
-### Buffer Sizing
+### Buffer sizing
 
 Increase buffers for large headers or payloads:
 
@@ -317,7 +317,7 @@ global
     tune.http.maxhdr 128      # Allow more headers
 ```
 
-### Password Hash Performance
+### Password hash performance
 
 !!! warning "Read this if your templates use password hashes"
     Password hash validation during configuration parsing can dominate reconciliation time. Review the table below before choosing a hash algorithm.
@@ -328,10 +328,10 @@ HAProxy validates password hash formats during configuration parsing by running 
 
 | Algorithm | Example | Time per hash |
 |-----------|---------|---------------|
-| MD5 | `$1$salt$hash` | ~0.004ms |
-| SHA-256 | `$5$salt$hash` | ~3ms |
-| SHA-512 | `$6$salt$hash` | ~3ms |
-| bcrypt (cost 10) | `$2y$10$salt$hash` | **~85ms** |
+| MD5 | `$1$salt$hash` | ~0.004 ms |
+| SHA-256 | `$5$salt$hash` | ~3 ms |
+| SHA-512 | `$6$salt$hash` | ~3 ms |
+| bcrypt (cost 10) | `$2y$10$salt$hash` | **~85 ms** |
 
 !!! warning "bcrypt with high cost factors is expensive"
     A configuration with 200 bcrypt passwords at cost factor 10 adds **~17 seconds** to every config validation. This directly impacts reconciliation time and webhook validation latency.
@@ -341,7 +341,7 @@ HAProxy validates password hash formats during configuration parsing by running 
 - **Prefer SHA-512 (`$6$`)** for password hashes - cryptographically strong with fast validation
 - **Avoid bcrypt cost factors above 8** in high-frequency validation scenarios
 - **Consolidate userlists** to avoid duplicate password entries - HAProxy validates each occurrence separately, even for identical hashes
-- **Consider external authentication** (OAuth, OIDC) for large user bases instead of embedding passwords in config
+- **Consider external authentication** (OAuth, OpenID Connect) for large user bases instead of embedding passwords in config
 
 **Checking your config:**
 
@@ -352,9 +352,9 @@ grep -c '\$2[aby]\$' /path/to/haproxy.cfg
 # Estimate validation overhead (bcrypt count × 85ms)
 ```
 
-## Scaling Strategies
+## Scaling strategies
 
-### Horizontal Scaling
+### Horizontal scaling
 
 Scale HAProxy pods for increased traffic:
 
@@ -364,11 +364,11 @@ kubectl scale deployment haptic-haproxy --replicas=5 -n haptic
 
 The controller automatically discovers new pods and deploys configuration.
 
-### Controller Scaling (HA Mode)
+### Controller scaling (HA mode)
 
 Running multiple controller replicas adds failover and webhook capacity, not render/deploy throughput — only the leader deploys. See [High Availability](./high-availability.md) for configuration and sizing.
 
-### Resource Watching Optimization
+### Resource watching optimization
 
 Reduce watched resources to minimize controller load:
 
@@ -391,11 +391,11 @@ spec:
       labelSelector: "managed-by=haptic"
 ```
 
-`labelSelector` is a comma-separated equality-only string (`k=v[,k=v]`) — the `matchLabels`/`matchExpressions` object form and set-based syntax (`in`, `notin`, `!`) are not supported. For label-based namespace filtering, fall back to per-namespace `Role`/`RoleBinding`s and watch each namespace explicitly, or filter inside the template against a watched `namespaces` resource.
+`labelSelector` is a comma-separated equality-only string (`k=v[,k=v]`) — the `matchLabels`/`matchExpressions` object form and set-based syntax (`in`, `notin`, `!`) aren't supported. For label-based namespace filtering, fall back to per-namespace `Role`/`RoleBinding`s and watch each namespace explicitly, or filter inside the template against a watched `namespaces` resource.
 
-## Deployment Performance
+## Deployment performance
 
-### Deployment Latency
+### Deployment latency
 
 Monitor deployment time:
 
@@ -410,8 +410,8 @@ histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
 
 **Target metrics:**
 
-- Average deployment: <1s per HAProxy pod
-- P95 deployment: <3s
+- Average deployment: <1 s per HAProxy pod
+- P95 deployment: <3 s
 
 ### Parallel Deployment
 
@@ -421,7 +421,7 @@ The controller deploys to multiple HAProxy pods in parallel. If deployment is sl
 2. Verify network connectivity to HAProxy pods
 3. Consider reducing config complexity
 
-## Event Processing
+## Event processing
 
 The controller's in-process event bus uses per-subscriber buffers sized at construction time (see `pkg/events/bus.go`); there is no CRD field to tune them. Monitor the event subsystem via the standard metrics:
 
@@ -462,12 +462,12 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 
 Controller images ship built with Profile-Guided Optimization (PGO), which typically yields 2-7% CPU improvement on hot paths — contributors updating the committed profile should see [Deployment — Build Optimizations](../development/design/deployment.md#build-optimizations-contributors).
 
-### Common Performance Issues
+### Common performance issues
 
 **High memory usage:**
 
 - Check for memory leaks: growing heap over time (`/debug/pprof/heap`)
-- Switch large, infrequently-accessed resources (e.g. TLS Secrets) to `store: on-demand`
+- Switch large, infrequently accessed resources (for example, TLS Secrets) to `store: on-demand`
 - Trim noisy fields with `watchedResourcesIgnoreFields`
 - Narrow watch scope via `fieldSelector` or `labelSelector` (see [Resource Watching Optimization](#resource-watching-optimization))
 
@@ -475,7 +475,7 @@ Controller images ship built with Profile-Guided Optimization (PGO), which typic
 
 - Profile to find hot spots (`/debug/pprof/profile?seconds=30`)
 - Optimize template complexity — see [Template Optimization](#template-optimization)
-- Raise `dataplane.minDeploymentInterval` to absorb more updates per push, and consider raising `spec.watchedResources.<name>.debounceInterval` for high-churn resources (e.g. EndpointSlices on a large cluster) so each watcher batches more aggressively before triggering reconciliation
+- Raise `dataplane.minDeploymentInterval` to absorb more updates per push, and consider raising `spec.watchedResources.<name>.debounceInterval` for high-churn resources (for example, EndpointSlices on a large cluster) so each watcher batches more aggressively before triggering reconciliation
 
 **Slow deployments:**
 
@@ -483,23 +483,23 @@ Controller images ship built with Profile-Guided Optimization (PGO), which typic
 - Verify network latency to HAProxy pods
 - Reduce config size by avoiding unnecessary nested loops in templates
 
-## Performance Checklist
+## Performance checklist
 
 ### Initial Deployment
 
 - [ ] Set appropriate resource requests/limits
-- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the 2s default is wrong for a specific kind (e.g. slower on EndpointSlice on large clusters)
-- [ ] Set HAProxy maxconn based on expected load
-- [ ] Match nbthread to CPU allocation
+- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the `2s` default is wrong for a specific kind (for example, slower on EndpointSlice on large clusters)
+- [ ] Set HAProxy `maxconn` based on expected load
+- [ ] Match `nbthread` to CPU allocation
 
-### Ongoing Optimization
+### Ongoing optimization
 
 - [ ] Monitor reconciliation latency
 - [ ] Monitor deployment latency
 - [ ] Watch for memory growth
 - [ ] Track event subscriber count
 
-### High-Load Environments
+### High-load environments
 
 - [ ] Scale HAProxy pods horizontally
 - [ ] Enable HA mode for controller
@@ -507,7 +507,7 @@ Controller images ship built with Profile-Guided Optimization (PGO), which typic
 - [ ] Use label selectors to filter resources
 - [ ] Profile and optimize templates
 
-## See Also
+## See also
 
 - [Monitoring Guide](./monitoring.md) - Performance metrics and alerting
 - [High Availability](./high-availability.md) - HA deployment patterns

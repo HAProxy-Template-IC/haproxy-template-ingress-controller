@@ -1,4 +1,4 @@
-# HAProxyTemplateConfig CRD Reference
+# HAProxyTemplateConfig CRD reference
 
 ## Overview
 
@@ -13,7 +13,7 @@ The schema is deliberately resource-agnostic — you template whatever you watch
 
 ▶ [Open the custom-CRD example in the playground](/playground/?preset=crd){target=_blank} — HAPTIC templating any resource, not just Ingress.
 
-## Basic Example
+## Basic example
 
 Run the whole custom resource in your browser to watch it render to a minimal haproxy.cfg.
 
@@ -53,11 +53,11 @@ spec:
 
 </div>
 
-## Spec Fields
+## Spec fields
 
 The four required fields come first (`credentialsSecretRef`, `podSelector`, `watchedResources`, `haproxyConfig`), followed by the template entries and the operational tuning fields.
 
-### credentialsSecretRef
+### `credentialsSecretRef`
 
 References a Secret containing Dataplane API credentials. **Required.**
 
@@ -73,7 +73,7 @@ credentialsSecretRef:
 
 The Secret must contain the keys `dataplane_username` and `dataplane_password`. Credentials are used only for the production Dataplane API; config validation runs locally against the `haproxy` binary and needs no credentials. See [Security — Credentials](./operations/security.md#credentials) for rotation and GitOps caveats.
 
-### podSelector
+### `podSelector`
 
 Labels that identify which HAProxy pods the controller manages. **Required.**
 
@@ -87,9 +87,9 @@ podSelector:
     app.kubernetes.io/component: loadbalancer
 ```
 
-The Helm chart ships `app.kubernetes.io/component: loadbalancer` (plus dynamically-set `app.kubernetes.io/name` / `app.kubernetes.io/instance`); use any labels your HAProxy pods actually carry. See [HAProxy Deployment — Pod Requirements](./haproxy-deployment.md#haproxy-pod-requirements) for what discovered pods must provide.
+The Helm chart ships `app.kubernetes.io/component: loadbalancer` (plus dynamically set `app.kubernetes.io/name` / `app.kubernetes.io/instance`); use any labels your HAProxy pods actually carry. See [HAProxy Deployment — Pod Requirements](./haproxy-deployment.md#haproxy-pod-requirements) for what discovered pods must provide.
 
-### watchedResources
+### `watchedResources`
 
 Defines which Kubernetes resources to watch. Each map key is an arbitrary name that appears in templates as `resources.<key>`. **Required** (at least one entry).
 
@@ -104,7 +104,7 @@ Defines which Kubernetes resources to watch. Each map key is an arbitrary name t
 | `fieldSelector` | string | No | `""` (client-side JSONPath equality, `"field.path=value"`; matches any field) |
 | `store` | string (`full` / `on-demand`) | No | `full` |
 | `enableValidationWebhook` | bool | No | `false` |
-| `debounceInterval` | string | No | `""` — empty / invalid uses the 2s default; an explicit `"0"` disables debouncing |
+| `debounceInterval` | string | No | `""` — empty / invalid uses the `2s` default; an explicit `"0"` disables debouncing |
 
 ```yaml
 watchedResources:
@@ -142,16 +142,16 @@ Rules:
   startup with an error naming the resource — the controller retries and
   converges when the CRD appears.
 - An **optional** entry whose candidates are all unserved is dropped, and every
-  `templateSnippets` / `validationTests` entry whose `requires` names it is
+  `templateSnippets` / `validationTests` entry whose `requires` names it gets
   stripped from the effective configuration.
 - Templates read the resolved version via `resources.<name>.APIVersion()`.
 - The current resolution is visible at `/debug/vars/effectiveConfigResolution`.
 
 See [Watching Resources](./watching-resources.md) for the store types, indexing semantics, and selector behaviour.
 
-### watchedResourcesIgnoreFields
+### `watchedResourcesIgnoreFields`
 
-JSONPath expressions for fields to remove from all watched resources before they are indexed, reducing memory usage.
+JSONPath expressions for fields to remove from all watched resources before they're indexed, reducing memory usage.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -165,14 +165,14 @@ watchedResourcesIgnoreFields:
 
 Applies uniformly to every watched resource; fields referenced by `indexBy` must not be trimmed. See [Watching Resources — Trimming Fields](./watching-resources.md#trimming-fields).
 
-### haproxyConfig
+### `haproxyConfig`
 
 The main HAProxy configuration template. **Required.**
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
-| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
+| `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
 
 ```yaml
 haproxyConfig:
@@ -192,7 +192,7 @@ haproxyConfig:
 
 See the [Templating Guide](./templating.md) for syntax, loops, and helper functions.
 
-### templateSnippets
+### `templateSnippets`
 
 Reusable template fragments, included in other templates via `{{ render "snippet-name" }}`.
 
@@ -216,14 +216,14 @@ resource only through compile-safe seams — `render "..." default ""`,
 `render_glob` extension points, or shared state — never a direct typed
 `resources.<name>` reference. See [Templating — Template Snippets](./templating.md#template-snippets).
 
-### maps
+### `maps`
 
 HAProxy map file templates. Each key is a map filename, referenced in config via `{{ pathResolver.GetPath("host.map", "map") }}`.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
-| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
+| `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
 
 ```yaml
 maps:
@@ -238,14 +238,14 @@ maps:
 
 See [Templating — Map Files](./templating.md#map-files).
 
-### files
+### `files`
 
 General auxiliary file templates (error pages, etc.). Each key is a filename, referenced in config via `{{ pathResolver.GetPath("503.http", "file") }}`.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
-| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
+| `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
 
 ```yaml
 files:
@@ -257,14 +257,14 @@ files:
 
 See [Templating — General Files](./templating.md#general-files).
 
-### sslCertificates
+### `sslCertificates`
 
 SSL certificate templates, typically assembled from watched Secrets. Each key is a certificate name, referenced in config via `{{ pathResolver.GetPath("example-com", "cert") }}`.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
-| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
+| `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
 
 ```yaml
 sslCertificates:
@@ -277,16 +277,16 @@ sslCertificates:
 
 See [Templating — SSL Certificates](./templating.md#ssl-certificates).
 
-### k8sResources
+### `k8sResources`
 
 Templates that emit Kubernetes resources for the controller to apply via Server-Side Apply. Each entry's rendered output is parsed as one or more YAML documents (multi-doc supported via `---` separators); each document must declare `apiVersion`, `kind`, and `metadata.name` (plus `metadata.namespace` for namespaced kinds).
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
-| `postProcessing` | `[]PostProcessor` | No | — (see [postProcessing](#postprocessing-all-template-entries)) |
+| `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
 
-The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every full-ownership applied resource, so cascade-delete (e.g. `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the SSA payload omits the `managed-by` label **and** the `OwnerReference`, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly-owned objects on which HAPTIC only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
+The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every full-ownership applied resource, so cascade-delete (for example `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the Server-Side Apply (SSA) payload omits the `managed-by` label **and** the `OwnerReference`, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly owned objects on which HAPTIC only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
 
 Templates have full access to the same engine context as `haproxyConfig` — `resources`, filters, `templateSnippets`, `fileRegistry`, `extraContext`, and the per-render `shared` cache — so a `k8sResources` template can render extension points (`render_glob` patterns) and read shared state populated by the main config template.
 
@@ -327,9 +327,9 @@ k8sResources:
 
 Use this when the resource shape derives from observed cluster state (Ingresses, Gateways, Endpoints, …); use the chart's own static `templates/*.yaml` for fixed install-time wiring (RBAC, the dataplane Service, etc.). The chart's `libraries/base.yaml` ships a canonical example: the `haproxy-service` entry that renders the user-facing HAProxy LoadBalancer Service from listener state.
 
-### postProcessing (all template entries)
+### `postProcessing` (all template entries)
 
-Every template-bearing entry — `haproxyConfig` and each entry under `maps`, `files`, `sslCertificates`, and `k8sResources` — accepts an optional `postProcessing` list that transforms the rendered output before it is used. Processors run sequentially.
+Every template-bearing entry — `haproxyConfig` and each entry under `maps`, `files`, `sslCertificates`, and `k8sResources` — accepts an optional `postProcessing` list that transforms the rendered output before it's used. Processors run sequentially.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
@@ -359,7 +359,7 @@ haproxyConfig:
 
 See [Templating — Post-Processing](./templating.md#post-processing) for a runnable example.
 
-### templatingSettings
+### `templatingSettings`
 
 Template rendering configuration and custom variables.
 
@@ -386,7 +386,7 @@ Custom variables are exposed to templates as the `extraContext` map. Read a key 
 
 See [Templating — Custom Template Variables](./templating.md#custom-template-variables) for detailed examples.
 
-### validationTests
+### `validationTests`
 
 Embedded validation tests (optional; run by the admission webhook, the `validate` CLI, and the controller itself on config load).
 
@@ -437,7 +437,7 @@ validationTests:
 
 See [Validation Tests](./validation-tests.md) for the full test-framework reference — fixtures, assertion types, CLI usage, and the [`requires` / `requiresFields` stripping semantics](./validation-tests.md#conditional-tests-requires-and-requiresfields) — and [CRD & Validation Design](./development/crd-validation-design.md) for the design rationale.
 
-### validators
+### `validators`
 
 Pluggable validator sidecars consulted by the admission webhook (optional).
 
@@ -459,7 +459,7 @@ validators:
 
 See [Pluggable Validators](./operations/pluggable-validators.md) for the wire protocol, sidecar wiring, and routing examples.
 
-### migrationCoverage
+### `migrationCoverage`
 
 Per-migration-source annotation coverage declarations (optional).
 
@@ -471,14 +471,14 @@ Per-migration-source annotation coverage declarations (optional).
 
 The controller treats this as opaque data — it's contributed by the template libraries, merged by the Helm chart, and consumed by tooling such as `migrate-check`; no entry influences rendering or reconciliation. See [Migrating](./migrating.md) for the tooling that reads it.
 
-### controller
+### `controller`
 
 Controller-level settings for leader election and config publishing.
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
 | `leaderElection.enabled` | bool | No | `true` |
-| `leaderElection.leaseName` | string | No | `""` → `haptic-leader` (the Helm chart sets the release fullname) |
+| `leaderElection.leaseName` | string | No | `""` → `haptic-leader` (the Helm chart sets the release `fullname`) |
 | `leaderElection.leaseDuration` | string | No | `30s` |
 | `leaderElection.renewDeadline` | string | No | `20s` |
 | `leaderElection.retryPeriod` | string | No | `5s` |
@@ -493,14 +493,14 @@ controller:
 ```
 
 !!! note
-    There is no reconciler-level debounce knob. The Reconciler fires immediately on every resource/HTTP event; batching is per-watcher (`spec.watchedResources.<name>.debounceInterval`, default 2s) and reload throttling is the deployer's `spec.dataplane.minDeploymentInterval`.
+    There is no reconciler-level debounce knob. The Reconciler fires immediately on every resource/HTTP event; batching is per-watcher (`spec.watchedResources.<name>.debounceInterval`, default `2s`) and reload throttling is the deployer's `spec.dataplane.minDeploymentInterval`.
 
 !!! note
-    These are the controller's built-in defaults from `pkg/core/config/defaults.go` — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (15s/10s/2s), so the leader rides out multi-second API-server or CPU starvation stalls without losing the lease. The Helm chart sets the same values; setting any of these fields on the CRD only matters if you need different values (e.g. faster crash-failover, or clusters with significant clock skew).
+    These are the controller's built-in defaults from `pkg/core/config/defaults.go` — deliberately 2x the values `kube-controller-manager` and `kube-scheduler` ship with (`15s`/`10s`/`2s`), so the leader rides out multi-second API-server or CPU starvation stalls without losing the lease. The Helm chart sets the same values; setting any of these fields on the CRD only matters if you need different values (for example faster crash-failover, or clusters with significant clock skew).
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 
-#### configPublishing
+#### `configPublishing`
 
 Controls how rendered configurations are stored in `HAProxyCfg` CRD resources.
 
@@ -516,7 +516,7 @@ controller:
 
 When the rendered configuration exceeds the threshold, it's compressed with zstd and base64-encoded; the `HAProxyCfg` resource stores it with `spec.compressed: true`, reducing etcd storage and speeding up watch events for large configurations. To read a published config back in plaintext, use `haptic-controller config view` — see [Debugging](./operations/debugging.md#common-recipes).
 
-### logging
+### `logging`
 
 Log level configuration.
 
@@ -529,7 +529,7 @@ logging:
   level: DEBUG
 ```
 
-### dataplane
+### `dataplane`
 
 Dataplane API connection, deployment, and validation settings.
 
@@ -567,7 +567,7 @@ The controller updates the status field with validation results:
 | `validationStatus` | string | `Valid`, `Invalid`, or `Unknown` — the printer column shown by `kubectl get htplcfg` |
 | `validationMessage` | string | Human-readable summary |
 | `validationErrors` | `[]string` | Populated when `Invalid`; each entry names the template and error context |
-| `conditions` | `[]Condition` | Standard `metav1.Condition` list (e.g. `Ready`) |
+| `conditions` | `[]Condition` | Standard `metav1.Condition` list (for example `Ready`) |
 
 ```yaml
 status:
@@ -584,7 +584,7 @@ status:
       lastTransitionTime: "2025-01-27T10:00:00Z"
 ```
 
-## Command-Line Management
+## Command-line management
 
 ### View Configurations
 
@@ -600,7 +600,7 @@ kubectl get htplcfg haproxy-config -o yaml
 kubectl get htplcfg -w
 ```
 
-### Validate Before Applying
+### Validate before applying
 
 ```bash
 # Validate local file
@@ -644,7 +644,7 @@ Additional validation occurs when:
 2. **Controller startup** - Validates configuration before starting
 3. **CLI command** - `haptic-controller validate` runs tests locally
 
-## Best Practices
+## Best practices
 
 **Security:**
 
@@ -667,12 +667,12 @@ Additional validation occurs when:
 
 **Templates:**
 
-- Use templateSnippets for reusable logic
-- Keep haproxyConfig template focused on structure
+- Use `templateSnippets` for reusable logic
+- Keep `haproxyConfig` template focused on structure
 - Comment complex template logic
 - Test templates with various resource combinations
 
-## See Also
+## See also
 
 - [Templating Guide](./templating.md) — template syntax, loops, status patches
 - [Template Reference](./template-reference.md) — context variables, functions, `pathResolver`

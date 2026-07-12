@@ -1,14 +1,14 @@
-# ingress-annotations-compat Library
+# `ingress-annotations-compat` library
 
 This library is a set of shared internal macros consumed by the three vendor annotation libraries ([haproxytech](haproxytech.md), [haproxy-ingress](haproxy-ingress.md), [nginx-ingress](nginx-ingress.md)) — it emits nothing on its own, and there is nothing in it to configure. Leave it enabled: the vendor libraries `import` its macros, so disabling it while any of them is enabled breaks their template compilation.
 
 ## Overview
 
-`ingress-annotations-compat.yaml` is a scaffold library at hierarchy level 2.5 that holds parameterized macros consumed by the three **Ingress** vendor annotation libraries. The scaffold either walks `resources.ingresses.List()` itself (e.g. `BuildAnnotationSSLPassthrough`) or takes a typed `*resources.ingresses.T` parameter (e.g. `EmitAnnotationAccessControl`) — that's correct, because all three vendor libraries process the same resource and differ only by annotation namespace.
+`ingress-annotations-compat.yaml` is a scaffold library at hierarchy level 2.5 that holds parameterized macros consumed by the three **Ingress** vendor annotation libraries. The scaffold either walks `resources.ingresses.List()` itself (for example, `BuildAnnotationSSLPassthrough`) or takes a typed `*resources.ingresses.T` parameter (for example, `EmitAnnotationAccessControl`) — that's correct, because all three vendor libraries process the same resource and differ only by annotation namespace.
 
 The scaffold exists to concentrate behaviour that would otherwise be duplicated three times. Each vendor library still owns its annotation extraction (the keys differ per vendor: `haproxy.org/*`, `haproxy-ingress.github.io/*`, `nginx.ingress.kubernetes.io/*`); the shared output emission lives in this library.
 
-**Scope: Ingress only.** A vendor library operating on a non-Ingress CRD (HTTPRoute, GRPCRoute, custom CRDs) does NOT use these macros — it writes its own equivalents.
+**Scope: Ingress only.** A vendor library operating on a non-Ingress CRD (HTTPRoute, GRPCRoute, custom CRDs) **doesn't** use these macros — it writes its own equivalents.
 
 ## Configuration
 
@@ -33,7 +33,7 @@ Level 3:   haproxytech, haproxy-ingress, nginx-ingress
 
 The vendor libraries import macros from this scaffold; the scaffold knows about Ingress but not about any specific vendor.
 
-## Available Macros
+## Available macros
 
 ### `BuildAnnotationSSLPassthrough`
 
@@ -50,7 +50,7 @@ BuildAnnotationSSLPassthrough(
 )
 ```
 
-**Backend entry shape (do not change without updating ssl.yaml consumers):**
+**Backend entry shape (don't change without updating ssl.yaml consumers):**
 
 ```scriggo
 {
@@ -64,7 +64,7 @@ BuildAnnotationSSLPassthrough(
 }
 ```
 
-The service fields (`svcName`, `svcPort`, `svcPortName`) are captured at scan time rather than re-fetched by the consumer's `backends-*-ssl-passthrough` snippet — a second `GetSingle()` lookup could disagree with the use_backend pass under concurrent Ingress deletion. The macro comment in the source has the full rationale.
+The service fields (`svcName`, `svcPort`, `svcPortName`) are captured at scan time rather than re-fetched by the consumer's `backends-*-ssl-passthrough` snippet — a second `GetSingle()` lookup could disagree with the `use_backend` pass under concurrent Ingress deletion. The macro comment in the source has the full rationale.
 
 **Used by:**
 
@@ -97,13 +97,13 @@ EmitAnnotationAccessControl(
 - `haproxy-ingress/` → `frontend-filters-610-haproxy-ingress-access-control`
 - `nginx-ingress/` → `frontend-filters-700-nginx-ingress-access-control`
 
-Validation tests assert on ACL names (`ni_allowlist_*`, `hi_allowlist_*`, `haproxytech_allowlist_*`), so each library passes its distinct `aclPrefix`.
+Validation tests assert on the names of the generated ACLs (`ni_allowlist_*`, `hi_allowlist_*`, `haproxytech_allowlist_*`), so each library passes its distinct `aclPrefix`.
 
 ## Design rationale
 
-Why the scaffold sits at level 2.5, which patterns were extracted, which were surveyed and deliberately left duplicated (cookie-based session affinity, backend timeouts, header manipulation), and the rename from `annotation-compat` to `ingress-annotations-compat`: see [ADR-0003](../development/adr/0003-annotation-compat-scaffold-level-2-5.md).
+Why the scaffold sits at level 2.5, which patterns were extracted, which were surveyed and deliberately left duplicated (cookie-based session affinity, backend timeouts, header manipulation), and the rename from `annotation-compat` to `ingress-annotations-compat`: see Architecture Decision Record (ADR) [ADR-0003](../development/adr/0003-annotation-compat-scaffold-level-2-5.md).
 
-## Adding a New Macro
+## Adding a new macro
 
 A new macro earns its keep when:
 
@@ -113,7 +113,7 @@ A new macro earns its keep when:
 
 If any of those fail, leave the duplication in place. Forced abstractions over genuinely different behaviour are worse than direct duplication — the future reader has to follow the parameters back to figure out what each library actually does.
 
-## See Also
+## See also
 
 - [Template Libraries Overview](../template-libraries.md)
 - [Base Library](base.md) — provides `util-ingress-helpers` (HostMatchCondition) used inside scaffold macros

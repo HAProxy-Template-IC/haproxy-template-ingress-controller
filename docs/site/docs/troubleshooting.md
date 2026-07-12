@@ -5,7 +5,7 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 !!! note "Namespace"
     All `kubectl` commands below assume the default installation namespace `haptic`. Replace `-n haptic` with your namespace if you installed elsewhere.
 
-## Quick Symptom Reference
+## Quick symptom reference
 
 | Symptom | Section |
 |---------|---------|
@@ -16,7 +16,7 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 | Pods running, no reconciliation activity | [Controller Running But Not Processing](#controller-running-but-not-processing) |
 | "template rendering failed" in logs | [Invalid Template Syntax](#invalid-template-syntax) |
 | "validation failed" / HAProxy errors | [Configuration Validation Failures](#configuration-validation-failures) |
-| "connection refused" to Dataplane API | [Cannot Connect to Dataplane API](#cannot-connect-to-dataplane-api) |
+| "connection refused" to Dataplane API | [Can't connect to Dataplane API](#cannot-connect-to-dataplane-api) |
 | Controller reports success but HAProxy unchanged | [Configuration Not Updating](#configuration-not-updating) |
 | 503 errors / no servers in HAProxy stats | [Requests Not Reaching Backend](#requests-not-reaching-backend) |
 | SSL handshake failures | [SSL/TLS Issues](#ssltls-issues) |
@@ -28,7 +28,7 @@ Find your symptom in the quick reference below, then follow its diagnosis and fi
 
 Problems that surface while the Helm chart installs, before the controller does any work.
 
-### Image Pull Errors
+### Image pull errors
 
 If pods are stuck in `ImagePullBackOff`:
 
@@ -44,7 +44,7 @@ helm get values haptic -n haptic | grep haproxyVersion
 
 The controller image tag is derived from both the chart `version` and `haproxyVersion`. If pulling from a private registry, configure `controller.podSpec.imagePullSecrets` (and `haproxy.podSpec.imagePullSecrets` if the chart's HAProxy pods need the same registry).
 
-### CRD Not Found
+### CRD not found
 
 If the controller fails with "no kind HAProxyTemplateConfig is registered":
 
@@ -63,7 +63,7 @@ helm upgrade --install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/ch
 
 For kind clusters, ensure:
 
-- Calico or Cilium CNI is installed
+- Calico or Cilium Container Network Interface (CNI) is installed
 - DNS access is allowed
 - The `networkPolicy.egress.kubernetesApi` CIDRs cover your API server (see [Networking](./operations/networking.md))
 
@@ -81,7 +81,7 @@ For NetworkPolicy configuration details, see [Networking](./operations/networkin
 
 ## Controller Issues
 
-### Controller Not Starting
+### Controller not starting
 
 **Symptoms**: CrashLoopBackOff, repeated restarts, initialization errors
 
@@ -101,7 +101,7 @@ kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.i
 | Invalid credentials Secret | `kubectl get secret -n haptic haptic-credentials -o jsonpath='{.data}'` (Helm names it `<release>-credentials`) | Recreate secret with correct keys |
 | RBAC permissions | `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<ns>:<sa>` | Verify ClusterRole/ClusterRoleBinding |
 
-### Controller Running But Not Processing
+### Controller running but not processing
 
 **Symptoms**: Pods running, no reconciliation activity
 
@@ -122,7 +122,7 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 
 ## Configuration Issues
 
-### Invalid Template Syntax
+### Invalid template syntax
 
 **Symptoms**: "template rendering failed" errors
 
@@ -144,9 +144,9 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 
 3. See [Templating Guide](./templating.md)
 
-### Configuration Validation Failures
+### Configuration validation failures
 
-**Symptoms**: "validation failed", HAProxy errors
+**Symptoms**: `validation failed`, HAProxy errors
 
 **Common Errors**:
 
@@ -156,7 +156,7 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 | `unable to load file` | Missing map/cert file | Define in `maps` section, use `pathResolver.GetPath()` |
 | `invalid address` | Bad server address | Verify EndpointSlices exist, check service names |
 
-### Validation Test Failures
+### Validation test failures
 
 **Symptoms**: `haptic-controller validate` fails
 
@@ -177,9 +177,11 @@ See [Validation Tests](./validation-tests.md#debugging-failed-tests) for detaile
 
 ## HAProxy Pod Issues
 
-### Cannot Connect to Dataplane API
+<a id="cannot-connect-to-dataplane-api"></a>
 
-**Symptoms**: "connection refused", "timeout", deployment failures
+### Can't connect to Dataplane API
+
+**Symptoms**: `connection refused`, `timeout`, deployment failures
 
 **Diagnosis**:
 
@@ -198,7 +200,7 @@ curl -u admin:<password> http://localhost:5555/v3/info
 | Wrong credentials | Compare secret vs dataplaneapi.yaml | Update the credentials Secret — `credentialsloader` picks it up live; also rotate the matching `dataplaneapi.yaml` on the HAProxy sidecar |
 | Network policy | `kubectl get networkpolicy` | Update egress rules for controller → HAProxy |
 
-### Configuration Not Updating
+### Configuration not updating
 
 **Symptoms**: Controller shows success but HAProxy has old config
 
@@ -217,10 +219,10 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 | Volume mount issue | `kubectl get pod $HAPROXY_POD -o yaml \| grep -A5 volumeMounts` | Ensure both containers share config volume |
 | HAProxy not reloading | `kubectl logs $HAPROXY_POD -c dataplane` | Check reload command, master socket access |
 
-### Shared Memory Stats Limit
+### Shared memory stats limit
 
 !!! note "Opt-in feature"
-    This only applies when `haproxy.shmStats.enabled: true` is set in Helm values (the default is `false`) and HAProxy is 3.3+ — the shm-stats file is gated by `semver_gte` in the chart templates. If you're on the default config you will not see these errors; this section is for operators who turned shm-stats on for performance.
+    This only applies when `haproxy.shmStats.enabled: true` is set in Helm values (the default is `false`) and HAProxy is 3.3+ — the shm-stats file is gated by `semver_gte` in the chart templates. If you're on the default config you won't see these errors; this section is for operators who turned shm-stats on for performance.
 
 **Symptoms**: 100% deployment error rate, HAProxy reload failures with `shm-stats-file-max-objects` errors
 
@@ -247,7 +249,7 @@ maximum number already reached (50000).
 
 **Solution**:
 
-Each HAProxy frontend, backend, and server directive counts as one shm-stats object. The file is fixed-size and cannot be resized on reload. Increase `haproxy.shmStats.maxObjects` in your Helm values:
+Each HAProxy frontend, backend, and server directive counts as one shm-stats object. The file is fixed-size and can't be resized on reload. Increase `haproxy.shmStats.maxObjects` in your Helm values:
 
 ```yaml
 haproxy:
@@ -263,7 +265,7 @@ haproxy:
 
 ## Routing Issues
 
-### Requests Not Reaching Backend
+### Requests not reaching backend
 
 **Symptoms**: 503 errors, timeouts, no servers in HAProxy stats
 
@@ -336,7 +338,7 @@ For certificate provisioning and rotation (cert-manager, manual Secrets, the cha
 
 ## Performance Issues
 
-### Slow Reconciliation
+### Slow reconciliation
 
 **Symptoms**: Changes take minutes, high CPU
 
@@ -354,7 +356,7 @@ curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 - Use cached store for large resources
 - Optimize templates: cache values with `{% var %}`, reduce nested loops
 
-### High Memory Usage
+### High memory usage
 
 **Symptoms**: OOMKilled events, gradual memory growth
 
@@ -379,9 +381,9 @@ watchedResources:
     labelSelector: "app=myapp"
 ```
 
-## Getting Help
+## Getting help
 
-### Collect Diagnostic Information
+### Collect diagnostic information
 
 ```bash
 # Controller version
@@ -397,15 +399,15 @@ kubectl get haproxytemplateconfig -n haptic haptic-config -o yaml > config.yaml
 kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.cfg
 ```
 
-### Enable Debug Logging
+### Enable debug logging
 
 The controller supports multiple log levels via the `LOG_LEVEL` environment variable (case-insensitive):
 
 | Level | Description |
 |-------|-------------|
-| ERROR | Errors only |
-| WARN (or WARNING) | Warnings and errors |
-| INFO | Important state changes (default) |
+| `ERROR` | Errors only |
+| `WARN` (or `WARNING`) | Warnings and errors |
+| `INFO` | Important state changes (default) |
 | DEBUG | Detailed debugging information |
 | TRACE | Very verbose, per-item iteration logs |
 
@@ -422,16 +424,16 @@ The log level can also be configured via the HAProxyTemplateConfig CRD's `spec.l
 ```yaml
 # In values.yaml
 controller:
-  logLevel: INFO  # Initial LOG_LEVEL env var (used until the CRD is loaded)
+  logLevel: `INFO`  # Initial LOG_LEVEL env var (used until the CRD is loaded)
   config:
     logging:
       level: DEBUG  # Written to spec.logging.level — overrides env var at runtime
 ```
 
 !!! note
-    TRACE level produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Enable it only for short, targeted sessions and set the level back to INFO afterwards — TRACE volume drowns everything else.
+    TRACE level produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Enable it only for short, targeted sessions and set the level back to `INFO` afterwards — TRACE volume drowns everything else.
 
-### Access the Debug Server
+### Access the debug server
 
 The Helm chart enables the debug server on port `8080` by default (same port as `/healthz`). Port-forward to reach it:
 
@@ -441,7 +443,7 @@ kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 
 Don't disable it with `controller.debugPort: 0` — `/healthz` shares the listener, so that breaks the liveness/readiness probes; restrict access via NetworkPolicy instead. See the [Debugging Guide](./operations/debugging.md) for the endpoint catalogue and usage.
 
-## See Also
+## See also
 
 - [Getting Started](./getting-started.md)
 - [Debugging](./operations/debugging.md)

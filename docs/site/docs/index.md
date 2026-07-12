@@ -36,9 +36,11 @@ hide:
 </div>
 
 !!! note "Community Project"
-    This is an independent community project and is not affiliated with or endorsed by HAProxy Technologies.
+    This is an independent community project and isn't affiliated with or endorsed by HAProxy Technologies.
 
-## What is HAPTIC?
+<a id="what-is-haptic"></a>
+
+## What's HAPTIC?
 
 HAPTIC is an event-driven Kubernetes controller that:
 
@@ -53,9 +55,9 @@ Unlike traditional ingress controllers with hardcoded configuration logic, HAPTI
 - **Support new standards** like Gateway API without waiting for controller updates
 - **Watch domain-specific CRDs** and generate HAProxy configuration from any Kubernetes resource type
 
-## Key Features
+## Key features
 
-### Template-Driven Flexibility
+### Template-driven flexibility
 
 Traditional ingress controllers embed configuration logic in code. HAPTIC inverts this:
 
@@ -64,7 +66,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
 - **Rich template context** - Access any Kubernetes resource, fetch external data via HTTP, and use controller state in your templates
 - **Everything is templatable** - Generate not just `haproxy.cfg` but also map files, SSL certificates, CRT-lists, and custom auxiliary files
 
-### Production Ready
+### Production ready
 
 - **High availability** - Leader election with automatic failover
 - **Layered validation** - Admission webhook, template validation, and tests you can run in CI before anything reaches a cluster
@@ -108,7 +110,7 @@ Key components:
 - **Validator** - Runs syntax, schema, and `haproxy -c` checks on the rendered config so broken configs never deploy
 - **Dataplane Syncer** - Applies configuration changes to HAProxy pods via the Dataplane API
 
-## Quick Start
+## Quick start
 
 ```bash
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1 --namespace haptic --create-namespace
@@ -116,7 +118,7 @@ helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/hapti
 
 This installs both the controller and a 2-replica HAProxy Deployment, plus the default template libraries that cover Ingress and Gateway API out of the box. For the full walkthrough — including a sample app, end-to-end verification, and inspecting the rendered config the controller publishes as a `HAProxyCfg` resource — see [Getting Started](getting-started.md).
 
-## What Makes HAPTIC Different
+## What makes HAPTIC different
 
 Templates are the difference. Suppose your platform users want a custom annotation that injects an `X-Request-ID` header for tracing. One snippet — no controller fork, no waiting for a release (with the Helm chart you'd place it under `controller.config.templateSnippets` in your values):
 
@@ -145,7 +147,7 @@ spec:
 
 Users opt in per-Ingress with `example.com/request-id-header: "X-Request-ID"`. The same pattern works for rate limiting, header rewrites, custom ACLs — anything HAProxy can express. Override any snippet, replace the main template, or disable all libraries and start from scratch. See the [Templating Guide](templating.md).
 
-## Where to Go Next
+## Where to go next
 
 - **Essential**: [Getting Started](getting-started.md) → [Templating](templating.md) → [CRD Reference](crd-reference.md)
 - **Replacing ingress-nginx or haproxy-ingress?** [Migrating](migrating.md)

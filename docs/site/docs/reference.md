@@ -1,4 +1,4 @@
-# Chart Values Reference
+# Chart values reference
 
 Every Helm value the chart accepts, with its type and default.
 
@@ -8,8 +8,8 @@ Every Helm value the chart accepts, with its type and default.
 |-----------|------|---------|-------------|
 | `replicaCount` | int | `2` | Number of controller replicas (2+ recommended for HA with leader election) |
 | `haproxyVersion` | string | `"3.4"` | HAProxy major.minor series. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
-| `haproxyPatchVersions` | map | See values.yaml | Per-`haproxyVersion` community patch pins (e.g. `"3.2": "3.2.x"`). Maintained by the chart and auto-updated by Renovate |
-| `haproxyEnterprisePatchVersions` | map | See values.yaml | Per-`haproxyVersion` enterprise revision pins (e.g. `"3.2": "3.2r1"`). Used when `haproxy.enterprise.enabled=true` |
+| `haproxyPatchVersions` | map | See values.yaml | Per-`haproxyVersion` community patch pins (for example `"3.2": "3.2.x"`). Maintained by the chart and auto-updated by Renovate |
+| `haproxyEnterprisePatchVersions` | map | See values.yaml | Per-`haproxyVersion` enterprise revision pins (for example `"3.2": "3.2r1"`). Used when `haproxy.enterprise.enabled=true` |
 | `image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic` | Controller image repository |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `image.tag` | string | `""` | Controller image tag; empty = `<chart appVersion>-haproxy<haproxyVersion>` |
@@ -20,19 +20,19 @@ Every Helm value the chart accepts, with its type and default.
 | `deploymentAnnotations` | map | `{}` | Annotations added only to the controller `Deployment` (in addition to `commonAnnotations`); useful for hooks like reloader's `reloader.stakater.com/auto: "true"` |
 | `extraDeploy` | list or map | `{}` | Free-form Kubernetes resources to render alongside the chart. Each entry is rendered through `tpl` so it can reference chart values. Map form (keys → manifests) is convenient for composing across multiple values files |
 
-## Controller Core
+## Controller core
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `controller.crdName` | string | `haptic-config` | Name of HAProxyTemplateConfig CRD resource |
 | `controller.debugPort` | int | `8080` | Introspection HTTP server port (/healthz, /debug/*) |
-| `controller.logLevel` | string | `INFO` | Initial controller log level (`LOG_LEVEL` env var) — see [Logging and Templating](#logging-and-templating) for the runtime override |
+| `controller.logLevel` | string | `INFO` | Initial controller log level (`LOG_LEVEL` env var) — see [Logging and templating](#logging-and-templating) for the runtime override |
 | `controller.ports.healthz` | int | `8080` | Health check endpoint port |
 | `controller.ports.metrics` | int | `9090` | Prometheus metrics endpoint port |
 | `controller.ports.webhook` | int | `9443` | Admission webhook HTTPS port |
 | `controller.statusPatches.enabled` | bool | `true` | Whether the controller writes LoadBalancer addresses back to Ingress/Gateway `.status`. Disable during a controller migration so the incumbent keeps owning status — the chart sets `extraContext.statusPatchesDisabled: true` and the status-patch snippets become no-ops |
 
-## Template Libraries
+## Template libraries
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -40,21 +40,21 @@ Every Helm value the chart accepts, with its type and default.
 | `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
 | `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTP, gRPC, TLS and TCP routes) |
-| `controller.templateLibraries.gateway.experimentalChannel` | bool | `false` | Declare that the Gateway API *Experimental* channel (`experimental-install.yaml`) is installed. Enables the validationTests that assert experimental HTTPRoute fields (`retry`/GEP-1731, `sessionPersistence`/GEP-1619) — Helm can't detect the channel because both installs ship identical CRDs and only HTTPRoute *fields* differ. The route snippets emit those directives whenever the fields are present, regardless of this flag |
+| `controller.templateLibraries.gateway.experimentalChannel` | bool | `false` | Declare that the Gateway API *Experimental* channel (`experimental-install.yaml`) is installed. Enables the `validationTests` that assert experimental HTTPRoute fields (`retry` per Gateway Enhancement Proposal (GEP) 1731, `sessionPersistence` per GEP-1619) — Helm can't detect the channel because both installs ship identical CRDs and only HTTPRoute *fields* differ. The route snippets emit those directives whenever the fields are present, regardless of this flag |
 | `controller.templateLibraries.ingressAnnotationsCompat.enabled` | bool | `true` | Shared ingress-annotations-compat scaffold (level 2.5). Provides parameterized macros consumed by the Ingress vendor annotation libraries below |
 | `controller.templateLibraries.haproxytech.enabled` | bool | `true` | haproxy.org/* annotation support |
 | `controller.templateLibraries.haproxyIngress.enabled` | bool | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
 | `controller.templateLibraries.nginxIngress.enabled` | bool | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
-| `controller.templateLibraries.spoaHub.enabled` | bool | `false` | HAProxy-side SPOA hub wiring. Auto-loaded when the SPOA hub sidecar is rendered (any `spoaHub.plugins.*` enabled, or `spoaHub.enabled: true`); set this to `true` to force-load the library standalone |
+| `controller.templateLibraries.spoaHub.enabled` | bool | `false` | HAProxy-side Stream Processing Offload Agent (SPOA) hub wiring. Auto-loaded when the SPOA hub sidecar is rendered (any `spoaHub.plugins.*` enabled, or `spoaHub.enabled: true`); set this to `true` to force-load the library standalone |
 | `controller.config.routing.regexMatchOrder` | string | `default` | Path matching order: `default` (Exact > Regex > Prefix-exact > Prefix) or `last` (Exact > Prefix-exact > Prefix > Regex, performance-first) |
 
-## Default SSL Certificate
+## Default SSL certificate
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `controller.defaultSSLCertificate.enabled` | bool | `true` | Enable default SSL certificate requirement. When the cert-manager API is absent and no inline cert is set, the chart generates a self-signed Secret (never touching an existing one) so the install converges out of the box |
 | `controller.defaultSSLCertificate.secretName` | string | `default-ssl-cert` | TLS Secret name containing certificate |
-| `controller.defaultSSLCertificate.namespace` | string | `""` | Secret namespace (defaults to Release.Namespace) |
+| `controller.defaultSSLCertificate.namespace` | string | `""` | Secret namespace (defaults to `Release.Namespace`) |
 | `controller.defaultSSLCertificate.certManager.enabled` | bool | `true` | Use cert-manager for certificate provisioning |
 | `controller.defaultSSLCertificate.certManager.createIssuer` | bool | `true` | Create self-signed Issuer (dev/test only) |
 | `controller.defaultSSLCertificate.certManager.dnsNames` | list | `["localdev.me", "*.localdev.me"]` | DNS names for the certificate |
@@ -76,12 +76,12 @@ Every Helm value the chart accepts, with its type and default.
 | `controller.config.controller.healthzPort` | int | `8080` | **Display only** — the chart strips this from the serialized CRD. The actual health-check port is set by the container port `controller.ports.healthz` and the controller doesn't read this field |
 | `controller.config.controller.metricsPort` | int | `9090` | **Display only** — the chart strips this from the serialized CRD. The actual metrics port is set by the `METRICS_PORT` env var (default `9090`); set `METRICS_PORT=0` via the top-level `extraEnv` to disable the metrics server. `controller.ports.metrics` declares the matching container port and Service port |
 
-## Leader Election
+## Leader election
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `controller.config.controller.leaderElection.enabled` | bool | `true` | Enable leader election (recommended for HA) |
-| `controller.config.controller.leaderElection.leaseName` | string | `""` | Lease resource name (defaults to release fullname) |
+| `controller.config.controller.leaderElection.leaseName` | string | `""` | Lease resource name (defaults to release `fullname`) |
 | `controller.config.controller.leaderElection.leaseDuration` | duration | `30s` | Failover timeout duration |
 | `controller.config.controller.leaderElection.renewDeadline` | duration | `20s` | Leader renewal timeout |
 | `controller.config.controller.leaderElection.retryPeriod` | duration | `5s` | Retry interval between attempts |
@@ -104,27 +104,27 @@ Every Helm value the chart accepts, with its type and default.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `apiVersion` | string | required | API group/version (e.g. `networking.k8s.io/v1`, `v1` for core) |
-| `resources` | string | required | Plural resource name (e.g. `ingresses`) |
+| `apiVersion` | string | required | API group/version (for example `networking.k8s.io/v1`, `v1` for core) |
+| `resources` | string | required | Plural resource name (for example `ingresses`) |
 | `indexBy` | list | `[]` | JSONPath expressions used to index resources for O(1) template lookup |
-| `fieldSelector` | string | `""` | Client-side JSONPath filter (e.g. `spec.ingressClassName=haptic`); supports any JSONPath expression unlike Kubernetes' built-in fieldSelector |
+| `fieldSelector` | string | `""` | Client-side JSONPath filter (for example `spec.ingressClassName=haptic`); supports any JSONPath expression unlike Kubernetes' built-in `fieldSelector` |
 | `labelSelector` | string | `""` | Server-side label selector for watch-time filtering (equality-only `key=value` pairs joined by commas) |
 | `enableValidationWebhook` | bool | `false` | Include this resource in the chart-rendered `ValidatingWebhookConfiguration` |
 | `statusPatch` | bool | `false` | Allow the controller to patch this resource's `/status` subresource |
 | `store` | string | `full` | `full` keeps all resources in memory; `on-demand` fetches with caching (lower memory, slower lookups). Useful for very large Secret stores |
-| `debounceInterval` | duration | `""` (2s) | Per-resource debounce window; empty/unparseable falls back to the controller-wide default (`DefaultDebounceInterval`, 2s). Lower for fast-reacting resources (e.g. `500ms` on httproutes during canaries). Avoid raising the value for resources that drive backend membership — `EndpointSlices` and `pods` in particular — because the debounce delays Pod removal from the HAProxy server pool by that whole window, so live traffic continues hitting Terminating pods until the next render fires |
+| `debounceInterval` | duration | `""` (`2s`) | Per-resource debounce window; empty/unparseable falls back to the controller-wide default (`DefaultDebounceInterval`, `2s`). Lower for fast-reacting resources (for example `500ms` on httproutes during canaries). Avoid raising the value for resources that drive backend membership — `EndpointSlices` and `pods` in particular — because the debounce delays Pod removal from the HAProxy server pool by that whole window, so live traffic continues hitting Terminating pods until the next render fires |
 
-## Logging and Templating
+## Logging and templating
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.logLevel` | string | `INFO` | Initial log level (`LOG_LEVEL` env var): TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive) |
+| `controller.logLevel` | string | `INFO` | Initial log level (`LOG_LEVEL` env var): `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive) |
 | `controller.config.logging.level` | string | `""` | Log level in the `HAProxyTemplateConfig` CRD (`spec.logging.level`); overrides `controller.logLevel` at runtime when non-empty |
 | `controller.config.templatingSettings.engine` | string | `scriggo` | Template engine used for rendering; `scriggo` is the only supported value |
 | `controller.config.templatingSettings.extraContext.debug` | bool | `true` | Enable debug headers in HAProxy responses |
 | `controller.config.templatingSettings.extraContext.password_hash_validation_regex` | string | `"^.*$"` | Regex every password hash in a basic-auth Secret must match (the `auth-secret` annotation handlers in the haproxytech and haproxy-ingress libraries). A non-matching hash fails the render with `password_hash_validation_error_message`; the default accepts all hashes. Example restricting to MD5-crypt (apr1) hashes: `"^\$apr1\$"`. Go RE2 syntax — no lookaheads, so express the policy as the *allowed* format |
 | `controller.config.templatingSettings.extraContext.password_hash_validation_error_message` | string | `Invalid password hash` | Error message emitted when a password hash fails validation; the rendered error appends the username, Secret name, and pattern |
-| `controller.config.templatingSettings.extraContext.coraza.dispatch.mode` | string | `opt-in` | Which requests the rendered config ships to the Coraza WAF: `opt-in` runs it only on paths carrying a `modsecurity-snippet` or `waf: "modsecurity"` annotation; `default-on` runs it on every request unless the path opts out via `nginx.ingress.kubernetes.io/enable-modsecurity: "false"`. Changes the rendered haproxy.cfg only — the SPOA hub plugin itself is configured via `spoaHub.plugins.coraza.*` |
+| `controller.config.templatingSettings.extraContext.coraza.dispatch.mode` | string | `opt-in` | Which requests the rendered config ships to the Coraza Web Application Firewall (WAF): `opt-in` runs it only on paths carrying a `modsecurity-snippet` or `waf: "modsecurity"` annotation; `default-on` runs it on every request unless the path opts out via `nginx.ingress.kubernetes.io/enable-modsecurity: "false"`. Changes the rendered haproxy.cfg only — the SPOA hub plugin itself is configured via `spoaHub.plugins.coraza.*` |
 | `controller.config.templatingSettings.extraContext.coraza.dispatch.defaultEnforcement` | string | `deny` | WAF enforcement (`deny` or `detect`) for requests dispatched by `mode: default-on`; a per-path `haproxy-ingress.github.io/waf-mode: "detect"` annotation overrides it. Ignored when `mode: opt-in` |
 | `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields, metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']]` | Fields to ignore in watched resources |
 
@@ -157,8 +157,8 @@ The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-s
 | `controller.validators.resources.requests.cpu` | string | `25m` | Validator sidecar CPU request (validation is bursty — admission calls are infrequent — so it's sized small) |
 | `controller.validators.resources.requests.memory` | string | `64Mi` | Validator sidecar memory request |
 | `controller.validators.resources.limits.memory` | string | `128Mi` | Validator sidecar memory limit |
-| `controller.validators.securityContext` | map | See values.yaml | Container security context for the validator sidecar. Default runs UID/GID 65532 (matching the controller's nonroot user) so the Unix socket is readable and writable by the controller without extra `fsGroup` plumbing; read-only root filesystem, no privilege escalation, all capabilities dropped |
-| `controller.validators.extraVolumeMounts` | list | `[]` | Extra volume mounts added to the validator sidecar only (rendered through `tpl`); for auxiliary data a plugin's `validate()` needs, such as MaxMind MMDB files or OWASP CRS rule files. Same shape as `spoaHub.extraVolumeMounts` |
+| `controller.validators.securityContext` | map | See values.yaml | Container security context for the validator sidecar. Default runs user and group 65532 (matching the controller's nonroot user) so the Unix socket is readable and writable by the controller without extra `fsGroup` plumbing; read-only root filesystem, no privilege escalation, all capabilities dropped |
+| `controller.validators.extraVolumeMounts` | list | `[]` | Extra volume mounts added to the validator sidecar only (rendered through `tpl`); for auxiliary data a plugin's `validate()` needs, such as MaxMind MMDB files or Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) files. Same shape as `spoaHub.extraVolumeMounts` |
 | `controller.validators.entries` | list | `[]` | Entries appended to the CRD's `spec.validators` (each: `name`, `socketPath`, `files` glob list, optional `timeoutMs`/`maxConnections`). The chart auto-appends a `spoa-hub` entry validating `general/spoa-hub-config.toml` when both the SPOA hub sidecar and the validator sidecar are enabled; an operator entry named `spoa-hub` takes precedence |
 
 ## IngressClass
@@ -181,7 +181,7 @@ The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-s
 | `gatewayClass.parametersRef.group` | string | `haproxy-haptic.org` | HAProxyTemplateConfig API group |
 | `gatewayClass.parametersRef.kind` | string | `HAProxyTemplateConfig` | HAProxyTemplateConfig kind |
 | `gatewayClass.parametersRef.name` | string | `""` | Config name (defaults to controller.crdName) |
-| `gatewayClass.parametersRef.namespace` | string | `""` | Config namespace (defaults to Release.Namespace) |
+| `gatewayClass.parametersRef.namespace` | string | `""` | Config namespace (defaults to `Release.Namespace`) |
 
 ## Credentials
 
@@ -200,9 +200,9 @@ The validator sidecar runs a second `haproxy-spoa-hub` instance in `--validate-s
 | `serviceAccount.name` | string | `""` | ServiceAccount name (auto-generated if empty) |
 | `rbac.create` | bool | `true` | Create RBAC resources |
 
-## Pod Configuration (Controller)
+## Pod configuration (controller)
 
-Pod-spec scheduling, runtime, and metadata fields for the controller Deployment live under `controller.podSpec.*`. The chart's `_pod-spec.tpl` helper renders the universally-shared subset; the remaining fields (podAnnotations, podLabels, podSecurityContext) are consumed directly by `templates/deployment.yaml`.
+Pod-spec scheduling, runtime, and metadata fields for the controller Deployment live under `controller.podSpec.*`. The chart's `_pod-spec.tpl` helper renders the universally shared subset; the remaining fields (`podAnnotations`, `podLabels`, `podSecurityContext`) are consumed directly by `templates/deployment.yaml`.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -210,7 +210,7 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | `controller.podSpec.podAnnotations` | map | `{}` | Pod annotations |
 | `controller.podSpec.podLabels` | map | `{}` | Additional pod labels |
 | `controller.podSpec.priorityClassName` | string | `""` | Pod priority class name |
-| `controller.podSpec.runtimeClassName` | string | `""` | Runtime class (e.g. gVisor, Kata) |
+| `controller.podSpec.runtimeClassName` | string | `""` | Runtime class (for example gVisor, Kata) |
 | `controller.podSpec.terminationGracePeriodSeconds` | int | `30` | Termination grace period |
 | `controller.podSpec.dnsPolicy` | string | `ClusterFirst` | DNS policy |
 | `controller.podSpec.dnsConfig` | map | `{}` | DNS config |
@@ -225,7 +225,7 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | `controller.podSpec.podSecurityContext.fsGroup` | int | `65532` | Filesystem group ID |
 | `controller.podSpec.podSecurityContext.seccompProfile.type` | string | `RuntimeDefault` | Seccomp profile type |
 
-## Container Security Context
+## Container security context
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -235,7 +235,7 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | `securityContext.runAsNonRoot` | bool | `true` | Run as non-root |
 | `securityContext.runAsUser` | int | `65532` | Container user ID |
 
-## Service & Health Probes
+## Service & health probes
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -259,7 +259,7 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | `readinessProbe.initialDelaySeconds` | int | `5` | Initial delay |
 | `readinessProbe.periodSeconds` | int | `5` | Probe period |
 | `readinessProbe.failureThreshold` | int | `3` | Failure threshold |
-| `startupProbe.enabled` | bool | `true` | Enable the startup probe; liveness/readiness probes are paused until it succeeds. On by default and load-bearing: controller startup runs the config's embedded validationTests (dozens of `haproxy -c` checks plus a full template compile), which can exceed the bare liveness budget on slow nodes and crash-loop the pod |
+| `startupProbe.enabled` | bool | `true` | Enable the startup probe; liveness/readiness probes are paused until it succeeds. On by default and load-bearing: controller startup runs the config's embedded `validationTests` (dozens of `haproxy -c` checks plus a full template compile), which can exceed the bare liveness budget on slow nodes and crash-loop the pod |
 | `startupProbe.httpGet.path` | string | `/healthz` | Startup probe path |
 | `startupProbe.httpGet.port` | string | `healthz` | Named container port the probe targets |
 | `startupProbe.initialDelaySeconds` | int | `0` | Initial delay |
@@ -268,7 +268,7 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | `startupProbe.successThreshold` | int | `1` | Success threshold |
 | `startupProbe.failureThreshold` | int | `30` | Failure threshold (with `periodSeconds: 10` this gives 5 minutes for startup) |
 
-## Resources & Scheduling
+## Resources & scheduling
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -276,9 +276,9 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | `resources.requests.memory` | string | `512Mi` | Memory request (Guaranteed QoS — matches `limits.memory`) |
 | `resources.limits.memory` | string | `512Mi` | Memory limit |
 
-Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) live under `controller.podSpec.*` — see [Pod Configuration (Controller)](#pod-configuration-controller).
+Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) live under `controller.podSpec.*` — see [Pod configuration (controller)](#pod-configuration-controller).
 
-## Controller Extras & Rollout
+## Controller extras & rollout
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -332,7 +332,7 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `monitoring.prometheusRule.defaultRules.highQueueDepth` | bool | `true` | Include the `HAProxyControllerHighQueueDepth` warning rule |
 | `monitoring.prometheusRule.defaultRules.leaderElectionLost` | bool | `true` | Include the `HAProxyControllerNoLeader` critical rule |
 | `monitoring.prometheusRule.defaultRules.fleetDiverged` | bool | `true` | Include the `HAProxyFleetDiverged` warning rule: some HAProxy pods haven't converged to the desired config for 5 minutes. Transient deploy failures self-heal, so sustained divergence is a real fault — this is the noise-free replacement for alerting on raw deployment errors |
-| `monitoring.prometheusRule.defaultRules.configRejected` | bool | `true` | Include the `HAProxyControllerConfigRejected` warning rule: the validation gate rejected a config change — the controller keeps serving the last-good config and the latest change is not live |
+| `monitoring.prometheusRule.defaultRules.configRejected` | bool | `true` | Include the `HAProxyControllerConfigRejected` warning rule: the validation gate rejected a config change — the controller keeps serving the last-good config and the latest change isn't live |
 | `monitoring.prometheusRule.defaultRules.haproxyPodsRejected` | bool | `true` | Include the `HAProxyControllerHAProxyPodsRejected` warning rule: discovered HAProxy pods refused admission (often a HAProxy major.minor mismatch with `haproxyVersion`) |
 | `monitoring.prometheusRule.defaultRules.noHAProxyPods` | bool | `true` | Include the `HAProxyControllerNoHAProxyPods` critical rule: the controller finds no HAProxy pods to manage, so no config reaches the data plane |
 | `monitoring.prometheusRule.defaultRules.criticalEventsDropped` | bool | `true` | Include the `HAProxyControllerCriticalEventsDropped` critical rule: a critical event-bus subscriber's buffer overflowed — reconciliation work was lost and the data plane may be stale |
@@ -351,7 +351,7 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `haproxy.replicaCount` | int | `2` | Number of HAProxy replicas |
 | `haproxy.image.repository` | string | `haproxytech/haproxy-debian` | HAProxy image repository |
 | `haproxy.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
-| `haproxy.image.tag` | string | `""` | HAProxy image tag; empty = derive from `haproxyVersion` plus the matching entry in `haproxyPatchVersions` (e.g. `3.2` → whichever 3.2.x patch the chart currently pins). Override to pin a specific patch yourself. |
+| `haproxy.image.tag` | string | `""` | HAProxy image tag; empty = derive from `haproxyVersion` plus the matching entry in `haproxyPatchVersions` (for example `3.2` → whichever 3.2.x patch the chart currently pins). Override to pin a specific patch yourself. |
 | `haproxy.enterprise.enabled` | bool | `false` | Use HAProxy Enterprise |
 | `haproxy.enterprise.version` | string | `3.2` | Enterprise version |
 | `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |
@@ -360,7 +360,7 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 
 ## HAProxy Pod Configuration
 
-Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*` (the chart's `_pod-spec.tpl` helper renders the universally-shared subset). See also `controller.podSpec.*` for the controller Deployment.
+Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*` (the chart's `_pod-spec.tpl` helper renders the universally shared subset). See also `controller.podSpec.*` for the controller Deployment.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -371,7 +371,7 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 | `haproxy.podSpec.dnsPolicy` | string | `ClusterFirst` | DNS policy |
 | `haproxy.podSpec.dnsConfig` | map | `{}` | DNS config |
 | `haproxy.podSpec.hostAliases` | list | `[]` | /etc/hosts entries |
-| `haproxy.podSpec.runtimeClassName` | string | `""` | Runtime class (e.g. gVisor, Kata) |
+| `haproxy.podSpec.runtimeClassName` | string | `""` | Runtime class (for example gVisor, Kata) |
 | `haproxy.podSpec.topologySpreadConstraints` | list | `[]` | Topology spread constraints |
 | `haproxy.podSpec.nodeSelector` | map | `{}` | Node selector |
 | `haproxy.podSpec.tolerations` | list | `[]` | Tolerations |
@@ -383,7 +383,7 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 | `haproxy.extraVolumeMounts` | list | `[]` | Extra volume mounts for HAProxy container |
 | `haproxy.extraEnv` | list | `[]` | Extra env vars for the HAProxy container |
 
-## HAProxy Ports
+## HAProxy ports
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -415,7 +415,7 @@ The controller renders the user-facing HAProxy Service from these values (the ba
 | `haproxy.service.stats.nodePort` | int | `30404` | Stats NodePort |
 | `haproxy.service.extraPorts` | list | `[]` | Additional Service ports (`corev1.ServicePort` shape) appended to the http/https/stats entries — for example a raw TCP frontend declared via a custom `haproxyConfig` snippet. Drop a default entry by setting `haproxy.service.{http,https,stats}.port: 0` |
 
-## HAProxy Dataplane Sidecar
+## HAProxy Dataplane sidecar
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -426,20 +426,20 @@ The controller renders the user-facing HAProxy Service from these values (the ba
 | `haproxy.dataplane.extraEnv` | list | `[]` | Extra env vars for the dataplane sidecar; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
 | `haproxy.dataplane.validateConfig` | bool | `false` | Run a server-side `haproxy -c` against each transaction. The controller already validates locally, so server-side validation is redundant; enable for double-validation when extra safety is required |
 | `haproxy.dataplane.debugSocketPath` | string | `""` | Unix socket path for runtime profiling of the dataplane sidecar (sets `debug_socket_path` in `dataplaneapi.yaml`) |
-| `haproxy.dataplane.aclFormat` | string | `""` | Apache Common Log Format override for the dataplane API access log. Empty leaves the dataplane API's built-in default in place; set this to a format with timing fields (e.g. `%{us}T` microseconds, `%D` milliseconds) to surface per-request publish-step latency in the access log |
+| `haproxy.dataplane.aclFormat` | string | `""` | Apache Common Log Format override for the dataplane API access log. Empty leaves the dataplane API's built-in default in place; set this to a format with timing fields (for example `%{us}T` microseconds, `%D` milliseconds) to surface per-request publish-step latency in the access log |
 
 Dataplane API credentials moved to the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
 
-## HAProxy Tuning
+## HAProxy tuning
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `haproxy.nbthread` | int/string | absent | HAProxy `nbthread` directive value. Default (key absent): auto-calculated as `ceil(cpu_request)` clamped to ≥1. Set `0` to skip the directive (HAProxy uses its built-in default). Templatable — `"{{ mul 2 (...) }}"` is allowed |
 | `haproxy.shmStats.enabled` | bool | `false` | Persist HAProxy stats counters across reloads via `shm-stats-file` (HAProxy 3.3+ only) |
 | `haproxy.shmStats.path` | string | `/dev/shm/haproxy-stats` | Path to the shared-memory stats file |
-| `haproxy.shmStats.maxObjects` | int | `50000` | Maximum object count in the shm-stats file. Each frontend, backend, listen, and server counts as one object — pick a value with headroom; HAProxy cannot resize the file on reload |
+| `haproxy.shmStats.maxObjects` | int | `50000` | Maximum object count in the shm-stats file. Each frontend, backend, listen, and server counts as one object — pick a value with headroom; HAProxy can't resize the file on reload |
 | `haproxy.shmStats.shmSizeLimit` | string | `""` | `/dev/shm` emptyDir size limit. Empty auto-calculates from `maxObjects` (~4 KB/object + 10% overhead, rounded to MiB) |
-| `haproxy.lifecycle` | map | `{}` | Container lifecycle hooks for the HAProxy container (preStop, postStart) |
+| `haproxy.lifecycle` | map | `{}` | Container lifecycle hooks for the HAProxy container (`preStop`, `postStart`) |
 | `haproxy.updateStrategy.type` | string | `RollingUpdate` | HAProxy Deployment update strategy |
 | `haproxy.updateStrategy.rollingUpdate.maxSurge` | int/string | `1` | Maximum surge during rolling updates |
 | `haproxy.updateStrategy.rollingUpdate.maxUnavailable` | int/string | `0` | Maximum unavailable during rolling updates |
@@ -460,7 +460,7 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `haproxy.keda.advanced` | map | `{}` | Advanced HPA `behavior` overrides (scale-up/-down stabilisation windows, etc.) |
 | `haproxy.keda.triggers` | list | required | Scaling triggers; see KEDA docs for the per-source schema (Prometheus, CPU, cron, …) |
 
-## SPOA Hub Sidecar
+## SPOA hub sidecar
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -478,7 +478,7 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.hub.metricsAddr` | string | `127.0.0.1:9095` | Hub Prometheus `/metrics` listen address. Loopback by default — the HAProxy container scrapes it via the shared pod network namespace. Set `""` to disable the endpoint (loses per-plugin counters) or `0.0.0.0:9095` to expose it cluster-wide (the metrics carry per-Ingress/route cardinality) |
 | `spoaHub.haproxy.socketPath` | string | `/run/spoa/hub.sock` | Unix socket path shared between HAProxy and the hub |
 | `spoaHub.haproxy.modeSpop` | bool | `true` | Use HAProxy 3.1+ `mode spop` backend; auto-falls back to `mode tcp` on 3.0. Set `false` to force `mode tcp` on 3.1+ |
-| `spoaHub.haproxy.timeoutHello` | duration | `2s` | SPOE hello timeout |
+| `spoaHub.haproxy.timeoutHello` | duration | `2s` | Stream Processing Offload Engine (SPOE) hello timeout |
 | `spoaHub.haproxy.timeoutIdle` | duration | `5m` | SPOE idle timeout |
 | `spoaHub.haproxy.timeoutProcessing` | duration | `500ms` | Per-message processing timeout |
 | `spoaHub.haproxy.poolMaxConn` | int | `100` | Connection pool maximum |
@@ -488,14 +488,14 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.plugins.<name>.timeoutMs` | int | per-plugin | Plugin processing timeout in milliseconds |
 | `spoaHub.plugins.<name>.messages` | list | per-plugin | SPOE messages this plugin handles |
 | `spoaHub.plugins.<name>.dependsOn` | list | `[]` | Other plugin names this plugin must run after |
-| `spoaHub.plugins.<name>.params` | string | per-plugin | Free-form TOML blob spliced verbatim under `[plugins.params]` — use dotted keys (`x.y = "..."`) or fully-qualified headers (`[plugins.params.x]`) for nested values; bare `[x]` headers will close the params scope and break the config |
+| `spoaHub.plugins.<name>.params` | string | per-plugin | Free-form TOML blob spliced verbatim under `[plugins.params]` — use dotted keys (`x.y = "..."`) or fully qualified headers (`[plugins.params.x]`) for nested values; bare `[x]` headers close the params scope and break the config |
 | `spoaHub.plugins.coraza.directives` | string | OWASP CRS includes + `SecRuleEngine On` | Coraza WAF rule directives (coraza only). Rendered into the hub TOML's own `directives` field, with per-Ingress `modsecurity-snippet` values appended after it (sorted by `<ns>/<name>`). Keep `SecRuleEngine On` *after* the includes — `@coraza.conf-recommended` sets `DetectionOnly`, so an earlier `On` is silently overridden and the WAF never blocks. Don't also set `directives` inside `params:`; the duplicate TOML field breaks the config |
-| `spoaHub.securityContext` | map | See values.yaml | Container security context for the spoa-hub container. Default runs UID/GID 99, matching the pod's `fsGroup`, so the Unix socket the hub creates under `/run/spoa` is accessible to the HAProxy container; read-only root filesystem, no privilege escalation, all capabilities dropped |
-| `spoaHub.extraVolumeMounts` | list | `[]` | Extra volume mounts added to the spoa-hub container only (rendered through `tpl`) — for MMDB files (maxmind), OIDC client secrets (sso-auth), and similar plugin data |
+| `spoaHub.securityContext` | map | See values.yaml | Container security context for the spoa-hub container. Default runs user and group 99, matching the pod's `fsGroup`, so the Unix socket the hub creates under `/run/spoa` is accessible to the HAProxy container; read-only root filesystem, no privilege escalation, all capabilities dropped |
+| `spoaHub.extraVolumeMounts` | list | `[]` | Extra volume mounts added to the spoa-hub container only (rendered through `tpl`) — for MMDB files (`maxmind`), OpenID Connect (OIDC) client secrets (`sso-auth`), and similar plugin data |
 
 Available plugin names (`<name>`): `coraza`, `external-auth`, `fingerprinting`, `maxmind`, `mirror`, `otel`, `sso-auth`. See `values.yaml` for each plugin's default `messages` / `timeoutMs` and the upstream plugin README for the `params:` schema.
 
-## HAProxy Resources & Scheduling
+## HAProxy resources & scheduling
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -534,10 +534,10 @@ No CPU limit is set by default to avoid throttling; HAProxy's `nbthread` auto-ca
 | `networkPolicy.ingress.dataplaneApi.enabled` | bool | `true` | Allow Dataplane API access (the policy selects all release pods, HAProxy included, so this rule is what lets the controller push configs) |
 | `networkPolicy.ingress.dataplaneApi.from` | list | `[{podSelector: {}}]` | NetworkPolicy peers allowed to reach the Dataplane API port (`haproxy.ports.dataplane`). The default admits every pod in the release namespace, which covers the controller |
 | `networkPolicy.ingress.webhook.enabled` | bool | `true` | Allow webhook access |
-| `networkPolicy.ingress.webhook.from` | list | IPv4+IPv6 `ipBlock` catch-alls | NetworkPolicy peers allowed to reach the webhook port (`controller.ports.webhook`). Defaults to `ipBlock` catch-alls because the kube-apiserver runs host-network on most distributions — a pod/namespace selector would silently fail to match it and the webhook would return 502s. Both `0.0.0.0/0` and `::/0` appear because `ipBlock.cidr` is single-family. Tighten to your apiserver/node CIDRs for production |
+| `networkPolicy.ingress.webhook.from` | list | IPv4+IPv6 `ipBlock` catch-alls | NetworkPolicy peers allowed to reach the webhook port (`controller.ports.webhook`). Defaults to `ipBlock` catch-alls because the kube-apiserver runs host-network on most distributions — a pod/namespace selector would silently fail to match it and the webhook would return 502 errors. Both `0.0.0.0/0` and `::/0` appear because `ipBlock.cidr` is single-family. Tighten to your apiserver/node CIDRs for production |
 | `networkPolicy.ingress.additionalRules` | list | `[]` | Additional ingress rules |
 
-## See Also
+## See also
 
 - [Deploying with Helm](./deploying-with-helm.md) — install, upgrade, and a task-based tour of the chart
 - [Template Libraries](./template-libraries.md) — what each `controller.templateLibraries.*` toggle loads

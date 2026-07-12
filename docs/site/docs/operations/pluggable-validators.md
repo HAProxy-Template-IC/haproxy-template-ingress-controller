@@ -4,7 +4,7 @@
 
 You declare one or more validator sidecars in `spec.validators`, each pointing at a Unix domain socket inside the controller pod and listing file glob patterns. After every dry-run render, the controller routes each rendered file to every validator whose globs match. The validator returns line-numbered diagnostics, and the webhook surfaces them in the admission response — so a broken config payload is caught at `kubectl apply` time with the offending row highlighted.
 
-**Why this exists:** HAPTIC's admission webhook validates incoming `HAProxyTemplateConfig` and watched-resource changes by performing a dry-run render of the operator's templates and an HAProxy syntax check on the result. That catches templating mistakes and HAProxy-syntax mistakes — but the rendered config can also include payloads (Coraza Web Application Firewall (WAF) directives via the Stream Processing Offload Agent (SPOA) hub, OpenTelemetry exporter URLs, OIDC discovery endpoints, etc.) that are not exercised by HAProxy itself. A typo like `nginx.ingress.kubernetes.io/modsecurity-snippet: "SecResquestBodyAccess On"` would otherwise ship through admission, land in the rendered config, and only fail when the SPOA hub's plugin-init runs in production — at which point the entire HAProxy data plane is down until the operator notices. Pluggable validators close that gap.
+**Why this exists:** HAPTIC's admission webhook validates incoming `HAProxyTemplateConfig` and watched-resource changes by performing a dry-run render of the operator's templates and an HAProxy syntax check on the result. That catches templating mistakes and HAProxy-syntax mistakes — but the rendered config can also include payloads (Coraza Web Application Firewall (WAF) directives via the Stream Processing Offload Agent (SPOA) hub, OpenTelemetry exporter URLs, OpenID Connect (OIDC) discovery endpoints, etc.) that aren't exercised by HAProxy itself. A typo like `nginx.ingress.kubernetes.io/modsecurity-snippet: "SecResquestBodyAccess On"` would otherwise ship through admission, land in the rendered config, and only fail when the SPOA hub's plugin-init runs in production — at which point the entire HAProxy data plane is down until the operator notices. Pluggable validators close that gap.
 
 The validator on the other side of the socket is an **opaque program** as far as the controller is concerned: it speaks the [validator wire protocol](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/development/validator-protocol.md) and returns diagnostics. What it does internally — whether it has plugins, how it dispatches files, how it parses content — is its own concern. This page is about how operators declare and run validators; the wire protocol itself is the reference for anyone implementing a new one.
 
@@ -12,7 +12,7 @@ The validator on the other side of the socket is an **opaque program** as far as
 
 Enable pluggable validators when your templates render any file whose contents the validator program understands:
 
-- **SPOA hub TOML configs** with Coraza WAF directives, OpenTelemetry exporter URLs, OIDC SSO configs, etc. (validator: `haproxy-spoa-hub --validate-socket`).
+- **SPOA hub TOML configs** with Coraza WAF directives, OpenTelemetry exporter URLs, OIDC single sign-on configs, etc. (validator: `haproxy-spoa-hub --validate-socket`).
 - **Future** specialised validators (custom map-file linter, gateway-config validator, etc.) — anything that conforms to the wire protocol can plug in.
 
 Skip this feature if your templates only produce HAProxy config — the core HAProxy syntax dry-run already catches everything that matters in that case.
@@ -86,7 +86,7 @@ A validator declared as
   files: ["/etc/haproxy-spoa-hub/*.toml"]
 ```
 
-receives any rendered file whose path matches `/etc/haproxy-spoa-hub/*.toml` (e.g. `config.toml`, `extra.toml`) — but NOT files outside that directory (`/etc/haproxy/maps/host.map`).
+receives any rendered file whose path matches `/etc/haproxy-spoa-hub/*.toml` (for example `config.toml`, `extra.toml`) — but **not** files outside that directory (`/etc/haproxy/maps/host.map`).
 
 Two validators can claim overlapping globs:
 
@@ -99,7 +99,7 @@ Two validators can claim overlapping globs:
 
 The `config.toml` file matches both globs, so it's sent to both validators in parallel; their diagnostics are aggregated. (This is unusual but supported — useful when you want a fast structural check alongside a slow deep semantic check.)
 
-A file that matches no validator's globs is not validated by any sidecar; it still flows through the existing template + HAProxy syntax dry-run.
+A file that matches no validator's globs isn't validated by any sidecar; it still flows through the existing template + HAProxy syntax dry-run.
 
 ### Chart wiring (default)
 
@@ -162,13 +162,13 @@ Configure the controller's liveness probe to hit `/healthz` so a stuck validator
 
 ### Caching
 
-The controller maintains an in-memory LRU cache of validator responses keyed by `(validator-name, file-path, sha256(file-content))`. A repeat reconciliation that produces identical files for the same validator skips the round-trip entirely — typical reconciliation churn (label changes, status updates) doesn't re-validate unchanged plugin configs.
+The controller maintains an in-memory Least Recently Used (LRU) cache of validator responses keyed by `(validator-name, file-path, sha256(file-content))`. A repeat reconciliation that produces identical files for the same validator skips the round-trip entirely — typical reconciliation churn (label changes, status updates) doesn't re-validate unchanged plugin configs.
 
 The cache:
 
 - Is process-local. A controller restart re-warms it.
 - Holds successful round-trips, including responses with `result: "warning"` or `result: "error"`. Validator output is a deterministic function of its input (per the protocol's purity contract).
-- Does NOT cache transport failures (connect refused, decode failure). A transient sidecar outage isn't allowed to poison subsequent admissions.
+- Does **not** cache transport failures (connect refused, decode failure). A transient sidecar outage isn't allowed to poison subsequent admissions.
 - Is bounded at 256 entries with LRU eviction.
 
 ### Connection pooling and parallelism
@@ -183,18 +183,18 @@ For a typical webhook call with one validator and a handful of matched files, th
 
 | What | What HAPTIC does |
 |------|------------------|
-| Validator socket missing at admission time | Admission denied with `validator <name>: connect <path>: no such file or directory`. The Ingress is NOT admitted. |
+| Validator socket missing at admission time | Admission denied with `validator <name>: connect <path>: no such file or directory`. The Ingress **isn't** admitted. |
 | Validator returns an error response | Admission denied with the validator's `errors[i].message` and the row + column the validator pointed at. |
 | Validator returns a warning response | Admission ALLOWED; the warning surfaces via `AdmissionResponse.Warnings` (operator sees it via `kubectl apply` soft warnings). |
 | Validator times out | Admission denied with `validator <name>: validation timed out after Ns`. |
-| Validator returns garbage / wrong protocol_version | Admission denied with a transport-level error message identifying the validator. |
+| Validator returns garbage / wrong `protocol_version` | Admission denied with a transport-level error message identifying the validator. |
 | Validator panics mid-validation | The sidecar catches the panic (per the wire protocol), returns a synthetic error diagnostic, and continues serving subsequent requests. The first admission sees the error; further admissions work. |
 | Idle-closed connection on first reuse | Transparently reconnected and retried once. The operator sees no failure. |
 
 In all cases the data plane (HAProxy itself) keeps running — only admission is gated. **Fail-closed by design**: a broken validator means broken admission, not silent acceptance.
 
 !!! note
-    If you need a temporary escape hatch (e.g., the validator has a bug that's blocking a critical Ingress change), remove the offending entry from `spec.validators` and the webhook reverts to template + HAProxy-syntax dry-run only. Re-add the entry once the validator is fixed.
+    If you need a temporary escape hatch (for example, the validator has a bug that's blocking a critical Ingress change), remove the offending entry from `spec.validators` and the webhook reverts to template + HAProxy-syntax dry-run only. Re-add the entry once the validator is fixed.
 
 ## Custom validators
 
@@ -246,7 +246,7 @@ See [`development/validator-protocol.md`](https://gitlab.com/haproxy-haptic/hapt
 
 **Admission denied with `unknown directive "..."` or similar specific errors.** This is the feature working — the validator caught a broken config in a rendered file. The diagnostic carries the row + column; use that to find the offending Ingress annotation.
 
-**Admission denied with `validation timed out after 5s`.** The validator is too slow on this file. First, check the validator container's logs for the panic / hang. If the slowness is real (very large OWASP Core Rule Set (CRS) bundle, slow regex compile), bump `spec.validators[i].timeoutMs` to a higher value (max 60000).
+**Admission denied with `validation timed out after 5s`.** The validator is too slow on this file. First, check the validator container's logs for the panic / hang. If the slowness is real (very large Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) bundle, slow regex compile), bump `spec.validators[i].timeoutMs` to a higher value (max 60000).
 
 **`/healthz` returns 503 with `pluggable-validators` failures listed.** Match the failure entries to your `spec.validators` and check the corresponding sidecar container's status. Common causes: OOMKilled (bump container resources), filesystem unmounted (check the chart's `emptyDir` volume), or an upstream image regression (pin a known-good `tag`).
 
