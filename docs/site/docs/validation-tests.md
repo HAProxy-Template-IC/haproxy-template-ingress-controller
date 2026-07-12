@@ -4,60 +4,56 @@
 
 Validation tests render your templates against fixture resources and assert on the output — broken templates and invalid HAProxy config fail before they reach a cluster. Tests are embedded in the HAProxyTemplateConfig CRD and run locally using the CLI.
 
-Beyond `run`, the controller binary provides `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
+Beyond running the controller (`haptic-controller run`), the controller binary provides `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
 
 ## Quick Start
 
-`haptic-controller validate` is the controller binary running in validation mode. Download it for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) and run it locally:
+1. Add a `validationTests` section to your HAProxyTemplateConfig:
 
-```bash
-haptic-controller validate -f my-config.yaml
-```
+    ```yaml
+    apiVersion: haproxy-haptic.org/v1alpha1
+    kind: HAProxyTemplateConfig
+    metadata:
+      name: my-config
+    spec:
+      # ... template configuration ...
 
-To validate the config currently deployed in your cluster:
+      validationTests:
+        test-basic-frontend:
+          description: Frontend should be created with correct settings
+          fixtures:
+            services:
+              - apiVersion: v1
+                kind: Service
+                metadata:
+                  name: my-service
+                  namespace: default
+                spec:
+                  ports:
+                    - port: 80
+          assertions:
+            - type: haproxy_valid
+              description: Configuration must be syntactically valid
+
+            - type: contains
+              target: haproxy.cfg
+              pattern: "frontend.*default"
+              description: Must have default frontend
+    ```
+
+2. Download `haptic-controller` for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases). The `validate` subcommand is the controller binary running in validation mode.
+
+3. Run the tests:
+
+    ```bash
+    haptic-controller validate -f my-config.yaml
+    ```
+
+To validate the config currently deployed in your cluster instead of a local file:
 
 ```bash
 kubectl get haproxytemplateconfig -n haptic haptic-config -o yaml > /tmp/haptic-config.yaml
 haptic-controller validate -f /tmp/haptic-config.yaml
-```
-
-Add a `validationTests` section to your HAProxyTemplateConfig:
-
-```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: my-config
-spec:
-  # ... template configuration ...
-
-  validationTests:
-    test-basic-frontend:
-      description: Frontend should be created with correct settings
-      fixtures:
-        services:
-          - apiVersion: v1
-            kind: Service
-            metadata:
-              name: my-service
-              namespace: default
-            spec:
-              ports:
-                - port: 80
-      assertions:
-        - type: haproxy_valid
-          description: Configuration must be syntactically valid
-
-        - type: contains
-          target: haproxy.cfg
-          pattern: "frontend.*default"
-          description: Must have default frontend
-```
-
-Run tests:
-
-```bash
-haptic-controller validate -f my-config.yaml
 ```
 
 Or run tests right here — this is a complete config with a `validationTests` block. Press **Run live**, then open the **tests** tab to see each assertion pass or fail:
@@ -148,6 +144,7 @@ Each test consists of:
 | **Min HAProxy version** (`minHAProxyVersion`) | Optional — skip the test unless the HAProxy version under test is at least this (for version-gated features) |
 | **Extra context** (`extraContext`) | Optional — per-test values merged into the render context, overriding the global `templatingSettings.extraContext` |
 | **Current config** (`currentConfig`) | Optional — an existing `haproxy.cfg` the render treats as the current config, exercising slot-preservation / reload-vs-runtime logic |
+| **Requires** (`requires` / `requiresFields`) | Optional — strip the test when a watched resource or schema field is unavailable (see [Conditional Tests](#conditional-tests-requires-and-requiresfields)) |
 
 ### Fixtures
 
@@ -198,7 +195,55 @@ httpResources:
 
 Templates calling `http.Fetch()` for unmocked URLs fail with an error. Define shared HTTP fixtures in the `_global` test to make them available to all tests.
 
+### Conditional Tests (`requires` and `requiresFields`)
+
+`requires` lists `watchedResources` keys the test depends on. When an optional
+watched resource named there is unavailable (no candidate API version served
+by the cluster), the test is stripped from the effective configuration at load
+time — the same mechanism `templateSnippets` use.
+
+`requiresFields` goes one level deeper: a list of schema field paths in the
+form `<watchedResourceKey>.<field.path>`:
+
+```yaml
+validationTests:
+  test-httproute-cors-filter:
+    requires: [httproutes]
+    requiresFields: [httproutes.spec.rules.filters.cors]
+    # ...
+```
+
+When any listed field is absent from the resolved schema generation of its
+watched resource, the test is stripped at load time. This covers clusters
+that serve the resource at the same API version as newer releases but with
+an older schema generation lacking the field (for example, Gateway API v1.1
+serves `httproutes` at `v1` without the CORS filter — the apiserver prunes
+the field from fixtures, the feature never activates, and without stripping
+the test would fail the fail-closed load gate). The first dot-segment must
+name a `watchedResources` key; array levels in the remaining path are
+descended transparently (`spec.rules.filters.cors` matches the field inside
+the `rules[]` / `filters[]` items). The current stripping outcome is visible
+at `/debug/vars/effectiveConfigResolution`.
+
 ## Assertion Types
+
+### Assertion Targets
+
+The `contains`, `not_contains`, `match_count`, `equals`, and `match_order` assertion types share a `target` field selecting which rendered output to check (resolved by `pkg/controller/testrunner/assertion_helpers.go`):
+
+| Target | What's checked |
+|--------|----------------|
+| `haproxy.cfg` (or empty) | The rendered main HAProxy configuration |
+| `map:<name>` | A rendered map file. `<name>` matches against either the full path or the basename |
+| `file:<name>` | A rendered general file (error pages, etc.), matched by filename |
+| `cert:<name>` | A rendered SSL certificate, matched by basename |
+| `crt-list:<name>` | A rendered crt-list file, matched by basename. Requires HAProxy 3.2+ |
+| `k8s:<template-name>` | The rendered YAML of a `spec.k8sResources` template (potentially multi-doc with `---`), so you can assert on emitted Kubernetes resources |
+| `status:<ns>/<name>:<phase>` | The JSON status payload a `statusPatch()` call emitted for resource `<ns>/<name>` in the given pipeline phase (`rendered`, `deployed`, `renderFailed`, or `deployFailed`) — the way to test status-patch templates |
+| `rendering_error` | The simplified render error string, populated only when the render itself failed. Use this on negative tests where you expect rendering to be rejected |
+
+!!! warning "Unknown targets fall back to `haproxy.cfg` silently"
+    Typos in `target:` won't error — they'll just match the wrong content. Sanity-check via `--dump-rendered` if an assertion behaves unexpectedly.
 
 ### haproxy_valid
 
@@ -221,21 +266,6 @@ Verifies target content matches a regex pattern:
   pattern: "backend api-production"
   description: Must create backend for API service
 ```
-
-**Targets** (resolved by `pkg/controller/testrunner/assertion_helpers.go`, shared by `contains` / `not_contains` / `match_count` / `equals` / `match_order`):
-
-| Target | What's checked |
-|--------|----------------|
-| `haproxy.cfg` (or empty) | The rendered main HAProxy configuration |
-| `map:<name>` | A rendered map file. `<name>` matches against either the full path or the basename |
-| `file:<name>` | A rendered general file (error pages, etc.), matched by filename |
-| `cert:<name>` | A rendered SSL certificate, matched by basename |
-| `crt-list:<name>` | A rendered crt-list file, matched by basename. Requires HAProxy 3.2+ |
-| `k8s:<template-name>` | The rendered YAML of a `spec.k8sResources` template (potentially multi-doc with `---`), so you can assert on emitted Kubernetes resources |
-| `status:<ns>/<name>:<phase>` | The JSON status payload a `statusPatch()` call emitted for resource `<ns>/<name>` in the given pipeline phase (`rendered`, `deployed`, `renderFailed`, or `deployFailed`) — the way to test status-patch templates |
-| `rendering_error` | The simplified render error string, populated only when the render itself failed. Use this on negative tests where you expect rendering to be rejected |
-
-Unknown targets fall back to `haproxy.cfg` silently — typos in `target:` won't error, they'll just match the wrong content. Sanity-check via `--dump-rendered` if an assertion behaves unexpectedly.
 
 ### not_contains
 
@@ -329,17 +359,14 @@ haptic-controller validate -f config.yaml --output yaml
 # Parallelism (0=auto-detect CPUs, 1=sequential)
 haptic-controller validate -f config.yaml --workers 4
 
-# Typed watched-resource access (needed when templates use *resources.X.T
-# field access). Point at a directory of CRD YAMLs / OpenAPI v3 schemas;
-# the repo bundles its Gateway API + haptic CRDs + K8s built-in schemas
-# under tests/schemas/, which the chart-test script auto-wires.
+# Typed watched-resource access — point at a directory of schemas
 haptic-controller validate -f config.yaml --schema-dir tests/schemas
 # Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic-controller validate ...
 ```
 
 The `haptic-controller validate` command shells out to the `haproxy` binary on your `PATH` — both to detect the HAProxy version during setup (`haproxy -v`) and for the `haproxy_valid` assertions (`haproxy -c`). Install HAProxy locally (e.g. via your package manager) and ensure it is on `PATH`; if no `haproxy` is found, `validate` fails fast with a clear error (it does not silently fall back to a syntax-only check). To validate against a specific HAProxy version, run the matching per-version controller image, which bundles that version.
 
-If a template reaches for typed watched-resource access (`resources.gateways.List()` returning `[]*resources.gateways.T`, or a `case *resources.httproutes.T` type-switch branch) and no `--schema-dir` was supplied, validation fails at engine compile time with a clear "no schema for X" pointer back to the flag. Charts that stick to the untyped `resources["<name>"]` / `dig()` path validate fine without the flag.
+Templates that use typed watched-resource access need `--schema-dir` (or `HAPTIC_SCHEMA_DIR`); without it they fail at engine compile time with a "no schema for X" error, while untyped `dig()`-based templates validate fine — see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for where schemas come from and what the repo's bundled `tests/schemas/` directory covers.
 
 Exit code 0 means all tests passed.
 
@@ -454,7 +481,7 @@ validationTests:
 
 ### Testing Template Errors
 
-A negative test passes when the render fails *as expected*. Assert on the `rendering_error` target (see [contains targets](#contains)) so the deliberate `fail()` is treated as the pass condition — without it, the failed render marks the whole test red:
+A negative test passes when the render fails *as expected*. Assert on the `rendering_error` target (see [Assertion Targets](#assertion-targets)) so the deliberate `fail()` is treated as the pass condition — without it, the failed render marks the whole test red:
 
 ```yaml
 test-no-services-error:
@@ -514,104 +541,105 @@ test1:
 
 ## Complete Example
 
+A full Ingress → Service routing config with its tests. Press **Run live**, then open the **tests** tab to watch every assertion evaluate:
+
+<div class="pg-embed" markdown data-tab="tests" data-controls="tabs" data-title="Ingress routing with validation tests" data-height="560">
+
 ```yaml
-apiVersion: haproxy-haptic.org/v1alpha1
-kind: HAProxyTemplateConfig
-metadata:
-  name: ingress-routing
-spec:
-  watchedResources:
-    services:
-      apiVersion: v1
-      resources: services
-      indexBy: ["metadata.namespace", "metadata.name"]
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      indexBy: ["metadata.namespace", "metadata.name"]
+watchedResources:
+  services:
+    apiVersion: v1
+    resources: services
+    indexBy: ["metadata.namespace", "metadata.name"]
+  ingresses:
+    apiVersion: networking.k8s.io/v1
+    resources: ingresses
+    indexBy: ["metadata.namespace", "metadata.name"]
 
-  haproxyConfig:
-    template: |
-      global
-        daemon
+haproxyConfig:
+  template: |
+    global
+      daemon
 
-      defaults
-        mode http
-        timeout connect 5s
-        timeout client 30s
-        timeout server 30s
+    defaults
+      mode http
+      timeout connect 5s
+      timeout client 30s
+      timeout server 30s
 
-      frontend http
-        bind :80
-        {% for _, ingress := range resources.ingresses.List() %}
-        {% for _, rule := range ingress.spec.rules %}
-        acl host_{{ replace(rule.host, ".", "_") }} hdr(host) -i {{ rule.host }}
-        use_backend {{ replace(rule.host, ".", "_") }}_backend if host_{{ replace(rule.host, ".", "_") }}
-        {% end %}
-        {% end %}
-
+    frontend http
+      bind :80
       {% for _, ingress := range resources.ingresses.List() %}
       {% for _, rule := range ingress.spec.rules %}
-      backend {{ replace(rule.host, ".", "_") }}_backend
-        balance roundrobin
-        {% var svc_name = rule.http.paths[0].backend.service.name %}
-        {% var svc = resources.services.GetSingle(ingress.metadata.namespace, svc_name) %}
-        {% if svc != nil %}
-        server svc1 {{ svc.spec.clusterIP }}:{{ svc.spec.ports[0].port }} check
-        {% end %}
+      acl host_{{ replace(rule.host, ".", "_") }} hdr(host) -i {{ rule.host }}
+      use_backend {{ replace(rule.host, ".", "_") }}_backend if host_{{ replace(rule.host, ".", "_") }}
       {% end %}
       {% end %}
 
-  validationTests:
-    test-single-ingress:
-      description: Single ingress should create frontend ACL and backend
-      fixtures:
-        services:
-          - apiVersion: v1
-            kind: Service
-            metadata:
-              name: api
-              namespace: default
-            spec:
-              clusterIP: 10.0.0.100
-              ports:
-                - port: 80
-        ingresses:
-          - apiVersion: networking.k8s.io/v1
-            kind: Ingress
-            metadata:
-              name: main
-              namespace: default
-            spec:
-              rules:
-                - host: api.example.com
-                  http:
-                    paths:
-                      - path: /
-                        backend:
-                          service:
-                            name: api
-                            port:
-                              number: 80
-      assertions:
-        - type: haproxy_valid
-          description: Configuration must be valid
+    {% for _, ingress := range resources.ingresses.List() %}
+    {% for _, rule := range ingress.spec.rules %}
+    backend {{ replace(rule.host, ".", "_") }}_backend
+      balance roundrobin
+      {% var svc_name = rule.http.paths[0].backend.service.name %}
+      {% var svc = resources.services.GetSingle(ingress.metadata.namespace, svc_name) %}
+      {% if svc != nil %}
+      server svc1 {{ svc.spec.clusterIP }}:{{ svc.spec.ports[0].port }} check
+      {% end %}
+    {% end %}
+    {% end %}
 
-        - type: contains
-          target: haproxy.cfg
-          pattern: "acl host_api_example_com hdr\\(host\\) -i api.example.com"
-          description: Must have ACL for api.example.com
+validationTests:
+  test-single-ingress:
+    description: Single ingress should create frontend ACL and backend
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: api
+            namespace: default
+          spec:
+            clusterIP: 10.0.0.100
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: main
+            namespace: default
+          spec:
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      backend:
+                        service:
+                          name: api
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: Configuration must be valid
 
-        - type: contains
-          target: haproxy.cfg
-          pattern: "backend api_example_com_backend"
-          description: Must have backend for api.example.com
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl host_api_example_com hdr\\(host\\) -i api.example.com"
+        description: Must have ACL for api.example.com
 
-        - type: contains
-          target: haproxy.cfg
-          pattern: "server svc1 10.0.0.100:80 check"
-          description: Must have server pointing to service ClusterIP
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend api_example_com_backend"
+        description: Must have backend for api.example.com
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server svc1 10.0.0.100:80 check"
+        description: Must have server pointing to service ClusterIP
 ```
+
+</div>
 
 ## See Also
 

@@ -21,9 +21,9 @@ Tune HAPTIC in three areas:
 These recommendations are based on the controller's primary memory consumers (watched resource caches, template rendering buffers, event history) and CPU consumers (template rendering, API server watch streams). Adjust based on your actual resource counts and template complexity.
 
 !!! note "Chart defaults differ — deliberately"
-    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Burstable QoS — no CPU limit, by design), which differs from the table above for two reasons spelled out in the [HAProxy deployment guide](../haproxy-deployment.md#resource-limits-and-container-awareness): omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel OOM killer from preferring this pod over Burstable neighbours. The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
+    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Burstable QoS — no CPU limit, by design), which differs from the table above for two reasons: omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel OOM killer from preferring this pod over Burstable neighbours (see [Robusta on Kubernetes memory limits](https://home.robusta.dev/blog/kubernetes-memory-limit) for the rationale). The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
 
-Configure via Helm values:
+Configure via Helm values. Top-level `resources:` applies to the controller pod; HAProxy and the Dataplane API sidecar have their own blocks under `haproxy.resources` and `haproxy.dataplane.resources` (see [HAProxy Deployment](../haproxy-deployment.md)):
 
 ```yaml
 # values.yaml
@@ -34,6 +34,29 @@ resources:
   limits:
     # No CPU limit — avoids throttling GOMAXPROCS-aware Go under bursts.
     memory: 512Mi   # memory request == limit; no CPU limit → Burstable QoS (by design)
+```
+
+### Container Awareness (GOMAXPROCS and GOMEMLIMIT)
+
+The controller automatically detects and respects the limits you set above — no tuning env vars are needed:
+
+- **CPU limits (GOMAXPROCS):** native cgroup-aware GOMAXPROCS (added upstream in Go 1.25; the controller currently builds with Go 1.26). The Go runtime detects cgroup CPU limits (v1 and v2), sets GOMAXPROCS to match the container's CPU limit rather than the host's core count, and adjusts dynamically if the limit changes at runtime. Proper GOMAXPROCS prevents over-scheduling goroutines and the CPU throttling that comes with it.
+- **Memory limits (GOMEMLIMIT):** the controller uses the `automemlimit` library to set GOMEMLIMIT to 90% of the container memory limit (10% headroom for non-heap memory), with both cgroups v1 and v2. GOMEMLIMIT helps the Go GC keep heap memory under control and prevents OOM kills.
+
+At startup the controller logs the detected limits, for example:
+
+```
+INFO HAPTIC starting ... gomaxprocs=8 gomemlimit="483183820 bytes (460.80 MiB)"
+```
+
+`gomemlimit` is 90% of the 512Mi memory limit (≈460.8 MiB). Because the chart omits a CPU limit, `gomaxprocs` matches the node's core count (8 here) rather than a container CPU limit — you only see `gomaxprocs=1` when you set a 1-CPU limit.
+
+The `AUTOMEMLIMIT` environment variable adjusts the memory limit ratio (default: 0.9; valid range `0.0 < AUTOMEMLIMIT <= 1.0`). Set it via the chart's top-level `extraEnv` list, which is injected into the controller container:
+
+```yaml
+extraEnv:
+  - name: AUTOMEMLIMIT
+    value: "0.8"   # Set GOMEMLIMIT to 80% of container memory limit
 ```
 
 ### Memory Considerations
@@ -86,8 +109,6 @@ watchedResources:
 ```
 
 Empty / invalid strings fall back to the 2s default silently; `"0"` disables debouncing so every change fires immediately. This is the only debounce layer — the Reconciler fires immediately on every event with no separate refractory window, and reload throttling lives in the deployer (see [Deployment Pacing](#deployment-pacing) below and [architecture-overview](../development/design/architecture-overview.md)).
-
-If you need to change the global default in a custom build, edit `DefaultDebounceInterval` in `pkg/k8s/types/types.go`.
 
 ### Deployment Pacing
 
@@ -345,33 +366,21 @@ The controller automatically discovers new pods and deploys configuration.
 
 ### Controller Scaling (HA Mode)
 
-For high availability, run multiple controller replicas:
-
-```yaml
-# values.yaml
-replicaCount: 3
-
-controller:
-  config:
-    controller:
-      leaderElection:
-        enabled: true
-```
-
-Only the leader performs deployments; followers maintain hot-standby status.
+Running multiple controller replicas adds failover and webhook capacity, not render/deploy throughput — only the leader deploys. See [High Availability](./high-availability.md) for configuration and sizing.
 
 ### Resource Watching Optimization
 
 Reduce watched resources to minimize controller load:
 
 ```yaml
-# Watch a single namespace
+# Pin a watch to a single namespace (fieldSelector is a client-side
+# JSONPath equality filter — see Watching Resources)
 spec:
   watchedResources:
     ingresses:
       apiVersion: networking.k8s.io/v1
       resources: ingresses
-      namespace: production
+      fieldSelector: "metadata.namespace=production"
 
 # Or narrow by label selector on the resources themselves
 spec:
@@ -412,10 +421,6 @@ The controller deploys to multiple HAProxy pods in parallel. If deployment is sl
 2. Verify network connectivity to HAProxy pods
 3. Consider reducing config complexity
 
-### Drift Prevention
-
-See [Reconciliation Tuning → Deployment Pacing](#deployment-pacing) above. Configure via `spec.dataplane.driftPreventionInterval` (default 60s).
-
 ## Event Processing
 
 The controller's in-process event bus uses per-subscriber buffers sized at construction time (see `pkg/events/bus.go`); there is no CRD field to tune them. Monitor the event subsystem via the standard metrics:
@@ -455,53 +460,7 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
     curl http://localhost:8080/debug/pprof/goroutine?debug=1
     ```
 
-??? note "Profile-Guided Optimization (PGO)"
-
-    The controller is built with Go's Profile-Guided Optimization (PGO) for improved performance. PGO typically provides 2-7% CPU improvement by optimizing frequently-called functions.
-
-    **How it works:**
-
-    A baseline CPU profile (`cmd/controller/default.pgo`) is committed to the repository. Go automatically uses this profile during builds to optimize hot paths.
-
-    **Updating the profile:**
-
-    To collect a fresh profile from the development environment:
-
-    1. Start the dev environment:
-
-        ```bash
-        ./scripts/start-dev-env.sh
-        ```
-
-    2. Port-forward to the controller's debug port:
-
-        ```bash
-        kubectl -n haptic port-forward deploy/haptic-controller 8080:8080
-        ```
-
-    3. Generate workload (trigger reconciliation by modifying resources)
-
-    4. Collect a 30-second CPU profile:
-
-        ```bash
-        make pgo-profile
-        # Or manually:
-        curl -o cmd/controller/default.pgo http://localhost:8080/debug/pprof/profile?seconds=30
-        ```
-
-    5. Rebuild with the new profile:
-
-        ```bash
-        make build
-        ```
-
-    **Production profiles:**
-
-    For optimal results, collect profiles from production during representative workloads. Merge multiple profiles for broader coverage:
-
-    ```bash
-    make pgo-merge PROFILES='profile1.pgo profile2.pgo'
-    ```
+Controller images ship built with Profile-Guided Optimization (PGO), which typically yields 2-7% CPU improvement on hot paths — contributors updating the committed profile should see [Deployment — Build Optimizations](../development/design/deployment.md#build-optimizations-contributors).
 
 ### Common Performance Issues
 
@@ -510,7 +469,7 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 - Check for memory leaks: growing heap over time (`/debug/pprof/heap`)
 - Switch large, infrequently-accessed resources (e.g. TLS Secrets) to `store: on-demand`
 - Trim noisy fields with `watchedResourcesIgnoreFields`
-- Narrow watch scope via `namespace` or `labelSelector`
+- Narrow watch scope via `fieldSelector` or `labelSelector` (see [Resource Watching Optimization](#resource-watching-optimization))
 
 **High CPU usage:**
 

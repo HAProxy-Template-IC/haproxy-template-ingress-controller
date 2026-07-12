@@ -4,68 +4,9 @@
 
 The chart can deploy HAProxy pods alongside the controller, or you can manage HAProxy separately.
 
-## Resource Limits and Container Awareness
+## Resource Limits
 
-The controller automatically detects and respects container resource limits:
-
-### CPU Limits (GOMAXPROCS)
-
-**Native cgroup-aware GOMAXPROCS** (added upstream in Go 1.25; the controller currently builds with Go 1.26): The Go runtime automatically:
-
-- Detects cgroup CPU limits (v1 and v2)
-- Sets GOMAXPROCS to match the container's CPU limit (not the host's core count)
-- Dynamically adjusts if CPU limits change at runtime
-
-No configuration needed - this works automatically when you set CPU limits in the deployment.
-
-### Memory Limits (GOMEMLIMIT)
-
-**automemlimit Library**: The controller uses the `automemlimit` library to automatically set GOMEMLIMIT based on cgroup memory limits. By default:
-
-- Sets GOMEMLIMIT to 90% of the container memory limit
-- Leaves 10% headroom for non-heap memory sources
-- Works with both cgroups v1 and v2
-
-### Configuration
-
-Set resource limits in your values file. Top-level `resources:` applies to the controller pod; HAProxy and the Dataplane API sidecar have their own blocks under `haproxy.resources` and `haproxy.dataplane.resources`:
-
-```yaml
-# Controller pod
-resources:
-  requests:
-    cpu: 100m
-    memory: 512Mi
-  limits:
-    memory: 512Mi   # No CPU limit by default to avoid throttling
-```
-
-The chart defaults to **Guaranteed QoS for memory** (`requests.memory == limits.memory`) and deliberately omits the CPU limit; see [Robusta on Kubernetes memory limits](https://home.robusta.dev/blog/kubernetes-memory-limit) for the rationale.
-
-At startup the controller logs the detected limits, for example:
-
-```
-INFO HAPTIC starting ... gomaxprocs=8 gomemlimit="483183820 bytes (460.80 MiB)"
-```
-
-`gomemlimit` is 90% of the 512Mi memory limit (≈460.8 MiB). Because the example omits a CPU limit, `gomaxprocs` matches the node's core count (8 here) rather than a container CPU limit — you only see `gomaxprocs=1` when you set a 1-CPU limit.
-
-### Fine-Tuning Memory Limits
-
-The `AUTOMEMLIMIT` environment variable can adjust the memory limit ratio (default: 0.9). Set it via the chart's top-level `extraEnv` list, which is injected into the controller container:
-
-```yaml
-extraEnv:
-  - name: AUTOMEMLIMIT
-    value: "0.8"   # Set GOMEMLIMIT to 80% of container memory limit
-```
-
-Valid range: `0.0 < AUTOMEMLIMIT <= 1.0`.
-
-### Why This Matters
-
-- **Prevents OOM kills**: GOMEMLIMIT helps the Go GC keep heap memory under control
-- **Reduces CPU throttling**: Proper GOMAXPROCS prevents over-scheduling goroutines
+Controller-pod sizing — the chart's request/limit defaults, the sizing table, and the GOMAXPROCS/GOMEMLIMIT container awareness — is covered in [Performance — Controller Resource Sizing](operations/performance.md#controller-resource-sizing). HAProxy and the Dataplane API sidecar have their own resource blocks in the chart values: `haproxy.resources` and `haproxy.dataplane.resources`.
 
 ## Service Architecture
 
