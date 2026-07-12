@@ -392,6 +392,16 @@ kubectl scale deployment haptic-haproxy --replicas=5 -n haptic
 
 The controller automatically discovers new pods and deploys configuration.
 
+!!! note "Scaling HAProxy doesn't reload the running pods"
+    Adding or removing an HAProxy replica doesn't reload the pods already running. The rendered config is identical on every HAProxy pod and independent of fleet size — backend servers list your application pod IPs (not HAProxy pod IPs), and the peers section is a single node-local socket peer, not a per-replica list. A new pod loads the current config once on startup; the existing pods keep serving unchanged.
+
+### Application rollout and traffic
+
+HAPTIC applies backend endpoint changes over the Runtime API without a reload, and the chart watches EndpointSlices with debouncing disabled (`debounceInterval: "0"`) so a pod becoming ready or not ready reaches HAProxy almost immediately. Two consequences for an application rollout:
+
+- **Reloads don't drop in-flight requests.** When a change does reload HAProxy, established connections drain on the old worker before it exits, so a reload isn't a traffic outage — see [Reload behavior](../supported-configuration.md#reload-behavior).
+- **A single-replica backend still has a brief 503 window during a rolling restart.** With one replica, the sole endpoint becomes not ready before its replacement is ready, so for that gap the backend has zero ready servers and returns `503` — no matter how fast HAPTIC reacts. This is inherent to running one replica, not a HAPTIC deploy delay. For a zero-downtime application rollout, run two or more replicas, or set the Deployment's `maxUnavailable: 0` with `maxSurge: 1` so a new pod is ready before the old one is removed.
+
 ### Controller scaling (HA mode)
 
 Running multiple controller replicas adds failover and webhook capacity, not render/deploy throughput — only the leader deploys. See [High Availability](./high-availability.md) for configuration and sizing.

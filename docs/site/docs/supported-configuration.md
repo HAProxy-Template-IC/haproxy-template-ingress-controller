@@ -120,7 +120,17 @@ The following sections use **whole-section comparison** via the models' `.Equal(
 The controller skips the HAProxy reload when every change in a push can be applied through the Runtime API. The sections below list exactly which changes qualify.
 
 !!! note "Reloads are seamless"
-    When a change *does* require a reload, HAProxy reloads seamlessly: the new worker takes over new connections while established connections keep running on the old worker, which drains them before exiting. Requests aren't dropped, so even reload-required changes are effectively zero-downtime. Skipping the reload (above) still matters — it avoids forking a fresh worker process at all — but a reload isn't a traffic outage.
+    When a change *does* require a reload, HAProxy reloads seamlessly: the new worker takes over new connections while established connections keep running on the old worker, which drains them before exiting. In-flight requests aren't dropped, so even reload-required changes are effectively zero-downtime. Skipping the reload (above) still matters — it avoids forking a fresh worker process at all — but a reload isn't a traffic outage.
+
+### Route and Ingress changes
+
+HAPTIC turns your routing resources into two kinds of HAProxy state: one **backend section** per routed Service and port, and **map entries** (host and path maps) that steer each request to the right backend. Whether a route change reloads depends on which of the two it touches:
+
+- **A new host or path that targets an already-routed Service and port** adds a map entry. Adding an entry to a map the running config already references applies over the Runtime API — no reload (Dataplane API v3.0+; see [Map and certificate content](#map-and-certificate-content)). No backend is created.
+- **A new host or path that targets a Service and port nothing routes to yet** creates a new backend section. Creating a backend is structural, so the push reloads (see [Structural and logic changes](#structural-and-logic-changes)).
+- **Removing the last route to a Service and port** deletes its backend section — also structural, also a reload.
+
+The runtime fast path is all-or-nothing: if a single push contains one new backend, the whole push reloads even when every other change in it was runtime-eligible. So a new route reloads exactly when it introduces a new backend, and applies at runtime when it only adds a map entry to an existing one.
 
 ### Zero-reload operations (runtime API)
 
@@ -133,7 +143,7 @@ Server modifications avoid reloads **only** when changing these Runtime API-supp
 | Field | Description | API Endpoint |
 |-------|-------------|--------------|
 | **Weight** | Server weight for load balancing | Runtime API `/runtime/servers` |
-| **Address** | Server IP address | Runtime API `/runtime/servers` |
+| **Address** | Server IP address — an endpoint or pod IP change updates this field | Runtime API `/runtime/servers` |
 | **Port** | Server port number | Runtime API `/runtime/servers` |
 | **Maintenance** | Enable/disable/drain server state | Runtime API `/runtime/servers` |
 | **AgentCheck** | Agent check status | Runtime API `/runtime/servers` |
@@ -141,11 +151,17 @@ Server modifications avoid reloads **only** when changing these Runtime API-supp
 | **AgentSend** | Agent check send string | Runtime API `/runtime/servers` |
 | **HealthCheckPort** | Health check port | Runtime API `/runtime/servers` |
 
+!!! note "Endpoint and pod IP changes reuse a pre-allocated slot"
+    A backend endpoint changing its IP address (a pod rescheduled onto a new node, an EndpointSlice update) is an **Address** change — reload-free — **only when it lands in a server slot that already exists**. The bundled chart guarantees this by reserving spare `disabled` server slots and keeping each server line minimal, so a rotating pod IP fills an existing slot over the Runtime API. When the count of ready endpoints exceeds the reserved slots, HAPTIC adds a new server line, which is structural and reloads. See [Reserved server slots](templating.md#reserved-server-slots-avoid-reloads).
+
 #### Frontend modifications
 
 | Field | Description | API Endpoint |
 |-------|-------------|--------------|
 | **`Maxconn`** | Maximum connections | Runtime API `/runtime/frontends` |
+
+!!! note "Only frontend `maxconn` is runtime-eligible"
+    HAProxy has three separate `maxconn` settings and only one avoids a reload. **Frontend `maxconn`** (the row above) applies over the Runtime API. **Global `maxconn`** and **server-line `maxconn`** both require a reload: the global section has no runtime command for it, and server-line `maxconn` isn't in the runtime-supported field set (see [Server operations](#server-operations)).
 
 #### Map and certificate content
 
@@ -161,6 +177,9 @@ The new content is also written to disk (so a later, unrelated reload re-reads i
 - The map or certificate must already exist **and be referenced by the running config** so HAProxy has it loaded. **Creating or deleting** a map/cert file, or changing one the config doesn't reference, takes the reload path.
 - Other auxiliary files — general/error files, CA files, crt-lists — always reload when their content changes.
 - If a runtime apply fails for any reason, the controller falls back to a single reload, so the result always converges.
+
+!!! note "Adding a certificate reloads; rotating one may not"
+    These two cases have opposite answers. **Adding a new certificate** (a new filename) is a file create — structural, always a reload. **Rotating an existing certificate** (renewed content under the same filename, for example a `cert-manager` renewal) is reload-free **only on HAProxy and Dataplane API v3.2 or newer**; on older versions even a same-filename rotation reloads.
 
 ### Reload-required operations
 
@@ -192,6 +211,8 @@ Examples of server attributes that **require reload** when modified:
 | **Health Checks** | HTTP Checks, TCP Checks | Health check logic changed |
 | **Frontend Attributes** | Most frontend settings except `Maxconn` | Not supported by Runtime API |
 | **Auxiliary Files** | Creating/deleting any map or certificate; general/error files, CA files, crt-lists | Only content updates to an existing, referenced map (v3.0+) or certificate (v3.2+) are reload-free |
+
+Creating or deleting a frontend or backend is a structural change and always reloads. A new Ingress rule that points at a Service and port nothing else routes to yet creates a new backend — so it reloads; see [Route and Ingress changes](#route-and-ingress-changes).
 
 ### Optimization strategy
 
