@@ -146,6 +146,9 @@ The Ingress library supports all standard Kubernetes Ingress path types:
 !!! note "Path match precedence"
     When more than one path could match a request, HAProxy evaluates the path maps in a fixed order: Exact, then Regex, then Prefix-exact, then Prefix. Host matching runs first (exact host, then single-label wildcard, then host regex). Set `controller.config.routing.regexMatchOrder=last` to move regex evaluation after the prefix matchers (Exact > Prefix-exact > Prefix > Regex). See [Frontend routing logic](base.md#frontend-routing-logic) for the complete cascade.
 
+!!! note "Conflicting Ingresses on the same host and path"
+    When two Ingresses declare the same host and path, HAPTIC doesn't merge or reject them — it emits a map entry for each. The Ingress library lists Ingresses sorted by namespace, then name, and HAProxy serves the first entry it loads for a duplicate map key. So the Ingress whose `namespace/name` sorts first wins, deterministically. There is no `creationTimestamp` tie-break for rule paths — this differs both from `spec.defaultBackend`, where the newest Ingress wins per host (see [Default backend and custom error pages](#default-backend-and-custom-error-pages)), and from ingress-nginx, where the oldest Ingress wins. For precedence against a Gateway API route on the same host and path, see [Frontend routing logic](base.md#frontend-routing-logic).
+
 **Example Ingress:**
 
 ```yaml
@@ -292,6 +295,9 @@ Backends are generated with:
 ```
 
 `<port-name>` is the Service port's name when the port is named (for example `http`, `https`). When the Service port is unnamed — or the Service isn't yet in the controller's store — it falls back to the numeric port number (for example `..._svc_shop_80`).
+
+!!! note "Backends resolve in the Ingress's own namespace"
+    A Kubernetes Ingress backend can't reference a Service in another namespace — `backend.service` has no namespace field, so HAPTIC always resolves the Service and its EndpointSlices in the Ingress's own namespace. A backend name with no matching Service there renders as a [degraded backend](#degraded-backend-events) (503, plus a `Warning` Event), not a cross-namespace route. To route to a Service in another namespace, use a Gateway API HTTPRoute with `backendRef.namespace` and a ReferenceGrant — see [Cross-namespace routes](gateway.md#cross-namespace-routes-referencegrant).
 
 **Example generated configuration:**
 

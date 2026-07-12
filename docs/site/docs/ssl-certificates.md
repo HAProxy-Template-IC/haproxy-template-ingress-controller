@@ -115,6 +115,12 @@ data:
   tls.key: LS0tLS1CRUdJTi... # Base64-encoded private key
 ```
 
+### When the default certificate is missing
+
+If the default certificate Secret doesn't exist, or lacks its `tls.crt` / `tls.key` fields, the render hard-fails with a clear error instead of falling back — every unmatched-SNI TLS handshake depends on this certificate. Fix the Secret (or [disable HTTPS](#disabling-https)) to let the render succeed.
+
+This is stricter than a per-Ingress `spec.tls` certificate: a missing or malformed per-Ingress Secret is skipped silently, and its host falls back to this default certificate (so clients see a name mismatch rather than an error). See [SSL library → missing or invalid certificates](libraries/ssl.md#missing-or-invalid-certificates) for that contrast.
+
 ### Disabling HTTPS
 
 To run in HTTP-only mode (not recommended):

@@ -264,6 +264,14 @@ http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_
 !!! note "Overriding Path Match Order"
     Setting `controller.config.routing.regexMatchOrder=last` swaps in the alternate `frontend-routing-logic-regex-last` variant of this snippet at Helm load time, producing performance-first ordering (Exact > Prefix-exact > Prefix > Regex). Faster matchers run first and regex matching is only evaluated as a fallback. The variant snippet is unset before the merged config is rendered, so it never appears in the operator-visible output.
 
+!!! note "Which resource wins when routes collide on a map key"
+    Every resource library writes into the same shared host and path maps through the `map-*` extension points. When two entries share a map key, HAProxy serves the first one loaded into the map, and `render_glob` renders matching snippets in alphabetical order. So the outcome follows snippet-name ordering:
+
+    - **Ingress and a Gateway API route on the same host and path** — the Gateway snippets (`map-path-exact-500-gateway`, `map-host-500-gateway`, …) sort before the Ingress ones (`…-500-ingress`), so the Gateway entry loads first and the HTTPRoute (or GRPCRoute) wins over the Ingress.
+    - **Two Ingresses on the same host and path** — the Ingress library emits entries in namespace, then name order, so the Ingress whose `namespace/name` sorts first wins (see [Conflicting Ingresses](ingress.md#path-types)).
+
+    This is deterministic but silent: HAPTIC neither merges the routes nor reports the collision.
+
 **3. Qualifier system** — the first `:`-separated field of `path_match` selects the routing mode: `BACKEND:<name>` routes directly, `MULTIBACKEND:<weight>:<key>` selects a weighted backend via random draw. Advanced matchers (method / header / query, contributed by the gateway library through `frontend-matchers-advanced-*`) may rewrite `path_match`, so the qualifier is re-parsed after they run.
 
 **Owner-resource identity.** `txn.resource_id` (`<namespace>/<name>`) is derived from the qualifier value the routing chain already produced — no extra map lookup — and keys the per-resource feature maps (auth, the Coraza web application firewall, body-size, header rewrites). Backend names use `_` as the separator (`<ns>_<name>_svc_<svc>_<port>` for Ingress, `<ns>_<name>_<ruleIdx>` for Gateway weighted routing); Kubernetes names disallow `_`, so splitting on `_` is collision-free.

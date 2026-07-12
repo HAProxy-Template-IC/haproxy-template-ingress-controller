@@ -39,6 +39,8 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 | [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) |
 | [spoa-hub](operations/spoa-hub.md) | Auto | HAProxy-side wiring for the Stream Processing Offload Agent (SPOA) hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
+You don't choose between resource types. A single HAPTIC install serves Ingress and Gateway API resources at the same time — both libraries are enabled by default, and the resource-agnostic base library renders their output into one HAProxy config. Disable a library only if you don't need it. When an Ingress and a Gateway API route collide on the same host and path, the [base library documents which one wins](libraries/base.md#frontend-routing-logic).
+
 ## Enabling and disabling libraries
 
 Configure libraries in your values.yaml (see the [Chart Values Reference](./reference.md#template-libraries) for every `controller.templateLibraries.*` value):
@@ -207,6 +209,14 @@ read any key the same way:
 ```scriggo
 {%- var code = extraContext | dig("nginxHttpRedirectCode") | fallback("308") | tostring() %}
 ```
+
+An `extraContext` value is a *global* default. A per-resource annotation on an
+individual Ingress always overrides a conflicting `extraContext` default for
+that resource: the bundled snippets read the annotation first and fall back to
+the `extraContext` value only when the annotation is absent. For example,
+`haproxy.org/ssl-redirect` on one Ingress wins over the cluster-wide
+`ssl_redirect_default`, and a per-Ingress `hsts` annotation wins over the
+global `hstsEnabled` (see [SSL Certificates → HSTS](./ssl-certificates.md#http-strict-transport-security-hsts)).
 
 ### Snippet priority
 

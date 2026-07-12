@@ -151,6 +151,10 @@ namespace_secretname.pem [ocsp-update on] host1.example.com host2.example.com
 default.pem [ocsp-update on]
 ```
 
+The default certificate (`default.pem`) is always the first line: HAProxy serves the first crt-list entry to clients whose Server Name Indication (SNI) matches nothing and to clients that send no SNI.
+
+When an SNI matches both an exact certificate (`shop.example.com`) and a wildcard one (`*.example.com`), HAProxy serves the exact certificate — this is HAProxy's native SNI selection and HAPTIC doesn't alter it. Crt-list order breaks ties only among patterns of the same specificity; it never lets a wildcard override an exact match.
+
 ### OCSP stapling
 
 Every certificate line in the generated `certificate-list.txt` is emitted with the `[ocsp-update on]` option, which instructs HAProxy to fetch and cache OCSP responses for that certificate:
@@ -161,6 +165,13 @@ default.pem [ocsp-update on]
 ```
 
 There is no separate global OCSP configuration — the per-certificate option is all that's needed with HAProxy 3.0+.
+
+### Missing or invalid certificates
+
+A missing certificate Secret behaves differently depending on whether it's a per-Ingress certificate or the chart's default certificate:
+
+- **A per-Ingress `spec.tls` Secret that's missing or malformed is skipped silently.** If the referenced Secret doesn't exist, or lacks the `tls.crt` / `tls.key` fields, the Ingress library omits it from the crt-list and the render still succeeds. That host then falls back to the default certificate through SNI matching, so clients reach the site but see a certificate-name mismatch (in a development install, the self-signed default). No error, warning, or Event is raised — a typo in `secretName` looks the same as a Secret that hasn't synced yet.
+- **The default certificate Secret being missing or malformed fails the render.** Because every unmatched-SNI handshake depends on it, an absent default Secret (or one lacking `tls.crt` / `tls.key`) hard-fails the render with a clear error rather than falling back. See [SSL Certificates → default SSL certificate](../ssl-certificates.md#default-ssl-certificate).
 
 ### Restricting frontend TLS versions and ciphers
 
@@ -219,6 +230,9 @@ When resource libraries register SSL passthrough backends (via `haproxy.org/ssl-
 2. Extracts SNI (Server Name Indication) without terminating TLS
 3. Routes passthrough traffic directly to backend pods (TCP mode)
 4. Routes termination traffic to Unix socket → HTTPS frontend
+
+!!! warning "SSL passthrough and HAProxy-side client-certificate mTLS are mutually exclusive per host"
+    A host using SSL passthrough can't also use HAProxy-side client-certificate mutual TLS (mTLS). The TCP frontend dispatches a passthrough host by its SNI before any TLS termination, so the encrypted stream never reaches the terminating HTTPS frontend where client-certificate verification (`auth-tls-*` annotations) would run. HAPTIC doesn't reject setting both on one host — the mTLS annotation is ignored, with no warning. For a passthrough host, the backend pod must verify the client certificate itself. To have HAProxy verify client certificates, terminate TLS at HAProxy (don't set `ssl-passthrough`).
 
 ## Watched resources
 
