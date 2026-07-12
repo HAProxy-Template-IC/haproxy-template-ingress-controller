@@ -108,9 +108,43 @@ The Dataplane API is authenticated with a basic-auth password stored in the `<re
 
 To tighten, replace, or debug these policies — including a copy-pastable replacement policy and its selector caveat — see [Networking](./networking.md#replacing-the-shipped-policies). If you keep the debug port enabled, pair it with a NetworkPolicy that restricts ingress to your observability namespace.
 
+## Config injection
+
+Can an annotation smuggle extra HAProxy directives into the rendered config? For most annotations, no. Two categories behave differently.
+
+### Snippet annotations inject by design
+
+These annotations exist to pass HAProxy directives straight into a config section, verbatim:
+
+| Annotation | Library | Default |
+|------------|---------|---------|
+| `haproxy.org/backend-config-snippet` | `haproxytech` | On |
+| `haproxy-ingress.github.io/config-frontend`, `config-global`, `config-defaults` | `haproxyIngress` | On |
+| `nginx.ingress.kubernetes.io/configuration-snippet` | `nginxIngress` | Off |
+
+Whoever can set annotations on an Ingress can inject any directive through an enabled snippet library. The only gate is Kubernetes RBAC on the Ingress resource — restrict who can create or edit Ingresses if that reach is too broad, or disable the snippet libraries you don't use.
+
+### Every other annotation value is validated
+
+Annotation values that HAPTIC interpolates onto a config line pass through injection guards before they render:
+
+- **CIDR-list annotations** (source allow and deny lists, rate-limit whitelists) accept only comma-separated IPv4/IPv6 addresses and CIDR ranges. Any other character — whitespace, `;`, `{`, a newline, a letter — fails the whole render.
+- **Single-value annotations** (header values, hostnames, ciphers, cookie domain and path, rewrite targets) reject control characters, so a newline can't split the line and append a second directive. They also reject spaces where the field is a single token.
+
+A value that trips a guard fails the render with a diagnostic instead of deploying, and the rendered config is checked by `haproxy -c` before it reaches HAProxy. The validating webhook and the daemon fail differently:
+
+- **Watched resources** (Ingress, Gateway, HTTPRoute) use `failurePolicy: Fail` — fail-closed. A resource whose render trips a guard is rejected at apply, and if the webhook is unreachable the apply is rejected too.
+- **The `HAProxyTemplateConfig` CRD** webhook uses `failurePolicy: Ignore` — fail-open by design, so a degraded controller never blocks you from applying a config fix. When it's bypassed, the daemon's load gate still runs `haproxy -c` server-side before deploying and reports the failure on `HAProxyCfg.status`.
+
 ## Secrets in templates
 
 Templates read watched Secrets like any other resource. Decode with `b64decode` (values in `.data` are base64-encoded by Kubernetes):
+
+!!! note "Templates read every watched Secret"
+    A template runs with the controller's read privileges, so it can render **any** Secret in the watched scope into the config — or into logs. There's no per-template Secret allowlist, so two levers bound the exposure:
+
+    - **Restrict who can write `HAProxyTemplateConfig`.** Whoever edits the templates chooses which Secrets get rendered — keep [RBAC](#rbac) on the CRD tight.
+    - **Narrow the Secret watch** with a `fieldSelector`, so the controller never caches Secrets outside the namespaces you serve — see [Watching Resources](../watching-resources.md#narrowing-the-watch).
 
 <div class="pg-embed" markdown data-tab="haproxy.cfg" data-controls="tabs,resources" data-focus="20" data-title="Watched Secret → userlist" data-height="480">
 
@@ -168,6 +202,20 @@ kubectl create secret generic basic-auth -n auth \
 
 Bcrypt is slow to verify on every request; for large userbases use `htpasswd -n -5` (SHA-512 crypt) and see [Performance](./performance.md#password-hash-performance) for the trade-off.
 
+HAPTIC doesn't check hash strength or format by default: `password_hash_validation_regex` defaults to `^.*$`, which accepts any string. Set it to the allowed format to reject weak or unsupported hashes at render time — see [`password_hash_validation_regex`](../reference.md#logging-and-templating). HAProxy's own `haproxy -c` parse rejects some malformed hashes, but formats like `$apr1$` or `{SHA}` pass the parse and then fail every login, so the regex is what stops those before they deploy.
+
+### Secret reference namespaces
+
+Where a Secret reference may point depends on the mechanism:
+
+| Reference | Reachable namespaces |
+|-----------|----------------------|
+| Ingress `spec.tls.secretName` | The Ingress's own namespace only |
+| Ingress `auth-secret` / `auth-tls-secret` annotations | Any watched namespace — the value accepts `namespace/name` with no cross-namespace gate |
+| Gateway API `certificateRefs` / `backendRefs` | Cross-namespace only with a matching `ReferenceGrant` in the target namespace (see [Gateway API](../libraries/gateway.md#cross-namespace-routes-referencegrant)) |
+
+Unlike Gateway API references, the Ingress `auth-secret` annotations have no `ReferenceGrant` equivalent: an Ingress in one namespace can name a Secret in any watched namespace. Narrow the Secret watch with a `fieldSelector` to bound which namespaces those annotations can reach.
+
 ## Audit trail
 
 A minimal audit policy that records who touched `HAProxyTemplateConfig` and which Secrets the controller reads:
@@ -196,6 +244,7 @@ Before exposing a HAPTIC deployment to production traffic:
 - [ ] Random, rotated passwords in `credentialsSecretRef`.
 - [ ] NetworkPolicy that pins `/debug/*` ingress to trusted namespaces (the port also serves `/healthz`, so don't set `controller.debugPort: 0`).
 - [ ] Watched-resource selectors scoped to the namespaces you intend to serve.
+- [ ] RBAC restricting who can write `HAProxyTemplateConfig` (and, with snippet annotations enabled, who can create Ingresses).
 - [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.
 - [ ] NetworkPolicy allowing only kube-apiserver + Dataplane-API egress.
 - [ ] Audit policy in place for `HAProxyTemplateConfig` changes.
