@@ -223,7 +223,7 @@ Addresses are discovered from the controller's LoadBalancer Service. Once an add
 
 ### Degraded backend Events
 
-An Ingress backend that references its Service port **by name** renders in a degraded shape while that Service is absent from the controller's store: the backend gets placeholder-only server slots and serves 503 until the Service appears (see the [base library's service port resolution](base.md) for why the render doesn't fail). That's correct during a propagation race — but a permanent Service-name typo looks exactly the same.
+An Ingress backend that references its Service port **by name** renders in a degraded shape while that Service is absent from the controller's store: the backend gets placeholder-only server slots and serves 503 until the Service appears. The render doesn't fail because an Ingress may legally be created before the Service it references — the base library resolves the missing reference to a port-less value and lets the backend converge on a later reconcile. That's correct during a propagation race — but a permanent Service-name typo looks exactly the same.
 
 To make the difference visible, the controller emits a `Warning` Event (reason `BackendUnresolved`) on each affected Ingress, in the Ingress's namespace. The Event names every unresolvable Service and port name, so a typo shows up in:
 

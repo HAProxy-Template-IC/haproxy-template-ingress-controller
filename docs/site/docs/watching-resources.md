@@ -61,7 +61,6 @@ watchedResources:
     indexBy:                                # JSONPaths that form the composite lookup key
       - metadata.namespace
       - metadata.name
-    namespace: ""                           # pin to one namespace, or leave empty to watch cluster-wide
     labelSelector: ""                       # "app=myapp" — string, not matchLabels object
     enableValidationWebhook: false          # include this kind in the webhook fan-out
     store: full                             # "full" (default) or "on-demand"
@@ -189,7 +188,7 @@ items:
 | Ingress / Service / ConfigMap | `["metadata.namespace", "metadata.name"]` | Standard unique lookup |
 | EndpointSlice | `["metadata.labels.kubernetes\\.io/service-name"]` | One-to-many: many slices per Service |
 | Secret (when sharded by type) | `["metadata.namespace", "type"]` | Group TLS vs. basic-auth vs. opaque |
-| Namespace-pinned resource | `["metadata.name"]` | `namespace:` already narrows the watch |
+| Cluster-scoped resource (Namespace, GatewayClass) | `["metadata.name"]` | No namespace to index by |
 
 Escape dots in JSONPath keys that contain them (`labels.kubernetes\\.io/service-name`), otherwise the path parser reads the dot as a subfield separator.
 
@@ -201,11 +200,10 @@ Escape dots in JSONPath keys that contain them (`labels.kubernetes\\.io/service-
 
 ## Narrowing the Watch
 
-Three filters narrow what actually lands in the store:
+Two filters narrow what actually lands in the store:
 
-- `namespace:` — hard pin to a single namespace. Drops the need for `metadata.namespace` in `indexBy`.
 - `labelSelector:` — equality-only label-selector string applied to the resource itself (`"app=myapp"` or `"app=nginx,env=prod"`). Comma-separated `key=value` pairs only; set-based syntax (`"tier in (frontend,api)"`, `"!disabled"`) is **not** supported — `pkg/controller/conversion.parseLabelSelector` splits on `,` and `=`, dropping anything else.
-- `fieldSelector:` — a client-side JSONPath equality filter applied *after* the list is fetched (format `"field.path=value"`, e.g. `"spec.ingressClassName=haproxy"`). Unlike Kubernetes' native field selectors it can target **any** field, not just the server-supported ones, because the watcher evaluates it itself (at the cost of fetching the full list first). A resource that stops matching is handled as a delete; one that starts matching, as an add. This is what the bundled ingress / gateway libraries use to scope by `ingressClassName` / `gatewayClassName`.
+- `fieldSelector:` — a client-side JSONPath equality filter applied *after* the list is fetched (format `"field.path=value"`, e.g. `"spec.ingressClassName=haproxy"`). Unlike Kubernetes' native field selectors it can target **any** field, not just the server-supported ones, because the watcher evaluates it itself (at the cost of fetching the full list first). A resource that stops matching is handled as a delete; one that starts matching, as an add. This is what the bundled ingress / gateway libraries use to scope by `ingressClassName` / `gatewayClassName`. To pin a watch to a single namespace, filter on `"metadata.namespace=<ns>"`.
 
 Watch the filter in action: two Ingresses reach the playground, but only the `haptic`-class one survives the `fieldSelector` and reaches a backend.
 
@@ -316,7 +314,7 @@ Empty / invalid strings fall back to the 2s default silently — the validating 
 | Symptom | Likely cause |
 |---------|--------------|
 | `.List()` returns empty | Controller hasn't finished initial sync — check `haptic_reconciliation_total` or `kubectl logs … \| grep "initial sync"` |
-| `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector` / `namespace:` is filtering it out |
+| `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector` / `fieldSelector` is filtering it out |
 | OOMKilled on controller | Switch large resources (TLS Secrets, big ConfigMaps) to `store: on-demand`; add `watchedResourcesIgnoreFields` entries |
 | Template rendering slow, many API logs | You're calling `.List()` on an `on-demand` store, or `.Fetch()` consistently missing the cache — profile with `/debug/pprof/profile`, consider `store: full` if the total size is modest |
 | `kubectl apply` on CRD rejected with "watchedResources must be non-empty" | The CRD schema requires at least one entry; see [CRD Reference](./crd-reference.md) |

@@ -2,33 +2,29 @@
 
 ## Overview
 
-By default, the chart provisions a default SSL certificate for HTTPS traffic (via cert-manager), and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
+By default, the chart provisions a default SSL certificate for HTTPS traffic — via cert-manager when it's installed, otherwise as a chart-generated self-signed Secret — and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
 
 ## Default SSL Certificate
 
 ### Default Behavior (Development/Testing)
 
-The chart works out of the box with cert-manager installed. By default, it creates:
+A default install converges out of the box, with or without cert-manager:
 
-- A self-signed `Issuer` named `<release>-ssl-selfsigned`
-- A `Certificate` for `localdev.me` and `*.localdev.me`
+- **cert-manager installed** (the `cert-manager.io/v1` API is present when Helm renders): the chart creates a self-signed `Issuer` named `<release>-ssl-selfsigned` and a `Certificate` for `localdev.me` and `*.localdev.me`; cert-manager provisions the `default-ssl-cert` Secret and renews it before expiry.
+- **cert-manager absent**: the chart generates a self-signed `default-ssl-cert` Secret itself, for the same DNS names. This certificate is valid for 10 years and is **not** auto-rotated. The Secret survives uninstall and upgrade (`helm.sh/resource-policy: keep`), and the chart only generates it when the Secret doesn't already exist — a Secret you created out-of-band is left untouched.
 
-The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local development. No additional configuration is required beyond having cert-manager installed:
+The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local development. No additional configuration is required:
 
 ```bash
-# Install cert-manager (if not already installed)
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
-
-# Install the chart - SSL works out of the box
 helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.2.0-alpha.1 \
   --namespace haptic --create-namespace
 ```
 
 !!! note
-    The default self-signed certificate is intended for development and testing only. For production, override with your own domain and issuer.
+    Both default certificates are self-signed and intended for development and testing only. For production, override with your own domain and issuer.
 
-!!! warning "Without cert-manager the install can't converge"
-    When the cert-manager API is absent, the chart skips the `Certificate` silently — `helm install` succeeds, but nothing ever creates the `default-ssl-cert` Secret. The controller then fails every render (`TLS Secret not found: <namespace>/default-ssl-cert` in its logs) and the HAProxy pods never become fully ready. Either install cert-manager first, or create the Secret yourself (see [Alternative: Manual Certificate](#alternative-manual-certificate)) — the controller picks it up live.
+!!! warning "GitOps tools that render without cluster access"
+    The no-cert-manager fallback checks for an existing Secret with Helm's `lookup` function, which returns nothing when the chart is rendered without cluster access (`helm template`, Argo CD) — every sync would then generate a fresh certificate. For those deployments, install cert-manager, or provide the certificate explicitly: inline via `controller.defaultSSLCertificate.create`/`cert`/`key`, or as a manually created Secret (see [Alternative: Manual Certificate](#alternative-manual-certificate)).
 
 ### Production Deployment
 
@@ -131,6 +127,8 @@ controller:
 ### Certificate Rotation
 
 **With cert-manager**: Certificates are automatically renewed before expiration.
+
+**Chart-generated self-signed Secret** (no cert-manager): never rotated automatically — it's valid for 10 years. Replace it like a manual certificate if you need a different one.
 
 **Manual certificates**: You must update the Secret with a new certificate before the old one expires:
 

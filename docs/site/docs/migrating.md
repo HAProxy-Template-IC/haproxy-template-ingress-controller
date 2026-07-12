@@ -5,9 +5,10 @@ hide:
 
 # Migrating to HAPTIC
 
-How to move an existing cluster from **ingress-nginx** or **haproxy-ingress** to
-HAPTIC with zero downtime — run both controllers side by side, cut over one
-Ingress at a time, and flip DNS only when you're ready.
+How to move an existing cluster from **ingress-nginx**, **haproxy-ingress**, or
+**haproxytech/kubernetes-ingress** to HAPTIC with zero downtime — run both
+controllers side by side, cut over one Ingress at a time, and flip DNS only when
+you're ready.
 
 HAPTIC is built to coexist with your current controller: it ships a distinct
 IngressClass (`haptic`, **not** cluster-default) and its own HAProxy Service, so
@@ -20,7 +21,7 @@ defaults that most often trip up a migration.
 
 ## Before you start
 
-- Your incumbent controller (ingress-nginx / haproxy-ingress) is still running and serving traffic. **Leave it running** until cutover is complete.
+- Your incumbent controller (ingress-nginx / haproxy-ingress / haproxytech kubernetes-ingress) is still running and serving traffic. **Leave it running** until cutover is complete.
 - You have Helm and cluster access. Step 1 below installs HAPTIC with the migration-specific flags. If HAPTIC is *already* installed, that's fine — it adopts nothing until you point Ingresses at its class; just apply the same flags with `helm upgrade` instead.
 - You can edit Ingress manifests (to change `ingressClassName`) or you accept renaming HAPTIC's class to match — see below.
 
@@ -34,13 +35,10 @@ anything:
   flags every annotation HAPTIC treats differently or can't carry over. Best for
   understanding a specific annotation — or trying a fix on the spot.
 - **Audit the whole cluster** with `migrate-check`: one command classifies every
-  annotation in use and renders each Ingress through the real pipeline, for a
-  go/no-go verdict before cutover. Read on for how to run it.
-
-The `migrate-check` tool reads your Ingresses, classifies every source-controller
-annotation as supported, different, dropped, or blocking, and renders each Ingress
-through HAPTIC's real template pipeline to catch anything that would be rejected —
-so you find the surprises now, not mid-cutover.
+  source-controller annotation in use as supported, different, dropped, or
+  blocking, and renders each Ingress through HAPTIC's real template pipeline to
+  catch anything that would be rejected — so you find the surprises now, not
+  mid-cutover. Read on for how to run it.
 
 The same classification runs live below on a preset ingress-nginx setup — the
 **migration** report is the clearest view of what carries over and what doesn't:
@@ -130,8 +128,9 @@ Useful flags:
     ```
 
 2. **Enable the right annotation library** for your source controller — see
-   [From ingress-nginx](#from-ingress-nginx) or
-   [From haproxy-ingress](#from-haproxy-ingress).
+   [From ingress-nginx](#from-ingress-nginx),
+   [From haproxy-ingress](#from-haproxy-ingress), or
+   [From haproxytech/kubernetes-ingress](#from-haproxytechkubernetes-ingress).
 
 3. **Move one test Ingress** to HAPTIC by changing only its class:
 
@@ -219,10 +218,11 @@ its store). Your Ingresses carry `ingressClassName: nginx`, so pick one:
     It's `nginxIngress`, not `nginx-ingress`. `--set …nginx-ingress.enabled=true`
     silently does nothing.
 
-Enabling it also pulls in the SPOA-hub sidecar (the Coraza WAF and external-auth
-plugins auto-enable), adding ~50 MB to the HAProxy pod. Basic host/path routing
-works without this library; only the `nginx.ingress.kubernetes.io/*` annotations
-need it.
+Enabling it also auto-enables the Coraza WAF and external-auth plugins in the
+[SPOA-hub sidecar](operations/spoa-hub.md); with default chart values the sidecar
+is already running (the default-on haproxy-ingress and gateway libraries
+auto-enable plugins of their own). Basic host/path routing works without this
+library; only the `nginx.ingress.kubernetes.io/*` annotations need it.
 
 ### 3. Control the DNS cutover
 

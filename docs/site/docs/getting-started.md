@@ -92,8 +92,31 @@ spec:
 </div>
 
 The playground accepts this bare `spec` content directly; on a cluster the same
-blocks live inside the `HAProxyTemplateConfig` custom resource — Step 3 shows the
-full wrapped shape.
+blocks nest under `spec` of the `HAProxyTemplateConfig` custom resource:
+
+```yaml
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: haptic-config
+  namespace: haptic
+spec:
+  credentialsSecretRef:        # Dataplane API credentials Secret
+    name: haptic-credentials
+  podSelector:                 # which HAProxy pods receive the config
+    matchLabels:
+      app.kubernetes.io/component: loadbalancer
+  haproxyConfig:
+    template: |
+      # ... as above ...
+  watchedResources:
+    # ... as above ...
+  maps:
+    # ... as above ...
+```
+
+The Helm chart installs a complete resource of this shape for you (Step 1); see
+the [CRD Reference](./crd-reference.md) for every field.
 
 ## Prerequisites
 
@@ -122,15 +145,7 @@ The Helm chart deploys:
 - **RBAC**: Permissions for watching Ingress, Service, and EndpointSlice resources
 - **HAProxyTemplateConfig**: CRD resource with the default template configuration, including [template libraries](template-libraries.md) for Ingress and Gateway API out of the box
 
-The chart's default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without cert-manager on the cluster, the chart skips the certificate silently — the controller then can't render its first configuration (its logs repeat `TLS Secret not found: haptic/default-ssl-cert`) and the HAProxy pods never become fully ready. If cert-manager is installed, skip to the verification below. Otherwise, create a self-signed certificate Secret now:
-
-```bash
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout tls.key -out tls.crt -subj "/CN=*.example.local"
-kubectl create secret tls default-ssl-cert -n haptic --cert=tls.crt --key=tls.key
-```
-
-The controller watches the Secret and converges within seconds — no restart needed. See [SSL Certificates](./ssl-certificates.md) for the cert-manager path and production options.
+The chart's default HTTPS certificate works out of the box: with [cert-manager](https://cert-manager.io/docs/installation/) installed, the chart hands it a `Certificate` to issue and renew; without it, the chart generates a self-signed `default-ssl-cert` Secret itself (valid 10 years, not auto-rotated). Use cert-manager for real domains and automatic rotation. If a GitOps tool renders the chart without cluster access (`helm template`, Argo CD), the self-signed fallback regenerates the Secret on every sync — install cert-manager or provide the certificate explicitly instead. See [SSL Certificates](./ssl-certificates.md) for details and production options.
 
 Verify both components are running:
 
