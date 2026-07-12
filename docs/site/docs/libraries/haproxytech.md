@@ -1972,7 +1972,7 @@ htpasswd -nb6 admin mypassword | cut -d: -f2 | base64 -w0
 htpasswd -nbB admin mypassword | cut -d: -f2 | base64 -w0
 ```
 
-Validation cost matters because HAProxy re-runs the hash at every config parse, and the controller validates the config on every reconciliation. With many users or high-cost bcrypt, this dominates reconciliation time. Stick with SHA-512 unless you specifically need bcrypt's adjustable work factor.
+Hash validation runs on every config parse and reconciliation, so with many users or bcrypt it can dominate reconciliation time — prefer SHA-512 unless you need bcrypt's tunable work factor. See [Performance — Password hash validation](../operations/performance.md#password-hash-performance).
 
 **Dependencies**: Requires `auth-type: basic-auth`
 
