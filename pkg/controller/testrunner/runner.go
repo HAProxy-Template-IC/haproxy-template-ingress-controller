@@ -429,7 +429,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 8. Run all assertions (whether rendering succeeded or failed)
-	r.executeAssertions(ctx, &result, test, rendered.HAProxyConfig, rendered.AuxiliaryFiles, rendered.K8sResources, rendered.StatusPatches, templateContext, validationPaths, renderDeps)
+	r.executeAssertions(ctx, &result, test, rendered.HAProxyConfig, rendered.AuxiliaryFiles, rendered.K8sResources, rendered.StatusPatches, rendered.Events, templateContext, validationPaths, renderDeps)
 
 	// Test passes if either:
 	// - Rendering succeeded AND all assertions passed

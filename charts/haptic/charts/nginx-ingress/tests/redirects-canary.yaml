@@ -919,6 +919,14 @@ validationTests:
         target: haproxy.cfg
         pattern: "rand\\(100\\) lt 20"
         description: "the canary weight split is still overlaid on the main's route"
+      - type: contains
+        target: events
+        pattern: 'Warning RouteConflict networking\.k8s\.io/v1 Ingress default/main-new: .*served by Ingress default/main-old'
+        description: "the losing non-canary main gets a RouteConflict Warning"
+      - type: not_contains
+        target: events
+        pattern: "default/canary-ingress:"
+        description: "the canary is exempt — it intentionally shares the main's route, so no conflict event"
 
   test-nginx-ingress-canary-without-main-serves-base-route:
     description: "A canary Ingress with NO corresponding main Ingress still owns and serves its own base route. Canary Ingresses yield the base route to a main when one exists, but fall back to owning it themselves otherwise — so a standalone canary annotation still routes traffic to its backend (mirrors the e2e nginx-canary-header-pattern case, a single annotated Ingress with no main)."

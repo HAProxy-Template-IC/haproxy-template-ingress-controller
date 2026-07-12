@@ -22,6 +22,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
@@ -99,7 +100,11 @@ type RenderOutput struct {
 	AuxiliaryFiles *dataplane.AuxiliaryFiles
 	K8sResources   map[string]string
 	StatusPatches  map[string]string
-	IncludeStats   []templating.IncludeStats
+	// Events is the newline-joined serialization of the Kubernetes Events the
+	// templates recorded via recordEvent(), one per line, so validation tests
+	// can assert on them with the `target: events` resolver.
+	Events       string
+	IncludeStats []templating.IncludeStats
 }
 
 // renderWithStores renders HAProxy configuration using test fixture stores and worker-specific engine.
@@ -156,6 +161,8 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 		return RenderOutput{}, err
 	}
 
+	renderedEvents := collectEvents(renderCtx)
+
 	// Extract dynamic files registered during template rendering
 	fileRegistry := renderCtx["fileRegistry"].(*rendercontext.FileRegistry)
 	dynamicFiles := fileRegistry.GetFiles()
@@ -177,6 +184,7 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 		AuxiliaryFiles: auxiliaryFiles,
 		K8sResources:   k8sResources,
 		StatusPatches:  statusPatches,
+		Events:         renderedEvents,
 		IncludeStats:   includeStats,
 	}, nil
 }
@@ -253,6 +261,27 @@ func collectStatusPatches(renderCtx map[string]any) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// collectEvents drains the EventCollector that the templates' recordEvent()
+// calls populated during rendering and serializes each Event to one line so
+// validation tests can assert on them via the `target: events` resolver.
+// Format: `<Type> <Reason> <apiVersion> <Kind> <ns>/<name>: <message>`.
+func collectEvents(renderCtx map[string]any) string {
+	collector, ok := renderCtx["recordEventCollector"].(*templating.EventCollector)
+	if !ok || collector == nil {
+		return ""
+	}
+	events := collector.Events()
+	if len(events) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, e := range events {
+		fmt.Fprintf(&b, "%s %s %s %s %s/%s: %s\n",
+			e.Type, e.Reason, e.APIVersion, e.Kind, e.Namespace, e.Name, e.Message)
+	}
+	return b.String()
 }
 
 // buildRenderingContext builds the template rendering context using fixture stores.

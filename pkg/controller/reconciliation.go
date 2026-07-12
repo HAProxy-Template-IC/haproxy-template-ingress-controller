@@ -29,6 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/deployer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/discovery"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/eventemitter"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
@@ -260,6 +261,17 @@ func createReconciliationComponents(
 
 	resourceApplierComponent := newResourceApplier(crd, k8sClient, gvrMapper, setup.Bus, logger)
 
+	// EventEmitter forwards template-recorded Kubernetes Events (recordEvent, e.g.
+	// a RouteConflict Warning on an Ingress) to the API server. All-replica:
+	// subscribes on every replica but only the leader emits (the source
+	// ReconciliationCompletedEvent is leader-only, and an internal leader flag
+	// double-gates it).
+	eventEmitterComponent := eventemitter.New(&eventemitter.Config{
+		EventBus:   setup.Bus,
+		KubeClient: k8sClient.Clientset(),
+		Logger:     logger,
+	})
+
 	// Register components with the lifecycle registry.
 	// Coordinator is leader-only because it performs rendering (state changes).
 	// DriftMonitor is leader-only to avoid multi-replica race conditions.
@@ -273,6 +285,7 @@ func createReconciliationComponents(
 			proposalValidatorComponent,
 			statusApplierComponent,
 			resourceApplierComponent,
+			eventEmitterComponent,
 		},
 		[]lifecycle.Component{
 			coordinatorComponent,

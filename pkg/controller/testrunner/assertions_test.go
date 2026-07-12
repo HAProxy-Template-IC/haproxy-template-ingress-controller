@@ -95,7 +95,7 @@ func TestRunner_AssertNotContains(t *testing.T) {
 				Pattern: tt.pattern,
 			}
 
-			result := runner.assertNotContains(tt.content, nil, nil, nil, assertion, "")
+			result := runner.assertNotContains(tt.content, nil, nil, nil, "", assertion, "")
 
 			assert.Equal(t, tt.wantPassed, result.Passed)
 			assert.Equal(t, "not_contains", result.Type)
@@ -116,7 +116,7 @@ func TestRunner_AssertNotContains_WithDescription(t *testing.T) {
 		Description: "Config must not contain forbidden pattern",
 	}
 
-	result := runner.assertNotContains("hello world", nil, nil, nil, assertion, "")
+	result := runner.assertNotContains("hello world", nil, nil, nil, "", assertion, "")
 
 	assert.True(t, result.Passed)
 	assert.Equal(t, "Config must not contain forbidden pattern", result.Description)
@@ -197,7 +197,7 @@ func TestRunner_AssertMatchCount(t *testing.T) {
 				Expected: tt.expected,
 			}
 
-			result := runner.assertMatchCount(tt.content, nil, nil, nil, assertion, "")
+			result := runner.assertMatchCount(tt.content, nil, nil, nil, "", assertion, "")
 
 			assert.Equal(t, tt.wantPassed, result.Passed)
 			assert.Equal(t, "match_count", result.Type)
@@ -259,7 +259,7 @@ func TestRunner_AssertEquals(t *testing.T) {
 				Expected: tt.expected,
 			}
 
-			result := runner.assertEquals(tt.content, nil, nil, nil, assertion, "")
+			result := runner.assertEquals(tt.content, nil, nil, nil, "", assertion, "")
 
 			assert.Equal(t, tt.wantPassed, result.Passed)
 			assert.Equal(t, "equals", result.Type)
@@ -283,7 +283,7 @@ func TestRunner_AssertEquals_TruncatesLongValues(t *testing.T) {
 		Expected: longExpected,
 	}
 
-	result := runner.assertEquals(longContent, nil, nil, nil, assertion, "")
+	result := runner.assertEquals(longContent, nil, nil, nil, "", assertion, "")
 
 	assert.False(t, result.Passed)
 	assert.Contains(t, result.Error, "Use --verbose for full preview")
@@ -460,7 +460,7 @@ func TestRunner_AssertMatchOrder(t *testing.T) {
 				Patterns: tt.patterns,
 			}
 
-			result := runner.assertMatchOrder(tt.content, nil, nil, nil, assertion, "")
+			result := runner.assertMatchOrder(tt.content, nil, nil, nil, "", assertion, "")
 
 			assert.Equal(t, tt.wantPassed, result.Passed)
 			assert.Equal(t, "match_order", result.Type)
@@ -707,7 +707,7 @@ func TestRunner_ResolveTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := runner.resolveTarget(tt.target, haproxyConfig, auxFiles, k8sResources, nil, renderError)
+			got := runner.resolveTarget(tt.target, haproxyConfig, auxFiles, k8sResources, nil, "", renderError)
 			assert.Equal(t, tt.want, got)
 		})
 	}

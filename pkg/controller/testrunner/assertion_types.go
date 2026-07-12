@@ -88,6 +88,7 @@ func (r *Runner) assertContains(
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	k8sResources map[string]string,
 	statusPatches map[string]string,
+	renderedEvents string,
 	assertion *config.ValidationAssertion,
 	renderError string,
 ) AssertionResult {
@@ -102,7 +103,7 @@ func (r *Runner) assertContains(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderError)
+	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
 
 	// Check if pattern matches
 	matched, err := regexp.MatchString(assertion.Pattern, target)
@@ -131,6 +132,7 @@ func (r *Runner) assertNotContains(
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	k8sResources map[string]string,
 	statusPatches map[string]string,
+	renderedEvents string,
 	assertion *config.ValidationAssertion,
 	renderError string,
 ) AssertionResult {
@@ -145,7 +147,7 @@ func (r *Runner) assertNotContains(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderError)
+	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
 
 	// Check if pattern matches
 	matched, err := regexp.MatchString(assertion.Pattern, target)
@@ -174,6 +176,7 @@ func (r *Runner) assertMatchCount(
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	k8sResources map[string]string,
 	statusPatches map[string]string,
+	renderedEvents string,
 	assertion *config.ValidationAssertion,
 	renderError string,
 ) AssertionResult {
@@ -188,7 +191,7 @@ func (r *Runner) assertMatchCount(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderError)
+	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
 
 	// Compile regex pattern
 	re, err := regexp.Compile(assertion.Pattern)
@@ -232,6 +235,7 @@ func (r *Runner) assertEquals(
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	k8sResources map[string]string,
 	statusPatches map[string]string,
+	renderedEvents string,
 	assertion *config.ValidationAssertion,
 	renderError string,
 ) AssertionResult {
@@ -246,7 +250,7 @@ func (r *Runner) assertEquals(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderError)
+	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
 
 	// Compare values
 	failed := target != assertion.Expected
@@ -337,6 +341,7 @@ func (r *Runner) assertMatchOrder(
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	k8sResources map[string]string,
 	statusPatches map[string]string,
+	renderedEvents string,
 	assertion *config.ValidationAssertion,
 	renderError string,
 ) AssertionResult {
@@ -351,7 +356,7 @@ func (r *Runner) assertMatchOrder(
 	}
 
 	// Resolve target to actual content
-	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderError)
+	target := r.resolveTarget(assertion.Target, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, renderedEvents, renderError)
 
 	// Check that we have patterns to match
 	if len(assertion.Patterns) == 0 {

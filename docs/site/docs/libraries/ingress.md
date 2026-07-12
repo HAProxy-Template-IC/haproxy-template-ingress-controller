@@ -203,6 +203,17 @@ A host and path can be routed to only one backend. When two Ingresses declare th
 
 Because the timestamp is the Ingress object's creation time, editing an Ingress doesn't change who wins — a route stays with the Ingress that first claimed it, regardless of later edits.
 
+The controller records a `Warning` Event with reason `RouteConflict` on the Ingress that lost the route, naming the winner, so the dropped route is visible without reading the controller logs:
+
+```console
+$ kubectl describe ingress route-new -n team-b
+...
+Events:
+  Type     Reason         Age   From              Message
+  ----     ------         ----  ----              -------
+  Warning  RouteConflict  10s   haptic-controller  host "shop.example.com" path "/checkout" (Prefix) is already served by Ingress team-a/route-old, which takes precedence; this Ingress's route is not applied
+```
+
 Different paths on the same host don't collide, so you can split a host across several Ingresses by giving each a distinct path. An [nginx canary](nginx-ingress.md) Ingress (`nginx.ingress.kubernetes.io/canary: "true"`) intentionally shares its main Ingress's host and path; it never competes for the base route — the main Ingress owns it, and the canary only overlays a traffic split on top.
 
 ### Default backend and custom error pages

@@ -225,6 +225,12 @@ const (
 	// Syntax: statusPatch(namespace, name, apiVersion, kind, variants).
 	FuncStatusPatch = "statusPatch"
 
+	// FuncRecordEvent registers a Kubernetes Warning Event to emit against a
+	// resource during rendering (resource-agnostic — the involved object is
+	// identified by apiVersion/kind/namespace/name supplied by the template).
+	// Syntax: recordEvent(namespace, name, apiVersion, kind, reason, message).
+	FuncRecordEvent = "recordEvent"
+
 	// FuncCondition builds a metav1.Condition-compatible map.
 	// Syntax: condition(type, status, reason, message, observedGeneration, lastTransitionTime).
 	FuncCondition = "condition"

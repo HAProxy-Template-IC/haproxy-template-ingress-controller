@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
@@ -292,12 +293,17 @@ func (c *Coordinator) handlePipelineSuccess(
 	// ResourceApplier reads them directly from the event payload (stateless
 	// on the success path, same pattern as StatusApplier + status patches).
 	totalDuration := time.Since(startTime).Milliseconds()
-	c.eventBus.Publish(events.NewReconciliationCompletedEvent(
+	completed := events.NewReconciliationCompletedEvent(
 		totalDuration,
 		result.RenderedResources,
 		result.StatusPatches,
 		events.PropagateCorrelation(triggerEvent),
-	))
+	)
+	// Carry the render's Events (recordEvent) for the leader-only EventEmitter.
+	// Cloned so the published event never aliases the pipeline result; set on
+	// the freshly-built local event before Publish (no subscriber holds it yet).
+	completed.Events = slices.Clone(result.Events)
+	c.eventBus.Publish(completed)
 
 	c.logger.Debug("Reconciliation completed",
 		"correlation_id", triggerEvent.CorrelationID(),

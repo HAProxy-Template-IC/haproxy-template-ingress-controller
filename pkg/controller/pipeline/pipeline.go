@@ -81,6 +81,10 @@ type PipelineResult struct {
 	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
 	StatusPatches []templating.StatusPatch
 
+	// Events contains Kubernetes Events templates asked to emit via recordEvent()
+	// (e.g. a RouteConflict Warning on an Ingress). Forwarded to the EventEmitter.
+	Events []templating.RenderedEvent
+
 	// RenderedResources contains full Kubernetes resources the templates declared
 	// the controller should own and reconcile (e.g. an auxiliary Service or other
 	// object a template emits alongside the HAProxy config).
@@ -241,6 +245,7 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider) (
 		HAProxyConfig:      renderResult.HAProxyConfig,
 		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
 		StatusPatches:      renderResult.StatusPatches,
+		Events:             renderResult.Events,
 		RenderedResources:  renderResult.RenderedResources,
 		AuxFileCount:       renderResult.AuxFileCount,
 		ContentChecksum:    contentChecksum,

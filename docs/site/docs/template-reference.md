@@ -163,6 +163,31 @@ For resources with nested condition arrays (for example, Gateway API Route `pare
 {{ transitionTime(dig(parents[parentIndex], "conditions"), "Accepted", "True") }}
 ```
 
+## Event functions
+
+### `recordEvent()`
+
+Records a Kubernetes `Warning` Event against a resource. The controller emits it via an EventRecorder on the leader, so it shows up under `kubectl describe <kind> <name>` and `kubectl get events`. Like `statusPatch()`, it's resource-agnostic — the involved object is identified purely by the `apiVersion`/`kind`/`namespace`/`name` you pass, so it works for any watched resource or custom resource.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `namespace` | `string` | Involved resource namespace (empty for cluster-scoped) |
+| `name` | `string` | Involved resource name |
+| `apiVersion` | `string` | Involved resource API version (for example, `networking.k8s.io/v1`) |
+| `kind` | `string` | Involved resource kind (for example, `Ingress`) |
+| `reason` | `string` | Short, machine-readable `PascalCase` reason (for example, `RouteConflict`) |
+| `message` | `string` | Human-readable description |
+
+```go
+{% recordEvent(ingress.Metadata.Namespace, ingress.Metadata.Name,
+    "networking.k8s.io/v1", "Ingress",
+    "RouteConflict", "host \"" + rule.Host + "\" path \"" + path.Path + "\" is already served by another Ingress") %}
+```
+
+The Event is a side-effect only — the call renders nothing. Identical `(resource, reason, message)` tuples emitted during one render collapse into a single Event. The controller re-emits on every reconcile while the condition holds, so the standard Kubernetes Event aggregation keeps it fresh and it ages out (default TTL ~1 hour) once the template stops recording it. The bundled Ingress library uses this to surface [route conflicts](./libraries/ingress.md#conflicting-routes-the-oldest-ingress-wins) on the losing Ingress.
+
 ## Typed access internals
 
 !!! note "Background"
