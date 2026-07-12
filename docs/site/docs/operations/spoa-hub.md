@@ -57,6 +57,93 @@ The table is generated from `versions-spoa.env` at the repository root. CI fails
 - **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
 - **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
 
+## Geolocation lookups
+
+The `maxmind` plugin resolves the client IP against a MaxMind MMDB database and hands the result back to HAProxy as a transaction variable you reference in ACLs, headers, or map keys. Unlike `coraza` and `mirror`, no template library dispatches it for you, so the recipe has two operator-owned halves: configure the plugin (enable, database, lookup), then dispatch the lookup in a frontend snippet and consume the result.
+
+### 1. Enable the plugin and declare the lookup
+
+Turn the plugin on and define, under `params:`, which MMDB files to open and which fields to extract. Each `[[lookups]]` entry sets `output_var` (the variable the hub writes back) and `message` (the SPOE message that triggers it — keep it equal to the plugin's `messages` entry, the default `geoip-enrich`):
+
+```yaml
+# values.yaml
+spoaHub:
+  plugins:
+    maxmind:
+      enabled: true
+      messages: ["geoip-enrich"]   # chart default; drives the generated SPOE group name
+      params: |
+        [databases]
+        country = { path = "/data/GeoLite2-Country.mmdb" }
+
+        [[lookups]]
+        name       = "country_code"
+        message    = "geoip-enrich"
+        database   = "country"
+        path       = ["country", "iso_code"]
+        output_var = "geo_country"
+```
+
+### 2. Mount the MMDB database
+
+The database file lives in the HAProxy pod, where the `spoa-hub` sidecar runs. Declare a pod volume with `haproxy.extraVolumes` and mount it into the sidecar with `spoaHub.extraVolumeMounts` at the path your `params:` references (`/data` above).
+
+MMDB files exceed the 1 MiB `ConfigMap`/`Secret` size limit (GeoLite2-Country alone is several MB), so don't try to mount one from a `Secret`. Use a `PersistentVolumeClaim`, or — as below — an `emptyDir` populated by an init container that downloads the database. The init container needs your MaxMind license key; this example reads it from a `Secret` you create separately:
+
+```yaml
+# values.yaml
+haproxy:
+  extraVolumes:
+    - name: maxmind-data
+      emptyDir: {}
+  initContainers:
+    - name: fetch-maxmind
+      image: curlimages/curl:latest
+      command:
+        - sh
+        - -c
+        - >
+          curl -fsSL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=$LICENSE_KEY&suffix=tar.gz"
+          | tar -xz --strip-components=1 -C /data
+      env:
+        - name: LICENSE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: maxmind-license
+              key: license_key
+      volumeMounts:
+        - name: maxmind-data
+          mountPath: /data
+
+spoaHub:
+  extraVolumeMounts:
+    - name: maxmind-data
+      mountPath: /data
+      readOnly: true
+```
+
+### 3. Dispatch the lookup and use the result
+
+When the plugin is enabled, the chart emits the SPOE plumbing automatically: a `[[plugins]]` block, a `spoe-message geoip-enrich` (sending the client IP as `args ip=src`), and a `spoe-group geoip-enrich-group`. The SPOE agent runs with `option var-prefix hub`, so an `output_var` of `geo_country` lands in HAProxy as `txn.hub.maxmind.geo_country` — the `txn.hub.<plugin>.<output_var>` convention shared by every hub plugin.
+
+The one piece the chart can't infer is *when* to run the lookup and *what* to do with the result. Add a `frontend-spoe-filters-*` snippet through `controller.config.templateSnippets`; it renders right after the `filter spoe engine spoa-hub` directive, so `send-spoe-group` and the variable are both in scope:
+
+```yaml
+# values.yaml
+controller:
+  config:
+    templateSnippets:
+      frontend-spoe-filters-300-geoip:
+        template: |
+          http-request send-spoe-group spoa-hub geoip-enrich-group
+          # Pass the country to backends as a header...
+          http-request set-header X-Country %[var(txn.hub.maxmind.geo_country)]
+          # ...or block selected countries at the edge:
+          http-request deny deny_status 403 if { var(txn.hub.maxmind.geo_country) -m str RU KP }
+```
+
+The snippet name's `300` orders it after the bundled `frontend-spoe-filters-050-coraza` and `-100-external-auth` dispatchers; pick any number that slots it where you want in the request pipeline.
+
 ## Verifying the published image
 
 The image is signed by digest with cosign keyless via GitLab OIDC. The CycloneDX Software Bill of Materials (SBOM) is attached as an in-toto attestation.

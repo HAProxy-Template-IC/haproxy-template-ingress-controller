@@ -240,9 +240,52 @@ Applies uniformly to every watched-resource store. Fields that are referenced by
 
 ## HTTP Resources
 
-Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts)` template function — a separate mechanism from Kubernetes watching. The controller auto-registers any URL that appears in an `http.Fetch()` call during template rendering, periodically refreshes it at a per-URL `delay`, and surfaces the cached body back to the template on the next render.
+Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts, auth)` template function — a separate mechanism from Kubernetes watching. The controller auto-registers any URL that appears in an `http.Fetch()` call during template rendering, periodically refreshes it at a per-URL `delay`, and surfaces the cached body back to the template on the next render. `Fetch` returns the response body as a string.
 
-For fixture-based mocking during validation tests, set per-test `httpResources` directly on the test (`spec.validationTests[].httpResources`, sibling to `fixtures` — not nested inside it); see [CRD Reference](./crd-reference.md). There is no top-level `spec.httpResources` field.
+### Fetch parameters
+
+The second argument is an options map. All keys are optional:
+
+| Key | Type | Default | Effect |
+|-----|------|---------|--------|
+| `delay` | Go duration string | none | Refresh interval. The controller re-fetches this often and serves the cached body to later renders. Omit it (or set `"0"`) to fetch once and never refresh. |
+| `timeout` | Go duration string | `30s` | Per-request timeout. |
+| `retries` | integer | 2 | Retry attempts on a failed request, with a growing delay between attempts. |
+| `critical` | boolean | `false` | Failure mode. With `false`, a failed fetch returns an empty string and rendering continues (a warning is logged). With `true`, a failed fetch aborts the render with an error, like [`fail()`](./template-reference.md#functions-and-filters). |
+
+Set `critical: true` only when an empty body would produce a dangerously wrong config (for example, a security blocklist that must not silently become empty); leave it `false` when a stale-or-empty body is safer than blocking every render on one unreachable URL.
+
+A third optional argument supplies authentication: `{"type": "bearer", "token": "..."}`, `{"type": "basic", "username": "...", "password": "..."}`, or `{"type": "header", "headers": {"X-API-Key": "..."}}`.
+
+### Example
+
+This backend denies any client IP listed in a remotely hosted blocklist. The list refreshes every 5 minutes; `critical: false` keeps a transient fetch failure from taking down the whole render:
+
+```yaml
+spec:
+  haproxyConfig:
+    template: |
+      global
+        log stdout format raw local0
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 30s
+        timeout server 30s
+      frontend web
+        bind :80
+        {%- var blocklist = http.Fetch("https://example.com/ip-blocklist.txt", map[string]any{"delay": "5m", "critical": false}) %}
+        {%- for _, ip := range split(tostring(blocklist), "\n") %}
+        {%- if strip(ip) != "" %}
+        http-request deny if { src {{ strip(ip) }} }
+        {%- end %}
+        {%- end %}
+        default_backend app
+      backend app
+        server s1 10.0.0.1:8080 check
+```
+
+The playground can't reach external URLs, so this example doesn't run there — deploy it to a cluster to see the fetched content. For fixture-based mocking during validation tests, set per-test `httpResources` directly on the test (`spec.validationTests[].httpResources`, sibling to `fixtures` — not nested inside it); see [CRD Reference](./crd-reference.md). There is no top-level `spec.httpResources` field.
 
 ## Validating webhook scope
 

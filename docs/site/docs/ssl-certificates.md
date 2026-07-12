@@ -2,6 +2,9 @@
 
 By default, the [HAPTIC Helm chart](deploying-with-helm.md) provisions a default SSL certificate for HTTPS traffic — via cert-manager when it's installed, otherwise as a chart-generated self-signed Secret — and the controller watches and deploys it to HAProxy. You can also disable HTTPS entirely — see [Disabling HTTPS](#disabling-https).
 
+!!! tip "Adding TLS to a single Ingress"
+    This page covers the chart's **default** certificate — the fallback HAProxy serves when no Server Name Indication (SNI) match is found. To serve a specific certificate for one host, add a `spec.tls` entry and a `kubernetes.io/tls` Secret to the Ingress itself. See [Ingress library — TLS configuration](libraries/ingress.md#tls-configuration) for the complete example.
+
 ## Default SSL certificate
 
 ### Default behavior (development/testing)
@@ -144,6 +147,25 @@ The controller watches the Secret and automatically deploys the updated certific
 ### SSL troubleshooting
 
 For SSL symptom diagnosis — "Secret not found" errors, HAProxy failing to start with SSL errors, or a certificate that isn't updating — see [Troubleshooting → SSL/TLS Issues](./troubleshooting.md#ssltls-issues).
+
+## HTTP strict transport security (HSTS)
+
+To send the `Strict-Transport-Security` response header on every HTTPS response — across all TLS hosts — enable HSTS in the template engine's `extraContext`:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        hstsEnabled: true
+        hstsMaxAge: "31536000"          # one year (default)
+        hstsIncludeSubdomains: false
+        hstsPreload: false
+```
+
+HSTS takes effect only over HTTPS, so pair it with an HTTP-to-HTTPS redirect. The rendered config emits a warning when HSTS is on but no redirect is configured.
+
+This sets the header for every host. To enable HSTS per host instead — or override the global value for specific hosts — use the per-Ingress `hsts` annotations (see [Annotations](annotations.md)). A per-Ingress annotation wins over the global default for its hosts.
 
 ## Webhook certificates
 

@@ -37,7 +37,7 @@ The libraries cover the following HAProxy feature areas:
 | Backend SSL / mTLS | `server-ssl`, `server-proto`, `server-ca`, `server-crt` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret`, `ssl-ciphers-backend`, … | `backend-protocol`, `proxy-ssl-secret`, `proxy-ssl-verify`, `proxy-ssl-name`, … |
 | Cross-Origin Resource Sharing (CORS) | `cors-enable`, `cors-allow-origin`, … | `cors-enable`, `cors-allow-origin`, … | `enable-cors`, `cors-allow-origin`, … |
 | Load balancing | `load-balance` | `balance-algorithm` | `load-balance`, `upstream-hash-by` |
-| Session affinity (cookies) | `cookie-persistence` | `affinity`, `session-cookie-*` | `affinity`, `session-cookie-*` |
+| Session affinity / sticky sessions (cookies) | `cookie-persistence` | `affinity`, `session-cookie-*` | `affinity`, `session-cookie-*` |
 | Rate limiting | `rate-limit-requests`, `rate-limit-period`, … | `limit-rps`, `limit-rpm`, `limit-whitelist` | `limit-rps`, `limit-rpm`, `limit-connections`, `limit-whitelist` |
 | Bandwidth throttling | — | — | `limit-rate`, `limit-rate-after` |
 | Request body size limit | — | `proxy-body-size` | `proxy-body-size` |

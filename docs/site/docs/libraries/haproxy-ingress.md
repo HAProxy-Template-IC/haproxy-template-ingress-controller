@@ -559,6 +559,8 @@ annotations:
 
 ## Session affinity
 
+Cookie-based session affinity — also called sticky sessions — pins a client to the same backend server across requests.
+
 ### `haproxy-ingress.github.io/affinity`
 
 **Status**: ✅ Supported

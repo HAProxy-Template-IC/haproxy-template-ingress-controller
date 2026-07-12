@@ -2,9 +2,17 @@
 
 ## Overview
 
-Validation tests render your templates against fixture resources and assert on the output — broken templates and invalid HAProxy config fail before they reach a cluster. Tests are embedded in the HAProxyTemplateConfig CRD and run locally using the CLI.
+Validation tests render your templates against fixture resources and assert on the output — broken templates and invalid HAProxy config fail before they reach a cluster. Tests are embedded in the HAProxyTemplateConfig CRD. You run them locally with the CLI (this page), and the controller also runs them automatically before any config reaches HAProxy.
 
 Beyond running the controller (`haptic-controller run`), the controller binary provides `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
+
+!!! note "Tests also run automatically before deployment"
+    The same suite runs at two gates besides the CLI, so a config whose tests fail never reaches HAProxy:
+
+    - **Admission** — the validating webhook runs a `HAProxyTemplateConfig`'s `validationTests` on every CREATE and UPDATE and rejects the change if any test fails, so a failing config never lands in the cluster. (This webhook is `failurePolicy: Ignore`; if the suite can't finish within its admission budget, it admits with a warning and defers to the load gate below.)
+    - **Config load** — the controller re-runs the suite whenever it loads a config. A live update whose tests fail is refused and the last-good config keeps serving; at startup, a failing initial config crash-loops the pod rather than serving untested config.
+
+    The `validate` CLI, the webhook, and the load gate run the identical suite through the same runner, so a passing local `validate` run predicts a clean admission and load.
 
 ## Quick start
 
@@ -369,6 +377,34 @@ The `haptic-controller validate` command shells out to the `haproxy` binary on y
 Templates that use typed watched-resource access need `--schema-dir` (or `HAPTIC_SCHEMA_DIR`); without it they fail at engine compile time with a "no schema for X" error, while untyped `dig()`-based templates validate fine — see [Templating — Typed Resource Access](./templating.md#typed-resource-access) for where schemas come from and what the repo's bundled `tests/schemas/` directory covers.
 
 Exit code 0 means all tests passed.
+
+### Run in CI
+
+Run `validate` as a pipeline step to block a broken config before it merges. The job fails when `validate` exits non-zero, so a template error or a failing test stops the pipeline. Use the per-version controller image: it bundles both `haptic-controller` and the matching `haproxy` binary, so `haproxy_valid` assertions run with no extra setup. Pick the tag whose HAProxy version matches your deployment (see [HAProxy Versions](operations/haproxy-versions.md)).
+
+GitLab CI (`.gitlab-ci.yml`) — override the image entrypoint so the job's `script` shell runs:
+
+```yaml
+validate-haptic-config:
+  image:
+    name: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
+    entrypoint: [""]
+  script:
+    - haptic-controller validate -f config.yaml
+```
+
+GitHub Actions (`.github/workflows/validate.yml`):
+
+```yaml
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    container:
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4
+    steps:
+      - uses: actions/checkout@v4
+      - run: haptic-controller validate -f config.yaml
+```
 
 ### Output example
 

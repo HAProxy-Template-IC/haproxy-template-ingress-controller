@@ -13,7 +13,7 @@ The Gateway API library implements the [Kubernetes Gateway API](https://gateway-
 - URL rewrites and redirects
 - TLS termination and SSL passthrough
 
-This library is **enabled by default**.
+This library is **enabled by default**. For a runnable end-to-end walkthrough (a Gateway with an HTTP listener, an HTTPRoute, and a backend Service), see [Expose a Service through a Gateway](../gateway-class.md#expose-a-service-through-a-gateway).
 
 !!! warning "Gateway API CRDs Required"
     The Gateway API library requires Gateway API CRDs to be installed in your cluster. Without them, the library isn't merged into the configuration.
@@ -122,6 +122,30 @@ per-release expectations are pinned by `tests/schemas-ga-*` and
 `scripts/test-templates.sh`.
 
 TLS Secrets are watched by the SSL library (not gateway), and controller-service address discovery for status patches is owned by base.yaml. See [SSL Library](ssl.md) and [Base Library](base.md).
+
+## Supported Gateway API versions and channels
+
+HAPTIC targets the Gateway API `v1` API group. Each kind is an optional watched resource with an ordered `apiVersions` candidate list (see [Watched Resources](#watched-resources)); the controller resolves each kind to the first version the cluster serves and activates its features at runtime, so installing or upgrading the Gateway API needs no chart redeploy. The per-release behavior is pinned by tests against Gateway API v1.1, v1.4, and v1.5, plus a no-CRD baseline.
+
+Which kinds a Gateway API install provides depends on its **channel**. The standard channel (`standard-install.yaml`) covers most kinds; a few graduated from the experimental channel (`experimental-install.yaml`) only in recent releases:
+
+| Kind | Channel |
+|------|---------|
+| Gateway, GatewayClass | Standard |
+| HTTPRoute | Standard |
+| GRPCRoute | Standard (since Gateway API v1.1) |
+| ReferenceGrant | Standard |
+| BackendTLSPolicy | Standard |
+| TLSRoute | Standard since Gateway API v1.5; experimental channel before |
+| TCPRoute | Standard since Gateway API v1.6; experimental channel before |
+| ListenerSet | Experimental channel (GEP-1713) |
+
+Installing the v1.6.0 standard channel gives you every route kind, including TLSRoute and TCPRoute. On Gateway API v1.5, install the experimental channel for TCPRoute; before v1.5, install it for both TLSRoute and TCPRoute.
+
+The word "experimental" describes two independent things, which don't gate each other:
+
+- **Channel** — which route *kinds* (CRDs) a Gateway API install ships, shown in the table above.
+- **The `controller.templateLibraries.gateway.experimentalChannel` value** — a separate switch that tells HAPTIC's `validationTests` the experimental **HTTPRoute schema** is installed, so tests exercising experimental HTTPRoute *fields* (`retry` per GEP-1731, `sessionPersistence` per GEP-1619) run. HAPTIC emits those directives whenever the fields are present, regardless of the flag; see the [Chart Values Reference](../reference.md). This value gates no route kind.
 
 ## Architecture
 
@@ -848,6 +872,50 @@ spec:
 
 TLSRoute routes TLS connections by SNI. Depending on the listener's TLS mode, HAProxy either forwards the still-encrypted stream to the backend (`tls.mode: Passthrough`) or terminates TLS and forwards the decrypted stream (`tls.mode: Terminate`).
 
+### Example: passthrough Gateway and TLSRoute
+
+This Gateway opens a `Passthrough` TLS listener on port 6443 and forwards `secure.example.com` — matched by SNI — to a backend that terminates TLS itself:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: tls-edge
+  namespace: default
+spec:
+  gatewayClassName: haptic
+  listeners:
+    - name: tls
+      protocol: TLS
+      port: 6443
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        namespaces:
+          from: Same
+        kinds:
+          - kind: TLSRoute
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: secure-app
+  namespace: default
+spec:
+  parentRefs:
+    - name: tls-edge
+  hostnames:
+    - secure.example.com
+  rules:
+    - backendRefs:
+        - name: secure-app
+          port: 8443
+EOF
+```
+
+HAPTIC renders a dedicated `frontend gateway-tls-port-6443` in `mode tcp` that reads the SNI from the buffered ClientHello and dispatches `secure.example.com` to backend `gtw_tls_default_secure-app_0`, forwarding the still-encrypted bytes to `secure-app:8443`. Choose a listener port other than the chart-static HTTPS port (`haproxy.ports.https`, default 443): a TLS listener on that port is dropped to avoid a duplicate bind (see [Forwarding behavior](#forwarding-behavior)). Each rule needs at least one `spec.hostnames` entry, and traffic goes to the rule's first `backendRef` — `weight` isn't honored for TLSRoute.
+
 ### Attachment semantics
 
 A TLSRoute attaches to a Gateway listener when every check in this table passes:
@@ -892,6 +960,49 @@ TLSRoutes count toward `attachedRoutes` on TLS listeners only; listeners on a mi
 
 TCPRoute forwards raw TCP: each claimed listener port becomes a dedicated `mode tcp` frontend whose `default_backend` is the route's backend. There is no per-connection matching — TCP carries no hostname or SNI, so a port forwards to exactly one backend.
 
+!!! note "TCPRoute needs Gateway API v1.6 standard channel (or the experimental channel)"
+    TCPRoute is in the Gateway API standard channel (`standard-install.yaml`) since v1.6. On v1.5 and earlier, install it from the experimental channel (`experimental-install.yaml`). HAPTIC activates TCPRoute support automatically once the CRD is served — no chart redeploy. See [Supported Gateway API versions and channels](#supported-gateway-api-versions-and-channels).
+
+### Example: TCP Gateway and TCPRoute
+
+This Gateway opens a `TCP` listener on port 5432 and forwards every connection to a PostgreSQL Service:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: tcp-edge
+  namespace: default
+spec:
+  gatewayClassName: haptic
+  listeners:
+    - name: postgres
+      protocol: TCP
+      port: 5432
+      allowedRoutes:
+        namespaces:
+          from: Same
+        kinds:
+          - kind: TCPRoute
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TCPRoute
+metadata:
+  name: postgres
+  namespace: default
+spec:
+  parentRefs:
+    - name: tcp-edge
+  rules:
+    - backendRefs:
+        - name: postgres
+          port: 5432
+EOF
+```
+
+HAPTIC renders `frontend gateway-tcp-port-5432` (`mode tcp`, `bind *:5432`, `default_backend gtw_tcp_default_postgres_0`) with no ACLs — the whole port maps to this one route rule. A TCPRoute has no hostnames. Choose a listener port other than the chart-static `haproxy.ports.http` / `haproxy.ports.https` (default 80 / 443): a TCP listener on either is dropped to avoid a duplicate bind.
+
 ### Attachment semantics
 
 | Check | Behavior |
@@ -927,6 +1038,69 @@ TCPRoutes count toward `attachedRoutes` on TCP listeners only. Status is written
 
 ---
 
+## Cross-namespace routes (ReferenceGrant)
+
+Cross-namespace routing has two independent gates, and both apply to every route kind (HTTPRoute, GRPCRoute, TLSRoute, TCPRoute):
+
+- **Listener attachment** — a Gateway listener's `allowedRoutes.namespaces.from` decides which namespaces' routes may attach. HAPTIC honors `Same` (the default — routes in the Gateway's own namespace), `All` (routes in any namespace), and `Selector` (routes in namespaces matching `matchLabels`; `matchExpressions` isn't supported). Attaching a route to a Gateway in another namespace needs no ReferenceGrant — only a permissive `allowedRoutes`.
+- **Backend references** — a rule's `backendRef.namespace` pointing at a Service in another namespace is permitted only by a ReferenceGrant in the **target** (Service) namespace whose `from` clause names the route's group, kind, and namespace and whose `to` clause names the Service group and kind. Without a matching grant, the route's `ResolvedRefs` condition turns `False` with reason `RefNotPermitted` and the backend isn't served.
+
+The example below runs a Gateway in the `infra` namespace that accepts routes from any namespace, an HTTPRoute in `store-a` whose backend Service lives in `store-b`, and the ReferenceGrant in `store-b` that permits it:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: infra
+spec:
+  gatewayClassName: haptic
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: store-a
+spec:
+  parentRefs:
+    - name: edge
+      namespace: infra
+  hostnames:
+    - shop.example.com
+  rules:
+    - backendRefs:
+        - name: shop
+          namespace: store-b
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-store-a-httproutes
+  namespace: store-b
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: store-a
+  to:
+    - group: ""
+      kind: Service
+EOF
+```
+
+The `to` clause omits `name`, so it permits references to any Service in `store-b`; add `name: shop` to scope the grant to one Service. To permit a different route kind, set `from[].kind` to `GRPCRoute`, `TLSRoute`, or `TCPRoute`. Cross-namespace Gateway certificate references (a listener's `tls.certificateRefs` pointing at a Secret in another namespace) follow the same rule with a `to` clause of `group: "", kind: Secret`.
+
+---
+
 ## Debug headers
 
 When debug headers are enabled, the gateway library adds response headers to help troubleshoot routing decisions:
@@ -959,12 +1133,46 @@ Two Gateway-API features cause the gateway library to emit additional Kubernetes
 
 | Template name | Triggered when | Emits |
 |---------------|----------------|-------|
-| `gateway-static-addresses` | A Gateway's `spec.addresses[]` lists at least one valid `IPAddress` entry — `SupportGatewayStaticAddresses` (Extended). | One `LoadBalancer` Service per such Gateway in the controller's namespace, named `gw-<gateway-namespace>-<gateway-name>`, carrying the requested addresses via `metallb.universe.tf/loadBalancerIPs` annotation (and `spec.loadBalancerIP` for non-MetalLB cloud LBs). The Service selects the chart's shared HAProxy pods, so the per-Gateway IP routes to the same data plane the rest of the cluster uses. |
+| `gateway-static-addresses` | A Gateway's `spec.addresses[]` lists at least one valid `IPAddress` entry — `SupportGatewayStaticAddresses` (Extended). | One `LoadBalancer` Service **per requested IP** in the controller's namespace, named `gw-<gateway-namespace>-<gateway-name>-<ip-with-dashes>` (names over 63 characters are truncated with a hash suffix). Each Service carries its single IP via the `metallb.universe.tf/loadBalancerIPs` annotation and selects the chart's shared HAProxy pods, so the per-Gateway IP routes to the same data plane the rest of the cluster uses. |
 | `gateway-infrastructure-propagation` | A Gateway sets `spec.infrastructure` (labels and / or annotations) but no `spec.addresses[]` — `SupportGatewayInfrastructurePropagation` (Extended). | One headless `ClusterIP` Service per such Gateway, also named `gw-<gateway-namespace>-<gateway-name>`. The Service has a placeholder `marker` port and an empty selector — its only purpose is to surface the propagated `spec.infrastructure` labels and annotations on a discoverable Kubernetes object. |
 
 Both templates draw their data from the per-Gateway computation that already runs during `haproxy.cfg` rendering (the `status-patches-200-gateway` block in `70-status-gateway.yaml`). That block stashes the per-Gateway Service spec into the per-render `shared` cache (`shared.Get("gatewayStaticAddressServices")` / `gatewayInfrastructureServices`) keyed by `<namespace>/<name>`; the `k8sResources` templates read the same map back during their post-`haproxyConfig` render pass and emit one Service per entry. Multi-doc YAML (`---`-separated) is used because a single template emits zero, one, or many Services depending on cluster state.
 
 These templates replace the previous in-template `renderResource()` calls. The semantics on the cluster are unchanged: same Service name, same selector, same ownership story. The wire-up is now declarative — anyone reading the rendered `HAProxyTemplateConfig` sees the templates explicitly under `spec.k8sResources`, and the controller's overlay-store dry-run path can validate them like any other rendered output.
+
+### Request a static IP for a Gateway
+
+Set `spec.addresses` on a Gateway to pin it to a fixed IP:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: platform
+spec:
+  gatewayClassName: haptic
+  addresses:
+    - type: IPAddress
+      value: 203.0.113.5
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+EOF
+```
+
+HAPTIC emits a `LoadBalancer` Service named `gw-platform-edge-203-0-113-5` in the controller's namespace, annotated `metallb.universe.tf/loadBalancerIPs: 203.0.113.5` and selecting the shared HAProxy pods. Find it by its Gateway label:
+
+```bash
+kubectl get svc -n haptic -l gateway.networking.k8s.io/gateway-name=edge
+```
+
+Once MetalLB (or your cloud load balancer) allocates the IP, it appears in the Gateway's `status.addresses`. Listing several `spec.addresses[]` entries emits one Service per IP; an IP that can't be allocated is left out of `status.addresses` while the usable ones still bind.
 
 ## Features summary
 

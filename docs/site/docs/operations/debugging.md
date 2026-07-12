@@ -153,6 +153,15 @@ curl -s http://localhost:8080/debug/vars/events \
 
 More than a few reconciliations per second under stable input usually means a watcher's debounce is undersized for the cluster's resource churn — see [Performance — Reconciliation Tuning](./performance.md#reconciliation-tuning) for the levers.
 
+**Which snippet produced a given config line?**
+
+There's no per-line origin mapping in a running controller. The two production tools stop short of line-level attribution:
+
+- `haptic-controller validate -f config.yaml --trace-templates` lists which templates and snippets rendered and how long each took (render order plus per-template timing), not which output line came from which snippet — see [Performance — Template debugging](./performance.md#template-debugging).
+- `/debug/vars/rendered` returns the final `haproxy.cfg` text with no attribution back to the snippets that produced it.
+
+Per-line "this config line came from snippet X" mapping is a feature of the [interactive playground](../templating.md) — its **provenance** control highlights, for a rendered line, the template snippet that emitted it. That mapping runs in the browser and isn't exposed by the in-cluster controller. To trace a line in production, match its content against the snippet names from `--trace-templates` and read that snippet in your `HAProxyTemplateConfig`.
+
 ## Security reminders
 
 - `/debug/vars/credentials` returns metadata only — the controller never exposes the actual DataPlane passwords here, the state dump, or any other endpoint.

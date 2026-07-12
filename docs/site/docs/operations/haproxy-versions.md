@@ -150,3 +150,5 @@ To move from one major.minor to another (for example 3.2 → 3.3):
     ```
 
 The controller and HAProxy pods restart with the new images.
+
+HAProxy rolls without dropping the fleet. The chart runs `haproxy.replicaCount` pods (2 by default) behind a `RollingUpdate` strategy set to `maxUnavailable: 0` and `maxSurge: 1` (`haproxy.updateStrategy`). Kubernetes starts a new-version pod and waits for it to pass its readiness probe before terminating an old one, so the number of serving pods never drops below the replica count during the roll. Keep `haproxy.replicaCount` at 2 or more for a no-downtime series bump — a single replica has nowhere to shift traffic while it restarts.

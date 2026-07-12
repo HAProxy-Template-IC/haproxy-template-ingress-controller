@@ -94,6 +94,32 @@ haproxy:
       nodePort: 30404
 ```
 
+## Replicas and autoscaling
+
+The chart runs 2 HAProxy replicas by default. Set `haproxy.replicaCount` to change the fixed count:
+
+```yaml
+haproxy:
+  replicaCount: 3
+```
+
+For traffic-driven autoscaling, enable [KEDA](https://keda.sh/) under `haproxy.keda`. When `haproxy.keda.enabled` is true, the chart creates a `ScaledObject` and stops writing a fixed `replicas` onto the Deployment (KEDA owns it), scaling between `minReplicaCount` and `maxReplicaCount` from the triggers you define:
+
+```yaml
+haproxy:
+  keda:
+    enabled: true
+    minReplicaCount: 2
+    maxReplicaCount: 10
+    triggers:
+      - type: cpu
+        metricType: Utilization
+        metadata:
+          value: "70"
+```
+
+KEDA must be installed in the cluster, and `haproxy.keda.triggers` must list at least one trigger — it's empty by default. Any [KEDA scaler](https://keda.sh/docs/latest/scalers/) works; the block above uses CPU utilization.
+
 ## Initial bootstrap config
 
 When the chart manages HAProxy, the pod boots with a minimal `haproxy.cfg` rendered from `haproxy.initialConfig` into the `<release>-haptic-haproxy-config` ConfigMap. The controller replaces this config via the Dataplane API on its first reconcile, so the bootstrap only matters during the seconds between pod start and controller handoff (and on pod restart before the controller reconciles again).
@@ -126,6 +152,30 @@ The string is processed through Helm's `tpl`, so chart helpers and `.Values` ref
 
 !!! warning "Keep /ready returning 503 until the controller takes over"
     An override that returns 200 on `/ready` lets the Service route traffic to HAProxy before any backends exist — clients see 404 responses. Replicate the 503 behaviour, or accept the gap.
+
+## Access logging
+
+HAProxy writes its access logs to the container's stdout, so `kubectl logs` shows them directly:
+
+```bash
+kubectl logs -n haptic -l app.kubernetes.io/component=loadbalancer -c haproxy
+```
+
+The default template libraries emit `log stdout len 4096 local0 info` in the `global` section and `option httplog` in the `defaults` section, which produces HAProxy's standard HTTP log line per request. To use a custom format, add a `log-format` directive through a `defaults-settings-*` snippet — it runs after the built-in `defaults-settings-100-options` and overrides `option httplog`:
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      defaults-settings-150-log-format:
+        template: |
+          log-format "%ci:%cp [%tr] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r"
+```
+
+To change the log destination or facility instead, override `global-settings-100-logging`.
+
+!!! note "This isn't the Dataplane API log"
+    `haproxy.dataplane.aclFormat` configures the **Dataplane API sidecar's own** access log, not HAProxy's traffic logs. HAProxy request logging is controlled by the `log`, `option httplog`, and `log-format` directives above.
 
 ## HAProxy Pod requirements
 

@@ -17,8 +17,17 @@ Tune HAPTIC in three areas:
 | Small (<50 Ingresses) | 50m | 200m | 64Mi | 256Mi |
 | Medium (50-200 Ingresses) | 100m | 500m | 128Mi | 512Mi |
 | Large (200+ Ingresses) | 200m | 1000m | 256Mi | 1Gi |
+| Very large (thousands of Ingresses) | 500m | 2000m | 512Mi | 2Gi |
 
 These recommendations are based on the controller's primary memory consumers (watched resource caches, template rendering buffers, event history) and CPU consumers (template rendering, API server watch streams). Adjust based on your actual resource counts and template complexity.
+
+!!! tip "Scaling past a few thousand Ingresses"
+    At the very-large scale, the resource numbers above are a starting point, not the main lever — the controller holds every watched resource in memory and re-renders the whole config on change, so what keeps that bounded is *watching less*, not sizing bigger. Reach for these first:
+
+    - **Narrow the watch** to the namespaces or labels that actually route through HAPTIC, so unrelated Ingresses, Services, and EndpointSlices never enter the cache — see [Resource watching optimization](#resource-watching-optimization).
+    - **Move large, infrequently read resources to the on-demand store** (TLS Secrets especially) so their bodies aren't held resident — see [Watching resources — store types](../watching-resources.md). Both cut memory and per-render CPU more than raising limits does.
+
+    HAProxy-side, watch `haproxy.shmStats.maxObjects` if you enabled shm-stats — thousands of backends and servers can exhaust the fixed-size stats file (see [Troubleshooting — Shared Memory Stats Limit](../troubleshooting.md#shared-memory-stats-limit)).
 
 !!! note "Chart defaults differ — deliberately"
     The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Burstable QoS — no CPU limit, by design), which differs from the table above for two reasons: omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel's out-of-memory killer from preferring this pod over Burstable neighbours (see [Robusta on Kubernetes memory limits](https://home.robusta.dev/blog/kubernetes-memory-limit) for the rationale). The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
@@ -316,6 +325,25 @@ global
     tune.bufsize 32768        # 32KB for large headers
     tune.http.maxhdr 128      # Allow more headers
 ```
+
+### Response compression
+
+HAProxy can gzip-compress HTTP responses, but no annotation library exposes a compression annotation, and there's no chart value for it. Enable it with HAProxy's own `compression` directives through a template snippet — the same extension point the built-in libraries use.
+
+Add the directives to the `defaults` section (applies to every backend) via a `defaults-settings-*` snippet. User snippets merge with the library-provided ones and win on key collision:
+
+```yaml
+# values.yaml
+controller:
+  config:
+    templateSnippets:
+      defaults-settings-500-compression:
+        template: |
+          compression algo gzip
+          compression type text/html text/plain text/css application/javascript application/json
+```
+
+To compress only one route's responses instead, emit the same two lines into that `backend` from a `backends-*` snippet, or reference an `extraContext` toggle so it can be flipped without editing the template. `compression algo` also accepts `deflate` and `raw-deflate`; list every content type you want compressed in `compression type` (HAProxy compresses nothing by default).
 
 ### Password hash performance
 

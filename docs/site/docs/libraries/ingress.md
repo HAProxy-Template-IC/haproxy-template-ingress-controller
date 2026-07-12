@@ -76,6 +76,63 @@ controller:
 
 ## Features
 
+### Host-based routing
+
+Each entry in `spec.rules` carries its own `host`, so a single Ingress can serve several hostnames — list one rule per host:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: multi-host
+  namespace: default
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: shop.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: storefront
+                port:
+                  number: 80
+    - host: admin.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-console
+                port:
+                  number: 80
+```
+
+A rule with no `host` matches every hostname (the catch-all listener).
+
+#### Wildcard hosts
+
+A single-label wildcard host — `*.example.com` — is supported. HAPTIC normalizes it to `.example.com` (dropping the `*`), and HAProxy strips the request's leading label before the map lookup. So `*.example.com` matches `shop.example.com` and `admin.example.com`, but not the apex `example.com` or a deeper `a.b.example.com` — a Kubernetes wildcard host matches exactly one label. To match more than one label, add the `haproxy-ingress.github.io/server-alias-regex` annotation, which routes matching hostnames through `host-regex.map`. See [Frontend routing logic](base.md#frontend-routing-logic) for the full host-match cascade.
+
+```yaml
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: "*.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wildcard-service
+                port:
+                  number: 80
+```
+
 ### Path types
 
 The Ingress library supports all standard Kubernetes Ingress path types:
@@ -85,6 +142,9 @@ The Ingress library supports all standard Kubernetes Ingress path types:
 | `Exact` | `map()` | Path must match exactly |
 | `Prefix` | `map_beg()` | Path must start with value |
 | `ImplementationSpecific` | `map_beg()` | Treated as Prefix by default |
+
+!!! note "Path match precedence"
+    When more than one path could match a request, HAProxy evaluates the path maps in a fixed order: Exact, then Regex, then Prefix-exact, then Prefix. Host matching runs first (exact host, then single-label wildcard, then host regex). Set `controller.config.routing.regexMatchOrder=last` to move regex evaluation after the prefix matchers (Exact > Prefix-exact > Prefix > Regex). See [Frontend routing logic](base.md#frontend-routing-logic) for the complete cascade.
 
 **Example Ingress:**
 
@@ -134,6 +194,44 @@ All three route to the same `storefront_shop_svc_shop_http` backend: they share 
 </details>
 
 </div>
+
+### Default backend and custom error pages
+
+Set `spec.defaultBackend` to route requests that match none of an Ingress's rule paths to a fallback Service:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: catch-all
+  namespace: default
+spec:
+  ingressClassName: haptic
+  defaultBackend:
+    service:
+      name: fallback-service
+      port:
+        number: 80
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 80
+```
+
+HAPTIC honours `spec.defaultBackend` in three shapes:
+
+- **Rule-less Ingress** — with only `spec.defaultBackend` and no `rules`, every request that doesn't match a more specific route goes to the default backend.
+- **Alongside rules** — a request that matches the Ingress's host but none of its paths falls through to the default backend; requests to other hosts aren't caught.
+- **Newest wins per host** — when several Ingresses declare a default backend for the same host, the most recently created one wins, so a rollout switches the fallback deterministically.
+
+To serve a custom page for unmatched requests — a branded 404 or a maintenance notice — point `spec.defaultBackend` at a small Service that returns it. For HAProxy's own error responses (for example the 503 shown when a backend has no ready endpoints), render the page as a file and wire it with an `errorfile` directive instead; see [Auxiliary files](../templating.md#general-files) for the `files` and `errorfile` pattern.
 
 ### TLS Configuration
 
@@ -206,6 +304,44 @@ backend default_my-app_svc_api-service_http
 ```
 
 `check` lives on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Reserved `disabled` slots get filled in at runtime when the backend scales up.
+
+### WebSocket backends
+
+WebSocket backends work without extra configuration. HAProxy tunnels the `Upgrade` handshake, so an Ingress routing to a WebSocket service needs no special annotation. Long-lived connections are bounded by HAProxy's `timeout tunnel`. Raise it per-backend with `haproxy.org/timeout-tunnel` (or `haproxy-ingress.github.io/timeout-tunnel`) when a connection must stay open longer:
+
+```yaml
+annotations:
+  haproxy.org/timeout-tunnel: "1h"
+```
+
+### gRPC backends
+
+gRPC runs over HTTP/2. Tell HAPTIC to speak HTTP/2 to a cleartext (h2c) backend with the `haproxy.org/server-proto: h2` annotation:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grpc-app
+  namespace: default
+  annotations:
+    haproxy.org/server-proto: h2
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: grpc.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grpc-service
+                port:
+                  number: 50051
+```
+
+For a TLS backend, use `haproxy-ingress.github.io/backend-protocol: h2-ssl` instead. Both annotation libraries are enabled by default. If you run the [nginx-ingress library](nginx-ingress.md), its `nginx.ingress.kubernetes.io/backend-protocol: GRPC` (or `GRPCS` for TLS) names gRPC directly. On the client side, HAProxy detects HTTP/2 cleartext prior-knowledge on the plaintext listener, so gRPC clients that dial insecurely still reach the backend.
 
 ### Backend config snippet
 
