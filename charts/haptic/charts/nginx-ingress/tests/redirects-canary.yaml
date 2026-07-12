@@ -775,3 +775,202 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "rand\\(100\\) lt 20"
+
+  test-nginx-ingress-canary-main-owns-base-route:
+    description: "A canary Ingress does not own its base route — it only overlays a use_backend split; the main Ingress owns the base map entry. Here two non-canary mains (main-old, main-new) and one canary all claim clash.example.com/. The canary is excluded from base-route ownership entirely, while the two real mains COMPETE under oldest-wins, so the OLDER main (main-old) owns the route. This pins both the canary exclusion and that a genuine second main still competes (unlike the canary)."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-old-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-new-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: canary-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-old-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-old-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-new-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-new-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: canary-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: canary-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.3"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: main-old
+            creationTimestamp: "2020-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: clash.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-old-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: main-new
+            creationTimestamp: "2026-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: clash.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-new-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-weight: "20"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: clash.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: canary-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^clash\\.example\\.com/ BACKEND:default_main-old_svc_main-old-service_80$"
+        description: "the older non-canary main owns the base route"
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "canary-service"
+        description: "the canary never owns the base route — it only overlays a use_backend split"
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "main-new-service"
+        description: "the newer main competed for the route but lost to the older main (oldest-wins), unlike the canary which is excluded outright"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "rand\\(100\\) lt 20"
+        description: "the canary weight split is still overlaid on the main's route"
+
+  test-nginx-ingress-canary-without-main-serves-base-route:
+    description: "A canary Ingress with NO corresponding main Ingress still owns and serves its own base route. Canary Ingresses yield the base route to a main when one exists, but fall back to owning it themselves otherwise — so a standalone canary annotation still routes traffic to its backend (mirrors the e2e nginx-canary-header-pattern case, a single annotated Ingress with no main)."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: solo-canary-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: solo-canary-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: solo-canary-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.9"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: solo-canary
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"
+              nginx.ingress.kubernetes.io/canary-by-header-pattern: "^v[0-9]+$"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: solo-canary.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: solo-canary-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^solo-canary\\.example\\.com/ BACKEND:default_solo-canary_svc_solo-canary-service_80$"
+        description: "with no main to defer to, the canary owns and serves its own base route"

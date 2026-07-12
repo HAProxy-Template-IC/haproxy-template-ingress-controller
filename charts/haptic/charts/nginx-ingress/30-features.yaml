@@ -23,6 +23,45 @@ templateSnippets:
         })
       %%}
 
+  features-080-nginx-ingress-canary-coexist:
+    template: |
+      {#-
+        Mark nginx canary Ingresses as base-route co-locators so they don't
+        compete for host+path ownership in the core Ingress path map
+        (ingress.yaml util-path-map-entry-ingress-shard).
+
+        A canary Ingress carries nginx.ingress.kubernetes.io/canary: "true" and
+        DELIBERATELY shares a host+path with a non-canary (main) Ingress. The
+        canary does NOT own the base route — its traffic is split off by a
+        use_backend rule (frontend-filters-780) that fires before the base map
+        lookup; the main Ingress owns the base map entry. Without this marker
+        the canary would compete for the route and (being alphabetically or
+        chronologically first) could win the base map, so non-canary traffic
+        would land on the canary backend.
+
+        We register the canary Ingress's IDENTITY (namespace/name) in
+        gf["coLocatedIngresses"]. The path-map owner computation skips these
+        Ingresses entirely, so the main owns the route alone and a genuine
+        SECOND non-canary Ingress on the same host+path still competes with the
+        main under oldest-wins. This runs at features-080 during the haproxy.cfg
+        render, which completes before the aux-file (map) render reads the set.
+        When the nginx-ingress library is disabled there are no canary Ingresses
+        and the set stays absent (the owner computation treats a missing set as
+        "no co-locators").
+      -#}
+      {%%
+        var gf = shared.Get("globalFeatures").(map[string]any)
+        if gf["coLocatedIngresses"] == nil {
+          gf["coLocatedIngresses"] = map[string]any{}
+        }
+        var coLocated = gf["coLocatedIngresses"].(map[string]any)
+        for _, ingress := range resources.ingresses.List() {
+          if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary"] == "true" {
+            coLocated[ingress.Metadata.Namespace + "/" + ingress.Metadata.Name] = true
+          }
+        }
+      %%}
+
   features-100-nginx-ingress-ssl-passthrough:
     template: |
       {#-

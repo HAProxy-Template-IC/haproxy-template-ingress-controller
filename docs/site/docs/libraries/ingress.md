@@ -195,6 +195,16 @@ All three route to the same `storefront_shop_svc_shop_http` backend: they share 
 
 </div>
 
+### Conflicting routes: the oldest Ingress wins
+
+A host and path can be routed to only one backend. When two Ingresses declare the same host, path, and path type, the controller resolves the collision deterministically: the **older** Ingress — by `creationTimestamp`, with the namespace and name as a tiebreaker — keeps the route, and the newer Ingress's conflicting route is dropped. This matches ingress-nginx's behavior, so an Ingress that was there first is never hijacked by a later conflicting one.
+
+`Prefix` and `ImplementationSpecific` paths share the same routing slot, so a `Prefix` path on one Ingress and an `ImplementationSpecific` path with the same host and path on another still collide and are resolved together. `Exact` paths match separately and never collide with prefix paths.
+
+Because the timestamp is the Ingress object's creation time, editing an Ingress doesn't change who wins — a route stays with the Ingress that first claimed it, regardless of later edits.
+
+Different paths on the same host don't collide, so you can split a host across several Ingresses by giving each a distinct path. An [nginx canary](nginx-ingress.md) Ingress (`nginx.ingress.kubernetes.io/canary: "true"`) intentionally shares its main Ingress's host and path; it never competes for the base route — the main Ingress owns it, and the canary only overlays a traffic split on top.
+
 ### Default backend and custom error pages
 
 Set `spec.defaultBackend` to route requests that match none of an Ingress's rule paths to a fallback Service:
