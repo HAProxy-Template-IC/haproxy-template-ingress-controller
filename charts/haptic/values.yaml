@@ -122,13 +122,24 @@ controller:
     # https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0003-annotation-compat-scaffold-level-2-5.md
     ingressAnnotationsCompat:
       enabled: true
-    # haproxy.org/* annotation compatibility.
+    # haproxy-haptic.org/* — HAPTIC's native annotation vocabulary and the
+    # only annotation library enabled by default. A best-of-breed superset of
+    # the three vendor libraries below; the vocabulary to use for a powerful
+    # ingress controller from scratch. The vendor libraries are opt-in migration
+    # aids — enable the one matching the controller you're coming from to keep
+    # its annotations working, and optionally migrate to haproxy-haptic.org/* at
+    # your own pace. All prefixes can be mixed on the same Ingress.
+    hapticAnnotations:
+      enabled: true
+    # haproxy.org/* compatibility (haproxytech/kubernetes-ingress migration).
+    # Opt-in: set true to keep existing haproxy.org/* annotations working.
     haproxytech:
-      enabled: true
-    # haproxy-ingress.github.io/* annotation compatibility.
+      enabled: false
+    # haproxy-ingress.github.io/* compatibility (jcmoraisjr/haproxy-ingress
+    # migration). Opt-in.
     haproxyIngress:
-      enabled: true
-    # nginx.ingress.kubernetes.io/* annotation compatibility (migration aid).
+      enabled: false
+    # nginx.ingress.kubernetes.io/* compatibility (ingress-nginx migration). Opt-in.
     nginxIngress:
       enabled: false
     # HAProxy-side wiring for the bundled spoa-hub sidecar. Auto-enabled by

@@ -1,0 +1,378 @@
+# HAPTIC-native annotation library — frontend-filters-* handlers.
+#
+# Best-of-breed superset of the three vendor frontend-filter fragments, exposed
+# under the haproxy-haptic.org/* prefix:
+#   - forwardfor        (haproxy-ingress: add|update|ifmissing|ignore)
+#   - request/response-set-header, src-ip-header, request-capture (haproxytech)
+#   - cors              (the shared EmitAnnotationCORS macro — ingress-nginx model)
+#   - allow/deny-list   (the shared EmitAnnotationAccessControl macro)
+#   - proxy-cookie-*    (nginx-ingress upstream Set-Cookie rewriting)
+#   - proxy-redirect-*  (nginx-ingress Location/Refresh rewriting)
+#
+# frontend-filters-* snippets inherit NO locals (see charts/CLAUDE.md extension
+# table); each iterates resources.ingresses.List() itself and host-scopes its
+# output via HostMatchCondition. Snippets sit in the 800-band (600s=haproxy-
+# ingress, 700s=nginx are taken).
+templateSnippets:
+
+  frontend-filters-800-haptic-forwardfor:
+    template: |
+      {#-
+        HAPTIC forwardfor Annotation (best-of-breed: haproxy-ingress semantics)
+
+        Annotations:
+          - haproxy-haptic.org/forwardfor: "add|update|ifmissing|ignore" (optional)
+
+        Generated HAProxy Config (host-scoped):
+          add       → http-request add-header X-Forwarded-For %[src]
+          update    → http-request set-header X-Forwarded-For %[src]
+          ifmissing → http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found }
+          ignore    → (no rule)
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var forwardfor = ingress.Metadata.Annotations["haproxy-haptic.org/forwardfor"] %}
+          {%- if forwardfor != "" && forwardfor != "add" && forwardfor != "update" && forwardfor != "ifmissing" && forwardfor != "ignore" %}
+            {{- fail("Invalid value '" + forwardfor + "' for annotation 'haproxy-haptic.org/forwardfor' on Ingress '" + key + "'. Valid values: add, update, ifmissing, ignore") -}}
+          {%- end %}
+          {%- if forwardfor != "" && forwardfor != "ignore" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haptic/forwardfor ({{ key }})
+              {%- if forwardfor == "ifmissing" %}
+      http-request set-header X-Forwarded-For %[src] if !{ req.hdr(X-Forwarded-For) -m found } {{ HostMatchCondition(hosts) }}
+              {%- else if forwardfor == "update" %}
+      http-request set-header X-Forwarded-For %[src] if {{ HostMatchCondition(hosts) }}
+              {%- else %}
+      http-request add-header X-Forwarded-For %[src] if {{ HostMatchCondition(hosts) }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-810-haptic-access-control:
+    template: |
+      {#-
+        HAPTIC IP allow/deny-list (best-of-breed: shared CIDR-ACL macro)
+
+        Annotations:
+          - haproxy-haptic.org/allowlist-source-range: "CIDR,CIDR,..." (optional)
+          - haproxy-haptic.org/denylist-source-range: "CIDR,CIDR,..." (optional)
+
+        Generated HAProxy Config (host-scoped):
+          acl <name> src <cidrs>
+          http-request deny if <host-match> !<acl>   (allowlist)
+          http-request deny if <host-match>  <acl>   (denylist)
+      -#}
+      {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
+      {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- Under satisfy=any the combined IP-or-auth gate (backend-directives-825)
+            owns the allowlist so an allow-listed OR authenticated request passes;
+            suppress the standalone allowlist deny here by passing an empty key
+            (the macro then skips it). The denylist deny still applies. -#}
+        {%- var allowKey = "haproxy-haptic.org/allowlist-source-range" %}
+        {%- if SatisfyAnyMode(ingress) == "any" %}{%- allowKey = "" %}{%- end %}
+        {{ EmitAnnotationAccessControl(ingress,
+            allowKey,
+            "haproxy-haptic.org/denylist-source-range",
+            "haptic",
+            "haptic/allowlist-source-range ({KEY})",
+            "haptic/denylist-source-range ({KEY})") }}
+      {%- end -%}
+
+  frontend-filters-820-haptic-request-set-header:
+    template: |
+      {#-
+        HAPTIC request header injection (best-of-breed: haproxytech newline form)
+
+        Annotations:
+          - haproxy-haptic.org/request-set-header: newline-separated "<name> <value>"
+            lines (one header per line).
+
+        Generated HAProxy Config (host-scoped):
+          http-request set-header <name> '<value>' if <host-match>
+
+        Guards: the header name (single token, no spaces) and value (control
+        chars rejected) both pass ValidateConfigValue before interpolation.
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var reqHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/request-set-header"] %}
+          {%- if reqHeaders != "" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haptic/request-set-header ({{ key }})
+              {%- for _, line := range split(reqHeaders, "\n") %}
+                {%- var t = trimSpace(line) %}
+                {%- if t != "" && strings_contains(t, " ") %}
+                  {%- var parts = split(t, " ") %}
+                  {%- var hName = ValidateConfigValue(parts[0], "haproxy-haptic.org/request-set-header", key, false) %}
+                  {%- var hVal = ValidateConfigValue(join(parts[1:], " "), "haproxy-haptic.org/request-set-header", key, true) %}
+      http-request set-header {{ hName }} '{{ hVal }}' if {{ HostMatchCondition(hosts) }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-825-haptic-response-set-header:
+    template: |
+      {#-
+        HAPTIC response header injection (best-of-breed: haproxytech newline form)
+
+        Annotations:
+          - haproxy-haptic.org/response-set-header: newline-separated "<name> <value>"
+            lines (one header per line).
+
+        Generated HAProxy Config (host-scoped):
+          http-response set-header <name> '<value>' if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var respHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/response-set-header"] %}
+          {%- if respHeaders != "" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haptic/response-set-header ({{ key }})
+              {%- for _, line := range split(respHeaders, "\n") %}
+                {%- var t = trimSpace(line) %}
+                {%- if t != "" && strings_contains(t, " ") %}
+                  {%- var parts = split(t, " ") %}
+                  {%- var hName = ValidateConfigValue(parts[0], "haproxy-haptic.org/response-set-header", key, false) %}
+                  {%- var hVal = ValidateConfigValue(join(parts[1:], " "), "haproxy-haptic.org/response-set-header", key, true) %}
+      http-response set-header {{ hName }} '{{ hVal }}' if {{ HostMatchCondition(hosts) }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-830-haptic-cors:
+    template: |
+      {#-
+        HAPTIC CORS (best-of-breed: shared EmitAnnotationCORS macro).
+
+        The macro implements the ingress-nginx model — a comma-separated
+        cors-allow-origin allow-list (with single-level "*." wildcards) matched
+        against the request Origin, echoed back on http-after-response so the
+        headers also ride the synthetic preflight 204. The always-on preflight
+        204 IS the best-of-breed behaviour; there is no respond-to-options knob.
+
+        Annotations:
+          - haproxy-haptic.org/cors-enable: "true" (required to enable)
+          - haproxy-haptic.org/cors-allow-origin, cors-allow-methods,
+            cors-allow-headers, cors-allow-credentials, cors-expose-headers,
+            cors-max-age (all optional; read inside the macro).
+
+        Generated HAProxy Config (host-scoped):
+          http-request set-var(txn.cors_origin) req.hdr(Origin) if <host-match>
+          acl <name> var(txn.cors_origin) -m str|reg <allow-list>
+          http-after-response set-header Access-Control-* ... if <host-match> <acl>
+          http-request return status 204 if <host-match> <acl> METH_OPTIONS ...
+      -#}
+      {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ EmitAnnotationCORS(ingress,
+            "haproxy-haptic.org",
+            "haproxy-haptic.org/cors-enable",
+            "86400",
+            "haptic/cors") }}
+      {%- end -%}
+
+  frontend-filters-840-haptic-src-ip-header:
+    template: |
+      {#-
+        HAPTIC source-IP override (best-of-breed: haproxytech src-ip-header).
+
+        Rewrites the connection source address from a request header, so
+        downstream ACLs, logging and rate-limiting see the real client IP when
+        HAProxy sits behind another proxy.
+
+        Annotations:
+          - haproxy-haptic.org/src-ip-header: "<header-name>" (optional)
+
+        Generated HAProxy Config (host-scoped):
+          http-request set-src hdr(<header-name>) if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy-haptic.org/src-ip-header"] %}
+          {%- if srcIpHeader != "" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haptic/src-ip-header ({{ key }})
+      http-request set-src hdr({{ ValidateConfigValue(srcIpHeader, "haproxy-haptic.org/src-ip-header", key, false) }}) if {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-850-haptic-request-capture:
+    template: |
+      {#-
+        HAPTIC request capture (best-of-breed: haproxytech request-capture).
+
+        Captures request header values into the log line. Applied
+        frontend-wide (capture slots are positional and not host-scopable).
+
+        Annotations:
+          - haproxy-haptic.org/request-capture: newline-separated header names
+            (one per line) to capture.
+          - haproxy-haptic.org/request-capture-len: capture length (default 128).
+
+        Generated HAProxy Config:
+          capture request header <name> len <len>
+      -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var reqCapture = ingress.Metadata.Annotations["haproxy-haptic.org/request-capture"] %}
+          {%- var captureLen = ingress.Metadata.Annotations["haproxy-haptic.org/request-capture-len"] %}
+          {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
+          {%- if reqCapture != "" %}
+            {%- if toint(captureLen) <= 0 %}
+              {{- fail("Invalid value '" + captureLen + "' for annotation 'haproxy-haptic.org/request-capture-len' on Ingress '" + key + "'. Must be a positive integer.") -}}
+            {%- end %}
+      # haptic/request-capture ({{ key }})
+            {%- for _, line := range split(reqCapture, "\n") %}
+              {%- var t = trimSpace(line) %}
+              {%- if t != "" %}
+      capture request header {{ ValidateConfigValue(t, "haproxy-haptic.org/request-capture", key, false) }} len {{ captureLen }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-860-haptic-proxy-cookie:
+    template: |
+      {#-
+        HAPTIC upstream Set-Cookie rewriting (best-of-breed: nginx-ingress
+        proxy-cookie-domain / proxy-cookie-path, host-scoped at the frontend).
+
+        Annotations:
+          - haproxy-haptic.org/proxy-cookie-domain: "<from> <to>"
+          - haproxy-haptic.org/proxy-cookie-path:   "<from> <to>"
+
+        Only the two-argument "<from> <to>" form is supported; any other arity
+        fails the render. HAProxy expresses the rewrite as a regex
+        replace-header that preserves the rest of the cookie string.
+
+        Generated HAProxy Config (host-scoped):
+          http-response replace-header Set-Cookie (.*)Domain=<from>(.*) \1Domain=<to>\2 if <host-match>
+          http-response replace-header Set-Cookie (.*)Path=<from>(.*)   \1Path=<to>\2   if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var cookieDomain = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-cookie-domain"] %}
+          {%- var cookiePath = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-cookie-path"] %}
+          {%- if cookieDomain != "" || cookiePath != "" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+              {%- var cond = HostMatchCondition(hosts) %}
+              {%- if cookieDomain != "" %}
+                {%- var parts = split(strip(cookieDomain), " ") %}
+                {%- if len(parts) == 2 %}
+      # haptic/proxy-cookie-domain ({{ key }})
+      http-response replace-header Set-Cookie (.*)Domain={{ ValidateConfigValue(parts[0], "haproxy-haptic.org/proxy-cookie-domain", key, false) }}(.*) \1Domain={{ ValidateConfigValue(parts[1], "haproxy-haptic.org/proxy-cookie-domain", key, false) }}\2 if {{ cond }}
+                {%- else %}
+                  {{- fail("Annotation 'haproxy-haptic.org/proxy-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
+                {%- end %}
+              {%- end %}
+              {%- if cookiePath != "" %}
+                {%- var parts = split(strip(cookiePath), " ") %}
+                {%- if len(parts) == 2 %}
+      # haptic/proxy-cookie-path ({{ key }})
+      http-response replace-header Set-Cookie (.*)Path={{ ValidateConfigValue(parts[0], "haproxy-haptic.org/proxy-cookie-path", key, false) }}(.*) \1Path={{ ValidateConfigValue(parts[1], "haproxy-haptic.org/proxy-cookie-path", key, false) }}\2 if {{ cond }}
+                {%- else %}
+                  {{- fail("Annotation 'haproxy-haptic.org/proxy-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-870-haptic-proxy-redirect:
+    template: |
+      {#-
+        HAPTIC upstream Location/Refresh rewriting (adapted from nginx-ingress
+        proxy-redirect-from / proxy-redirect-to).
+
+        Annotations:
+          - haproxy-haptic.org/proxy-redirect-from: text to replace (skip when
+            "off"; "default" is unsupported → warning comment).
+          - haproxy-haptic.org/proxy-redirect-to:   replacement text (required
+            alongside a real "from").
+
+        DIVERGENCE ("different"): nginx applies this per-backend and supports a
+        proxy_pass-derived "default" mode. HAPTIC has no proxy_pass equivalent
+        (default → warning) and emits the rewrite host-scoped at the frontend
+        rather than per-backend. The "from" literal is regex-escaped.
+
+        Generated HAProxy Config (host-scoped):
+          http-response replace-header Location <from-regex> <to> if <host-match>
+          http-response replace-header Refresh  <from-regex> <to> if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var from = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-redirect-from"] %}
+          {%- var to = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-redirect-to"] %}
+          {%- if from == "default" %}
+      # Warning: haproxy-haptic.org/proxy-redirect-from=default on Ingress {{ key }} is not supported — HAProxy has no proxy_pass-derived rewrite; specify an explicit from/to pair.
+          {%- else if from != "" && from != "off" %}
+            {%- if to == "" %}
+              {{- fail("Annotation 'haproxy-haptic.org/proxy-redirect-from' on Ingress '" + key + "' requires 'haproxy-haptic.org/proxy-redirect-to'.") -}}
+            {%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+              {%- var cond = HostMatchCondition(hosts) %}
+              {%- var fromRe = sanitize_regex(ValidateConfigValue(from, "haproxy-haptic.org/proxy-redirect-from", key, false)) %}
+              {%- var toV = ValidateConfigValue(to, "haproxy-haptic.org/proxy-redirect-to", key, false) %}
+      # haptic/proxy-redirect ({{ key }})
+      http-response replace-header Location {{ fromRe }} {{ toV }} if {{ cond }}
+      http-response replace-header Refresh {{ fromRe }} {{ toV }} if {{ cond }}
+            {%- end %}
+          {%- end %}
+      {%- end -%}

@@ -118,9 +118,13 @@ templateSnippets:
                 {%- if tlsCrt != "" && tlsKey != "" %}
                   {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
                   {%- var crtFilename = secNs + "-" + secName + "-proxy-ssl-client.pem" %}
-                  {%- var crtPath, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+                  {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
                   {%- if crtRegErr != nil -%}{{ fail("failed to register proxy-ssl client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-                  {%- crtPart = " crt " + crtPath %}
+                  {#- `crt` is resolved by HAProxy against `crt-base` (the ssl dir),
+                      so pass the BARE filename. The Register()-returned ssl/-prefixed
+                      path would double to ssl/ssl/<name> and fail `haproxy -c` on a
+                      real deploy. Matches haproxytech/haproxy-ingress. -#}
+                  {%- crtPart = " crt " + crtFilename %}
                 {%- end %}
               {%- end %}
             {%- end %}

@@ -35,6 +35,9 @@ import re, sys, pathlib
 
 ROOT = pathlib.Path(".")
 VENDORS = [
+    ("haptic-annotations", "haproxy-haptic.org",
+     "charts/haptic/charts/haptic-annotations/90-migration-coverage.yaml",
+     "docs/site/docs/libraries/haptic-annotations.md"),
     ("nginx-ingress", "nginx.ingress.kubernetes.io",
      "charts/haptic/charts/nginx-ingress/90-migration-coverage.yaml",
      "docs/site/docs/libraries/nginx-ingress.md"),

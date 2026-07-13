@@ -1,0 +1,417 @@
+# Migration coverage for the HAPTIC-native annotation library.
+#
+# haptic-annotations is a best-of-breed SUPERSET of the three vendor
+# libraries — one clean haproxy-haptic.org/* annotation per capability,
+# adopting whichever vendor's semantics is best. Every key is `supported`
+# or `different` (works but diverges, see note); nothing is inert. This
+# block is pinned against the annotation keys the fragments actually read
+# by scripts/check-migration-coverage.sh, and documented on the library's
+# page by scripts/check-annotation-{docs,status}.sh.
+migrationCoverage:
+  - source: haptic-annotations
+    detect:
+      ingressClasses: ["haptic"]
+      annotationPrefixes: ["haproxy-haptic.org/"]
+    annotations:
+      haproxy-haptic.org/affinity:
+        status: supported
+        note: "value 'cookie' enables the session-affinity cookie directive"
+      haproxy-haptic.org/agent-check-addr:
+        status: supported
+        note: "→ `agent-addr <addr>`; fails if set without agent-check-port; guarded."
+      haproxy-haptic.org/agent-check-interval:
+        status: supported
+        note: "→ `agent-inter <dur>`; fails if set without agent-check-port; guarded."
+      haproxy-haptic.org/agent-check-port:
+        status: supported
+        note: "1-65535, enables the agent check → `agent-check agent-port <n>`; prerequisite for the other agent-check keys (haproxy-ingress source)."
+      haproxy-haptic.org/agent-check-send:
+        status: supported
+        note: "→ `agent-send <string>`; fails if set without agent-check-port; guarded (control chars rejected)."
+      haproxy-haptic.org/allowlist-source-range:
+        status: supported
+        note: "CIDR allow-list ACL + host-scoped deny via shared EmitAnnotationAccessControl (aclPrefix haptic); CIDRs validated"
+      haproxy-haptic.org/app-root:
+        status: supported
+        note: "Registers host->path into gf[\"appRootHosts\"]; base builds app-root.map and emits the path=/ gated redirect. Control-char guarded."
+      haproxy-haptic.org/auth-headers-fail:
+        status: supported
+        note: "Failure-path response headers → http-after-response set-header (survives http-request deny short-circuit)."
+      haproxy-haptic.org/auth-headers-request:
+        status: supported
+        note: "Forwarded request-header allowlist → auth-forward-headers.map + auto-extended SPOE check-auth args (six standard headers pre-seeded to avoid duplicate args)."
+      haproxy-haptic.org/auth-headers-succeed:
+        status: supported
+        note: "Success-path response headers → one http-request set-header per unique header, gated on external_auth.allowed."
+      haproxy-haptic.org/auth-method:
+        status: supported
+        note: "External-auth HTTP method override → auth-method.map; guarded to a single alphabetic token."
+      haproxy-haptic.org/auth-realm:
+        status: supported
+        note: "Basic-auth realm (default \"Restricted\"); guarded against double-quote/newline injection."
+      haproxy-haptic.org/auth-secret:
+        status: supported
+        note: "References the credentials Secret (ns/name or name); an absent Secret skips the userlist+challenge cleanly."
+      haproxy-haptic.org/auth-secret-type:
+        status: supported
+        note: "auth-file (htpasswd in the `auth` key, incl. user::plain) or auth-map (one key per user); default auth-file."
+      haproxy-haptic.org/auth-signin:
+        status: supported
+        note: "External-auth sign-in redirect URL → auth-signin.map."
+      haproxy-haptic.org/auth-tls-cert-header:
+        status: supported
+        note: "Forwards X-SSL-Client-CN/DN/Cert to the backend on hosts that presented a client cert (gated on ssl_fc_has_crt)."
+      haproxy-haptic.org/auth-tls-error-page:
+        status: supported
+        note: "Registers host→URL into gf[\"mtlsErrorHosts\"]; base emits the ssl_c_verify-gated redirect (map-only, reload-free)."
+      haproxy-haptic.org/auth-tls-secret:
+        status: supported
+        note: "SNI-keyed client-cert CA verify; ca.crt written via fileRegistry and registered into gf[\"clientCertVerifyHosts\"]; host required (host-less rule fails)."
+      haproxy-haptic.org/auth-tls-verify-client:
+        status: different
+        note: "on→verify required, optional/optional_no_ca→verify optional (HAProxy has no distinct optional_no_ca mode), off→no entry."
+      haproxy-haptic.org/auth-type:
+        status: supported
+        note: "Basic-auth gate; must be \"basic\" (any other value fails loud at render)."
+      haproxy-haptic.org/auth-url:
+        status: supported
+        note: "External-auth: populates auth-url.map (requires spoaHub.plugins.external-auth; spoa-hub frontend self-gates on the check-auth message)."
+      haproxy-haptic.org/backend-ca-secret:
+        status: supported
+        note: "Secret ca.crt registered as fileRegistry file and emitted as ca-file; supplying it implies verify required. Missing Secret/key -> warning comment + skip."
+      haproxy-haptic.org/backend-ciphers:
+        status: supported
+        note: "ciphers <list> (TLS<=1.2); only on a TLS-enabled backend; ValidateConfigValue-guarded."
+      haproxy-haptic.org/backend-ciphersuites:
+        status: supported
+        note: "ciphersuites <list> (TLS1.3, HI capability); only on a TLS-enabled backend; ValidateConfigValue-guarded."
+      haproxy-haptic.org/backend-crt-secret:
+        status: supported
+        note: "kubernetes.io/tls Secret tls.crt+tls.key combined, registered as cert (ssl/ dir), presented to upstream via crt in any verify mode. Missing -> warning + skip."
+      haproxy-haptic.org/backend-protocol:
+        status: supported
+        note: "Union of HI (h1|h2|h1-ssl|h2-ssl) and NG (http|https|grpc|grpcs); normalized to proto h2 (h2/grpc/h2-ssl/grpcs) and TLS-to-upstream (h1-ssl/https/h2-ssl/grpcs)."
+      haproxy-haptic.org/backend-sni:
+        status: supported
+        note: "host/sni keyword -> sni req.hdr(host); any other value -> sni str(<literal>), ValidateConfigValue-guarded (single token)."
+      haproxy-haptic.org/backend-ssl-protocols:
+        status: different
+        note: "Space-separated version list mapped to ssl-min-ver (lowest) / ssl-max-ver (highest); HAProxy expresses only a contiguous span, so a listed gap (e.g. skipping TLSv1.2) cannot be represented."
+      haproxy-haptic.org/backend-verify:
+        status: supported
+        note: "Truthy (on/true/yes/1, case-insensitive) requires verification; fail-closed if no usable CA, never a silent downgrade to verify none (NG semantics)."
+      haproxy-haptic.org/backend-verify-host:
+        status: supported
+        note: "verifyhost <host>, decoupled from SNI (unlike NG which couples them); ValidateConfigValue-guarded."
+      haproxy-haptic.org/canary:
+        status: supported
+        note: "Marks the Ingress as a canary for a shared host; excluded from base-route ownership (features-800 registers it in gf[\"coLocatedIngresses\"]) so the main Ingress owns the map entry and the canary only overlays a use_backend split."
+      haproxy-haptic.org/canary-by-cookie:
+        status: supported
+        note: "Cookie-gated split (req.cook(<name>) -m str always); guarded by ValidateConfigValue."
+      haproxy-haptic.org/canary-by-header:
+        status: supported
+        note: "Header-gated use_backend split (req.hdr(<name>) -m str always by default); value guarded by ValidateConfigValue."
+      haproxy-haptic.org/canary-by-header-pattern:
+        status: supported
+        note: "Regex header match (req.hdr(<name>) -m reg <pattern>), takes precedence over header-value; guarded by ValidateConfigValue."
+      haproxy-haptic.org/canary-by-header-value:
+        status: supported
+        note: "Overrides the matched header value (req.hdr(<name>) -m str <value>); guarded by ValidateConfigValue."
+      haproxy-haptic.org/canary-weight:
+        status: supported
+        note: "Weighted split via rand(100) lt <weight>; bounds-checked to an integer 0-100 (fail-loud otherwise) — best-of-breed hardening over the nginx source."
+      haproxy-haptic.org/check:
+        status: supported
+        note: "on/off toggle; false → serverOpts.checkDirective=no-check so servers aren't health-checked (haproxytech source)."
+      haproxy-haptic.org/config-backend:
+        status: supported
+        note: "Raw HAProxy directives injected verbatim into the backend section — intentional multi-line escape hatch mirroring the haproxy-ingress config-backend annotation (trusted config, not request data)."
+      haproxy-haptic.org/config-defaults:
+        status: supported
+        note: "Raw operator-authored directives injected verbatim into the defaults section."
+      haproxy-haptic.org/config-frontend:
+        status: supported
+        note: "Raw operator-authored directives injected at frontend-extra-* (before routing) into every frontend."
+      haproxy-haptic.org/config-global:
+        status: supported
+        note: "Raw operator-authored directives injected verbatim into the global section (strip-trimmed, multi-line, no control-char guard by design — matches vendor raw-passthrough)."
+      haproxy-haptic.org/connection-proxy-header:
+        status: supported
+        note: "NG: Connection header override via reload-free reqhdr-connection.map"
+      haproxy-haptic.org/cors-allow-credentials:
+        status: supported
+        note: "Access-Control-Allow-Credentials 'true' when set (via macro)"
+      haproxy-haptic.org/cors-allow-headers:
+        status: supported
+        note: "Access-Control-Allow-Headers via http-after-response (via macro)"
+      haproxy-haptic.org/cors-allow-methods:
+        status: supported
+        note: "Access-Control-Allow-Methods via http-after-response (via macro)"
+      haproxy-haptic.org/cors-allow-origin:
+        status: supported
+        note: "comma-separated allow-list with single-level '*.' wildcard, matched request Origin echoed back (via macro); default '*'"
+      haproxy-haptic.org/cors-enable:
+        status: supported
+        note: "gates the shared EmitAnnotationCORS macro; always-on preflight 204 is the best-of-breed behaviour (no respond-to-options knob)"
+      haproxy-haptic.org/cors-expose-headers:
+        status: supported
+        note: "Access-Control-Expose-Headers when set (via macro)"
+      haproxy-haptic.org/cors-max-age:
+        status: supported
+        note: "Access-Control-Max-Age; default 86400 (via macro)"
+      haproxy-haptic.org/default-backend:
+        status: different
+        note: "nginx-style per-host catch-all pool from a named Service (first port) plus a <host>/ path-prefix.map entry; SILENTLY skipped when the Service/port can't be resolved (diverges from the redirect-based default-backend of haproxy-ingress)."
+      haproxy-haptic.org/default-backend-redirect:
+        status: supported
+        note: "haproxy-ingress-style: builds haptic-default-backend-redirect-<code>.map and redirects host-matched-but-path-unmatched requests via !{ var(txn.backend_name) -m found }. Control-char guarded."
+      haproxy-haptic.org/default-backend-redirect-code:
+        status: supported
+        note: "default-backend-redirect code (default 302); validated fail-loud."
+      haproxy-haptic.org/denylist-source-range:
+        status: supported
+        note: "CIDR deny-list ACL + host-scoped deny via shared EmitAnnotationAccessControl (aclPrefix haptic); CIDRs validated"
+      haproxy-haptic.org/forwardfor:
+        status: supported
+        note: "add|update|ifmissing|ignore X-Forwarded-For, host-scoped (haproxy-ingress semantics); invalid enum fails loud"
+      haproxy-haptic.org/from-to-www-redirect:
+        status: supported
+        note: "nginx-style 301 apex<->www; builds haptic-from-to-www.map and emits two scheme-split redirect-prefix rules (Location only, never Host)."
+      haproxy-haptic.org/fullconn:
+        status: different
+        note: "Emits backend `fullconn <n>` (haproxy-ingress limit-connections). HAProxy fullconn is a SOFT threshold that scales min/maxconn ranges, not a hard backend connection cap."
+      haproxy-haptic.org/health-check-fall:
+        status: supported
+        note: "Positive int → default-server `fall <n>`."
+      haproxy-haptic.org/health-check-interval:
+        status: supported
+        note: "→ default-server `inter <dur>`; skipped when check=false; guarded."
+      haproxy-haptic.org/health-check-port:
+        status: supported
+        note: "1-65535 → default-server `port <n>` (haproxy-ingress source)."
+      haproxy-haptic.org/health-check-rise:
+        status: supported
+        note: "Positive int → default-server `rise <n>`."
+      haproxy-haptic.org/health-check-uri:
+        status: supported
+        note: "→ `option httpchk`; a value with a space is used verbatim, a bare path becomes `GET <path>` (haproxytech check-http heuristic); guarded."
+      haproxy-haptic.org/hsts:
+        status: supported
+        note: "Enables HSTS; via RegisterAnnotationHSTS registers host->value into gf[\"hstsHosts\"]; base builds hsts.map and emits the shared response-header rule."
+      haproxy-haptic.org/hsts-include-subdomains:
+        status: supported
+        note: "Appends includeSubDomains to the Strict-Transport-Security value when \"true\"."
+      haproxy-haptic.org/hsts-max-age:
+        status: supported
+        note: "HSTS max-age seconds; default from extraContext hapticHstsMaxAge (63072000). Control-char guarded in the macro."
+      haproxy-haptic.org/hsts-preload:
+        status: supported
+        note: "Appends preload to the Strict-Transport-Security value when \"true\"."
+      haproxy-haptic.org/initial-weight:
+        status: supported
+        note: "Integer 0-256 → default-server `weight <n>` (haproxy-ingress source)."
+      haproxy-haptic.org/limit-rate:
+        status: supported
+        note: "Per-connection download throttle (bytes/s) via a bwlim-out filter + set-bandwidth-limit; byte-size validated. Independent of the deny-based caps."
+      haproxy-haptic.org/limit-rate-after:
+        status: supported
+        note: "Bytes transferred before the limit-rate throttle applies; maps to bwlim-out min-size; byte-size validated."
+      haproxy-haptic.org/load-balance:
+        status: supported
+        note: "Parameterized algorithms roundrobin|static-rr|leastconn|first|source|random plus uri|url_param(NAME)|hdr(NAME)|rdp-cookie(NAME); invalid value fails the render (haproxytech source)."
+      haproxy-haptic.org/maxconn-server:
+        status: supported
+        note: "Positive int → per-server `maxconn <n>` via default-server flags (haproxy-ingress source)."
+      haproxy-haptic.org/maxqueue-server:
+        status: supported
+        note: "Positive int → per-server `maxqueue <n>` via default-server flags."
+      haproxy-haptic.org/mirror-target:
+        status: supported
+        note: "Fire-and-forget request mirroring via the spoa-hub mirror plugin (scheme://host[:port] authority → per-Ingress SPOE slot). Requires spoaHub.plugins.mirror (auto-enabled with the gateway library) and a rule host; both are enforced with fail-loud guards. Buffers the request body (option http-buffer-request)."
+      haproxy-haptic.org/modsecurity-snippet:
+        status: supported
+        note: "Per-app coraza SecRule directives → gf[\"sphCorazaApps\"] (spoa-hub config-content) + coraza-app.map; TOML triple-quote rejected; fails loud without the coraza plugin."
+      haproxy-haptic.org/oauth:
+        status: supported
+        note: "oauth2-proxy only; desugars onto external-auth, deriving the oauth2-proxy backend from the Ingress's own oauth-uri-prefix path; skipped when auth-url is set."
+      haproxy-haptic.org/oauth-headers:
+        status: supported
+        note: "Headers forwarded from the oauth2-proxy reply on success (default X-Auth-Request-Email); <header>[:<source>] form keyed on header name."
+      haproxy-haptic.org/oauth-uri-prefix:
+        status: supported
+        note: "oauth2-proxy path prefix (default /oauth2); trailing slash trimmed."
+      haproxy-haptic.org/path-rewrite:
+        status: supported
+        note: "haproxytech form: <from> <to> → replace-path with both tokens; bare value → replace-path (.*) <value>"
+      haproxy-haptic.org/path-type:
+        status: supported
+        note: "regex|exact|prefix|begin honored only for pathType ImplementationSpecific; selects path-regex/path-exact/path-prefix(trailing-slash normalised)/path-prefix-exact map, adapted from haproxy-ingress"
+      haproxy-haptic.org/permanent-redirect:
+        status: supported
+        note: "URL registered into gf[\"redirectHosts\"] with code (default 301); base emits from redirect-loc-<code>.map. Control-char guarded."
+      haproxy-haptic.org/permanent-redirect-code:
+        status: supported
+        note: "Permanent redirect code (default 301); validated fail-loud."
+      haproxy-haptic.org/pod-maxconn:
+        status: supported
+        note: "Cluster budget divided by count of Ready HAProxy pods, quantized up to a power of two; result set on serverOpts.podMaxconnValue for base.yaml to emit as per-server maxconn (haproxytech source)."
+      haproxy-haptic.org/proxy-body-size:
+        status: supported
+        note: "HI/NG: k/K,m/M,g/G suffix parsed to bytes into body-size.map (413 via base.yaml); '0' = unlimited, no entry"
+      haproxy-haptic.org/proxy-cookie-domain:
+        status: supported
+        note: "'<from> <to>' only -> http-response replace-header Set-Cookie Domain= regex rewrite, host-scoped; wrong arity fails"
+      haproxy-haptic.org/proxy-cookie-path:
+        status: supported
+        note: "'<from> <to>' only -> http-response replace-header Set-Cookie Path= regex rewrite, host-scoped; wrong arity fails"
+      haproxy-haptic.org/proxy-next-upstream:
+        status: different
+        note: "NG retry-on mapping (error→conn-failure, timeout→response-timeout, invalid_header→junk-response, http_NNN→NNN, off→retries 0); non_idempotent ignored — diverges from nginx's exact retry surface"
+      haproxy-haptic.org/proxy-next-upstream-tries:
+        status: supported
+        note: "NG: positive integer → retries N; '0' keeps the default (no retries directive emitted)"
+      haproxy-haptic.org/proxy-protocol:
+        status: supported
+        note: "proxy/proxy-v1→send-proxy, proxy-v2, proxy-v2-ssl, proxy-v2-ssl-cn (haproxytech value vocabulary); any other value fails the render (haproxy-ingress strictness)."
+      haproxy-haptic.org/proxy-redirect-from:
+        status: different
+        note: "Location/Refresh replace-header rewrite (from regex-escaped); 'default' proxy_pass-derived mode unsupported (warning); emitted host-scoped at the frontend rather than nginx's per-backend"
+      haproxy-haptic.org/proxy-redirect-to:
+        status: different
+        note: "replacement text for proxy-redirect-from; required alongside a real (non-off/non-default) from, else render fails"
+      haproxy-haptic.org/rate-limit-connections:
+        status: supported
+        note: "Per-source concurrent-connection cap via conn_cur counter; ignored when rps or rpm is set (separate counter type, comment records it)."
+      haproxy-haptic.org/rate-limit-period:
+        status: different
+        note: "Stick-table window override; when unset it derives from the active cap (1s rps / 60s rpm / 30s-TTL connections) rather than a flat 1s default, so rpm stays per-minute."
+      haproxy-haptic.org/rate-limit-rpm:
+        status: supported
+        note: "Per-source requests/minute cap (http_req_rate, 60s window); ignored when rate-limit-rps is also set (single stick-table, comment records it)."
+      haproxy-haptic.org/rate-limit-rps:
+        status: supported
+        note: "Hard per-source-IP requests/sec cap via http_req_rate stick-table; over-cap rejected with deny_status (default 429). No burst allowance."
+      haproxy-haptic.org/rate-limit-size:
+        status: supported
+        note: "Stick-table size (default 100k); validated as a byte-size token (^[0-9]+[kKmMgG]?$) before interpolation."
+      haproxy-haptic.org/rate-limit-status-code:
+        status: supported
+        note: "Deny status code (best-of-breed default 429 vs haproxytech's 403); validated as a 3-digit HTTP status before interpolation."
+      haproxy-haptic.org/rate-limit-whitelist:
+        status: supported
+        note: "Comma-separated CIDRs exempted via a trailing negated src guard; routed through ValidateCidrList so invalid CIDRs fail loudly."
+      haproxy-haptic.org/request-capture:
+        status: supported
+        note: "newline-separated header names -> capture request header, frontend-wide (capture slots are positional, not host-scopable); guarded"
+      haproxy-haptic.org/request-capture-len:
+        status: supported
+        note: "capture length, default 128; positive-integer validated"
+      haproxy-haptic.org/request-set-header:
+        status: supported
+        note: "newline-separated '<name> <value>' lines -> http-request set-header, host-scoped; name (no-space) and value ValidateConfigValue-guarded"
+      haproxy-haptic.org/response-set-header:
+        status: supported
+        note: "newline-separated '<name> <value>' lines -> http-response set-header, host-scoped; guarded"
+      haproxy-haptic.org/rewrite-target:
+        status: supported
+        note: "HI/NG best-of-breed: $N→\N capture emits backend-scoped http-request replace-path; literal (no backreference) relocates to reload-free path-rewrite.map"
+      haproxy-haptic.org/satisfy:
+        status: supported
+        note: "\"any\" OR-combines allowlist-source-range and basic auth into one backend gate, suppressing both the standalone allowlist deny and the standalone auth challenge so an allow-listed OR authenticated request passes."
+      haproxy-haptic.org/scale-server-slots:
+        status: supported
+        note: "Positive int overrides reserved server-slot count via serverOpts.serverSlotsValue (haproxytech source)."
+      haproxy-haptic.org/server-alias:
+        status: supported
+        note: "comma/space list of extra exact hostnames → host.map entries pointing at the first rule's MapKeyForHost key; each alias guarded by ValidateConfigValue"
+      haproxy-haptic.org/server-alias-regex:
+        status: supported
+        note: "regex hostnames → host-regex.map entry mapped to the primary host key, emitted verbatim after ValidateConfigValue injection guard"
+      haproxy-haptic.org/session-cookie-domain:
+        status: supported
+        note: "HI/NG: native 'domain <d>' cookie keyword; injection-guarded"
+      haproxy-haptic.org/session-cookie-dynamic:
+        status: supported
+        note: "HI: default true → adds 'dynamic' keyword plus per-backend dynamic-cookie-key sha256(ns/name)"
+      haproxy-haptic.org/session-cookie-keywords:
+        status: supported
+        note: "HI: appended verbatim (injection-guarded, spaces allowed) e.g. 'httponly'"
+      haproxy-haptic.org/session-cookie-max-age:
+        status: supported
+        note: "NG: non-negative integer seconds → 'attr Max-Age=<n>' (browser cookie lifetime, not HAProxy maxlife); non-integer → fail"
+      haproxy-haptic.org/session-cookie-name:
+        status: supported
+        note: "cookie name; defaults to INGRESSCOOKIE; injection-guarded"
+      haproxy-haptic.org/session-cookie-path:
+        status: supported
+        note: "NG: surfaced as 'attr Path=<path>' (HAProxy has no bare path keyword); injection-guarded"
+      haproxy-haptic.org/session-cookie-preserve:
+        status: supported
+        note: "HI: 'true' → 'preserve' keyword on the cookie directive"
+      haproxy-haptic.org/session-cookie-samesite:
+        status: supported
+        note: "NG spelling: None|Lax|Strict → 'attr SameSite=<v>'; invalid → fail"
+      haproxy-haptic.org/session-cookie-secure:
+        status: supported
+        note: "NG: 'true' → 'attr Secure'"
+      haproxy-haptic.org/session-cookie-strategy:
+        status: supported
+        note: "HI: insert|rewrite|prefix (default insert); insert/prefix add indirect nocache; invalid → fail"
+      haproxy-haptic.org/set-host:
+        status: supported
+        note: "haproxytech set-host / NG upstream-vhost union: overrides upstream Host via reload-free reqhdr-host.map"
+      haproxy-haptic.org/src-ip-header:
+        status: supported
+        note: "http-request set-src hdr(<name>), host-scoped; header name ValidateConfigValue-guarded"
+      haproxy-haptic.org/ssl-passthrough:
+        status: supported
+        note: "Via BuildAnnotationSSLPassthrough (cache key haptic_sslPassthrough, namePrefix ssl-passthrough-haptic-) + gf[\"sslPassthroughBackends\"] copy + RenderAnnotationSSLPassthroughBackends; ssl.yaml builds the SNI TCP frontend."
+      haproxy-haptic.org/ssl-redirect:
+        status: supported
+        note: "Registers host into gf[\"sslRedirectHosts\"]; ssl.yaml builds ssl-redirect-<code>.map and emits the scheme-redirect rule (reload-free). Hosts also setting ssl-redirect-port are excluded here to avoid a double redirect."
+      haproxy-haptic.org/ssl-redirect-code:
+        status: supported
+        note: "Redirect status code (301|302|303|307|308, default 302); validated fail-loud rather than silently corrected."
+      haproxy-haptic.org/ssl-redirect-port:
+        status: supported
+        note: "haproxytech-style port-targeted redirect: builds haptic-ssl-redirect-port-<code>.map and emits a terminal http-request redirect to https on the explicit port preserving the URI."
+      haproxy-haptic.org/temporal-redirect:
+        status: supported
+        note: "URL registered into gf[\"redirectHosts\"] with code (default 302); base emits from redirect-loc-<code>.map. Control-char guarded."
+      haproxy-haptic.org/temporal-redirect-code:
+        status: supported
+        note: "Temporal redirect code (default 302); validated fail-loud."
+      haproxy-haptic.org/timeout-check:
+        status: supported
+        note: "Emits `timeout check <x>` (haproxytech source); guarded."
+      haproxy-haptic.org/timeout-connect:
+        status: supported
+        note: "Emits `timeout connect <x>`; value guarded by ValidateConfigValue (haproxy-ingress source)."
+      haproxy-haptic.org/timeout-http-request:
+        status: supported
+        note: "Emits `timeout http-request <x>`; guarded."
+      haproxy-haptic.org/timeout-keep-alive:
+        status: supported
+        note: "Emits `timeout http-keep-alive <x>`; guarded."
+      haproxy-haptic.org/timeout-queue:
+        status: supported
+        note: "Emits `timeout queue <x>`; guarded."
+      haproxy-haptic.org/timeout-server:
+        status: supported
+        note: "Emits `timeout server <x>`; guarded."
+      haproxy-haptic.org/timeout-tunnel:
+        status: supported
+        note: "Emits `timeout tunnel <x>`; guarded."
+      haproxy-haptic.org/upstream-hash-by:
+        status: different
+        note: "nginx has no exact HAProxy analogue; value (nginx $var or raw fetch) remapped to the closest consistent-hash equivalent: `balance uri`/`balance source`/`balance hdr(...)`/`balance url_param(...)`/`balance hash req.cook(...)` plus `hash-type consistent`."
+      haproxy-haptic.org/waf:
+        status: supported
+        note: "\"modsecurity\" opt-in → haproxy-ingress-waf.map (txn.coraza_mode), keyed by ns/name; fails loud without the coraza plugin."
+      haproxy-haptic.org/waf-mode:
+        status: supported
+        note: "deny|detect (default deny); waf-mode without waf fails loud; invalid mode fails loud."
+      haproxy-haptic.org/x-forwarded-prefix:
+        status: supported
+        note: "NG: X-Forwarded-Prefix via reload-free reqhdr-xfwd-prefix.map"

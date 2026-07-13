@@ -20,7 +20,7 @@ Some plugins auto-enable with the template library that consumes them — each p
 - **external-auth** follows `controller.templateLibraries.nginxIngress.enabled`,
 - **mirror** follows `controller.templateLibraries.gateway.enabled`.
 
-The haproxy-ingress and gateway libraries are on by default, so a default install already runs the hub with the `coraza` and `mirror` plugins; `fingerprinting`, `maxmind`, `otel`, and `sso-auth` stay off until you enable them.
+The gateway library is on by default and auto-enables the `mirror` plugin, so a default install already runs the hub with `mirror`. The `coraza` plugin auto-enables when you turn on the opt-in haproxy-ingress or nginx-ingress annotation library, and `external-auth` when you turn on nginx-ingress; `fingerprinting`, `maxmind`, `otel`, and `sso-auth` stay off until you enable them.
 
 An explicit boolean on `spoaHub.enabled` always wins: `false` forces the sidecar off even with plugins enabled; `true` renders it with none. See the [Chart Values Reference](../reference.md#spoa-hub-sidecar) for every `spoaHub.*` value.
 

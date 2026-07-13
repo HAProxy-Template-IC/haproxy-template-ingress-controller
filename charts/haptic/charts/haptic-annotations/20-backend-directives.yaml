@@ -1,0 +1,532 @@
+# HAPTIC-native annotation library (haproxy-haptic.org/*) — backend-directives fragment.
+#
+# Best-of-breed superset of the three vendor annotation libraries' backend
+# directives, exposed under the haproxy-haptic.org/ prefix:
+#   - timeouts + timeout-check (haproxy-ingress + haproxytech)
+#   - parameterized load-balance (haproxytech)
+#   - upstream-hash-by consistent hashing (nginx, remapped to HAProxy balance)
+#   - per-server maxconn / maxqueue + soft fullconn (haproxy-ingress)
+#   - pod-maxconn + scale-server-slots (haproxytech)
+#   - initial-weight (haproxy-ingress)
+#   - proxy-protocol send-proxy variants (haproxytech vocabulary + fail-on-invalid)
+#   - health checks: check toggle, httpchk uri, port, interval, fall, rise
+#   - agent checks (haproxy-ingress)
+#   - config-backend raw-directive escape hatch (haproxy-ingress)
+#
+# These snippets receive `ingress`, `serverOpts`, `serviceName`, `port` via
+# inherit_context from backends-500-ingress. Each guards its body with
+# `{%- if ingress != nil %}` and either emits directives inline into the
+# backend {...} section or pushes default-server flags onto serverOpts["flags"].
+templateSnippets:
+  backend-directives-800-haptic-timeouts:
+    template: |
+      {#-
+        HAPTIC Backend Timeouts
+
+        Best-of-breed source: haproxy-ingress.github.io/* timeouts + haproxytech
+        timeout-check. Every value maps directly to a `timeout <x>` backend line.
+
+        Annotations (all optional):
+          - haproxy-haptic.org/timeout-connect      -> timeout connect
+          - haproxy-haptic.org/timeout-server       -> timeout server
+          - haproxy-haptic.org/timeout-queue        -> timeout queue
+          - haproxy-haptic.org/timeout-tunnel       -> timeout tunnel
+          - haproxy-haptic.org/timeout-http-request -> timeout http-request
+          - haproxy-haptic.org/timeout-keep-alive   -> timeout http-keep-alive
+          - haproxy-haptic.org/timeout-check        -> timeout check
+
+        Each value is guarded by ValidateConfigValue (no spaces, no control
+        characters) before it reaches the config line.
+      -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var tConnect = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-connect"] %}
+        {%- var tServer = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-server"] %}
+        {%- var tQueue = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-queue"] %}
+        {%- var tTunnel = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-tunnel"] %}
+        {%- var tHttpReq = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-http-request"] %}
+        {%- var tKeepAlive = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-keep-alive"] %}
+        {%- var tCheck = ingress.Metadata.Annotations["haproxy-haptic.org/timeout-check"] %}
+        {%- var hasTimeout = tConnect != "" || tServer != "" || tQueue != "" || tTunnel != "" || tHttpReq != "" || tKeepAlive != "" || tCheck != "" %}
+        {%- if hasTimeout %}
+      # haptic/timeouts ({{ key }})
+        {%- end %}
+        {%- if tConnect != "" %}
+      timeout connect {{ ValidateConfigValue(tConnect, "haproxy-haptic.org/timeout-connect", key, false) }}
+        {% end %}
+        {%- if tServer != "" %}
+      timeout server {{ ValidateConfigValue(tServer, "haproxy-haptic.org/timeout-server", key, false) }}
+        {% end %}
+        {%- if tQueue != "" %}
+      timeout queue {{ ValidateConfigValue(tQueue, "haproxy-haptic.org/timeout-queue", key, false) }}
+        {% end %}
+        {%- if tTunnel != "" %}
+      timeout tunnel {{ ValidateConfigValue(tTunnel, "haproxy-haptic.org/timeout-tunnel", key, false) }}
+        {% end %}
+        {%- if tHttpReq != "" %}
+      timeout http-request {{ ValidateConfigValue(tHttpReq, "haproxy-haptic.org/timeout-http-request", key, false) }}
+        {% end %}
+        {%- if tKeepAlive != "" %}
+      timeout http-keep-alive {{ ValidateConfigValue(tKeepAlive, "haproxy-haptic.org/timeout-keep-alive", key, false) }}
+        {% end %}
+        {%- if tCheck != "" %}
+      timeout check {{ ValidateConfigValue(tCheck, "haproxy-haptic.org/timeout-check", key, false) }}
+        {% end %}
+      {%- end -%}
+
+  backend-directives-810-haptic-load-balance:
+    template: |
+      {#-
+        HAPTIC Load Balancing Algorithm
+
+        Best-of-breed source: haproxytech haproxy.org/load-balance (the richest
+        vocabulary — exact algorithms plus parameterized ones).
+
+        Annotation: haproxy-haptic.org/load-balance
+        Exact values: roundrobin, static-rr, leastconn, first, source, random
+        Parameterized: uri[...], url_param(NAME), hdr(NAME), rdp-cookie(NAME)
+        Any other value fails the render.
+
+        Generated HAProxy config:
+          balance <value>
+      -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var lb = ingress.Metadata.Annotations["haproxy-haptic.org/load-balance"] %}
+        {%- if lb != "" %}
+          {%- var exactValid = []string{"roundrobin", "static-rr", "leastconn", "first", "source", "random"} %}
+          {%- var prefixValid = []string{"uri", "url_param", "hdr", "rdp-cookie"} %}
+          {%- var isValid = false %}
+          {%- for _, v := range exactValid %}{%- if lb == v %}{%- isValid = true %}{%- end %}{%- end %}
+          {%- if !isValid %}
+            {%- for _, v := range prefixValid %}
+              {%- if hasPrefix(lb, v) %}{%- isValid = true %}{%- end %}
+            {%- end %}
+          {%- end %}
+          {%- if !isValid %}
+            {{- fail("Invalid value '" + lb + "' for annotation 'haproxy-haptic.org/load-balance' on Ingress '" + key + "'. Valid algorithms: " + (exactValid | join(", ")) + ", or parameterized: " + (prefixValid | join("(...), ")) + "(...)") -}}
+          {%- end %}
+      # haptic/load-balance ({{ key }})
+      balance {{ ValidateConfigValue(lb, "haproxy-haptic.org/load-balance", key, true) }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-815-haptic-upstream-hash:
+    template: |
+      {#-
+        HAPTIC Consistent-Hash Load Balancing (upstream-hash-by)
+
+        Best-of-breed source: nginx.ingress.kubernetes.io/upstream-hash-by.
+        DIVERGENCE: nginx builds a Rendezvous/CRC hash ring over an arbitrary
+        variable; HAProxy has no identical primitive, so the value is remapped
+        to the closest HAProxy consistent-hash equivalent — a `balance` line
+        plus `hash-type consistent`.
+
+        Annotation: haproxy-haptic.org/upstream-hash-by
+        Accepted values (nginx variables OR a raw HAProxy fetch):
+          $request_uri / request.uri / uri -> balance uri
+          $remote_addr / src / source      -> balance source
+          $http_<name>                     -> balance hdr(<name>)  (underscores -> hyphens)
+          $arg_<name>                      -> balance url_param(<name>)
+          $cookie_<name>                   -> balance hash req.cook(<name>)
+          any other $var                   -> fails the render
+          anything else                    -> balance hash <value>  (assumed HAProxy fetch)
+
+        Generated HAProxy config:
+          balance <expr>
+          hash-type consistent
+      -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var hashBy = ingress.Metadata.Annotations["haproxy-haptic.org/upstream-hash-by"] %}
+        {%- if hashBy != "" %}
+          {%- var expr = "" %}
+          {%- if hashBy == "$request_uri" || hashBy == "request.uri" || hashBy == "uri" %}
+            {%- expr = "uri" %}
+          {%- else if hashBy == "$remote_addr" || hashBy == "src" || hashBy == "source" %}
+            {%- expr = "source" %}
+          {%- else if hasPrefix(hashBy, "$cookie_") %}
+            {%- expr = "hash req.cook(" + hashBy[8:] + ")" %}
+          {%- else if hasPrefix(hashBy, "$http_") %}
+            {%- expr = "hdr(" + replace(hashBy[6:], "_", "-") + ")" %}
+          {%- else if hasPrefix(hashBy, "$arg_") %}
+            {%- expr = "url_param(" + hashBy[5:] + ")" %}
+          {%- else if hasPrefix(hashBy, "$") %}
+            {{- fail("Unsupported variable '" + hashBy + "' for annotation 'haproxy-haptic.org/upstream-hash-by' on Ingress '" + key + "'. Supported: $request_uri, $remote_addr, $http_<name>, $arg_<name>, $cookie_<name>, or a raw HAProxy fetch.") -}}
+          {%- else %}
+            {%- expr = "hash " + hashBy %}
+          {%- end %}
+      # haptic/upstream-hash ({{ key }})
+      balance {{ ValidateConfigValue(expr, "haproxy-haptic.org/upstream-hash-by", key, true) }}
+      hash-type consistent
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-820-haptic-maxconn:
+    template: |
+      {#-
+        HAPTIC Connection Limits
+
+        Best-of-breed source: haproxy-ingress.github.io/* maxconn-server,
+        maxqueue-server, and limit-connections (renamed to the clearer
+        `fullconn`).
+
+        Annotations (all optional, positive integers):
+          - haproxy-haptic.org/maxconn-server  -> default-server maxconn <n>  (per-server hard cap)
+          - haproxy-haptic.org/maxqueue-server -> default-server maxqueue <n> (per-server queue cap)
+          - haproxy-haptic.org/fullconn        -> backend fullconn <n>
+
+        DIVERGENCE (fullconn): HAProxy `fullconn` is a SOFT threshold that scales
+        per-server minconn/maxconn ranges — it is not a hard connection cap on the
+        backend. Use maxconn-server for a hard per-server limit.
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var maxconn = ingress.Metadata.Annotations["haproxy-haptic.org/maxconn-server"] %}
+        {%- var maxqueue = ingress.Metadata.Annotations["haproxy-haptic.org/maxqueue-server"] %}
+        {%- var fullconn = ingress.Metadata.Annotations["haproxy-haptic.org/fullconn"] %}
+        {%- if maxconn != "" %}
+          {%- var val = toint(maxconn) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + maxconn + "' for annotation 'haproxy-haptic.org/maxconn-server' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "maxconn " + tostring(val)) %}
+        {%- end %}
+        {%- if maxqueue != "" %}
+          {%- var val = toint(maxqueue) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + maxqueue + "' for annotation 'haproxy-haptic.org/maxqueue-server' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "maxqueue " + tostring(val)) %}
+        {%- end %}
+        {%- if fullconn != "" %}
+          {%- var val = toint(fullconn) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + fullconn + "' for annotation 'haproxy-haptic.org/fullconn' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+      # haptic/fullconn ({{ key }})
+      fullconn {{ val }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-825-haptic-pod-maxconn:
+    template: |
+      {#-
+        HAPTIC Pod maxconn (cluster-wide budget divided across HAProxy pods)
+
+        Best-of-breed source: haproxytech haproxy.org/pod-maxconn. The annotation
+        is the TOTAL connection budget; the per-server maxconn is that value
+        divided by the number of Ready HAProxy pods, quantized UP to the next
+        power of two so scaling events don't cascade reloads. The result is
+        stashed on serverOpts["podMaxconnValue"], which base.yaml's BackendServers
+        macro emits as `maxconn <perPod>` on each server line.
+
+        Annotation: haproxy-haptic.org/pod-maxconn (positive integer)
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var podMaxconn = ingress.Metadata.Annotations["haproxy-haptic.org/pod-maxconn"] %}
+        {%- if podMaxconn != "" %}
+          {%- var val = toint(podMaxconn) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + podMaxconn + "' for annotation 'haproxy-haptic.org/pod-maxconn' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {#- Count only Running+Ready HAProxy pods (not Pending/SysctlForbidden). -#}
+          {%- var haproxyPodCount = 0 %}
+          {%- if controller != nil %}
+            {%- var pods = controller.haproxy_pods %}
+            {%- if pods != nil %}
+              {%- for _, pod := range pods.List() %}
+                {%- if (pod | dig("status", "phase") | fallback("")) == "Running" %}
+                  {%- for _, cond := range (pod | dig("status", "conditions") | fallback([]any{}) | toSlice()) %}
+                    {%- if (cond | dig("type") | fallback("")) == "Ready" && (cond | dig("status") | fallback("")) == "True" %}
+                      {%- haproxyPodCount = haproxyPodCount + 1 %}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+          {%- if haproxyPodCount > 0 %}
+            {#- Quantize the ready-pod count up to the next power of 2. -#}
+            {%- var effectiveCount = 1 %}
+            {%- for effectiveCount < haproxyPodCount %}
+              {%- effectiveCount = effectiveCount * 2 %}
+            {%- end %}
+            {%- var perPod = ((val | float64()) / (effectiveCount | float64())) | ceil() %}
+      # haptic/pod-maxconn ({{ key }})
+      # pod-maxconn: {{ podMaxconn }} total / {{ haproxyPodCount }} ready pods (effective: {{ effectiveCount }}) = {{ perPod }} per pod
+            {% serverOpts["podMaxconnValue"] = perPod -%}
+          {%- else %}
+      # haptic/pod-maxconn ({{ key }})
+      # pod-maxconn: {{ podMaxconn }} (no ready HAProxy pods discovered yet, using full value)
+            {% serverOpts["podMaxconnValue"] = val -%}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-830-haptic-scale-server-slots:
+    template: |
+      {#-
+        HAPTIC Scale Server Slots
+
+        Best-of-breed source: haproxytech haproxy.org/scale-server-slots.
+        Overrides the pre-allocated (reserved) server-slot count for the backend
+        via serverOpts["serverSlotsValue"], which base.yaml's BackendServers macro
+        reads. More slots = more headroom for reload-free scale-up; fewer = a
+        leaner config.
+
+        Annotation: haproxy-haptic.org/scale-server-slots (positive integer)
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var serverSlots = ingress.Metadata.Annotations["haproxy-haptic.org/scale-server-slots"] %}
+        {%- if serverSlots != "" %}
+          {%- var val = toint(serverSlots) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + serverSlots + "' for annotation 'haproxy-haptic.org/scale-server-slots' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["serverSlotsValue"] = val %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-835-haptic-initial-weight:
+    template: |
+      {#-
+        HAPTIC Initial Server Weight
+
+        Best-of-breed source: haproxy-ingress.github.io/initial-weight. Sets the
+        initial load-balancing weight on every server via default-server, so the
+        runtime API can still adjust individual weights without a reload.
+
+        Annotation: haproxy-haptic.org/initial-weight (integer 0-256)
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var weight = ingress.Metadata.Annotations["haproxy-haptic.org/initial-weight"] %}
+        {%- if weight != "" %}
+          {%- var val = toint(weight) %}
+          {%- if val < 0 || val > 256 %}
+            {{- fail("Invalid value '" + weight + "' for annotation 'haproxy-haptic.org/initial-weight' on Ingress '" + key + "'. Must be 0-256.") -}}
+          {%- end %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "weight " + tostring(val)) %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-840-haptic-proxy-protocol:
+    template: |
+      {#-
+        HAPTIC PROXY-protocol to Backend
+
+        Best-of-breed source: haproxytech haproxy.org/send-proxy-protocol value
+        vocabulary, combined with haproxy-ingress' fail-on-invalid strictness (the
+        haproxytech snippet silently ignored unknown values — we reject them).
+
+        Annotation: haproxy-haptic.org/proxy-protocol
+          proxy | proxy-v1 -> send-proxy
+          proxy-v2         -> send-proxy-v2
+          proxy-v2-ssl     -> send-proxy-v2-ssl
+          proxy-v2-ssl-cn  -> send-proxy-v2-ssl-cn
+          anything else    -> fails the render
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var pp = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-protocol"] %}
+        {%- if pp != "" %}
+          {%- if pp == "proxy" || pp == "proxy-v1" %}
+            {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "send-proxy") %}
+          {%- else if pp == "proxy-v2" %}
+            {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "send-proxy-v2") %}
+          {%- else if pp == "proxy-v2-ssl" %}
+            {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "send-proxy-v2-ssl") %}
+          {%- else if pp == "proxy-v2-ssl-cn" %}
+            {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "send-proxy-v2-ssl-cn") %}
+          {%- else %}
+            {{- fail("Invalid value '" + pp + "' for annotation 'haproxy-haptic.org/proxy-protocol' on Ingress '" + key + "'. Valid values: proxy, proxy-v1, proxy-v2, proxy-v2-ssl, proxy-v2-ssl-cn") -}}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-850-haptic-health-check-toggle:
+    template: |
+      {#-
+        HAPTIC Health-check Toggle
+
+        Best-of-breed source: haproxytech haproxy.org/check on/off toggle. When
+        false, sets serverOpts["checkDirective"] to "no-check" so ingress.yaml
+        emits `default-server no-check` and the backend's servers are NOT
+        health-checked. Runs before 855 so the httpchk/interval logic there can
+        respect the toggle.
+
+        Annotation: haproxy-haptic.org/check ("true" | "false")
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var check = ingress.Metadata.Annotations["haproxy-haptic.org/check"] %}
+        {%- if check != "" %}
+          {%- if check != "true" && check != "false" %}
+            {{- fail("Invalid value '" + check + "' for annotation 'haproxy-haptic.org/check' on Ingress '" + key + "'. Valid values: 'true', 'false'") -}}
+          {%- end %}
+          {%- if check == "false" %}
+            {%- serverOpts["checkDirective"] = "no-check" %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-855-haptic-health-checks:
+    template: |
+      {#-
+        HAPTIC Health-check Configuration
+
+        Best-of-breed source: haproxy-ingress.github.io/* health-check-* keys,
+        with the haproxytech check-http "bare path vs full spec" heuristic for
+        the URI.
+
+        Annotations (all optional):
+          - haproxy-haptic.org/health-check-uri      -> option httpchk [GET] <uri>
+          - haproxy-haptic.org/health-check-port     -> default-server port <n>   (1-65535)
+          - haproxy-haptic.org/health-check-interval -> default-server inter <dur> (ignored when check=false)
+          - haproxy-haptic.org/health-check-fall     -> default-server fall <n>
+          - haproxy-haptic.org/health-check-rise     -> default-server rise <n>
+
+        health-check-uri: a value containing a space is used verbatim after
+        `option httpchk` (e.g. "GET /healthz HTTP/1.1"); a bare path becomes
+        `option httpchk GET <path>`.
+      -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var checkUri = ingress.Metadata.Annotations["haproxy-haptic.org/health-check-uri"] %}
+        {%- var checkPort = ingress.Metadata.Annotations["haproxy-haptic.org/health-check-port"] %}
+        {%- var checkInterval = ingress.Metadata.Annotations["haproxy-haptic.org/health-check-interval"] %}
+        {%- var fallCount = ingress.Metadata.Annotations["haproxy-haptic.org/health-check-fall"] %}
+        {%- var riseCount = ingress.Metadata.Annotations["haproxy-haptic.org/health-check-rise"] %}
+        {%- if checkUri != "" %}
+      # haptic/health-checks ({{ key }})
+          {%- if strings_contains(checkUri, " ") %}
+      option httpchk {{ ValidateConfigValue(checkUri, "haproxy-haptic.org/health-check-uri", key, true) }}
+          {%- else %}
+      option httpchk GET {{ ValidateConfigValue(checkUri, "haproxy-haptic.org/health-check-uri", key, false) }}
+          {%- end %}
+        {%- end %}
+        {%- if checkPort != "" %}
+          {%- var val = toint(checkPort) %}
+          {%- if val <= 0 || val > 65535 %}
+            {{- fail("Invalid value '" + checkPort + "' for annotation 'haproxy-haptic.org/health-check-port' on Ingress '" + key + "'. Must be 1-65535.") -}}
+          {%- end %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "port " + tostring(val)) %}
+        {%- end %}
+        {#- inter is meaningless once checks are disabled via check=false. -#}
+        {%- if checkInterval != "" && (serverOpts | dig("checkDirective") | fallback("check") | tostring()) != "no-check" %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "inter " + ValidateConfigValue(checkInterval, "haproxy-haptic.org/health-check-interval", key, false)) %}
+        {%- end %}
+        {%- if fallCount != "" %}
+          {%- var val = toint(fallCount) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + fallCount + "' for annotation 'haproxy-haptic.org/health-check-fall' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "fall " + tostring(val)) %}
+        {%- end %}
+        {%- if riseCount != "" %}
+          {%- var val = toint(riseCount) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + riseCount + "' for annotation 'haproxy-haptic.org/health-check-rise' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "rise " + tostring(val)) %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-860-haptic-agent-check:
+    template: |
+      {#-
+        HAPTIC Agent Check
+
+        Best-of-breed source: haproxy-ingress.github.io/* agent-check-* keys. The
+        agent check is auxiliary to the regular health check. HAProxy requires an
+        agent PORT to enable it, so haproxy-haptic.org/agent-check-port is the
+        enabler — the other three keys have no effect without it and are rejected
+        when set on their own. All map to runtime-safe default-server parameters.
+
+        Annotations:
+          - haproxy-haptic.org/agent-check-port     -> agent-check agent-port <n> (REQUIRED to enable)
+          - haproxy-haptic.org/agent-check-addr     -> agent-addr <addr>   (optional)
+          - haproxy-haptic.org/agent-check-interval -> agent-inter <dur>   (optional)
+          - haproxy-haptic.org/agent-check-send     -> agent-send <string> (optional)
+      -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var aPort = ingress.Metadata.Annotations["haproxy-haptic.org/agent-check-port"] %}
+        {%- var aAddr = ingress.Metadata.Annotations["haproxy-haptic.org/agent-check-addr"] %}
+        {%- var aInter = ingress.Metadata.Annotations["haproxy-haptic.org/agent-check-interval"] %}
+        {%- var aSend = ingress.Metadata.Annotations["haproxy-haptic.org/agent-check-send"] %}
+        {%- if aPort == "" && (aAddr != "" || aInter != "" || aSend != "") %}
+          {{- fail("Annotation 'haproxy-haptic.org/agent-check-port' is required to enable the agent check on Ingress '" + key + "'; agent-check-addr/-interval/-send have no effect without it.") -}}
+        {%- end %}
+        {%- if aPort != "" %}
+          {%- var val = toint(aPort) %}
+          {%- if val <= 0 || val > 65535 %}
+            {{- fail("Invalid value '" + aPort + "' for annotation 'haproxy-haptic.org/agent-check-port' on Ingress '" + key + "'. Must be 1-65535.") -}}
+          {%- end %}
+          {%- var agentFlags = "agent-check agent-port " + tostring(val) %}
+          {%- if aAddr != "" %}
+            {%- agentFlags = agentFlags + " agent-addr " + ValidateConfigValue(aAddr, "haproxy-haptic.org/agent-check-addr", key, false) %}
+          {%- end %}
+          {%- if aInter != "" %}
+            {%- agentFlags = agentFlags + " agent-inter " + ValidateConfigValue(aInter, "haproxy-haptic.org/agent-check-interval", key, false) %}
+          {%- end %}
+          {%- if aSend != "" %}
+            {%- agentFlags = agentFlags + " agent-send " + ValidateConfigValue(strip(aSend), "haproxy-haptic.org/agent-check-send", key, true) %}
+          {%- end %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), agentFlags) %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-900-haptic-config-backend:
+    template: |
+      {#-
+        HAPTIC Backend Config Snippet (raw-directive escape hatch)
+
+        Best-of-breed source: haproxy-ingress.github.io/config-backend. Injects
+        raw HAProxy directives verbatim into the backend section. This is an
+        intentional multi-line escape hatch (like the vendor annotation it mirrors)
+        for operators who need directives HAPTIC doesn't model — the value is
+        emitted as-is, so it is trusted config, not user-request data.
+
+        Annotation: haproxy-haptic.org/config-backend (raw HAProxy config lines)
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-backend"] %}
+        {%- if snippet != "" %}
+      # haptic/config-backend ({{ key }})
+      {{ snippet }}
+        {%- end %}
+      {%- end -%}

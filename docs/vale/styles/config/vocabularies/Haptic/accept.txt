@@ -329,6 +329,8 @@ SOPS
 SPIFFE
 SPIRE
 SPOA
+SPOE
+superset
 SSL
 stderr
 stdout
@@ -392,6 +394,7 @@ validators
 VictoriaMetrics
 vs
 walkthrough
+WAF
 Wasm
 WebAssembly
 WebSocket

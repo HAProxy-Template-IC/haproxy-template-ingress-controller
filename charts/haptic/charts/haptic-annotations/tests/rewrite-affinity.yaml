@@ -1,0 +1,241 @@
+# HAPTIC-native annotation library — rewrite / upstream-header / next-upstream /
+# session-affinity validation tests (haproxy-haptic.org/*).
+validationTests:
+  test-haptic-rewrite-target:
+    description: haproxy-haptic.org/rewrite-target — $N capture stays inline, literal relocates to path-rewrite.map
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: rw-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rw-capture
+            annotations:
+              haproxy-haptic.org/rewrite-target: "/app/$1"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: capture.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: rw-svc, port: {number: 80}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rw-literal
+            annotations:
+              haproxy-haptic.org/rewrite-target: "/static"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: literal.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: rw-svc, port: {number: 80}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request replace-path \(\.\*\) /app/\\1'
+      - type: contains
+        target: map:path-rewrite.map
+        pattern: "default_rw-literal_svc_rw-svc_80 /static"
+
+  test-haptic-path-rewrite:
+    description: haproxy-haptic.org/path-rewrite — two-token and bare forms both emit replace-path
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: pr-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: pr-two
+            annotations:
+              haproxy-haptic.org/path-rewrite: "/foo/(.*) /bar/\\1"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: two.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: pr-svc, port: {number: 80}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request replace-path /foo/\(\.\*\) /bar/\\1'
+
+  test-haptic-proxy-body-size:
+    description: haproxy-haptic.org/proxy-body-size — size with suffix lands in body-size.map as bytes
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: bs-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bs-ing
+            annotations:
+              haproxy-haptic.org/proxy-body-size: "8m"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: body.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: bs-svc, port: {number: 80}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:body-size.map
+        pattern: "default_bs-ing_svc_bs-svc_80 8388608"
+
+  test-haptic-next-upstream:
+    description: haproxy-haptic.org/proxy-next-upstream maps to retry-on plus retries
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: nu-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: nu-ing
+            annotations:
+              haproxy-haptic.org/proxy-next-upstream: "error timeout http_503"
+              haproxy-haptic.org/proxy-next-upstream-tries: "3"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: nextup.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: nu-svc, port: {number: 80}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "retry-on conn-failure response-timeout 503"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "retries 3"
+
+  test-haptic-upstream-headers:
+    description: set-host / x-forwarded-prefix / connection-proxy-header relocate to reload-free reqhdr maps
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: hdr-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hdr-ing
+            annotations:
+              haproxy-haptic.org/set-host: "internal.svc.local"
+              haproxy-haptic.org/x-forwarded-prefix: "/api"
+              haproxy-haptic.org/connection-proxy-header: "keep-alive"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hdr.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: hdr-svc, port: {number: 80}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:reqhdr-host.map
+        pattern: "default_hdr-ing_svc_hdr-svc_80 internal.svc.local"
+      - type: contains
+        target: map:reqhdr-xfwd-prefix.map
+        pattern: "default_hdr-ing_svc_hdr-svc_80 /api"
+      - type: contains
+        target: map:reqhdr-connection.map
+        pattern: "default_hdr-ing_svc_hdr-svc_80 keep-alive"
+
+  test-haptic-session-affinity:
+    description: haproxy-haptic.org/affinity=cookie builds a best-of-breed cookie directive with dynamic key
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: aff-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: aff-ing
+            annotations:
+              haproxy-haptic.org/affinity: "cookie"
+              haproxy-haptic.org/session-cookie-name: "HAPTICSESS"
+              haproxy-haptic.org/session-cookie-keywords: "httponly"
+              haproxy-haptic.org/session-cookie-path: "/"
+              haproxy-haptic.org/session-cookie-secure: "true"
+              haproxy-haptic.org/session-cookie-samesite: "Strict"
+              haproxy-haptic.org/session-cookie-max-age: "3600"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: aff.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: aff-svc, port: {number: 80}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie HAPTICSESS insert indirect nocache dynamic httponly attr Path=/ attr Secure attr SameSite=Strict attr Max-Age=3600"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "dynamic-cookie-key "

@@ -4,7 +4,7 @@ The haproxy-ingress library implements `haproxy-ingress.github.io/*` annotations
 
 ## Overview
 
-This library is enabled by default.
+This library is **opt-in** — disabled by default. Enable it to keep your existing `haproxy-ingress.github.io/*` annotations working when migrating from jcmoraisjr/haproxy-ingress. For new configuration, the enabled-by-default [`haproxy-haptic.org/*`](haptic-annotations.md) native library covers the same capabilities (and more); the two coexist, so you can migrate at your own pace.
 
 See the `haproxy-ingress.github.io/*` annotations render to HAProxy config live:
 
@@ -22,7 +22,7 @@ The `backend storefront_shop_svc_shop_http` section changes `option httpchk GET 
 </div>
 
 !!! note "Migrating from jcmoraisjr/haproxy-ingress"
-    If you are migrating from jcmoraisjr/haproxy-ingress, your existing `haproxy-ingress.github.io/*` annotations work without changes. See [Migrating from haproxy-ingress](../migrating.md#from-haproxy-ingress) for the cutover guide and the per-annotation verdict table, and [Annotations](../annotations.md) for the feature comparison between annotation libraries.
+    Enable this library (see [Configuration](#configuration) below), and your existing `haproxy-ingress.github.io/*` annotations work without changes. See [Migrating from haproxy-ingress](../migrating.md#from-haproxy-ingress) for the cutover guide and the per-annotation verdict table, and [Annotations](../annotations.md) for the feature comparison between annotation libraries.
 
 ## Configuration
 
@@ -30,7 +30,7 @@ The `backend storefront_shop_svc_shop_http` section changes `option httpchk GET 
 controller:
   templateLibraries:
     haproxyIngress:
-      enabled: true  # Enabled by default
+      enabled: true  # Set to enable this opt-in library (disabled by default)
 ```
 
 ## Extension points
@@ -991,7 +991,7 @@ spoaHub:
 The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. See the [SPOA Hub operations guide](../operations/spoa-hub.md) for the full deployment surface.
 
 !!! warning "Not auto-enabled with this library"
-    Unlike the nginx-ingress library, enabling the haproxy-ingress library doesn't auto-enable the `external-auth` plugin (the library is on by default, and auto-enabling would deploy the SPOA hub sidecar for everyone). Without the plugin, `auth-url` is silently not enforced — set `spoaHub.plugins.external-auth.enabled=true` explicitly.
+    Unlike the nginx-ingress library, enabling the haproxy-ingress library doesn't auto-enable the `external-auth` plugin. Without the plugin, `auth-url` is silently not enforced — set `spoaHub.plugins.external-auth.enabled=true` explicitly.
 
 !!! warning "Host-less rules error at render time"
     All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` can't be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress; add a `host:` to the rule to fix.

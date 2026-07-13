@@ -51,6 +51,15 @@ controller:
   templateLibraries:
     gateway:
       enabled: true
+    # The vendor annotation libraries are opt-in (disabled by default as of the
+    # haptic-annotations release), but the e2e suite exercises ALL of them —
+    # ingress_haproxy_ingress_*, ingress_basic_auth (haproxy.org/*), etc. — so
+    # force-enable them here regardless of chart defaults. hapticAnnotations is
+    # on by default and covers the ingress_haptic_* suite.
+    haproxytech:
+      enabled: true
+    haproxyIngress:
+      enabled: true
     # Enable nginx-ingress library so nginx.ingress.kubernetes.io/auth-url
     # is wired (also auto-flips spoaHub.plugins.external-auth.enabled on,
     # since the OR-expression in values.yaml gates on this library).

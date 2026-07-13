@@ -57,7 +57,7 @@ The Ingress library hooks into these extension points from base.yaml. Snippet na
 | `map-path-prefix-*` | `map-path-prefix-500-ingress` | Prefix entries for `pathType: Prefix` paths |
 | `status-patches-*` | `status-patches-200-ingress` | Patches the LoadBalancer status on each matched Ingress |
 
-Regex-path matching isn't emitted by this library directly — it comes from the `haproxy-ingress` library's `map-path-regex-600-haproxy-ingress` snippet (enabled by default) which handles the `haproxy-ingress.github.io/path-type: regex` annotation.
+Regex-path matching isn't emitted by this library directly — it comes from the default-enabled [haptic-annotations](haptic-annotations.md) library, whose `map-path-regex-800-haptic-path-type` snippet handles `haproxy-haptic.org/path-type: regex`. The opt-in `haproxy-ingress` library provides the equivalent `haproxy-ingress.github.io/path-type: regex`.
 
 ### Injecting custom configuration
 
@@ -387,7 +387,7 @@ annotations:
 
 ### gRPC backends
 
-gRPC runs over HTTP/2. Tell HAPTIC to speak HTTP/2 to a cleartext (h2c) backend with the `haproxy.org/server-proto: h2` annotation:
+gRPC runs over HTTP/2. Tell HAPTIC to speak HTTP/2 to a cleartext (h2c) backend with the native `haproxy-haptic.org/backend-protocol: h2` annotation:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -396,7 +396,7 @@ metadata:
   name: grpc-app
   namespace: default
   annotations:
-    haproxy.org/server-proto: h2
+    haproxy-haptic.org/backend-protocol: h2
 spec:
   ingressClassName: haptic
   rules:
@@ -412,7 +412,7 @@ spec:
                   number: 50051
 ```
 
-For a TLS backend, use `haproxy-ingress.github.io/backend-protocol: h2-ssl` instead. Both annotation libraries are enabled by default. If you run the [nginx-ingress library](nginx-ingress.md), its `nginx.ingress.kubernetes.io/backend-protocol: GRPC` (or `GRPCS` for TLS) names gRPC directly. On the client side, HAProxy detects HTTP/2 cleartext prior-knowledge on the plaintext listener, so gRPC clients that dial insecurely still reach the backend.
+For a TLS backend, use `haproxy-haptic.org/backend-protocol: h2-ssl` (or `grpcs`) instead. The native [haptic-annotations](haptic-annotations.md) library is enabled by default; the opt-in vendor libraries name the same thing as `haproxy-ingress.github.io/backend-protocol: h2-ssl` or `nginx.ingress.kubernetes.io/backend-protocol: GRPC`/`GRPCS`. On the client side, HAProxy detects HTTP/2 cleartext prior-knowledge on the plaintext listener, so gRPC clients that dial insecurely still reach the backend.
 
 ### Backend config snippet
 

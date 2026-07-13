@@ -2,15 +2,16 @@
 
 ## Overview
 
-HAPTIC supports annotations on Ingress resources through three template libraries, each providing compatibility with a different ingress controller:
+HAPTIC supports annotations on Ingress resources through template libraries. Start with HAPTIC's own native vocabulary; three vendor libraries additionally provide drop-in compatibility with the annotation prefixes of specific upstream ingress controllers, for migrations:
 
-| Compatible with | Annotation prefix | Library docs |
-|-----------------|-------------------|--------------|
+| Library | Annotation prefix | Library docs |
+|---------|-------------------|--------------|
+| HAPTIC native (best-of-breed **superset** of all three below) | `haproxy-haptic.org/` | [haptic-annotations library →](./libraries/haptic-annotations.md) |
 | [haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) (vendor ingress controller) | `haproxy.org/` | [haproxytech library →](./libraries/haproxytech.md) |
 | [jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) (community ingress controller) | `haproxy-ingress.github.io/` | [haproxy-ingress library →](./libraries/haproxy-ingress.md) |
 | [kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) (nginx ingress controller) | `nginx.ingress.kubernetes.io/` | [nginx-ingress library →](./libraries/nginx-ingress.md) |
 
-The two HAProxy libraries are enabled by default and work independently — you can use annotations from either prefix on the same Ingress. The nginx-ingress library is disabled by default and must be explicitly enabled. If you're migrating from one of these controllers, enable the matching library and keep using its annotation prefix. If you are starting fresh, enabling the HAProxy libraries gives you the widest annotation coverage.
+All libraries work independently and coexist — you can mix prefixes on the same Ingress. **For new configuration, use the native `haproxy-haptic.org/*` vocabulary**: one clean annotation per capability, covering everything the vendor libraries do. Only the native library is **enabled by default**; the three vendor libraries are **opt-in** migration aids. If you're coming from one of those controllers, enable the matching vendor library (`controller.templateLibraries.<name>.enabled: true`) to keep using its annotation prefix — then either stay on it, migrate to `haproxy-haptic.org/*` at your own pace, or run a mix of both.
 
 See [Template Libraries](./template-libraries.md) for how to enable or disable individual libraries.
 
@@ -22,7 +23,7 @@ See the nginx-ingress compatibility verdict render live:
 
 ## Supported features
 
-The libraries cover the following HAProxy feature areas:
+The three vendor libraries cover the following HAProxy feature areas. The native `haproxy-haptic.org/*` library implements a **superset** of every row — see the [haptic-annotations reference](./libraries/haptic-annotations.md) for its canonical annotation per capability.
 
 | Feature | `haproxy.org/` | `haproxy-ingress.github.io/` | `nginx.ingress.kubernetes.io/` |
 |---------|----------------|-------------------------------|--------------------------------|

@@ -14,6 +14,9 @@ dependencies:
   - name: gateway
     version: 0.1.0
     condition: controller.templateLibraries.gateway.enabled
+  - name: haptic-annotations
+    version: 0.1.0
+    condition: controller.templateLibraries.hapticAnnotations.enabled
   - name: haproxytech
     version: 0.1.0
     condition: controller.templateLibraries.haproxytech.enabled

@@ -1,0 +1,50 @@
+# HAPTIC-native annotation library (haproxy-haptic.org/*)
+#
+# The flagship, first-class annotation vocabulary for HAPTIC. Its capabilities
+# are a best-of-breed SUPERSET of the three vendor annotation-compat libraries
+# (haproxy.org/*, haproxy-ingress.github.io/*, nginx.ingress.kubernetes.io/*):
+# for every capability it adopts whichever vendor's semantics is best, exposed
+# under one clean native annotation name. Unlike the vendor libraries (which
+# exist to ease migration FROM an upstream controller), this is the vocabulary
+# HAPTIC's own docs and examples recommend going forward.
+#
+# Split library (ADR-0008): this _index.yaml is the load-rule authority
+# (_helm_load + watchedResources + extraContext defaults). Production
+# templateSnippets live in the sibling fragments by concern — 10-path-maps,
+# 20-backend-directives, 30-frontend-filters, 40-features, 50-auth-spoe — and
+# validationTests live under tests/. All fragments merge into one library at
+# chart-render time; the merge order is lexicographic, but since each
+# snippet/test name is unique the source file it lives in is purely
+# organisational.
+#
+# Every annotation is documented (with its best-of-breed source and any
+# divergence) in docs/site/docs/libraries/haptic-annotations.md and classified
+# in 90-migration-coverage.yaml. Reserved output-annotation names on the
+# haproxy-haptic.org group (e.g. haproxy-haptic.org/ownership) are NOT claimed
+# as Ingress annotation keys here.
+
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.hapticAnnotations.enabled }}'
+
+# Library-declared extraContext defaults. These flow into the rendered config's
+# templatingSettings.extraContext as low-precedence defaults — an operator can
+# override any of them via controller.config.templatingSettings.extraContext.
+# Snippets read them the usual way, keeping a literal fallback so the snippet
+# still works if the key is somehow absent.
+templatingSettings:
+  extraContext:
+    # Default HSTS max-age (seconds) applied when haproxy-haptic.org/hsts is
+    # enabled without an explicit haproxy-haptic.org/hsts-max-age. 63072000 =
+    # 2 years (the modern HSTS-preload minimum).
+    hapticHstsMaxAge: "63072000"
+    # Regex a haproxy-haptic.org/auth-secret password hash must match, mirroring
+    # the vendor libraries' hash-validation guard. Default accepts bcrypt
+    # ($2a/$2b/$2y), Apache MD5 ($apr1), and crypt SHA-256/512 ($5/$6) / MD5 ($1).
+    hapticPasswordHashRegex: '^\$(2[aby]|apr1|1|5|6)\$'
+
+watchedResources:
+  secrets:
+    apiVersion: v1
+    resources: secrets
+    indexBy: ["metadata.namespace", "metadata.name"]

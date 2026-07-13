@@ -1,0 +1,515 @@
+# HAPTIC-native annotation library — auth / mTLS / external-auth / OAuth2 / WAF
+# validation tests (haproxy-haptic.org/* prefix).
+validationTests:
+  # ============================================================================
+  # Basic auth
+  # ============================================================================
+  test-haptic-basic-auth:
+    description: >-
+      haproxy-haptic.org/auth-type basic + auth-secret (auth-file htpasswd)
+      generates a userlist (bcrypt hash + user::plain → insecure-password) and
+      the backend auth challenge.
+    fixtures:
+      secrets:
+        # data.auth = base64("admin:$2y$05$...\nguest::plainpw\n")
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: haptic-auth }
+          type: Opaque
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: auth-svc }
+          spec: { ports: [{ port: 80 }] }
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-ingress
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "haptic-auth"
+              haproxy-haptic.org/auth-realm: "ProtectedArea"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: auth.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: auth-svc, port: { number: 80 } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "userlist haptic_auth_default_haptic-auth"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user admin password [$]2y[$]05[$]"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user guest insecure-password plainpw"
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request auth realm "ProtectedArea" unless \{ http_auth\(haptic_auth_default_haptic-auth\) \}'
+
+  test-haptic-basic-auth-map:
+    description: >-
+      haproxy-haptic.org/auth-secret-type auth-map reads one Secret data key per
+      username; the base64-decoded value is that user's password hash, validated
+      against hapticPasswordHashRegex.
+    fixtures:
+      secrets:
+        # admin: base64("$2y$05$mN1WVk5Qnbg4QwdAdXbfz.8b3ceH6Q5KOVCKxR2IkNAfJgLi5pIKW")
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: haptic-authmap }
+          type: Opaque
+          data:
+            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: authmap-svc }
+          spec: { ports: [{ port: 80 }] }
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: authmap-ingress
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "haptic-authmap"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: authmap.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: authmap-svc, port: { number: 80 } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "userlist haptic_auth_default_haptic-authmap"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user admin password [$]2y[$]05[$]"
+
+  # ============================================================================
+  # satisfy=any — OR-combine allowlist + basic auth
+  # ============================================================================
+  test-haptic-satisfy-any:
+    description: >-
+      satisfy=any folds the allowlist and basic auth into a single backend
+      challenge that fires only for non-allow-listed, unauthenticated requests,
+      and suppresses the unconditional auth challenge.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: satisfy-auth }
+          type: Opaque
+          data:
+            admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: satisfy-svc }
+          spec: { ports: [{ port: 80 }] }
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: satisfy-svc-abc
+            labels: { kubernetes.io/service-name: satisfy-svc }
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: satisfy-any-ingress
+            annotations:
+              haproxy-haptic.org/auth-type: "basic"
+              haproxy-haptic.org/auth-secret: "satisfy-auth"
+              haproxy-haptic.org/auth-secret-type: "auth-map"
+              haproxy-haptic.org/auth-realm: "Protected"
+              haproxy-haptic.org/allowlist-source-range: "10.0.0.0/8,192.168.0.0/16"
+              haproxy-haptic.org/satisfy: "any"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: satisfy.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: satisfy-svc, port: { number: 80 } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl haptic_satisfy_ip_default_satisfy-any-ingress src 10\\.0\\.0\\.0/8 192\\.168\\.0\\.0/16"
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request auth realm "Protected" if !haptic_satisfy_ip_default_satisfy-any-ingress !\{ http_auth\(haptic_auth_default_satisfy-auth\) \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'http-request auth realm "Protected" unless \{ http_auth\(haptic_auth_default_satisfy-auth\) \}'
+      # The standalone allowlist deny (access-control fragment) is suppressed
+      # under satisfy=any — the combined gate above owns the allowlist, so an
+      # authenticated request from a non-allow-listed IP still passes.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "haptic_allowlist_default_satisfy-any-ingress"
+
+  # ============================================================================
+  # mTLS — client-cert verification + error page + cert passthrough
+  # ============================================================================
+  test-haptic-auth-tls:
+    description: >-
+      auth-tls-secret registers a SNI-keyed CA verify (verify required) in the
+      crt-list, auth-tls-error-page lands in mtls-error.map, and
+      auth-tls-cert-header forwards the X-SSL-Client-* headers.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: mtls-svc }
+          spec: { ports: [{ port: 80 }] }
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: client-ca }
+          type: kubernetes.io/tls
+          data:
+            ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: server-tls }
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-protected
+            annotations:
+              haproxy-haptic.org/auth-tls-secret: "client-ca"
+              haproxy-haptic.org/auth-tls-verify-client: "on"
+              haproxy-haptic.org/auth-tls-error-page: "https://login.example.com/cert-required"
+              haproxy-haptic.org/auth-tls-cert-header: "true"
+          spec:
+            ingressClassName: haptic
+            tls:
+              - hosts: ["api.example.com"]
+                secretName: server-tls
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: mtls-svc, port: { number: 80 } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: "ca-file [^ ]*general/default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
+      - type: contains
+        target: map:mtls-error.map
+        pattern: "api.example.com https://login.example.com/cert-required"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-SSL-Client-Cert %\\[ssl_c_der,base64\\] if \\{ ssl_fc_has_crt \\}"
+
+  # ============================================================================
+  # External auth (SPOE) — requires spoa-hub loaded
+  # ============================================================================
+  test-haptic-external-auth:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: >-
+      auth-url populates auth-url.map and the spoa-hub external-auth frontend
+      wiring; auth-headers-succeed emits a per-header set-header on success.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: protected-svc }
+          spec: { ports: [{ port: 80 }] }
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              haproxy-haptic.org/auth-url: "https://auth.example/check"
+              haproxy-haptic.org/auth-signin: "https://login.example/start"
+              haproxy-haptic.org/auth-method: "POST"
+              haproxy-haptic.org/auth-headers-request: "X-Tenant-Id"
+              haproxy-haptic.org/auth-headers-succeed: "X-Auth-User"
+              haproxy-haptic.org/auth-headers-fail: "WWW-Authenticate"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: protected-svc, port: { number: 80 } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:auth-url.map
+        pattern: "default/protected https://auth.example/check"
+      - type: contains
+        target: map:auth-signin.map
+        pattern: "default/protected https://login.example/start"
+      - type: contains
+        target: map:auth-method.map
+        pattern: "default/protected POST"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request send-spoe-group spoa-hub check-auth-group"
+      # Security: a client-supplied copy of the pass-through header is stripped
+      # before the auth value is set, so it can't survive when the auth reply
+      # omits the header (identity/privilege-escalation guard).
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request del-header X-Auth-User if \\{ var\\(txn.auth_url\\) -m found \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Auth-User %\\[var\\(txn.hub.external_auth.x_auth_user\\)\\]"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-after-response set-header WWW-Authenticate"
+
+  # ============================================================================
+  # OAuth2-proxy — desugars onto external-auth
+  # ============================================================================
+  test-haptic-oauth-oauth2-proxy:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: >-
+      oauth: oauth2-proxy derives the oauth2-proxy address from the Ingress's own
+      /oauth2 path backend, setting auth-url (/oauth2/auth), auth-signin
+      (/oauth2/start), and auth-method HEAD.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: oauth-app-svc }
+          spec: { ports: [{ port: 80 }] }
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: oauth2-proxy }
+          spec: { ports: [{ port: 4180 }] }
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: oauthapp
+            annotations:
+              haproxy-haptic.org/oauth: "oauth2-proxy"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: oauthapp.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: oauth-app-svc, port: { number: 80 } }
+                    - path: /oauth2
+                      pathType: Prefix
+                      backend:
+                        service: { name: oauth2-proxy, port: { number: 4180 } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:auth-url.map
+        pattern: "default/oauthapp http://oauth2-proxy.default.svc:4180/oauth2/auth"
+      - type: contains
+        target: map:auth-signin.map
+        pattern: "default/oauthapp /oauth2/start\\?rd=%\\[path\\]"
+      - type: contains
+        target: map:auth-method.map
+        pattern: "default/oauthapp HEAD"
+
+  # ============================================================================
+  # WAF (Coraza via SPOA hub) — waf / waf-mode + modsecurity-snippet
+  # ============================================================================
+  test-haptic-waf:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: >-
+      waf: modsecurity populates haproxy-ingress-waf.map with the enforcement
+      mode (default deny; detect when /waf-mode: detect) and
+      modsecurity-snippet emits a per-app coraza block + coraza-app.map row.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: waf-svc }
+          spec: { ports: [{ port: 80 }] }
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: waf-deny
+            annotations:
+              haproxy-haptic.org/waf: modsecurity
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: waf-deny.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: waf-svc, port: { number: 80 } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: waf-shadow
+            annotations:
+              haproxy-haptic.org/waf: modsecurity
+              haproxy-haptic.org/waf-mode: detect
+              haproxy-haptic.org/modsecurity-snippet: |
+                SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: waf-shadow.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: waf-svc, port: { number: 80 } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:haproxy-ingress-waf.map
+        pattern: "default/waf-deny deny"
+      - type: contains
+        target: map:haproxy-ingress-waf.map
+        pattern: "default/waf-shadow detect"
+      - type: contains
+        target: map:coraza-app.map
+        pattern: "default/waf-shadow default/waf-shadow"
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'plugins.params.applications."default/waf-shadow"'
+
+  test-haptic-waf-without-coraza-rejected:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: >-
+      haproxy-haptic.org/waf set while the spoaHub coraza plugin is NOT enabled
+      fails the render with an explicit diagnostic.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: []
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: orphan-waf
+            annotations:
+              haproxy-haptic.org/waf: modsecurity
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: orphan.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: any, port: { number: 80 } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "default/orphan-waf sets annotation 'haproxy-haptic\\.org/waf' but the spoaHub coraza plugin is not enabled"

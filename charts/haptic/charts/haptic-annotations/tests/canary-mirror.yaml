@@ -1,0 +1,433 @@
+# HAPTIC-native annotation library — canary + mirror validation tests.
+# Canary by header, header-pattern, cookie, and weight. Each canary Ingress
+# shares its host+path with a non-canary main Ingress; the main owns the base
+# route (features-800-haptic-canary-colocation) while the canary overlays a
+# use_backend split (frontend-filters-810-haptic-canary).
+#
+# The mirror test relies on the spoa-hub mirror plugin being enabled (mirror-target
+# fails loud otherwise). The plugin auto-enables with the gateway library, which
+# the chart test harness always renders with (scripts/test-templates.sh), so the
+# mirror SPOE group (mirror-1-group) is present and the config validates.
+validationTests:
+  test-haptic-canary-by-header:
+    description: haproxy-haptic.org canary-by-header overlays a header-gated use_backend
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: canary-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: canary-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: canary-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: main-ingress
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-ingress
+            annotations:
+              haproxy-haptic.org/canary: "true"
+              haproxy-haptic.org/canary-by-header: "X-Canary"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: canary-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend default_canary-ingress_svc_canary-service_80 if \\{ req\\.hdr\\(X-Canary\\) -m str always \\}"
+
+  test-haptic-canary-by-header-pattern:
+    description: haproxy-haptic.org canary-by-header-pattern uses a regex match
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: canary-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: canary-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: canary-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: main-ingress
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-pat.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-pat-ingress
+            annotations:
+              haproxy-haptic.org/canary: "true"
+              haproxy-haptic.org/canary-by-header: "X-Region"
+              haproxy-haptic.org/canary-by-header-pattern: "^(eu|us)-.*$"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-pat.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: canary-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "req\\.hdr\\(X-Region\\) -m reg \\^\\(eu\\|us\\)-\\.\\*\\$"
+
+  test-haptic-canary-by-cookie:
+    description: haproxy-haptic.org canary-by-cookie overlays a cookie-gated use_backend
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: canary-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: canary-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: canary-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: main-ingress
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-cookie.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-cookie-ingress
+            annotations:
+              haproxy-haptic.org/canary: "true"
+              haproxy-haptic.org/canary-by-cookie: "canary_stage"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-cookie.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: canary-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "req\\.cook\\(canary_stage\\) -m str always"
+
+  test-haptic-canary-by-weight:
+    description: haproxy-haptic.org canary-weight overlays a randomized use_backend
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: canary-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: canary-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: canary-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: main-ingress
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-weight.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-weight-ingress
+            annotations:
+              haproxy-haptic.org/canary: "true"
+              haproxy-haptic.org/canary-weight: "20"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: canary-weight.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: canary-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend default_canary-weight-ingress_svc_canary-service_80 if \\{ rand\\(100\\) lt 20 \\}"
+
+  test-haptic-mirror-target:
+    description: haproxy-haptic.org mirror-target buffers the body and fires the SPOE mirror group
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: mirror-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mirror-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mirror-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.9"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mirror-ingress
+            annotations:
+              haproxy-haptic.org/mirror-target: "https://mirror.internal:8443/shadow$request_uri"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mirror.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mirror-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "option http-buffer-request"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-var\\(txn.gw_mirror_target_1\\) str\\(mirror.internal:8443\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "send-spoe-group spoa-hub mirror-1-group if \\{ var\\(txn.host\\) -m str mirror.example.com \\}"

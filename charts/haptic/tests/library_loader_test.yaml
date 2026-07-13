@@ -146,6 +146,7 @@ tests:
   # the templates actually read is pinned by scripts/check-migration-coverage.sh.
   - it: should not emit migrationCoverage when no vendor annotation library is enabled
     set:
+      controller.templateLibraries.hapticAnnotations.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
       controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.haproxytech.enabled: false
@@ -155,16 +156,18 @@ tests:
 
   - it: should contribute one migrationCoverage source per enabled library
     set:
+      controller.templateLibraries.hapticAnnotations.enabled: true
       controller.templateLibraries.nginxIngress.enabled: true
       controller.templateLibraries.haproxyIngress.enabled: true
       controller.templateLibraries.haproxytech.enabled: true
     asserts:
       - lengthEqual:
           path: spec.migrationCoverage
-          count: 3
+          count: 4
 
   - it: should declare the ingress-nginx source shape when only nginx-ingress is enabled
     set:
+      controller.templateLibraries.hapticAnnotations.enabled: false
       controller.templateLibraries.nginxIngress.enabled: true
       controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.haproxytech.enabled: false
@@ -192,6 +195,7 @@ tests:
 
   - it: should declare the haproxy-ingress source shape when only haproxy-ingress is enabled
     set:
+      controller.templateLibraries.hapticAnnotations.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
       controller.templateLibraries.haproxyIngress.enabled: true
       controller.templateLibraries.haproxytech.enabled: false
@@ -208,6 +212,7 @@ tests:
 
   - it: should declare the haproxytech source shape when only haproxytech is enabled
     set:
+      controller.templateLibraries.hapticAnnotations.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
       controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.haproxytech.enabled: true
@@ -227,3 +232,21 @@ tests:
       - equal:
           path: spec.migrationCoverage[0].annotations["haproxy.org/whitelist"].status
           value: different
+
+  - it: should declare the haptic-annotations source shape when only haptic-annotations is enabled
+    set:
+      controller.templateLibraries.hapticAnnotations.enabled: true
+      controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.haproxytech.enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.migrationCoverage
+          count: 1
+      - equal:
+          path: spec.migrationCoverage[0].source
+          value: haptic-annotations
+      - equal:
+          path: spec.migrationCoverage[0].detect.annotationPrefixes
+          value:
+            - haproxy-haptic.org/

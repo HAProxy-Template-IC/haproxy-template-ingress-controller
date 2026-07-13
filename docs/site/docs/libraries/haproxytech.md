@@ -17,7 +17,7 @@ Supported features:
 - Health check configuration
 - Timeout customization
 
-This library is enabled by default.
+This library is **opt-in** — disabled by default. Enable it to keep your existing `haproxy.org/*` annotations working when migrating from haproxytech/kubernetes-ingress. For new configuration, the enabled-by-default [`haproxy-haptic.org/*`](haptic-annotations.md) native library covers the same capabilities (and more); the two coexist, so you can migrate at your own pace.
 
 Watch the `haproxy.org/*` annotations render to HAProxy config live:
 
@@ -35,7 +35,7 @@ The `backend storefront_shop_svc_shop_http` section swaps `balance leastconn` fo
 </div>
 
 !!! note "Migrating from haproxytech/kubernetes-ingress"
-    If you are migrating from the official HAProxy Technologies ingress controller, your existing `haproxy.org/*` annotations work without changes. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
+    Enable this library (see [Configuration](#configuration) below), and your existing `haproxy.org/*` annotations work without changes. See [Annotations](../annotations.md) for the full feature comparison between annotation libraries.
 
 **Important notes:**
 
@@ -50,7 +50,7 @@ The `backend storefront_shop_svc_shop_http` section swaps `balance leastconn` fo
 controller:
   templateLibraries:
     haproxytech:
-      enabled: true  # Enabled by default
+      enabled: true  # Set to enable this opt-in library (disabled by default)
 ```
 
 ## Extension points

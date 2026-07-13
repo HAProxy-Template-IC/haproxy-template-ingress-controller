@@ -173,9 +173,10 @@ Useful flags:
 |---------|---------|----------------|
 | `ingressClass.name` | `haptic` | Only Ingresses with this exact `ingressClassName` are served. |
 | `ingressClass.default` | `false` | Class-less Ingresses **aren't** adopted; leave `false` during migration. |
-| `controller.templateLibraries.nginxIngress.enabled` | `false` | Turn on for `nginx.ingress.kubernetes.io/*` annotations. |
-| `controller.templateLibraries.haproxyIngress.enabled` | `true` | `haproxy-ingress.github.io/*` annotations (already on). |
-| `controller.templateLibraries.haproxytech.enabled` | `true` | `haproxy.org/*` annotations (already on). |
+| `controller.templateLibraries.hapticAnnotations.enabled` | `true` | Native `haproxy-haptic.org/*` annotations — on by default and the recommended target vocabulary once you've migrated. |
+| `controller.templateLibraries.nginxIngress.enabled` | `false` | Opt-in: turn on to keep `nginx.ingress.kubernetes.io/*` annotations working. |
+| `controller.templateLibraries.haproxyIngress.enabled` | `false` | Opt-in: turn on to keep `haproxy-ingress.github.io/*` annotations working. |
+| `controller.templateLibraries.haproxytech.enabled` | `false` | Opt-in: turn on to keep `haproxy.org/*` annotations working. |
 | `controller.statusPatches.enabled` | `true` | Writes Ingress/Gateway status; **disable during migration**. |
 | `haproxy.service.type` | `NodePort` | Set to `LoadBalancer` for a routable external address. |
 
@@ -221,10 +222,9 @@ its store). Your Ingresses carry `ingressClassName: nginx`, so pick one:
     silently has no effect.
 
 Enabling it also auto-enables the Coraza Web Application Firewall (WAF) and external-auth plugins in the
-[Stream Processing Offload Agent (SPOA) hub sidecar](operations/spoa-hub.md); with default chart values the sidecar
-is already running (the default-on haproxy-ingress and gateway libraries
-auto-enable plugins of their own). Basic host/path routing works without this
-library; only the `nginx.ingress.kubernetes.io/*` annotations need it.
+[Stream Processing Offload Agent (SPOA) hub sidecar](operations/spoa-hub.md). The gateway library (on by
+default) already auto-enables the `mirror` plugin, so a default install may already be running the sidecar.
+Basic host/path routing works without this library; only the `nginx.ingress.kubernetes.io/*` annotations need it.
 
 ### Control the DNS cutover
 
@@ -302,11 +302,14 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 suppo
 
 ## From `haproxy-ingress`
 
-The `haproxy-ingress.github.io/*` library is **enabled by default**, so
-jcmoraisjr/haproxy-ingress annotations work with no flag change. You still need
-to [match the IngressClass](#match-the-ingressclass) (your Ingresses likely
+The `haproxy-ingress.github.io/*` library is **opt-in** — enable it with
+`--set controller.templateLibraries.haproxyIngress.enabled=true` and your
+jcmoraisjr/haproxy-ingress annotations work unchanged. You still need to
+[match the IngressClass](#match-the-ingressclass) (your Ingresses likely
 use `ingressClassName: haproxy` — either edit them or `--set ingressClass.name=haproxy`)
-and [control the DNS cutover](#control-the-dns-cutover) the same way.
+and [control the DNS cutover](#control-the-dns-cutover) the same way. Once
+you're on HAPTIC you can migrate to the native `haproxy-haptic.org/*`
+annotations at your own pace, or keep both.
 
 Most routing, SSL, session-affinity, redirect, HSTS, CORS, access-control,
 basic/external auth, client-mTLS, and WAF annotations are supported. Full
@@ -359,10 +362,13 @@ The library classifies 92 `haproxy-ingress.github.io/*` annotations: 62 supporte
 ## From `haproxytech/kubernetes-ingress`
 
 The `haproxy.org/*` library (the official haproxytech/kubernetes-ingress
-annotation set) is **enabled by default**, so those annotations work with no flag
-change. You still need to [match the IngressClass](#match-the-ingressclass)
+annotation set) is **opt-in** — enable it with
+`--set controller.templateLibraries.haproxytech.enabled=true` and those
+annotations work unchanged. You still need to [match the IngressClass](#match-the-ingressclass)
 (your Ingresses likely use `ingressClassName: haproxy`) and
-[control the DNS cutover](#control-the-dns-cutover) the same way.
+[control the DNS cutover](#control-the-dns-cutover) the same way. Once you're
+on HAPTIC you can migrate to the native `haproxy-haptic.org/*` annotations at
+your own pace, or keep both.
 
 HAPTIC reads these annotations on **Ingress** resources only. haproxytech's
 controller also reads many of them on Service and ConfigMap resources; that
@@ -410,12 +416,12 @@ reports. Each fails quietly, so check them first.
   an `ingressClassName: nginx` Ingress is filtered out before it reaches the
   controller's store. Fix: [match the IngressClass](#match-the-ingressclass).
 
-- **Annotations seem to be ignored.** The `nginx.ingress.kubernetes.io/*`
-  compatibility library is **disabled by default**, so those annotations
-  (timeouts, auth, CORS, rate-limits, redirects) are silent no-ops until you turn
-  it on. Fix: [enable the annotation library](#enable-the-annotation-library).
-  (The `haproxy-ingress.github.io/*` and `haproxy.org/*` libraries are on by
-  default.)
+- **Annotations seem to be ignored.** All three vendor compatibility libraries
+  (`nginx.ingress.kubernetes.io/*`, `haproxy-ingress.github.io/*`, `haproxy.org/*`)
+  are **disabled by default** — only the native `haproxy-haptic.org/*` library is
+  on. A vendor annotation (timeouts, auth, CORS, rate-limits, redirects) is a
+  silent no-op until you enable its matching library. Fix: [enable the annotation
+  library](#enable-the-annotation-library) for the controller you're migrating from.
 
 - **DNS cut over before you were ready.** Ingress status writes are **on by
   default** — install with them off and enable them only after you've verified
