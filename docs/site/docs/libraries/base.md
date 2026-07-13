@@ -324,6 +324,9 @@ Built-in function that escapes regex metacharacters so a user-supplied literal (
 
 </div>
 
+!!! warning "Config output isn't auto-escaped"
+    The rendered HAProxy config is plain text — template output is never escaped for it (Scriggo only context-escapes the `html`/`css`/`js` format types, and the `haproxyConfig` template uses none of them). A user-supplied value (annotation, header, host, cookie) that carries a newline can split a config line and smuggle a second directive that still passes `haproxy -c`. When you interpolate an unchecked value onto a config line in your own snippet, guard it: use `sanitize_regex` for a `map_reg()`/regex context (it escapes the value, neutralizing metacharacters), and the `ValidateConfigValue` / `ValidateCidrList` macros from the Ingress annotations-compat library for single-token fields (SNI, cipher, cookie domain/path, header values) and `src` CIDR lists (both `fail()` the whole render on a control-character or out-of-charset breakout). The bundled vendor libraries already route their annotation values through these guards.
+
 ### Utility macros
 
 The base library provides reusable macros across several `util-*` snippets, imported by other libraries:

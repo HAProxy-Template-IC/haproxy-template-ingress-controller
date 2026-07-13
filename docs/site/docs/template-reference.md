@@ -59,6 +59,8 @@ For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, 
 
 `sort_by` criteria accept modifiers: `:desc` (descending), `:exists` (by field presence), `| length` (by length).
 
+`sort_by` is a stable sort: items whose keys compare equal on every criterion keep their original input order. Add a final deterministic criterion (such as `$.name`) only when you want a specific order for otherwise-equal items rather than input order.
+
 **Example — route precedence sorting:**
 
 ```go
@@ -74,7 +76,10 @@ For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, 
 HAPTIC has two regex surfaces, and they use different engines:
 
 - **Template-level regex** — `regex_search`, `sanitize_regex`, and the `regex_replace` post-processor — runs on Go's `regexp` package, which implements RE2 syntax. RE2 has no backreferences and no look-around assertions; a pattern that needs those won't compile. The `regex_replace` post-processor also runs line by line, so a pattern can't span a newline, and `^` / `$` anchor to each line rather than the whole document.
-- **HAProxy-runtime regex** — patterns HAProxy evaluates itself, such as `map_reg` lookups or a Gateway API `RegularExpression` path match — uses HAProxy's Perl Compatible Regular Expressions (PCRE) engine, which does support backreferences and look-around. A pattern that works in one surface may be rejected by the other.
+- **HAProxy-runtime regex** — patterns HAProxy evaluates itself, such as `map_reg` lookups, a Gateway API `RegularExpression` path match, or `server-alias-regex` — uses HAProxy's Perl Compatible Regular Expressions (PCRE) engine, which does support backreferences and look-around. A pattern that works in one surface may be rejected by the other.
+
+!!! warning "Regex safety with user-supplied patterns"
+    Template-level regex runs on RE2, which is linear-time and can't catastrophically backtrack, so a pattern in `regex_search`, `sanitize_regex`, or `regex_replace` is never a regular-expression denial-of-service (ReDoS) vector, whatever the input. PCRE does backtrack, and HAPTIC imposes no PCRE match limit — a pathological pattern-and-input pair reaching the HAProxy-runtime surface is a potential data-plane CPU-exhaustion risk. When patterns can come from tenants you don't control (for example an Ingress or HTTPRoute authored in a namespace you don't own), match on the RE2 side where you can, and review any tenant-supplied runtime regex.
 
 ### Emitting warnings
 

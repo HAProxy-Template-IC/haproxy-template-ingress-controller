@@ -5,6 +5,9 @@ By default, the [HAPTIC Helm chart](deploying-with-helm.md) provisions a default
 !!! tip "The default certificate and per-host TLS"
     This page covers the chart's **default** certificate. HAPTIC serves it for every Ingress over HTTPS by default, and as the fallback when a Server Name Indication (SNI) match isn't found. To serve a specific certificate for one host, add a `spec.tls` entry and a `kubernetes.io/tls` Secret to the Ingress itself. See [Ingress library — TLS configuration](libraries/ingress.md#tls-configuration) for per-host certificates and the `ingressDefaultHTTPS` toggle.
 
+!!! note "Exact hostnames win over wildcards"
+    When a wildcard certificate (`*.example.com`) and an exact-hostname certificate (`app.example.com`) both match the same SNI — registered through separate `spec.tls` entries — HAProxy presents the most specific match: `app.example.com` gets the exact certificate, other subdomains fall to the wildcard. HAPTIC emits both into `certificate-list.txt`; HAProxy's SNI lookup performs this specificity selection regardless of the order the certificates appear in the list. Order only sets the default first-line certificate served for unmatched SNIs and clients that send no SNI.
+
 ## Default SSL certificate
 
 ### Default behavior (development/testing)

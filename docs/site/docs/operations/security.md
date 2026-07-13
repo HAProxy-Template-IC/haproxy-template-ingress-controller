@@ -87,6 +87,13 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
 ```
 
+### HAProxy pod hardening
+
+The HAProxy pods the chart deploys also run restricted: `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, and `seccompProfile.type: RuntimeDefault` — compatible with the restricted Pod Security Standard. The chart auto-derives the UID from `haproxy.enterprise.enabled` and applies it identically as `runAsUser`, `runAsGroup`, and `fsGroup`: community images use `99` (the `haproxy` user), enterprise images use `1000` (the `hapee-lb` user).
+
+!!! warning "HAProxy binds privileged ports 80 and 443"
+    HAProxy binds the literal `:80` and `:443`. Community images drop all capabilities and run non-root, so binding these privileged ports relies on the node permitting unprivileged low-port binds — the kernel `sysctl` `net.ipv4.ip_unprivileged_port_start` must be `<= 80` (the default in kind and Docker). On a cluster that keeps the kernel default of `1024`, either lower that `sysctl` or add `CAP_NET_BIND_SERVICE` to the HAProxy container's capabilities. Enterprise images run as UID `1000` and their binaries carry `CAP_NET_BIND_SERVICE` file capabilities, so the chart adds that capability automatically when `haproxy.enterprise.enabled: true`.
+
 ## Network exposure
 
 The controller pod exposes three HTTP ports (all chart defaults):
@@ -167,6 +174,12 @@ kubectl create secret generic basic-auth -n auth \
 ```
 
 Bcrypt is slow to verify on every request; for large userbases use `htpasswd -n -5` (SHA-512 crypt) and see [Performance](./performance.md#password-hash-performance) for the trade-off.
+
+## Annotation input as a trust boundary
+
+Most annotation values reach the config as validated or escaped data: CIDR-list annotations are parsed as CIDRs (an invalid entry fails the render), and header, cookie, SNI, and rewrite-target values are checked against a strict character set that rejects control characters, so they can't break out of their directive and inject arbitrary HAProxy config.
+
+The `*-config-snippet` annotations (`haproxy.org/backend-config-snippet`, `nginx.ingress.kubernetes.io/configuration-snippet`, and the like) are the deliberate exception: their value is inserted into the rendered config verbatim. Anyone who can create or edit an Ingress in a watched namespace can therefore inject arbitrary HAProxy directives. Treat Ingress edit permission in watched namespaces as equivalent to HAProxy config access, and restrict it with RBAC accordingly.
 
 ## Audit trail
 

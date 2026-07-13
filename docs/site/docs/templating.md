@@ -499,6 +499,9 @@ For complete syntax reference, see the [Scriggo documentation](https://scriggo.c
 {# This is a comment #}
 ```
 
+!!! warning "Reserved identifiers"
+    Scriggo uses Go's grammar, so you can't use Go's keywords as variable names: `break`, `case`, `chan`, `const`, `continue`, `default`, `defer`, `else`, `fallthrough`, `for`, `func`, `go`, `goto`, `if`, `import`, `interface`, `map`, `package`, `range`, `return`, `select`, `struct`, `switch`, `type`, and `var`. Writing `{% var type = … %}` or `{% var range = … %}` produces a parse error. In template mode, these words are also reserved: `and`, `contains`, `end`, `extends`, `in`, `macro`, `not`, `or`, `raw`, `render`, `render_glob`, `inherit_context`, `show`, and `using`. This is why the nil-default helper is `fallback`, not `default`.
+
 ### Helper functions
 
 Beyond Scriggo's built-ins, HAPTIC adds helpers for the patterns ingress templates need: nil-safe navigation (`dig`, `fallback`, `toSlice`), string and map utilities, deduplication (`first_seen`), sorting (`sort_by`), and version gates (`semver_gte`). The [Template Reference](./template-reference.md#functions-and-filters) lists every function with its calling styles and an example each.
@@ -707,6 +710,8 @@ Templates write `gw.ApiVersion`, not `gw.APIVersion`. Why the convention works t
 
 **Inside a typed scope** (typed for-range, typed macro parameter, type-switch case branch) use direct field access — no `dig()`, no `tostring()`, no `fallback()` on already-typed primitives. Reach for `dig()` only at genuine polymorphic boundaries (a `routeInfo["route"]` switch entry, an `any` macro parameter, a `shared.Get(...)` return, a ConfigMap with no schema bundled, a `listenerOwner` that may be a Gateway or a ListenerSet, etc.). Mixed-shape chart code — some snippets typed, some not — is the expected adoption pattern, and `dig()` navigates typed structs by JSON tag, so a snippet ported one at a time keeps working without churning its callers.
 
+**Iterate an optional typed slice directly.** An absent (nil) optional typed slice ranges zero times, so `for _, r := range ingress.spec.rules` is panic-free with no guard. Don't wrap a typed slice in `fallback(x, []any{})`: `fallback` returns `any`, which erases the element type and makes the following typed field access (such as `r.host`) fail to compile. When you need to branch on emptiness, test `len(x.field) > 0` (as in the map-file example earlier on this page), not a `dig(...) | toSlice()` guard.
+
 **Optional fields normalise to nil through `dig()`.** A typegen-produced struct field whose schema entry is *not* in the OpenAPI `required` list carries a `json:"…,omitempty"` tag; `dig()` returns nil when such a field's value is the type's zero value (`""`, `0`, `false`, empty slice). The universal `dig(obj, "field") | fallback(default)` chart pattern therefore behaves identically across typed and untyped shapes — without the normalisation, an unpopulated optional string would return `""`, `fallback()` would skip, and downstream key composition would silently produce malformed strings. Required fields keep their zero values intact.
 
 **Schema source.** Typed shapes are generated from each resource's OpenAPI v3 schema:
@@ -864,6 +869,8 @@ server SRV_{{ i }} 192.0.2.1:1 disabled
 
 **Benefit**: Endpoint changes update server addresses via runtime API without dropping connections.
 
+The slot count caps how many endpoints receive traffic: an endpoint beyond the last slot gets no server line and no traffic, with no error, warning, or Kubernetes Event. Size the slot count at or above the backend's maximum replica count, including any `HorizontalPodAutoscaler` ceiling.
+
 !!! tip "Maximize Runtime API Usage"
     Keep server lines minimal - only `address:port` plus `enabled` or `disabled`. Place all other options (`check`, `proto h2`, SSL settings) in the `default-server` directive:
 
@@ -969,7 +976,7 @@ The two `indexBy` entries above are what make the lookup work: `ingresses` is in
 
 ### Safe Iteration
 
-Wrap every field access in `dig(...) | toSlice()` so a missing field yields an empty range instead of a panic. The second endpoint below has no `addresses`, so it's skipped rather than breaking the render:
+With untyped `map[string]any` data (no schema loaded), wrap every field access in `dig(...) | toSlice()` so a missing field yields an empty range instead of a panic. With typed access, skip this — range optional typed slices directly (see [Typed resource access](#typed-resource-access)). The second endpoint below has no `addresses`, so it's skipped rather than breaking the render:
 
 <div class="pg-embed" markdown data-scriggo data-title="Safe iteration over missing fields" data-height="320">
 

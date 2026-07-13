@@ -216,6 +216,9 @@ Events:
 
 Different paths on the same host don't collide, so you can split a host across several Ingresses by giving each a distinct path. An [nginx canary](nginx-ingress.md) Ingress (`nginx.ingress.kubernetes.io/canary: "true"`) intentionally shares its main Ingress's host and path; it never competes for the base route — the main Ingress owns it, and the canary only overlays a traffic split on top.
 
+!!! warning "No arbitration across resource types"
+    Oldest-wins applies only between Ingresses. There's no conflict resolution between an Ingress and a Gateway API route (HTTPRoute/GRPCRoute) that claim the same host and path. The Ingress and Gateway libraries write into the same shared host and path map files independently, and each de-duplicates only within its own resource type — so an overlapping Ingress and HTTPRoute produce a duplicate map entry whose winner is order-dependent and not guaranteed. Give an Ingress and a Gateway route distinct host and path combinations rather than routing the same host and path through both.
+
 ### Default backend and custom error pages
 
 Set `spec.defaultBackend` to route requests that match none of an Ingress's rule paths to a fallback Service:
@@ -297,6 +300,9 @@ data:
   tls.key: <base64-encoded-key>
 ```
 
+!!! warning "A missing TLS Secret is silent"
+    If the Secret named in `spec.tls[].secretName` doesn't exist — or exists but lacks `tls.crt`/`tls.key` — HAPTIC skips registering that certificate. The host is still served over HTTPS, but with the [default certificate](../ssl-certificates.md), not your own. The render doesn't fail and, unlike a missing backend Service (which emits a `BackendUnresolved` Warning event), no event is emitted — so a mistyped or not-yet-created `secretName` shows up only as the wrong certificate on the wire. Verify the Secret exists with `kubectl get -n <namespace> secret <secretName>`, and check what's served with `openssl s_client -connect <host>:443 -servername <host>`.
+
 #### HTTPS on by default
 
 Every Ingress is served over **both HTTP and HTTPS** out of the box, even without a `spec.tls` entry. HAPTIC binds the chart's https port (`haproxy.ports.https`, default `443`) and terminates TLS with the [default certificate](../ssl-certificates.md) — a self-signed cert out of the box — routing HTTPS requests through the same host and path rules as HTTP. A `spec.tls` entry layers a host-specific certificate on top: that host is served with its own certificate instead of the default.
@@ -365,6 +371,10 @@ backend default_my-app_svc_api-service_http
 ```
 
 `check` lives on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Reserved `disabled` slots get filled in at runtime when the backend scales up.
+
+#### Backend namespace scope
+
+An Ingress backend references a Service by name only — the Kubernetes API has no per-backend namespace field. HAPTIC therefore always resolves the Service, its EndpointSlices, and any `spec.tls` Secret in the Ingress's own namespace. A Service that doesn't exist in that namespace renders as a placeholder backend that serves 503 (and, for a port referenced by name, raises the `BackendUnresolved` Warning Event — see [Degraded backend events](#degraded-backend-events)). To route to a Service in a different namespace, use a Gateway API HTTPRoute with a `backendRef.namespace` and a matching ReferenceGrant — see [Cross-namespace routes](gateway.md#cross-namespace-routes-referencegrant); Ingress can't express a cross-namespace backend.
 
 ### WebSocket backends
 

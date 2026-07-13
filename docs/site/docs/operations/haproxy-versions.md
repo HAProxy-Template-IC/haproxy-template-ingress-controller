@@ -30,6 +30,19 @@ HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of 
     validated against the matching HAProxy binary via `haproxy -c`, which is why a
     per-series controller image exists.
 
+## Feature version requirements
+
+Most chart features work on every supported series. A few require a minimum HAProxy series:
+
+| Feature | Minimum series | Behavior below the minimum |
+|---------|----------------|----------------------------|
+| SSL/TLS termination, [CRT-list management](../libraries/ssl.md#crt-list-certificate-management), [OCSP stapling](../libraries/ssl.md#ocsp-stapling) | 3.0 | Not applicable — 3.0 is the minimum supported series |
+| [SPOA hub](spoa-hub.md) native transport (`mode spop`) | 3.1 | Auto-falls back to `mode tcp`; the hub still works |
+| Reload-free TLS certificate rotation (`set ssl cert`) | 3.2 | Certificate rotation still works, but each renewal triggers a full reload instead of a runtime update |
+| [Shared-memory stats persistence](../libraries/base.md#shared-memory-stats-haproxy-33) (`shm-stats-file`) | 3.3 | Silently omitted; stats counters reset on every reload |
+
+Only `mode spop` (3.1) and shm-stats (3.3) gate chart behavior you can't otherwise get. 3.2 unlocks no chart feature you couldn't use below it — it only enables the reload-free lane for certificate rotation; on 3.0 and 3.1 the same rotation triggers a reload. That lane depends on DataPlane API v3.2+, which ships with the 3.2+ images (see the note above).
+
 ## Selecting a version
 
 Set `haproxyVersion` to your desired series. The chart defaults to `3.4`:

@@ -112,6 +112,9 @@ helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
   --version 0.2.0-alpha.1
 ```
 
+!!! warning "The chart owns the `HAProxyTemplateConfig`"
+    The chart renders the single `HAProxyTemplateConfig` from `controller.config`, so it owns that resource. Every `helm upgrade` re-applies the values-derived spec and reverts any change you made with `kubectl edit htplcfg` or `kubectl patch`. A manual edit is live and drives the controller immediately, but it only lasts until the next helm operation. To make a change durable, put it under `controller.config` in your values file instead of editing the CRD directly.
+
 ## Uninstalling
 
 ```bash
