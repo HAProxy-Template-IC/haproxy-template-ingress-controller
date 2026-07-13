@@ -437,6 +437,16 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Auth-Roles %\\[var\\(txn.hub.external_auth.x_auth_roles\\)\\] if \\{ var\\(txn.hub.external_auth.x_auth_roles\\) -m found \\} \\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\}"
+      # Security: strip a client-supplied copy of each trusted header on the
+      # auth-protected route before re-adding the plugin value, so a forged
+      # inbound header can't survive when the auth reply omits it. del-header
+      # must precede the corresponding set-header.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?s)del-header X-Auth-User if \\{ var\\(txn.auth_url\\) -m found \\}.*set-header X-Auth-User "
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?s)del-header X-Auth-Roles if \\{ var\\(txn.auth_url\\) -m found \\}.*set-header X-Auth-Roles "
 
   test-nginx-ingress-external-auth-hostless-accepted:
     # Same as test-nginx-ingress-external-auth: needs the spoa-hub library

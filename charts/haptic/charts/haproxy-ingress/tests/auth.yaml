@@ -448,6 +448,58 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request deny deny_status 401"
 
+  test-haproxy-ingress-auth-url-ssl-passthrough-warns:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "An Ingress that sets both haproxy-ingress.github.io/auth-url and ssl-passthrough gets an AuthIgnored Warning event: external auth can't run on undecrypted L4 passthrough traffic, so auth-url is a no-op. The chart warns rather than failing the render (the config is valid; a hard fail would block all config updates over one misconfig)."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: pt-svc
+          spec:
+            ports:
+              - port: 443
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: pt-auth
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pt-auth.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: pt-svc
+                          port:
+                            number: 443
+    assertions:
+      - type: contains
+        target: events
+        pattern: 'Warning AuthIgnored networking\.k8s\.io/v1 Ingress default/pt-auth: .*ssl-passthrough'
+
   test-haproxy-ingress-oauth-oauth2-proxy:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "oauth: oauth2_proxy desugars onto external-auth — derives the oauth2-proxy address from the Ingress's own /oauth2 path backend; sets auth-url (/oauth2/auth), auth-signin (/oauth2/start), auth-method HEAD, extract-headers, and forwards X-Auth-Request-Email on success."
@@ -526,6 +578,16 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Auth-Request-Email %\\[var\\(txn.hub.external_auth.x_auth_request_email\\)\\]"
+      # Security: a client-supplied copy of the trusted identity header must be
+      # stripped on the auth-protected route before the plugin value is re-added,
+      # so a forged inbound X-Auth-Request-Email can't survive to the backend when
+      # the auth reply omits it. The del-header must precede the set-header.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request del-header X-Auth-Request-Email if \\{ var\\(txn.auth_url\\) -m found \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?s)del-header X-Auth-Request-Email if \\{ var\\(txn.auth_url\\) -m found \\}.*set-header X-Auth-Request-Email"
 
   test-haproxy-ingress-oauth-invalid-value:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
