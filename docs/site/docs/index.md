@@ -76,7 +76,7 @@ Traditional ingress controllers embed configuration logic in code. HAPTIC invert
     The current release is `0.2.0-alpha.1`, a pre-1.0 alpha, and the custom resources are served at API version `v1alpha1` — their schemas can still change before 1.0. The high-availability, validation, and observability features above are implemented and covered by tests, but pin an exact chart version (`--version 0.2.0-alpha.1`) and read the [changelog](changelog.md) before you upgrade.
 
 !!! note "Ready to use out of the box"
-    The [Helm chart](deploying-with-helm.md) ships with [Template Libraries](template-libraries.md) enabled by default. They cover Kubernetes Ingress and Gateway API resources with annotation support comparable to existing HAProxy ingress controllers — no template authoring required. Customizing or extending the templates is entirely optional.
+    The [Helm chart](deploying-with-helm.md) ships with [Template Libraries](template-libraries.md) enabled by default. They cover Kubernetes Ingress and Gateway API resources out of the box, with HAPTIC's native [`haproxy-haptic.org/*` annotations](libraries/haptic-annotations.md) — a best-of-breed superset of the common HAProxy and nginx ingress-controller annotations — enabled by default. No template authoring required, and the vendor annotation libraries are available opt-in for migration. Customizing or extending the templates is entirely optional.
 
 ## Architecture
 

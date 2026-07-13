@@ -165,7 +165,7 @@ You should see two controller pods (the chart defaults to two replicas with lead
 
 That's the whole install. HAPTIC now watches Ingress and Gateway API resources with a production-ready default configuration — **no templating required**:
 
-- **Ingress** — any Ingress with `ingressClassName: haptic` is picked up automatically. The [HAProxy Technologies](./libraries/haproxytech.md) and [haproxy-ingress](./libraries/haproxy-ingress.md) annotation libraries are on by default; [ingress-nginx](./libraries/nginx-ingress.md) compatibility is available as an opt-in. See the [Ingress library](./libraries/ingress.md).
+- **Ingress** — any Ingress with `ingressClassName: haptic` is picked up automatically. HAPTIC's native [`haproxy-haptic.org/*` annotation library](./libraries/haptic-annotations.md) is on by default — a best-of-breed vocabulary covering timeouts, TLS, authentication, CORS, rate-limiting, redirects, canary routing, and more. The vendor annotation libraries ([HAProxy Technologies](./libraries/haproxytech.md), [haproxy-ingress](./libraries/haproxy-ingress.md), [ingress-nginx](./libraries/nginx-ingress.md)) are opt-in aids for migrating from those controllers. See the [Ingress library](./libraries/ingress.md).
 - **Gateway API** — create a `Gateway` with `gatewayClassName: haptic` and attach `HTTPRoute` resources; see the [Gateway library](./libraries/gateway.md) and [GatewayClass setup](./gateway-class.md).
 
 Point your existing resources at HAPTIC and they route immediately. You only reach for [templating](./templating.md) to go beyond what these libraries already do.
@@ -323,7 +323,7 @@ When you created the Ingress, the controller detected the change via the Kuberne
 
 The default [template libraries](template-libraries.md) already handle path-based routing, TLS termination, and annotation-driven configuration — no templating needed. Point your resources at HAPTIC and read the reference for what each supports:
 
-- **Ingress** — the [Ingress library](./libraries/ingress.md), with annotation compatibility for [HAProxy Technologies](./libraries/haproxytech.md) and [haproxy-ingress](./libraries/haproxy-ingress.md) on by default, and [ingress-nginx](./libraries/nginx-ingress.md) available opt-in.
+- **Ingress** — the [Ingress library](./libraries/ingress.md), with HAPTIC's native [`haproxy-haptic.org/*` annotations](./libraries/haptic-annotations.md) on by default and the vendor compatibility libraries ([HAProxy Technologies](./libraries/haproxytech.md), [haproxy-ingress](./libraries/haproxy-ingress.md), [ingress-nginx](./libraries/nginx-ingress.md)) available opt-in for migration.
 - **Gateway API** — the [Gateway library](./libraries/gateway.md) and [GatewayClass setup](./gateway-class.md).
 
 ### Replacing another Ingress controller?

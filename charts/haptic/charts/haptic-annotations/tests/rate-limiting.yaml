@@ -1,0 +1,188 @@
+# haptic-annotations library — rate-limiting validation tests.
+# Covers per-source request/connection caps (rps/rpm/connections), the tunable
+# period/size/status-code + whitelist, precedence, and the bwlim-out download
+# throttle (limit-rate / limit-rate-after).
+validationTests:
+  test-haptic-rate-limit-rps:
+    description: rate-limit-rps with tunable period/size/status-code and whitelist
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rps-service
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rps-ingress
+            annotations:
+              haproxy-haptic.org/rate-limit-rps: "10"
+              haproxy-haptic.org/rate-limit-period: "5s"
+              haproxy-haptic.org/rate-limit-size: "200k"
+              haproxy-haptic.org/rate-limit-status-code: "429"
+              haproxy-haptic.org/rate-limit-whitelist: "10.0.0.0/8,192.168.0.0/16"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rps.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rps-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "stick-table type ip size 200k expire 5s store http_req_rate"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request track-sc0 src"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "deny_status 429"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "src 10.0.0.0/8 192.168.0.0/16"
+
+  test-haptic-rate-limit-rpm-precedence:
+    description: rate-limit-rps wins over rate-limit-rpm; rpm is ignored
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rpm-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rpm-ingress
+            annotations:
+              haproxy-haptic.org/rate-limit-rps: "20"
+              haproxy-haptic.org/rate-limit-rpm: "100"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rpm.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rpm-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "expire 1s store http_req_rate"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "sc_http_req_rate.0. gt 20"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "rate-limit-rpm ignored"
+
+  test-haptic-rate-limit-connections:
+    description: rate-limit-connections uses the conn_cur counter
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: conn-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: conn-ingress
+            annotations:
+              haproxy-haptic.org/rate-limit-connections: "100"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: conn.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: conn-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "store conn_cur peers localinstance"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "sc_conn_cur.0. gt 100"
+
+  test-haptic-limit-rate:
+    description: limit-rate / limit-rate-after emit a bwlim-out download throttle
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: bw-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bw-ingress
+            annotations:
+              haproxy-haptic.org/limit-rate: "100k"
+              haproxy-haptic.org/limit-rate-after: "1m"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bw.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: bw-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "filter bwlim-out haptic_limitrate_default_bw-ingress default-limit 100k default-period 1s min-size 1m"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-bandwidth-limit haptic_limitrate_default_bw-ingress"

@@ -1,0 +1,577 @@
+# haptic-annotations library — feature registration, redirects, HSTS, SSL
+# passthrough, default-backend, and raw config injection.
+#
+# Best-of-breed superset of the three vendor libraries, exposed under the
+# native haproxy-haptic.org/* prefix. Registration snippets (features-*) push
+# host→value entries into the shared gf maps that base.yaml/ssl.yaml emit
+# (reload-free, map-only updates); the frontend-filters-*/backends-*/map-* and
+# config-injection snippets emit directly into their sections.
+#
+# Sources adapted:
+#   ssl-redirect / redirects / app-root / hsts / ssl-passthrough / mTLS-style
+#     gf-registration ......... haproxy-ingress/40-features.yaml
+#   permanent/temporal split & from-to-www .. nginx-ingress/{30,20}-*
+#   ssl-redirect-port ........ haproxytech/library.yaml
+#   default-backend-redirect . haproxy-ingress/30-frontend-filters.yaml
+#   default-backend .......... nginx-ingress/17-default-backend.yaml
+#   config-global/defaults/frontend .. haproxy-ingress/45-config-sections.yaml
+templateSnippets:
+
+  # ==========================================================================
+  # SSL redirect — host registration into the shared gf["sslRedirectHosts"].
+  # ssl.yaml builds ssl-redirect-<code>.map and emits the shared scheme-redirect
+  # rule, so adding/removing a redirected host is a map-only, reload-free update.
+  # ==========================================================================
+  features-105-haptic-ssl-redirect:
+    template: |
+      {#-
+        HAPTIC SSL redirect — host registration.
+
+        Annotations:
+          - haproxy-haptic.org/ssl-redirect: "true" enables the redirect
+          - haproxy-haptic.org/ssl-redirect-code: "301|302|303|307|308" (default 302)
+
+        Best-of-breed: takes the haproxy-ingress map-based registration (reload-free)
+        and adopts haproxytech's ssl-redirect-port coexistence — hosts that also set
+        haproxy-haptic.org/ssl-redirect-port are handled by the port-targeted
+        redirect (frontend-filters-800-haptic-ssl-redirect-port) and are NOT
+        registered here, so no double redirect fires. Unlike the vendor libraries the
+        native code is validated fail-loud rather than silently corrected.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/ssl-redirect"] == "true" %}
+            {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+            {%- var redirectPort = ingress.Metadata.Annotations["haproxy-haptic.org/ssl-redirect-port"] %}
+            {%- if redirectPort == "" %}
+              {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/ssl-redirect-code"] %}
+              {%- if code == "" %}{%- code = "302" %}{%- end %}
+              {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" %}
+                {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/ssl-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+              {%- end %}
+              {%- for _, rule := range ingress.Spec.Rules %}
+                {%- if rule.Host != "" %}
+                  {%- var rh []any = coalesce(gf["sslRedirectHosts"], []any{}) -%}
+                  {%- gf["sslRedirectHosts"] = append(rh, map[string]any{"host": toLower(rule.Host), "code": code}) -%}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # SSL redirect to an explicit HTTPS port (haproxytech-style). Single-vendor,
+  # so the per-code host→port maps are built and referenced here. The Host header
+  # is read (field(1,:) strips any existing port) but never set, so host routing
+  # is not corrupted. Map names are haptic-scoped to avoid colliding with the
+  # haproxytech library's ssl-redirect-port maps.
+  # ==========================================================================
+  frontend-filters-800-haptic-ssl-redirect-port:
+    template: |
+      {#-
+        HAPTIC SSL redirect to an explicit port.
+
+        Annotations:
+          - haproxy-haptic.org/ssl-redirect: "true" (or ssl-redirect-port implies intent)
+          - haproxy-haptic.org/ssl-redirect-port: explicit HTTPS port (positive integer)
+          - haproxy-haptic.org/ssl-redirect-code: "301|302|303|307|308" (default 302)
+
+        Rewrites the request to https on the explicit port, preserving the original
+        request URI. Adapted from haproxytech/frontend-filters-055.
+      -#}
+      {%- var portByCode = map[string]map[string]string{} -%}
+      {%- var codeHosts = map[string][]any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var redirectPort = ingress.Metadata.Annotations["haproxy-haptic.org/ssl-redirect-port"] %}
+        {%- if redirectPort != "" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- if toint(redirectPort) <= 0 %}
+            {{- fail("Invalid value '" + redirectPort + "' for annotation 'haproxy-haptic.org/ssl-redirect-port' on Ingress '" + key + "'. Must be a positive integer port.") -}}
+          {%- end %}
+          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/ssl-redirect"] == "true" %}
+            {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/ssl-redirect-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
+            {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" %}
+              {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/ssl-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {%- end %}
+            {%- if portByCode[code] == nil %}{%- portByCode[code] = map[string]string{} %}{%- end %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- var host = toLower(rule.Host) %}
+              {%- if host != "" && !seen[host] %}
+                {%- seen[host] = true %}
+                {%- portByCode[code][host] = redirectPort %}
+                {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}), host) %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- for code, hostPort := range portByCode %}
+        {%- var sortedHosts = sort_strings(coalesce(codeHosts[code], []any{})) %}
+        {%- var lines = []any{} %}
+        {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + hostPort[tostring(h)]) %}{%- end %}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var _, mapErr = fileRegistry.Register("map", "haptic-ssl-redirect-port-" + code + ".map", mapContent) %}
+        {%- if mapErr != nil %}{{ fail("failed to register haptic ssl-redirect-port map: " + tostring(mapErr)) }}{%- end %}
+        {%- var m, _ = pathResolver.GetPath("haptic-ssl-redirect-port-" + code + ".map", "map") %}
+      # haptic/ssl-redirect-port (code {{ code }})
+      http-request redirect location https://%[hdr(host),field(1,:)]:%[var(txn.host),map({{ m }})]%[capture.req.uri] code {{ code }} if !{ ssl_fc } { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
+
+  # ==========================================================================
+  # Permanent / temporal redirect — host registration into gf["redirectHosts"].
+  # base.yaml's frontend-filters-060-redirect-location emits the rule from
+  # redirect-loc-<code>.map, so changing a host redirect is a map-only,
+  # reload-free update. Adapted from nginx-ingress permanent/temporal split.
+  # ==========================================================================
+  features-135-haptic-redirects:
+    template: |
+      {#-
+        HAPTIC host redirects — permanent (default 301) and temporal (default 302).
+
+        Annotations:
+          - haproxy-haptic.org/permanent-redirect        (URL; enables the redirect)
+          - haproxy-haptic.org/permanent-redirect-code   (default 301)
+          - haproxy-haptic.org/temporal-redirect         (URL; enables the redirect)
+          - haproxy-haptic.org/temporal-redirect-code    (default 302)
+
+        The two axes are independent; an Ingress may set either or both. URLs pass a
+        control-char config-injection guard before interpolation.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- var permUrl = ingress.Metadata.Annotations["haproxy-haptic.org/permanent-redirect"] %}
+          {%- if permUrl != "" %}
+            {%- if regex_search(permUrl, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- var pc = ingress.Metadata.Annotations["haproxy-haptic.org/permanent-redirect-code"] %}
+            {%- if pc == "" %}{%- pc = "301" %}{%- end %}
+            {%- if pc != "301" && pc != "302" && pc != "303" && pc != "307" && pc != "308" %}
+              {{- fail("Invalid value '" + pc + "' for annotation 'haproxy-haptic.org/permanent-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {%- end %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}
+                {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}
+                {%- gf["redirectHosts"] = append(rh, map[string]any{"host": toLower(rule.Host), "location": permUrl, "code": pc}) -%}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+          {%- var tempUrl = ingress.Metadata.Annotations["haproxy-haptic.org/temporal-redirect"] %}
+          {%- if tempUrl != "" %}
+            {%- if regex_search(tempUrl, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/temporal-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- var tc = ingress.Metadata.Annotations["haproxy-haptic.org/temporal-redirect-code"] %}
+            {%- if tc == "" %}{%- tc = "302" %}{%- end %}
+            {%- if tc != "301" && tc != "302" && tc != "303" && tc != "307" && tc != "308" %}
+              {{- fail("Invalid value '" + tc + "' for annotation 'haproxy-haptic.org/temporal-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {%- end %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}
+                {%- var rh []any = coalesce(gf["redirectHosts"], []any{}) -%}
+                {%- gf["redirectHosts"] = append(rh, map[string]any{"host": toLower(rule.Host), "location": tempUrl, "code": tc}) -%}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # From-to-WWW redirect (nginx-style): 301 between apex and www. counterpart.
+  # Single-vendor: builds haptic-from-to-www.map and emits two scheme-split
+  # rules reading it (map-only, reload-free). Adapted from nginx-ingress.
+  # ==========================================================================
+  frontend-filters-810-haptic-from-to-www-redirect:
+    template: |
+      {#-
+        HAPTIC from-to-www redirect.
+
+        Annotation: haproxy-haptic.org/from-to-www-redirect: "true"
+
+        Redirects apex ↔ www with a 301:
+          - host `example.com`     → `www.example.com`
+          - host `www.example.com` → `example.com`
+
+        Emitted as a true client redirect (`redirect prefix`) that sets the Location
+        header, never the Host header, so routing is not corrupted; the request path
+        is preserved and the scheme is preserved by gating on ssl_fc.
+      -#}
+      {%- var pairByHost = map[string]string{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- var hostKeys = []any{} -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/from-to-www-redirect"] == "true" %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var srcHost = toLower(rule.Host) %}
+            {%- if srcHost != "" && !seen[srcHost] %}
+              {%- seen[srcHost] = true %}
+              {%- var targetHost = "" %}
+              {%- if hasPrefix(srcHost, "www.") %}{%- targetHost = srcHost[4:] %}{%- else %}{%- targetHost = "www." + srcHost %}{%- end %}
+              {%- pairByHost[srcHost] = targetHost %}
+              {%- hostKeys = append(hostKeys, srcHost) %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- if len(hostKeys) > 0 %}
+        {%- var sortedHosts = sort_strings(hostKeys) %}
+        {%- var lines = []any{} %}
+        {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + pairByHost[tostring(h)]) %}{%- end %}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var _, mapErr = fileRegistry.Register("map", "haptic-from-to-www.map", mapContent) %}
+        {%- if mapErr != nil %}{{ fail("failed to register haptic from-to-www map: " + tostring(mapErr)) }}{%- end %}
+        {%- var m, _ = pathResolver.GetPath("haptic-from-to-www.map", "map") %}
+      # haptic/from-to-www-redirect
+      http-request redirect prefix https://%[var(txn.host),map({{ m }})] code 301 if { ssl_fc } { var(txn.host),map({{ m }}) -m found }
+      http-request redirect prefix http://%[var(txn.host),map({{ m }})] code 301 if !{ ssl_fc } { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
+
+  # ==========================================================================
+  # App-root — host registration into gf["appRootHosts"]. base.yaml
+  # features-175-app-root-map builds app-root.map and frontend-filters-065-app-root
+  # emits the gated redirect, so changing an app-root is a map-only, reload-free
+  # update. Adapted from haproxy-ingress/nginx-ingress app-root.
+  # ==========================================================================
+  features-145-haptic-app-root:
+    template: |
+      {#-
+        HAPTIC app-root — redirect requests for "/" to a sub-path.
+
+        Annotation: haproxy-haptic.org/app-root: "<path>"
+
+        The path passes a control-char config-injection guard before registration.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var appRoot = ingress.Metadata.Annotations["haproxy-haptic.org/app-root"] %}
+        {%- if appRoot != "" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/app-root' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}
+              {%- var ar []any = coalesce(gf["appRootHosts"], []any{}) -%}
+              {%- gf["appRootHosts"] = append(ar, map[string]any{"host": toLower(rule.Host), "path": appRoot}) -%}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # Default-backend redirect (haproxy-ingress-style): redirect requests that
+  # match one of this Ingress's hosts but no configured path. Single-vendor:
+  # builds haptic-default-backend-redirect-<code>.map and emits the rule.
+  # ==========================================================================
+  frontend-filters-820-haptic-default-backend-redirect:
+    template: |
+      {#-
+        HAPTIC default-backend redirect.
+
+        Annotations:
+          - haproxy-haptic.org/default-backend-redirect: "<url>" (enables the redirect)
+          - haproxy-haptic.org/default-backend-redirect-code: "301|302|303|307|308" (default 302)
+
+        frontend-filters-* run AFTER the routing cascade, so txn.backend_name is set
+        for matched paths and empty otherwise; the guard
+        `!{ var(txn.backend_name) -m found }` fires exactly on unmatched requests,
+        scoped to this Ingress's host(s). Adapted from
+        haproxy-ingress/frontend-filters-680.
+      -#}
+      {%- var codeMap = map[string]map[string]string{} -%}
+      {%- var codeHosts = map[string][]any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var redirectURL = ingress.Metadata.Annotations["haproxy-haptic.org/default-backend-redirect"] %}
+        {%- if redirectURL != "" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- if regex_search(redirectURL, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/default-backend-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/default-backend-redirect-code"] %}
+          {%- if code == "" %}{%- code = "302" %}{%- end %}
+          {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" %}
+            {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+          {%- end %}
+          {%- if codeMap[code] == nil %}{%- codeMap[code] = map[string]string{} %}{%- end %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var host = toLower(rule.Host) %}
+            {%- if host != "" && !seen[host] %}
+              {%- seen[host] = true %}
+              {%- codeMap[code][host] = redirectURL %}
+              {%- codeHosts[code] = append(coalesce(codeHosts[code], []any{}), host) %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- for code, hostURL := range codeMap %}
+        {%- var sortedHosts = sort_strings(coalesce(codeHosts[code], []any{})) %}
+        {%- var lines = []any{} %}
+        {%- for _, h := range sortedHosts %}{%- lines = append(lines, tostring(h) + " " + hostURL[tostring(h)]) %}{%- end %}
+        {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+        {%- var _, mapErr = fileRegistry.Register("map", "haptic-default-backend-redirect-" + code + ".map", mapContent) %}
+        {%- if mapErr != nil %}{{ fail("failed to register haptic default-backend-redirect map: " + tostring(mapErr)) }}{%- end %}
+        {%- var m, _ = pathResolver.GetPath("haptic-default-backend-redirect-" + code + ".map", "map") %}
+      # haptic/default-backend-redirect (code {{ code }})
+      http-request redirect location %[var(txn.host),map({{ m }})] code {{ code }} if !{ var(txn.backend_name) -m found } { var(txn.host),map({{ m }}) -m found }
+      {%- end %}
+
+  # ==========================================================================
+  # HSTS — host registration into gf["hstsHosts"] via the shared macro. base.yaml
+  # features-190-hsts-map builds hsts.map and frontend-filters-080-hsts emits the
+  # single shared response-header rule (map-only, reload-free). Default max-age
+  # comes from the library extraContext default hapticHstsMaxAge (2 years).
+  # ==========================================================================
+  features-155-haptic-hsts:
+    template: |
+      {#-
+        HAPTIC HSTS — Strict-Transport-Security registration.
+
+        Annotations:
+          - haproxy-haptic.org/hsts: "true" enables HSTS for the host(s)
+          - haproxy-haptic.org/hsts-max-age: seconds (default extraContext.hapticHstsMaxAge, 63072000)
+          - haproxy-haptic.org/hsts-include-subdomains: "true" adds includeSubDomains
+          - haproxy-haptic.org/hsts-preload: "true" adds preload
+      -#}
+      {%- import "util-register-annotation-hsts" for RegisterAnnotationHSTS -%}
+      {%- var defMaxAge = extraContext | dig("hapticHstsMaxAge") | fallback("63072000") | tostring() -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ RegisterAnnotationHSTS(ingress,
+            "haproxy-haptic.org/hsts",
+            "haproxy-haptic.org/hsts-max-age",
+            "haproxy-haptic.org/hsts-include-subdomains",
+            "haproxy-haptic.org/hsts-preload",
+            defMaxAge) }}
+      {%- end -%}
+
+  # ==========================================================================
+  # SSL passthrough — cache + gf-copy + backend emission. Mirrors
+  # features-100-haproxy-ingress-ssl-passthrough exactly with haptic keys:
+  #   cache key   "haptic_sslPassthrough"
+  #   name prefix "ssl-passthrough-haptic-"
+  # ssl.yaml consumes gf["sslPassthroughBackends"] to build the SNI TCP frontend.
+  # ==========================================================================
+  util-haptic-ssl-passthrough:
+    template: |
+      {#- Caches SSL passthrough backends from haproxy-haptic.org/ssl-passthrough
+          annotations. Build logic lives in ingress-annotations-compat.yaml's
+          BuildAnnotationSSLPassthrough macro; this snippet only owns the per-library
+          cache key and naming-convention parameters. -#}
+      {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("haptic_sslPassthrough", func() any {
+          var sslData = map[string]any{"backends": []any{}}
+          BuildAnnotationSSLPassthrough(sslData,
+            "haproxy-haptic.org/ssl-passthrough",
+            "ssl-passthrough-haptic-",
+            "haptic_sslPassthrough_host")
+          return sslData
+        })
+      %%}
+
+  features-100-haptic-ssl-passthrough:
+    template: |
+      {#-
+        HAPTIC SSL passthrough registration.
+
+        Annotation: haproxy-haptic.org/ssl-passthrough: "true"
+
+        Registers SSL passthrough backends with the global feature registry; ssl.yaml
+        consumes gf["sslPassthroughBackends"] to generate the SNI-routed TCP frontend
+        and passthrough backends. Adapted from
+        features-100-haproxy-ingress-ssl-passthrough (cache→gf copy).
+      -#}
+      {{ render "util-haptic-ssl-passthrough" }}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
+      {%- if sslBackends != nil %}
+        {%- var haVal, _ = shared.ComputeIfAbsent("haptic_sslPassthrough", func() any { return nil }) %}
+        {%- if haVal != nil %}
+          {%- var haBackends = haVal.(map[string]any)["backends"].([]any) %}
+          {%- for _, backend := range haBackends %}
+            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  backends-840-haptic-ssl-passthrough:
+    template: |
+      {#-
+        HAPTIC SSL passthrough backends.
+
+        Generates TCP-mode backends for Ingresses carrying
+        haproxy-haptic.org/ssl-passthrough: "true".
+      -#}
+      {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
+      {{ render "util-haptic-ssl-passthrough" }}
+      {{ RenderAnnotationSSLPassthroughBackends("haptic_sslPassthrough", "haptic_sslPassthrough_backend", "haptic") }}
+
+  # ==========================================================================
+  # Default-backend (nginx-style): per-host catch-all pool from a named Service
+  # (first port). A dedicated backend pool plus a per-host "<host>/" prefix entry
+  # in path-prefix.map. Silently skipped when the Service can't be resolved.
+  # Adapted from nginx-ingress/17-default-backend.yaml.
+  # ==========================================================================
+  util-haptic-default-backend:
+    template: |
+      {%- macro ResolveHapticDefaultBackend(ingress *resources.ingresses.T, result map[string]any) %}
+        {%%
+          result["ok"] = false
+          var ann = ingress.Metadata.Annotations["haproxy-haptic.org/default-backend"]
+          if ann == "" {
+            return
+          }
+          var ns = ingress.Metadata.Namespace
+          var svcNs = ns
+          var svcName = ann
+          if strings_contains(ann, "/") {
+            var parts = split(ann, "/")
+            svcNs = parts[0]
+            svcName = parts[1]
+          }
+          // The default-backend names only a Service (no port). Resolve its first
+          // port number; the pool can't be built without it.
+          var svc = resources.services.GetSingle(svcNs, svcName)
+          if svc == nil {
+            return
+          }
+          var port = 0
+          var portName = ""
+          for _, sp := range svc.Spec.Ports {
+            port = toint(sp.Port)
+            portName = sp.Name
+            break
+          }
+          if port <= 0 {
+            return
+          }
+          result["svcNs"] = svcNs
+          result["svcName"] = svcName
+          result["port"] = port
+          result["portName"] = portName
+          result["backendName"] = ns + "_" + ingress.Metadata.Name + "_default-backend_" + svcName
+          result["ok"] = true
+        %%}
+      {%- end macro -%}
+
+  backends-850-haptic-default-backend:
+    template: |
+      {#-
+        HAPTIC default-backend pools.
+
+        Annotation: haproxy-haptic.org/default-backend: "<service>" or "<ns>/<service>"
+
+        Emits one backend pool per Ingress carrying the annotation. The
+        map-path-prefix-850 sibling adds the catch-all path entries that route
+        unmatched requests here. Silently skipped when the Service is missing
+        (diverges from the redirect-based haproxy-ingress default-backend).
+      -#}
+      {%- import "util-haptic-default-backend" for ResolveHapticDefaultBackend -%}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var info = map[string]any{} -%}
+        {{- ResolveHapticDefaultBackend(ingress, info) -}}
+        {%- if info["ok"] == true -%}
+          {%- var svcNs = tostring(info["svcNs"]) -%}
+          {%- var svcName = tostring(info["svcName"]) -%}
+          {%- var port = toint(info["port"]) -%}
+          {%- var portName = tostring(info["portName"]) -%}
+          {%- var backendName = tostring(info["backendName"]) -%}
+          {%- if first_seen("haptic_default_backend", backendName) -%}
+      {{ "\n" }}# haptic/default-backend: Ingress {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} → Service {{ svcNs }}/{{ svcName }}:{{ port }}
+      backend {{ backendName }}
+          guid {{ make_guid("be", backendName) }}
+          {%- var serverOpts = map[string]any{"flags": []any{}} -%}
+          {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
+        default-server check{{ BuildServerOptions(serverOpts) }}
+        {{ BackendServers(svcName, 0, port, nil, portName, backendName, svcNs) | indent(2, true) }}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  map-path-prefix-850-haptic-default-backend:
+    template: |
+      {#-
+        HAPTIC default-backend catch-all path entries.
+
+        For each host on an Ingress carrying haproxy-haptic.org/default-backend,
+        emit a "<host>/" prefix entry pointing at the default-backend pool. The
+        map_beg longest-prefix match in path-prefix.map prefers the Ingress's own
+        rule paths and falls through to this catch-all only when no rule path
+        matched.
+      -#}
+      {%- import "util-haptic-default-backend" for ResolveHapticDefaultBackend -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var info = map[string]any{} -%}
+        {{- ResolveHapticDefaultBackend(ingress, info) -}}
+        {%- if info["ok"] == true -%}
+          {%- var backendName = tostring(info["backendName"]) -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- if rule.Host != "" -%}
+              {%- var hostKey = MapKeyForHost(rule.Host) -%}
+      {{ "\n" }}# haptic/default-backend ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}){{ "\n" }}{{ hostKey }}/ BACKEND:{{ backendName }}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # ==========================================================================
+  # Raw directive injection (haproxy-ingress-style). Each annotation injects
+  # operator-authored HAProxy directives verbatim into the corresponding section.
+  # Directives are whole config blocks (newlines are legitimate), so they are
+  # strip()-trimmed and emitted as-is, matching the vendor's raw-passthrough
+  # contract; deduplication is the operator's responsibility.
+  # ==========================================================================
+  global-settings-800-haptic-config-global:
+    template: |
+      {#-
+        haproxy-haptic.org/config-global → raw directives in the global section.
+      -#}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-global"] %}
+      {%- if strip(snippet) != "" %}
+      {%- if isFirst %}
+      # haptic/config-global
+      {%- isFirst = false %}
+      {%- end %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}
+      {{ strip(snippet) }}
+      {%- end %}
+      {%- end %}
+
+  defaults-settings-800-haptic-config-defaults:
+    template: |
+      {#-
+        haproxy-haptic.org/config-defaults → raw directives in the defaults section.
+      -#}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-defaults"] %}
+      {%- if strip(snippet) != "" %}
+      {%- if isFirst %}
+      # haptic/config-defaults
+      {%- isFirst = false %}
+      {%- end %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}
+      {{ strip(snippet) }}
+      {%- end %}
+      {%- end %}
+
+  frontend-extra-800-haptic-config-frontend:
+    template: |
+      {#-
+        haproxy-haptic.org/config-frontend → raw directives in the http frontend.
+
+        Runs at frontend-extra-* (BEFORE routing logic), so captures, ACLs and early
+        http-request rules are in scope for the routing that follows. Emitted into
+        every frontend (plain HTTP, h2c, and the SSL https frontend).
+      -#}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/config-frontend"] %}
+      {%- if strip(snippet) != "" %}
+      {%- if isFirst %}
+      # haptic/config-frontend
+      {%- isFirst = false %}
+      {%- end %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}
+      {{ strip(snippet) }}
+      {%- end %}
+      {%- end %}

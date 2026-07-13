@@ -1,0 +1,276 @@
+# haptic-annotations library — feature validation tests (40-features.yaml).
+# Covers the native haproxy-haptic.org/* redirects, HSTS, default-backend and
+# raw config injection. All fixtures use ingressClassName: haptic.
+validationTests:
+
+  test-haptic-ssl-redirect:
+    description: haproxy-haptic.org/ssl-redirect registers the host in the shared ssl-redirect map (reload-free) with the requested code
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: redir-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: redir-ingress
+            annotations:
+              haproxy-haptic.org/ssl-redirect: "true"
+              haproxy-haptic.org/ssl-redirect-code: "301"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: secure.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: redir-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:ssl-redirect-301.map
+        pattern: "secure\\.example\\.com"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect scheme https code 301 if !\\{ ssl_fc \\}"
+
+  test-haptic-redirects:
+    description: haproxy-haptic.org permanent- and temporal-redirect register host→URL in the shared redirect-loc maps with their default codes
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: r-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: perm-ingress
+            annotations:
+              haproxy-haptic.org/permanent-redirect: "https://new.example.com"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: old.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: r-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: temp-ingress
+            annotations:
+              haproxy-haptic.org/temporal-redirect: "https://sale.example.com"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: promo.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: r-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:redirect-loc-301.map
+        pattern: "old\\.example\\.com https://new\\.example\\.com"
+      - type: contains
+        target: map:redirect-loc-302.map
+        pattern: "promo\\.example\\.com https://sale\\.example\\.com"
+
+  test-haptic-hsts:
+    description: haproxy-haptic.org/hsts registers the full Strict-Transport-Security value in hsts.map
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: hsts-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hsts-ingress
+            annotations:
+              haproxy-haptic.org/hsts: "true"
+              haproxy-haptic.org/hsts-max-age: "31536000"
+              haproxy-haptic.org/hsts-include-subdomains: "true"
+              haproxy-haptic.org/hsts-preload: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hsts.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: hsts-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:hsts.map
+        pattern: "hsts.example.com max-age=31536000; includeSubDomains; preload"
+
+  test-haptic-default-backend:
+    description: haproxy-haptic.org/default-backend emits a backend pool plus a per-host catch-all path entry routing unmatched requests to that Service
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: app-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: errors-service
+          spec:
+            ports:
+              - port: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: app-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: app-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: errors-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: errors-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.9"]
+          ports:
+            - port: 9000
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: db-ingress
+            annotations:
+              haproxy-haptic.org/default-backend: "errors-service"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: db.example.com
+                http:
+                  paths:
+                    - path: /app
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: app-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend default_db-ingress_default-backend_errors-service"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10\\.0\\.0\\.9:9000"
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "db\\.example\\.com/ BACKEND:default_db-ingress_default-backend_errors-service"
+
+  test-haptic-config-injection:
+    description: haproxy-haptic.org config-global/config-defaults/config-frontend inject raw directives verbatim into their sections
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cfg-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cfg-ingress
+            annotations:
+              haproxy-haptic.org/config-global: "tune.bufsize 32768"
+              haproxy-haptic.org/config-defaults: "option dontlognull"
+              haproxy-haptic.org/config-frontend: "http-request set-header X-Haptic-Test yes"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cfg.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cfg-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "tune.bufsize 32768"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "option dontlognull"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Haptic-Test yes"

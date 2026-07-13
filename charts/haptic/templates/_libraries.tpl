@@ -184,6 +184,7 @@ Each entry in `$libraryFiles` is either:
     "libraries/ingress.yaml"
     "subchart:gateway"
     "libraries/ingress-annotations-compat.yaml"
+    "subchart:haptic-annotations"
     "subchart:haproxytech"
     "subchart:haproxy-ingress"
     "subchart:nginx-ingress"

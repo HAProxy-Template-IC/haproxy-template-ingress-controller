@@ -184,11 +184,11 @@ controller:
 The `450` prefix places the snippet after the built-in `global-settings-400-ssl`, so it doesn't collide with any bundled snippet.
 
 !!! warning "These harden the client-facing listener, not the backend"
-    `ssl-default-bind-*` directives apply to the frontend — traffic between clients and HAProxy. They don't affect TLS between HAProxy and your upstream pods. Backend TLS ciphers and versions are set per route with vendor annotations instead: `nginx.ingress.kubernetes.io/proxy-ssl-ciphers` / `proxy-ssl-protocols` (see [nginx-ingress library](nginx-ingress.md)) or haproxy-ingress `ssl-ciphers-backend` (see [haproxy-ingress library](haproxy-ingress.md)).
+    `ssl-default-bind-*` directives apply to the frontend — traffic between clients and HAProxy. They don't affect TLS between HAProxy and your upstream pods. Backend TLS ciphers and versions are set per route with annotations instead: the default [haptic-annotations](haptic-annotations.md) library exposes `haproxy-haptic.org/backend-ciphers` / `backend-ciphersuites` / `backend-ssl-protocols`; the opt-in vendor libraries name the same thing as `nginx.ingress.kubernetes.io/proxy-ssl-ciphers` / `proxy-ssl-protocols` or haproxy-ingress `ssl-ciphers-backend`.
 
 ### SSL passthrough
 
-When resource libraries register SSL passthrough backends (via `haproxy.org/ssl-passthrough: "true"` annotation), the SSL library generates a dual-frontend architecture:
+When resource libraries register SSL passthrough backends (via the default `haproxy-haptic.org/ssl-passthrough: "true"` annotation, or a vendor equivalent such as `haproxy.org/ssl-passthrough`), the SSL library generates a dual-frontend architecture:
 
 ```
                            ┌─────────────────────┐

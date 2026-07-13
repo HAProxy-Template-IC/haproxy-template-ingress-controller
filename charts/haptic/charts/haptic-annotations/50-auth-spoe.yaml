@@ -1,0 +1,923 @@
+# HAPTIC-native annotation library — auth, mTLS, external-auth (SPOE), OAuth2,
+# and WAF. Best-of-breed superset of the three vendor auth libraries under the
+# haproxy-haptic.org/* prefix:
+#   - Basic auth: nginx's explicit auth-type + auth-secret-type (auth-file /
+#     auth-map) selector, haproxy-ingress's htpasswd `user::plain` handling, and
+#     password-hash validation against extraContext.hapticPasswordHashRegex.
+#   - satisfy: nginx's "any" → OR-combine of the allowlist and basic auth.
+#   - mTLS: identical nginx / haproxy-ingress registration into
+#     gf["clientCertVerifyHosts"] + gf["mtlsErrorHosts"] + the X-SSL-Client-*
+#     cert passthrough.
+#   - External auth: the auth-* SPOE map contributions + pass/fail header wiring
+#     (requires spoaHub.plugins.external-auth — see the plugin note below).
+#   - OAuth2-proxy: haproxy-ingress's `oauth` desugaring onto external-auth.
+#   - WAF: haproxy-ingress's waf / waf-mode enforcement-mode map + nginx's
+#     per-app modsecurity-snippet (both via the spoa-hub coraza plugin).
+#
+# Plugin requirement (accurate, not auto-enabled): the external-auth and WAF
+# capabilities only take effect when the operator has enabled the corresponding
+# spoa-hub plugin (spoaHub.plugins external-auth / coraza). The values layer
+# owns plugin enablement; these snippets never flip it on. The WAF snippets
+# fail-loud when their annotations are present without the coraza plugin (a
+# silent no-op would hide a real misconfiguration); the external-auth map
+# contributions mirror the vendor behaviour and populate the SPOE maps
+# unconditionally — the spoa-hub frontend wiring self-gates on the check-auth
+# message being present in the messages union.
+templateSnippets:
+  # ============================================================================
+  # Basic auth — userlist generation (global-top)
+  # ============================================================================
+  global-top-820-haptic-auth:
+    template: |
+      {#-
+        HAPTIC Basic Auth Userlist Generation
+
+        Documentation: docs/site/docs/libraries/haptic-annotations.md#basic-auth
+
+        Annotations:
+          - haproxy-haptic.org/auth-type: "basic" (required; any other value fails)
+          - haproxy-haptic.org/auth-secret: "<ns/name>" or "<name>" (required)
+          - haproxy-haptic.org/auth-secret-type: "auth-file" | "auth-map"
+            (optional, default "auth-file")
+
+        Secret formats (selected by auth-secret-type):
+          auth-file (default): a single `auth` data key holding an htpasswd file
+            (base64-encoded). One `username:hash` line each; `username::plain`
+            lines (empty hash field, double colon) map to `insecure-password`.
+          auth-map: each data key is a username and its base64-decoded value is
+            that user's password hash.
+
+        Password hashes are validated against
+        extraContext.hapticPasswordHashRegex (default accepts bcrypt / apr1 /
+        crypt SHA / MD5). A per-line config-injection guard additionally rejects
+        whitespace / control characters so a hostile Secret value cannot break
+        out of the userlist line.
+
+        Generated HAProxy Config:
+          userlist haptic_auth_<secretNs>_<secretName>
+            user <username> password <hash>
+      -#}
+      {%- var hashRegex = extraContext | dig_string("^\\$(2[aby]|apr1|1|5|6)\\$", "hapticPasswordHashRegex") %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var authType = ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] %}
+        {%- if authType != "" %}
+          {%- if authType != "basic" %}
+            {{- fail("Unsupported auth-type '" + authType + "' for annotation 'haproxy-haptic.org/auth-type' on Ingress '" + key + "'. Only 'basic' is supported.") -}}
+          {%- end %}
+          {%- var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"] %}
+          {%- if authSecret != "" %}
+            {%- var secretType = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret-type"] %}
+            {%- if secretType == "" %}{%- secretType = "auth-file" %}{%- end %}
+            {%- if secretType != "auth-file" && secretType != "auth-map" %}
+              {{- fail("Invalid value '" + secretType + "' for annotation 'haproxy-haptic.org/auth-secret-type' on Ingress '" + key + "'. Valid values: 'auth-file', 'auth-map'.") -}}
+            {%- end %}
+            {%- var secretNs = ns %}
+            {%- var secretName = authSecret %}
+            {%- if strings_contains(authSecret, "/") %}
+              {%- var parts = split(authSecret, "/") %}
+              {%- secretNs = parts[0] %}
+              {%- secretName = parts[1] %}
+            {%- end %}
+            {%- var userlistName = "haptic_auth_" + secretNs + "_" + secretName %}
+            {%- if first_seen("haptic_userlist", userlistName) %}
+              {#-
+                Skip both the userlist and the matching backend ACL ref when the
+                referenced Secret isn't in the controller's cache (informer lag,
+                or a cascade-delete that removed the Secret while the Ingress
+                still lingers). Routed through shared.ComputeIfAbsent so the
+                matching backend snippet observes the same Secret presence —
+                stores are live during render and two direct GetSingle calls can
+                see different states.
+              -#}
+              {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_auth_secret:" + secretNs + "/" + secretName, func() any {
+                return resources.secrets.GetSingle(secretNs, secretName)
+              }) %}
+              {#- Assert to the typed pointer BEFORE the nil check. GetSingle
+                  returns a typed *resources.secrets.T — a typed-nil when absent —
+                  boxing that through the closure's `any` yields a NON-nil
+                  interface, so `secretAny != nil` would pass for an absent Secret
+                  and the `.Data` access below would dereference a nil pointer. -#}
+              {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+              {%- if secret != nil %}
+                {%- if secretType == "auth-file" %}
+                  {%- var authData = secret.Data["auth"] | b64decode() | tostring() %}
+                  {%- if authData == "" %}
+                    {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy-haptic.org/auth-secret' on Ingress '" + key + "' has an empty or missing 'auth' key (auth-file format).") -}}
+                  {%- end %}
+      # haptic/auth ({{ key }})
+      userlist {{ userlistName }}
+                  {%- for _, line := range split(authData, "\n") %}
+                    {%- var l = strip(line) %}
+                    {%- if l == "" || !strings_contains(l, ":") %}{%- continue %}{%- end %}
+                    {%- var lparts = strings_splitn(l, ":", 2) %}
+                    {%- var user = lparts[0] %}
+                    {%- var rest = lparts[1] %}
+                    {%- var pwKeyword = "password" %}
+                    {%- if hasPrefix(rest, ":") %}{%- pwKeyword = "insecure-password" %}{%- rest = rest[1:] %}{%- end %}
+                    {%- if user == "" || rest == "" %}{%- continue %}{%- end %}
+                    {#- Config-injection guard: reject whitespace / control chars in
+                        both the username and the credential (they land on a single
+                        HAProxy `user` line). -#}
+                    {%- if !regex_search(user, "^[!-~]+$") || !regex_search(rest, "^[!-~]+$") %}
+                      {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' has an invalid username or credential for user '" + user + "' (whitespace / control characters are not permitted).") -}}
+                    {%- end %}
+                    {#- Hashed credentials must match the configured hash regex;
+                        insecure-password (plaintext) lines are intentionally
+                        exempt — plaintext is not a hash. -#}
+                    {%- if pwKeyword == "password" && !regex_search(rest, hashRegex) %}
+                      {{- fail("Invalid password hash for user '" + user + "' in Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' (must match hapticPasswordHashRegex \"" + hashRegex + "\").") -}}
+                    {%- end %}
+        user {{ user }} {{ pwKeyword }} {{ rest }}
+                  {%- end %}
+                {%- else %}
+                  {#- auth-map: each Secret data key is a username, its value the hash. -#}
+      # haptic/auth ({{ key }})
+      userlist {{ userlistName }}
+                  {%- for _, username := range keys(secret.Data) %}
+                    {%- var passwordHash = secret.Data[username] | b64decode() | tostring() %}
+                    {%- if username == "" || passwordHash == "" %}
+                      {{- fail("Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced on Ingress '" + key + "' has an empty username or hash.") -}}
+                    {%- end %}
+                    {%- if !regex_search(username, "^[!-~]+$") || !regex_search(passwordHash, "^[!-~]+$") %}
+                      {{- fail("Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced on Ingress '" + key + "' has an invalid username or hash for user '" + username + "' (whitespace / control characters are not permitted).") -}}
+                    {%- end %}
+                    {%- if !regex_search(passwordHash, hashRegex) %}
+                      {{- fail("Invalid password hash for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced on Ingress '" + key + "' (must match hapticPasswordHashRegex \"" + hashRegex + "\").") -}}
+                    {%- end %}
+        user {{ username }} password {{ passwordHash }}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # Basic auth — backend challenge (backend-directives)
+  # ============================================================================
+  backend-directives-820-haptic-auth:
+    template: |
+      {#-
+        HAPTIC Basic Auth Backend Directive
+
+        Annotations:
+          - haproxy-haptic.org/auth-type: "basic" (required)
+          - haproxy-haptic.org/auth-secret: "<ns/name>" or "<name>" (required)
+          - haproxy-haptic.org/auth-realm: "<realm>" (optional, default "Restricted")
+
+        Generates:
+          http-request auth realm "<realm>" unless { http_auth(<userlist>) }
+
+        Suppressed under satisfy=any — the combined IP-or-auth gate emitted by
+        backend-directives-825-haptic-satisfy-any owns the challenge there so an
+        allow-listed source IP passes without authenticating.
+      -#}
+      {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var authType = ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] %}
+        {%- if authType == "basic" %}
+          {%- var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"] %}
+          {%- if authSecret != "" %}
+            {%- var authRealm = ingress.Metadata.Annotations["haproxy-haptic.org/auth-realm"] %}
+            {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
+            {#- Config-injection guard: the realm is interpolated into a quoted
+                HAProxy string, so reject double-quotes / newlines. -#}
+            {%- if !regex_search(authRealm, "^[^\"\\r\\n]*$") %}
+              {{- fail("Invalid auth-realm '" + authRealm + "' on Ingress '" + key + "': must not contain double-quotes or newlines.") -}}
+            {%- end %}
+            {%- var secretNs = ns %}
+            {%- var secretName = authSecret %}
+            {%- if strings_contains(authSecret, "/") %}
+              {%- var parts = split(authSecret, "/") %}
+              {%- secretNs = parts[0] %}
+              {%- secretName = parts[1] %}
+            {%- end %}
+            {%- var userlistName = "haptic_auth_" + secretNs + "_" + secretName %}
+            {#- Same cached lookup the userlist snippet uses so both agree on
+                whether the userlist exists (a boxed typed-nil passes != nil and
+                would emit an http_auth ref to a userlist that was never
+                produced — `haproxy -c` then fails with "unable to find
+                userlist"). -#}
+            {%- var authSecretAny, _ = shared.ComputeIfAbsent("haptic_auth_secret:" + secretNs + "/" + secretName, func() any {
+              return resources.secrets.GetSingle(secretNs, secretName)
+            }) %}
+            {%- var authSecretObj, _ = authSecretAny.(*resources.secrets.T) %}
+            {#- Under satisfy=any the challenge is folded into the combined
+                IP-or-auth gate (backend-directives-825); suppress the
+                unconditional challenge here so an allow-listed IP passes. -#}
+            {%- if authSecretObj != nil && SatisfyAnyMode(ingress) == "" %}
+      # haptic/auth-challenge ({{ key }})
+      http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # satisfy — shared predicate + combined IP-or-auth gate
+  # ============================================================================
+  util-haptic-satisfy:
+    template: |
+      {#-
+        satisfy=any predicate. True (returns "any") only when
+        haproxy-haptic.org/satisfy == "any" AND an allowlist
+        (haproxy-haptic.org/allowlist-source-range) AND basic auth with a
+        resolvable Secret are ALL present — i.e. there are genuinely two gates
+        to OR together. The allowlist frontend deny (emitted by the
+        access-control fragment) and this library's backend auth challenge both
+        import this macro and suppress themselves when it returns "any", leaving
+        the combined gate below as the single OR check.
+      -#}
+      {%- macro SatisfyAnyMode(ingress *resources.ingresses.T) string -%}
+        {%%
+          if ingress.Metadata.Annotations["haproxy-haptic.org/satisfy"] != "any" {
+            show ""
+            return
+          }
+          if ingress.Metadata.Annotations["haproxy-haptic.org/allowlist-source-range"] == "" {
+            show ""
+            return
+          }
+          if ingress.Metadata.Annotations["haproxy-haptic.org/auth-type"] != "basic" {
+            show ""
+            return
+          }
+          var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"]
+          if authSecret == "" {
+            show ""
+            return
+          }
+          var ns = ingress.Metadata.Namespace
+          var secretNs = ns
+          var secretName = authSecret
+          if strings_contains(authSecret, "/") {
+            var parts = split(authSecret, "/")
+            secretNs = parts[0]
+            secretName = parts[1]
+          }
+          var secAny, _ = shared.ComputeIfAbsent("haptic_auth_secret:" + secretNs + "/" + secretName, func() any {
+            return resources.secrets.GetSingle(secretNs, secretName)
+          })
+          var sec, _ = secAny.(*resources.secrets.T)
+          if sec == nil {
+            show ""
+            return
+          }
+          show "any"
+        %%}
+      {%- end macro -%}
+
+  backend-directives-825-haptic-satisfy-any:
+    template: |
+      {#-
+        HAPTIC satisfy=any combined IP-or-auth gate.
+
+        Emits, in the backend:
+          acl haptic_satisfy_ip_<ns>_<name> src <cidrs>
+          http-request auth realm "<realm>" if !haptic_satisfy_ip_<ns>_<name> !{ http_auth(<userlist>) }
+
+        The challenge fires only for requests whose source IP is NOT in the
+        allow-list AND that have not authenticated — the OR semantics of
+        satisfy=any. The standalone allowlist deny (access-control fragment) and
+        the unconditional auth challenge (backend-directives-820) suppress
+        themselves for this Ingress via SatisfyAnyMode().
+      -#}
+      {%- import "util-haptic-satisfy" for SatisfyAnyMode -%}
+      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {%- if ingress != nil %}
+        {%- if SatisfyAnyMode(ingress) != "" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var key = ns + "/" + name %}
+          {%- var allowlist = ingress.Metadata.Annotations["haproxy-haptic.org/allowlist-source-range"] %}
+          {%- var authRealm = ingress.Metadata.Annotations["haproxy-haptic.org/auth-realm"] %}
+          {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
+          {%- if !regex_search(authRealm, "^[^\"\\r\\n]*$") %}
+            {{- fail("Invalid auth-realm '" + authRealm + "' on Ingress '" + key + "': must not contain double-quotes or newlines.") -}}
+          {%- end %}
+          {%- var authSecret = ingress.Metadata.Annotations["haproxy-haptic.org/auth-secret"] %}
+          {%- var secretNs = ns %}
+          {%- var secretName = authSecret %}
+          {%- if strings_contains(authSecret, "/") %}
+            {%- var parts = split(authSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var userlistName = "haptic_auth_" + secretNs + "_" + secretName %}
+          {%- var aclName = "haptic_satisfy_ip_" + ns + "_" + name %}
+      # haptic/satisfy-any ({{ key }})
+      acl {{ aclName }} src {{ ValidateCidrList(allowlist, "haproxy-haptic.org/allowlist-source-range", key) }}
+      http-request auth realm "{{ authRealm }}" if !{{ aclName }} !{ http_auth({{ userlistName }}) }
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # mTLS — client-cert verification registration (features)
+  #
+  # Registration MUST precede the shared builders that consume the gf maps
+  # within the same features-* glob pass: ssl.yaml's features-150-ssl-crtlist
+  # reads gf["clientCertVerifyHosts"], base.yaml's features-185-mtls-error-map
+  # reads gf["mtlsErrorHosts"]. These snippets therefore use functional 1NN
+  # numbers (mirroring the vendor mTLS snippets at 110 / 150) rather than the
+  # 8NN band — an 8NN number would run after the builders and leave the crt-list
+  # / mtls-error map empty.
+  # ============================================================================
+  features-110-haptic-auth-tls:
+    template: |
+      {#-
+        HAPTIC Client-Cert Verification Registration
+
+        Annotations:
+          - haproxy-haptic.org/auth-tls-secret: "<name>" or "<ns>/<name>"
+            (Secret with `ca.crt` holding the CA bundle that signed the clients'
+            certificates)
+          - haproxy-haptic.org/auth-tls-verify-client: "on" | "off" | "optional"
+            | "optional_no_ca" (default "on")
+
+        Writes each referenced Secret's `ca.crt` to the general file dir via
+        fileRegistry and registers per-host config in gf["clientCertVerifyHosts"].
+        ssl.yaml's features-150-ssl-crtlist reads that map and emits the crt-list
+        `[ca-file <path> verify <mode>]` line for each affected host.
+
+        Verify-client mapping (→ HAProxy): on → required; off → no entry;
+        optional / optional_no_ca → optional.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var secretRef = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-secret"] %}
+        {%- if secretRef != "" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var verifyClient = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-verify-client"] | toLower() %}
+          {%- if verifyClient == "" %}{%- verifyClient = "on" %}{%- end %}
+          {%- if verifyClient == "off" %}
+            {%- continue %}
+          {%- end %}
+          {%- var verifyMode = "" %}
+          {%- if verifyClient == "on" %}
+            {%- verifyMode = "required" %}
+          {%- else if verifyClient == "optional" || verifyClient == "optional_no_ca" %}
+            {%- verifyMode = "optional" %}
+          {%- else %}
+            {{- fail("Ingress " + ns + "/" + name + " has haproxy-haptic.org/auth-tls-verify-client=" + verifyClient + " which is not one of 'on', 'off', 'optional', 'optional_no_ca'.") -}}
+          {%- end %}
+
+          {%- var secretNs = ns %}
+          {%- var secretName = secretRef %}
+          {%- if strings_contains(secretRef, "/") %}
+            {%- var parts = split(secretRef, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+          {%- if secret == nil %}
+            {#- Missing Secret — warn and skip mTLS for this ingress rather than
+                fail the whole cluster render (the webhook re-renders every
+                Ingress on each CREATE; fail() would cascade). The webhook still
+                rejects an Ingress whose OWN Secret is missing — it just doesn't
+                cascade to unrelated ingresses. -#}
+            # WARNING haproxy-haptic.org/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
+            {%- continue %}
+          {%- end %}
+          {%- var caBundleB64 = secret.Data["ca.crt"] %}
+          {%- if caBundleB64 == "" %}
+            # WARNING haproxy-haptic.org/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
+            {%- continue %}
+          {%- end %}
+          {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
+          {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/):
+              the Dataplane API validates ssl/ uploads as cert+key bundles, but a
+              CA bundle has no private key. HAProxy's crt-list `[ca-file <path>]`
+              accepts any path. -#}
+          {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
+          {%- var _, regErr = fileRegistry.Register("file", caFilename, caBundle) -%}
+          {%- if regErr != nil -%}
+            {{- fail("failed to register client CA " + caFilename + ": " + tostring(regErr)) -}}
+          {%- end -%}
+          {%- var caPath, _ = pathResolver.GetPath(caFilename, "file") %}
+
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var host = rule.Host %}
+            {%- if host == "" %}
+              {{- fail("Ingress " + ns + "/" + name + " has haproxy-haptic.org/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end %}
+            {%- gf["clientCertVerifyHosts"].(map[string]any)[host] = map[string]any{
+              "ca_path": caPath,
+              "verify_mode": verifyMode,
+            } %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  features-140-haptic-auth-tls-error:
+    template: |
+      {#-
+        HAPTIC auth-tls-error-page — registers host→error-page URL into the
+        shared gf["mtlsErrorHosts"]. base.yaml features-185-mtls-error-map builds
+        mtls-error.map and frontend-filters-075-mtls-error emits the
+        ssl_c_verify-gated redirect (map-only, reload-free).
+        Annotation: haproxy-haptic.org/auth-tls-error-page
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var errorPage = ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-error-page"] %}
+        {%- if errorPage != "" %}
+          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+          {%- if regex_search(errorPage, "[[:cntrl:]]") %}{{ fail("Invalid URL in annotation 'haproxy-haptic.org/auth-tls-error-page' on Ingress '" + key + "': must not contain control characters (newlines/tabs) — config-injection guard.") }}{%- end %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}
+              {%- var me []any = coalesce(gf["mtlsErrorHosts"], []any{}) -%}
+              {%- gf["mtlsErrorHosts"] = append(me, map[string]any{"host": toLower(rule.Host), "location": errorPage}) -%}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # mTLS — client-cert passthrough headers (frontend-filters)
+  # ============================================================================
+  frontend-filters-820-haptic-auth-tls-cert-header:
+    template: |
+      {#-
+        HAPTIC auth-tls-cert-header — forward client-certificate details to the
+        backend as request headers on hosts that presented a client cert.
+
+        Annotation: haproxy-haptic.org/auth-tls-cert-header: "true|false"
+
+        Generated HAProxy Config (per matched host):
+          http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } <host-match>
+          http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } <host-match>
+          http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/auth-tls-cert-header"] == "true" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+            {%- var cond = HostMatchCondition(hosts) %}
+      # haptic/auth-tls-cert-header ({{ key }})
+      http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } {{ cond }}
+      http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } {{ cond }}
+      http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } {{ cond }}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # External auth (SPOE) — map contributions
+  #   Requires spoaHub.plugins.external-auth. The spoa-hub frontend wiring
+  #   (frontend-spoe-filters-100-external-auth) self-gates on the check-auth
+  #   message being present in the messages union; these snippets only feed the
+  #   maps. Keyed by <ns>/<name> (resource id) — matches base.yaml's
+  #   txn.resource_id extraction, so any path/host type the routing chain
+  #   resolved is covered.
+  # ============================================================================
+  map-auth-url-820-haptic:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
+        {%- if authUrl != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- if regex_search(authUrl, "[[:cntrl:]]") -%}
+            {{- fail("Invalid value for annotation 'haproxy-haptic.org/auth-url' on Ingress '" + ns + "/" + name + "': must not contain control characters — config-injection guard.") -}}
+          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
+        {%- end -%}
+      {%- end -%}
+
+  map-auth-signin-820-haptic:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authSignin = ingress.Metadata.Annotations["haproxy-haptic.org/auth-signin"] -%}
+        {%- if authSignin != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- if regex_search(authSignin, "[[:cntrl:]]") -%}
+            {{- fail("Invalid value for annotation 'haproxy-haptic.org/auth-signin' on Ingress '" + ns + "/" + name + "': must not contain control characters — config-injection guard.") -}}
+          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authSignin }}
+        {%- end -%}
+      {%- end -%}
+
+  map-auth-method-820-haptic:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authMethod = ingress.Metadata.Annotations["haproxy-haptic.org/auth-method"] -%}
+        {%- if authMethod != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {#- Single-token guard: the method is threaded into the SPOE check-auth
+              `method` arg; reject whitespace / control characters. -#}
+          {%- if !regex_search(authMethod, "^[A-Za-z]+$") -%}
+            {{- fail("Invalid value '" + authMethod + "' for annotation 'haproxy-haptic.org/auth-method' on Ingress '" + ns + "/" + name + "': must be a single alphabetic HTTP method token.") -}}
+          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authMethod }}
+        {%- end -%}
+      {%- end -%}
+
+  # auth-headers-request → auth-forward-headers.map (SPOE forward_headers arg).
+  map-auth-forward-headers-820-haptic:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-request"] -%}
+        {%- if authHeaders != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- for _, h := range split(authHeaders, ",") -%}
+            {%- var hn = h | strip() -%}
+            {%- if hn != "" -%}{{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/auth-headers-request", ns, name) -}}{%- end -%}
+          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authHeaders }}
+        {%- end -%}
+      {%- end -%}
+
+  # Auto-extend the SPOE check-auth message body's `args=` line with a
+  # `hdr_<name>=req.hdr(<Name>)` capture per unique auth-headers-request header
+  # across all ingresses, so operators don't hand-edit spoe-message-check-auth-body.
+  # The six standard headers spoa-hub already captures are pre-seeded (underscore
+  # form) to avoid duplicate args (HAProxy 3.0 rejects duplicate SPOE arg names).
+  spoe-message-check-auth-extra-args-820-haptic:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- seen["authorization"] = true -%}
+      {%- seen["cookie"] = true -%}
+      {%- seen["x_forwarded_for"] = true -%}
+      {%- seen["x_forwarded_proto"] = true -%}
+      {%- seen["x_forwarded_host"] = true -%}
+      {%- seen["x_forwarded_uri"] = true -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-request"] -%}
+        {%- if authHeaders != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- for _, h := range split(authHeaders, ",") -%}
+            {%- var hn = h | strip() -%}
+            {%- if hn != "" -%}
+              {{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/auth-headers-request", ns, name) -}}
+              {%- var argName = replace(toLower(hn), "-", "_") -%}
+              {%- if !seen[argName] -%}
+                {%- seen[argName] = true -%}
+                {{- " hdr_" + argName + "=req.hdr(" + hn + ")" -}}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # auth-headers-succeed ∪ auth-headers-fail → auth-extract-headers.map.
+  map-auth-extract-headers-820-haptic:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var passHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-succeed"] -%}
+        {%- var failHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-fail"] -%}
+        {%- var union = passHeaders -%}
+        {%- if passHeaders != "" && failHeaders != "" -%}
+          {%- union = passHeaders + ", " + failHeaders -%}
+        {%- else if failHeaders != "" -%}
+          {%- union = failHeaders -%}
+        {%- end -%}
+        {%- if union != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ union }}
+        {%- end -%}
+      {%- end -%}
+
+  # One http-request set-header per unique auth-headers-succeed header, gated on
+  # auth success. Per-route gating is implicit (the plugin only sets the txn var
+  # for routes whose extract_headers arg listed the header). Rendered inside
+  # frontend-filters-* for both HTTP frontends — a local map dedup (not
+  # first_seen) keeps both frontend renders in sync (issue #49).
+  frontend-spoe-set-pass-headers-820-haptic:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var passHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-succeed"] -%}
+        {%- if passHeaders != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- for _, h := range split(passHeaders, ",") -%}
+            {%- var hn = h | strip() -%}
+            {%- if hn != "" -%}
+              {{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/auth-headers-succeed", ns, name) -}}
+              {%- var varName = replace(toLower(hn), "-", "_") -%}
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": hn, "varName": varName}) -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {#- Strip any client-supplied copy of the header before setting the auth
+          value, so a spoofed X-Auth-* can't survive to the backend when the auth
+          reply omits it (the set-header below is skipped when its var isn't
+          found). Matches the vendor libraries' always-overwrite semantics. -#}
+      {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
+      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+      {%- end -%}
+
+  # One http-after-response set-header per unique auth-headers-fail header,
+  # surfaced to the client on auth failure. http-after-response (not
+  # http-response) is required because `http-request deny` short-circuits the
+  # backend response path.
+  frontend-spoe-set-fail-headers-820-haptic:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var failHeaders = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-fail"] -%}
+        {%- if failHeaders != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- for _, h := range split(failHeaders, ",") -%}
+            {%- var hn = h | strip() -%}
+            {%- if hn != "" -%}
+              {{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/auth-headers-fail", ns, name) -}}
+              {%- var varName = replace(toLower(hn), "-", "_") -%}
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": hn, "varName": varName}) -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {{ "\n" }}      http-after-response set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ pVarName }}) -m found }
+      {%- end -%}
+
+  # ============================================================================
+  # OAuth2-proxy — desugars onto the external-auth machinery
+  #   haproxy-haptic.org/oauth (oauth2-proxy only) derives the oauth2-proxy
+  #   backend from the Ingress's own oauth-uri-prefix path (default /oauth2).
+  #   auth-url takes precedence, so the desugaring is skipped when auth-url is
+  #   also set on the same Ingress.
+  # ============================================================================
+  map-auth-url-825-haptic-oauth:
+    template: |-
+      {%- import "util-service-port-resolution" for ResolveServicePort -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
+        {%- if oauth != "" && authUrl == "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- if oauth != "oauth2_proxy" && oauth != "oauth2-proxy" -%}
+            {{- fail("Invalid value '" + oauth + "' for annotation 'haproxy-haptic.org/oauth' on Ingress '" + ns + "/" + name + "'. Only 'oauth2-proxy' (or 'oauth2_proxy') is supported.") -}}
+          {%- end -%}
+          {%- var prefix = ingress.Metadata.Annotations["haproxy-haptic.org/oauth-uri-prefix"] -%}
+          {%- if prefix == "" -%}{%- prefix = "/oauth2" -%}{%- end -%}
+          {%- if len(prefix) > 1 && hasSuffix(prefix, "/") -%}{%- prefix = prefix[:len(prefix)-1] -%}{%- end -%}
+          {%- var emitted = false -%}
+          {%- for _, path := range ingress.Spec.Rules[*].Http.Paths -%}
+            {%- if !emitted && path.Path == prefix && path.Backend.Service.Name != "" -%}
+              {%- var parts = split(ResolveServicePort(ns, path.Backend.Service.Name, path.Backend.Service.Port), " ") -%}
+      {{ "\n" }}{{ ns }}/{{ name }} http://{{ path.Backend.Service.Name }}.{{ ns }}.svc:{{ parts[0] }}{{ prefix }}/auth
+              {%- emitted = true -%}
+            {%- end -%}
+          {%- end -%}
+          {%- if !emitted -%}
+            {{- fail("Ingress '" + ns + "/" + name + "' sets 'haproxy-haptic.org/oauth: " + oauth + "' but has no Ingress path '" + prefix + "' routing to the oauth2-proxy Service. Add a path for '" + prefix + "' (the oauth2-proxy backend is derived from that path).") -}}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  map-auth-signin-825-haptic-oauth:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
+        {#- An explicit auth-signin (its -820- snippet renders first) takes
+            precedence over the oauth desugaring. -#}
+        {%- var authSignin = ingress.Metadata.Annotations["haproxy-haptic.org/auth-signin"] -%}
+        {%- if (oauth == "oauth2_proxy" || oauth == "oauth2-proxy") && authUrl == "" && authSignin == "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- var prefix = ingress.Metadata.Annotations["haproxy-haptic.org/oauth-uri-prefix"] -%}
+          {%- if prefix == "" -%}{%- prefix = "/oauth2" -%}{%- end -%}
+          {%- if len(prefix) > 1 && hasSuffix(prefix, "/") -%}{%- prefix = prefix[:len(prefix)-1] -%}{%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ prefix }}/start?rd=%[path]
+        {%- end -%}
+      {%- end -%}
+
+  map-auth-method-825-haptic-oauth:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
+        {#- Explicit auth-method takes precedence over the oauth desugaring. -#}
+        {%- var authMethod = ingress.Metadata.Annotations["haproxy-haptic.org/auth-method"] -%}
+        {%- if (oauth == "oauth2_proxy" || oauth == "oauth2-proxy") && authUrl == "" && authMethod == "" -%}
+      {{ "\n" }}{{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} HEAD
+        {%- end -%}
+      {%- end -%}
+
+  map-auth-extract-headers-825-haptic-oauth:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
+        {#- Explicit auth-headers-succeed owns the extract-headers channel. -#}
+        {%- var authHeadersSucceed = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-succeed"] -%}
+        {%- if (oauth == "oauth2_proxy" || oauth == "oauth2-proxy") && authUrl == "" && authHeadersSucceed == "" -%}
+          {%- var headers = ingress.Metadata.Annotations["haproxy-haptic.org/oauth-headers"] -%}
+          {%- if headers == "" -%}{%- headers = "X-Auth-Request-Email" -%}{%- end -%}
+      {{ "\n" }}{{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} {{ headers }}
+        {%- end -%}
+      {%- end -%}
+
+  frontend-spoe-set-pass-headers-825-haptic-oauth:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Forward the oauth-headers (default X-Auth-Request-Email) from the
+          oauth2-proxy auth reply to the backend on success; only active for the
+          oauth desugaring (auth-url absent, explicit auth-headers-succeed
+          absent). -#}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var oauth = ingress.Metadata.Annotations["haproxy-haptic.org/oauth"] -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-haptic.org/auth-url"] -%}
+        {%- var authHeadersSucceed = ingress.Metadata.Annotations["haproxy-haptic.org/auth-headers-succeed"] -%}
+        {%- if (oauth == "oauth2_proxy" || oauth == "oauth2-proxy") && authUrl == "" && authHeadersSucceed == "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- var headers = ingress.Metadata.Annotations["haproxy-haptic.org/oauth-headers"] -%}
+          {%- if headers == "" -%}{%- headers = "X-Auth-Request-Email" -%}{%- end -%}
+          {%- for _, h := range split(headers, ",") -%}
+            {%- var htok = h | strip() -%}
+            {#- oauth-headers items may be <header>[:<source>]; key on the header name. -#}
+            {%- var hn = htok -%}
+            {%- if index(htok, ":") > 0 -%}{%- hn = htok[:index(htok, ":")] | strip() -%}{%- end -%}
+            {%- if hn != "" -%}
+              {{- ValidateAuthHeaderName(hn, "haproxy-haptic.org/oauth-headers", ns, name) -}}
+              {%- var varName = replace(toLower(hn), "-", "_") -%}
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": hn, "varName": varName}) -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {#- Strip any client-supplied copy of the header before setting the auth
+          value, so a spoofed X-Auth-* can't survive to the backend when the auth
+          reply omits it (the set-header below is skipped when its var isn't
+          found). Matches the vendor libraries' always-overwrite semantics. -#}
+      {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
+      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+      {%- end -%}
+
+  # ============================================================================
+  # WAF (Coraza via SPOA hub)
+  #   haproxy-haptic.org/waf + /waf-mode → enforcement-mode map (coraza_mode).
+  #   haproxy-haptic.org/modsecurity-snippet → per-app SecRule directives.
+  #   Both require spoaHub.plugins.coraza (fail-loud when absent).
+  # ============================================================================
+  map-haproxy-ingress-waf-820-haptic:
+    template: |-
+      {#- waf / waf-mode → haproxy-ingress-waf.map (txn.coraza_mode). Keyed by
+          <ns>/<name>; the value is the resolved enforcement mode (deny|detect)
+          which drives both the dispatch gate and the deny-skip in detect mode
+          (see spoa-hub frontend-spoe-filters-050-coraza). -#}
+      {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
+      {%- var corazaEnabled = false -%}
+      {%- for _, p := range plugins -%}
+        {%- var pName = p.(map[string]any)["name"].(string) -%}
+        {%- if pName == "coraza" -%}{%- corazaEnabled = true -%}{%- end -%}
+      {%- end -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var ns = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {%- var key = ns + "/" + name -%}
+        {%- var waf = ingress.Metadata.Annotations["haproxy-haptic.org/waf"] -%}
+        {%- var mode = ingress.Metadata.Annotations["haproxy-haptic.org/waf-mode"] -%}
+        {#- waf-mode without waf is a no-op; loud per the fail-loud convention. -#}
+        {%- if waf == "" && mode != "" -%}
+          {{- fail("Ingress " + key + " sets 'haproxy-haptic.org/waf-mode' but not 'haproxy-haptic.org/waf'. waf-mode is meaningful only when waf is also set; remove waf-mode or add 'haproxy-haptic.org/waf: modsecurity'.") -}}
+        {%- end -%}
+        {%- if waf != "" -%}
+          {%- if !corazaEnabled -%}
+            {{- fail("Ingress " + key + " sets annotation 'haproxy-haptic.org/waf' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.") -}}
+          {%- end -%}
+          {%- if waf != "modsecurity" -%}
+            {{- fail("Invalid value '" + waf + "' for annotation 'haproxy-haptic.org/waf' on Ingress '" + key + "'. Only 'modsecurity' is supported.") -}}
+          {%- end -%}
+          {%- var resolvedMode = mode -%}
+          {%- if resolvedMode == "" -%}{%- resolvedMode = "deny" -%}{%- end -%}
+          {%- if resolvedMode != "deny" && resolvedMode != "detect" -%}
+            {{- fail("Invalid value '" + mode + "' for annotation 'haproxy-haptic.org/waf-mode' on Ingress '" + key + "'. Valid values: 'deny', 'detect'.") -}}
+          {%- end -%}
+      {{ "\n" }}{{ key }} {{ resolvedMode }}
+        {%- end -%}
+      {%- end -%}
+
+  # modsecurity-snippet scan → gf["sphCorazaApps"] (consumed by spoa-hub's
+  # config-content per-app blocks). Cached via shared.ComputeIfAbsent so it
+  # runs once. Seeds from any existing gf["sphCorazaApps"] and appends (deduped
+  # by <ns>/<name>) so it produces the UNION rather than clobbering a vendor
+  # scan's entries. The name intentionally sorts AFTER
+  # util-nginx-ingress-coraza-scan in the `util-*-coraza-scan` glob so, when
+  # both libraries are enabled, this seed-and-append pass is the last writer and
+  # the union survives (nginx-ingress's scan overwrites unconditionally). In the
+  # production default (nginx-ingress off) it is the only scan.
+  util-waf-haptic-coraza-scan:
+    template: |-
+      {%%
+        var _, _ = shared.ComputeIfAbsent("sphCorazaScanHaptic", func() any {
+          var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} })
+          var gf = shared.Get("globalFeatures").(map[string]any)
+
+          var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice()
+          var corazaEnabled = false
+          for _, p := range plugins {
+            var pName = p.(map[string]any)["name"].(string)
+            if pName == "coraza" {
+              corazaEnabled = true
+            }
+          }
+
+          // Seed from any existing scan output (vendor library) so we append
+          // rather than clobber; dedupe by <ns>/<name>.
+          var byKey = map[string]any{}
+          for _, existing := range (gf | dig("sphCorazaApps") | fallback([]any{}) | toSlice()) {
+            var e = existing.(map[string]any)
+            byKey[e["ns"].(string) + "/" + e["name"].(string)] = e
+          }
+          var firstAnnotationKey = ""
+          var anyAnnotation = false
+
+          for _, ingress := range resources.ingresses.List() {
+            var ns = ingress.Metadata.Namespace
+            var name = ingress.Metadata.Name
+            var key = ns + "/" + name
+            var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/modsecurity-snippet"]
+            if snippet != "" {
+              if strings_contains(snippet, "\"\"\"") {
+                fail("Ingress " + key + " annotation 'haproxy-haptic.org/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
+              }
+              byKey[key] = map[string]any{"ns": ns, "name": name, "snippet": snippet}
+              if !anyAnnotation {
+                firstAnnotationKey = key
+                anyAnnotation = true
+              }
+            }
+          }
+
+          if anyAnnotation && !corazaEnabled {
+            fail("Ingress " + firstAnnotationKey + " sets annotation 'haproxy-haptic.org/modsecurity-snippet' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.")
+          }
+
+          var sortedKeys = keys(byKey)
+          var modsecApps = []any{}
+          for _, k := range sortedKeys {
+            modsecApps = append(modsecApps, byKey[k])
+          }
+          gf["sphCorazaApps"] = modsecApps
+          return true
+        })
+      %%}
+
+  # coraza-app.map: one `<ns>/<name> <ns>/<name>` identity row per Ingress
+  # carrying haproxy-haptic.org/modsecurity-snippet. Iterates the Ingresses
+  # directly (rather than reading gf["sphCorazaApps"]) so it emits only
+  # haptic-owned rows — the shared gf list may be a union with a vendor scan,
+  # and a vendor library emits its own rows from its own map snippet. Consumed
+  # via var(txn.resource_id),map(...) in spoa-hub's frontend-spoe-filters-050.
+  map-coraza-app-820-haptic:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/modsecurity-snippet"] != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ ns }}/{{ name }}
+        {%- end -%}
+      {%- end -%}

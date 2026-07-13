@@ -1,0 +1,244 @@
+# HAPTIC-native annotation library — backend-directives-* for TLS to the
+# upstream (backend-protocol / backend-verify / backend-ca-secret /
+# backend-crt-secret / backend-sni / backend-verify-host / backend-ciphers /
+# backend-ciphersuites / backend-ssl-protocols).
+#
+# Best-of-breed superset of:
+#   - haproxy-ingress secure-backends / secure-* / ssl-ciphers-backend /
+#     ssl-cipher-suites-backend / backend-protocol (h1|h2|h1-ssl|h2-ssl)
+#   - nginx-ingress proxy-ssl-* (verify fail-closed, ssl-protocols min/max span)
+#   - haproxytech server-ssl / server-ca / server-crt / server-proto
+#
+# Runs at the backend-directives-* extension point (inherit_context: ingress,
+# serverOpts, serviceName, port). Every directive is pushed onto
+# serverOpts["flags"] so it lands on the backend's `default-server` line.
+templateSnippets:
+  backend-directives-820-haptic-backend-tls:
+    template: |
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {#-
+        HAPTIC-native Backend TLS (haproxy-haptic.org/backend-*)
+
+        Documentation: docs/site/docs/libraries/haptic-annotations.md#backend-tls
+
+        Annotations:
+          - haproxy-haptic.org/backend-protocol: "<proto>" (optional)
+              Union of the haproxy-ingress and nginx-ingress vocabularies:
+                h1 | http           → plaintext HTTP/1.1 (default)
+                h2  | grpc          → plaintext h2 / gRPC (h2c) → `proto h2`
+                h1-ssl | https      → TLS to upstream, HTTP/1.1
+                h2-ssl | grpcs      → TLS to upstream + `proto h2`
+          - haproxy-haptic.org/backend-verify: "on|off" (optional, default off)
+              Truthy (on/true/yes/1, case-insensitive) requires the upstream
+              certificate to be verified — which needs backend-ca-secret. Asking
+              to verify without a CA FAILS THE RENDER (fail-closed, never a
+              silent downgrade to `verify none`).
+          - haproxy-haptic.org/backend-ca-secret: "<name>" | "<ns>/<name>"
+              Secret whose ca.crt verifies the upstream cert. Supplying it
+              implies `verify required` even without backend-verify.
+          - haproxy-haptic.org/backend-crt-secret: "<name>" | "<ns>/<name>"
+              kubernetes.io/tls Secret; tls.crt+tls.key are presented to the
+              upstream as the client certificate (mTLS), in any verify mode.
+          - haproxy-haptic.org/backend-sni: "host" | "sni" | "<literal>"
+              `host`/`sni` forwards the request Host as SNI (`sni req.hdr(host)`);
+              any other value is sent literally (`sni str(<value>)`).
+          - haproxy-haptic.org/backend-verify-host: "<host>"
+              `verifyhost <host>` — the name the upstream cert must match.
+          - haproxy-haptic.org/backend-ciphers: "<cipher-list>"
+              TLS<=1.2 cipher list (`ciphers`).
+          - haproxy-haptic.org/backend-ciphersuites: "<suite-list>"
+              TLS1.3 cipher suites (`ciphersuites`).
+          - haproxy-haptic.org/backend-ssl-protocols: "TLSv1.2 TLSv1.3 ..."
+              Space-separated list; the lowest becomes `ssl-min-ver`, the
+              highest `ssl-max-ver`. HAProxy expresses only a contiguous span,
+              so a listed gap (e.g. skipping TLSv1.2) cannot be represented.
+
+        All SSL directives require a TLS backend-protocol (h1-ssl/https/h2-ssl/
+        grpcs). Setting them with a plaintext protocol emits a warning and is
+        otherwise ignored.
+
+        Generated HAProxy server flags (on default-server), e.g.:
+          proto h2
+          ssl verify required ca-file <f> crt <f> sni str(<name>)
+              verifyhost <name> ciphers <l> ciphersuites <l>
+              ssl-min-ver TLSv1.2 ssl-max-ver TLSv1.3
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+
+        {#- backend-protocol: normalise both vocabularies to sslEnabled/protoH2. -#}
+        {%- var proto = ingress.Metadata.Annotations["haproxy-haptic.org/backend-protocol"] %}
+        {%- var sslEnabled = false %}
+        {%- var protoH2 = false %}
+        {%- if proto == "" || proto == "h1" || proto == "http" %}
+          {#- plaintext HTTP/1.1 — no flag -#}
+        {%- else if proto == "h2" || proto == "grpc" %}
+          {%- protoH2 = true %}
+        {%- else if proto == "h1-ssl" || proto == "https" %}
+          {%- sslEnabled = true %}
+        {%- else if proto == "h2-ssl" || proto == "grpcs" %}
+          {%- sslEnabled = true %}
+          {%- protoH2 = true %}
+        {%- else %}
+          {{- fail("Invalid value '" + proto + "' for annotation 'haproxy-haptic.org/backend-protocol' on Ingress '" + key + "'. Valid values: h1, h2, http, https, grpc, grpcs, h1-ssl, h2-ssl") -}}
+        {%- end %}
+        {%- if protoH2 %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto h2") %}
+        {%- end %}
+
+        {#- Read the SSL-only annotations up front (also pins the literal keys
+            for the read-set lint). -#}
+        {%- var verifyRaw = ingress.Metadata.Annotations["haproxy-haptic.org/backend-verify"] %}
+        {%- var caSec = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ca-secret"] %}
+        {%- var crtSec = ingress.Metadata.Annotations["haproxy-haptic.org/backend-crt-secret"] %}
+        {%- var sni = ingress.Metadata.Annotations["haproxy-haptic.org/backend-sni"] %}
+        {%- var verifyHost = ingress.Metadata.Annotations["haproxy-haptic.org/backend-verify-host"] %}
+        {%- var ciphers = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ciphers"] %}
+        {%- var ciphersuites = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ciphersuites"] %}
+        {%- var sslProtocols = ingress.Metadata.Annotations["haproxy-haptic.org/backend-ssl-protocols"] %}
+        {%- var hasSslOnly = verifyRaw != "" || caSec != "" || crtSec != "" || sni != "" || verifyHost != "" || ciphers != "" || ciphersuites != "" || sslProtocols != "" %}
+
+        {%- if sslEnabled %}
+          {#- CA bundle → ca-file. Resolve FIRST: HAProxy rejects `verify
+              required` without a `ca-file`, so the verify mode depends on
+              whether a CA was actually registered (caAdded). -#}
+          {%- var caFilePart = "" %}
+          {%- var caAdded = false %}
+          {%- var caFound = false %}
+          {%- if caSec != "" %}
+            {%- var caNs = ns %}
+            {%- var caName = caSec %}
+            {%- if strings_contains(caSec, "/") %}
+              {%- var parts = split(caSec, "/") %}
+              {%- caNs = parts[0] %}
+              {%- caName = parts[1] %}
+            {%- end %}
+            {%- var caSecret = resources.secrets.GetSingle(caNs, caName) %}
+            {%- if caSecret != nil %}
+              {%- caFound = true %}
+              {%- var caContent = caSecret.Data["ca.crt"] | b64decode() %}
+              {%- if caContent != "" %}
+                {%- var caFilename = caNs + "-" + caName + "-backend-tls-ca.pem" %}
+                {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+                {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
+                {%- caFilePart = " ca-file " + caPath %}
+                {%- caAdded = true %}
+              {%- else %}
+      # Warning: Secret {{ caNs }}/{{ caName }} referenced by haproxy-haptic.org/backend-ca-secret on Ingress {{ key }} is missing the 'ca.crt' key
+              {%- end %}
+            {%- else %}
+      # Warning: Secret {{ caNs }}/{{ caName }} referenced by haproxy-haptic.org/backend-ca-secret on Ingress {{ key }} not found
+            {%- end %}
+          {%- end %}
+
+          {#- Client certificate (mTLS) → crt. Presented regardless of verify
+              mode. -#}
+          {%- var crtPart = "" %}
+          {%- if crtSec != "" %}
+            {%- var crtNs = ns %}
+            {%- var crtName = crtSec %}
+            {%- if strings_contains(crtSec, "/") %}
+              {%- var parts = split(crtSec, "/") %}
+              {%- crtNs = parts[0] %}
+              {%- crtName = parts[1] %}
+            {%- end %}
+            {%- var crtSecret = resources.secrets.GetSingle(crtNs, crtName) %}
+            {%- if crtSecret != nil %}
+              {%- var tlsCrt = crtSecret.Data["tls.crt"] | b64decode() %}
+              {%- var tlsKey = crtSecret.Data["tls.key"] | b64decode() %}
+              {%- if tlsCrt != "" && tlsKey != "" %}
+                {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
+                {%- var crtFilename = crtNs + "-" + crtName + "-backend-tls-client.pem" %}
+                {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+                {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
+                {#- `crt` is resolved by HAProxy relative to `crt-base` (the ssl dir,
+                    set in base.yaml), so pass the BARE filename. Passing the
+                    Register()-returned ssl/-prefixed path would double the prefix
+                    to ssl/ssl/<name> and fail `haproxy -c`. Matches the
+                    haproxy-ingress secure-crt-secret pattern. -#}
+                {%- crtPart = " crt " + crtFilename %}
+              {%- else %}
+      # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy-haptic.org/backend-crt-secret on Ingress {{ key }} is missing the 'tls.crt' or 'tls.key' key
+              {%- end %}
+            {%- else %}
+      # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy-haptic.org/backend-crt-secret on Ingress {{ key }} not found
+            {%- end %}
+          {%- end %}
+
+          {#- Verify mode. Truthy backend-verify requests verification; a CA
+              being present implies it. Requesting verification without a usable
+              CA FAILS THE RENDER (fail-closed) rather than silently downgrading
+              to `verify none`, which would leave the operator believing the
+              upstream cert is checked when it is not. -#}
+          {%- var verifyNorm = toLower(trimSpace(verifyRaw)) %}
+          {%- var wantVerify = verifyNorm == "on" || verifyNorm == "true" || verifyNorm == "yes" || verifyNorm == "1" %}
+          {%- if verifyRaw != "" && !wantVerify && verifyNorm != "off" && verifyNorm != "false" && verifyNorm != "no" && verifyNorm != "0" %}
+            {{- fail("Invalid value '" + verifyRaw + "' for annotation 'haproxy-haptic.org/backend-verify' on Ingress '" + key + "'. Valid values: on, off.") -}}
+          {%- end %}
+          {%- var effVerify = "none" %}
+          {%- if caAdded %}
+            {%- effVerify = "required" %}
+          {%- else if wantVerify %}
+            {%- if caSec == "" %}
+              {{- fail("haproxy-haptic.org/backend-verify: on on Ingress '" + key + "' requires haproxy-haptic.org/backend-ca-secret pointing at a Secret containing ca.crt; otherwise set backend-verify: off.") -}}
+            {%- else if !caFound %}
+              {{- fail("Secret '" + caSec + "' referenced by haproxy-haptic.org/backend-ca-secret on Ingress '" + key + "' was not found, but backend-verify: on requires its ca.crt to verify the upstream certificate.") -}}
+            {%- else %}
+              {{- fail("Secret '" + caSec + "' on Ingress '" + key + "' has no ca.crt, but haproxy-haptic.org/backend-verify: on requires a CA to verify the upstream certificate.") -}}
+            {%- end %}
+          {%- end %}
+
+          {#- Assemble the single, coherent SSL flag string. -#}
+          {%- var sslFlag = "ssl verify " + effVerify %}
+          {%- if effVerify == "required" %}{%- sslFlag = sslFlag + caFilePart %}{%- end %}
+          {%- sslFlag = sslFlag + crtPart %}
+
+          {#- backend-sni: host keyword forwards the request Host; a literal is
+              guarded (single host token) and sent verbatim. -#}
+          {%- if sni != "" %}
+            {%- if sni == "host" || sni == "sni" %}
+              {%- sslFlag = sslFlag + " sni req.hdr(host)" %}
+            {%- else %}
+              {%- sslFlag = sslFlag + " sni str(" + ValidateConfigValue(sni, "haproxy-haptic.org/backend-sni", key, false) + ")" %}
+            {%- end %}
+          {%- end %}
+
+          {#- verifyhost (single host token; injection-guarded). -#}
+          {%- if verifyHost != "" %}
+            {%- sslFlag = sslFlag + " verifyhost " + ValidateConfigValue(verifyHost, "haproxy-haptic.org/backend-verify-host", key, false) %}
+          {%- end %}
+
+          {#- ciphers / ciphersuites (single colon-list tokens; injection-guarded). -#}
+          {%- if ciphers != "" %}
+            {%- sslFlag = sslFlag + " ciphers " + ValidateConfigValue(ciphers, "haproxy-haptic.org/backend-ciphers", key, false) %}
+          {%- end %}
+          {%- if ciphersuites != "" %}
+            {%- sslFlag = sslFlag + " ciphersuites " + ValidateConfigValue(ciphersuites, "haproxy-haptic.org/backend-ciphersuites", key, false) %}
+          {%- end %}
+
+          {#- backend-ssl-protocols → ssl-min-ver / ssl-max-ver span. HAProxy
+              expresses a contiguous bound only; a listed gap can't be
+              represented — we take the lowest as the floor, highest as ceiling. -#}
+          {%- if sslProtocols != "" %}
+            {%- var minVer = "" %}
+            {%- var maxVer = "" %}
+            {%- for _, p := range split(sslProtocols, " ") %}
+              {%- var pv = trimSpace(p) %}
+              {%- if pv != "" %}
+                {%- pv = ValidateConfigValue(pv, "haproxy-haptic.org/backend-ssl-protocols", key, false) %}
+                {%- if minVer == "" || pv < minVer %}{%- minVer = pv %}{%- end %}
+                {%- if maxVer == "" || pv > maxVer %}{%- maxVer = pv %}{%- end %}
+              {%- end %}
+            {%- end %}
+            {%- if minVer != "" %}{%- sslFlag = sslFlag + " ssl-min-ver " + minVer %}{%- end %}
+            {%- if maxVer != "" %}{%- sslFlag = sslFlag + " ssl-max-ver " + maxVer %}{%- end %}
+          {%- end %}
+
+      # haptic/backend-tls ({{ ns }}/{{ name }})
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), sslFlag) %}
+        {%- else if hasSslOnly %}
+      # Warning: haproxy-haptic.org/backend-* TLS annotations on Ingress {{ key }} are ignored — the backend-protocol is plaintext (set backend-protocol to h1-ssl/https/h2-ssl/grpcs to enable TLS to the upstream).
+        {%- end %}
+      {%- end -%}

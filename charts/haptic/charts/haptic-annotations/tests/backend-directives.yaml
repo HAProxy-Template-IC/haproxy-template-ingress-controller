@@ -1,0 +1,275 @@
+# haptic-annotations library — backend-directives validation tests.
+# Timeouts, load-balance, consistent-hash, health checks, and server tuning
+# (maxconn/maxqueue/weight/scale-server-slots/proxy-protocol/fullconn).
+validationTests:
+  test-haptic-timeouts:
+    description: haproxy-haptic.org timeout annotations render timeout directives
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: timeout-service
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: timeout-ingress
+            annotations:
+              haproxy-haptic.org/timeout-connect: "10s"
+              haproxy-haptic.org/timeout-server: "60s"
+              haproxy-haptic.org/timeout-queue: "30s"
+              haproxy-haptic.org/timeout-tunnel: "1h"
+              haproxy-haptic.org/timeout-http-request: "15s"
+              haproxy-haptic.org/timeout-keep-alive: "20s"
+              haproxy-haptic.org/timeout-check: "5s"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: timeout.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: timeout-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout connect 10s"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout server 60s"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout queue 30s"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout tunnel 1h"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout http-request 15s"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout http-keep-alive 20s"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout check 5s"
+
+  test-haptic-load-balance:
+    description: haproxy-haptic.org/load-balance accepts exact and parameterized algorithms
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: lb-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lb-ingress
+            annotations:
+              haproxy-haptic.org/load-balance: "hdr(X-Custom)"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: lb.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: lb-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'balance hdr\(X-Custom\)'
+
+  test-haptic-upstream-hash:
+    description: haproxy-haptic.org/upstream-hash-by maps to a HAProxy consistent hash
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: hash-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-ingress
+            annotations:
+              haproxy-haptic.org/upstream-hash-by: "$request_uri"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hash.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: hash-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "balance uri"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "hash-type consistent"
+
+  test-haptic-health-checks:
+    description: haproxy-haptic.org health-check annotations render httpchk and default-server flags
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: health-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: health-ingress
+            annotations:
+              haproxy-haptic.org/health-check-uri: "/healthz"
+              haproxy-haptic.org/health-check-port: "8082"
+              haproxy-haptic.org/health-check-interval: "7s"
+              haproxy-haptic.org/health-check-fall: "4"
+              haproxy-haptic.org/health-check-rise: "5"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: health.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: health-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "option httpchk GET /healthz"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "port 8082"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "inter 7s"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "fall 4"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "rise 5"
+
+  test-haptic-server-tuning:
+    description: maxconn/maxqueue/weight/proxy-protocol/scale-server-slots/fullconn render together
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: tuning-service
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: tuning-service-abc
+            labels:
+              kubernetes.io/service-name: tuning-service
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: tuning-ingress
+            annotations:
+              haproxy-haptic.org/maxconn-server: "100"
+              haproxy-haptic.org/maxqueue-server: "200"
+              haproxy-haptic.org/initial-weight: "50"
+              haproxy-haptic.org/proxy-protocol: "proxy-v2"
+              haproxy-haptic.org/scale-server-slots: "5"
+              haproxy-haptic.org/fullconn: "300"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: tuning.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: tuning-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "maxconn 100"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "maxqueue 200"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "weight 50"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "send-proxy-v2"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "fullconn 300"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_5"

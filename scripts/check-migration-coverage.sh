@@ -175,6 +175,10 @@ check_library() {
   echo "OK [$name]: $total annotations declared, read-set and coverage agree"
 }
 
+check_library haptic-annotations haproxy-haptic.org \
+  "$CHARTS/haptic-annotations/90-migration-coverage.yaml" \
+  "$CHARTS"/haptic-annotations/_index.yaml "$CHARTS"/haptic-annotations/[0-9]*.yaml
+
 check_library nginx-ingress nginx.ingress.kubernetes.io \
   "$CHARTS/nginx-ingress/90-migration-coverage.yaml" \
   "$CHARTS"/nginx-ingress/_index.yaml "$CHARTS"/nginx-ingress/[0-9]*.yaml

@@ -6,19 +6,18 @@ templates:
   - haproxytemplateconfig.yaml
 
 tests:
-  # Baseline: with both ingress libraries off (so neither nginx-ingress
-  # nor haproxy-ingress auto-enables coraza) and no other plugin
-  # explicitly enabled, the spoa-hub sidecar is not rendered. The
-  # default chart values keep haproxyIngress.enabled=true, which
-  # auto-enables coraza via spoaHub.plugins.coraza.enabled's `or`
-  # predicate; that's the documented tradeoff for path-scoped
-  # `haproxy-ingress.github.io/waf` to work without a second toggle.
-  # The gateway library (also on by default) auto-enables the
-  # `mirror` plugin so HTTPRoute RequestMirror filters work out of
-  # the box; flipping it off is the second trigger an operator may
-  # disable. These baseline tests pin the inverse — when none of the
-  # plugin-triggering libraries (haproxyIngress / nginxIngress /
-  # gateway) is enabled, no sidecar.
+  # Baseline: with the plugin-triggering libraries off, the spoa-hub sidecar
+  # is not rendered. haproxy-ingress / nginx-ingress auto-enable coraza via
+  # spoaHub.plugins.coraza.enabled's `or` predicate (the documented tradeoff
+  # for path-scoped `haproxy-ingress.github.io/waf` to work without a second
+  # toggle), and the gateway library (on by default) auto-enables the `mirror`
+  # plugin so HTTPRoute RequestMirror filters work out of the box. The default
+  # annotation library, hapticAnnotations (haproxy-haptic.org/*), does NOT
+  # auto-enable any plugin — its waf/external-auth/mirror annotations require
+  # the operator to enable the matching plugin explicitly — so a default install
+  # renders a sidecar only via the gateway/mirror trigger. These baseline tests
+  # pin the inverse: with haproxyIngress / nginxIngress / gateway all disabled,
+  # no sidecar.
   - it: should render no spoa-hub sidecar when no plugin-triggering library is enabled
     template: haproxy-deployment.yaml
     set:

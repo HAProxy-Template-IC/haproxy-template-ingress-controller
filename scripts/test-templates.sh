@@ -145,6 +145,8 @@ if ! helm template "$CHART_DIR" \
     $HAPROXY_VERSION_ARG \
     --set controller.templateLibraries.gateway.enabled=true \
     --set controller.templateLibraries.gateway.experimentalChannel=true \
+    --set controller.templateLibraries.hapticAnnotations.enabled=true \
+    --set controller.templateLibraries.haproxytech.enabled=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
     | yq 'select(.kind == "HAProxyTemplateConfig")' \
@@ -230,6 +232,10 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]]; t
     trap 'rm -f "$TEMP_CONFIG" "$STD_CONFIG"' EXIT
     helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \
         --set controller.templateLibraries.gateway.enabled=true \
+        --set controller.templateLibraries.hapticAnnotations.enabled=true \
+        --set controller.templateLibraries.haproxytech.enabled=true \
+        --set controller.templateLibraries.haproxyIngress.enabled=true \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
         | yq 'select(.kind == "HAProxyTemplateConfig")' > "$STD_CONFIG"
     for BUNDLE in "$PROJECT_ROOT"/tests/schemas-ga-*; do
         [[ -d "$BUNDLE" ]] || continue

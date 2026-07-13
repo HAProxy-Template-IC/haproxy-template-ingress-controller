@@ -47,8 +47,9 @@ render_config ingress         no  gateway.enabled=false haproxyIngress.enabled=f
 render_config haproxytech      no  gateway.enabled=false haproxyIngress.enabled=false nginxIngress.enabled=false
 render_config haproxy-ingress  no  gateway.enabled=false haproxytech.enabled=false    nginxIngress.enabled=false
 render_config nginx-ingress    no  gateway.enabled=false haproxytech.enabled=false    haproxyIngress.enabled=false nginxIngress.enabled=true
+render_config haptic-annotations no gateway.enabled=false haproxytech.enabled=false    haproxyIngress.enabled=false nginxIngress.enabled=false
 render_config gateway          yes haproxyIngress.enabled=false nginxIngress.enabled=false haproxytech.enabled=false
-render_config all              yes nginxIngress.enabled=true
+render_config all              yes nginxIngress.enabled=true haproxytech.enabled=true haproxyIngress.enabled=true
 
 # Static example resources (committed) for ingress / gateway / all.
 for id in ingress gateway all; do
@@ -70,6 +71,7 @@ gen_vendor_resources haproxy-ingress '{"haproxy-ingress.github.io/balance-algori
 # migration tab flags — hsts (different: emitted only when explicitly true) and
 # server-snippet (dropped: no HAProxy equivalent) — so the migration report
 # demonstrates a real mixed verdict rather than an all-clear.
+gen_vendor_resources haptic-annotations '{"haproxy-haptic.org/load-balance":"leastconn","haproxy-haptic.org/timeout-connect":"5s","haproxy-haptic.org/timeout-server":"45s","haproxy-haptic.org/health-check-uri":"/healthz","haproxy-haptic.org/health-check-interval":"2s","haproxy-haptic.org/maxconn-server":"256","haproxy-haptic.org/pod-maxconn":"2000","haproxy-haptic.org/affinity":"cookie","haproxy-haptic.org/session-cookie-name":"SHOPSESSION","haproxy-haptic.org/forwardfor":"add","haproxy-haptic.org/cors-enable":"true","haproxy-haptic.org/cors-allow-origin":"https://shop.example.com","haproxy-haptic.org/allowlist-source-range":"10.0.0.0/8,192.168.0.0/16","haproxy-haptic.org/ssl-redirect":"true","haproxy-haptic.org/app-root":"/web"}'
 gen_vendor_resources nginx-ingress   '{"nginx.ingress.kubernetes.io/proxy-connect-timeout":"10","nginx.ingress.kubernetes.io/proxy-read-timeout":"60","nginx.ingress.kubernetes.io/load-balance":"ewma","nginx.ingress.kubernetes.io/backend-protocol":"HTTPS","nginx.ingress.kubernetes.io/limit-rps":"10","nginx.ingress.kubernetes.io/app-root":"/dashboard","nginx.ingress.kubernetes.io/whitelist-source-range":"10.0.0.0/8,192.168.0.0/16","nginx.ingress.kubernetes.io/denylist-source-range":"203.0.113.0/24","nginx.ingress.kubernetes.io/custom-response-headers":"X-Frame-Options:SAMEORIGIN|X-Content-Type-Options:nosniff","nginx.ingress.kubernetes.io/upstream-vhost":"internal.shop.svc","nginx.ingress.kubernetes.io/proxy-next-upstream-tries":"3","nginx.ingress.kubernetes.io/affinity":"cookie","nginx.ingress.kubernetes.io/session-cookie-name":"SHOPSESSIONID","nginx.ingress.kubernetes.io/enable-cors":"true","nginx.ingress.kubernetes.io/cors-allow-origin":"https://shop.example.com","nginx.ingress.kubernetes.io/hsts":"true"}'
 
 # extend = the ingress preset + the landing's request-id snippet, shown against an

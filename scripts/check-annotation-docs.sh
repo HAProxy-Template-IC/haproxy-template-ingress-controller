@@ -117,6 +117,10 @@ check_library() {
   echo "OK [$name]: all $checked supported/different annotations (of $total declared) are documented on $docs_page"
 }
 
+check_library haptic-annotations haproxy-haptic.org \
+  "$CHARTS/haptic-annotations/90-migration-coverage.yaml" \
+  "$DOCS/haptic-annotations.md"
+
 check_library nginx-ingress nginx.ingress.kubernetes.io \
   "$CHARTS/nginx-ingress/90-migration-coverage.yaml" \
   "$DOCS/nginx-ingress.md"

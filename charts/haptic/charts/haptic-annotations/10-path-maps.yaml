@@ -1,0 +1,218 @@
+# HAPTIC-native annotation library — path-matching + server-alias contributions.
+#
+# Best-of-breed adaptation of the haproxy-ingress vendor fragments
+# (10-path-maps.yaml + 15-server-alias.yaml), re-homed under the
+# haproxy-haptic.org/* prefix and the 800 priority band. Semantics are carried
+# faithfully from haproxy-ingress (the only vendor exposing per-path type
+# selection and server aliases), so migrating an Ingress is a pure key rename.
+#
+#   haproxy-haptic.org/path-type:          regex | exact | prefix | begin
+#       Honored only for paths whose pathType is ImplementationSpecific. Drives
+#       which path map the path lands in (regex → path-regex.map, exact →
+#       path-exact.map, prefix → path-prefix.map, begin → path-prefix-exact.map).
+#   haproxy-haptic.org/server-alias:       comma/space list of extra EXACT hosts.
+#       → host.map entry  `<alias-key> <primary-host-key>`
+#   haproxy-haptic.org/server-alias-regex: a regex matching extra hostnames.
+#       → host-regex.map entry  `<regex> <primary-host-key>`
+#
+# Map targets use BackendNameIngress + MapKeyForHost so names/keys match
+# ingress.yaml (and the standard path-map renderers) byte-for-byte.
+templateSnippets:
+  map-path-regex-800-haptic-path-type:
+    template: |
+      {#-
+        haproxy-haptic.org/path-type: "regex" → path-regex.map entries.
+
+        Annotations:
+          - haproxy-haptic.org/path-type: "regex" (optional)
+
+        Matches Ingress paths with pathType ImplementationSpecific. The path
+        value is a HAProxy-compatible PCRE, emitted verbatim keyed on the
+        normalised host. Output shape mirrors ingress.yaml's standard path
+        renderers (`<host-key><path> BACKEND:<backend>`), so base.yaml's
+        routing cascade decodes the qualifier + backend name identically.
+
+        Extension Point: map-path-regex-* (priority 800 — HAPTIC-native)
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "regex" %}
+      # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  map-path-exact-800-haptic-path-type:
+    template: |
+      {#-
+        haproxy-haptic.org/path-type: "exact" → path-exact.map entries.
+
+        Annotations:
+          - haproxy-haptic.org/path-type: "exact" (optional)
+
+        Matches Ingress paths with pathType ImplementationSpecific; the path
+        must match exactly (no prefix semantics).
+
+        Extension Point: map-path-exact-* (priority 800 — HAPTIC-native)
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "exact" %}
+      # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  map-path-prefix-800-haptic-path-type:
+    template: |
+      {#-
+        haproxy-haptic.org/path-type: "prefix" → path-prefix.map entries.
+
+        Annotations:
+          - haproxy-haptic.org/path-type: "prefix" (optional)
+
+        Matches Ingress paths with pathType ImplementationSpecific. The path is
+        normalised with a trailing "/" so it matches on path segments (Ingress
+        Prefix semantics), not on an arbitrary string prefix.
+
+        Extension Point: map-path-prefix-* (priority 800 — HAPTIC-native)
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "prefix" %}
+      # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+            {%- var pathValue = path.Path %}
+            {#- Ensure path ends with / for segment-boundary prefix matching -#}
+            {%- if pathValue != "" && !hasSuffix(pathValue, "/") %}
+              {%- pathValue = pathValue + "/" %}
+            {%- end %}
+      {{ MapKeyForHost(rule.Host) }}{{ pathValue }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  map-pfxexact-800-haptic-path-type:
+    template: |
+      {#-
+        haproxy-haptic.org/path-type: "begin" → path-prefix-exact.map entries.
+
+        Annotations:
+          - haproxy-haptic.org/path-type: "begin" (optional)
+
+        The "begin" path type matches when the request path begins with the
+        specified prefix, with no trailing-slash normalisation (legacy
+        haproxy-ingress semantics).
+
+        Extension Point: map-pfxexact-* (priority 800 — HAPTIC-native)
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- if ingress.Metadata.Annotations["haproxy-haptic.org/path-type"] == "begin" %}
+      # haptic/path-type ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  map-host-800-haptic-server-alias:
+    template: |
+      {#-
+        haproxy-haptic.org/server-alias → host.map entries.
+
+        Annotations:
+          - haproxy-haptic.org/server-alias: "a.example.com, b.example.com" (optional)
+
+        For each listed hostname, emit one host.map entry pointing at the
+        primary host's normalised key. The primary host is the FIRST rule's
+        host, normalised with MapKeyForHost — the SAME normalisation the
+        standard host-map renderer uses — so the alias resolves to identical
+        downstream path-map lookups. No backend or path-map duplication.
+
+        Each alias is passed through ValidateConfigValue (config-injection
+        guard: rejects control characters / spaces) before interpolation.
+
+        Extension Point: map-host-* (priority 800 — HAPTIC-native)
+      -#}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var aliasAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/server-alias"] %}
+      {%- if aliasAnnotation != "" %}
+      {%- var rules = ingress.Spec.Rules %}
+      {%- if len(rules) > 0 %}
+      {%- var primaryKey = MapKeyForHost(rules[0].Host) %}
+      {%- if primaryKey != "" %}
+      {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+      # haptic/server-alias ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+      {%- for _, rawAlias := range split(replace(aliasAnnotation, ",", " "), " ") %}
+      {%- var alias = strip(rawAlias) %}
+      {%- if alias != "" %}
+      {%- var safeAlias = ValidateConfigValue(alias, "haproxy-haptic.org/server-alias", key, false) %}
+      {{ MapKeyForHost(safeAlias) }} {{ primaryKey }}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+
+  map-hostregex-800-haptic-server-alias:
+    template: |
+      {#-
+        haproxy-haptic.org/server-alias-regex → host-regex.map entries.
+
+        Annotations:
+          - haproxy-haptic.org/server-alias-regex: "^app[0-9]+\.example\.com$" (optional)
+
+        The value is a HAProxy-compatible PCRE matching extra hostnames.
+        host-regex.map is consulted by base.yaml's routing cascade via
+        map_reg() after the exact host.map miss, so a single regex entry routes
+        every matching hostname to the primary host's normalised key.
+
+        The regex is passed through ValidateConfigValue (config-injection guard:
+        rejects control characters / spaces) before interpolation.
+
+        Extension Point: map-hostregex-* (priority 800 — HAPTIC-native)
+      -#}
+      {%- import "util-host-key" for MapKeyForHost -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var regexAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/server-alias-regex"] %}
+      {%- if regexAnnotation != "" %}
+      {%- var rules = ingress.Spec.Rules %}
+      {%- if len(rules) > 0 %}
+      {%- var primaryKey = MapKeyForHost(rules[0].Host) %}
+      {%- if primaryKey != "" %}
+      {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+      # haptic/server-alias-regex ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+      {{ ValidateConfigValue(strip(regexAnnotation), "haproxy-haptic.org/server-alias-regex", key, false) }} {{ primaryKey }}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}

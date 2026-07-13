@@ -1,0 +1,4 @@
+apiVersion: v2
+name: haptic-annotations
+description: HAPTIC-native (haproxy-haptic.org/*) annotation library — a best-of-breed superset of the haproxytech, haproxy-ingress, and nginx-ingress vocabularies. Carries only library YAML; the parent chart merges it into the HAProxyTemplateConfig.
+version: 0.1.0

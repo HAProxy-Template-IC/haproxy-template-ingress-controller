@@ -34,9 +34,10 @@ The Ingress library's `map-host-500-ingress` snippet emits one `host host` line 
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTP, gRPC, TLS and TCP routes) support |
 | [ingress-annotations-compat](libraries/ingress-annotations-compat.md) | Enabled | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
-| [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
-| [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
-| [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) |
+| [haptic-annotations](libraries/haptic-annotations.md) | Enabled | `haproxy-haptic.org/*` — HAPTIC's native vocabulary; a best-of-breed superset of the three vendor libraries. The only annotation library on by default |
+| [haproxytech](libraries/haproxytech.md) | Disabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) — opt-in migration aid |
+| [haproxy-ingress](libraries/haproxy-ingress.md) | Disabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) — opt-in migration aid |
+| [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) — opt-in migration aid |
 | [spoa-hub](operations/spoa-hub.md) | Auto | HAProxy-side wiring for the Stream Processing Offload Agent (SPOA) hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
 ## Enabling and disabling libraries
@@ -54,12 +55,14 @@ controller:
       enabled: true   # Kubernetes Ingress
     gateway:
       enabled: true   # Gateway API
+    hapticAnnotations:
+      enabled: true   # haproxy-haptic.org native annotations (default; best-of-breed superset)
     haproxytech:
-      enabled: true   # haproxy.org annotations
+      enabled: false  # haproxy.org compat — opt-in migration aid
     haproxyIngress:
-      enabled: true   # HAProxy Ingress compatibility
+      enabled: false  # haproxy-ingress.github.io compat — opt-in migration aid
     nginxIngress:
-      enabled: false  # nginx-ingress annotation compatibility
+      enabled: false  # nginx-ingress compat — opt-in migration aid
   config:
     routing:
       regexMatchOrder: default  # "default" or "last" — see Path Matching Order below
@@ -86,11 +89,12 @@ Libraries are merged in a specific order, with later libraries overriding earlie
 3. ingress.yaml
 4. gateway/
 5. ingress-annotations-compat.yaml  (level 2.5 - Ingress-only shared scaffold)
-6. haproxytech.yaml
-7. haproxy-ingress/
-8. nginx-ingress/
-9. spoa-hub/             (auto-loaded when SPOA hub sidecar is enabled)
-10. controller.config.*  (highest priority - your values.yaml overrides for templateSnippets / maps / files / sslCertificates / haproxyConfig / validationTests / watchedResources)
+6. haptic-annotations/   (native haproxy-haptic.org/* superset)
+7. haproxytech.yaml
+8. haproxy-ingress/
+9. nginx-ingress/
+10. spoa-hub/            (auto-loaded when SPOA hub sidecar is enabled)
+11. controller.config.*  (highest priority - your values.yaml overrides for templateSnippets / maps / files / sslCertificates / haproxyConfig / validationTests / watchedResources)
 ```
 
 Your custom configuration in `controller.config` always takes precedence.
@@ -237,9 +241,10 @@ Reserved numeric ranges used by the built-in libraries:
 | 500-599 | Core features (ingress, gateway) |
 | 600-699 | haproxy-ingress (`haproxy-ingress.github.io/*`) compatibility |
 | 700-799 | nginx-ingress (`nginx.ingress.kubernetes.io/*`) compatibility |
+| 800-899 | haptic-annotations (`haproxy-haptic.org/*`) native vocabulary |
 | 900-999 | Finalization / cleanup |
 
-The haproxytech (`haproxy.org/*`) library is the exception among the vendor annotation libraries: its snippets sit in the 100–500 band rather than a dedicated block. The haproxy-ingress (600) and nginx-ingress (700) ranges deliberately sort after it, so when two vendor annotations target the same directive on one Ingress, the later library's snippet wins.
+The haproxytech (`haproxy.org/*`) library is the exception among the vendor annotation libraries: its snippets sit in the 100–500 band rather than a dedicated block. The haproxy-ingress (600), nginx-ingress (700), and haptic-annotations (800) ranges deliberately sort after it, so when annotations from more than one prefix target the same directive on one Ingress, the later library's snippet wins — the native `haproxy-haptic.org/*` value layers last.
 
 To override a built-in snippet, use the **same key name**; values-file entries take precedence over library entries during merge.
 
@@ -251,6 +256,7 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 | SSL | `features-*`, `frontends-*`, `backends-*`, `global-top-*` |
 | Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*`, `status-patches-*` |
 | Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |
+| haptic-annotations | `map-path-*`, `map-pfxexact-*`, `map-host-*`, `map-hostregex-*`, `backend-directives-*`, `frontend-filters-*`, `features-*`, `backends-*`, `global-*`, `defaults-settings-*`, `frontend-extra-*` |
 | haproxytech | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
 | haproxy-ingress | `features-*`, `map-path-*`, `map-pfxexact-*`, `backend-directives-*`, `frontend-filters-*`, `global-top-*`, `backends-*` |
 | nginx-ingress | `features-*`, `backends-*`, `global-top-*`, `backend-directives-*`, `frontend-filters-*` |

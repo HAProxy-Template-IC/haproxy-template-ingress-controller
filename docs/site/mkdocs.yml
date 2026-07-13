@@ -102,6 +102,7 @@ nav:
     - Gateway API: libraries/gateway.md
     - ingress-annotations-compat (internals): libraries/ingress-annotations-compat.md
     - Annotations: annotations.md
+    - haptic-annotations (haproxy-haptic.org/*): libraries/haptic-annotations.md
     - haproxytech (haproxy.org/*): libraries/haproxytech.md
     - haproxy-ingress (haproxy-ingress.github.io/*): libraries/haproxy-ingress.md
     - nginx-ingress (nginx.ingress.kubernetes.io/*): libraries/nginx-ingress.md

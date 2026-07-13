@@ -1,0 +1,212 @@
+# HAPTIC-native annotation library — path-type + server-alias validation tests.
+# Mirrors the haproxy-ingress vendor tests under the haproxy-haptic.org/* prefix.
+# Default ingress class is "haptic".
+validationTests:
+  # ==========================================================================
+  # path-type: per-path map selection for ImplementationSpecific paths
+  # ==========================================================================
+
+  test-haptic-path-type-exact:
+    description: haproxy-haptic.org/path-type=exact routes an ImplementationSpecific path into path-exact.map
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: exact-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: exact-ingress
+            annotations:
+              haproxy-haptic.org/path-type: "exact"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: exact.example.com
+                http:
+                  paths:
+                    - path: /api/users
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: exact-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:path-exact.map"
+        pattern: '(?m)^exact\.example\.com/api/users BACKEND:default_exact-ingress_svc_exact-service_80$'
+
+  test-haptic-path-type-prefix:
+    description: haproxy-haptic.org/path-type=prefix normalises a trailing slash and uses path-prefix.map
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: prefix-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: prefix-ingress
+            annotations:
+              haproxy-haptic.org/path-type: "prefix"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: prefix.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: prefix-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:path-prefix.map"
+        pattern: '(?m)^prefix\.example\.com/api/ BACKEND:default_prefix-ingress_svc_prefix-service_80$'
+
+  test-haptic-path-type-regex:
+    description: haproxy-haptic.org/path-type=regex keys path-regex.map on the literal PCRE with a BACKEND qualifier
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: regex-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: regex-ingress
+            annotations:
+              haproxy-haptic.org/path-type: "regex"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: regex.example.com
+                http:
+                  paths:
+                    - path: /api/v[0-9]+/.*
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: regex-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:path-regex.map"
+        pattern: '(?m)^regex\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_regex-ingress_svc_regex-service_80$'
+
+  # ==========================================================================
+  # server-alias / server-alias-regex: extra hostnames → primary host's routes
+  # ==========================================================================
+
+  test-haptic-server-alias:
+    description: haproxy-haptic.org/server-alias routes extra exact hostnames to the primary host key
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: alias-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: alias-ingress
+            annotations:
+              haproxy-haptic.org/server-alias: "alias1.example.com, alias2.example.com"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: primary.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: alias-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^primary\\.example\\.com primary\\.example\\.com$"
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^alias1\\.example\\.com primary\\.example\\.com$"
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^alias2\\.example\\.com primary\\.example\\.com$"
+
+  test-haptic-server-alias-regex:
+    description: haproxy-haptic.org/server-alias-regex maps a hostname regex to the primary host key
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: alias-regex-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: alias-regex-ingress
+            annotations:
+              haproxy-haptic.org/server-alias-regex: "^app[0-9]+\\.example\\.com$"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: alias-regex-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:host-regex.map"
+        pattern: "\\^app\\[0-9\\]\\+\\\\\\.example\\\\\\.com\\$ app\\.example\\.com"

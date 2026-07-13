@@ -79,9 +79,16 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "ca-file [^ ]*default-upstream-client-proxy-ssl-ca\\.pem"
+      # `crt` resolves against crt-base (the ssl dir), so the value MUST be the
+      # bare filename — a ssl/-prefixed value doubles to ssl/ssl/<name> and fails
+      # `haproxy -c` on a real deploy (offline validation hides it by writing the
+      # cert wherever the config names it, so this exact-value pin is the guard).
       - type: contains
         target: haproxy.cfg
-        pattern: "crt [^ ]*default-upstream-client-proxy-ssl-client\\.pem"
+        pattern: " crt default-upstream-client-proxy-ssl-client\\.pem"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "crt ssl/"
       - type: not_contains
         target: haproxy.cfg
         pattern: "verify-depth 3"

@@ -1,0 +1,260 @@
+# HAPTIC-native annotation library — backend TLS (haproxy-haptic.org/backend-*)
+# validation tests: protocol normalisation, verify + CA + client cert, SNI,
+# ciphers/ciphersuites, ssl-protocols span, and fail-closed verify.
+validationTests:
+  test-haptic-backend-tls-verify-full:
+    description: >-
+      backend-protocol https + backend-verify on + ca/crt secrets + sni +
+      verify-host + ciphers + ciphersuites + ssl-protocols emit one coherent
+      verified SSL server flag set.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: btls-service
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: btls-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: btls-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8443
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: be-ca
+          data:
+            ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: be-crt
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: btls-ingress
+            annotations:
+              haproxy-haptic.org/backend-protocol: "https"
+              haproxy-haptic.org/backend-verify: "on"
+              haproxy-haptic.org/backend-ca-secret: "be-ca"
+              haproxy-haptic.org/backend-crt-secret: "be-crt"
+              haproxy-haptic.org/backend-sni: "upstream.internal"
+              haproxy-haptic.org/backend-verify-host: "upstream.internal"
+              haproxy-haptic.org/backend-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+              haproxy-haptic.org/backend-ciphersuites: "TLS_AES_128_GCM_SHA256"
+              haproxy-haptic.org/backend-ssl-protocols: "TLSv1.2 TLSv1.3"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: btls.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: btls-service
+                          port:
+                            number: 443
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl verify required"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "ssl verify none"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ca-file [^ ]*default-be-ca-backend-tls-ca\\.pem"
+      # `crt` resolves against crt-base (the ssl dir), so the value MUST be the
+      # bare filename. A ssl/-prefixed value doubles to ssl/ssl/<name> at
+      # runtime and fails `haproxy -c` on a real deploy (regression pinned here:
+      # offline validation writes the cert to whatever path the config names, so
+      # only this exact-value assertion — not haproxy_valid — catches the double).
+      - type: contains
+        target: haproxy.cfg
+        pattern: " crt default-be-crt-backend-tls-client\\.pem"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "crt ssl/"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "sni str\\(upstream\\.internal\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "verifyhost upstream\\.internal"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ciphersuites TLS_AES_128_GCM_SHA256"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl-min-ver TLSv1\\.2"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl-max-ver TLSv1\\.3"
+
+  test-haptic-backend-protocol-grpcs:
+    description: backend-protocol grpcs enables TLS to the upstream and negotiates h2 (proto h2 + ssl).
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: grpcs-service
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: grpcs-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: grpcs-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8443
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: grpcs-ingress
+            annotations:
+              haproxy-haptic.org/backend-protocol: "grpcs"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: grpcs.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: grpcs-service
+                          port:
+                            number: 443
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "proto h2"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl verify none"
+
+  test-haptic-backend-protocol-grpc-plaintext:
+    description: backend-protocol grpc negotiates cleartext h2 (proto h2) without enabling TLS to the upstream.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: grpc-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: grpc-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: grpc-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.3"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: grpc-ingress
+            annotations:
+              haproxy-haptic.org/backend-protocol: "grpc"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: grpc.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: grpc-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "proto h2"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "ssl verify"
+
+  test-haptic-backend-verify-without-ca-rejected:
+    description: backend-verify on (truthy, case-insensitive) with no backend-ca-secret fails the render fail-closed — never a silent downgrade to verify none.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: fc-service}
+          spec:
+            ports: [{port: 443}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: fc-ingress
+            annotations:
+              haproxy-haptic.org/backend-protocol: "https"
+              haproxy-haptic.org/backend-verify: "True"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: fc.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: fc-service, port: {number: 443}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "backend-verify: on on Ingress 'default/fc-ingress' requires"
