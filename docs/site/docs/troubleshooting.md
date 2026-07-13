@@ -163,6 +163,9 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 
 3. See [Templating Guide](./templating.md)
 
+!!! note "Live traffic keeps flowing"
+    A render or validation failure never drops requests. The leader refuses to deploy the broken output and HAProxy keeps serving the last good config, so the failure surfaces only in the controller logs and the `haptic_reconciliation_errors_total` metric — nothing changes in the data plane until a render succeeds again.
+
 ### Configuration validation failures
 
 **Symptoms**: `validation failed`, HAProxy errors

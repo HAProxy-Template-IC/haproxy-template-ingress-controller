@@ -1095,6 +1095,8 @@ The independent frontend whitelist deny and the unconditional backend auth chall
 
 The library wires the `nginx.ingress.kubernetes.io/auth-*` family to the SPOA hub's `external-auth` plugin (v0.3.0+). When set, each request hits an HTTP auth subrequest before reaching the backend; the auth service's status code decides whether HAProxy forwards the request, redirects to a sign-in URL, or returns 401.
 
+External auth is enforced independently of basic auth. When a route carries both `auth-url` and `auth-type: basic` + `auth-secret`, the two stack: a request must pass the external-auth subrequest *and* present valid basic-auth credentials — external auth denies at the frontend, basic auth challenges at the backend. You can't OR them; `satisfy: any` only OR-combines basic auth with the IP whitelist, not with external auth.
+
 ### Prerequisites
 
 The SPOA hub sidecar with the `external-auth` plugin must be enabled:
@@ -1246,6 +1248,7 @@ spec:
 - Uses SNI-based routing in TCP mode
 - Backend receives encrypted traffic and terminates SSL
 - HTTP-level features (headers, path rewriting) aren't available for passthrough traffic
+- Incoming client-cert mTLS (`auth-tls-*`) can't run on a passthrough host. Passthrough routes the connection by SNI to the TCP frontend in `mode tcp` and never terminates TLS, so HAProxy never sees the client certificate. If a host enables both, passthrough wins and the client-cert verification silently never runs.
 
 ---
 
@@ -1304,6 +1307,9 @@ spec:
 use_backend default_my-app-canary_svc_my-app-canary_http if { req.hdr(X-Canary) -m str always } { hdr(host) -i app.example.com }
 use_backend default_my-app-canary_svc_my-app-canary_http if { rand(100) lt 20 } { hdr(host) -i app.example.com }
 ```
+
+!!! note "Canary and rate limiting compose per backend"
+    Canary selection happens in the frontend (`use_backend ... if { rand(100) lt <weight> }`) before backend selection, and [rate limits](#rate-limiting) render into per-backend stick-tables. The main and canary Ingresses are separate backends, so each enforces the rate limit set on its own Ingress. A `limit-rps` on the main Ingress alone does *not* limit canary traffic — the split-off portion reaches the canary backend, which has no stick-table. To bound both, set the rate-limit annotation on the canary Ingress too. Gateway API weighted splitting has no rate-limit annotation, so there's nothing to combine there.
 
 ---
 

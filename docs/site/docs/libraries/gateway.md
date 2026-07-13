@@ -693,6 +693,7 @@ A `http-request set-header X-API-Version "v2"` directive appears under the filte
 | Multiple backends | ✅ Supported | Weighted traffic splitting using MULTIBACKEND qualifier |
 | Single backend | ✅ Supported | Optimized with BACKEND qualifier (avoids weighted logic) |
 | Omitted weight | ✅ Supported | Defaults to weight 1 |
+| Explicit `weight: 0` | ✅ Supported | Valid ref that receives no traffic: it contributes zero weighted-map entries, but its backend block is still rendered (per Gateway API) |
 
 **Weighted Backend Implementation:**
 
@@ -759,6 +760,12 @@ When multiple routes reference the same service and port, the template emits a s
 **Route Key Generation:**
 
 Internal route identifiers use the format `namespace_routename_ruleindex` to ensure uniqueness across namespaces and rules.
+
+### Misdirected requests on HTTPS listeners
+
+When a Gateway has multiple HTTPS listeners with distinct hostnames, HAPTIC enforces RFC 9110 listener isolation. If a request's TLS SNI selects one HTTPS listener but its `Host` header canonically belongs to a *different* HTTPS listener on the Gateway, HAPTIC returns `421 Misdirected Request` (Gateway API conformance test `HTTPRouteHTTPSListenerDetectMisdirectedRequests`).
+
+The check applies only to HTTPS connections that carry an SNI. Plain-HTTP requests are unaffected.
 
 ---
 

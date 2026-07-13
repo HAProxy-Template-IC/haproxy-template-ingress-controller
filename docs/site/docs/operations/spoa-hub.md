@@ -49,13 +49,15 @@ The table is generated from `versions-spoa.env` at the repository root. CI fails
 
 ## What each plugin does
 
-- **coraza** — embeds the [Coraza WAF](https://coraza.io/) engine and runs HTTP request/response inspection against the Open Worldwide Application Security Project (OWASP) Core Rule Set v4.
+- **coraza** — embeds the [Coraza WAF](https://coraza.io/) engine and runs HTTP request inspection against the Open Worldwide Application Security Project (OWASP) Core Rule Set v4. HAPTIC wires the request phase only — there's no response-body inspection stage, so response compression doesn't interact with the WAF.
 - **external-auth** — implements nginx-style `auth_request` semantics: makes an HTTP subrequest to an upstream auth service and returns allow/deny plus identity headers to HAProxy.
 - **fingerprinting** — computes JA3, JA3N, and JA4 TLS fingerprints from the ClientHello.
 - **maxmind** — performs in-memory MaxMind MMDB lookups against operator-provided database files: City, Country, Autonomous System Number (ASN), and so on.
 - **otel** — emits OpenTelemetry traces, metrics, and log records via OpenTelemetry Protocol (OTLP) gRPC or HTTP.
 - **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
 - **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
+
+When several hub plugins are enabled, the bundled frontend dispatchers run in a fixed order: the Coraza WAF pass (`frontend-spoe-filters-050-coraza`) inspects each request and can deny it before the external-auth subrequest (`frontend-spoe-filters-100-external-auth`) — WAF first, auth second. Basic authentication (`haproxy.org/auth-type: basic-auth` or `haproxy-ingress.github.io/auth-secret`) runs later still, as a backend directive, so it too happens after WAF inspection.
 
 ## Geolocation lookups
 

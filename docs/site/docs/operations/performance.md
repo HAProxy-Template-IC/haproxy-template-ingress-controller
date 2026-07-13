@@ -142,6 +142,8 @@ spec:
     driftPreventionInterval: "60s"
 ```
 
+Resource deletions take the same path as any structural change: the watch delete fires, the leading-edge debouncer forwards it (the first change in a quiet window fires immediately, so an isolated delete isn't held for the 2 s window), the reconciler re-renders without the resource, and the deployer pushes a reload paced by `minDeploymentInterval`. Unlike EndpointSlice pod-IP rotations, a deletion isn't runtime-fast-path eligible — that path covers only server weight, address, port, and admin-state updates — so it always reloads. An isolated deletion typically converges in about one to a few seconds.
+
 **Tuning guidelines:**
 
 - Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per push (trades latency for fewer Dataplane API calls).

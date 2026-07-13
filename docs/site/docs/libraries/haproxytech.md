@@ -1087,7 +1087,7 @@ server pod1 10.0.1.5:8443 ssl verify none proto h2
 
 **Status**: ✅ Supported
 
-**Description**: Client certificate for mTLS (mutual TLS) to backend. References a Secret containing `tls.crt` and `tls.key`. Supports cross-namespace format `namespace/secretname`.
+**Description**: Client certificate for mTLS (mutual TLS) to backend. References a Secret containing `tls.crt` and `tls.key`. Supports cross-namespace format `namespace/secretname`. Unlike Gateway API cross-namespace references, this isn't gated by a ReferenceGrant — the Secret resolves against any namespace the controller watches, bounded only by the `watchedResources` scope and the controller's RBAC.
 
 **Usage**:
 
@@ -1113,7 +1113,7 @@ server pod1 10.0.1.5:8443 ssl crt /etc/haproxy/ssl/client-cert.pem ca-file /etc/
 
 **Status**: ✅ Supported
 
-**Description**: CA certificate for verifying backend server certificates. References a Secret containing `tls.crt`. Supports cross-namespace format `namespace/secretname`.
+**Description**: CA certificate for verifying backend server certificates. References a Secret containing `tls.crt`. Supports cross-namespace format `namespace/secretname`. Unlike Gateway API cross-namespace references, this isn't gated by a ReferenceGrant — the Secret resolves against any namespace the controller watches, bounded only by the `watchedResources` scope and the controller's RBAC.
 
 **Usage**:
 
@@ -1412,6 +1412,11 @@ server SRV_3 192.0.2.1:1 disabled
 server SRV_4 192.0.2.1:1 disabled
 server SRV_5 192.0.2.1:1 disabled
 ```
+
+!!! warning "Size the slot count to your peak replica count"
+    Set the slot count to at least the backend's maximum expected replica count. When a backend has more ready endpoints than slots, the excess endpoints get no `server` line and receive no traffic — HAPTIC drops them silently, with no error, warning, or Event, and the render still succeeds. The default of 10 applies to every backend without this annotation, so a Deployment scaled past 10 ready pods starves the extra pods until you raise `scale-server-slots`.
+
+There's no fixed maximum — any positive integer is accepted. In practice the count is bounded by total config size and, when the shared-memory stats file is enabled (`haproxy.shmStats.maxObjects`, default 50000, shared across the whole config), the shm-stats object budget.
 
 **Dependencies**: None
 
@@ -1828,7 +1833,7 @@ backend app-backend
 
 **Dependencies**: None
 
-**Warning**: Raw config injection bypasses validation. User is responsible for correct syntax.
+**Note**: The snippet is injected verbatim into the rendered backend section, but HAPTIC still validates the resulting config with `haproxy -c` before deploying it. The Ingress admission webhook (`failurePolicy: Fail`) rejects a syntax error at apply time, and the daemon's config load gate refuses to load a config that doesn't parse — a typo fails the render rather than being silently deployed. HAPTIC doesn't vet what the directives *do*, only that the config parses.
 
 ---
 
@@ -1935,7 +1940,7 @@ http-request auth realm "API-Access" unless { http_auth(auth_default_auth-creden
 
 **Status**: ✅ Supported
 
-**Description**: Reference to Kubernetes Secret containing authentication credentials. Supports cross-namespace format `namespace/secretname`.
+**Description**: Reference to Kubernetes Secret containing authentication credentials. Supports cross-namespace format `namespace/secretname`. Unlike Gateway API cross-namespace references, this isn't gated by a ReferenceGrant — the Secret resolves against any namespace the controller watches, bounded only by the `watchedResources` scope and the controller's RBAC.
 
 **Usage**:
 

@@ -28,6 +28,8 @@ watchedResources:
 
 All selector fields are plain label-selector strings — the `matchLabels`/`matchExpressions` object form that Prometheus Operator and others use is *not* accepted here.
 
+`watchedResources` is an unbounded map — there's no maximum number of watched kinds. Each entry costs one informer and one apiserver watch stream, and a `store: full` entry holds its objects resident in memory, so the ceiling is apiserver watch capacity and controller memory, not a fixed count. See [Resource watching optimization](./operations/performance.md#resource-watching-optimization).
+
 ## Two store types
 
 Every entry uses one of two store backends. The choice controls memory footprint and rendering latency.
@@ -256,6 +258,8 @@ The second argument is an options map. All keys are optional:
 Set `critical: true` only when an empty body would produce a dangerously wrong config (for example, a security blocklist that must not silently become empty); leave it `false` when a stale-or-empty body is safer than blocking every render on one unreachable URL.
 
 A third optional argument supplies authentication: `{"type": "bearer", "token": "..."}`, `{"type": "basic", "username": "...", "password": "..."}`, or `{"type": "header", "headers": {"X-API-Key": "..."}}`.
+
+Response bodies are capped at 10 MiB. A larger response fails the fetch with `response body exceeds maximum size of N bytes` — it isn't truncated — and the limit is fixed with no per-call override. A failed fetch is then handled per the `critical` setting above.
 
 ### Example
 
