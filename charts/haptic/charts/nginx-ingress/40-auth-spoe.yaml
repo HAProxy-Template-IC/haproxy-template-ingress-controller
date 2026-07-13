@@ -162,6 +162,12 @@ templateSnippets:
       {%- for _, pair := range pairs -%}
         {%- var pName = pair.(map[string]any)["name"].(string) -%}
         {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {#- Strip any client-supplied copy of this trusted header on auth-protected
+          routes BEFORE re-adding the plugin value, so a forged inbound header
+          can't survive to the backend when the auth reply omits it (the
+          set-header below is skipped when its var isn't found). Mirrors
+          ingress-nginx's always-overwrite semantics. -#}
+      {{ "\n" }}      http-request del-header {{ pName }} if { var(txn.auth_url) -m found }
       {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
 
