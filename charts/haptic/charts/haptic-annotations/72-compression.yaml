@@ -1,0 +1,57 @@
+# HAPTIC-native annotation library — response compression.
+#
+# Enables HAProxy-side response compression per Ingress (backend-directives,
+# inherit_context). Only the community-build algorithms are allowed (gzip,
+# deflate, raw-deflate — all zlib); brotli/zstd need a non-community HAProxy
+# build and fail the render loudly rather than silently doing nothing.
+templateSnippets:
+
+  backend-directives-872-haptic-compression:
+    template: |
+      {#-
+        HAPTIC response compression.
+
+        Annotations:
+          - haproxy-haptic.org/compress-enable: "true" (enables compression)
+          - haproxy-haptic.org/compress-algorithm: gzip (default) | deflate | raw-deflate
+            (brotli/zstd are unavailable in the community HAProxy build → fail-loud)
+          - haproxy-haptic.org/compress-types: comma-separated MIME types to compress
+            (default: a standard text/JSON/XML/SVG set)
+
+        Generated HAProxy Config (in the backend):
+          compression algo <algorithm>
+          compression type <t1> <t2> ...
+
+        HAProxy compresses only responses the backend didn't already compress and
+        whose Content-Type is in the list.
+      -#}
+      {%- if ingress != nil %}
+        {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/compress-enable"] == "true" %}
+          {%- var alg = ingress.Metadata.Annotations["haproxy-haptic.org/compress-algorithm"] %}
+          {%- if alg == "" %}{%- alg = "gzip" %}{%- end %}
+          {%- if alg == "br" || alg == "brotli" || alg == "zstd" %}
+            {{- fail("Algorithm '" + alg + "' for annotation 'haproxy-haptic.org/compress-algorithm' on Ingress '" + key + "' is not available in the community HAProxy build. Use gzip, deflate, or raw-deflate.") -}}
+          {%- end %}
+          {%- if alg != "gzip" && alg != "deflate" && alg != "raw-deflate" %}
+            {{- fail("Invalid value '" + alg + "' for annotation 'haproxy-haptic.org/compress-algorithm' on Ingress '" + key + "'. Valid: gzip, deflate, raw-deflate.") -}}
+          {%- end %}
+          {%- var typesRaw = ingress.Metadata.Annotations["haproxy-haptic.org/compress-types"] %}
+          {%- if typesRaw == "" %}{%- typesRaw = "text/html,text/plain,text/css,text/javascript,application/javascript,application/json,application/xml,image/svg+xml" %}{%- end %}
+          {%- var types = []any{} %}
+          {%- for _, tok := range split(typesRaw, ",") %}
+            {%- var ct = strip(tok) %}
+            {%- if ct != "" %}
+              {%- if !regex_search(ct, "^[A-Za-z0-9./+-]+$") %}
+                {{- fail("Invalid media type '" + ct + "' in annotation 'haproxy-haptic.org/compress-types' on Ingress '" + key + "'. Allowed characters: letters, digits, '.', '/', '+', '-'.") -}}
+              {%- end %}
+              {%- types = append(types, ct) %}
+            {%- end %}
+          {%- end %}
+          {%- if len(types) > 0 %}
+      # haptic/compression ({{ key }})
+      compression algo {{ alg }}
+      compression type {{ types | toStringSlice() | join(" ") }}
+          {%- end %}
+        {%- end %}
+      {%- end -%}

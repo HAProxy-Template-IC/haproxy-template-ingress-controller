@@ -175,28 +175,6 @@ validationTests:
   test-haptic-backend-protocol-grpc-plaintext:
     description: backend-protocol grpc negotiates cleartext h2 (proto h2) without enabling TLS to the upstream.
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: grpc-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: grpc-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: grpc-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.3"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -215,7 +193,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: grpc-service
+                          name: echo
                           port:
                             number: 80
     assertions:

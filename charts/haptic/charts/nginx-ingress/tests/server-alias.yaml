@@ -4,28 +4,6 @@ validationTests:
   test-nginx-ingress-server-alias:
     description: server-alias adds alias hostnames to the host map pointing at the same normalized host key as the rule host
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: alias-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: alias-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: alias-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -44,7 +22,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: alias-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -59,28 +37,6 @@ validationTests:
   test-nginx-ingress-server-alias-wildcard:
     description: server-alias normalizes a wildcard alias the same way rule hosts are normalized (leading * stripped)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: aliasw-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: aliasw-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: aliasw-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.2"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -99,7 +55,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: aliasw-service
+                          name: echo
                           port:
                             number: 80
     assertions:

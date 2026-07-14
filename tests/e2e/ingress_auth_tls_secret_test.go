@@ -41,6 +41,7 @@ import (
 // the crt-list line for the matching SNI; this exercises the runtime
 // verification path end-to-end (chart → HAProxy → TLS layer).
 func TestIngressAuthTLSSecret(t *testing.T) {
+	RequireVendorLibrary(t, "haproxyIngress")
 	t.Parallel()
 	host := "ingress-auth-tls.localdev.me"
 

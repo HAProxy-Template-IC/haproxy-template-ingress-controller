@@ -9,16 +9,6 @@ validationTests:
   test-haproxy-ingress-timeouts:
     description: HAProxy-Ingress timeout annotations generate correct config
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: timeout-service
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -39,7 +29,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: timeout-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -57,15 +47,6 @@ validationTests:
   test-haproxy-ingress-balance-algorithm:
     description: HAProxy-Ingress balance-algorithm annotation works
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: lb-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -84,7 +65,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: lb-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -96,15 +77,6 @@ validationTests:
   test-haproxy-ingress-health-check:
     description: HAProxy-Ingress health check annotations work
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: health-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -127,7 +99,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: health-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -154,15 +126,6 @@ validationTests:
   test-haproxy-ingress-maxconn-server:
     description: maxconn-server and maxqueue-server land on the default-server line
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: maxconn-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -182,7 +145,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: maxconn-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -197,15 +160,6 @@ validationTests:
   test-haproxy-ingress-initial-weight:
     description: initial-weight sets the default-server weight
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: weight-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -224,7 +178,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: weight-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -275,15 +229,6 @@ validationTests:
   test-haproxy-ingress-backend-protocol-h2:
     description: HAProxy-Ingress backend-protocol h2 annotation works
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: h2-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -302,7 +247,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: h2-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -314,15 +259,6 @@ validationTests:
   test-haproxy-ingress-config-backend-snippet:
     description: HAProxy-Ingress config-backend annotation injects directives
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: snippet-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -343,7 +279,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: snippet-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -362,15 +298,6 @@ validationTests:
   test-haproxy-ingress-ssl-redirect:
     description: HAProxy-Ingress ssl-redirect annotation generates redirect
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: redirect-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -390,7 +317,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: redirect-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -412,12 +339,6 @@ validationTests:
   test-haproxy-ingress-redirect-to:
     description: HAProxy-Ingress redirect-to registers the host in the shared redirect-loc map (reload-free)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: rt-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -435,7 +356,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend: {service: {name: rt-svc, port: {number: 80}}}
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
       # Host → location lands in the shared per-code redirect map (reload-free add).
@@ -454,15 +375,6 @@ validationTests:
   test-haproxy-ingress-hsts:
     description: HAProxy-Ingress HSTS annotations generate correct headers
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: hsts-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -484,7 +396,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hsts-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -499,28 +411,6 @@ validationTests:
   test-haproxy-ingress-allowlist:
     description: HAProxy-Ingress allowlist-source-range creates ACL
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: allow-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: allow-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: allow-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -539,7 +429,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: allow-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -557,15 +447,6 @@ validationTests:
   test-haproxy-ingress-whitelist-source-range-alias:
     description: deprecated whitelist-source-range alias creates an allow ACL when allowlist-source-range is absent
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: wl-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -584,7 +465,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: wl-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -596,15 +477,6 @@ validationTests:
   test-haproxy-ingress-cors:
     description: HAProxy-Ingress CORS annotations generate correct headers
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cors-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -625,7 +497,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cors-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -648,15 +520,6 @@ validationTests:
   test-haproxy-ingress-app-root:
     description: HAProxy-Ingress app-root annotation generates redirect
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: approot-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -675,7 +538,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: approot-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -937,15 +800,6 @@ validationTests:
   test-haproxy-ingress-session-affinity-basic:
     description: HAProxy-Ingress cookie affinity generates cookie directive
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: affinity-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -964,7 +818,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: affinity-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -976,15 +830,6 @@ validationTests:
   test-haproxy-ingress-session-affinity-custom:
     description: HAProxy-Ingress cookie affinity with custom options
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: affinity-custom-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1006,7 +851,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: affinity-custom-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1077,15 +922,6 @@ validationTests:
   test-haproxy-ingress-limit-rps:
     description: limit-rps generates a per-source request-rate stick-table and 429 deny
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: rps-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1104,7 +940,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: rps-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1119,15 +955,6 @@ validationTests:
   test-haproxy-ingress-limit-rpm:
     description: limit-rpm generates a per-minute request-rate stick-table
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: rpm-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1146,7 +973,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: rpm-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1161,15 +988,6 @@ validationTests:
   test-haproxy-ingress-limit-whitelist:
     description: limit-whitelist exempts listed CIDRs from the rate limit
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: wl-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1189,7 +1007,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: wl-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1205,15 +1023,6 @@ validationTests:
   test-haproxy-ingress-rewrite-target:
     description: rewrite-target emits replace-path and translates $N capture groups to \N
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: rw-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1232,7 +1041,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: rw-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1333,15 +1142,6 @@ validationTests:
   test-haproxy-ingress-proxy-body-size-unlimited:
     description: HAProxy-Ingress proxy-body-size "0" emits no body-size.map entry
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: body0-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1360,7 +1160,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: body0-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1417,15 +1217,6 @@ validationTests:
   test-haproxy-ingress-ssl-ciphers-backend-ignored-without-ssl:
     description: ssl-ciphers-backend is ignored when backend SSL is not enabled
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cipher-nossl-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1444,7 +1235,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cipher-nossl-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1456,15 +1247,6 @@ validationTests:
   test-haproxy-ingress-agent-check:
     description: HAProxy-Ingress agent-check annotations add agent-check server params to default-server
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: agent-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1485,7 +1267,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: agent-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1500,15 +1282,6 @@ validationTests:
   test-haproxy-ingress-agent-check-addr:
     description: HAProxy-Ingress agent-check-addr is appended alongside the required agent-check-port
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: agentaddr-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1528,7 +1301,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: agentaddr-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1540,15 +1313,6 @@ validationTests:
   test-haproxy-ingress-agent-check-addr-without-port-rejected:
     description: HAProxy-Ingress agent-check-addr without agent-check-port fails the render
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: agentnoport-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1567,7 +1331,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: agentnoport-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1578,15 +1342,6 @@ validationTests:
   test-haproxy-ingress-default-backend-redirect:
     description: HAProxy-Ingress default-backend-redirect redirects unmatched requests for the Ingress host
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: dbr-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1606,7 +1361,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: dbr-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1621,15 +1376,6 @@ validationTests:
   test-haproxy-ingress-default-backend-redirect-default-code:
     description: HAProxy-Ingress default-backend-redirect defaults to code 302
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: dbr2-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1648,7 +1394,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: dbr2-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1667,15 +1413,6 @@ validationTests:
   test-haproxy-ingress-allowlist-cidr-injection-rejected:
     description: An allowlist-source-range token that is not a bare IP/CIDR aborts the render (config-injection guard)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: inj-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1696,7 +1433,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: inj-service
+                          name: echo
                           port:
                             number: 80
     assertions:

@@ -946,6 +946,20 @@ validationTests:
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
+        # Shared TLS cert for per-test TLS fixtures in the `default` namespace,
+        # merged into every test via _global. A test whose spec.tls /
+        # certificateRefs points at Secret `shared-tls` (namespace default) need
+        # NOT inline its own copy of the cert — this deduplicates the identical
+        # cert/key that was otherwise copy-pasted across the suite.
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: shared-tls
+            namespace: default
+          data:
+            tls.crt: *test_tls_crt
+            tls.key: *test_tls_key
 
   test-ssl-certificate-loading:
     description: Verify default SSL certificate is loaded correctly

@@ -8,15 +8,6 @@ validationTests:
   test-haproxy-ingress-server-alias:
     description: server-alias routes extra hostnames to the same backends as the primary host
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: alias-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -35,7 +26,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: alias-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -53,15 +44,6 @@ validationTests:
   test-haproxy-ingress-server-alias-single:
     description: server-alias with a single hostname (no comma) works
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: alias-single-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -80,7 +62,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: alias-single-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -96,15 +78,6 @@ validationTests:
   test-haproxy-ingress-server-alias-regex:
     description: server-alias-regex maps a regex of hostnames to the primary host key
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: alias-regex-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -123,7 +96,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: alias-regex-service
+                          name: echo
                           port:
                             number: 80
     assertions:

@@ -1,0 +1,82 @@
+# HAPTIC-native annotation library — API-gateway request gating tests.
+validationTests:
+  test-haptic-gateway-security:
+    description: >-
+      allowed-methods denies 405, require-content-type denies 415 on body
+      methods, require-headers denies 400 per missing header, mock-response and
+      fixed-response emit host-scoped http-request return (JSON body escaped
+      for HAProxy's quoted string).
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: gate
+            annotations:
+              haproxy-haptic.org/allowed-methods: "GET,POST"
+              haproxy-haptic.org/require-content-type: "application/json"
+              haproxy-haptic.org/require-headers: "X-Api-Key,X-Tenant-Id"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: gate.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: dummy, port: { number: 80 } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mock
+            annotations:
+              haproxy-haptic.org/mock-response: '{"stub":true}'
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mock.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: dummy, port: { number: 80 } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: term
+            annotations:
+              haproxy-haptic.org/fixed-response: "true"
+              haproxy-haptic.org/fixed-response-code: "503"
+              haproxy-haptic.org/fixed-response-body: "under maintenance"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: term.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: dummy, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 405 if .* !\\{ method GET POST \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request return status 415 if .* \\{ method POST PUT PATCH \\} !\\{ req.hdr\\(Content-Type\\) -m beg application/json \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 400 if .* !\\{ req.hdr\\(X-Api-Key\\) -m found \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 400 if .* !\\{ req.hdr\\(X-Tenant-Id\\) -m found \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request return status 200 content-type "application/json" string "\{\\"stub\\":true\}" if'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request return status 503 content-type "text/plain" string "under maintenance" if'

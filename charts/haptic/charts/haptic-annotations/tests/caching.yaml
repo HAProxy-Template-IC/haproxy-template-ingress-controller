@@ -1,0 +1,179 @@
+# HAPTIC-native annotation library — shared-cache (Varnish tier) tests.
+validationTests:
+  test-haptic-cache-core:
+    description: >-
+      With the Varnish tier enabled, cache-enable/cache-ttl build reload-free
+      maps keyed by resource_id, the frontend routes cache-eligible non-loopback
+      requests to varnish_cache, and the sharded consistent-hash backend is
+      emitted with bounded-load balancing.
+    extraContext:
+      hapticCacheEnabled: "true"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cache-ingress
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "300"
+              haproxy-haptic.org/cache-key: "consumer,header:X-Api-Version"
+              haproxy-haptic.org/cache-exclude-content-types: "text/html,text/xml"
+              haproxy-haptic.org/cache-exclude-paths: "/admin,/live"
+              haproxy-haptic.org/cache-max-object-size: "1048576"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cache.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:haptic-cache-enable.map"
+        pattern: "default/cache-ingress 1"
+      - type: contains
+        target: "map:haptic-cache-ttl.map"
+        pattern: "default/cache-ingress 300"
+      # The loop-break source map is registered (its runtime content — the live
+      # Varnish pod IPs — is verified end-to-end by TestHapticVarnishCache; the
+      # daemon renders bundled validationTests with no live endpoints, so we can't
+      # assert map content here without failing the on-load validation).
+      - type: contains
+        target: haproxy.cfg
+        pattern: "map\\([^)]*haptic-varnish-src\\.map\\)"
+      # Loop-break is by source (Varnish pod IPs), NOT a client-forgeable header.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend varnish_cache if \\{ var\\(txn.resource_id\\),map\\([^)]*haptic-cache-enable\\.map\\) -m found \\} !\\{ src,map\\([^)]*haptic-varnish-src\\.map\\) -m found \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request del-header X-Haptic-Cache-Fetch"
+      # The forgeable-header bypass must be gone from the routing decision.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "req.hdr\\(X-Haptic-Cache-Fetch\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Haptic-Cache-TTL %\\[var\\(txn.resource_id\\),map\\([^)]*haptic-cache-ttl\\.map\\)\\]"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend varnish_cache"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "balance uri"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "hash-type consistent"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "hash-balance-factor 150"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "kind: StatefulSet"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "kind: ConfigMap"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "clusterIP: None"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "malloc,256m"
+      # A CPU request must be present so the autoscaling HPA can compute utilization.
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "cpu: 100m"
+      # The VCL no longer sets a loopback marker header (source-based loop-break).
+      - type: not_contains
+        target: "k8s:varnish-cache"
+        pattern: "X-Haptic-Cache-Fetch"
+      - type: contains
+        target: "map:haptic-cache-skip-ct.map"
+        pattern: "default/cache-ingress \\|text/html\\|text/xml\\|"
+      - type: contains
+        target: "map:haptic-cache-maxsize.map"
+        pattern: "default/cache-ingress 1048576"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request del-header X-Haptic-Cache-Vary"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Haptic-Cache-Vary %\\[var\\(txn.haptic_consumer\\)\\]\\|%\\[req.hdr\\(X-Api-Version\\)\\] if \\{ var\\(txn.resource_id\\) -m str default/cache-ingress \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend %\\[var\\(txn.backend_name\\)\\] if \\{ var\\(txn.resource_id\\) -m str default/cache-ingress \\} \\{ path_beg /admin /live \\}"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "hash_data\\(req.http.X-Haptic-Cache-Vary\\)"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "std.strstr\\(bereq.http.X-Haptic-Cache-Skip-CT"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "sub vcl_recv"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "if \\(req.http.X-Haptic-Cache-Vary && \\(req.method == \"GET\" \\|\\| req.method == \"HEAD\"\\)\\) \\{"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "set resp.http.X-Cache = \"HIT\""
+
+  test-haptic-cache-autoscaling:
+    description: >-
+      With autoscaling enabled, the Varnish tier emits a HorizontalPodAutoscaler
+      targeting the workload (CPU utilization, generous scale-down window) and
+      omits the static replica count so the HPA owns it.
+    extraContext:
+      hapticCacheEnabled: "true"
+      hapticCacheAutoscalingEnabled: "true"
+      hapticCacheMinReplicas: "3"
+      hapticCacheMaxReplicas: "9"
+      hapticCacheTargetCPU: "65"
+      hapticCacheScaleDownWindow: "900"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cache-ingress
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cache.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "kind: HorizontalPodAutoscaler"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "kind: StatefulSet\\s+name: haptic-varnish-cache"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "minReplicas: 3"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "maxReplicas: 9"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "averageUtilization: 65"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "stabilizationWindowSeconds: 900"
+      # The HPA owns the replica count — the workload must not pin a static one.
+      - type: not_contains
+        target: "k8s:varnish-cache"
+        pattern: "replicas: 2"

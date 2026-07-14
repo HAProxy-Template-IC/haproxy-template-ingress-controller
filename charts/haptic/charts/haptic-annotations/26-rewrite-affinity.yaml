@@ -1,13 +1,11 @@
 # HAPTIC-native annotation library (haproxy-haptic.org/*) — rewrites, upstream
-# request-header overrides, proxy-next-upstream retry policy, and session
-# affinity. Best-of-breed superset of the three vendor libraries:
-#   - rewrite-target: haproxy-ingress / nginx-ingress ($N→\N capture; literal via
-#     reload-free path-rewrite.map)
+# request-header overrides, retry-on retry policy, and session affinity.
+# Best-of-breed superset of the three vendor libraries:
 #   - path-rewrite: haproxytech (<from> <to> → replace-path; bare → whole path)
-#   - proxy-body-size: haproxy-ingress / nginx-ingress (413 via reload-free
+#   - max-request-body-size: haproxy-ingress / nginx-ingress (413 via reload-free
 #     body-size.map; "0" = unlimited)
-#   - proxy-next-upstream / -tries: nginx-ingress (retry-on mapping)
-#   - set-host / x-forwarded-prefix / connection-proxy-header: nginx-ingress +
+#   - retry-on / retries: nginx-ingress (proxy_next_upstream value → retry-on mapping)
+#   - set-host / x-forwarded-prefix / backend-connection-header: nginx-ingress +
 #     haproxytech (reload-free reqhdr-*.map)
 #   - affinity + session-cookie-*: haproxy-ingress (strategy / dynamic / keywords
 #     / preserve / domain) UNION nginx-ingress (path / secure / samesite / max-age)
@@ -15,72 +13,6 @@ templateSnippets:
   # ============================================================================
   # Path rewrites
   # ============================================================================
-
-  backend-directives-810-haptic-rewrite-target:
-    template: |
-      {#-
-        HAPTIC Rewrite Target (capture-group form)
-
-        Documentation: docs/site/docs/libraries/haptic-annotations.md#rewrite-target
-
-        Annotation: haproxy-haptic.org/rewrite-target
-
-        Rewrites the request path before forwarding to the backend. Capture
-        groups written in the nginx-compatible `$N` form are translated to
-        HAProxy's `\N` backreference syntax (best-of-breed: haproxy-ingress /
-        nginx-ingress). Only values that carry an actual `\1..\9` backreference
-        are emitted here as a backend-scoped `http-request replace-path`; a
-        LITERAL replacement (no backreference) is relocated to path-rewrite.map
-        by map-path-rewrite-810-haptic and applied reload-free. The two branches
-        are mutually exclusive (one rewrite value per backend).
-
-        Generated HAProxy Config:
-          http-request replace-path (.*) <translated-value>
-      -#}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- if ingress != nil %}
-        {%- var ns = ingress.Metadata.Namespace %}
-        {%- var name = ingress.Metadata.Name %}
-        {%- var key = ns + "/" + name %}
-        {%- var rewrite = ingress.Metadata.Annotations["haproxy-haptic.org/rewrite-target"] %}
-        {%- if rewrite != "" %}
-          {#- Translate $1..$9 capture groups to \1..\9 in one shot. -#}
-          {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") %}
-          {#- The predicate keys on an actual \N backreference, not any backslash,
-              so a literal path containing a backslash routes to the map instead. -#}
-          {%- if regex_search(rewrite, "\\\\[1-9]") %}
-      # haptic/rewrite-target ({{ key }})
-      http-request replace-path (.*) {{ ValidateConfigValue(rewrite, "haproxy-haptic.org/rewrite-target", key, false) }}
-          {%- end %}
-        {%- end %}
-      {%- end -%}
-
-  map-path-rewrite-810-haptic:
-    template: |
-      {#- HAPTIC rewrite-target LITERAL replacement (no \N capture) →
-          path-rewrite.map, consumed by base.yaml frontend-filters-400-path-rewrite
-          as a reload-free set-path. Capture rewrites stay as replace-path in
-          backend-directives-810-haptic-rewrite-target. Shares the
-          "map-path-rewrite" first_seen namespace with the vendor emitters. -#}
-      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
-      {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var rewrite = ingress.Metadata.Annotations["haproxy-haptic.org/rewrite-target"] -%}
-        {%- if rewrite != "" -%}
-          {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
-          {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") -%}
-          {%- if !regex_search(rewrite, "\\\\[1-9]") -%}
-            {%- for _, rule := range ingress.Spec.Rules -%}
-              {%- for _, path := range rule.Http.Paths -%}
-                {%- var be = BackendNameIngress(ingress, path) -%}
-                {%- if first_seen("map-path-rewrite", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(rewrite, "haproxy-haptic.org/rewrite-target", key, false) }}
-                {%- end -%}
-              {%- end -%}
-            {%- end -%}
-          {%- end -%}
-        {%- end -%}
-      {%- end -%}
 
   backend-directives-820-haptic-path-rewrite:
     template: |
@@ -127,11 +59,11 @@ templateSnippets:
   map-body-size-830-haptic:
     template: |
       {#-
-        HAPTIC Proxy Body Size Limit (Strategy 1: relocated to a map)
+        HAPTIC Request Body Size Limit (Strategy 1: relocated to a map)
 
-        Documentation: docs/site/docs/libraries/haptic-annotations.md#proxy-body-size
+        Documentation: docs/site/docs/libraries/haptic-annotations.md#max-request-body-size
 
-        Annotation: haproxy-haptic.org/proxy-body-size
+        Annotation: haproxy-haptic.org/max-request-body-size
         Values: plain number (bytes), or with k/K, m/M, g/G suffix.
         Value "0" means unlimited — no map entry emitted.
 
@@ -143,7 +75,7 @@ templateSnippets:
       -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var bodySize = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-body-size"] -%}
+        {%- var bodySize = ingress.Metadata.Annotations["haproxy-haptic.org/max-request-body-size"] -%}
         {%- if bodySize != "" -%}
           {%%
             var bytes = 0
@@ -173,28 +105,28 @@ templateSnippets:
       {%- end -%}
 
   # ============================================================================
-  # proxy-next-upstream retry policy
+  # retry-on retry policy
   # ============================================================================
 
-  backend-directives-840-haptic-next-upstream:
+  backend-directives-840-haptic-retry-on:
     template: |
       {#-
-        HAPTIC proxy-next-upstream — when to retry against the next server.
+        HAPTIC retry-on — when to retry against the next server.
 
-        Documentation: docs/site/docs/libraries/haptic-annotations.md#proxy-next-upstream
+        Documentation: docs/site/docs/libraries/haptic-annotations.md#retry-on
 
         Annotations:
-          - haproxy-haptic.org/proxy-next-upstream: space-separated conditions
+          - haproxy-haptic.org/retry-on: space-separated conditions
               (error, timeout, invalid_header, http_<NNN>, non_idempotent, off)
-          - haproxy-haptic.org/proxy-next-upstream-tries: max attempts
+          - haproxy-haptic.org/retries: max attempts
 
         Adopts nginx-ingress semantics (backend-level):
           error -> conn-failure ; timeout -> response-timeout ;
           invalid_header -> junk-response ; http_<NNN> -> <NNN> ;
           off -> `retries 0` ; tries N(>0) -> `retries N` ; "0" -> keep default.
         `option redispatch` is set in defaults so a retry lands on a different
-        server. Ignored (no HAProxy CE equivalent): non_idempotent. This diverges
-        from nginx's exact retry surface, hence classified "different".
+        server. Ignored: non_idempotent — nginx vocabulary with no HAProxy
+        `retry-on` analogue.
 
         Generated HAProxy Config:
           retry-on <conditions>
@@ -204,8 +136,8 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var nu = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-next-upstream"] %}
-        {%- var tries = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-next-upstream-tries"] %}
+        {%- var nu = ingress.Metadata.Annotations["haproxy-haptic.org/retry-on"] %}
+        {%- var tries = ingress.Metadata.Annotations["haproxy-haptic.org/retries"] %}
         {%- if nu != "" || tries != "" %}
           {%- var off = false %}
           {%- var conds = []string{} %}
@@ -224,7 +156,7 @@ templateSnippets:
             {%- else if hasPrefix(t, "http_") %}
               {%- var code = t[5:] %}
               {%- if !regex_search(code, "^[1-5][0-9][0-9]$") %}
-                {{- fail("Invalid status '" + code + "' in 'haproxy-haptic.org/proxy-next-upstream' on Ingress '" + key + "'. Use http_<3-digit-status>.") -}}
+                {{- fail("Invalid status '" + code + "' in 'haproxy-haptic.org/retry-on' on Ingress '" + key + "'. Use http_<3-digit-status>.") -}}
               {%- end %}
               {%- mapped = code %}
             {%- end %}
@@ -234,18 +166,18 @@ templateSnippets:
             {%- end %}
           {%- end %}
           {%- if off %}
-      # haptic/proxy-next-upstream ({{ key }}) - disabled
+      # haptic/retry-on ({{ key }}) - disabled
       retries 0
           {%- else %}
             {%- if len(conds) > 0 %}
-      # haptic/proxy-next-upstream ({{ key }})
+      # haptic/retry-on ({{ key }})
       retry-on {{ join(conds, " ") }}
             {%- end %}
             {%- if tries != "" %}
               {#- Reject non-integer values up front: toint() returns 0 for junk
                   like "abc"/"2.5", which would otherwise be silently dropped. -#}
               {%- if !regex_search(tries, "^[0-9]+$") %}
-                {{- fail("Invalid value '" + tries + "' for 'haproxy-haptic.org/proxy-next-upstream-tries' on Ingress '" + key + "'. Must be a non-negative integer.") -}}
+                {{- fail("Invalid value '" + tries + "' for 'haproxy-haptic.org/retries' on Ingress '" + key + "'. Must be a non-negative integer.") -}}
               {%- end %}
               {%- var n = toint(tries) %}
               {%- if n > 0 %}
@@ -308,19 +240,19 @@ templateSnippets:
 
   map-reqhdr-connection-850-haptic:
     template: |
-      {#- HAPTIC connection-proxy-header → reqhdr-connection.map, applied
+      {#- HAPTIC backend-connection-header → reqhdr-connection.map, applied
           reload-free by base.yaml frontend-filters-262-request-set-connection. -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var v = ingress.Metadata.Annotations["haproxy-haptic.org/connection-proxy-header"] -%}
+        {%- var v = ingress.Metadata.Annotations["haproxy-haptic.org/backend-connection-header"] -%}
         {%- if v != "" -%}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
               {%- var be = BackendNameIngress(ingress, path) -%}
               {%- if first_seen("map-reqhdr-connection", be) -%}
-      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "haproxy-haptic.org/connection-proxy-header", key, true) }}
+      {{ "\n" }}{{ be }} {{ ValidateConfigValue(v, "haproxy-haptic.org/backend-connection-header", key, true) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}

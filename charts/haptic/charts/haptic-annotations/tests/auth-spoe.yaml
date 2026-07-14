@@ -18,11 +18,6 @@ validationTests:
           type: Opaque
           data:
             auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: { namespace: default, name: auth-svc }
-          spec: { ports: [{ port: 80 }] }
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -42,7 +37,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: { name: auth-svc, port: { number: 80 } }
+                        service: { name: echo, port: { number: 80 } }
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -72,11 +67,6 @@ validationTests:
           type: Opaque
           data:
             admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: { namespace: default, name: authmap-svc }
-          spec: { ports: [{ port: 80 }] }
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -96,7 +86,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: { name: authmap-svc, port: { number: 80 } }
+                        service: { name: echo, port: { number: 80 } }
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -122,23 +112,6 @@ validationTests:
           type: Opaque
           data:
             admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: { namespace: default, name: satisfy-svc }
-          spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: satisfy-svc-abc
-            labels: { kubernetes.io/service-name: satisfy-svc }
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.5"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -161,7 +134,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: { name: satisfy-svc, port: { number: 80 } }
+                        service: { name: echo, port: { number: 80 } }
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -189,11 +162,6 @@ validationTests:
       crt-list, auth-tls-error-page lands in mtls-error.map, and
       auth-tls-cert-header forwards the X-SSL-Client-* headers.
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: { namespace: default, name: mtls-svc }
-          spec: { ports: [{ port: 80 }] }
       secrets:
         - apiVersion: v1
           kind: Secret
@@ -231,7 +199,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: { name: mtls-svc, port: { number: 80 } }
+                        service: { name: echo, port: { number: 80 } }
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -265,11 +233,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: { namespace: default, name: protected-svc }
-          spec: { ports: [{ port: 80 }] }
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -292,7 +255,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: { name: protected-svc, port: { number: 80 } }
+                        service: { name: echo, port: { number: 80 } }
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -386,14 +349,14 @@ validationTests:
         pattern: "default/oauthapp HEAD"
 
   # ============================================================================
-  # WAF (Coraza via SPOA hub) — waf / waf-mode + modsecurity-snippet
+  # WAF (Coraza via SPOA hub) — waf / waf-mode + waf-rules
   # ============================================================================
   test-haptic-waf:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: >-
       waf: modsecurity populates haproxy-ingress-waf.map with the enforcement
       mode (default deny; detect when /waf-mode: detect) and
-      modsecurity-snippet emits a per-app coraza block + coraza-app.map row.
+      waf-rules emits a per-app coraza block + coraza-app.map row.
     extraContext:
       spoaHub:
         enabled: true
@@ -415,11 +378,6 @@ validationTests:
               SecRuleEngine On
             params: ""
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: { namespace: default, name: waf-svc }
-          spec: { ports: [{ port: 80 }] }
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -437,7 +395,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: { name: waf-svc, port: { number: 80 } }
+                        service: { name: echo, port: { number: 80 } }
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -446,7 +404,7 @@ validationTests:
             annotations:
               haproxy-haptic.org/waf: modsecurity
               haproxy-haptic.org/waf-mode: detect
-              haproxy-haptic.org/modsecurity-snippet: |
+              haproxy-haptic.org/waf-rules: |
                 SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"
           spec:
             ingressClassName: haptic
@@ -457,7 +415,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: { name: waf-svc, port: { number: 80 } }
+                        service: { name: echo, port: { number: 80 } }
     assertions:
       - type: haproxy_valid
       - type: contains

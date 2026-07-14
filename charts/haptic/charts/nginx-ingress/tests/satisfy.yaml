@@ -5,28 +5,6 @@ validationTests:
   test-nginx-ingress-satisfy-any:
     description: satisfy=any combines whitelist + auth with OR — auth is only challenged when the source IP is not in the allow-list, and the standalone whitelist deny is suppressed
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: satisfy-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: satisfy-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: satisfy-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       secrets:
         - apiVersion: v1
           kind: Secret
@@ -58,7 +36,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: satisfy-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -79,28 +57,6 @@ validationTests:
   test-nginx-ingress-satisfy-all-default:
     description: satisfy=all (the default) keeps the independent whitelist deny and unconditional auth challenge (AND semantics)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: satall-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: satall-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: satall-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.2"]
-          ports:
-            - port: 8080
       secrets:
         - apiVersion: v1
           kind: Secret
@@ -130,7 +86,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: satall-service
+                          name: echo
                           port:
                             number: 80
     assertions:

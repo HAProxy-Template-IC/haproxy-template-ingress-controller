@@ -4,7 +4,7 @@
 # directives, exposed under the haproxy-haptic.org/ prefix:
 #   - timeouts + timeout-check (haproxy-ingress + haproxytech)
 #   - parameterized load-balance (haproxytech)
-#   - upstream-hash-by consistent hashing (nginx, remapped to HAProxy balance)
+#   - consistent-hash-by consistent hashing (nginx upstream-hash-by → HAProxy balance)
 #   - per-server maxconn / maxqueue + soft fullconn (haproxy-ingress)
 #   - pod-maxconn + scale-server-slots (haproxytech)
 #   - initial-weight (haproxy-ingress)
@@ -117,10 +117,10 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  backend-directives-815-haptic-upstream-hash:
+  backend-directives-815-haptic-consistent-hash:
     template: |
       {#-
-        HAPTIC Consistent-Hash Load Balancing (upstream-hash-by)
+        HAPTIC Consistent-Hash Load Balancing
 
         Best-of-breed source: nginx.ingress.kubernetes.io/upstream-hash-by.
         DIVERGENCE: nginx builds a Rendezvous/CRC hash ring over an arbitrary
@@ -128,7 +128,7 @@ templateSnippets:
         to the closest HAProxy consistent-hash equivalent — a `balance` line
         plus `hash-type consistent`.
 
-        Annotation: haproxy-haptic.org/upstream-hash-by
+        Annotation: haproxy-haptic.org/consistent-hash-by
         Accepted values (nginx variables OR a raw HAProxy fetch):
           $request_uri / request.uri / uri -> balance uri
           $remote_addr / src / source      -> balance source
@@ -147,7 +147,7 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var hashBy = ingress.Metadata.Annotations["haproxy-haptic.org/upstream-hash-by"] %}
+        {%- var hashBy = ingress.Metadata.Annotations["haproxy-haptic.org/consistent-hash-by"] %}
         {%- if hashBy != "" %}
           {%- var expr = "" %}
           {%- if hashBy == "$request_uri" || hashBy == "request.uri" || hashBy == "uri" %}
@@ -161,12 +161,12 @@ templateSnippets:
           {%- else if hasPrefix(hashBy, "$arg_") %}
             {%- expr = "url_param(" + hashBy[5:] + ")" %}
           {%- else if hasPrefix(hashBy, "$") %}
-            {{- fail("Unsupported variable '" + hashBy + "' for annotation 'haproxy-haptic.org/upstream-hash-by' on Ingress '" + key + "'. Supported: $request_uri, $remote_addr, $http_<name>, $arg_<name>, $cookie_<name>, or a raw HAProxy fetch.") -}}
+            {{- fail("Unsupported variable '" + hashBy + "' for annotation 'haproxy-haptic.org/consistent-hash-by' on Ingress '" + key + "'. Supported: $request_uri, $remote_addr, $http_<name>, $arg_<name>, $cookie_<name>, or a raw HAProxy fetch.") -}}
           {%- else %}
             {%- expr = "hash " + hashBy %}
           {%- end %}
-      # haptic/upstream-hash ({{ key }})
-      balance {{ ValidateConfigValue(expr, "haproxy-haptic.org/upstream-hash-by", key, true) }}
+      # haptic/consistent-hash-by ({{ key }})
+      balance {{ ValidateConfigValue(expr, "haproxy-haptic.org/consistent-hash-by", key, true) }}
       hash-type consistent
         {%- end %}
       {%- end -%}

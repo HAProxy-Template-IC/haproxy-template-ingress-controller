@@ -1,0 +1,115 @@
+# HAPTIC-native annotation library — HMAC + consumer-groups (auth crypto) tests.
+validationTests:
+  test-haptic-hmac:
+    description: >-
+      hmac-secret verifies a request signature: body signing forces
+      option http-buffer-request, computes hmac(sha256) hex over the body with
+      the inlined secret, and denies 401 unless the client signature matches.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: hmac-keys }
+          type: Opaque
+          data:
+            secret: czNjcjN0LWtleQ==   # s3cr3t-key
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hmac-ingress
+            annotations:
+              haproxy-haptic.org/hmac-secret: "hmac-keys"
+              haproxy-haptic.org/hmac-algorithm: "sha256"
+              haproxy-haptic.org/hmac-header: "X-Signature"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hmac.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "option http-buffer-request"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn.haptic_hmac\\) req.body,hmac\\(sha256,\"czNjcjN0LWtleQ==\"\\),hex,lower"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 401 unless \\{ req.hdr\\(X-Signature\\),strcmp\\(txn.haptic_hmac\\) -m int 0 \\}"
+
+  test-haptic-consumer-groups:
+    description: >-
+      consumer-groups-secret builds a consumer→group map and denies 403 unless
+      the request's consumer maps to one of the allowed groups.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: cg }
+          type: Opaque
+          data:
+            groups: YWxpY2U6YWRtaW5zCmJvYjplZGl0b3JzCg==   # alice:admins / bob:editors
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cg-ingress
+            annotations:
+              haproxy-haptic.org/consumer-groups-secret: "cg"
+              haproxy-haptic.org/allowed-consumer-groups: "admins,editors"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cg.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:haptic-consumer-groups-default-cg.map"
+        pattern: "alice admins"
+      - type: contains
+        target: "map:haptic-consumer-groups-default-cg.map"
+        pattern: "bob editors"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 403 unless \\{ var\\(txn.haptic_consumer\\),map\\([^)]*haptic-consumer-groups-default-cg\\.map\\) -m str admins editors \\}"
+
+  test-haptic-consumer-groups-partial-fails:
+    description: >-
+      Setting allowed-consumer-groups without consumer-groups-secret (or vice
+      versa) must fail the render loudly, not silently leave the route
+      unauthorized (fail-open for a security feature).
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cg-partial
+            annotations:
+              haproxy-haptic.org/allowed-consumer-groups: "admins"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cg-partial.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "requires BOTH"

@@ -9,15 +9,6 @@ validationTests:
   test-haproxy-ingress-config-frontend:
     description: config-frontend injects raw directives into the http frontend
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cf-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -37,7 +28,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cf-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -56,15 +47,6 @@ validationTests:
   test-haproxy-ingress-config-global:
     description: config-global injects raw directives into the global section
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cg-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -84,7 +66,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cg-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -103,15 +85,6 @@ validationTests:
   test-haproxy-ingress-config-defaults:
     description: config-defaults injects raw directives into the defaults section
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cd-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -131,7 +104,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cd-service
+                          name: echo
                           port:
                             number: 80
     assertions:

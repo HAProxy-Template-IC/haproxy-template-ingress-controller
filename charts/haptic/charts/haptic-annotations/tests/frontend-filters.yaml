@@ -1,17 +1,11 @@
 # HAPTIC-native annotation library — frontend-filters validation tests.
 # Covers forwardfor, request/response-set-header + src-ip-header + request-capture,
-# CORS, allow/deny-list access control, and proxy-cookie / proxy-redirect.
+# CORS, allow/deny-list access control, and response-cookie / response-location-rewrite.
 validationTests:
 
   test-haptic-forwardfor:
     description: haproxy-haptic.org/forwardfor=update emits a host-scoped X-Forwarded-For set-header (haproxy-ingress semantics)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: ff-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -30,7 +24,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: ff-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -42,12 +36,6 @@ validationTests:
   test-haptic-header-manipulation:
     description: request/response-set-header (newline form), src-ip-header, and request-capture with a custom length
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: hdr-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -75,7 +63,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hdr-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -96,12 +84,6 @@ validationTests:
   test-haptic-cors:
     description: cors-enable emits the shared CORS macro output (http-after-response Allow-Origin + preflight 204)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: cors-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -125,7 +107,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cors-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -143,12 +125,6 @@ validationTests:
   test-haptic-access-control:
     description: allowlist/denylist-source-range emit CIDR ACLs (aclPrefix haptic) plus host-scoped deny rules
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: ac-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -168,7 +144,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: ac-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -184,14 +160,8 @@ validationTests:
         pattern: "http-request deny if .* !haptic_allowlist_default_ac-ingress"
 
   test-haptic-proxy-cookie-and-redirect:
-    description: proxy-cookie-domain/path and proxy-redirect-from/to rewrite upstream Set-Cookie and Location/Refresh headers
+    description: response-cookie-domain/path and response-location-rewrite-from/to rewrite upstream Set-Cookie and Location/Refresh headers
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: px-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -199,10 +169,10 @@ validationTests:
             namespace: default
             name: px-ingress
             annotations:
-              haproxy-haptic.org/proxy-cookie-domain: "old.example.com new.example.com"
-              haproxy-haptic.org/proxy-cookie-path: "/old /new"
-              haproxy-haptic.org/proxy-redirect-from: "http://old.svc"
-              haproxy-haptic.org/proxy-redirect-to: "https://new.svc"
+              haproxy-haptic.org/response-cookie-domain: "old.example.com new.example.com"
+              haproxy-haptic.org/response-cookie-path: "/old /new"
+              haproxy-haptic.org/response-location-rewrite-from: "http://old.svc"
+              haproxy-haptic.org/response-location-rewrite-to: "https://new.svc"
           spec:
             ingressClassName: haptic
             rules:
@@ -213,7 +183,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: px-svc
+                          name: echo
                           port:
                             number: 80
     assertions:

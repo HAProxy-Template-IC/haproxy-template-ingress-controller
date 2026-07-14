@@ -42,6 +42,27 @@ templatingSettings:
     # the vendor libraries' hash-validation guard. Default accepts bcrypt
     # ($2a/$2b/$2y), Apache MD5 ($apr1), and crypt SHA-256/512 ($5/$6) / MD5 ($1).
     hapticPasswordHashRegex: '^\$(2[aby]|apr1|1|5|6)\$'
+    # Shared-cache (Varnish tier) wiring. The chart overrides these from
+    # controller.cache.varnish via templates/haproxytemplateconfig.yaml when the
+    # tier is enabled; the fallbacks keep the caching snippets renderable
+    # (offline/standalone) when it is not. hapticCacheEnabled gates whether the
+    # varnish_cache backend + routing are emitted at all.
+    hapticCacheEnabled: "false"
+    hapticCacheVarnishService: "haptic-varnish-cache"
+    hapticCacheVarnishNamespace: "default"
+    hapticCacheVarnishPort: "6081"
+    # HAProxy origin the Varnish tier loops back to on a miss; the chart sets
+    # these to the controller-managed HAProxy Service (host + HTTP port).
+    hapticCacheOriginHost: "haptic"
+    hapticCacheOriginPort: "80"
+    # Bounded-load consistent hashing: cap any one Varnish shard's share to this
+    # factor of the mean (prevents a hot key pinning a pod). 0 disables.
+    hapticCacheHashBalanceFactor: "150"
+    # Varnish workload shape (chart-overridden from controller.cache.varnish.*).
+    hapticCacheWorkload: "statefulset"          # statefulset | deployment
+    hapticCacheReplicas: "2"
+    hapticCacheImage: "varnish:7.6"
+    hapticCacheMalloc: "256m"                    # -s malloc,<size> (≈75% of the mem limit)
 
 watchedResources:
   secrets:

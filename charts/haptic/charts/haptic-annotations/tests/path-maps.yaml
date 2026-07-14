@@ -1,4 +1,4 @@
-# HAPTIC-native annotation library — path-type + server-alias validation tests.
+# HAPTIC-native annotation library — path-type + host-alias validation tests.
 # Mirrors the haproxy-ingress vendor tests under the haproxy-haptic.org/* prefix.
 # Default ingress class is "haptic".
 validationTests:
@@ -124,21 +124,12 @@ validationTests:
         pattern: '(?m)^regex\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_regex-ingress_svc_regex-service_80$'
 
   # ==========================================================================
-  # server-alias / server-alias-regex: extra hostnames → primary host's routes
+  # host-alias / host-alias-regex: extra hostnames → primary host's routes
   # ==========================================================================
 
   test-haptic-server-alias:
-    description: haproxy-haptic.org/server-alias routes extra exact hostnames to the primary host key
+    description: haproxy-haptic.org/host-alias routes extra exact hostnames to the primary host key
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: alias-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -146,7 +137,7 @@ validationTests:
             namespace: default
             name: alias-ingress
             annotations:
-              haproxy-haptic.org/server-alias: "alias1.example.com, alias2.example.com"
+              haproxy-haptic.org/host-alias: "alias1.example.com, alias2.example.com"
           spec:
             ingressClassName: haptic
             rules:
@@ -157,7 +148,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: alias-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -173,17 +164,8 @@ validationTests:
         pattern: "(?m)^alias2\\.example\\.com primary\\.example\\.com$"
 
   test-haptic-server-alias-regex:
-    description: haproxy-haptic.org/server-alias-regex maps a hostname regex to the primary host key
+    description: haproxy-haptic.org/host-alias-regex maps a hostname regex to the primary host key
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: alias-regex-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -191,7 +173,7 @@ validationTests:
             namespace: default
             name: alias-regex-ingress
             annotations:
-              haproxy-haptic.org/server-alias-regex: "^app[0-9]+\\.example\\.com$"
+              haproxy-haptic.org/host-alias-regex: "^app[0-9]+\\.example\\.com$"
           spec:
             ingressClassName: haptic
             rules:
@@ -202,7 +184,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: alias-regex-service
+                          name: echo
                           port:
                             number: 80
     assertions:

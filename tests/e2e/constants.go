@@ -108,6 +108,11 @@ var ChartHAProxyVersion = func() string {
 // re-tags it with the haproxy-version suffix the chart expects.
 var ControllerImageName = "haptic:test-haproxy" + ChartHAProxyVersion
 
+// VarnishImage is the stock upstream Varnish image the shared-cache tier
+// deploys. Must match charts/haptic/values.yaml controller.cache.varnish.image.
+// Loaded into kind by the cache shard so the StatefulSet needn't reach Docker Hub.
+const VarnishImage = "varnish:7.6"
+
 // Debug endpoint paths, mirrored from tests/acceptance/constants.go.
 const (
 	DebugPathConfig    = "/debug/vars/config"

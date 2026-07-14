@@ -799,7 +799,7 @@ templateSnippets:
   # ============================================================================
   # WAF (Coraza via SPOA hub)
   #   haproxy-haptic.org/waf + /waf-mode → enforcement-mode map (coraza_mode).
-  #   haproxy-haptic.org/modsecurity-snippet → per-app SecRule directives.
+  #   haproxy-haptic.org/waf-rules → per-app SecRule directives.
   #   Both require spoaHub.plugins.coraza (fail-loud when absent).
   # ============================================================================
   map-haproxy-ingress-waf-820-haptic:
@@ -840,7 +840,7 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-  # modsecurity-snippet scan → gf["sphCorazaApps"] (consumed by spoa-hub's
+  # waf-rules scan → gf["sphCorazaApps"] (consumed by spoa-hub's
   # config-content per-app blocks). Cached via shared.ComputeIfAbsent so it
   # runs once. Seeds from any existing gf["sphCorazaApps"] and appends (deduped
   # by <ns>/<name>) so it produces the UNION rather than clobbering a vendor
@@ -879,10 +879,10 @@ templateSnippets:
             var ns = ingress.Metadata.Namespace
             var name = ingress.Metadata.Name
             var key = ns + "/" + name
-            var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/modsecurity-snippet"]
+            var snippet = ingress.Metadata.Annotations["haproxy-haptic.org/waf-rules"]
             if snippet != "" {
               if strings_contains(snippet, "\"\"\"") {
-                fail("Ingress " + key + " annotation 'haproxy-haptic.org/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
+                fail("Ingress " + key + " annotation 'haproxy-haptic.org/waf-rules' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
               }
               byKey[key] = map[string]any{"ns": ns, "name": name, "snippet": snippet}
               if !anyAnnotation {
@@ -893,7 +893,7 @@ templateSnippets:
           }
 
           if anyAnnotation && !corazaEnabled {
-            fail("Ingress " + firstAnnotationKey + " sets annotation 'haproxy-haptic.org/modsecurity-snippet' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.")
+            fail("Ingress " + firstAnnotationKey + " sets annotation 'haproxy-haptic.org/waf-rules' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.")
           }
 
           var sortedKeys = keys(byKey)
@@ -907,7 +907,7 @@ templateSnippets:
       %%}
 
   # coraza-app.map: one `<ns>/<name> <ns>/<name>` identity row per Ingress
-  # carrying haproxy-haptic.org/modsecurity-snippet. Iterates the Ingresses
+  # carrying haproxy-haptic.org/waf-rules. Iterates the Ingresses
   # directly (rather than reading gf["sphCorazaApps"]) so it emits only
   # haptic-owned rows — the shared gf list may be a union with a vendor scan,
   # and a vendor library emits its own rows from its own map snippet. Consumed
@@ -915,7 +915,7 @@ templateSnippets:
   map-coraza-app-820-haptic:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/modsecurity-snippet"] != "" -%}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/waf-rules"] != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
           {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ ns }}/{{ name }}

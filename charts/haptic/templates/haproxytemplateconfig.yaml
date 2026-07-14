@@ -71,6 +71,34 @@ spec:
   {{- /* HAProxy version (used by version-gated features such as shm-stats-file) */ -}}
   {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
 
+  {{- /* Shared cache (Varnish tier). When enabled, the caching library emits the
+         varnish_cache routing/backend and the k8sResources Varnish workload.
+         The Varnish loopback origin is the chart's HAProxy Service. */ -}}
+  {{- if $controller.cache.varnish.enabled }}
+    {{- $varnish := $controller.cache.varnish }}
+    {{- $_ := set $extraContext "hapticCacheEnabled" "true" }}
+    {{- $_ := set $extraContext "hapticCacheVarnishService" (printf "%s-varnish-cache" (include "haptic.fullname" .)) }}
+    {{- $_ := set $extraContext "hapticCacheVarnishNamespace" .Release.Namespace }}
+    {{- $_ := set $extraContext "hapticCacheWorkload" $varnish.workload }}
+    {{- $_ := set $extraContext "hapticCacheReplicas" ($varnish.replicas | toString) }}
+    {{- $_ := set $extraContext "hapticCacheImage" $varnish.image }}
+    {{- $_ := set $extraContext "hapticCacheMalloc" $varnish.malloc }}
+    {{- $_ := set $extraContext "hapticCacheHashBalanceFactor" ($varnish.hashBalanceFactor | toString) }}
+    {{- $_ := set $extraContext "hapticCacheOriginHost" (include "haptic.haproxyFullname" .) }}
+    {{- $_ := set $extraContext "hapticCacheOriginPort" (.Values.haproxy.ports.http | toString) }}
+    {{- $vres := $varnish.resources | default dict }}
+    {{- $_ := set $extraContext "hapticCacheCpuRequest" (dig "requests" "cpu" "100m" $vres | toString) }}
+    {{- $_ := set $extraContext "hapticCacheMemRequest" (dig "requests" "memory" "384Mi" $vres | toString) }}
+    {{- $_ := set $extraContext "hapticCacheMemLimit" (dig "limits" "memory" "384Mi" $vres | toString) }}
+    {{- if $varnish.autoscaling.enabled }}
+    {{- $_ := set $extraContext "hapticCacheAutoscalingEnabled" "true" }}
+    {{- $_ := set $extraContext "hapticCacheMinReplicas" ($varnish.autoscaling.minReplicas | toString) }}
+    {{- $_ := set $extraContext "hapticCacheMaxReplicas" ($varnish.autoscaling.maxReplicas | toString) }}
+    {{- $_ := set $extraContext "hapticCacheTargetCPU" ($varnish.autoscaling.targetCPUUtilizationPercentage | toString) }}
+    {{- $_ := set $extraContext "hapticCacheScaleDownWindow" ($varnish.autoscaling.scaleDownStabilizationSeconds | toString) }}
+    {{- end }}
+  {{- end }}
+
   {{- /* Controller's own namespace + HAProxy pod selector. Templates that
          emit owned resources via renderResource() (e.g. per-Gateway
          LoadBalancer Services for SupportGatewayStaticAddresses) need

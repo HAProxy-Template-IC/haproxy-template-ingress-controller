@@ -45,4 +45,23 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- if .Values.controller.cache.varnish.enabled }}
+  # Shared-cache (Varnish) tier: the haptic-annotations library's k8sResources
+  # emit a VCL ConfigMap + a StatefulSet (or Deployment) into the controller's
+  # own namespace, applied via SSA by the resource applier. Same-namespace, so
+  # granted here (Role) not cluster-wide. SSA needs patch (with create for the
+  # first apply); delete covers orphan cleanup when the tier is disabled.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- if .Values.controller.cache.varnish.autoscaling.enabled }}
+  # The cache tier's HPA is applied via SSA when autoscaling is enabled.
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
+  {{- end }}
 {{- end }}

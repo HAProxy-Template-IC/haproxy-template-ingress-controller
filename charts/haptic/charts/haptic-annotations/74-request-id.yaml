@@ -1,0 +1,81 @@
+# HAPTIC-native annotation library — request correlation ID.
+#
+# Generates a per-request unique ID (HAProxy `unique-id`) and forwards it to the
+# upstream in a configurable header (default X-Request-ID), so a request can be
+# correlated across HAProxy logs and the backend. Host-scoped per Ingress.
+#
+# unique-id-format is a defaults-section directive (emitted once, gated on any
+# Ingress opting in); the per-Ingress set-header lives in frontend-filters-*.
+templateSnippets:
+
+  # ==========================================================================
+  # unique-id-format — emitted once in `defaults` if any Ingress opts in.
+  # Referencing %[unique-id] anywhere generates the id lazily per transaction;
+  # without a format set it would resolve empty, so this must be present.
+  # ==========================================================================
+  defaults-settings-810-haptic-request-id:
+    template: |
+      {#-
+        HAPTIC request-id — unique-id-format registration.
+
+        Emitted once (not per-Ingress) when at least one Ingress sets
+        haproxy-haptic.org/request-id: "true". The format is fixed and
+        header-safe (colon/underscore separated, no spaces); operators who need
+        a custom format use haproxy-haptic.org/config-defaults raw injection.
+      -#}
+      {%- var enabled = false %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/request-id"] == "true" %}{%- enabled = true %}{%- end %}
+      {%- end %}
+      {%- if enabled %}
+      # haptic/request-id
+      unique-id-format %ci:%cp_%fi:%fp_%Ts_%rt:%pid
+      {%- end %}
+
+  # ==========================================================================
+  # Per-Ingress set-header (host-scoped). frontend-filters-* inherit no locals.
+  # ==========================================================================
+  frontend-filters-880-haptic-request-id:
+    template: |
+      {#-
+        HAPTIC request-id — forward a correlation ID upstream.
+
+        Annotations:
+          - haproxy-haptic.org/request-id: "true" (enables the feature)
+          - haproxy-haptic.org/request-id-header: "<name>" (default X-Request-ID)
+          - haproxy-haptic.org/request-id-accept-inbound: "true"
+              preserve a client-supplied header value instead of overwriting it
+              (default: always generate a fresh id, ignoring client input — a
+              client-set id can't be trusted for internal correlation).
+
+        Generated HAProxy Config (host-scoped):
+          accept-inbound=false (default):
+            http-request set-header <H> %[unique-id] if <host-match>
+          accept-inbound=true:
+            http-request set-header <H> %[unique-id] if <host-match> !{ req.hdr(<H>) -m found }
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/request-id"] == "true" %}
+            {%- var hdr = ingress.Metadata.Annotations["haproxy-haptic.org/request-id-header"] %}
+            {%- if hdr == "" %}{%- hdr = "X-Request-ID" %}{%- end %}
+            {%- var h = ValidateConfigValue(hdr, "haproxy-haptic.org/request-id-header", key, false) %}
+            {%- var acceptInbound = ingress.Metadata.Annotations["haproxy-haptic.org/request-id-accept-inbound"] == "true" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haptic/request-id ({{ key }})
+              {%- if acceptInbound %}
+      http-request set-header {{ h }} %[unique-id] if {{ HostMatchCondition(hosts) }} !{ req.hdr({{ h }}) -m found }
+              {%- else %}
+      http-request set-header {{ h }} %[unique-id] if {{ HostMatchCondition(hosts) }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}

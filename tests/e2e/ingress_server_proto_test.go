@@ -34,6 +34,7 @@ import (
 // Combined with server-ssl=true so the backend connection is over TLS
 // (HAProxy needs the TLS layer to negotiate ALPN).
 func TestIngressServerProtoH2(t *testing.T) {
+	RequireVendorLibrary(t, "haproxytech")
 	t.Parallel()
 	host := "ingress-server-proto-h2.localdev.me"
 

@@ -18,6 +18,8 @@ args
 asdf
 async
 Automount
+autoscale
+Autoscale
 autoscaling
 Autoscaling
 AWS
@@ -37,11 +39,13 @@ builtins
 Burstable
 bursty
 CA
+cacheable
 callee
 callees
 CAPTCHAs
 cgroup
 cgroups
+charset
 CIDR
 CIDRs
 cleartext
@@ -181,6 +185,7 @@ info
 Ingress
 ingress
 IngressClass
+inlined
 inlines
 IP
 IP's
@@ -370,6 +375,7 @@ typegen
 UDP
 UID
 UIDs
+uncacheable
 unmocked
 unparseable
 unserved

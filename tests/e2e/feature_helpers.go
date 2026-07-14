@@ -18,12 +18,74 @@ package e2e
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 )
+
+// vendorPrefixes maps a vendor annotation prefix to the chart template-library
+// flag that must be enabled for those annotations to take effect.
+var vendorPrefixes = map[string]string{
+	"haproxy.org/":                 "haproxytech",
+	"haproxy-ingress.github.io/":   "haproxyIngress",
+	"nginx.ingress.kubernetes.io/": "nginxIngress",
+}
+
+// activeVendorLibrary returns the single vendor library enabled in the current
+// e2e shard (from HAPTIC_E2E_PROFILE), or "" for the core / conformance
+// profiles. See the sharding note in main_test.go.
+func activeVendorLibrary() string {
+	switch os.Getenv("HAPTIC_E2E_PROFILE") {
+	case "haproxytech":
+		return "haproxytech"
+	case "haproxy-ingress":
+		return "haproxyIngress"
+	case "nginx":
+		return "nginxIngress"
+	default:
+		return ""
+	}
+}
+
+// RequireVendorLibrary skips the test unless the named vendor library
+// (haproxytech | haproxyIngress | nginxIngress) is the one enabled in the
+// current e2e shard. Use it in vendor tests whose setup doesn't run through
+// RunSimpleIngressTest.
+func RequireVendorLibrary(t *testing.T, lib string) {
+	t.Helper()
+	if activeVendorLibrary() != lib {
+		t.Skipf("vendor library %q is not enabled in this e2e shard (HAPTIC_E2E_PROFILE=%q); it runs in the %q shard", lib, os.Getenv("HAPTIC_E2E_PROFILE"), lib)
+	}
+}
+
+// RequireCacheProfile skips the test unless the Varnish cache shard is active
+// (HAPTIC_E2E_PROFILE=cache) — the only profile that deploys the cache tier.
+func RequireCacheProfile(t *testing.T) {
+	t.Helper()
+	if os.Getenv("HAPTIC_E2E_PROFILE") != "cache" {
+		t.Skipf("Varnish cache tier not deployed in this shard (HAPTIC_E2E_PROFILE=%q); it runs in the cache shard", os.Getenv("HAPTIC_E2E_PROFILE"))
+	}
+}
+
+// skipIfVendorDisabled skips the test if any of its annotations use a vendor
+// prefix whose library isn't the one enabled in the current shard. This
+// auto-gates every RunSimpleIngressTest-based vendor test with no per-test
+// change: a haproxy.org/* test runs only in the haproxytech shard, and so on.
+func skipIfVendorDisabled(t *testing.T, annotations map[string]string) {
+	t.Helper()
+	active := activeVendorLibrary()
+	for key := range annotations {
+		for prefix, lib := range vendorPrefixes {
+			if strings.HasPrefix(key, prefix) && lib != active {
+				t.Skipf("annotation %q needs vendor library %q, not enabled in this e2e shard (HAPTIC_E2E_PROFILE=%q)", key, lib, os.Getenv("HAPTIC_E2E_PROFILE"))
+			}
+		}
+	}
+}
 
 // SimpleIngressTest captures the most common test shape: one Ingress
 // pointing at a per-test echo-server, plus one or more behavioural
@@ -101,6 +163,8 @@ func RunSimpleIngressTest(t *testing.T, sit SimpleIngressTest) {
 	if len(sit.Assess) == 0 {
 		t.Fatalf("RunSimpleIngressTest %q: at least one assertion required", sit.Description)
 	}
+	// Auto-skip vendor-annotation tests in shards where their library is off.
+	skipIfVendorDisabled(t, sit.Annotations)
 
 	feature := features.New(sit.Description).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

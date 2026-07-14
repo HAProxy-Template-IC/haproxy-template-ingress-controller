@@ -328,15 +328,38 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 	if os.Getenv("SKIP_CLUSTER_CREATE") == "true" {
 		return ctx, nil
 	}
+	if err := loadImageIntoKind(ctx, ControllerImageName); err != nil {
+		return ctx, err
+	}
+	// The cache shard deploys the Varnish tier. Pull the (stock upstream) image
+	// on the host and load it into kind so the StatefulSet doesn't depend on the
+	// kind node reaching Docker Hub (and no rate-limit flakiness in CI).
+	if os.Getenv("HAPTIC_E2E_PROFILE") == "cache" {
+		pull := exec.CommandContext(ctx, "docker", "pull", VarnishImage)
+		pull.Stdout, pull.Stderr = os.Stderr, os.Stderr
+		if err := pull.Run(); err != nil {
+			return ctx, fmt.Errorf("docker pull %s: %w", VarnishImage, err)
+		}
+		if err := loadImageIntoKind(ctx, VarnishImage); err != nil {
+			return ctx, err
+		}
+	}
+	return ctx, nil
+}
 
-	saveCmd := exec.CommandContext(ctx, "docker", "save", ControllerImageName)
+// loadImageIntoKind pipes `docker save <image>` into `ctr image import` inside
+// the kind control-plane container. We avoid `kind load docker-image` because it
+// stages a tar in $TMPDIR, which fails when dockerd runs under systemd
+// PrivateTmp=yes (daemon and caller see different /tmp namespaces).
+func loadImageIntoKind(ctx context.Context, image string) error {
+	saveCmd := exec.CommandContext(ctx, "docker", "save", image)
 	importCmd := exec.CommandContext(ctx, "docker", "exec", "-i",
 		ClusterName+"-control-plane",
 		"ctr", "--namespace=k8s.io", "images", "import", "-")
 
 	pipe, err := saveCmd.StdoutPipe()
 	if err != nil {
-		return ctx, fmt.Errorf("pipe docker save: %w", err)
+		return fmt.Errorf("pipe docker save: %w", err)
 	}
 	importCmd.Stdin = pipe
 	importCmd.Stdout = os.Stderr
@@ -344,16 +367,16 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 	saveCmd.Stderr = os.Stderr
 
 	if err := importCmd.Start(); err != nil {
-		return ctx, fmt.Errorf("start ctr import: %w", err)
+		return fmt.Errorf("start ctr import: %w", err)
 	}
 	if err := saveCmd.Run(); err != nil {
 		_ = importCmd.Wait()
-		return ctx, fmt.Errorf("docker save %s: %w", ControllerImageName, err)
+		return fmt.Errorf("docker save %s: %w", image, err)
 	}
 	if err := importCmd.Wait(); err != nil {
-		return ctx, fmt.Errorf("ctr image import: %w", err)
+		return fmt.Errorf("ctr image import %s: %w", image, err)
 	}
-	return ctx, nil
+	return nil
 }
 
 // installCRDs applies the chart's CRD manifests. We do this separately
@@ -534,10 +557,24 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	// fixtures that don't belong in conformance runs.
 	profile := os.Getenv("HAPTIC_E2E_PROFILE")
 	var valuesBytes []byte
+	// vendorLib names the ONE vendor annotation library a per-vendor shard
+	// enables on top of the core values. Empty for the core / conformance runs.
+	var vendorLib string
+	// cacheProfile enables the Varnish shared-cache tier for the cache shard.
+	cacheProfile := profile == "cache"
 	switch profile {
 	case "conformance":
 		valuesBytes = devassets.ConformanceValuesYAML
 		fmt.Fprintln(os.Stderr, "e2e: using conformance values profile")
+	case "haproxytech":
+		valuesBytes = devassets.E2EValuesYAML
+		vendorLib = "haproxytech"
+	case "haproxy-ingress":
+		valuesBytes = devassets.E2EValuesYAML
+		vendorLib = "haproxyIngress"
+	case "nginx":
+		valuesBytes = devassets.E2EValuesYAML
+		vendorLib = "nginxIngress"
 	default:
 		valuesBytes = devassets.E2EValuesYAML
 	}
@@ -589,6 +626,28 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		// httpclient picks the right destination automatically.
 		"--set", "haproxy.service.type=LoadBalancer",
 		"--timeout", DefaultHelmInstallTimeout.String(),
+	}
+	// Per-vendor e2e sharding. The core profile (default) installs with all three
+	// vendor annotation libraries DISABLED (e2e-values.yaml) — enabling all three
+	// at once produces a HAProxyTemplateConfig CR that exceeds etcd's ~1.5 MiB
+	// object limit, a config no real user runs (the vendor libraries are
+	// mutually-exclusive migration aids; a user enables at most one). Each vendor
+	// is instead exercised in its own shard (HAPTIC_E2E_PROFILE=haproxytech |
+	// haproxy-ingress | nginx), which enables just that one library on top of the
+	// core. Vendor tests skip in shards where their library is off — see
+	// skipIfVendorDisabled / RequireVendorLibrary in feature_helpers.go.
+	if vendorLib != "" {
+		args = append(args, "--set", "controller.templateLibraries."+vendorLib+".enabled=true")
+		fmt.Fprintf(os.Stderr, "e2e: vendor shard — enabling %s on top of core values\n", vendorLib)
+	}
+	// Cache shard: deploy the Varnish tier (one replica keeps the shard quick).
+	// The tier's origin is the HAProxy Service; loopback + caching are exercised
+	// by TestHapticVarnishCache (gated on this profile via RequireCacheProfile).
+	if cacheProfile {
+		args = append(args,
+			"--set", "controller.cache.varnish.enabled=true",
+			"--set", "controller.cache.varnish.replicas=1")
+		fmt.Fprintln(os.Stderr, "e2e: cache shard — enabling the Varnish cache tier")
 	}
 	// dev-values.yaml hardcodes spoaHub.image.tag=main-latest. CI sets
 	// SPOA_TAG to ci-${CI_PIPELINE_ID} so the test loads the spoa-hub

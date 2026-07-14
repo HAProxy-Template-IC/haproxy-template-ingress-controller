@@ -43,6 +43,7 @@ import (
 // (a single process firing back-to-back keep-alive requests), where
 // every request shares one pod IP and the limit reliably fires.
 func TestIngressRateLimit(t *testing.T) {
+	RequireVendorLibrary(t, "haproxytech")
 	t.Parallel()
 	host := "ingress-ratelimit.localdev.me"
 

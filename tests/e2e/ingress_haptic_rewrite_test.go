@@ -22,24 +22,22 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
-// TestHapticPathRewrite adapts the vendor path-rewrite e2e tests
-// (TestIngressPathRewrite / ingress_rewrite_test.go) to the native
-// haproxy-haptic.org/* annotation library. It exercises the two haptic
-// canonical path-rewrite keys end-to-end, verifying via echo-server's
+// TestHapticPathRewrite exercises both forms of the haptic-native
+// haproxy-haptic.org/path-rewrite key end-to-end, verifying via echo-server's
 // reflected path that the upstream sees the rewritten path.
 //
-//   - haproxy-haptic.org/path-rewrite (haproxytech form): a "<from> <to>"
-//     value emits `http-request replace-path <from> <to>`, so the matched
-//     prefix is stripped before forwarding.
-//   - haproxy-haptic.org/rewrite-target (haproxy-ingress / nginx form): a
-//     value carrying a `$N` backreference is translated to HAProxy's `\N`
-//     and emitted as backend-scoped `http-request replace-path (.*) <value>`.
+//   - two-token form: a "<from> <to>" value emits
+//     `http-request replace-path <from> <to>`, so the matched prefix is
+//     stripped (or rewritten) before forwarding.
+//   - bare form: a value with no space emits
+//     `http-request replace-path (.*) <value>`, replacing the whole request
+//     path with the given value.
 func TestHapticPathRewrite(t *testing.T) {
 	t.Parallel()
 
-	// path-rewrite: strip the /api/v1/ prefix via the "<from> <to>" form.
+	// Two-token form: strip the /api/v1/ prefix via "<from> <to>".
 	RunSimpleIngressTest(t, SimpleIngressTest{
-		Description: "Ingress: haproxy-haptic.org/path-rewrite annotation",
+		Description: "Ingress: haproxy-haptic.org/path-rewrite two-token form",
 		Host:        "ingress-haptic-rewrite.localdev.me",
 		Annotations: map[string]string{
 			"haproxy-haptic.org/path-rewrite": `^/api/v1/(.*) /\1`,
@@ -60,19 +58,25 @@ func TestHapticPathRewrite(t *testing.T) {
 		},
 	})
 
-	// rewrite-target: prepend /backend using the nginx-style $1 capture,
-	// which translates to HAProxy's \1 backreference over the whole path.
+	// Bare form: a value with no space replaces the whole path, so every
+	// request lands on /backend at the upstream regardless of the request path.
 	RunSimpleIngressTest(t, SimpleIngressTest{
-		Description: "Ingress: haproxy-haptic.org/rewrite-target annotation",
-		Host:        "ingress-haptic-rewrite-target.localdev.me",
+		Description: "Ingress: haproxy-haptic.org/path-rewrite bare whole-path form",
+		Host:        "ingress-haptic-rewrite-bare.localdev.me",
 		Annotations: map[string]string{
-			"haproxy-haptic.org/rewrite-target": `/backend$1`,
+			"haproxy-haptic.org/path-rewrite": `/backend`,
 		},
 		Assess: []SimpleIngressAssertion{
 			{
-				Name: "/svc prepends /backend at the backend",
+				Name: "/svc rewrites to /backend at the backend",
 				Check: func(t *testing.T, host string) {
-					httpclient.New(t).GET(host, "/svc").ExpectEchoPath(t, "/backend/svc")
+					httpclient.New(t).GET(host, "/svc").ExpectEchoPath(t, "/backend")
+				},
+			},
+			{
+				Name: "/deep/nested/path also rewrites to /backend at the backend",
+				Check: func(t *testing.T, host string) {
+					httpclient.New(t).GET(host, "/deep/nested/path").ExpectEchoPath(t, "/backend")
 				},
 			},
 		},
