@@ -1,0 +1,54 @@
+# HAPTIC-native annotation library — request-id validation tests.
+validationTests:
+  test-haptic-request-id:
+    description: >-
+      request-id emits unique-id-format once in defaults and a host-scoped
+      set-header per Ingress; accept-inbound adds the "only if absent" guard and
+      the default header name is X-Request-ID.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rid-overwrite
+            annotations:
+              haproxy-haptic.org/request-id: "true"
+              haproxy-haptic.org/request-id-header: "X-Trace-Id"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: a.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: dummy, port: { number: 80 } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rid-inbound
+            annotations:
+              haproxy-haptic.org/request-id: "true"
+              haproxy-haptic.org/request-id-accept-inbound: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: b.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: dummy, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "unique-id-format %ci:%cp_%fi:%fp_%Ts_%rt:%pid"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Trace-Id %\\[unique-id\\] if"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Request-ID %\\[unique-id\\] if .* !\\{ req.hdr\\(X-Request-ID\\) -m found \\}"

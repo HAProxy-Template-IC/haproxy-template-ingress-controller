@@ -48,6 +48,7 @@ import (
 // `frontend-spoe-filters-050-coraza` — traffic still passes even when
 // the SecRule matches.
 func TestIngressHaproxyIngressWafDeny(t *testing.T) {
+	RequireVendorLibrary(t, "haproxyIngress")
 	const (
 		denyHost   = "ingress-haproxy-ingress-waf-deny.localdev.me"
 		detectHost = "ingress-haproxy-ingress-waf-detect.localdev.me"

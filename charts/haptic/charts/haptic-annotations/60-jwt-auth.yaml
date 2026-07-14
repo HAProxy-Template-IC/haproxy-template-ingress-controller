@@ -1,0 +1,202 @@
+# HAPTIC-native annotation library — JWT bearer-token authentication.
+#
+# Verifies a JWT presented in the Authorization: Bearer header against an
+# asymmetric public key (RS*/ES*/PS*) held in a Secret, with a hardened
+# alg-confusion guard, standard claim checks (exp/iss/aud/required), optional
+# claim forwarding, and the shared consumer identity (txn.haptic_consumer,
+# from the `sub` claim). Runs at backend-directives-805 — before API-key auth
+# (806) — so a JWT `sub` wins the set-once consumer identity.
+#
+# Security model:
+#   - ASYMMETRIC ONLY. HS* (symmetric) JWT is rejected: the shared HMAC secret
+#     would have to be inlined into the rendered config (visible in the
+#     HAProxyCfg CR and on disk). Only the public key ever appears in config.
+#   - Alg-confusion hardened: the token's header `alg` must equal the configured
+#     algorithm AND jwt_verify is called with the CONSTANT configured algorithm
+#     (never the token's), so an attacker can't downgrade RS256→HS256 and sign
+#     with the public key.
+#   - Fail-CLOSED per route: if the key Secret is absent at render time the route
+#     returns 503 (not open, not a whole-render failure); a present-but-malformed
+#     Secret fails the render loudly.
+#   - Forwarded claim headers are del-header'd off the client request first
+#     (a client must not be able to spoof an identity claim).
+templateSnippets:
+
+  # ==========================================================================
+  # util — resolve + cache the JWT public key per Secret; register the PEM file.
+  # ==========================================================================
+  util-haptic-jwt-key:
+    template: |
+      {%- macro ResolveHapticJWTKey(secretNs string, secretName string, ingressKey string, result map[string]any) %}
+        {%%
+          var cacheKey = "haptic_jwt_key:" + secretNs + "/" + secretName
+          var cached, _ = shared.ComputeIfAbsent(cacheKey, func() any {
+            var secret = resources.secrets.GetSingle(secretNs, secretName)
+            if secret == nil {
+              return map[string]any{"found": false, "pubkey": ""}
+            }
+            var pubkey = secret.Data["pubkey.pem"] | b64decode() | tostring()
+            return map[string]any{"found": true, "pubkey": pubkey}
+          })
+          var c = cached.(map[string]any)
+          result["found"] = c["found"]
+          result["filename"] = "haptic-jwt-" + secretNs + "-" + secretName + ".pem"
+          if c["found"] == true {
+            var pubkey = tostring(c["pubkey"])
+            if strip(pubkey) == "" {
+              fail("Secret '" + secretNs + "/" + secretName + "' referenced by 'haproxy-haptic.org/jwt-secret' on Ingress '" + ingressKey + "' has an empty or missing 'pubkey.pem' data key.")
+            }
+            result["pubkey"] = pubkey
+          }
+        %%}
+      {%- end macro -%}
+
+  # ==========================================================================
+  # Register the public-key PEM file once per Secret (global side-effect).
+  # ==========================================================================
+  features-860-haptic-jwt:
+    template: |
+      {#- HAPTIC JWT — register the verification public key (one PEM per Secret). -#}
+      {%- import "util-haptic-jwt-key" for ResolveHapticJWTKey -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var key = ns + "/" + ingress.Metadata.Name %}
+        {%- var jwtSecret = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-secret"] %}
+        {%- if jwtSecret != "" %}
+          {%- var secretNs = ns %}
+          {%- var secretName = jwtSecret %}
+          {%- if strings_contains(jwtSecret, "/") %}
+            {%- var parts = split(jwtSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var info = map[string]any{} %}
+          {{- ResolveHapticJWTKey(secretNs, secretName, key, info) -}}
+          {%- if info["found"] == true %}
+            {%- var filename = tostring(info["filename"]) %}
+            {%- if first_seen("haptic_jwt_file", filename) %}
+              {%- var _, regErr = fileRegistry.Register("file", filename, tostring(info["pubkey"])) %}
+              {%- if regErr != nil %}{{ fail("failed to register JWT public key " + filename + ": " + tostring(regErr)) }}{%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # JWT verification chain (backend-directives; inherit_context).
+  # ==========================================================================
+  backend-directives-805-haptic-jwt:
+    template: |
+      {#-
+        HAPTIC JWT auth.
+
+        Annotations:
+          - haproxy-haptic.org/jwt-secret: "<ns/name>" | "<name>" (required; Secret
+            with a `pubkey.pem` data key holding the PEM public key)
+          - haproxy-haptic.org/jwt-algorithm: RS256 (default) | RS384/512, ES256/384/512,
+            PS256/384/512 — asymmetric only
+          - haproxy-haptic.org/jwt-issuer: required `iss` claim value (optional)
+          - haproxy-haptic.org/jwt-audience: required `aud` claim value (optional)
+          - haproxy-haptic.org/jwt-required-claims: comma-separated claim names that
+            must be present (optional)
+          - haproxy-haptic.org/jwt-forward-claims: comma-separated `<claim>:<header>`
+            pairs forwarded upstream after successful verification (optional)
+
+        Generated HAProxy Config (in the backend):
+          http-request del-header <forward-headers...>
+          http-request set-var(txn.haptic_jwt_alg) http_auth_bearer,jwt_header_query('$.alg')
+          http-request deny deny_status 401 unless { var(txn.haptic_jwt_alg) -m str <ALG> }
+          http-request deny deny_status 401 unless { http_auth_bearer,jwt_verify(<ALG>,"<pem>") -m int 1 }
+          # exp/iss/aud/required-claim denies …
+          http-request set-var(txn.haptic_consumer) http_auth_bearer,jwt_payload_query('$.sub') unless { var(txn.haptic_consumer) -m found }
+          http-request set-header <header> %[http_auth_bearer,jwt_payload_query('$.<claim>')]
+      -#}
+      {%- import "util-haptic-jwt-key" for ResolveHapticJWTKey -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var key = ns + "/" + ingress.Metadata.Name %}
+        {%- var jwtSecret = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-secret"] %}
+        {%- if jwtSecret != "" %}
+          {%- var secretNs = ns %}
+          {%- var secretName = jwtSecret %}
+          {%- if strings_contains(jwtSecret, "/") %}
+            {%- var parts = split(jwtSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var alg = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-algorithm"] %}
+          {%- if alg == "" %}{%- alg = "RS256" %}{%- end %}
+          {%- if !regex_search(alg, "^(RS|ES|PS)(256|384|512)$") %}
+            {{- fail("Invalid value '" + alg + "' for annotation 'haproxy-haptic.org/jwt-algorithm' on Ingress '" + key + "'. Only asymmetric algorithms are supported (RS256/384/512, ES256/384/512, PS256/384/512); symmetric HS* JWT would require inlining the shared secret.") -}}
+          {%- end %}
+          {%- var info = map[string]any{} %}
+          {{- ResolveHapticJWTKey(secretNs, secretName, key, info) -}}
+      # haptic/jwt ({{ key }})
+          {%- if info["found"] != true %}
+      # WARNING haproxy-haptic.org/jwt-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until the key is present.
+      http-request deny deny_status 503
+          {%- else %}
+            {%- var pemPath, _ = pathResolver.GetPath(tostring(info["filename"]), "file") %}
+            {#- Anti-spoof: strip any client-supplied forward-claim headers first. -#}
+            {%- var fwd = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-forward-claims"] %}
+            {%- if fwd != "" %}
+              {%- for _, pair := range split(fwd, ",") %}
+                {%- var p = strip(pair) %}
+                {%- if p != "" && strings_contains(p, ":") %}
+                  {%- var kv = strings_splitn(p, ":", 2) %}
+                  {%- var fh = ValidateConfigValue(strip(kv[1]), "haproxy-haptic.org/jwt-forward-claims", key, false) %}
+      http-request del-header {{ fh }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+      http-request set-var(txn.haptic_jwt_alg) http_auth_bearer,jwt_header_query('$.alg')
+      http-request deny deny_status 401 unless { var(txn.haptic_jwt_alg) -m str {{ alg }} }
+      http-request deny deny_status 401 unless { http_auth_bearer,jwt_verify({{ alg }},"{{ pemPath }}") -m int 1 }
+            {#- exp: enforce only when the claim is present (expired = exp - now < 0). -#}
+      http-request set-var(txn.haptic_jwt_now) date()
+      http-request set-var(txn.haptic_jwt_exp) http_auth_bearer,jwt_payload_query('$.exp','int')
+      http-request deny deny_status 401 if { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
+            {%- var iss = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-issuer"] %}
+            {%- if iss != "" %}
+              {%- var issV = ValidateConfigValue(iss, "haproxy-haptic.org/jwt-issuer", key, false) %}
+              {%- if regex_search(issV, "[\"{}\\\\]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/jwt-issuer' on Ingress '" + key + "': must not contain '\"', '{', '}' or '\\'.") }}{%- end %}
+      http-request deny deny_status 401 unless { http_auth_bearer,jwt_payload_query('$.iss') -m str "{{ issV }}" }
+            {%- end %}
+            {%- var aud = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-audience"] %}
+            {%- if aud != "" %}
+              {%- var audV = ValidateConfigValue(aud, "haproxy-haptic.org/jwt-audience", key, false) %}
+              {%- if regex_search(audV, "[\"{}\\\\]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/jwt-audience' on Ingress '" + key + "': must not contain '\"', '{', '}' or '\\'.") }}{%- end %}
+      http-request deny deny_status 401 unless { http_auth_bearer,jwt_payload_query('$.aud') -m str "{{ audV }}" }
+            {%- end %}
+            {%- var reqClaims = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-required-claims"] %}
+            {%- if reqClaims != "" %}
+              {%- for _, claim := range split(reqClaims, ",") %}
+                {%- var cl = strip(claim) %}
+                {%- if cl != "" %}
+                  {%- if !regex_search(cl, "^[A-Za-z0-9_-]+$") %}
+                    {{- fail("Invalid claim name '" + cl + "' in annotation 'haproxy-haptic.org/jwt-required-claims' on Ingress '" + key + "'. Allowed characters: letters, digits, '_', '-'.") -}}
+                  {%- end %}
+      http-request deny deny_status 401 unless { http_auth_bearer,jwt_payload_query('$.{{ cl }}') -m found }
+                {%- end %}
+              {%- end %}
+            {%- end %}
+            {#- Valid past this point. Establish the shared consumer identity (set-once). -#}
+      http-request set-var(txn.haptic_consumer) http_auth_bearer,jwt_payload_query('$.sub') unless { var(txn.haptic_consumer) -m found }
+            {%- if fwd != "" %}
+              {%- for _, pair := range split(fwd, ",") %}
+                {%- var p = strip(pair) %}
+                {%- if p != "" && strings_contains(p, ":") %}
+                  {%- var kv = strings_splitn(p, ":", 2) %}
+                  {%- var claim = strip(kv[0]) %}
+                  {%- if !regex_search(claim, "^[A-Za-z0-9_-]+$") %}
+                    {{- fail("Invalid claim name '" + claim + "' in annotation 'haproxy-haptic.org/jwt-forward-claims' on Ingress '" + key + "'. Allowed characters: letters, digits, '_', '-'.") -}}
+                  {%- end %}
+                  {%- var fh = ValidateConfigValue(strip(kv[1]), "haproxy-haptic.org/jwt-forward-claims", key, false) %}
+      http-request set-header {{ fh }} %[http_auth_bearer,jwt_payload_query('$.{{ claim }}')]
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}

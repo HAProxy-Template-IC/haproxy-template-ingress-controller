@@ -40,6 +40,7 @@ import (
 // auth-url annotation wiring, and the httpclient retry-with-401-tolerance
 // are all working.
 func TestIngressExternalAuth(t *testing.T) {
+	RequireVendorLibrary(t, "nginxIngress")
 	t.Parallel()
 
 	const (

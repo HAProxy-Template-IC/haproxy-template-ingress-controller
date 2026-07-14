@@ -1,21 +1,11 @@
 # haptic-annotations library — rate-limiting validation tests.
 # Covers per-source request/connection caps (rps/rpm/connections), the tunable
-# period/size/status-code + whitelist, precedence, and the bwlim-out download
-# throttle (limit-rate / limit-rate-after).
+# period/size/status-code + allowlist, precedence, and the bwlim-out download
+# throttle (download-bandwidth-limit / download-bandwidth-limit-after).
 validationTests:
   test-haptic-rate-limit-rps:
-    description: rate-limit-rps with tunable period/size/status-code and whitelist
+    description: rate-limit-rps with tunable period/size/status-code and allowlist
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: rps-service
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -27,7 +17,7 @@ validationTests:
               haproxy-haptic.org/rate-limit-period: "5s"
               haproxy-haptic.org/rate-limit-size: "200k"
               haproxy-haptic.org/rate-limit-status-code: "429"
-              haproxy-haptic.org/rate-limit-whitelist: "10.0.0.0/8,192.168.0.0/16"
+              haproxy-haptic.org/rate-limit-allowlist: "10.0.0.0/8,192.168.0.0/16"
           spec:
             ingressClassName: haptic
             rules:
@@ -38,7 +28,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: rps-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -59,15 +49,6 @@ validationTests:
   test-haptic-rate-limit-rpm-precedence:
     description: rate-limit-rps wins over rate-limit-rpm; rpm is ignored
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: rpm-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -87,7 +68,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: rpm-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -105,15 +86,6 @@ validationTests:
   test-haptic-rate-limit-connections:
     description: rate-limit-connections uses the conn_cur counter
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: conn-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -132,7 +104,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: conn-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -145,17 +117,8 @@ validationTests:
         pattern: "sc_conn_cur.0. gt 100"
 
   test-haptic-limit-rate:
-    description: limit-rate / limit-rate-after emit a bwlim-out download throttle
+    description: download-bandwidth-limit / download-bandwidth-limit-after emit a bwlim-out download throttle
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: bw-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -163,8 +126,8 @@ validationTests:
             namespace: default
             name: bw-ingress
             annotations:
-              haproxy-haptic.org/limit-rate: "100k"
-              haproxy-haptic.org/limit-rate-after: "1m"
+              haproxy-haptic.org/download-bandwidth-limit: "100k"
+              haproxy-haptic.org/download-bandwidth-limit-after: "1m"
           spec:
             ingressClassName: haptic
             rules:
@@ -175,7 +138,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: bw-service
+                          name: echo
                           port:
                             number: 80
     assertions:

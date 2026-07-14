@@ -44,6 +44,7 @@ import (
 // We do NOT couple to the hub's exact log format string — see
 // spoaHubLogsShowSuccessfulReload's substring match for the contract.
 func TestSPOAHubReloadOnConfigPush(t *testing.T) {
+	RequireVendorLibrary(t, "nginxIngress")
 	feature := features.New("SPOA hub: graceful reload on controller config push").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			client, err := cfg.NewClient()

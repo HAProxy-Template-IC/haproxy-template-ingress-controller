@@ -1,18 +1,18 @@
-# HAPTIC-native annotation library — path-matching + server-alias contributions.
+# HAPTIC-native annotation library — path-matching + host-alias contributions.
 #
 # Best-of-breed adaptation of the haproxy-ingress vendor fragments
 # (10-path-maps.yaml + 15-server-alias.yaml), re-homed under the
 # haproxy-haptic.org/* prefix and the 800 priority band. Semantics are carried
 # faithfully from haproxy-ingress (the only vendor exposing per-path type
-# selection and server aliases), so migrating an Ingress is a pure key rename.
+# selection and host aliases), so migrating an Ingress is a pure key rename.
 #
 #   haproxy-haptic.org/path-type:          regex | exact | prefix | begin
 #       Honored only for paths whose pathType is ImplementationSpecific. Drives
 #       which path map the path lands in (regex → path-regex.map, exact →
 #       path-exact.map, prefix → path-prefix.map, begin → path-prefix-exact.map).
-#   haproxy-haptic.org/server-alias:       comma/space list of extra EXACT hosts.
+#   haproxy-haptic.org/host-alias:       comma/space list of extra EXACT hosts.
 #       → host.map entry  `<alias-key> <primary-host-key>`
-#   haproxy-haptic.org/server-alias-regex: a regex matching extra hostnames.
+#   haproxy-haptic.org/host-alias-regex: a regex matching extra hostnames.
 #       → host-regex.map entry  `<regex> <primary-host-key>`
 #
 # Map targets use BackendNameIngress + MapKeyForHost so names/keys match
@@ -140,13 +140,13 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
-  map-host-800-haptic-server-alias:
+  map-host-800-haptic-host-alias:
     template: |
       {#-
-        haproxy-haptic.org/server-alias → host.map entries.
+        haproxy-haptic.org/host-alias → host.map entries.
 
         Annotations:
-          - haproxy-haptic.org/server-alias: "a.example.com, b.example.com" (optional)
+          - haproxy-haptic.org/host-alias: "a.example.com, b.example.com" (optional)
 
         For each listed hostname, emit one host.map entry pointing at the
         primary host's normalised key. The primary host is the FIRST rule's
@@ -162,18 +162,18 @@ templateSnippets:
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var aliasAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/server-alias"] %}
+      {%- var aliasAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/host-alias"] %}
       {%- if aliasAnnotation != "" %}
       {%- var rules = ingress.Spec.Rules %}
       {%- if len(rules) > 0 %}
       {%- var primaryKey = MapKeyForHost(rules[0].Host) %}
       {%- if primaryKey != "" %}
       {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-      # haptic/server-alias ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+      # haptic/host-alias ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
       {%- for _, rawAlias := range split(replace(aliasAnnotation, ",", " "), " ") %}
       {%- var alias = strip(rawAlias) %}
       {%- if alias != "" %}
-      {%- var safeAlias = ValidateConfigValue(alias, "haproxy-haptic.org/server-alias", key, false) %}
+      {%- var safeAlias = ValidateConfigValue(alias, "haproxy-haptic.org/host-alias", key, false) %}
       {{ MapKeyForHost(safeAlias) }} {{ primaryKey }}
       {%- end %}
       {%- end %}
@@ -182,13 +182,13 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
-  map-hostregex-800-haptic-server-alias:
+  map-hostregex-800-haptic-host-alias-regex:
     template: |
       {#-
-        haproxy-haptic.org/server-alias-regex → host-regex.map entries.
+        haproxy-haptic.org/host-alias-regex → host-regex.map entries.
 
         Annotations:
-          - haproxy-haptic.org/server-alias-regex: "^app[0-9]+\.example\.com$" (optional)
+          - haproxy-haptic.org/host-alias-regex: "^app[0-9]+\.example\.com$" (optional)
 
         The value is a HAProxy-compatible PCRE matching extra hostnames.
         host-regex.map is consulted by base.yaml's routing cascade via
@@ -203,15 +203,15 @@ templateSnippets:
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var regexAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/server-alias-regex"] %}
+      {%- var regexAnnotation = ingress.Metadata.Annotations["haproxy-haptic.org/host-alias-regex"] %}
       {%- if regexAnnotation != "" %}
       {%- var rules = ingress.Spec.Rules %}
       {%- if len(rules) > 0 %}
       {%- var primaryKey = MapKeyForHost(rules[0].Host) %}
       {%- if primaryKey != "" %}
       {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-      # haptic/server-alias-regex ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
-      {{ ValidateConfigValue(strip(regexAnnotation), "haproxy-haptic.org/server-alias-regex", key, false) }} {{ primaryKey }}
+      # haptic/host-alias-regex ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+      {{ ValidateConfigValue(strip(regexAnnotation), "haproxy-haptic.org/host-alias-regex", key, false) }} {{ primaryKey }}
       {%- end %}
       {%- end %}
       {%- end %}

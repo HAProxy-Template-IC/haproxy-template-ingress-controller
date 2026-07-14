@@ -32,7 +32,7 @@ Snippet names use the `800`-band priority, so where the same Ingress carries bot
 
 ## Annotation reference
 
-Every annotation below is `supported` (semantics carried faithfully) or, where HAProxy diverges from the source controller, `different` (works, with the caveat in the note). The library declares no inert annotations.
+Every annotation below works. Most are **✅ Supported**; a few are marked **⚠️ Caveat** — they work too, but with the behavioural limitation described alongside. The library declares no inert annotations; nothing is silently ignored.
 
 ### Path and host matching
 
@@ -41,8 +41,8 @@ Route which requests reach a backend and alias extra hostnames onto an existing 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
 | `haproxy-haptic.org/path-type` | ✅ Supported | Overrides how the path matches when the Ingress `pathType` is `ImplementationSpecific`: `regex`, `exact`, `prefix` (trailing slash normalized), or `begin`. |
-| `haproxy-haptic.org/server-alias` | ✅ Supported | Adds extra exact hostnames (comma- or space-separated) that route to the same backends as the Ingress's primary host. |
-| `haproxy-haptic.org/server-alias-regex` | ✅ Supported | Adds regular-expression hostnames that route to the same backends as the Ingress's primary host. |
+| `haproxy-haptic.org/host-alias` | ✅ Supported | Adds extra exact hostnames (comma- or space-separated) that route to the same backends as the Ingress's primary host. Each hostname becomes a host-map entry pointing at the primary host's normalized routing key, so no backends or path-map entries are duplicated. Each hostname is injection-guarded (control characters and spaces rejected). |
+| `haproxy-haptic.org/host-alias-regex` | ✅ Supported | Adds a regular-expression hostname pattern that routes every matching hostname to the same backends as the Ingress's primary host. The pattern becomes a regex host-map entry pointing at the primary host's normalized routing key, consulted after an exact host-map miss. The pattern is injection-guarded (control characters and spaces rejected). |
 
 ### Backend tuning
 
@@ -55,8 +55,8 @@ Per-backend timeouts, load balancing, connection limits, health/agent checks, an
 | `haproxy-haptic.org/agent-check-port` | ✅ Supported | Enables the agent check on the given port (1-65535) via `agent-check` and `agent-port`; required by the other `agent-check-*` keys. |
 | `haproxy-haptic.org/agent-check-send` | ✅ Supported | Sets the string sent to the agent check via `agent-send`; requires `agent-check-port`. |
 | `haproxy-haptic.org/check` | ✅ Supported | Toggles server health checks; `off` emits `no-check` so servers aren't health-checked. |
-| `haproxy-haptic.org/config-backend` | ✅ Supported | Injects raw operator-authored directives verbatim into the `backend` section. |
-| `haproxy-haptic.org/fullconn` | ⚠️ Behaviour differs | Emits `fullconn` on the backend. Unlike a hard connection cap, HAProxy's `fullconn` is a soft threshold that scales the per-server `minconn`/`maxconn` ranges. |
+| `haproxy-haptic.org/config-backend` | ✅ Supported | Injects raw, operator-authored HAProxy directives verbatim into the `backend` section. Intended for trusted configuration, not request data. |
+| `haproxy-haptic.org/fullconn` | ✅ Supported | Emits `fullconn <n>` on the backend. HAProxy uses this threshold to scale each server's `minconn`/`maxconn` range as backend load rises. For a hard per-server cap, use `maxconn-server`. |
 | `haproxy-haptic.org/health-check-fall` | ✅ Supported | Sets the failed-check count before a server is marked down via `fall`. |
 | `haproxy-haptic.org/health-check-interval` | ✅ Supported | Sets the health-check interval via `inter`; ignored when `check` is `off`. |
 | `haproxy-haptic.org/health-check-port` | ✅ Supported | Sets the health-check port (1-65535) via `port`. |
@@ -76,7 +76,7 @@ Per-backend timeouts, load balancing, connection limits, health/agent checks, an
 | `haproxy-haptic.org/timeout-queue` | ✅ Supported | Sets the queue timeout via `timeout queue`. |
 | `haproxy-haptic.org/timeout-server` | ✅ Supported | Sets the server timeout via `timeout server`. |
 | `haproxy-haptic.org/timeout-tunnel` | ✅ Supported | Sets the tunnel timeout via `timeout tunnel`. |
-| `haproxy-haptic.org/upstream-hash-by` | ⚠️ Behaviour differs | Maps nginx's hash key to the closest HAProxy consistent-hash `balance` equivalent (`balance uri`, `balance source`, `balance hdr(...)`, `balance url_param(...)`, or `balance hash req.cook(...)`) with `hash-type consistent`; nginx has no exact analogue. |
+| `haproxy-haptic.org/consistent-hash-by` | ✅ Supported | Configures consistent hashing on the backend, emitting a `balance` directive plus `hash-type consistent`. Accepts a hash key: `uri`, `source`, `$http_<name>`, `$arg_<name>`, or `$cookie_<name>`; any other value is used verbatim as a HAProxy fetch expression via `balance hash <value>`. |
 
 ### Backend TLS (to the upstream)
 
@@ -90,7 +90,7 @@ Speak TLS to the backend Service — protocol, verification, client certs, SNI, 
 | `haproxy-haptic.org/backend-crt-secret` | ✅ Supported | Presents the Secret's `tls.crt` and `tls.key` as a client certificate to the upstream via `crt`; a missing Secret is skipped with a warning. |
 | `haproxy-haptic.org/backend-protocol` | ✅ Supported | Selects the upstream protocol from `h1`, `h2`, `h1-ssl`, `h2-ssl`, `http`, `https`, `grpc`, or `grpcs`; the `h2`, `grpc`, `h2-ssl`, and `grpcs` values add `proto h2`, and `h1-ssl`, `https`, `h2-ssl`, and `grpcs` speak TLS to the upstream. |
 | `haproxy-haptic.org/backend-sni` | ✅ Supported | Sets the SNI sent to the upstream: `host` or `sni` forwards the request Host via `sni req.hdr(host)`, and any other value is sent literally via `sni str(<value>)`. |
-| `haproxy-haptic.org/backend-ssl-protocols` | ⚠️ Behaviour differs | Maps a space-separated TLS version list to `ssl-min-ver` (lowest) and `ssl-max-ver` (highest). HAProxy expresses only a contiguous span, so a gap in the list (for example, skipping `TLSv1.2`) can't be represented. |
+| `haproxy-haptic.org/backend-ssl-protocols` | ⚠️ Caveat | Maps a space-separated TLS version list to `ssl-min-ver` (lowest) and `ssl-max-ver` (highest). HAProxy expresses only a contiguous span, so a gap in the list (for example, skipping `TLSv1.2`) can't be represented. |
 | `haproxy-haptic.org/backend-verify` | ✅ Supported | A truthy value (`on`, `true`, `yes`, `1`) requires upstream certificate verification, and fails closed rather than silently downgrading to `verify none` when no CA is available. |
 | `haproxy-haptic.org/backend-verify-host` | ✅ Supported | Sets the expected upstream certificate hostname via `verifyhost`, independent of the SNI value. |
 
@@ -100,15 +100,38 @@ Per-source request-rate caps (reload-surviving stick-tables) and per-connection 
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
-| `haproxy-haptic.org/limit-rate` | ✅ Supported | Throttles per-connection download bandwidth (bytes per second) via a `bwlim-out` filter and `set-bandwidth-limit`, independent of the request-rate caps. |
-| `haproxy-haptic.org/limit-rate-after` | ✅ Supported | Sets the number of bytes transferred before `limit-rate` throttling begins, via the `bwlim-out` minimum size. |
+| `haproxy-haptic.org/download-bandwidth-limit` | ✅ Supported | Throttles the bandwidth (bytes per second) sent toward a single client connection, using a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Independent of the request-rate caps; both can apply to the same Ingress. Byte-size values are validated before interpolation. |
+| `haproxy-haptic.org/download-bandwidth-limit-after` | ✅ Supported | Sets the number of bytes sent on a connection before the download bandwidth limit begins to throttle, via the `bwlim-out` `min-size` parameter. Byte-size values are validated before interpolation. |
 | `haproxy-haptic.org/rate-limit-connections` | ✅ Supported | Caps concurrent connections per source IP; ignored when `rate-limit-rps` or `rate-limit-rpm` is set. |
-| `haproxy-haptic.org/rate-limit-period` | ⚠️ Behaviour differs | Overrides the stick-table window. When unset, it derives from the active cap (1 second for requests per second, 60 seconds for requests per minute, a 30-second TTL for connection caps) instead of a flat 1-second default, so per-minute limits stay per-minute. |
+| `haproxy-haptic.org/rate-limit-period` | ✅ Supported | Overrides the stick-table window. When unset, the window derives from the active cap: 1 second for requests per second, 60 seconds for requests per minute, and a 30-second table TTL for connection caps. Accepts a bare number or an HAProxy time suffix (`us`/`ms`/`s`/`m`/`h`/`d`); other values fail the render. |
 | `haproxy-haptic.org/rate-limit-rpm` | ✅ Supported | Caps requests per minute per source IP (a 60-second `http_req_rate` window); ignored when `rate-limit-rps` is also set. |
 | `haproxy-haptic.org/rate-limit-rps` | ✅ Supported | Caps requests per second per source IP via an `http_req_rate` stick-table; requests over the cap are rejected with the deny status (default `429`), with no burst allowance. |
 | `haproxy-haptic.org/rate-limit-size` | ✅ Supported | Sets the stick-table size (default `100k`). |
-| `haproxy-haptic.org/rate-limit-status-code` | ✅ Supported | Sets the HTTP status returned to rejected requests (default `429`). |
-| `haproxy-haptic.org/rate-limit-whitelist` | ✅ Supported | Exempts comma-separated CIDRs from the rate limit; invalid CIDRs fail the render. |
+| `haproxy-haptic.org/rate-limit-status-code` | ✅ Supported | Sets the HTTP status returned to rejected requests (default 429). Validated as a 3-digit HTTP status before interpolation, then emitted as the `http-request deny deny_status` code. |
+| `haproxy-haptic.org/rate-limit-allowlist` | ✅ Supported | Exempts comma-separated CIDRs from the rate limit; invalid CIDRs fail the render. |
+
+### Compression
+
+HAProxy-side response compression, per Ingress.
+
+| Annotation | Status | Behaviour |
+|------------|--------|-----------|
+| `haproxy-haptic.org/compress-algorithm` | ✅ Supported | Compression algorithm (default `gzip`; `deflate`/`raw-deflate`). `brotli`/`zstd` fail the render — unavailable in the community HAProxy build. |
+| `haproxy-haptic.org/compress-enable` | ✅ Supported | The value `true` enables HAProxy-side response compression for the backend. |
+| `haproxy-haptic.org/compress-types` | ✅ Supported | Comma-separated MIME types to compress (default a standard text/JSON/XML/SVG set). |
+
+### Shared response cache
+
+Routes cache-eligible requests through a chart-deployed, consistent-hash-sharded Varnish tier, so the cache is shared across the whole HAProxy fleet. These annotations take effect only when the tier is enabled (`controller.cache.varnish.enabled`). Per-route behaviour is driven by internal `X-Haptic-Cache-*` headers that HAProxy strips from the client request first, so a client can't influence the cache key or the exclusion rules.
+
+| Annotation | Status | Behaviour |
+|------------|--------|-----------|
+| `haproxy-haptic.org/cache-enable` | ✅ Supported | The value `true` routes the Ingress's requests through the shared Varnish cache tier. |
+| `haproxy-haptic.org/cache-exclude-content-types` | ✅ Supported | Comma-separated response media types never cached even if otherwise eligible (for example `text/html`); matched after stripping the `; charset=…` suffix. |
+| `haproxy-haptic.org/cache-exclude-paths` | ✅ Supported | Comma-separated request path prefixes that bypass the cache and go straight to the app. |
+| `haproxy-haptic.org/cache-key` | ✅ Supported | Adds a vary component to the cache key: `consumer`, `src`, `header:<h>`, `cookie:<c>`, `query:<q>`, or a comma-separated composite — so, for example, per-consumer responses are cached separately (which is what makes caching authenticated content safe). |
+| `haproxy-haptic.org/cache-max-object-size` | ✅ Supported | Maximum cacheable response size in bytes; a larger response (by `Content-Length`) stays uncacheable. |
+| `haproxy-haptic.org/cache-ttl` | ✅ Supported | Cache lifetime in seconds for the route; non-2xx or `Set-Cookie` responses stay uncacheable. |
 
 ### Rewriting, retries, and session affinity
 
@@ -117,12 +140,11 @@ Path/target rewriting, body-size limits, upstream retries, Host/header overrides
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
 | `haproxy-haptic.org/affinity` | ✅ Supported | The value `cookie` enables cookie-based session affinity via the backend `cookie` directive. |
-| `haproxy-haptic.org/connection-proxy-header` | ✅ Supported | Overrides the `Connection` header sent to the upstream. |
+| `haproxy-haptic.org/backend-connection-header` | ✅ Supported | Overrides the `Connection` header sent to the backend server. |
 | `haproxy-haptic.org/path-rewrite` | ✅ Supported | Rewrites the request path via `http-request replace-path`: a `<from> <to>` pair rewrites the match, and a bare value replaces the whole path. |
-| `haproxy-haptic.org/proxy-body-size` | ✅ Supported | Limits the request body size (with `k`, `m`, or `g` suffixes), returning `413` when exceeded; `0` means unlimited. |
-| `haproxy-haptic.org/proxy-next-upstream` | ⚠️ Behaviour differs | Maps nginx retry conditions to HAProxy `retry-on` values (`error`, `timeout`, `invalid_header`, and `http_<code>`); `non_idempotent` is ignored and `off` disables retries, so the retry surface differs from nginx. |
-| `haproxy-haptic.org/proxy-next-upstream-tries` | ✅ Supported | Sets the number of upstream retries via `retries`; `0` keeps the default. |
-| `haproxy-haptic.org/rewrite-target` | ✅ Supported | Rewrites the request path via `http-request replace-path`; capture references like `$1` become HAProxy backreferences like `\1`. |
+| `haproxy-haptic.org/max-request-body-size` | ✅ Supported | Limits the request body size (accepts `k`, `m`, or `g` suffixes), returning `413` when exceeded; `0` means unlimited. |
+| `haproxy-haptic.org/retry-on` | ✅ Supported | Sets the conditions under which HAProxy retries a failed request against the next server, emitting `retry-on`. Conditions cover connection failures, response timeouts, malformed responses, and per-status-code retries (`http_<code>`); a disable value emits `retries 0`. `option redispatch` in defaults sends the retry to a different server. |
+| `haproxy-haptic.org/retries` | ✅ Supported | Sets the number of retry attempts against backend servers via HAProxy `retries`; `0` keeps the default. |
 | `haproxy-haptic.org/session-cookie-domain` | ✅ Supported | Sets the session cookie's `Domain` via the `domain` cookie keyword. |
 | `haproxy-haptic.org/session-cookie-dynamic` | ✅ Supported | Enables dynamically generated cookie values via the `dynamic` cookie keyword (default on). |
 | `haproxy-haptic.org/session-cookie-keywords` | ✅ Supported | Appends extra keywords to the `cookie` directive verbatim (for example, `httponly`). |
@@ -152,10 +174,10 @@ Request/response header manipulation, capture, CORS, source-IP allow/deny, and u
 | `haproxy-haptic.org/cors-max-age` | ✅ Supported | Sets the `Access-Control-Max-Age` response header (default `86400`). |
 | `haproxy-haptic.org/denylist-source-range` | ✅ Supported | Denies the listed CIDRs and allows all other source IPs for the host. |
 | `haproxy-haptic.org/forwardfor` | ✅ Supported | Controls the `X-Forwarded-For` header: `add`, `update`, `ifmissing`, or `ignore`. |
-| `haproxy-haptic.org/proxy-cookie-domain` | ✅ Supported | Rewrites the `Domain` in upstream `Set-Cookie` headers, given a `<from> <to>` pair. |
-| `haproxy-haptic.org/proxy-cookie-path` | ✅ Supported | Rewrites the `Path` in upstream `Set-Cookie` headers, given a `<from> <to>` pair. |
-| `haproxy-haptic.org/proxy-redirect-from` | ⚠️ Behaviour differs | Rewrites the `Location` and `Refresh` response headers matching this pattern; nginx's `default` mode isn't supported, and the rewrite applies at the frontend rather than per-backend. |
-| `haproxy-haptic.org/proxy-redirect-to` | ⚠️ Behaviour differs | Supplies the replacement text for `proxy-redirect-from`; required whenever that annotation names a real pattern, or the render fails. |
+| `haproxy-haptic.org/response-cookie-domain` | ✅ Supported | Rewrites the `Domain` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. |
+| `haproxy-haptic.org/response-cookie-path` | ✅ Supported | Rewrites the `Path` attribute of upstream `Set-Cookie` response headers, given a `<from> <to>` pair, preserving the rest of the cookie string. Host-scoped; a wrong-arity value fails the render. |
+| `haproxy-haptic.org/response-location-rewrite-from` | ✅ Supported | Names the literal text to match in the `Location` and `Refresh` response headers; the matched text is regex-escaped and replaced with the value of `response-location-rewrite-to`. Host-scoped. |
+| `haproxy-haptic.org/response-location-rewrite-to` | ✅ Supported | Supplies the replacement text for `response-location-rewrite-from`; required whenever a match pattern is set, or the render fails. |
 | `haproxy-haptic.org/request-capture` | ✅ Supported | Captures the named request headers (newline-separated) in the logs via `capture request header`, across the whole frontend. |
 | `haproxy-haptic.org/request-capture-len` | ✅ Supported | Sets the capture length for `request-capture` (default `128`). |
 | `haproxy-haptic.org/request-set-header` | ✅ Supported | Sets request headers sent to the upstream via `http-request set-header`, one `<name> <value>` per line. |
@@ -182,14 +204,14 @@ HTTP→HTTPS and host redirects (reload-free maps), HSTS, SSL passthrough, a def
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
-| `haproxy-haptic.org/app-root` | ✅ Supported | Redirects requests for the host root (`/`) to the given path. |
+| `haproxy-haptic.org/root-redirect` | ✅ Supported | Redirects requests for the host root path (`/`) to the given sub-path. |
 | `haproxy-haptic.org/config-defaults` | ✅ Supported | Injects raw operator-authored directives verbatim into the `defaults` section. |
 | `haproxy-haptic.org/config-frontend` | ✅ Supported | Injects raw operator-authored directives into every frontend, before routing. |
-| `haproxy-haptic.org/config-global` | ✅ Supported | Injects raw operator-authored directives verbatim into the `global` section. |
-| `haproxy-haptic.org/default-backend` | ⚠️ Behaviour differs | Routes unmatched requests for the host to a named Service (its first port) as a catch-all backend; silently skipped when the Service or port can't be resolved, unlike haproxy-ingress's redirect-based default backend. |
+| `haproxy-haptic.org/config-global` | ✅ Supported | Injects raw operator-authored HAProxy directives verbatim into the `global` section. |
+| `haproxy-haptic.org/default-backend` | ⚠️ Caveat | Routes requests that match the host but none of its configured paths to a named Service as a catch-all backend pool, using the Service's first port. Produces no backend, and no error, when the Service or its first port can't be resolved. |
 | `haproxy-haptic.org/default-backend-redirect` | ✅ Supported | Redirects requests that match the host but no path to the given URL. |
 | `haproxy-haptic.org/default-backend-redirect-code` | ✅ Supported | Sets the status code for `default-backend-redirect` (default `302`). |
-| `haproxy-haptic.org/from-to-www-redirect` | ✅ Supported | Issues a `301` redirect between the apex domain and its `www` subdomain. |
+| `haproxy-haptic.org/apex-www-redirect` | ✅ Supported | Issues a `301` redirect between the apex domain and its `www` subdomain, in both directions, preserving the request path and scheme. |
 | `haproxy-haptic.org/hsts` | ✅ Supported | Enables HSTS by adding the `Strict-Transport-Security` response header for the host. |
 | `haproxy-haptic.org/hsts-include-subdomains` | ✅ Supported | Appends `includeSubDomains` to the `Strict-Transport-Security` header when set to `true`. |
 | `haproxy-haptic.org/hsts-max-age` | ✅ Supported | Sets the HSTS `max-age` in seconds (default `63072000`). |
@@ -197,11 +219,11 @@ HTTP→HTTPS and host redirects (reload-free maps), HSTS, SSL passthrough, a def
 | `haproxy-haptic.org/permanent-redirect` | ✅ Supported | Redirects the host to the given URL with a permanent status code (default `301`). |
 | `haproxy-haptic.org/permanent-redirect-code` | ✅ Supported | Sets the status code for `permanent-redirect` (default `301`). |
 | `haproxy-haptic.org/ssl-passthrough` | ✅ Supported | Passes TLS through to the backend without terminating it, routed by SNI on a dedicated TCP frontend. |
-| `haproxy-haptic.org/ssl-redirect` | ✅ Supported | Redirects plain HTTP requests for the host to HTTPS; hosts that also set `ssl-redirect-port` are handled there instead to avoid a double redirect. |
-| `haproxy-haptic.org/ssl-redirect-code` | ✅ Supported | Sets the HTTP-to-HTTPS redirect status code (`301`, `302`, `303`, `307`, or `308`; default `302`). |
-| `haproxy-haptic.org/ssl-redirect-port` | ✅ Supported | Redirects plain HTTP requests to HTTPS on an explicit port, preserving the URI. |
-| `haproxy-haptic.org/temporal-redirect` | ✅ Supported | Redirects the host to the given URL with a temporary status code (default `302`). |
-| `haproxy-haptic.org/temporal-redirect-code` | ✅ Supported | Sets the status code for `temporal-redirect` (default `302`). |
+| `haproxy-haptic.org/https-redirect` | ✅ Supported | Redirects plain HTTP requests for the host to HTTPS. Hosts that also set `https-redirect-port` are handled there instead, avoiding a double redirect. |
+| `haproxy-haptic.org/https-redirect-code` | ✅ Supported | Sets the HTTP-to-HTTPS redirect status code (`301`, `302`, `303`, `307`, or `308`; default `302`). |
+| `haproxy-haptic.org/https-redirect-port` | ✅ Supported | Redirects plain HTTP requests to HTTPS on an explicit port, preserving the request URI. |
+| `haproxy-haptic.org/temporary-redirect` | ✅ Supported | Redirects the host to the given URL with a temporary status code (default `302`). |
+| `haproxy-haptic.org/temporary-redirect-code` | ✅ Supported | Sets the status code for `temporary-redirect` (default `302`). |
 
 ### Authentication, mTLS, and WAF
 
@@ -220,10 +242,10 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | `haproxy-haptic.org/auth-tls-cert-header` | ✅ Supported | Forwards the client certificate details (`X-SSL-Client-CN`, `X-SSL-Client-DN`, `X-SSL-Client-Cert`) to the upstream when a client certificate was presented. |
 | `haproxy-haptic.org/auth-tls-error-page` | ✅ Supported | Redirects to the given URL when client-certificate (mTLS) verification fails. |
 | `haproxy-haptic.org/auth-tls-secret` | ✅ Supported | Enables client-certificate (mTLS) verification for the host using the CA in the named Secret; a host is required. |
-| `haproxy-haptic.org/auth-tls-verify-client` | ⚠️ Behaviour differs | Sets client-certificate verification: `on` requires it, `optional` and `optional_no_ca` both map to `verify optional` (HAProxy has no distinct `optional_no_ca` mode), and `off` disables it. |
+| `haproxy-haptic.org/auth-tls-verify-client` | ⚠️ Caveat | Sets client-certificate verification: `on` requires it, `optional` and `optional_no_ca` both map to `verify optional` (HAProxy has no distinct `optional_no_ca` mode), and `off` disables it. |
 | `haproxy-haptic.org/auth-type` | ✅ Supported | Enables basic authentication; the only accepted value is `basic`. |
 | `haproxy-haptic.org/auth-url` | ✅ Supported | Sets the external authentication service URL; requires the SPOA hub's external-auth plugin. |
-| `haproxy-haptic.org/modsecurity-snippet` | ✅ Supported | Adds per-application Coraza WAF rules for the Ingress; requires the Coraza plugin. |
+| `haproxy-haptic.org/waf-rules` | ✅ Supported | Adds per-application WAF rules (ModSecurity SecLang `SecRule` directives) for the Ingress. Requires the Coraza plugin. |
 | `haproxy-haptic.org/oauth` | ✅ Supported | Enables authentication through `oauth2-proxy` (the only supported provider), building on external auth; skipped when `auth-url` is set. |
 | `haproxy-haptic.org/oauth-headers` | ✅ Supported | Lists headers forwarded from the `oauth2-proxy` response on success (default `X-Auth-Request-Email`). |
 | `haproxy-haptic.org/oauth-uri-prefix` | ✅ Supported | Sets the `oauth2-proxy` callback path prefix (default `/oauth2`). |
@@ -231,4 +253,42 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | `haproxy-haptic.org/waf` | ✅ Supported | The value `modsecurity` enables the Coraza WAF for the Ingress; requires the Coraza plugin. |
 | `haproxy-haptic.org/waf-mode` | ✅ Supported | Sets the WAF mode: `deny` (default) or `detect`; requires `waf` to be set. |
 
-<!-- 134 annotations documented -->
+### API gateway
+
+API-management controls expressed as pure HAProxy config: token authentication (API key, JWT, HMAC) that establishes a shared consumer identity, consumer-group authorization, stateless request gating (method/content-type/header validation, mocking, termination), and request correlation IDs.
+
+JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from the `sub` claim, API key from its map), which consumer-group authorization and — in later releases — per-consumer quotas build on.
+
+| Annotation | Status | Behaviour |
+|------------|--------|-----------|
+| `haproxy-haptic.org/allowed-consumer-groups` | ✅ Supported | Comma-separated group set the route permits; a request whose consumer isn't in an allowed group is denied `403`. Requires `consumer-groups-secret` and an authenticated consumer. |
+| `haproxy-haptic.org/allowed-methods` | ✅ Supported | Restricts the accepted HTTP methods (comma-separated); any other method is denied with `405`. |
+| `haproxy-haptic.org/api-key-consumer-header` | ✅ Supported | Forwards the resolved consumer id to the upstream in the named header. |
+| `haproxy-haptic.org/api-key-header` | ✅ Supported | Header carrying the API key (default `X-API-Key`); mutually exclusive with `api-key-query`. |
+| `haproxy-haptic.org/api-key-query` | ✅ Supported | Query parameter carrying the API key; mutually exclusive with `api-key-header`. |
+| `haproxy-haptic.org/api-key-secret` | ✅ Supported | Names the Secret (data key `keys`, one `apikey[:consumer]` per line) that becomes a reload-free key→consumer map; an unknown key is denied with `401`, and a valid key sets the shared `txn.haptic_consumer` identity. |
+| `haproxy-haptic.org/consumer-groups-secret` | ✅ Supported | Names the Secret (data key `groups`, one `<consumer>:<group>` per line) mapping each consumer to a group; combined with `allowed-consumer-groups` to authorize. Requires an authenticated consumer. |
+| `haproxy-haptic.org/hmac-algorithm` | ✅ Supported | HMAC digest algorithm (default `sha256`; `sha1`/`sha224`/`sha384`/`sha512`). |
+| `haproxy-haptic.org/hmac-header` | ✅ Supported | Header carrying the client HMAC signature (default `X-Signature`; lowercase hex). |
+| `haproxy-haptic.org/hmac-secret` | ⚠️ Caveat | Names the Secret (data key `secret`) for HMAC request-signature verification (deny `401` on mismatch). The shared key is inlined (base64) into the rendered config and the compare isn't constant-time — prefer JWT. Fails closed (`503`) when the Secret is absent. |
+| `haproxy-haptic.org/hmac-signed-string` | ✅ Supported | What the signature covers: `body` (default, buffers the request) or `path`. |
+| `haproxy-haptic.org/jwt-algorithm` | ✅ Supported | JWT signature algorithm (default `RS256`); asymmetric only (`RS`/`ES`/`PS` `256`/`384`/`512`) — symmetric `HS*` is rejected so no shared secret is inlined. |
+| `haproxy-haptic.org/jwt-audience` | ⚠️ Caveat | Required `aud` claim value (exact match); an array `aud` (multiple audiences) isn't matched — scalar only. |
+| `haproxy-haptic.org/jwt-forward-claims` | ✅ Supported | Comma-separated `<claim>:<header>` pairs forwarded upstream after verification; each header is stripped from the client request first (anti-spoof). |
+| `haproxy-haptic.org/jwt-issuer` | ✅ Supported | Required `iss` claim value (exact match). |
+| `haproxy-haptic.org/jwt-required-claims` | ✅ Supported | Comma-separated claim names that must be present in the payload; a missing claim is denied `401`. |
+| `haproxy-haptic.org/jwt-secret` | ✅ Supported | Names the Secret (data key `pubkey.pem`) for asymmetric JWT verification with an alg-confusion guard, `exp`/`iss`/`aud`/required-claim checks, and the shared consumer identity from `sub`. Fails closed (`503`) when the Secret is absent; key rotation needs a reload. |
+| `haproxy-haptic.org/mock-response` | ✅ Supported | A non-empty value returns it as a canned response body, short-circuiting the backend (for stubbing an API). |
+| `haproxy-haptic.org/mock-response-code` | ✅ Supported | HTTP status for `mock-response` (default `200`). |
+| `haproxy-haptic.org/mock-response-content-type` | ✅ Supported | Content-Type for the `mock-response` body (default `application/json`). |
+| `haproxy-haptic.org/request-id` | ✅ Supported | The value `true` generates a per-request correlation id and forwards it upstream (HAProxy `unique-id`). |
+| `haproxy-haptic.org/request-id-accept-inbound` | ✅ Supported | The value `true` preserves a client-supplied id (used only when the header is absent) instead of always generating a fresh one. |
+| `haproxy-haptic.org/request-id-header` | ✅ Supported | Header carrying the correlation id (default `X-Request-ID`). |
+| `haproxy-haptic.org/fixed-response` | ✅ Supported | The value `true` returns a fixed response for every request matching the route's hosts via `http-request return` — for maintenance windows or sunset routes. Runs before mocking and the validators. Defaults to status 503 / `text/plain`, and can return a bare status with no body. |
+| `haproxy-haptic.org/fixed-response-body` | ✅ Supported | Optional response body for `fixed-response`. |
+| `haproxy-haptic.org/fixed-response-code` | ✅ Supported | HTTP status for `fixed-response` (default 503; must be 100-599). |
+| `haproxy-haptic.org/fixed-response-content-type` | ✅ Supported | Content-Type for the `fixed-response` body (default `text/plain`). |
+| `haproxy-haptic.org/require-content-type` | ✅ Supported | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). |
+| `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. |
+
+<!-- 171 annotations documented -->

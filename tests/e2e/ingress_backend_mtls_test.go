@@ -38,6 +38,7 @@ import (
 // haproxy.org/server-{ca,crt} pair; without it those annotations only
 // reach the chart's render-time validationTests.
 func TestIngressBackendMTLS(t *testing.T) {
+	RequireVendorLibrary(t, "haproxytech")
 	t.Parallel()
 	host := "ingress-backend-mtls.localdev.me"
 
@@ -85,6 +86,7 @@ func TestIngressBackendMTLS(t *testing.T) {
 // haproxy.org/server-* — this test ensures that path actually presents
 // the client cert and verifies the server cert.
 func TestIngressBackendMTLSHaproxyIngress(t *testing.T) {
+	RequireVendorLibrary(t, "haproxyIngress")
 	t.Parallel()
 	host := "ingress-hi-backend-mtls.localdev.me"
 

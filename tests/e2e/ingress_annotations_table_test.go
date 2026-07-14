@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -473,6 +474,21 @@ func TestIngressAnnotations(t *testing.T) {
 	}
 
 	for _, tc := range cases {
+		// Each row targets exactly one vendor-annotation prefix; skip rows
+		// whose library isn't the one enabled in the current e2e shard so the
+		// rest of the table still runs.
+		rowLib := ""
+		for key := range tc.annotations {
+			for prefix, lib := range vendorPrefixes {
+				if strings.HasPrefix(key, prefix) {
+					rowLib = lib
+				}
+			}
+		}
+		if rowLib != "" && activeVendorLibrary() != rowLib {
+			continue
+		}
+
 		feature := features.New("Ingress: "+tc.name).
 			Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 				client, err := cfg.NewClient()

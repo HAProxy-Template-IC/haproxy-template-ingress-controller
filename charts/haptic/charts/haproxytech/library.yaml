@@ -1133,18 +1133,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: api-service
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: api-service
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1259,18 +1250,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: api-service
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: api-service
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1300,18 +1282,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: api-service
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: api-service
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       # The annotation value is a regex that matches the request Origin; the
@@ -1352,18 +1325,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: api-service
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: api-service
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       # Preflight is answered by HAProxy itself; the after-response headers apply
@@ -1409,18 +1373,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: contains
         target: rendering_error
@@ -1464,18 +1419,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1502,18 +1448,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1542,18 +1479,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       - type: not_contains
@@ -1578,18 +1506,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       - type: not_contains
@@ -1612,32 +1531,23 @@ validationTests:
               - host: host01.example.com
                 http:
                   paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
               - host: host02.example.com
                 http:
                   paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
               - host: host03.example.com
                 http:
                   paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
               - host: host04.example.com
                 http:
                   paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
               - host: host05.example.com
                 http:
                   paths:
-                    - { path: /, pathType: Prefix, backend: { service: { name: test-svc, port: { number: 80 } } } }
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1652,15 +1562,6 @@ validationTests:
       haproxy.org/rate-limit-whitelist appends a trailing '!{ src <cidrs> }' guard
       to the rate-limit deny line so whitelisted sources are never denied.
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: api-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1681,7 +1582,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: api-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1698,15 +1599,6 @@ validationTests:
       Without haproxy.org/rate-limit-whitelist the deny line must not carry a src guard
       (regression guard for the whitelist extension).
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: api-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1725,7 +1617,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: api-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1741,15 +1633,6 @@ validationTests:
     description: >-
       haproxy.org/allow-list (the canonical upstream key) emits a src allow ACL.
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: ac-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1768,7 +1651,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: ac-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1781,15 +1664,6 @@ validationTests:
     description: >-
       haproxy.org/deny-list (the canonical upstream key) emits a src deny ACL.
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: ac-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1808,7 +1682,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: ac-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1822,15 +1696,6 @@ validationTests:
       The deprecated haproxy.org/whitelist alias still emits a src allow ACL when
       the canonical allow-list is absent (upstream parity).
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: ac-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1849,7 +1714,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: ac-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1863,15 +1728,6 @@ validationTests:
       haproxy.org/ssl-redirect-port redirects to https on the explicit port instead of
       the default scheme redirect.
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1891,7 +1747,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1913,15 +1769,6 @@ validationTests:
     extraContext:
       ssl_redirect_default: "true"
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1938,7 +1785,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1970,18 +1817,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
       haproxy-pods:
         - apiVersion: v1
           kind: Pod
@@ -2032,18 +1870,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
       haproxy-pods:
         - apiVersion: v1
           kind: Pod
@@ -2163,28 +1992,6 @@ validationTests:
   test-haproxytech-check-disable:
     description: haproxy.org/check=false disables health checks via default-server no-check
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: nocheck-svc
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: nocheck-svc-abc
-            labels:
-              kubernetes.io/service-name: nocheck-svc
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2203,7 +2010,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: nocheck-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -2218,28 +2025,6 @@ validationTests:
   test-haproxytech-check-interval:
     description: haproxy.org/check-interval sets the inter parameter on default-server
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: interval-svc
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: interval-svc-abc
-            labels:
-              kubernetes.io/service-name: interval-svc
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2258,7 +2043,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: interval-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -2274,28 +2059,6 @@ validationTests:
   test-haproxytech-scale-server-slots:
     description: haproxy.org/scale-server-slots overrides the pre-allocated slot count
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: slots-svc
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: slots-svc-abc
-            labels:
-              kubernetes.io/service-name: slots-svc
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2314,7 +2077,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: slots-svc
+                          name: echo
                           port:
                             number: 80
     assertions:

@@ -32,6 +32,7 @@ import (
 // works (haproxy-demo-backend's port 8080 binds with `accept-proxy` —
 // without the annotation it would reject the connection).
 func TestIngressProxyProtocol(t *testing.T) {
+	RequireVendorLibrary(t, "haproxytech")
 	t.Parallel()
 	host := "ingress-proxy-protocol.localdev.me"
 
@@ -73,6 +74,7 @@ func TestIngressProxyProtocol(t *testing.T) {
 // haproxy.org/server-ssl annotation makes HAProxy use HTTPS to backend.
 // Routes through haproxy-demo-backend's port 8443 (TLS-terminating).
 func TestIngressBackendSSL(t *testing.T) {
+	RequireVendorLibrary(t, "haproxytech")
 	t.Parallel()
 	host := "ingress-backend-ssl.localdev.me"
 
@@ -116,6 +118,7 @@ func TestIngressBackendSSL(t *testing.T) {
 // (haproxy-demo-backend's HTTPS listener); the chart's frontend just
 // forwards encrypted bytes.
 func TestIngressSSLPassthrough(t *testing.T) {
+	RequireVendorLibrary(t, "haproxytech")
 	t.Parallel()
 	host := "ingress-ssl-passthrough.localdev.me"
 

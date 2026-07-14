@@ -6,8 +6,8 @@
 #   - request/response-set-header, src-ip-header, request-capture (haproxytech)
 #   - cors              (the shared EmitAnnotationCORS macro — ingress-nginx model)
 #   - allow/deny-list   (the shared EmitAnnotationAccessControl macro)
-#   - proxy-cookie-*    (nginx-ingress upstream Set-Cookie rewriting)
-#   - proxy-redirect-*  (nginx-ingress Location/Refresh rewriting)
+#   - response-cookie-*          (nginx proxy_cookie_* upstream Set-Cookie rewriting)
+#   - response-location-rewrite-* (nginx proxy_redirect Location/Refresh rewriting)
 #
 # frontend-filters-* snippets inherit NO locals (see charts/CLAUDE.md extension
 # table); each iterates resources.ingresses.List() itself and host-scopes its
@@ -272,15 +272,15 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
-  frontend-filters-860-haptic-proxy-cookie:
+  frontend-filters-860-haptic-response-cookie:
     template: |
       {#-
-        HAPTIC upstream Set-Cookie rewriting (best-of-breed: nginx-ingress
-        proxy-cookie-domain / proxy-cookie-path, host-scoped at the frontend).
+        HAPTIC upstream Set-Cookie rewriting (best-of-breed: nginx
+        proxy_cookie_domain / proxy_cookie_path, host-scoped at the frontend).
 
         Annotations:
-          - haproxy-haptic.org/proxy-cookie-domain: "<from> <to>"
-          - haproxy-haptic.org/proxy-cookie-path:   "<from> <to>"
+          - haproxy-haptic.org/response-cookie-domain: "<from> <to>"
+          - haproxy-haptic.org/response-cookie-path:   "<from> <to>"
 
         Only the two-argument "<from> <to>" form is supported; any other arity
         fails the render. HAProxy expresses the rewrite as a regex
@@ -296,8 +296,8 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var cookieDomain = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-cookie-domain"] %}
-          {%- var cookiePath = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-cookie-path"] %}
+          {%- var cookieDomain = ingress.Metadata.Annotations["haproxy-haptic.org/response-cookie-domain"] %}
+          {%- var cookiePath = ingress.Metadata.Annotations["haproxy-haptic.org/response-cookie-path"] %}
           {%- if cookieDomain != "" || cookiePath != "" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -308,35 +308,35 @@ templateSnippets:
               {%- if cookieDomain != "" %}
                 {%- var parts = split(strip(cookieDomain), " ") %}
                 {%- if len(parts) == 2 %}
-      # haptic/proxy-cookie-domain ({{ key }})
-      http-response replace-header Set-Cookie (.*)Domain={{ ValidateConfigValue(parts[0], "haproxy-haptic.org/proxy-cookie-domain", key, false) }}(.*) \1Domain={{ ValidateConfigValue(parts[1], "haproxy-haptic.org/proxy-cookie-domain", key, false) }}\2 if {{ cond }}
+      # haptic/response-cookie-domain ({{ key }})
+      http-response replace-header Set-Cookie (.*)Domain={{ ValidateConfigValue(parts[0], "haproxy-haptic.org/response-cookie-domain", key, false) }}(.*) \1Domain={{ ValidateConfigValue(parts[1], "haproxy-haptic.org/response-cookie-domain", key, false) }}\2 if {{ cond }}
                 {%- else %}
-                  {{- fail("Annotation 'haproxy-haptic.org/proxy-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
+                  {{- fail("Annotation 'haproxy-haptic.org/response-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
                 {%- end %}
               {%- end %}
               {%- if cookiePath != "" %}
                 {%- var parts = split(strip(cookiePath), " ") %}
                 {%- if len(parts) == 2 %}
-      # haptic/proxy-cookie-path ({{ key }})
-      http-response replace-header Set-Cookie (.*)Path={{ ValidateConfigValue(parts[0], "haproxy-haptic.org/proxy-cookie-path", key, false) }}(.*) \1Path={{ ValidateConfigValue(parts[1], "haproxy-haptic.org/proxy-cookie-path", key, false) }}\2 if {{ cond }}
+      # haptic/response-cookie-path ({{ key }})
+      http-response replace-header Set-Cookie (.*)Path={{ ValidateConfigValue(parts[0], "haproxy-haptic.org/response-cookie-path", key, false) }}(.*) \1Path={{ ValidateConfigValue(parts[1], "haproxy-haptic.org/response-cookie-path", key, false) }}\2 if {{ cond }}
                 {%- else %}
-                  {{- fail("Annotation 'haproxy-haptic.org/proxy-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
+                  {{- fail("Annotation 'haproxy-haptic.org/response-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
                 {%- end %}
               {%- end %}
             {%- end %}
           {%- end %}
       {%- end -%}
 
-  frontend-filters-870-haptic-proxy-redirect:
+  frontend-filters-870-haptic-response-location-rewrite:
     template: |
       {#-
-        HAPTIC upstream Location/Refresh rewriting (adapted from nginx-ingress
-        proxy-redirect-from / proxy-redirect-to).
+        HAPTIC upstream Location/Refresh rewriting (adapted from nginx
+        proxy_redirect).
 
         Annotations:
-          - haproxy-haptic.org/proxy-redirect-from: text to replace (skip when
+          - haproxy-haptic.org/response-location-rewrite-from: text to replace (skip when
             "off"; "default" is unsupported → warning comment).
-          - haproxy-haptic.org/proxy-redirect-to:   replacement text (required
+          - haproxy-haptic.org/response-location-rewrite-to:   replacement text (required
             alongside a real "from").
 
         DIVERGENCE ("different"): nginx applies this per-backend and supports a
@@ -354,13 +354,13 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var from = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-redirect-from"] %}
-          {%- var to = ingress.Metadata.Annotations["haproxy-haptic.org/proxy-redirect-to"] %}
+          {%- var from = ingress.Metadata.Annotations["haproxy-haptic.org/response-location-rewrite-from"] %}
+          {%- var to = ingress.Metadata.Annotations["haproxy-haptic.org/response-location-rewrite-to"] %}
           {%- if from == "default" %}
-      # Warning: haproxy-haptic.org/proxy-redirect-from=default on Ingress {{ key }} is not supported — HAProxy has no proxy_pass-derived rewrite; specify an explicit from/to pair.
+      # Warning: haproxy-haptic.org/response-location-rewrite-from=default on Ingress {{ key }} is not supported — HAProxy has no proxy_pass-derived rewrite; specify an explicit from/to pair.
           {%- else if from != "" && from != "off" %}
             {%- if to == "" %}
-              {{- fail("Annotation 'haproxy-haptic.org/proxy-redirect-from' on Ingress '" + key + "' requires 'haproxy-haptic.org/proxy-redirect-to'.") -}}
+              {{- fail("Annotation 'haproxy-haptic.org/response-location-rewrite-from' on Ingress '" + key + "' requires 'haproxy-haptic.org/response-location-rewrite-to'.") -}}
             {%- end %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -368,9 +368,9 @@ templateSnippets:
             {%- end %}
             {%- if len(hosts) > 0 %}
               {%- var cond = HostMatchCondition(hosts) %}
-              {%- var fromRe = sanitize_regex(ValidateConfigValue(from, "haproxy-haptic.org/proxy-redirect-from", key, false)) %}
-              {%- var toV = ValidateConfigValue(to, "haproxy-haptic.org/proxy-redirect-to", key, false) %}
-      # haptic/proxy-redirect ({{ key }})
+              {%- var fromRe = sanitize_regex(ValidateConfigValue(from, "haproxy-haptic.org/response-location-rewrite-from", key, false)) %}
+              {%- var toV = ValidateConfigValue(to, "haproxy-haptic.org/response-location-rewrite-to", key, false) %}
+      # haptic/response-location-rewrite ({{ key }})
       http-response replace-header Location {{ fromRe }} {{ toV }} if {{ cond }}
       http-response replace-header Refresh {{ fromRe }} {{ toV }} if {{ cond }}
             {%- end %}

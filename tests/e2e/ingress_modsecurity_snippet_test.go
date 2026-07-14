@@ -49,6 +49,7 @@ import (
 // all of them at once, which also pins the multi-rule append behaviour
 // of features-spoa-hub's snippet inlining.
 func TestIngressModSecuritySnippetEnforced(t *testing.T) {
+	RequireVendorLibrary(t, "nginxIngress")
 	const host = "ingress-modsec.localdev.me"
 
 	feature := features.New("Ingress: nginx.ingress.kubernetes.io/modsecurity-snippet enforced").
@@ -130,6 +131,7 @@ func TestIngressModSecuritySnippetEnforced(t *testing.T) {
 // verify /v1 transitions from 403 → 200 and /v2 transitions from 200 →
 // 403 across the update.
 func TestIngressModSecuritySnippetHotReload(t *testing.T) {
+	RequireVendorLibrary(t, "nginxIngress")
 	const host = "ingress-modsec-hot-reload.localdev.me"
 
 	feature := features.New("Ingress: modsecurity-snippet hot-reload (annotation update)").

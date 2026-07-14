@@ -24,7 +24,7 @@ import (
 )
 
 // TestHapticSSLRedirect adapts the haproxy.org/ssl-redirect vendor test to
-// haptic's native prefix: haproxy-haptic.org/ssl-redirect makes HAProxy answer
+// haptic's native prefix: haproxy-haptic.org/https-redirect makes HAProxy answer
 // plain HTTP requests with the configured redirect status and a https://
 // Location. Verifies the status code and the https:// scheme in Location.
 func TestHapticSSLRedirect(t *testing.T) {
@@ -33,8 +33,8 @@ func TestHapticSSLRedirect(t *testing.T) {
 		Description: "Ingress: haptic ssl-redirect annotation",
 		Host:        "ingress-haptic-sslredirect.localdev.me",
 		Annotations: map[string]string{
-			"haproxy-haptic.org/ssl-redirect":      "true",
-			"haproxy-haptic.org/ssl-redirect-code": "301",
+			"haproxy-haptic.org/https-redirect":      "true",
+			"haproxy-haptic.org/https-redirect-code": "301",
 		},
 		Assess: []SimpleIngressAssertion{{
 			Name: "HTTP request returns 301 with https:// Location",

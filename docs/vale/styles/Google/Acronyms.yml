@@ -24,6 +24,7 @@ exceptions:
   - GPU
   - GTK
   - GUI
+  - HMAC
   - HTML
   - HTTP
   - HTTPS
@@ -31,8 +32,10 @@ exceptions:
   - JAR
   - JSON
   - JSX
+  - JWT
   - LESS
   - LLDB
+  - MIME
   - NET
   - NOTE
   - NVDA

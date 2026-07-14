@@ -147,6 +147,50 @@ controller:
     # here only to force-load the library with no plugins enabled.
     spoaHub:
       enabled: false
+  # Shared response cache (Varnish tier). When enabled, requests to Ingresses
+  # carrying the haproxy-haptic.org/cache-* annotations are routed through a
+  # chart-deployed, consistent-hash-sharded Varnish workload so the cache is
+  # shared across the whole HAProxy fleet (loopback origin: on a miss Varnish
+  # fetches back through HAProxy, which routes to the app). See the caching docs.
+  cache:
+    varnish:
+      # Deploy the Varnish tier and emit the cache routing/backend. Off by default.
+      enabled: false
+      # statefulset (default; an ordered rollout keeps 1/N of the cache warm on
+      # restart) or deployment (ephemeral accelerator).
+      workload: statefulset
+      replicas: 2
+      # Stock upstream Varnish image — no custom build needed for the loopback
+      # topology. Pin to a digest in production.
+      image: varnish:7.6
+      # -s malloc,<size> — size at roughly 75% of the pod memory limit (Varnish
+      # adds ~1 KB/object of management overhead). OSS Varnish is RAM-only.
+      malloc: 256m
+      # Pod resources. A CPU request is REQUIRED for the autoscaling HPA to
+      # compute utilization (a `Utilization` target is a percentage of the
+      # request). Keep the memory limit above `malloc` plus Varnish's overhead
+      # (default malloc 256m ≈ 67% of the 384Mi limit).
+      resources:
+        requests:
+          cpu: 100m
+          memory: 384Mi
+        limits:
+          memory: 384Mi
+      # Bounded-load consistent hashing: cap any one shard's share to this factor
+      # of the mean (prevents a hot key pinning a pod). 0 disables.
+      hashBalanceFactor: 150
+      # Horizontal autoscaling of the Varnish tier. Bounded-load consistent
+      # hashing keeps per-shard load even, so average CPU is a sound signal.
+      # When enabled, the HPA owns the replica count (the static `replicas`
+      # above is ignored). A scale event re-maps only ~1/(N±1) of keys, so use a
+      # generous scale-down window to avoid thrashing a warm cache.
+      autoscaling:
+        enabled: false
+        minReplicas: 2
+        maxReplicas: 6
+        targetCPUUtilizationPercentage: 70
+        # Seconds the HPA waits before acting on a scale-down (cache-warmth guard).
+        scaleDownStabilizationSeconds: 600
   # Pluggable validator sidecar
   # Runs a second instance of the haproxy-spoa-hub binary alongside the
   # controller pod, in --validate-socket mode. The admission webhook

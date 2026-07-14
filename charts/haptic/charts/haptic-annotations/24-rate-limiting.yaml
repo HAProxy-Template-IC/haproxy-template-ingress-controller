@@ -13,9 +13,9 @@
 #   haproxy-haptic.org/rate-limit-period       stick-table window override
 #   haproxy-haptic.org/rate-limit-size         stick-table size
 #   haproxy-haptic.org/rate-limit-status-code  deny status
-#   haproxy-haptic.org/rate-limit-whitelist    exempt CIDRs
-#   haproxy-haptic.org/limit-rate              per-connection download throttle
-#   haproxy-haptic.org/limit-rate-after        bytes before throttle applies
+#   haproxy-haptic.org/rate-limit-allowlist    exempt CIDRs
+#   haproxy-haptic.org/download-bandwidth-limit              per-connection download throttle
+#   haproxy-haptic.org/download-bandwidth-limit-after        bytes before throttle applies
 templateSnippets:
   backend-directives-810-haptic-rate-limiting:
     template: |
@@ -38,7 +38,7 @@ templateSnippets:
             for rpm, 30s table-TTL for connections.
           - haproxy-haptic.org/rate-limit-size: stick-table size (default 100k).
           - haproxy-haptic.org/rate-limit-status-code: deny status (default 429).
-          - haproxy-haptic.org/rate-limit-whitelist: comma-separated CIDRs never
+          - haproxy-haptic.org/rate-limit-allowlist: comma-separated CIDRs never
             subject to the deny (still tracked). Invalid CIDR → fail.
 
         Precedence (HAProxy stores one stick-table per backend, and each data
@@ -109,13 +109,13 @@ templateSnippets:
           {%- else if !regex_search(status, "^[1-5][0-9][0-9]$") %}
             {{- fail("Invalid value '" + status + "' for annotation 'haproxy-haptic.org/rate-limit-status-code' on Ingress '" + key + "'. Expected a 3-digit HTTP status code.") -}}
           {%- end %}
-          {#- rate-limit-whitelist: comma-separated CIDRs exempted from the deny
+          {#- rate-limit-allowlist: comma-separated CIDRs exempted from the deny
               via a trailing negated src guard. Routed through ValidateCidrList
               (full literal key at the call site for the lint gate). -#}
-          {%- var whitelist = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-whitelist"] %}
+          {%- var whitelist = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-allowlist"] %}
           {%- var guard = "" %}
           {%- if whitelist != "" %}
-            {%- var validated = ValidateCidrList(whitelist, "haproxy-haptic.org/rate-limit-whitelist", key) %}
+            {%- var validated = ValidateCidrList(whitelist, "haproxy-haptic.org/rate-limit-allowlist", key) %}
             {%- if validated != "" %}
               {%- guard = " !{ src " + validated + " }" %}
             {%- end %}
@@ -139,7 +139,7 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  backend-directives-815-haptic-limit-rate:
+  backend-directives-815-haptic-download-bandwidth-limit:
     template: |
       {#-
         HAPTIC-native per-connection download throttle (adapted from
@@ -148,9 +148,9 @@ templateSnippets:
         Documentation: docs/site/docs/libraries/haptic-annotations.md#rate-limiting
 
         Annotations:
-          - haproxy-haptic.org/limit-rate: max bytes/sec sent toward a single
+          - haproxy-haptic.org/download-bandwidth-limit: max bytes/sec sent toward a single
             client connection (e.g. "100k"). Enables the throttle.
-          - haproxy-haptic.org/limit-rate-after: bytes transferred before the
+          - haproxy-haptic.org/download-bandwidth-limit-after: bytes transferred before the
             throttle applies (e.g. "1m"). Maps to bwlim-out min-size.
 
         HAProxy mapping (per-stream bandwidth limit, HAProxy >= 2.7):
@@ -164,21 +164,21 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var rate = ingress.Metadata.Annotations["haproxy-haptic.org/limit-rate"] %}
-        {%- var after = ingress.Metadata.Annotations["haproxy-haptic.org/limit-rate-after"] %}
+        {%- var rate = ingress.Metadata.Annotations["haproxy-haptic.org/download-bandwidth-limit"] %}
+        {%- var after = ingress.Metadata.Annotations["haproxy-haptic.org/download-bandwidth-limit-after"] %}
         {%- if rate != "" %}
           {%- if !regex_search(rate, "^[0-9]+[kKmMgG]?$") %}
-            {{- fail("Invalid value '" + rate + "' for annotation 'haproxy-haptic.org/limit-rate' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
+            {{- fail("Invalid value '" + rate + "' for annotation 'haproxy-haptic.org/download-bandwidth-limit' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
           {%- end %}
           {%- var fname = "haptic_limitrate_" + ns + "_" + name %}
           {%- var filterLine = "filter bwlim-out " + fname + " default-limit " + rate + " default-period 1s" %}
           {%- if after != "" %}
             {%- if !regex_search(after, "^[0-9]+[kKmMgG]?$") %}
-              {{- fail("Invalid value '" + after + "' for annotation 'haproxy-haptic.org/limit-rate-after' on Ingress '" + key + "'. Expected a byte size like '1m'.") -}}
+              {{- fail("Invalid value '" + after + "' for annotation 'haproxy-haptic.org/download-bandwidth-limit-after' on Ingress '" + key + "'. Expected a byte size like '1m'.") -}}
             {%- end %}
             {%- filterLine = filterLine + " min-size " + after %}
           {%- end %}
-      # haptic/limit-rate ({{ key }})
+      # haptic/download-bandwidth-limit ({{ key }})
       {{ filterLine }}
       http-request set-bandwidth-limit {{ fname }}
         {%- end %}

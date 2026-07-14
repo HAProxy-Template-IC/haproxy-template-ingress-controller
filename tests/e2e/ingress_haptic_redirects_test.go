@@ -22,22 +22,21 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
-// TestHapticRedirects covers the haptic-native host redirect and app-root
-// annotations under the haproxy-haptic.org/ prefix, adapting the nginx-ingress
-// permanent/temporal redirect and the app-root vendor e2e tests:
+// TestHapticRedirects covers the haptic-native host-redirect annotations under
+// the haproxy-haptic.org/ prefix:
 //
 //   - haproxy-haptic.org/permanent-redirect (+ -code): any path returns a 301
 //     with the configured Location (registered into gf["redirectHosts"], base
 //     emits from redirect-loc-<code>.map).
-//   - haproxy-haptic.org/temporal-redirect (+ -code): same shape, default 302.
-//   - haproxy-haptic.org/app-root: a request to "/" is redirected to the
-//     configured sub-path (path="/"-gated redirect via app-root.map); other
-//     paths reach the backend.
+//   - haproxy-haptic.org/temporary-redirect (+ -code): same shape, default 302.
+//   - haproxy-haptic.org/root-redirect: a request to "/" is redirected to the
+//     configured sub-path (path="/"-gated redirect served from a reload-free
+//     map); other paths reach the backend.
 //
 // Each annotation registers per host, and a catch-all host redirect would
-// shadow the app-root "/"-gated redirect, so the three behaviours use distinct
-// hosts under the shared "ingress-haptic-redirects" theme rather than one
-// Ingress.
+// shadow the root-redirect "/"-gated redirect, so the three behaviours use
+// distinct hosts under the shared "ingress-haptic-redirects" theme rather than
+// one Ingress.
 func TestHapticRedirects(t *testing.T) {
 	t.Parallel()
 
@@ -61,14 +60,14 @@ func TestHapticRedirects(t *testing.T) {
 		}},
 	})
 
-	// Temporal redirect: default code is 302; set it explicitly to exercise the
+	// Temporary redirect: default code is 302; set it explicitly to exercise the
 	// -code key and confirm the chart picks the temporary status per annotation.
 	RunSimpleIngressTest(t, SimpleIngressTest{
-		Description: "Ingress: haproxy-haptic.org/temporal-redirect",
-		Host:        "ingress-haptic-redirects-temporal.localdev.me",
+		Description: "Ingress: haproxy-haptic.org/temporary-redirect",
+		Host:        "ingress-haptic-redirects-temporary.localdev.me",
 		Annotations: map[string]string{
-			"haproxy-haptic.org/temporal-redirect":      "https://example.com/temp",
-			"haproxy-haptic.org/temporal-redirect-code": "302",
+			"haproxy-haptic.org/temporary-redirect":      "https://example.com/temp",
+			"haproxy-haptic.org/temporary-redirect-code": "302",
 		},
 		Assess: []SimpleIngressAssertion{{
 			Name: "any request returns 302 to configured Location",
@@ -81,13 +80,13 @@ func TestHapticRedirects(t *testing.T) {
 		}},
 	})
 
-	// App-root: a request to "/" is redirected to the configured sub-path; any
-	// other path (here the app-root target itself) reaches the backend.
+	// Root redirect: a request to "/" is redirected to the configured sub-path;
+	// any other path (here the root-redirect target itself) reaches the backend.
 	RunSimpleIngressTest(t, SimpleIngressTest{
-		Description: "Ingress: haproxy-haptic.org/app-root",
-		Host:        "ingress-haptic-redirects-approot.localdev.me",
+		Description: "Ingress: haproxy-haptic.org/root-redirect",
+		Host:        "ingress-haptic-redirects-rootredirect.localdev.me",
 		Annotations: map[string]string{
-			"haproxy-haptic.org/app-root": "/welcome",
+			"haproxy-haptic.org/root-redirect": "/welcome",
 		},
 		Assess: []SimpleIngressAssertion{
 			{

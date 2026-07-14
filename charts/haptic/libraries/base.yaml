@@ -1874,7 +1874,29 @@ haproxyConfig:
 validationTests:
   _global:
     description: Global fixtures for all validation tests
-    fixtures: {}
+    # Shared echo backend, merged into every test's fixtures. A test whose
+    # Ingress/route points at Service `echo` (port 80, endpoint 10.0.0.1:8080)
+    # need NOT declare its own Service + EndpointSlice — this deduplicates the
+    # otherwise-per-test backend fixtures that dominate the rendered CR. Tests
+    # needing a differently-named/ported backend still declare their own.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: echo }
+          spec: { ports: [{ port: 80 }] }
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: echo-abc
+            labels: { kubernetes.io/service-name: echo }
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
     assertions:
       - type: haproxy_valid
       - type: deterministic

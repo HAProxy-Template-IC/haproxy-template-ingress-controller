@@ -9,28 +9,6 @@ validationTests:
   test-nginx-ingress-timeouts:
     description: Nginx Ingress timeout annotations generate correct config
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: timeout-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: timeout-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: timeout-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -50,7 +28,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: timeout-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -65,28 +43,6 @@ validationTests:
   test-nginx-ingress-load-balance:
     description: Nginx Ingress load-balance annotation maps to HAProxy algorithm
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: lb-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: lb-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: lb-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -105,7 +61,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: lb-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -117,28 +73,6 @@ validationTests:
   test-nginx-ingress-ssl-redirect:
     description: Nginx Ingress ssl-redirect annotation generates 308 redirect (matches ingress-nginx)
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: redirect-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: redirect-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: redirect-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -157,7 +91,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: redirect-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -178,28 +112,6 @@ validationTests:
     extraContext:
       nginxHttpRedirectCode: "301"
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: redirect-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: redirect-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: redirect-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -218,7 +130,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: redirect-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -233,28 +145,6 @@ validationTests:
   test-nginx-ingress-force-ssl-redirect:
     description: Nginx Ingress force-ssl-redirect annotation generates 308 redirect
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: force-redirect-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: force-redirect-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: force-redirect-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -273,7 +163,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: force-redirect-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -288,28 +178,6 @@ validationTests:
   test-nginx-ingress-cors:
     description: Nginx Ingress CORS annotations generate correct headers
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cors-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: cors-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: cors-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -329,7 +197,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cors-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -357,28 +225,6 @@ validationTests:
   test-nginx-ingress-cors-multiorigin:
     description: cors-allow-origin accepts a comma-separated allow-list with single-level wildcards; exact origins go to -m str, wildcards compile to anchored -m reg
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cors-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: cors-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: cors-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -398,7 +244,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cors-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -418,28 +264,6 @@ validationTests:
   test-nginx-ingress-access-control:
     description: Nginx Ingress whitelist-source-range creates ACL and deny rule
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: allow-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: allow-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: allow-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -458,7 +282,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: allow-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -476,28 +300,6 @@ validationTests:
   test-nginx-ingress-hsts:
     description: Nginx Ingress HSTS annotations generate correct header
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: hsts-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: hsts-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: hsts-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -519,7 +321,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hsts-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -638,28 +440,6 @@ validationTests:
   test-nginx-ingress-session-affinity:
     description: Nginx Ingress cookie affinity generates cookie directive
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: affinity-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: affinity-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: affinity-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -679,7 +459,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: affinity-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -928,28 +708,6 @@ validationTests:
       through shared.ComputeIfAbsent's func() any made `!= nil` pass, then
       `.Data["auth"]` dereferenced nil).
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: auth-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: auth-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: auth-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -969,7 +727,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: auth-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -993,28 +751,6 @@ validationTests:
           type: Opaque
           data:
             auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: auth-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: auth-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: auth-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1034,7 +770,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: auth-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1318,28 +1054,6 @@ validationTests:
   test-nginx-ingress-rate-limit-rps:
     description: Nginx Ingress limit-rps annotation generates stick-table and deny 429
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: ratelimit-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: ratelimit-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: ratelimit-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1358,7 +1072,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: ratelimit-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1504,28 +1218,6 @@ validationTests:
   test-nginx-ingress-config-snippet:
     description: Nginx Ingress configuration-snippet injects raw directives
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: snippet-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: snippet-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: snippet-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1545,7 +1237,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: snippet-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1557,28 +1249,6 @@ validationTests:
   test-nginx-ingress-rewrite-target:
     description: Nginx Ingress rewrite-target translates capture groups
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: rewrite-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: rewrite-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: rewrite-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1597,7 +1267,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: rewrite-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1721,28 +1391,6 @@ validationTests:
   test-nginx-ingress-app-root:
     description: Nginx Ingress app-root redirects root path
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: approot-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: approot-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: approot-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1761,7 +1409,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: approot-service
+                          name: echo
                           port:
                             number: 80
     assertions:

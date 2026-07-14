@@ -1,0 +1,135 @@
+# HAPTIC-native annotation library — API-key authentication.
+#
+# Validates an API key presented in a request header (default X-API-Key) or a
+# query parameter against a Secret-backed map of valid keys, and establishes the
+# shared consumer identity (txn.haptic_consumer) that the per-consumer quota and
+# consumer-group ACL features key on.
+#
+# Reload-free: the key→consumer map is delivered as an HAProxyMapFile, so keys
+# can be added/rotated via the runtime map API without an HAProxy reload — the
+# strongest reload-free story in the API-gateway feature set.
+#
+# Secret format (data key `keys`, base64-encoded): one entry per line, either a
+# bare `<apikey>` (the key is its own consumer id) or `<apikey>:<consumer>`.
+templateSnippets:
+  # ==========================================================================
+  # API-key map generation (global side-effect: build one map per Secret)
+  # ==========================================================================
+  features-862-haptic-api-key:
+    template: |
+      {#- HAPTIC API-key map generation: builds a reload-free apikey to consumer map per Secret. -#}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var apiKeySecret = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] %}
+        {%- if apiKeySecret != "" %}
+          {%- var secretNs = ns %}
+          {%- var secretName = apiKeySecret %}
+          {%- if strings_contains(apiKeySecret, "/") %}
+            {%- var parts = split(apiKeySecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
+          {%- if first_seen("haptic_apikey_map", mapName) %}
+            {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_apikey_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
+            {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+            {%- if secret == nil %}
+      # WARNING haproxy-haptic.org/api-key-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ key }} not found at render time; skipping API-key auth for this Ingress.
+            {%- else %}
+              {%- var keysData = secret.Data["keys"] | b64decode() | tostring() %}
+              {%- if keysData == "" %}
+                {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy-haptic.org/api-key-secret' on Ingress '" + key + "' has an empty or missing 'keys' data key.") -}}
+              {%- end %}
+              {%- var lines = []any{} %}
+              {%- for _, rawLine := range split(keysData, "\n") %}
+                {%- var l = strip(rawLine) %}
+                {%- if l == "" %}{%- continue %}{%- end %}
+                {%- var apikey = l %}
+                {%- var consumer = l %}
+                {%- if strings_contains(l, ":") %}
+                  {%- var kp = strings_splitn(l, ":", 2) %}
+                  {%- apikey = kp[0] %}
+                  {%- consumer = kp[1] %}
+                {%- end %}
+                {#- Config-injection guard: the key is a map key and the consumer a
+                    map value — both must be printable, whitespace-free tokens. -#}
+                {%- if !regex_search(apikey, "^[!-~]+$") || !regex_search(consumer, "^[!-~]+$") %}
+                  {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced on Ingress '" + key + "' has an invalid API key or consumer id (whitespace / control characters are not permitted).") -}}
+                {%- end %}
+                {%- lines = append(lines, apikey + " " + consumer) %}
+              {%- end %}
+              {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+              {%- var _, regErr = fileRegistry.Register("map", mapName, mapContent) %}
+              {%- if regErr != nil %}{{ fail("failed to register API-key map " + mapName + ": " + tostring(regErr)) }}{%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # API-key check + consumer identity (backend-directives; inherit_context)
+  # ==========================================================================
+  backend-directives-806-haptic-api-key:
+    template: |
+      {#-
+        HAPTIC API-key check
+
+        Annotations:
+          - haproxy-haptic.org/api-key-secret: "<ns/name>" | "<name>" (required)
+          - haproxy-haptic.org/api-key-header: "<header>" (default X-API-Key)
+          - haproxy-haptic.org/api-key-query: "<param>" (mutually exclusive with -header)
+          - haproxy-haptic.org/api-key-consumer-header: "<header>" (forward the consumer id upstream)
+
+        Generated HAProxy Config:
+          http-request set-var(txn.haptic_apikey) req.hdr(<header>)
+          http-request deny deny_status 401 unless { var(txn.haptic_apikey),map(<map>) -m found }
+          http-request set-var(txn.haptic_consumer) var(txn.haptic_apikey),map(<map>) unless { var(txn.haptic_consumer) -m found }
+          http-request set-header <consumer-header> %[var(txn.haptic_consumer)] if { var(txn.haptic_consumer) -m found }
+
+        The consumer var is set-once (`unless -m found`) so JWT and API-key auth
+        compose — the first producer (JWT at 805) wins. This is the shared
+        identity the per-consumer quota / consumer-group features read.
+      -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var apiKeySecret = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-secret"] %}
+        {%- if apiKeySecret != "" %}
+          {%- var secretNs = ns %}
+          {%- var secretName = apiKeySecret %}
+          {%- if strings_contains(apiKeySecret, "/") %}
+            {%- var parts = split(apiKeySecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var hdr = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-header"] %}
+          {%- var qparam = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-query"] %}
+          {%- if hdr != "" && qparam != "" %}
+            {{- fail("Ingress '" + key + "' sets both haproxy-haptic.org/api-key-header and haproxy-haptic.org/api-key-query; they are mutually exclusive.") -}}
+          {%- end %}
+          {%- var fetch = "" %}
+          {%- if qparam != "" %}
+            {%- var q = ValidateConfigValue(qparam, "haproxy-haptic.org/api-key-query", key, false) %}
+            {%- fetch = "url_param(" + q + ")" %}
+          {%- else %}
+            {%- if hdr == "" %}{%- hdr = "X-API-Key" %}{%- end %}
+            {%- var h = ValidateConfigValue(hdr, "haproxy-haptic.org/api-key-header", key, false) %}
+            {%- fetch = "req.hdr(" + h + ")" %}
+          {%- end %}
+          {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
+          {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
+      # haptic/api-key ({{ key }})
+      http-request set-var(txn.haptic_apikey) {{ fetch }}
+      http-request deny deny_status 401 unless { var(txn.haptic_apikey),map({{ mapPath }}) -m found }
+      http-request set-var(txn.haptic_consumer) var(txn.haptic_apikey),map({{ mapPath }}) unless { var(txn.haptic_consumer) -m found }
+          {%- var consumerHdr = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-consumer-header"] %}
+          {%- if consumerHdr != "" %}
+            {%- var ch = ValidateConfigValue(consumerHdr, "haproxy-haptic.org/api-key-consumer-header", key, false) %}
+      http-request set-header {{ ch }} %[var(txn.haptic_consumer)] if { var(txn.haptic_consumer) -m found }
+          {%- end %}
+        {%- end %}
+      {%- end -%}

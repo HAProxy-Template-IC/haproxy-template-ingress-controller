@@ -4,17 +4,8 @@
 validationTests:
 
   test-haptic-ssl-redirect:
-    description: haproxy-haptic.org/ssl-redirect registers the host in the shared ssl-redirect map (reload-free) with the requested code
+    description: haproxy-haptic.org/https-redirect registers the host in the shared ssl-redirect map (reload-free) with the requested code
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: redir-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -22,8 +13,8 @@ validationTests:
             namespace: default
             name: redir-ingress
             annotations:
-              haproxy-haptic.org/ssl-redirect: "true"
-              haproxy-haptic.org/ssl-redirect-code: "301"
+              haproxy-haptic.org/https-redirect: "true"
+              haproxy-haptic.org/https-redirect-code: "301"
           spec:
             ingressClassName: haptic
             rules:
@@ -34,7 +25,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: redir-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -47,17 +38,8 @@ validationTests:
         pattern: "http-request redirect scheme https code 301 if !\\{ ssl_fc \\}"
 
   test-haptic-redirects:
-    description: haproxy-haptic.org permanent- and temporal-redirect register host→URL in the shared redirect-loc maps with their default codes
+    description: haproxy-haptic.org permanent- and temporary-redirect register host→URL in the shared redirect-loc maps with their default codes
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: r-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -76,7 +58,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: r-service
+                          name: echo
                           port:
                             number: 80
         - apiVersion: networking.k8s.io/v1
@@ -85,7 +67,7 @@ validationTests:
             namespace: default
             name: temp-ingress
             annotations:
-              haproxy-haptic.org/temporal-redirect: "https://sale.example.com"
+              haproxy-haptic.org/temporary-redirect: "https://sale.example.com"
           spec:
             ingressClassName: haptic
             rules:
@@ -96,7 +78,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: r-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -111,15 +93,6 @@ validationTests:
   test-haptic-hsts:
     description: haproxy-haptic.org/hsts registers the full Strict-Transport-Security value in hsts.map
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: hsts-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -141,7 +114,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hsts-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -231,15 +204,6 @@ validationTests:
   test-haptic-config-injection:
     description: haproxy-haptic.org config-global/config-defaults/config-frontend inject raw directives verbatim into their sections
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cfg-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -260,7 +224,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cfg-service
+                          name: echo
                           port:
                             number: 80
     assertions:

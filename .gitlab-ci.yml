@@ -1582,6 +1582,48 @@ test-e2e:
     - .test-e2e-base
     - .haproxy-version-matrix
 
+# Per-vendor e2e shards. The default test-e2e job installs with all three vendor
+# annotation libraries DISABLED (e2e-values.yaml) — enabling all three at once
+# produces a HAProxyTemplateConfig CR that exceeds etcd's ~1.5 MiB object limit,
+# a config no real user runs (the vendor libraries are mutually-exclusive
+# migration aids; a user enables at most one alongside haproxy-haptic.org/*).
+# Each vendor is exercised in its own shard (HAPTIC_E2E_PROFILE), which enables
+# just that one library on top of the core values, keeping the CR under the
+# limit. Vendor tests auto-skip in shards where their library is off (see
+# skipIfVendorDisabled / RequireVendorLibrary in tests/e2e/feature_helpers.go).
+# One HAProxy version per vendor shard — the version dimension is already covered
+# by test-e2e's matrix; re-running it per vendor would multiply e2e jobs 4×.
+.test-e2e-vendor-base:
+  extends: .test-e2e-base
+  variables:
+    HAPROXY_VERSION: "3.2"
+
+test-e2e-vendor-haproxytech:
+  extends: .test-e2e-vendor-base
+  variables:
+    HAPTIC_E2E_PROFILE: "haproxytech"
+
+test-e2e-vendor-haproxy-ingress:
+  extends: .test-e2e-vendor-base
+  variables:
+    HAPTIC_E2E_PROFILE: "haproxy-ingress"
+
+test-e2e-vendor-nginx:
+  extends: .test-e2e-vendor-base
+  variables:
+    HAPTIC_E2E_PROFILE: "nginx"
+
+# Shared-cache (Varnish tier) e2e shard. Installs with
+# controller.cache.varnish.enabled=true and runs the cache tests
+# (TestHapticVarnishCache) which the other profiles skip. One HAProxy version —
+# the tier is version-agnostic. Loads the stock Varnish image into kind (see
+# loadControllerImage) so the StatefulSet needn't reach Docker Hub.
+test-e2e-cache:
+  extends: .test-e2e-base
+  variables:
+    HAPROXY_VERSION: "3.2"
+    HAPTIC_E2E_PROFILE: "cache"
+
 # Upstream Gateway API conformance suite (sigs.k8s.io/gateway-api/conformance).
 #
 # Runs the same kind+helm setup as test-e2e (including MetalLB so Gateways

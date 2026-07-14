@@ -1,0 +1,455 @@
+# HAPTIC-native annotation library — API-gateway request gating.
+#
+# Stateless request-admission controls expressed as pure HAProxy config, all
+# host-scoped per Ingress and emitted into the frontend after routing:
+#   - fixed-response        (unconditional canned response — maintenance/sunset)
+#   - mock-response         (canned 200 stub — dev/testing)
+#   - allowed-methods       (deny 405 on disallowed HTTP methods)
+#   - require-content-type  (deny 415 when a body method lacks an allowed type)
+#   - require-headers       (deny 400 when a required header is absent)
+#
+# Snippet order (by numeric prefix) is load-bearing: fixed-response (802) and mock
+# (804) short-circuit with http-request return BEFORE the validators (806-809),
+# so a mocked or maintenance route is not also method/header-checked.
+#
+# NOTE: HMAC auth and consumer-groups ACLs (also API-gateway security) land in
+# this fragment in Phase 2; Phase 1 is the stateless-native subset above.
+templateSnippets:
+
+  # ==========================================================================
+  # fixed-response — unconditional canned response (first to run).
+  # ==========================================================================
+  frontend-filters-802-haptic-fixed-response:
+    template: |
+      {#-
+        HAPTIC fixed-response — return a fixed response for all requests
+        on this Ingress's host(s). Use for maintenance windows or sunset routes.
+
+        Annotations:
+          - haproxy-haptic.org/fixed-response: "true" (enables it)
+          - haproxy-haptic.org/fixed-response-code: HTTP status (default 503)
+          - haproxy-haptic.org/fixed-response-body: response body (optional)
+          - haproxy-haptic.org/fixed-response-content-type: (default text/plain
+            when a body is set)
+
+        Generated HAProxy Config (host-scoped):
+          http-request return status <code> [content-type "<ct>" string "<body>"] if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- if ingress.Metadata.Annotations["haproxy-haptic.org/fixed-response"] == "true" %}
+            {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/fixed-response-code"] %}
+            {%- if code == "" %}{%- code = "503" %}{%- end %}
+            {%- if toint(code) < 100 || toint(code) > 599 %}
+              {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/fixed-response-code' on Ingress '" + key + "'. Must be a valid HTTP status code (100-599).") -}}
+            {%- end %}
+            {%- var body = ingress.Metadata.Annotations["haproxy-haptic.org/fixed-response-body"] %}
+            {%- var ct = ingress.Metadata.Annotations["haproxy-haptic.org/fixed-response-content-type"] %}
+            {%- if ct == "" %}{%- ct = "text/plain" %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haptic/fixed-response ({{ key }})
+              {%- if body != "" %}
+                {%- if regex_search(body, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/fixed-response-body' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+                {#- Escape for HAProxy's double-quoted string: backslash first, then quote. -#}
+                {%- var safeBody = replace(replace(body, "\\", "\\\\"), "\"", "\\\"") %}
+      http-request return status {{ code }} content-type "{{ ValidateConfigValue(ct, "haproxy-haptic.org/fixed-response-content-type", key, false) }}" string "{{ safeBody }}" if {{ HostMatchCondition(hosts) }}
+              {%- else %}
+      http-request return status {{ code }} if {{ HostMatchCondition(hosts) }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # mock-response — canned 200 stub, short-circuits before the validators.
+  # ==========================================================================
+  frontend-filters-804-haptic-mock-response:
+    template: |
+      {#-
+        HAPTIC mock-response — return a canned body for this Ingress's host(s),
+        short-circuiting the backend. For stubbing an API during development.
+
+        Enabled when haproxy-haptic.org/mock-response (the body) is non-empty.
+
+        Annotations:
+          - haproxy-haptic.org/mock-response: response body (non-empty enables it)
+          - haproxy-haptic.org/mock-response-code: HTTP status (default 200)
+          - haproxy-haptic.org/mock-response-content-type: (default application/json)
+
+        Generated HAProxy Config (host-scoped):
+          http-request return status <code> content-type "<ct>" string "<body>" if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var body = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response"] %}
+          {%- if body != "" %}
+            {%- if regex_search(body, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/mock-response' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {#- Escape for HAProxy's double-quoted string: backslash first, then quote. -#}
+            {%- var safeBody = replace(replace(body, "\\", "\\\\"), "\"", "\\\"") %}
+            {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response-code"] %}
+            {%- if code == "" %}{%- code = "200" %}{%- end %}
+            {%- if toint(code) < 100 || toint(code) > 599 %}
+              {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/mock-response-code' on Ingress '" + key + "'. Must be a valid HTTP status code (100-599).") -}}
+            {%- end %}
+            {%- var ct = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response-content-type"] %}
+            {%- if ct == "" %}{%- ct = "application/json" %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # haptic/mock-response ({{ key }})
+      http-request return status {{ code }} content-type "{{ ValidateConfigValue(ct, "haproxy-haptic.org/mock-response-content-type", key, false) }}" string "{{ safeBody }}" if {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # allowed-methods — deny 405 on disallowed HTTP methods.
+  # ==========================================================================
+  frontend-filters-806-haptic-allowed-methods:
+    template: |
+      {#-
+        HAPTIC allowed-methods — restrict the HTTP methods this Ingress accepts.
+
+        Annotation:
+          - haproxy-haptic.org/allowed-methods: comma-separated method list,
+            e.g. "GET,POST,OPTIONS". Each token must be uppercase A-Z.
+
+        Generated HAProxy Config (host-scoped):
+          http-request deny deny_status 405 if <host-match> !{ method <M1> <M2> ... }
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var methodsRaw = ingress.Metadata.Annotations["haproxy-haptic.org/allowed-methods"] %}
+          {%- if methodsRaw != "" %}
+            {%- var methods = []any{} %}
+            {%- for _, tok := range split(methodsRaw, ",") %}
+              {%- var m = strip(tok) %}
+              {%- if m != "" %}
+                {%- if !regex_search(m, "^[A-Z]+$") %}
+                  {{- fail("Invalid method '" + m + "' in annotation 'haproxy-haptic.org/allowed-methods' on Ingress '" + key + "'. Methods must be uppercase letters (e.g. GET, POST).") -}}
+                {%- end %}
+                {%- methods = append(methods, m) %}
+              {%- end %}
+            {%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(methods) > 0 && len(hosts) > 0 %}
+      # haptic/allowed-methods ({{ key }})
+      http-request deny deny_status 405 if {{ HostMatchCondition(hosts) }} !{ method {{ methods | toStringSlice() | join(" ") }} }
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # require-content-type — deny 415 when a body method lacks an allowed type.
+  # ==========================================================================
+  frontend-filters-808-haptic-require-content-type:
+    template: |
+      {#-
+        HAPTIC require-content-type — enforce an allowed Content-Type on requests
+        that carry a body (POST/PUT/PATCH). Prefix-matched so charset suffixes
+        (e.g. "application/json; charset=utf-8") still match.
+
+        Annotation:
+          - haproxy-haptic.org/require-content-type: comma-separated media types,
+            e.g. "application/json,application/xml".
+
+        Uses `http-request return status 415` rather than `deny deny_status 415`
+        because HAProxy's deny_status only accepts codes that have a built-in
+        errorfile, and 415 is not one of them.
+
+        Generated HAProxy Config (host-scoped):
+          http-request return status 415 if <host-match> { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg <t1> <t2> ... }
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var ctRaw = ingress.Metadata.Annotations["haproxy-haptic.org/require-content-type"] %}
+          {%- if ctRaw != "" %}
+            {%- var types = []any{} %}
+            {%- for _, tok := range split(ctRaw, ",") %}
+              {%- var ct = strip(tok) %}
+              {%- if ct != "" %}
+                {%- if !regex_search(ct, "^[A-Za-z0-9./+-]+$") %}
+                  {{- fail("Invalid media type '" + ct + "' in annotation 'haproxy-haptic.org/require-content-type' on Ingress '" + key + "'. Allowed characters: letters, digits, '.', '/', '+', '-'.") -}}
+                {%- end %}
+                {%- types = append(types, ct) %}
+              {%- end %}
+            {%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(types) > 0 && len(hosts) > 0 %}
+      # haptic/require-content-type ({{ key }})
+      http-request return status 415 if {{ HostMatchCondition(hosts) }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # require-headers — deny 400 when a required request header is absent.
+  # ==========================================================================
+  frontend-filters-809-haptic-require-headers:
+    template: |
+      {#-
+        HAPTIC require-headers — reject requests missing any required header.
+
+        Annotation:
+          - haproxy-haptic.org/require-headers: comma-separated header names,
+            e.g. "X-Api-Key,X-Tenant-Id". One deny rule per header.
+
+        Generated HAProxy Config (host-scoped):
+          http-request deny deny_status 400 if <host-match> !{ req.hdr(<H>) -m found }
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var hdrsRaw = ingress.Metadata.Annotations["haproxy-haptic.org/require-headers"] %}
+          {%- if hdrsRaw != "" %}
+            {%- var hdrs = []any{} %}
+            {%- for _, tok := range split(hdrsRaw, ",") %}
+              {%- var hn = strip(tok) %}
+              {%- if hn != "" %}
+                {%- if !regex_search(hn, "^[A-Za-z0-9-]+$") %}
+                  {{- fail("Invalid header name '" + hn + "' in annotation 'haproxy-haptic.org/require-headers' on Ingress '" + key + "'. Allowed characters: letters, digits, '-'.") -}}
+                {%- end %}
+                {%- hdrs = append(hdrs, hn) %}
+              {%- end %}
+            {%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hdrs) > 0 && len(hosts) > 0 %}
+      # haptic/require-headers ({{ key }})
+              {%- var cond = HostMatchCondition(hosts) %}
+              {%- for _, hn := range hdrs %}
+      http-request deny deny_status 400 if {{ cond }} !{ req.hdr({{ tostring(hn) }}) -m found }
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # HMAC request-signature verification (backend-directives; inherit_context).
+  # SECURITY: the shared secret is INLINED into the rendered config (visible in
+  # the HAProxyCfg CR and on disk) — prefer asymmetric JWT (60-jwt-auth) where
+  # only a public key appears in config. Status `different` for this reason plus
+  # the non-constant-time signature compare.
+  # ==========================================================================
+  backend-directives-807-haptic-hmac:
+    template: |
+      {#-
+        HAPTIC HMAC signature verification (webhook-style shared-secret auth).
+
+        Annotations:
+          - haproxy-haptic.org/hmac-secret: "<ns/name>" | "<name>" (required; Secret
+            with a `secret` data key holding the shared key)
+          - haproxy-haptic.org/hmac-algorithm: sha256 (default) | sha1/sha224/sha384/sha512
+          - haproxy-haptic.org/hmac-header: header carrying the client signature
+            (default X-Signature); the signature must be lowercase hex
+          - haproxy-haptic.org/hmac-signed-string: what to sign — `body` (default,
+            forces option http-buffer-request) or `path`
+
+        Generated HAProxy Config (in the backend):
+          option http-buffer-request              # body signing only
+          http-request set-var(txn.haptic_hmac) <fetch>,hmac(<alg>,"<secret>"),hex
+          http-request deny deny_status 401 unless { req.hdr(<hdr>),strcmp(txn.haptic_hmac) -m int 0 }
+
+        SECURITY CAVEATS: the shared secret is inlined (see fragment header —
+        prefer JWT); the compare is not constant-time (a network timing side
+        channel, generally impractical over the wire but noted for honesty);
+        fails CLOSED per route (503) when the Secret is absent at render time.
+      -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var key = ns + "/" + ingress.Metadata.Name %}
+        {%- var hmacSecret = ingress.Metadata.Annotations["haproxy-haptic.org/hmac-secret"] %}
+        {%- if hmacSecret != "" %}
+          {%- var secretNs = ns %}
+          {%- var secretName = hmacSecret %}
+          {%- if strings_contains(hmacSecret, "/") %}
+            {%- var parts = split(hmacSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var alg = ingress.Metadata.Annotations["haproxy-haptic.org/hmac-algorithm"] %}
+          {%- if alg == "" %}{%- alg = "sha256" %}{%- end %}
+          {%- if !regex_search(alg, "^(sha1|sha224|sha256|sha384|sha512)$") %}
+            {{- fail("Invalid value '" + alg + "' for annotation 'haproxy-haptic.org/hmac-algorithm' on Ingress '" + key + "'. Valid: sha1, sha224, sha256, sha384, sha512.") -}}
+          {%- end %}
+          {%- var hdr = ingress.Metadata.Annotations["haproxy-haptic.org/hmac-header"] %}
+          {%- if hdr == "" %}{%- hdr = "X-Signature" %}{%- end %}
+          {%- var hdrV = ValidateConfigValue(hdr, "haproxy-haptic.org/hmac-header", key, false) %}
+          {%- var signed = ingress.Metadata.Annotations["haproxy-haptic.org/hmac-signed-string"] %}
+          {%- if signed == "" %}{%- signed = "body" %}{%- end %}
+          {%- var fetch = "" %}
+          {%- if signed == "body" %}{%- fetch = "req.body" %}{%- else if signed == "path" %}{%- fetch = "path" %}{%- else %}
+            {{- fail("Invalid value '" + signed + "' for annotation 'haproxy-haptic.org/hmac-signed-string' on Ingress '" + key + "'. Valid: body, path.") -}}
+          {%- end %}
+          {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_hmac_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
+          {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+      # haptic/hmac ({{ key }})
+          {%- if secret == nil %}
+      # WARNING haproxy-haptic.org/hmac-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      http-request deny deny_status 503
+          {%- else %}
+            {#- HAProxy's hmac converter wants the key base64-encoded — which is
+                exactly the Secret's stored form, so pass Data["secret"] as-is
+                (no b64decode). The base64 (not the raw key) is what inlines. -#}
+            {%- var secretVal = secret.Data["secret"] | tostring() %}
+            {%- if strip(secretVal) == "" %}
+              {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by 'haproxy-haptic.org/hmac-secret' on Ingress '" + key + "' has an empty or missing 'secret' data key.") -}}
+            {%- end %}
+            {%- if !regex_search(secretVal, "^[A-Za-z0-9+/=]+$") %}
+              {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by 'haproxy-haptic.org/hmac-secret' on Ingress '" + key + "' has a malformed 'secret' data value.") -}}
+            {%- end %}
+      # WARNING: the HMAC shared secret (base64) is inlined into this config — prefer asymmetric JWT.
+            {%- if signed == "body" %}
+      option http-buffer-request
+            {%- end %}
+      http-request set-var(txn.haptic_hmac) {{ fetch }},hmac({{ alg }},"{{ secretVal }}"),hex,lower
+      http-request deny deny_status 401 unless { req.hdr({{ hdrV }}),strcmp(txn.haptic_hmac) -m int 0 }
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ==========================================================================
+  # Consumer-groups authorization (map build + deny). Keys on the shared
+  # txn.haptic_consumer set by API-key (806) / JWT (805), so it runs at 808.
+  # Model: each consumer maps to ONE group; a route allows a SET of groups.
+  # ==========================================================================
+  features-864-haptic-consumer-groups:
+    template: |
+      {#-
+        HAPTIC consumer-groups — build the consumer→group map (one per Secret).
+
+        Secret format (data key `groups`, base64): one `<consumer>:<group>` per
+        line. Reload-free (delivered as an HAProxyMapFile).
+      -#}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var key = ns + "/" + ingress.Metadata.Name %}
+        {%- var cgSecret = ingress.Metadata.Annotations["haproxy-haptic.org/consumer-groups-secret"] %}
+        {%- if cgSecret != "" %}
+          {%- var secretNs = ns %}
+          {%- var secretName = cgSecret %}
+          {%- if strings_contains(cgSecret, "/") %}
+            {%- var parts = split(cgSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var mapName = "haptic-consumer-groups-" + secretNs + "-" + secretName + ".map" %}
+          {%- if first_seen("haptic_cg_map", mapName) %}
+            {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_cg_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
+            {%- var secret, _ = secretAny.(*resources.secrets.T) %}
+            {%- if secret == nil %}
+      # WARNING haproxy-haptic.org/consumer-groups-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ key }} not found at render time; skipping consumer-group map for this Secret.
+            {%- else %}
+              {%- var groupsData = secret.Data["groups"] | b64decode() | tostring() %}
+              {%- if strip(groupsData) == "" %}
+                {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by 'haproxy-haptic.org/consumer-groups-secret' on Ingress '" + key + "' has an empty or missing 'groups' data key.") -}}
+              {%- end %}
+              {%- var lines = []any{} %}
+              {%- for _, ln := range split(groupsData, "\n") %}
+                {%- var t = strip(ln) %}
+                {%- if t == "" %}{%- continue %}{%- end %}
+                {%- if !strings_contains(t, ":") %}
+                  {{- fail("Secret '" + secretNs + "/" + secretName + "' (consumer-groups) on Ingress '" + key + "' has a malformed line '" + t + "'; expected '<consumer>:<group>'.") -}}
+                {%- end %}
+                {%- var kv = strings_splitn(t, ":", 2) %}
+                {%- var consumer = strip(kv[0]) %}
+                {%- var grp = strip(kv[1]) %}
+                {%- if !regex_search(consumer, "^[!-~]+$") || !regex_search(grp, "^[!-~]+$") %}
+                  {{- fail("Secret '" + secretNs + "/" + secretName + "' (consumer-groups) on Ingress '" + key + "' has an invalid consumer or group token (whitespace / control characters not permitted).") -}}
+                {%- end %}
+                {%- lines = append(lines, consumer + " " + grp) %}
+              {%- end %}
+              {%- var mapContent = (lines | toStringSlice() | join("\n")) + "\n" %}
+              {%- var _, regErr = fileRegistry.Register("map", mapName, mapContent) %}
+              {%- if regErr != nil %}{{ fail("failed to register consumer-groups map " + mapName + ": " + tostring(regErr)) }}{%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-808-haptic-consumer-groups:
+    template: |
+      {#-
+        HAPTIC consumer-groups — authorize the request's consumer against an
+        allowed group set.
+
+        Annotations:
+          - haproxy-haptic.org/consumer-groups-secret: "<ns/name>" | "<name>" (required)
+          - haproxy-haptic.org/allowed-consumer-groups: comma-separated group names
+            the route permits (required)
+
+        Requires an authenticated consumer (API-key or JWT sets txn.haptic_consumer);
+        with no consumer, the lookup misses and the request is denied 403.
+
+        Generated HAProxy Config (in the backend):
+          http-request deny deny_status 403 unless { var(txn.haptic_consumer),map(<groups.map>) -m str <g1> <g2> ... }
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var key = ns + "/" + ingress.Metadata.Name %}
+        {%- var cgSecret = ingress.Metadata.Annotations["haproxy-haptic.org/consumer-groups-secret"] %}
+        {%- var allowed = ingress.Metadata.Annotations["haproxy-haptic.org/allowed-consumer-groups"] %}
+        {#- Fail loud on a half-configured pair: emitting no deny rule would
+            silently leave the route unauthorized (fail-open for a security
+            feature). Both annotations are required together. -#}
+        {%- if (cgSecret != "" && allowed == "") || (cgSecret == "" && allowed != "") %}
+          {{- fail("Ingress '" + key + "' sets only one of 'haproxy-haptic.org/consumer-groups-secret' and 'haproxy-haptic.org/allowed-consumer-groups'; consumer-group authorization requires BOTH — a partial config would silently leave the route unauthorized.") -}}
+        {%- end %}
+        {%- if cgSecret != "" && allowed != "" %}
+          {%- var secretNs = ns %}
+          {%- var secretName = cgSecret %}
+          {%- if strings_contains(cgSecret, "/") %}
+            {%- var parts = split(cgSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var groups = []any{} %}
+          {%- for _, g := range split(allowed, ",") %}
+            {%- var gt = strip(g) %}
+            {%- if gt != "" %}
+              {%- if !regex_search(gt, "^[!-~]+$") %}
+                {{- fail("Invalid group '" + gt + "' in annotation 'haproxy-haptic.org/allowed-consumer-groups' on Ingress '" + key + "' (whitespace / control characters not permitted).") -}}
+              {%- end %}
+              {%- groups = append(groups, gt) %}
+            {%- end %}
+          {%- end %}
+          {%- var mapName = "haptic-consumer-groups-" + secretNs + "-" + secretName + ".map" %}
+          {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
+          {%- if len(groups) > 0 %}
+      # haptic/consumer-groups ({{ key }})
+      http-request deny deny_status 403 unless { var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ groups | toStringSlice() | join(" ") }} }
+          {%- end %}
+        {%- end %}
+      {%- end -%}

@@ -1,68 +1,9 @@
 # HAPTIC-native annotation library — rewrite / upstream-header / next-upstream /
 # session-affinity validation tests (haproxy-haptic.org/*).
 validationTests:
-  test-haptic-rewrite-target:
-    description: haproxy-haptic.org/rewrite-target — $N capture stays inline, literal relocates to path-rewrite.map
-    fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: rw-svc}
-          spec:
-            ports: [{port: 80}]
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: rw-capture
-            annotations:
-              haproxy-haptic.org/rewrite-target: "/app/$1"
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: capture.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: {name: rw-svc, port: {number: 80}}
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: rw-literal
-            annotations:
-              haproxy-haptic.org/rewrite-target: "/static"
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: literal.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: {name: rw-svc, port: {number: 80}}
-    assertions:
-      - type: haproxy_valid
-      - type: contains
-        target: haproxy.cfg
-        pattern: 'http-request replace-path \(\.\*\) /app/\\1'
-      - type: contains
-        target: map:path-rewrite.map
-        pattern: "default_rw-literal_svc_rw-svc_80 /static"
-
   test-haptic-path-rewrite:
     description: haproxy-haptic.org/path-rewrite — two-token and bare forms both emit replace-path
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: pr-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -80,7 +21,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: {name: pr-svc, port: {number: 80}}
+                        service: {name: echo, port: {number: 80}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -88,7 +29,7 @@ validationTests:
         pattern: 'http-request replace-path /foo/\(\.\*\) /bar/\\1'
 
   test-haptic-proxy-body-size:
-    description: haproxy-haptic.org/proxy-body-size — size with suffix lands in body-size.map as bytes
+    description: haproxy-haptic.org/max-request-body-size — size with suffix lands in body-size.map as bytes
     fixtures:
       services:
         - apiVersion: v1
@@ -103,7 +44,7 @@ validationTests:
             namespace: default
             name: bs-ing
             annotations:
-              haproxy-haptic.org/proxy-body-size: "8m"
+              haproxy-haptic.org/max-request-body-size: "8m"
           spec:
             ingressClassName: haptic
             rules:
@@ -121,14 +62,8 @@ validationTests:
         pattern: "default_bs-ing_svc_bs-svc_80 8388608"
 
   test-haptic-next-upstream:
-    description: haproxy-haptic.org/proxy-next-upstream maps to retry-on plus retries
+    description: haproxy-haptic.org/retry-on maps to retry-on plus retries
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: nu-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -136,8 +71,8 @@ validationTests:
             namespace: default
             name: nu-ing
             annotations:
-              haproxy-haptic.org/proxy-next-upstream: "error timeout http_503"
-              haproxy-haptic.org/proxy-next-upstream-tries: "3"
+              haproxy-haptic.org/retry-on: "error timeout http_503"
+              haproxy-haptic.org/retries: "3"
           spec:
             ingressClassName: haptic
             rules:
@@ -147,7 +82,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: {name: nu-svc, port: {number: 80}}
+                        service: {name: echo, port: {number: 80}}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -158,7 +93,7 @@ validationTests:
         pattern: "retries 3"
 
   test-haptic-upstream-headers:
-    description: set-host / x-forwarded-prefix / connection-proxy-header relocate to reload-free reqhdr maps
+    description: set-host / x-forwarded-prefix / backend-connection-header relocate to reload-free reqhdr maps
     fixtures:
       services:
         - apiVersion: v1
@@ -175,7 +110,7 @@ validationTests:
             annotations:
               haproxy-haptic.org/set-host: "internal.svc.local"
               haproxy-haptic.org/x-forwarded-prefix: "/api"
-              haproxy-haptic.org/connection-proxy-header: "keep-alive"
+              haproxy-haptic.org/backend-connection-header: "keep-alive"
           spec:
             ingressClassName: haptic
             rules:
@@ -201,12 +136,6 @@ validationTests:
   test-haptic-session-affinity:
     description: haproxy-haptic.org/affinity=cookie builds a best-of-breed cookie directive with dynamic key
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: aff-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -230,7 +159,7 @@ validationTests:
                     - path: /
                       pathType: Prefix
                       backend:
-                        service: {name: aff-svc, port: {number: 80}}
+                        service: {name: echo, port: {number: 80}}
     assertions:
       - type: haproxy_valid
       - type: contains

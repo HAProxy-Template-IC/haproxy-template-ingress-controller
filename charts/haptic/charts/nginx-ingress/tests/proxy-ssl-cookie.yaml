@@ -111,28 +111,6 @@ validationTests:
   test-nginx-ingress-proxy-ssl-verify-off:
     description: proxy-ssl-verify=off keeps verify none and proxy-ssl directives are skipped when backend SSL is not enabled
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: pssloff-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: pssloff-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: pssloff-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.2"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -152,7 +130,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: pssloff-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -168,28 +146,6 @@ validationTests:
   test-nginx-ingress-proxy-cookie-rewrite:
     description: proxy-cookie-domain and proxy-cookie-path rewrite the upstream Set-Cookie header
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: cookie-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: cookie-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: cookie-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.3"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -209,7 +165,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: cookie-service
+                          name: echo
                           port:
                             number: 80
     assertions:

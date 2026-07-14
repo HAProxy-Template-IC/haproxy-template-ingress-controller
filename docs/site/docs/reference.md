@@ -47,6 +47,18 @@ Every Helm value the chart accepts, with its type and default.
 | `controller.templateLibraries.haproxyIngress.enabled` | bool | `false` | `haproxy-ingress.github.io/*` annotation compatibility (jcmoraisjr/haproxy-ingress migration) — opt-in |
 | `controller.templateLibraries.nginxIngress.enabled` | bool | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility (ingress-nginx migration) — opt-in |
 | `controller.templateLibraries.spoaHub.enabled` | bool | `false` | HAProxy-side Stream Processing Offload Agent (SPOA) hub wiring. Auto-loaded when the SPOA hub sidecar is rendered (any `spoaHub.plugins.*` enabled, or `spoaHub.enabled: true`); set this to `true` to force-load the library standalone |
+| `controller.cache.varnish.enabled` | bool | `false` | Deploy the shared Varnish cache tier and emit the cache routing/backend. When on, Ingresses carrying `haproxy-haptic.org/cache-*` annotations are routed through a consistent-hash-sharded Varnish workload so the cache is shared across the HAProxy fleet |
+| `controller.cache.varnish.workload` | string | `statefulset` | Varnish workload kind: `statefulset` (ordered rollout keeps `1/N` of the cache warm on restart) or `deployment` (ephemeral accelerator) |
+| `controller.cache.varnish.replicas` | int | `2` | Number of Varnish cache shards |
+| `controller.cache.varnish.image` | string | `varnish:7.6` | Varnish container image — stock upstream, since the loopback topology needs no custom build. Pin to a digest in production |
+| `controller.cache.varnish.malloc` | string | `256m` | Varnish `-s malloc,<size>` cache size per shard; set to roughly 75% of the pod memory limit |
+| `controller.cache.varnish.resources` | object | cpu `100m` / memory `384Mi` | Varnish pod resource requests and limits. A CPU request is required for autoscaling (the HPA's `Utilization` target is a percentage of the request); keep the memory limit above `malloc` plus overhead |
+| `controller.cache.varnish.hashBalanceFactor` | int | `150` | Bounded-load consistent hashing: cap any one shard's share to this factor of the mean (`0` disables) |
+| `controller.cache.varnish.autoscaling.enabled` | bool | `false` | Autoscale the Varnish tier with a HorizontalPodAutoscaler. When on, the HPA owns the replica count (the static `replicas` is ignored) |
+| `controller.cache.varnish.autoscaling.minReplicas` | int | `2` | Minimum Varnish shards the HPA keeps |
+| `controller.cache.varnish.autoscaling.maxReplicas` | int | `6` | Maximum Varnish shards the HPA scales to |
+| `controller.cache.varnish.autoscaling.targetCPUUtilizationPercentage` | int | `70` | Target average CPU utilization that drives scaling |
+| `controller.cache.varnish.autoscaling.scaleDownStabilizationSeconds` | int | `600` | Seconds the HPA waits before acting on a scale-down, to protect cache warmth |
 | `controller.config.routing.regexMatchOrder` | string | `default` | Path matching order: `default` (Exact > Regex > Prefix-exact > Prefix) or `last` (Exact > Prefix-exact > Prefix > Regex, performance-first) |
 
 ## Default SSL certificate

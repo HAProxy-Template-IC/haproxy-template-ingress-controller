@@ -18,15 +18,6 @@ validationTests:
           type: Opaque
           data:
             admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: auth-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -46,7 +37,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: auth-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -74,15 +65,6 @@ validationTests:
           type: Opaque
           data:
             auth: YWRtaW46JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCmd1ZXN0OjpwbGFpbnB3Cg==
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: auth-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -101,7 +83,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: auth-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -124,15 +106,6 @@ validationTests:
       a non-nil `any`, so `secret != nil` passed and the subsequent
       `secret.(*resources.secrets.T).Data` dereferenced a nil pointer.
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: auth-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -152,7 +125,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: auth-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -197,18 +170,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: contains
         target: rendering_error
@@ -249,18 +213,9 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: test-svc
+                          name: echo
                           port:
                             number: 80
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: test-svc
-          spec:
-            ports:
-              - port: 80
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -270,15 +225,6 @@ validationTests:
   test-haproxy-ingress-auth-tls-secret:
     description: haproxy-ingress.github.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/ — Dataplane validates ssl/ uploads as cert+key) and used in the crt-list line...
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: mtls-service
-          spec:
-            ports:
-              - port: 80
       secrets:
         - apiVersion: v1
           kind: Secret
@@ -322,7 +268,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: mtls-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -343,15 +289,6 @@ validationTests:
   test-haproxy-ingress-auth-tls-error-page-injection-rejected:
     description: An auth-tls-error-page value containing whitespace (or newlines, tabs, etc.) must fail loudly — without validation, the value would be interpolated into a `http-request redirect location <url>` direct...
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: mtls-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -371,7 +308,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: mtls-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -403,15 +340,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: hi-protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -430,7 +358,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hi-protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -604,12 +532,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: oauth-bad-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -626,7 +548,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend: {service: {name: oauth-bad-svc, port: {number: 80}}}
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: contains
         target: rendering_error
@@ -647,12 +569,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {namespace: default, name: oauth-np-svc}
-          spec:
-            ports: [{port: 80}]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -669,7 +585,7 @@ validationTests:
                   paths:
                     - path: /
                       pathType: Prefix
-                      backend: {service: {name: oauth-np-svc, port: {number: 80}}}
+                      backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: contains
         target: rendering_error
@@ -749,15 +665,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: hi-protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -777,7 +684,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hi-protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -811,15 +718,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -839,7 +737,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -870,15 +768,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -898,7 +787,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -929,15 +818,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -958,7 +838,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
         - apiVersion: networking.k8s.io/v1
@@ -980,7 +860,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1032,15 +912,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1060,7 +931,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1100,15 +971,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1128,7 +990,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
         - apiVersion: networking.k8s.io/v1
@@ -1149,7 +1011,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1174,14 +1036,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports: [{ port: 80 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1201,7 +1055,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1229,15 +1083,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1258,7 +1103,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1298,15 +1143,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1327,7 +1163,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -1354,15 +1190,6 @@ validationTests:
         poolMaxConn: 100
         poolPurgeDelay: 30s
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: hi-protected-svc
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1380,7 +1207,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hi-protected-svc
+                          name: echo
                           port:
                             number: 80
     assertions:

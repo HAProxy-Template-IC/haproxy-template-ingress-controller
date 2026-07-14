@@ -5,16 +5,6 @@ validationTests:
   test-haptic-timeouts:
     description: haproxy-haptic.org timeout annotations render timeout directives
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: timeout-service
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -39,7 +29,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: timeout-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -69,15 +59,6 @@ validationTests:
   test-haptic-load-balance:
     description: haproxy-haptic.org/load-balance accepts exact and parameterized algorithms
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: lb-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -96,7 +77,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: lb-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -106,17 +87,8 @@ validationTests:
         pattern: 'balance hdr\(X-Custom\)'
 
   test-haptic-upstream-hash:
-    description: haproxy-haptic.org/upstream-hash-by maps to a HAProxy consistent hash
+    description: haproxy-haptic.org/consistent-hash-by maps to a HAProxy consistent hash
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: hash-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -124,7 +96,7 @@ validationTests:
             namespace: default
             name: hash-ingress
             annotations:
-              haproxy-haptic.org/upstream-hash-by: "$request_uri"
+              haproxy-haptic.org/consistent-hash-by: "$request_uri"
           spec:
             ingressClassName: haptic
             rules:
@@ -135,7 +107,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hash-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -150,15 +122,6 @@ validationTests:
   test-haptic-health-checks:
     description: haproxy-haptic.org health-check annotations render httpchk and default-server flags
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: health-service
-          spec:
-            ports:
-              - port: 80
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -181,7 +144,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: health-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -205,28 +168,6 @@ validationTests:
   test-haptic-server-tuning:
     description: maxconn/maxqueue/weight/proxy-protocol/scale-server-slots/fullconn render together
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: tuning-service
-          spec:
-            ports:
-              - port: 80
-                targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: tuning-service-abc
-            labels:
-              kubernetes.io/service-name: tuning-service
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -250,7 +191,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: tuning-service
+                          name: echo
                           port:
                             number: 80
     assertions:

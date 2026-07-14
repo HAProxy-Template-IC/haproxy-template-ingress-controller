@@ -1,0 +1,34 @@
+# HAPTIC-native annotation library — compression validation test.
+validationTests:
+  test-haptic-compression:
+    description: >-
+      compress-enable emits backend compression directives with the configured
+      algorithm and MIME type list.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: gz-ingress
+            annotations:
+              haproxy-haptic.org/compress-enable: "true"
+              haproxy-haptic.org/compress-algorithm: "gzip"
+              haproxy-haptic.org/compress-types: "text/html,application/json"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: gz.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "compression algo gzip"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "compression type text/html application/json"

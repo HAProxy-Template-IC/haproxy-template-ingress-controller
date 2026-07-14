@@ -5,28 +5,6 @@ validationTests:
   test-nginx-ingress-permanent-redirect:
     description: Nginx Ingress permanent-redirect generates 301 redirect
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: permredir-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: permredir-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: permredir-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -45,7 +23,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: permredir-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -57,28 +35,6 @@ validationTests:
   test-nginx-ingress-temporal-redirect:
     description: Nginx Ingress temporal-redirect generates 302 redirect
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: tempredir-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: tempredir-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: tempredir-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -97,7 +53,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: tempredir-service
+                          name: echo
                           port:
                             number: 80
     assertions:
@@ -539,28 +495,6 @@ validationTests:
   test-nginx-ingress-upstream-hash-header:
     description: Nginx Ingress upstream-hash-by translates $http_ variables
     fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: hash-service
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: hash-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: hash-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -579,7 +513,7 @@ validationTests:
                       pathType: Prefix
                       backend:
                         service:
-                          name: hash-service
+                          name: echo
                           port:
                             number: 80
     assertions:

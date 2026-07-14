@@ -37,6 +37,7 @@ import (
 // auth-tls-pass-certificate-to-upstream — all four annotations the
 // nginx-ingress library renders into the chart's mTLS pipeline.
 func TestIngressAuthTLSSecretNginx(t *testing.T) {
+	RequireVendorLibrary(t, "nginxIngress")
 	t.Parallel()
 	host := "ingress-nginx-auth-tls.localdev.me"
 

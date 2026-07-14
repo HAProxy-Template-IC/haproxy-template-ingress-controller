@@ -51,20 +51,22 @@ controller:
   templateLibraries:
     gateway:
       enabled: true
-    # The vendor annotation libraries are opt-in (disabled by default as of the
-    # haptic-annotations release), but the e2e suite exercises ALL of them —
-    # ingress_haproxy_ingress_*, ingress_basic_auth (haproxy.org/*), etc. — so
-    # force-enable them here regardless of chart defaults. hapticAnnotations is
-    # on by default and covers the ingress_haptic_* suite.
+    # The vendor annotation libraries are opt-in and stay OFF in this core
+    # profile: enabling all three at once renders an HAProxyTemplateConfig CR
+    # larger than etcd's 1.5 MiB object limit. The e2e suite still exercises each
+    # one, sharded — main_test.go force-enables a single vendor per shard from
+    # HAPTIC_E2E_PROFILE (haproxytech / haproxy-ingress / nginx), and vendor tests
+    # auto-skip in the shards where their library is off. hapticAnnotations is on
+    # by default and covers the ingress_haptic_* suite in every shard.
+    # The external-auth + coraza SPOA plugins that the haptic-native auth-url /
+    # waf tests need are enabled explicitly under spoaHub.plugins below (they must
+    # not depend on a vendor library that a given shard turns off).
     haproxytech:
-      enabled: true
+      enabled: false
     haproxyIngress:
-      enabled: true
-    # Enable nginx-ingress library so nginx.ingress.kubernetes.io/auth-url
-    # is wired (also auto-flips spoaHub.plugins.external-auth.enabled on,
-    # since the OR-expression in values.yaml gates on this library).
+      enabled: false
     nginxIngress:
-      enabled: true
+      enabled: false
 
   # Route the rendered SPOA-hub TOML through the validator sidecar at
   # admission time. The webhook dry-renders the prospective config
@@ -249,6 +251,12 @@ spoaHub:
     logLevel: debug
   plugins:
     external-auth:
+      # Enabled explicitly: the haptic-native TestHapticExternalAuth
+      # (haproxy-haptic.org/auth-url) runs in every e2e shard, so the plugin
+      # can't depend on the vendor-library OR (values.yaml gates external-auth on
+      # nginxIngress, which the per-vendor shards toggle off). Chart default keeps
+      # it off unless a vendor library that uses it is enabled.
+      enabled: true
       params: |
         timeout_ms = 5000
         fail_open = false
@@ -260,9 +268,11 @@ spoaHub:
           "x-forwarded-host", "x-forwarded-uri"
         ]
         extract_headers = ["x-auth-user", "x-auth-roles"]
-    # Coraza is auto-enabled by chart values.yaml whenever the
-    # nginx-ingress OR haproxy-ingress library is on (both are here),
-    # so we don't set `enabled` explicitly. Override `directives` to
+    # Enabled explicitly: the haptic-native TestHapticWAF
+    # (haproxy-haptic.org/waf) runs in every e2e shard, so coraza can't depend on
+    # the vendor-library OR (values.yaml gates it on nginx-ingress OR
+    # haproxy-ingress, which the per-vendor shards toggle off). Override
+    # `directives` to
     # the smallest viable rule set — operators wanting OWASP CRS get
     # the chart default; CI keeps it minimal so per-test
     # `nginx.ingress.kubernetes.io/modsecurity-snippet` and
@@ -281,6 +291,7 @@ spoaHub:
     # per-Ingress rules land in the running config without a pod
     # restart.
     coraza:
+      enabled: true
       directives: |
         SecRuleEngine On
         SecRule REQUEST_HEADERS:User-Agent "@streq haptic-waf-block-probe" "id:7700201,phase:1,deny,status:403,msg:'haptic-e2e-waf-probe blocked'"

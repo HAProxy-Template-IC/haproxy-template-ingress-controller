@@ -42,6 +42,7 @@ import (
 // suffix-form key as host.map. This test pins that contract by
 // exercising it end-to-end through the per-app WAF path.
 func TestIngressModSecuritySnippetWildcardHost(t *testing.T) {
+	RequireVendorLibrary(t, "nginxIngress")
 	const (
 		wildcardHost = "*.localdev.me"
 		concreteHost = "wild-modsec-test.localdev.me"
