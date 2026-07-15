@@ -191,6 +191,75 @@ controller:
         targetCPUUtilizationPercentage: 70
         # Seconds the HPA waits before acting on a scale-down (cache-warmth guard).
         scaleDownStabilizationSeconds: 600
+  # Shared request-rate limiting via the bundled rate-limit SPOA plugin. This
+  # is independent of the per-pod stick-table limiter (`rate-limit-rps` /
+  # `rate-limit-rpm`): when enabled, routes carrying
+  # `haproxy-haptic.org/rate-limit-requests` consume one budget across the
+  # whole HAProxy fleet.
+  rateLimit:
+    shared:
+      # Enables the native shared rate-limit annotations and auto-enables the
+      # spoaHub.plugins.rate-limit plugin. Off by default; annotations fail the
+      # render loudly while this is false so a missing opt-in cannot become an
+      # inert, unprotected route.
+      enabled: false
+      # Outer SPOE/plugin processing timeout in milliseconds for the shared
+      # limiter. Keep this tight on public edges: if the hub/plugin is
+      # overloaded, annotated routes fail closed quickly instead of adding a
+      # long request tail. Override spoaHub.plugins.rate-limit.timeoutMs only
+      # if you intentionally want to bypass this first-class knob.
+      pluginTimeoutMs: 50
+      # Per-operation shared-store timeout in milliseconds. The default keeps
+      # exact `gcra` checks from adding a long tail during store trouble while
+      # still allowing operators on slower cross-zone networks to tune upward.
+      # This renders to the plugin's `store_timeout_ms` parameter.
+      storeTimeoutMs: 10
+    store:
+      # Deploy chart-managed HA Valkey for shared rate limiting when
+      # controller.rateLimit.shared.enabled=true. Enabled by default so the
+      # native shared limiter has an HA store out of the box; set false only
+      # when bringing your own Redis/Valkey/Sentinel/Cluster endpoint through
+      # spoaHub.plugins.rate-limit.params.store_url or store_urls.
+      enabled: true
+      image: valkey/valkey:8-alpine
+      port: 6379
+      # One writable primary with Sentinel failover. Three replicas gives
+      # Sentinel quorum and one promoted survivor during a single pod/node loss.
+      # This is intentionally not an HPA-scaled Valkey Cluster: horizontal
+      # scaling requires slot management and is left to BYO Redis/Valkey
+      # platforms.
+      replicas: 3
+      # Keep Valkey below the container memory limit under high-cardinality
+      # traffic. Every rate-limit key has a TTL, so volatile-ttl evicts expiring
+      # limiter keys instead of OOM-killing the pod.
+      maxmemory: 96mb
+      maxmemoryPolicy: volatile-ttl
+      sentinel:
+        port: 26379
+        quorum: 2
+        downAfterMilliseconds: 2000
+        failoverTimeoutMilliseconds: 10000
+        parallelSyncs: 1
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            memory: 64Mi
+      podDisruptionBudget:
+        enabled: true
+        maxUnavailable: 1
+      networkPolicy:
+        # Selects the chart-managed Valkey pods and only allows HAProxy/SPOA
+        # pods plus same-store Sentinel/replication traffic. Effective only when
+        # the cluster CNI enforces NetworkPolicy.
+        enabled: true
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 128Mi
   # Pluggable validator sidecar
   # Runs a second instance of the haproxy-spoa-hub binary alongside the
   # controller pod, in --validate-socket mode. The admission webhook
@@ -1738,6 +1807,57 @@ spoaHub:
       params: |
         instrumentation.name = "haproxy-edge"
         instrumentation.scopes = ["request", "response"]
+    rate-limit:
+      # Shared, fleet-wide rate limiting via the haproxy-spoa-hub
+      # rate-limit plugin. Opt-in (off by default). Unlike the per-pod
+      # stick-table limiter (haproxy-haptic.org/rate-limit-rps), this
+      # enforces ONE limit across ALL haproxy pods through a shared store.
+      # Drive it per route with the haproxy-haptic.org/rate-limit-requests
+      # (+ -period / -burst / -key / -algorithm) annotations.
+      #
+      # The shared store is a Valkey/Redis reachable at `store_url`. Either
+      # let the chart deploy one (controller.rateLimit.store.enabled=true,
+      # which injects store_url automatically) or point store_url at your
+      # own below (BYO). HAPTIC fails the render when shared rate limiting is
+      # enabled without an effective store_url, because per-pod fallback is
+      # not a shared fleet budget.
+      enabled: '{{ .Values.controller.rateLimit.shared.enabled }}'
+      # The plugin's default lease mode is a local in-memory token-bucket
+      # check. The shared store is touched only on bounded/coalesced background
+      # refresh work, not on every request. Keep the SPOE timeout tight:
+      # if the hub/plugin is overloaded, annotated routes should fail closed
+      # quickly instead of adding a long request tail under DoS.
+      # max_keys bounds local key cardinality; once capacity eviction happens,
+      # newly inserted keys wait for a shared lease instead of receiving a fresh
+      # optimistic local batch.
+      # Exact mode (rate-limit-algorithm: gcra) does one synchronous store
+      # round-trip per request; store_timeout_ms below is intentionally very
+      # low so exact mode can return a fail-closed verdict before the hub drops
+      # the plugin result. Keep public-edge DoS limits on the default lease
+      # mode; exact mode is for low-volume contractual budgets.
+      timeoutMs: '{{ .Values.controller.rateLimit.shared.pluginTimeoutMs }}'
+      messages: ["check-ratelimit"]
+      dependsOn: []
+      # Runtime knobs (1:1 with PluginConfig in
+      # haproxy-spoa-hub-plugin-rate-limit/src/config.rs). When
+      # controller.rateLimit.store.enabled=true the chart appends a
+      # `store_url = "..."` line pointing at the managed Sentinel service —
+      # do NOT also set store_url here in that case (duplicate key). To
+      # bring your own store, leave the store disabled and uncomment
+      # store_url below. The plugin also accepts store_urls = [...] for BYO
+      # deployments that intentionally shard across several independent stores.
+      params: |
+        fail_open = true
+        sync_interval_ms = 200
+        low_water_percent = 20
+        ttl_ms = 60000
+        breaker_threshold = 3
+        breaker_cooldown_ms = 5000
+        store_timeout_ms = {{ .Values.controller.rateLimit.shared.storeTimeoutMs }}
+        max_keys = 50000
+        idle_ttl_ms = 120000
+        max_prefetch_queue = 8192
+        # store_url = "redis://my-valkey.my-namespace.svc:6379"
     sso-auth:
       enabled: '{{ false }}'
       timeoutMs: 6000

@@ -41,6 +41,7 @@ ${BEGIN_MARK}
 | \`maxmind\`         | \`${SPOA_PLUGIN_MAXMIND_VERSION}\`          |
 | \`mirror\`          | \`${SPOA_PLUGIN_MIRROR_VERSION}\`           |
 | \`otel\`            | \`${SPOA_PLUGIN_OTEL_VERSION}\`             |
+| \`rate-limit\`      | \`${SPOA_PLUGIN_RATE_LIMIT_VERSION}\`       |
 | \`sso-auth\`        | \`${SPOA_PLUGIN_SSO_AUTH_VERSION}\`         |
 
 Plugin \`.so\` files target glibc \`${SPOA_PLUGIN_GLIBC_VERSION}\` (Debian bookworm).

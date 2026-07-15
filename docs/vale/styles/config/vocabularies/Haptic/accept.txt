@@ -168,6 +168,7 @@ Helm
 hitless
 Hostname
 hostname
+Valkey
 hostnames
 HPA
 HSTS

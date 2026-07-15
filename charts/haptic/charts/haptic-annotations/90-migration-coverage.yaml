@@ -370,9 +370,21 @@ migrationCoverage:
       haproxy-haptic.org/rate-limit-connections:
         status: supported
         note: "Per-source concurrent-connection cap via conn_cur counter; ignored when rps or rpm is set (separate counter type, comment records it)."
+      haproxy-haptic.org/rate-limit-algorithm:
+        status: supported
+        note: "Shared SPOA limiter algorithm: token-bucket (lease mode) or gcra (exact synchronous store check). Requires rate-limit-requests and controller.rateLimit.shared.enabled."
+      haproxy-haptic.org/rate-limit-burst:
+        status: supported
+        note: "Shared SPOA limiter burst allowance; positive integer, defaults to rate-limit-requests."
+      haproxy-haptic.org/rate-limit-key:
+        status: supported
+        note: "Shared SPOA limiter key dimension: ip (default) or consumer (txn.haptic_consumer, falling back to source IP when no consumer is present)."
       haproxy-haptic.org/rate-limit-period:
         status: supported
-        note: "Overrides the stick-table window. When unset, the window derives from the active cap: 1 second for requests per second, 60 seconds for requests per minute, and a 30-second table TTL for connection caps. Accepts a bare number or an HAProxy time suffix (`us`/`ms`/`s`/`m`/`h`/`d`); other values fail the render."
+        note: "Overrides the rate window. For stick-tables, derives from rps/rpm/connections when unset and accepts HAProxy time suffixes; for shared SPOA limiting defaults to 1s and accepts ms/s/m/h/d. Malformed or zero shared periods fail the render."
+      haproxy-haptic.org/rate-limit-requests:
+        status: supported
+        note: "Enables the shared fleet-wide rate limiter for the Ingress: N requests per period via the bundled rate-limit SPOA plugin. Requires controller.rateLimit.shared.enabled; controller.rateLimit.store.enabled deploys HA Valkey with Sentinel and auto-injects store_url."
       haproxy-haptic.org/rate-limit-rpm:
         status: supported
         note: "Per-source requests/minute cap (http_req_rate, 60s window); ignored when rate-limit-rps is also set (single stick-table, comment records it)."

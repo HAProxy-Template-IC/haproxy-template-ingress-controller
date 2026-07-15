@@ -59,6 +59,19 @@ Every Helm value the chart accepts, with its type and default.
 | `controller.cache.varnish.autoscaling.maxReplicas` | int | `6` | Maximum Varnish shards the HPA scales to |
 | `controller.cache.varnish.autoscaling.targetCPUUtilizationPercentage` | int | `70` | Target average CPU utilization that drives scaling |
 | `controller.cache.varnish.autoscaling.scaleDownStabilizationSeconds` | int | `600` | Seconds the HPA waits before acting on a scale-down, to protect cache warmth |
+| `controller.rateLimit.shared.enabled` | bool | `false` | Enable the native shared rate-limit annotations and auto-enable the bundled `rate-limit` SPOA plugin. When false, Ingresses carrying `haproxy-haptic.org/rate-limit-requests` fail the render loudly instead of being silently unprotected. When true, leave `controller.rateLimit.store.enabled=true` for the chart-managed HA Valkey/Sentinel store or provide `spoaHub.plugins.rate-limit.params.store_url`/`store_urls`; HAPTIC fails the render instead of silently using a per-pod fallback |
+| `controller.rateLimit.shared.pluginTimeoutMs` | int | `50` | Outer SPOE/plugin processing timeout for shared rate-limit checks. Keep low on public edges so plugin overload fails closed quickly; raise only when your network/store latency budget requires it |
+| `controller.rateLimit.shared.storeTimeoutMs` | int | `10` | Per-operation Redis/Valkey timeout rendered as the rate-limit plugin's `store_timeout_ms`. Exact `gcra` mode waits on this path per request; tune according to measured store round-trip time and failover behavior |
+| `controller.rateLimit.store.enabled` | bool | `true` | Deploy chart-managed HA Valkey with Sentinel and inject its `store_url` into the rate-limit plugin, so budgets are shared across the HAProxy fleet. Leave true for the out-of-box HA store; set false only when you bring your own Redis/Valkey/Sentinel/Cluster endpoint via `spoaHub.plugins.rate-limit.params` |
+| `controller.rateLimit.store.image` | string | `valkey/valkey:8-alpine` | Valkey image for the chart-managed shared rate-limit store |
+| `controller.rateLimit.store.port` | int | `6379` | Valkey Service port for the chart-managed shared rate-limit store |
+| `controller.rateLimit.store.replicas` | int | `3` | Fixed Valkey pod count for the chart-managed Sentinel topology: one writable primary plus replicas for failover. Must be at least 3. This is HA, not automatic horizontal Valkey scaling |
+| `controller.rateLimit.store.maxmemory` | string | `96mb` | Valkey `--maxmemory` for the chart-managed shared rate-limit store |
+| `controller.rateLimit.store.maxmemoryPolicy` | string | `volatile-ttl` | Valkey eviction policy for the chart-managed shared rate-limit store. All limiter keys expire, so this bounds memory under high key cardinality instead of OOM-killing the pod |
+| `controller.rateLimit.store.sentinel` | object | port `26379`, quorum `2` | Sentinel settings for managed-store failover: port, quorum, down-after, failover timeout, parallel syncs, and Sentinel container resources |
+| `controller.rateLimit.store.podDisruptionBudget` | object | enabled `true`, `maxUnavailable` `1` | PodDisruptionBudget settings for the managed Valkey pods |
+| `controller.rateLimit.store.networkPolicy.enabled` | bool | `true` | Emit a NetworkPolicy that only allows HAProxy/SPOA pods and store-internal Valkey/Sentinel traffic to the managed store |
+| `controller.rateLimit.store.resources` | object | cpu `50m` / memory `128Mi` | Valkey pod resource requests and limits. The chart-managed store is a fixed-size HA Sentinel topology; use bring-your-own Redis/Valkey infrastructure when you need horizontal store scaling |
 | `controller.config.routing.regexMatchOrder` | string | `default` | Path matching order: `default` (Exact > Regex > Prefix-exact > Prefix) or `last` (Exact > Prefix-exact > Prefix > Regex, performance-first) |
 
 ## Default SSL certificate
@@ -506,7 +519,7 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.securityContext` | map | See values.yaml | Container security context for the spoa-hub container. Default runs user and group 99, matching the pod's `fsGroup`, so the Unix socket the hub creates under `/run/spoa` is accessible to the HAProxy container; read-only root filesystem, no privilege escalation, all capabilities dropped |
 | `spoaHub.extraVolumeMounts` | list | `[]` | Extra volume mounts added to the spoa-hub container only (rendered through `tpl`) — for MMDB files (`maxmind`), OpenID Connect (OIDC) client secrets (`sso-auth`), and similar plugin data |
 
-Available plugin names (`<name>`): `coraza`, `external-auth`, `fingerprinting`, `maxmind`, `mirror`, `otel`, `sso-auth`. See `values.yaml` for each plugin's default `messages` / `timeoutMs` and the upstream plugin README for the `params:` schema.
+Available plugin names (`<name>`): `coraza`, `external-auth`, `fingerprinting`, `maxmind`, `mirror`, `otel`, `rate-limit`, `sso-auth`. See `values.yaml` for each plugin's default `messages` / `timeoutMs` and the upstream plugin README for the `params:` schema.
 
 ## HAProxy resources & scheduling
 

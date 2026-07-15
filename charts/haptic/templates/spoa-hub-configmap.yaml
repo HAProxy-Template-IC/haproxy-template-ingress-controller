@@ -10,8 +10,6 @@ The chart never parses or validates the blob — see each upstream plugin's
 README for the schema.
 */}}
 {{- if or (include "haptic.spoaHub.enabled" .) (include "haptic.validators.enabled" .) }}
-{{- $spoaHub := .Values.spoaHub }}
-{{- $hub := $spoaHub.hub }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,68 +19,5 @@ metadata:
     app.kubernetes.io/component: spoa-hub
 data:
   config.toml: |
-    plugin_dir = "/etc/haproxy-spoa-hub/plugins"
-    default_timeout_ms = 500
-    log_level = {{ $hub.logLevel | quote }}
-    max_connections = {{ $hub.maxConnections }}
-    blocking_thread_keep_alive_secs = {{ $hub.blockingThreadKeepAliveSecs }}
-    {{- with $hub.metricsAddr }}
-    {{- /* Bootstrap-side metrics_addr — mirrors the runtime-rendered
-           libraries/spoa-hub/ `metrics_addr` line so the /metrics
-           endpoint is bound from process start, not just after the
-           controller pushes the first runtime config. The two have to
-           stay in sync: the bootstrap is what the sidecar loads on pod
-           startup (read-only, mounted from this ConfigMap), and the
-           hub's file-watch swaps in the runtime config later. Without
-           this, scraping /metrics during early-cluster boot returns
-           empty — what bit issue #45's first artifact run. */}}
-    metrics_addr = {{ . | quote }}
-    {{- end }}
-    {{- with $hub.workerThreads }}
-    worker_threads = {{ . }}
-    {{- end }}
-
-    [[listeners]]
-    type = "unix"
-    address = {{ $spoaHub.haproxy.socketPath | quote }}
-
-    {{- range $name, $plugin := $spoaHub.plugins }}
-    {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $) }}
-
-    {{- /* The hub builds SPOP response variable names as `<plugin>.<var>`,
-           so the plugin name shows up directly in HAProxy's variable namespace
-           (e.g. `txn.<var-prefix>.<plugin>.allowed`). HAProxy variable names
-           are restricted identifiers — dashes aren't allowed mid-identifier
-           the same way they are in YAML keys, so a TOML name of `external-auth`
-           produces a var like `external-auth.allowed` which the deny rule
-           can't match. The upstream plugin's example hub.toml uses the
-           snake_case form for this reason. Convert dashes to underscores
-           here to keep the YAML key kebab-case (idiomatic) while emitting
-           a HAProxy-friendly identifier. */}}
-    [[plugins]]
-    name = {{ regexReplaceAll "-" $name "_" | quote }}
-    library = {{ include "haptic.spoaHub.libName" (dict "name" $name) | quote }}
-    messages = {{ $plugin.messages | toJson }}
-    timeout_ms = {{ $plugin.timeoutMs }}
-    {{- with $plugin.dependsOn }}
-    depends_on = {{ . | toJson }}
-    {{- end }}
-
-    [plugins.params]
-    {{- /* Coraza's directives lives in its own values field so the
-           controller-rendered TOML (rendered by libraries/spoa-hub/)
-           can append per-Ingress modsecurity-snippet values into it.
-           The bootstrap placeholder rendered here is just enough to let
-           the hub start; the controller pushes the real config via the
-           dataplane API and the hub reloads on file-watch. */}}
-    {{- if and (eq $name "coraza") $plugin.directives }}
-    directives = """
-    {{- $plugin.directives | nindent 4 }}
-    """
-    {{- end }}
-    {{- with $plugin.params }}
-    {{ . | nindent 4 | trim }}
-    {{- end }}
-    {{- end }}
-    {{- end }}
+{{ include "haptic.spoaHub.bootstrapConfigContent" . | nindent 4 }}
 {{- end }}

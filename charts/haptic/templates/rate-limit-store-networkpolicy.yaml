@@ -1,0 +1,75 @@
+{{- $store := .Values.controller.rateLimit.store }}
+{{- $np := $store.networkPolicy | default dict }}
+{{- $npEnabled := true }}
+{{- if hasKey $np "enabled" }}
+  {{- $npEnabled = $np.enabled }}
+{{- end }}
+{{- if and .Values.controller.rateLimit.shared.enabled $store.enabled $npEnabled }}
+{{- $storeName := include "haptic.rateLimit.storeServiceName" . }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $storeName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rate-limit-store
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: haptic-rate-limit-store
+      app.kubernetes.io/instance: {{ $storeName }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # HAProxy pods host the SPOA hub sidecar. The plugin reaches Sentinels for
+    # primary discovery and then connects to the current Valkey primary.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "haptic.haproxy.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ $store.port }}
+          protocol: TCP
+        - port: {{ $store.sentinel.port | default 26379 }}
+          protocol: TCP
+    # Valkey replication, Sentinel quorum, and Sentinel-driven reconfiguration
+    # are internal to the managed store pods.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: haptic-rate-limit-store
+              app.kubernetes.io/instance: {{ $storeName }}
+      ports:
+        - port: {{ $store.port }}
+          protocol: TCP
+        - port: {{ $store.sentinel.port | default 26379 }}
+          protocol: TCP
+  egress:
+    # DNS is required because Sentinel announces and resolves stable StatefulSet
+    # pod hostnames.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Store-internal Valkey replication and Sentinel gossip/reconfiguration.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: haptic-rate-limit-store
+              app.kubernetes.io/instance: {{ $storeName }}
+      ports:
+        - port: {{ $store.port }}
+          protocol: TCP
+        - port: {{ $store.sentinel.port | default 26379 }}
+          protocol: TCP
+{{- end }}

@@ -320,6 +320,8 @@ templateSnippets:
       {{ render "spoe-message-check-auth-body" }}
       {%- else if msg == "check-request" -%}
       {{ render "spoe-message-check-request-body" }}
+      {%- else if msg == "check-ratelimit" -%}
+      {{ render "spoe-message-check-ratelimit-body" }}
       {%- else if hasPrefix(msg, "mirror-") -%}
       {{ render "spoe-message-mirror-body" inherit_context }}
       {%- else -%}
@@ -433,6 +435,41 @@ templateSnippets:
     template: |-
       spoe-message check-request
           args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body app=var(txn.coraza_app)
+
+  # Canonical spoe-message check-ratelimit body. Rendered by name from
+  # spoe-conf-content's per-message dispatch when "check-ratelimit" is in the
+  # messages union (i.e. spoaHub.plugins.rate-limit is enabled). Args
+  # follow the haproxy-spoa-hub-plugin-rate-limit plugin's process()
+  # contract (src/plugin.rs):
+  #
+  #   - key    (required) — the opaque bucket key. The plugin never
+  #     interprets it; identical keys share one limit fleet-wide. The
+  #     chart builds it in frontend-spoe-filters-150-rate-limit as
+  #     `<ns>/<name>|<dimension>` so each route gets its own bucket and
+  #     the dimension (source IP or consumer) partitions within it. An
+  #     empty key makes the plugin fail open (allow, no accounting).
+  #   - limit / period — the rate: `limit` requests per `period` seconds
+  #     (the plugin computes rate = limit/period). Sourced per route from
+  #     the packed rate-limit.map.
+  #   - burst  (optional) — the bucket depth (max instantaneous burst).
+  #     Defaults to `limit` in the plugin when absent/empty.
+  #   - mode   (optional) — `exact` selects the synchronous GCRA path
+  #     (exact, fails closed) for money/contract limits; anything else
+  #     (the default) uses the low-latency lease path (fails static on a
+  #     store outage). Sourced from rate-limit-mode.map.
+  #
+  # `cost` is intentionally omitted (the plugin defaults it to 1).
+  #
+  # The hub prefixes plugin output variables with the plugin name
+  # (rate_limit.*); HAProxy exposes them under the spoa-hub engine namespace
+  # as txn.hub.rate_limit.{allowed (bool), limit, remaining, reset,
+  # retry_after (uint32)}. The dispatcher in
+  # frontend-spoe-filters-150-rate-limit denies (429) on !allowed and publishes
+  # the X-RateLimit-* / Retry-After headers.
+  spoe-message-check-ratelimit-body:
+    template: |-
+      spoe-message check-ratelimit
+          args key=var(txn.rl_key) limit=var(txn.rl_limit) period=var(txn.rl_period) burst=var(txn.rl_burst) mode=var(txn.rl_mode)
 
   # Canonical spoe-message mirror body. Rendered by name from
   # spoe-conf-content's per-message dispatch when "mirror" is in the

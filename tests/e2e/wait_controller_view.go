@@ -35,9 +35,10 @@ import (
 // controllerForgetTimeout caps how long the test cleanup waits for the
 // controller's rendered config to no longer mention a deleted Ingress's
 // namespace. The controller's informer typically catches up in well under
-// 1s, but we allow a generous budget so transient API-server slowness
-// during parallel teardown doesn't cause spurious cleanup-warning logs.
-const controllerForgetTimeout = 10 * time.Second
+// 1s, but we allow a bounded 15s budget so transient API-server slowness
+// and the chart's 5s minDeploymentInterval during parallel teardown don't
+// cause spurious cleanup-warning logs.
+const controllerForgetTimeout = 15 * time.Second
 
 // controllerDeployedTimeout caps the post-apply wait for the HAProxyCfg
 // status to report every HAProxy pod at a render containing the marker.

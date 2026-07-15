@@ -21,6 +21,30 @@ Args: dict "plugin" <plugin map> "root" $
 {{- end -}}
 
 {{/*
+Resolve a plugin timeout. Like `enabled`, `timeoutMs` may be a literal number
+or a templated string in values.yaml. The latter lets feature-level chart values
+(for example controller.rateLimit.shared.pluginTimeoutMs) drive the plugin
+config while still allowing direct spoaHub plugin overrides.
+Args: dict "plugin" <plugin map> "root" $ "name" <plugin name>
+*/}}
+{{- define "haptic.spoaHub.pluginTimeoutMs" -}}
+{{- $plugin := default dict .plugin -}}
+{{- $raw := 500 -}}
+{{- if hasKey $plugin "timeoutMs" -}}
+  {{- $raw = $plugin.timeoutMs -}}
+{{- end -}}
+{{- $resolved := $raw -}}
+{{- if eq (kindOf $raw) "string" -}}
+  {{- $resolved = (trim (tpl $raw .root)) -}}
+{{- end -}}
+{{- $ms := int $resolved -}}
+{{- if le $ms 0 -}}
+  {{- fail (printf "spoaHub.plugins.%s.timeoutMs must resolve to a positive integer milliseconds value." .name) -}}
+{{- end -}}
+{{- $ms -}}
+{{- end }}
+
+{{/*
 Whether the SPOA hub sidecar should be rendered.
 True when:
   - spoaHub.enabled is explicitly true, OR
@@ -106,6 +130,159 @@ and as the dial address the controller writes into spec.validators[].
 {{- define "haptic.validators.socketPath" -}}
 {{- $v := .Values.controller.validators -}}
 {{- printf "%s/%s" (trimSuffix "/" $v.socketDir) $v.socketName -}}
+{{- end -}}
+
+{{/*
+Bootstrap TOML for the SPOA hub sidecar. The sidecar starts with this content
+from a ConfigMap, then reloads the controller-rendered runtime TOML from
+general storage after the first successful reconciliation.
+*/}}
+{{- define "haptic.spoaHub.bootstrapConfigContent" -}}
+{{- $spoaHub := .Values.spoaHub -}}
+{{- $hub := $spoaHub.hub -}}
+plugin_dir = "/etc/haproxy-spoa-hub/plugins"
+default_timeout_ms = 500
+log_level = {{ $hub.logLevel | quote }}
+max_connections = {{ $hub.maxConnections }}
+blocking_thread_keep_alive_secs = {{ $hub.blockingThreadKeepAliveSecs }}
+{{- with $hub.metricsAddr }}
+{{- /* Bootstrap-side metrics_addr — mirrors the runtime-rendered
+       libraries/spoa-hub/ `metrics_addr` line so the /metrics
+       endpoint is bound from process start, not just after the
+       controller pushes the first runtime config. The two have to
+       stay in sync: the bootstrap is what the sidecar loads on pod
+       startup (read-only, mounted from this ConfigMap), and the
+       hub's file-watch swaps in the runtime config later. Without
+       this, scraping /metrics during early-cluster boot returns
+       empty — what bit issue #45's first artifact run. */}}
+metrics_addr = {{ . | quote }}
+{{- end }}
+{{- with $hub.workerThreads }}
+worker_threads = {{ . }}
+{{- end }}
+
+[[listeners]]
+type = "unix"
+address = {{ $spoaHub.haproxy.socketPath | quote }}
+
+{{- range $name, $plugin := $spoaHub.plugins }}
+{{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $) }}
+
+{{- /* The hub builds SPOP response variable names as `<plugin>.<var>`,
+       so the plugin name shows up directly in HAProxy's variable namespace
+       (e.g. `txn.<var-prefix>.<plugin>.allowed`). HAProxy variable names
+       are restricted identifiers — dashes aren't allowed mid-identifier
+       the same way they are in YAML keys, so a TOML name of `external-auth`
+       produces a var like `external-auth.allowed` which the deny rule
+       can't match. The upstream plugin's example hub.toml uses the
+       snake_case form for this reason. Convert dashes to underscores
+       here to keep the YAML key kebab-case (idiomatic) while emitting
+       a HAProxy-friendly identifier. */}}
+[[plugins]]
+name = {{ regexReplaceAll "-" $name "_" | quote }}
+library = {{ include "haptic.spoaHub.libName" (dict "name" $name) | quote }}
+messages = {{ $plugin.messages | toJson }}
+timeout_ms = {{ include "haptic.spoaHub.pluginTimeoutMs" (dict "plugin" $plugin "root" $ "name" $name) }}
+{{- with $plugin.dependsOn }}
+depends_on = {{ . | toJson }}
+{{- end }}
+
+[plugins.params]
+{{- /* Coraza's directives lives in its own values field so the
+       controller-rendered TOML (rendered by libraries/spoa-hub/)
+       can append per-Ingress modsecurity-snippet values into it.
+       The bootstrap placeholder rendered here is just enough to let
+       the hub start; the controller pushes the real config via the
+       dataplane API and the hub reloads on file-watch. */}}
+{{- if and (eq $name "coraza") $plugin.directives }}
+directives = """
+{{- $plugin.directives | nindent 0 }}
+"""
+{{- end }}
+{{- with (include "haptic.spoaHub.effectivePluginParams" (dict "root" $ "name" $name "plugin" $plugin)) }}
+{{ . | trim }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Names and URLs for the chart-managed Valkey store used by the shared
+rate-limit plugin. The workload itself is emitted by the haptic-annotations
+library through k8sResources so it is owned by the HAProxyTemplateConfig CR.
+*/}}
+{{- define "haptic.rateLimit.storeServiceName" -}}
+{{- printf "%s-rl-store" (include "haptic.fullname" .) | trunc 43 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "haptic.rateLimit.storeSentinelServiceName" -}}
+{{- printf "%s-sentinel" (include "haptic.rateLimit.storeServiceName" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "haptic.rateLimit.storeSentinelMasterName" -}}
+{{- "haptic-rate-limit" -}}
+{{- end -}}
+
+{{- define "haptic.rateLimit.storeSentinelURL" -}}
+{{- $root := . -}}
+{{- $store := $root.Values.controller.rateLimit.store -}}
+{{- $sentinel := $store.sentinel | default dict -}}
+{{- $sentinelPort := int ($sentinel.port | default 26379) -}}
+{{- $svc := include "haptic.rateLimit.storeSentinelServiceName" $root -}}
+{{- $storeSvc := include "haptic.rateLimit.storeServiceName" $root -}}
+{{- $master := include "haptic.rateLimit.storeSentinelMasterName" $root -}}
+{{- $url := printf "redis-sentinel://%s.%s.svc:%d/0?sentinelServiceName=%s" $svc $root.Release.Namespace $sentinelPort $master -}}
+{{- range $i := until (int $store.replicas) -}}
+  {{- $node := printf "%s-%d.%s.%s.svc.cluster.local:%d" $storeSvc $i $storeSvc $root.Release.Namespace $sentinelPort -}}
+  {{- $url = printf "%s&node=%s" $url $node -}}
+{{- end -}}
+{{- $url -}}
+{{- end -}}
+
+{{- define "haptic.rateLimit.storeURLTOML" -}}
+store_url = {{ include "haptic.rateLimit.storeSentinelURL" . | quote }}
+{{- end -}}
+
+{{/*
+Return the effective params TOML for one spoaHub plugin. Most plugins pass
+their values.yaml params through unchanged. rate-limit gets chart-managed
+store_url appended when controller.rateLimit.shared.enabled=true and
+controller.rateLimit.store.enabled=true, so the bootstrap ConfigMap and the
+runtime-rendered hub config stay byte-for-byte consistent about the store
+endpoints.
+*/}}
+{{- define "haptic.spoaHub.effectivePluginParams" -}}
+{{- $root := .root -}}
+{{- $name := .name -}}
+{{- $plugin := default dict .plugin -}}
+{{- $rawParams := ($plugin.params | default "") -}}
+{{- $params := $rawParams -}}
+{{- if and (eq $name "rate-limit") (eq (kindOf $rawParams) "string") -}}
+  {{- $params = tpl $rawParams $root -}}
+{{- end -}}
+{{- $hasStoreURL := regexMatch "(?m)^\\s*store_urls?\\s*=" $params -}}
+{{- $managedStore := and $root.Values.controller.rateLimit.shared.enabled $root.Values.controller.rateLimit.store.enabled -}}
+{{- if and (eq $name "rate-limit") $root.Values.controller.rateLimit.shared.enabled -}}
+  {{- $storeTimeoutMs := int $root.Values.controller.rateLimit.shared.storeTimeoutMs -}}
+  {{- if le $storeTimeoutMs 0 -}}
+    {{- fail "controller.rateLimit.shared.storeTimeoutMs must be a positive integer milliseconds value." -}}
+  {{- end -}}
+{{- end -}}
+{{- if and (eq $name "rate-limit") $managedStore -}}
+  {{- if $hasStoreURL -}}
+    {{- fail "controller.rateLimit.store.enabled=true auto-injects store_url for spoaHub.plugins.rate-limit; remove the manual store_url/store_urls from spoaHub.plugins.rate-limit.params or disable controller.rateLimit.store.enabled to bring your own store" -}}
+  {{- end -}}
+  {{- if $params -}}
+{{ trimSuffix "\n" $params }}
+{{ include "haptic.rateLimit.storeURLTOML" $root }}
+  {{- else -}}
+{{ include "haptic.rateLimit.storeURLTOML" $root }}
+  {{- end -}}
+{{- else if and (eq $name "rate-limit") $root.Values.controller.rateLimit.shared.enabled (not $hasStoreURL) -}}
+  {{- fail "controller.rateLimit.shared.enabled=true requires a shared store. Leave controller.rateLimit.store.enabled=true for chart-managed HA Valkey, or set spoaHub.plugins.rate-limit.params.store_url/store_urls to bring your own Redis/Valkey." -}}
+{{- else -}}
+{{ $params }}
+{{- end -}}
 {{- end -}}
 
 {{/*

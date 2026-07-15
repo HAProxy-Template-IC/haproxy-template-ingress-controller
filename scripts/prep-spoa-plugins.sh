@@ -8,9 +8,9 @@
 #   2. cosign verify-blob against the upstream project's tag identity
 #
 # Outputs (overwrites):
-#   plugins/amd64/<libname>.so   (× 6 plugins)
-#   plugins/arm64/<libname>.so   (× 6 plugins)
-#   plugins/armv7/<libname>.so   (× 6 plugins)
+#   plugins/amd64/<libname>.so   (× 8 plugins)
+#   plugins/arm64/<libname>.so   (× 8 plugins)
+#   plugins/armv7/<libname>.so   (× 8 plugins)
 #
 # Requires: bash, curl, sha256sum, cosign, awk.
 
@@ -32,6 +32,7 @@ declare -A PLUGINS=(
     [maxmind]="${SPOA_PLUGIN_MAXMIND_VERSION}"
     [mirror]="${SPOA_PLUGIN_MIRROR_VERSION}"
     [otel]="${SPOA_PLUGIN_OTEL_VERSION}"
+    [rate-limit]="${SPOA_PLUGIN_RATE_LIMIT_VERSION}"
     [sso-auth]="${SPOA_PLUGIN_SSO_AUTH_VERSION}"
 )
 
@@ -46,6 +47,7 @@ declare -A LIB_NAMES=(
     [maxmind]="libmaxmind_plugin"
     [mirror]="libmirror_plugin"
     [otel]="libotel_plugin"
+    [rate-limit]="librate_limit_plugin"
     [sso-auth]="libhaproxy_spoa_hub_plugin_sso_auth"
 )
 

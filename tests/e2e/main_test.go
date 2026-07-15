@@ -344,6 +344,25 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 			return ctx, err
 		}
 	}
+	// The shared rate-limit shard deploys Valkey. Load the stock image into kind
+	// for the same reason as the cache shard's Varnish image: deterministic CI
+	// and no dependency on the kind node reaching Docker Hub.
+	if os.Getenv("HAPTIC_E2E_PROFILE") == "rate-limit" {
+		pull := exec.CommandContext(ctx, "docker", "pull", ValkeyImage)
+		pull.Stdout, pull.Stderr = os.Stderr, os.Stderr
+		if err := pull.Run(); err != nil {
+			return ctx, fmt.Errorf("docker pull %s: %w", ValkeyImage, err)
+		}
+		if err := loadImageIntoKind(ctx, ValkeyImage); err != nil {
+			return ctx, err
+		}
+		if os.Getenv("SPOA_TAG") == "" {
+			fmt.Fprintf(os.Stderr, "e2e: rate-limit profile — loading local %s into kind\n", LocalSPOAHubImage)
+			if err := loadImageIntoKind(ctx, LocalSPOAHubImage); err != nil {
+				return ctx, err
+			}
+		}
+	}
 	return ctx, nil
 }
 
@@ -562,6 +581,8 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	var vendorLib string
 	// cacheProfile enables the Varnish shared-cache tier for the cache shard.
 	cacheProfile := profile == "cache"
+	// rateLimitProfile enables shared rate limiting and its Valkey store.
+	rateLimitProfile := profile == "rate-limit"
 	switch profile {
 	case "conformance":
 		valuesBytes = devassets.ConformanceValuesYAML
@@ -648,6 +669,21 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 			"--set", "controller.cache.varnish.enabled=true",
 			"--set", "controller.cache.varnish.replicas=1")
 		fmt.Fprintln(os.Stderr, "e2e: cache shard — enabling the Varnish cache tier")
+	}
+	// Shared rate-limit shard: deploy Valkey and auto-wire the bundled
+	// rate-limit plugin. TestHapticSharedRateLimit is gated on this profile.
+	if rateLimitProfile {
+		args = append(args,
+			"--set", "controller.rateLimit.shared.enabled=true",
+			"--set", "controller.rateLimit.store.enabled=true")
+		if os.Getenv("SPOA_TAG") == "" {
+			args = append(args,
+				"--set", "spoaHub.image.repository=spoa-hub",
+				"--set", "spoaHub.image.tag=dev",
+				"--set", "spoaHub.image.pullPolicy=Never")
+			fmt.Fprintln(os.Stderr, "e2e: rate-limit shard — using local spoa-hub:dev image")
+		}
+		fmt.Fprintln(os.Stderr, "e2e: rate-limit shard — enabling shared rate limiting with Valkey")
 	}
 	// dev-values.yaml hardcodes spoaHub.image.tag=main-latest. CI sets
 	// SPOA_TAG to ci-${CI_PIPELINE_ID} so the test loads the spoa-hub

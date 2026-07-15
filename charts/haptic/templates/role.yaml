@@ -47,16 +47,28 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   {{- if .Values.controller.cache.varnish.enabled }}
   # Shared-cache (Varnish) tier: the haptic-annotations library's k8sResources
-  # emit a VCL ConfigMap + a StatefulSet (or Deployment) into the controller's
-  # own namespace, applied via SSA by the resource applier. Same-namespace, so
-  # granted here (Role) not cluster-wide. SSA needs patch (with create for the
-  # first apply); delete covers orphan cleanup when the tier is disabled.
+  # emit a VCL ConfigMap into the controller's own namespace, applied via SSA by
+  # the resource applier. SSA needs patch (with create for first apply); delete
+  # covers orphan cleanup when the tier is disabled.
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
+  {{- if or .Values.controller.cache.varnish.enabled (and .Values.controller.rateLimit.shared.enabled .Values.controller.rateLimit.store.enabled) }}
+  # Template-owned auxiliary workloads: Varnish emits a StatefulSet or
+  # Deployment, and shared rate limiting emits a Valkey StatefulSet.
   - apiGroups: ["apps"]
     resources: ["statefulsets", "deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
+  {{- if and .Values.controller.rateLimit.shared.enabled .Values.controller.rateLimit.store.enabled }}
+  # Shared-rate-limit Valkey HA store: the haptic-annotations library emits a
+  # PodDisruptionBudget alongside the Sentinel-managed StatefulSet.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
+  {{- if .Values.controller.cache.varnish.enabled }}
   {{- if .Values.controller.cache.varnish.autoscaling.enabled }}
   # The cache tier's HPA is applied via SSA when autoscaling is enabled.
   - apiGroups: ["autoscaling"]
