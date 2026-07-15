@@ -162,7 +162,7 @@ controller:
       replicas: 2
       # Stock upstream Varnish image — no custom build needed for the loopback
       # topology. Pin to a digest in production.
-      image: varnish:7.6
+      image: varnish:7.7
       # -s malloc,<size> — size at roughly 75% of the pod memory limit (Varnish
       # adds ~1 KB/object of management overhead). OSS Varnish is RAM-only.
       malloc: 256m
