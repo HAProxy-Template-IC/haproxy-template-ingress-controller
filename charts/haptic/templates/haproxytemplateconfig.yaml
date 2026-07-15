@@ -1,4 +1,11 @@
 {{- $controller := .Values.controller }}
+{{- if and $controller.rateLimit.shared.enabled (eq (toString .Values.spoaHub.enabled) "false") }}
+  {{- fail "controller.rateLimit.shared.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable shared rate limiting." }}
+{{- end }}
+{{- $rateLimitPlugin := (index (.Values.spoaHub.plugins | default dict) "rate-limit") | default dict }}
+{{- if and $controller.rateLimit.shared.enabled (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $rateLimitPlugin "root" .))) }}
+  {{- fail "controller.rateLimit.shared.enabled=true requires spoaHub.plugins.rate-limit to be enabled. Remove spoaHub.plugins.rate-limit.enabled=false or disable shared rate limiting." }}
+{{- end }}
 {{- if $controller.config }}
 apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
@@ -97,6 +104,59 @@ spec:
     {{- $_ := set $extraContext "hapticCacheTargetCPU" ($varnish.autoscaling.targetCPUUtilizationPercentage | toString) }}
     {{- $_ := set $extraContext "hapticCacheScaleDownWindow" ($varnish.autoscaling.scaleDownStabilizationSeconds | toString) }}
     {{- end }}
+  {{- end }}
+
+  {{- /* Shared request-rate limiting. The haptic-annotations library consumes
+         these flat keys to fail-loud when route annotations are used without
+         the chart opt-in and, when requested, to emit the chart-owned Valkey
+         store through k8sResources. */ -}}
+  {{- if $controller.rateLimit.shared.enabled }}
+    {{- $_ := set $extraContext "hapticRateLimitSharedEnabled" "true" }}
+  {{- end }}
+  {{- if and $controller.rateLimit.shared.enabled $controller.rateLimit.store.enabled }}
+    {{- $rlStore := $controller.rateLimit.store }}
+    {{- $rlSentinel := $rlStore.sentinel | default dict }}
+    {{- $rlReplicas := int ($rlStore.replicas | default 3) }}
+    {{- $rlQuorum := int ($rlSentinel.quorum | default 2) }}
+    {{- if lt $rlReplicas 3 }}
+      {{- fail "controller.rateLimit.store.replicas must be at least 3 for chart-managed Sentinel HA." }}
+    {{- end }}
+    {{- if or (lt $rlQuorum 1) (gt $rlQuorum $rlReplicas) }}
+      {{- fail "controller.rateLimit.store.sentinel.quorum must be between 1 and controller.rateLimit.store.replicas." }}
+    {{- end }}
+    {{- $rlRes := $rlStore.resources | default dict }}
+    {{- $rlSentinelRes := $rlSentinel.resources | default dict }}
+    {{- $rlPDB := $rlStore.podDisruptionBudget | default dict }}
+    {{- $rlPDBEnabled := true }}
+    {{- if hasKey $rlPDB "enabled" }}
+      {{- $rlPDBEnabled = $rlPDB.enabled }}
+    {{- end }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreEnabled" "true" }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreBaseName" (include "haptic.rateLimit.storeServiceName" .) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreNamespace" .Release.Namespace }}
+    {{- $_ := set $extraContext "hapticRateLimitStorePort" ($rlStore.port | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreImage" $rlStore.image }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreReplicas" ($rlReplicas | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreMaxmemory" ($rlStore.maxmemory | default "96mb" | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreMaxmemoryPolicy" ($rlStore.maxmemoryPolicy | default "volatile-ttl" | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelMasterName" (include "haptic.rateLimit.storeSentinelMasterName" .) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelPort" ($rlSentinel.port | default 26379 | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelQuorum" ($rlQuorum | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelDownAfterMs" ($rlSentinel.downAfterMilliseconds | default 2000 | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelFailoverTimeoutMs" ($rlSentinel.failoverTimeoutMilliseconds | default 10000 | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelParallelSyncs" ($rlSentinel.parallelSyncs | default 1 | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreCpuRequest" (dig "requests" "cpu" "50m" $rlRes | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreMemRequest" (dig "requests" "memory" "128Mi" $rlRes | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreMemLimit" (dig "limits" "memory" "128Mi" $rlRes | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelCpuRequest" (dig "requests" "cpu" "25m" $rlSentinelRes | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelMemRequest" (dig "requests" "memory" "64Mi" $rlSentinelRes | toString) }}
+    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelMemLimit" (dig "limits" "memory" "64Mi" $rlSentinelRes | toString) }}
+    {{- if $rlPDBEnabled }}
+      {{- $_ := set $extraContext "hapticRateLimitStorePDBEnabled" "true" }}
+    {{- else }}
+      {{- $_ := set $extraContext "hapticRateLimitStorePDBEnabled" "false" }}
+    {{- end }}
+    {{- $_ := set $extraContext "hapticRateLimitStorePDBMaxUnavailable" ($rlPDB.maxUnavailable | default 1 | toString) }}
   {{- end }}
 
   {{- /* Controller's own namespace + HAProxy pod selector. Templates that
@@ -221,9 +281,9 @@ spec:
             "name" (regexReplaceAll "-" $name "_")
             "library" (include "haptic.spoaHub.libName" (dict "name" $name))
             "messages" $plugin.messages
-            "timeoutMs" (int $plugin.timeoutMs)
+            "timeoutMs" (int (include "haptic.spoaHub.pluginTimeoutMs" (dict "plugin" $plugin "root" $ "name" $name)))
             "dependsOn" ($plugin.dependsOn | default list)
-            "params" ($plugin.params | default "")
+            "params" (include "haptic.spoaHub.effectivePluginParams" (dict "root" $ "name" $name "plugin" $plugin))
         }}
         {{- /* Coraza-specific: surface the directives field separately so
                the runtime render snippet can append per-Ingress

@@ -1624,6 +1624,18 @@ test-e2e-cache:
     HAPROXY_VERSION: "3.2"
     HAPTIC_E2E_PROFILE: "cache"
 
+# Shared-rate-limit e2e shard. Installs with
+# controller.rateLimit.shared.enabled=true and controller.rateLimit.store.enabled=true,
+# then TestHapticSharedRateLimit proves one Valkey-backed budget is enforced
+# across multiple HAProxy pods. One HAProxy version — the tier is
+# version-agnostic. Loads the stock Valkey image into kind (see
+# loadControllerImage) so the Deployment needn't reach Docker Hub.
+test-e2e-rate-limit:
+  extends: .test-e2e-base
+  variables:
+    HAPROXY_VERSION: "3.2"
+    HAPTIC_E2E_PROFILE: "rate-limit"
+
 # Upstream Gateway API conformance suite (sigs.k8s.io/gateway-api/conformance).
 #
 # Runs the same kind+helm setup as test-e2e (including MetalLB so Gateways

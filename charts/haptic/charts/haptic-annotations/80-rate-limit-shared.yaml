@@ -1,0 +1,353 @@
+# HAPTIC-native SHARED rate-limiting annotations (haproxy-haptic.org/*).
+#
+# Fleet-wide rate limiting via the haproxy-spoa-hub rate-limit plugin
+# (spoaHub.plugins.rate-limit). Distinct from the per-pod stick-table limiter
+# in 24-rate-limiting.yaml: that caps each haproxy pod independently; this
+# enforces ONE budget across all pods through a shared store. The two are
+# independent — an Ingress may set either or both (both is redundant, not an
+# error).
+#
+#   haproxy-haptic.org/rate-limit-requests    N requests per period (activates the shared limit)
+#   haproxy-haptic.org/rate-limit-period      window (HAProxy duration; default 1s) — shared with 24-rate-limiting.yaml
+#   haproxy-haptic.org/rate-limit-burst       burst allowance (default = requests)
+#   haproxy-haptic.org/rate-limit-key         ip (default) | consumer
+#   haproxy-haptic.org/rate-limit-algorithm   token-bucket (default) | gcra (exact, fails closed)
+#
+# The chart opt-in (`controller.rateLimit.shared.enabled=true`) must be set or
+# using rate-limit-requests fails the render. A shared store is required for
+# fleet-wide enforcement; the chart can deploy HA Valkey with Sentinel via
+# `controller.rateLimit.store.enabled=true`, or operators can provide their own
+# Redis/Valkey store_url under spoaHub.plugins.rate-limit.params.
+#
+# This fragment only PRODUCES the rate-limit.map that the spoa-hub library's
+# frontend-spoe-filters-150-rate-limit dispatch consumes. Map value is
+# "<limit> <period_seconds> <burst> <mode> <keyspec>" keyed by <ns>/<name>;
+# the dispatch splits it positionally with field() and ships it as the
+# rate-limit SPOE args. The deny status is always 429 (the standard); the
+# per-route rate-limit-status-code applies to the per-pod limiter only.
+templateSnippets:
+  map-rate-limit-820-haptic:
+    template: |-
+      {%- var sharedEnabled = extraContext | dig("hapticRateLimitSharedEnabled") | fallback("false") | tostring() -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var requests = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] -%}
+        {%- if requests != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- var key = ns + "/" + name -%}
+          {%- if sharedEnabled != "true" -%}
+            {{- fail("Ingress " + key + " sets annotation 'haproxy-haptic.org/rate-limit-requests' but shared rate limiting is not enabled. Set controller.rateLimit.shared.enabled=true, or remove the annotation.") -}}
+          {%- end -%}
+          {#- requests: positive integer, the limit N. -#}
+          {%- var n = toint(requests) -%}
+          {%- if n <= 0 -%}
+            {{- fail("Invalid value '" + requests + "' for annotation 'haproxy-haptic.org/rate-limit-requests' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end -%}
+          {#- period: HAProxy duration → seconds (default 1s). ms checked
+              before s (both end in 's'). -#}
+          {%- var periodStr = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-period"] -%}
+          {%- if periodStr == "" -%}{%- periodStr = "1s" -%}{%- end -%}
+          {%- if !regex_search(periodStr, "^[0-9]+(ms|s|m|h|d)?$") -%}
+            {{- fail("Invalid value '" + periodStr + "' for annotation 'haproxy-haptic.org/rate-limit-period' on Ingress '" + key + "'. Expected a time value like '1s', '60s', '10m'.") -}}
+          {%- end -%}
+          {%- var mult = 1.0 -%}
+          {%- var numstr = periodStr -%}
+          {%- if hasSuffix(periodStr, "ms") -%}{%- mult = 0.001 -%}{%- numstr = periodStr[0:len(periodStr)-2] -%}
+          {%- else if hasSuffix(periodStr, "s") -%}{%- mult = 1.0 -%}{%- numstr = periodStr[0:len(periodStr)-1] -%}
+          {%- else if hasSuffix(periodStr, "m") -%}{%- mult = 60.0 -%}{%- numstr = periodStr[0:len(periodStr)-1] -%}
+          {%- else if hasSuffix(periodStr, "h") -%}{%- mult = 3600.0 -%}{%- numstr = periodStr[0:len(periodStr)-1] -%}
+          {%- else if hasSuffix(periodStr, "d") -%}{%- mult = 86400.0 -%}{%- numstr = periodStr[0:len(periodStr)-1] -%}
+          {%- end -%}
+          {%- var pf, _ = tofloat(numstr) -%}
+          {%- var periodS = pf * mult -%}
+          {%- if periodS <= 0.0 -%}
+            {{- fail("Invalid value '" + periodStr + "' for annotation 'haproxy-haptic.org/rate-limit-period' on Ingress '" + key + "'. Must be greater than zero.") -}}
+          {%- end -%}
+          {#- burst: positive integer, defaults to the limit. -#}
+          {%- var burstStr = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-burst"] -%}
+          {%- var burst = n -%}
+          {%- if burstStr != "" -%}
+            {%- var b = toint(burstStr) -%}
+            {%- if b <= 0 -%}
+              {{- fail("Invalid value '" + burstStr + "' for annotation 'haproxy-haptic.org/rate-limit-burst' on Ingress '" + key + "'. Must be a positive integer.") -}}
+            {%- end -%}
+            {%- burst = b -%}
+          {%- end -%}
+          {#- key dimension: ip (default) or consumer (txn.haptic_consumer). -#}
+          {%- var keyspec = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] -%}
+          {%- if keyspec == "" -%}{%- keyspec = "ip" -%}{%- end -%}
+          {%- if keyspec != "ip" && keyspec != "consumer" -%}
+            {{- fail("Invalid value '" + keyspec + "' for annotation 'haproxy-haptic.org/rate-limit-key' on Ingress '" + key + "'. Expected 'ip' or 'consumer'.") -}}
+          {%- end -%}
+          {#- algorithm → plugin mode: gcra = exact (fails closed);
+              token-bucket = lease (default, fails static). -#}
+          {%- var algo = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-algorithm"] -%}
+          {%- if algo == "" -%}{%- algo = "token-bucket" -%}{%- end -%}
+          {%- var mode = "lease" -%}
+          {%- if algo == "gcra" -%}{%- mode = "exact" -%}
+          {%- else if algo != "token-bucket" -%}
+            {{- fail("Invalid value '" + algo + "' for annotation 'haproxy-haptic.org/rate-limit-algorithm' on Ingress '" + key + "'. Expected 'token-bucket' or 'gcra'.") -}}
+          {%- end -%}
+      {{ "\n" }}{{ key }} {{ n }} {{ tostring(periodS) }} {{ burst }} {{ mode }} {{ keyspec }}
+        {%- end -%}
+      {%- end -%}
+
+k8sResources:
+  rate-limit-store:
+    template: |
+      {%- var enabled = extraContext | dig("hapticRateLimitStoreEnabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+      {%- var base = extraContext | dig("hapticRateLimitStoreBaseName") | fallback("haptic-rate-limit-store") | tostring() %}
+      {%- var sentinelSvc = base + "-sentinel" %}
+      {%- var ns = extraContext | dig("hapticRateLimitStoreNamespace") | fallback("default") | tostring() %}
+      {%- var port = extraContext | dig("hapticRateLimitStorePort") | fallback("6379") | tostring() %}
+      {%- var sentinelPort = extraContext | dig("hapticRateLimitStoreSentinelPort") | fallback("26379") | tostring() %}
+      {%- var sentinelMaster = extraContext | dig("hapticRateLimitStoreSentinelMasterName") | fallback("haptic-rate-limit") | tostring() %}
+      {%- var replicas = extraContext | dig("hapticRateLimitStoreReplicas") | fallback("3") | tostring() %}
+      {%- var quorum = extraContext | dig("hapticRateLimitStoreSentinelQuorum") | fallback("2") | tostring() %}
+      {%- var downAfterMs = extraContext | dig("hapticRateLimitStoreSentinelDownAfterMs") | fallback("2000") | tostring() %}
+      {%- var failoverTimeoutMs = extraContext | dig("hapticRateLimitStoreSentinelFailoverTimeoutMs") | fallback("10000") | tostring() %}
+      {%- var parallelSyncs = extraContext | dig("hapticRateLimitStoreSentinelParallelSyncs") | fallback("1") | tostring() %}
+      {%- var img = extraContext | dig("hapticRateLimitStoreImage") | fallback("valkey/valkey:8-alpine") | tostring() %}
+      {%- var maxmemory = extraContext | dig("hapticRateLimitStoreMaxmemory") | fallback("96mb") | tostring() %}
+      {%- var maxmemoryPolicy = extraContext | dig("hapticRateLimitStoreMaxmemoryPolicy") | fallback("volatile-ttl") | tostring() %}
+      {%- var cpuReq = extraContext | dig("hapticRateLimitStoreCpuRequest") | fallback("50m") | tostring() %}
+      {%- var memReq = extraContext | dig("hapticRateLimitStoreMemRequest") | fallback("128Mi") | tostring() %}
+      {%- var memLim = extraContext | dig("hapticRateLimitStoreMemLimit") | fallback("128Mi") | tostring() %}
+      {%- var sentinelCpuReq = extraContext | dig("hapticRateLimitStoreSentinelCpuRequest") | fallback("25m") | tostring() %}
+      {%- var sentinelMemReq = extraContext | dig("hapticRateLimitStoreSentinelMemRequest") | fallback("64Mi") | tostring() %}
+      {%- var sentinelMemLim = extraContext | dig("hapticRateLimitStoreSentinelMemLimit") | fallback("64Mi") | tostring() %}
+      {%- var pdbEnabled = extraContext | dig("hapticRateLimitStorePDBEnabled") | fallback("true") | tostring() %}
+      {%- var pdbMaxUnavailable = extraContext | dig("hapticRateLimitStorePDBMaxUnavailable") | fallback("1") | tostring() %}
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ base }}
+        namespace: {{ ns }}
+        labels:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        clusterIP: None
+        publishNotReadyAddresses: true
+        selector:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+        ports:
+          - name: valkey
+            port: {{ port }}
+            targetPort: valkey
+          - name: sentinel
+            port: {{ sentinelPort }}
+            targetPort: sentinel
+      ---
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ sentinelSvc }}
+        namespace: {{ ns }}
+        labels:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+          app.kubernetes.io/component: sentinel
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        selector:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+        ports:
+          - name: sentinel
+            port: {{ sentinelPort }}
+            targetPort: sentinel
+      ---
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: {{ base }}
+        namespace: {{ ns }}
+        labels:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        serviceName: {{ base }}
+        podManagementPolicy: Parallel
+        replicas: {{ replicas }}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: haptic-rate-limit-store
+            app.kubernetes.io/instance: {{ base }}
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: haptic-rate-limit-store
+              app.kubernetes.io/instance: {{ base }}
+          spec:
+            affinity:
+              podAntiAffinity:
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 100
+                    podAffinityTerm:
+                      topologyKey: kubernetes.io/hostname
+                      labelSelector:
+                        matchLabels:
+                          app.kubernetes.io/name: haptic-rate-limit-store
+                          app.kubernetes.io/instance: {{ base }}
+            topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: kubernetes.io/hostname
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic-rate-limit-store
+                    app.kubernetes.io/instance: {{ base }}
+            containers:
+              - name: valkey
+                image: {{ img }}
+                command: ["/bin/sh", "-ec"]
+                args:
+                  - |
+                    ordinal="${POD_NAME##*-}"
+                    self="${POD_NAME}.{{ base }}.${POD_NAMESPACE}.svc.cluster.local"
+                    master_host=""
+                    master_port=""
+                    for _ in 1 2 3 4 5 6 7 8 9 10; do
+                      master_info="$(timeout 1 valkey-cli -h "{{ sentinelSvc }}" -p "{{ sentinelPort }}" sentinel get-master-addr-by-name "{{ sentinelMaster }}" 2>/dev/null || true)"
+                      master_host="$(printf '%s\n' "$master_info" | sed -n '1p')"
+                      master_port="$(printf '%s\n' "$master_info" | sed -n '2p')"
+                      if [ -n "$master_host" ] && [ -n "$master_port" ]; then
+                        break
+                      fi
+                      sleep 1
+                    done
+                    if [ -n "$master_host" ] && [ -n "$master_port" ] && [ "$master_host" != "$self" ]; then
+                      exec valkey-server \
+                        --port "{{ port }}" \
+                        --bind "0.0.0.0" \
+                        --protected-mode "no" \
+                        --save "" \
+                        --appendonly "no" \
+                        --maxmemory "{{ maxmemory }}" \
+                        --maxmemory-policy "{{ maxmemoryPolicy }}" \
+                        --replicaof "$master_host" "$master_port"
+                    fi
+                    if [ "$ordinal" = "0" ]; then
+                      exec valkey-server \
+                        --port "{{ port }}" \
+                        --bind "0.0.0.0" \
+                        --protected-mode "no" \
+                        --save "" \
+                        --appendonly "no" \
+                        --maxmemory "{{ maxmemory }}" \
+                        --maxmemory-policy "{{ maxmemoryPolicy }}"
+                    fi
+                    exec valkey-server \
+                      --port "{{ port }}" \
+                      --bind "0.0.0.0" \
+                      --protected-mode "no" \
+                      --save "" \
+                      --appendonly "no" \
+                      --maxmemory "{{ maxmemory }}" \
+                      --maxmemory-policy "{{ maxmemoryPolicy }}" \
+                      --replicaof "{{ base }}-0.{{ base }}.${POD_NAMESPACE}.svc.cluster.local" "{{ port }}"
+                env:
+                  - name: POD_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.name
+                  - name: POD_NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                resources:
+                  requests:
+                    cpu: {{ cpuReq }}
+                    memory: {{ memReq }}
+                  limits:
+                    memory: {{ memLim }}
+                ports:
+                  - name: valkey
+                    containerPort: {{ port }}
+                readinessProbe:
+                  exec:
+                    command: ["sh", "-ec", "valkey-cli -p {{ port }} ping | grep -q PONG"]
+                  initialDelaySeconds: 2
+                  periodSeconds: 5
+                livenessProbe:
+                  exec:
+                    command: ["sh", "-ec", "valkey-cli -p {{ port }} ping | grep -q PONG"]
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+              - name: sentinel
+                image: {{ img }}
+                command: ["/bin/sh", "-ec"]
+                args:
+                  - |
+                    cat > /sentinel/sentinel.conf <<EOF
+                    port {{ sentinelPort }}
+                    bind 0.0.0.0
+                    protected-mode no
+                    sentinel resolve-hostnames yes
+                    sentinel announce-hostnames yes
+                    sentinel announce-ip ${POD_NAME}.{{ base }}.${POD_NAMESPACE}.svc.cluster.local
+                    sentinel announce-port {{ sentinelPort }}
+                    sentinel monitor {{ sentinelMaster }} {{ base }}-0.{{ base }}.${POD_NAMESPACE}.svc.cluster.local {{ port }} {{ quorum }}
+                    sentinel down-after-milliseconds {{ sentinelMaster }} {{ downAfterMs }}
+                    sentinel failover-timeout {{ sentinelMaster }} {{ failoverTimeoutMs }}
+                    sentinel parallel-syncs {{ sentinelMaster }} {{ parallelSyncs }}
+                    EOF
+                    exec valkey-sentinel /sentinel/sentinel.conf
+                env:
+                  - name: POD_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.name
+                  - name: POD_NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                resources:
+                  requests:
+                    cpu: {{ sentinelCpuReq }}
+                    memory: {{ sentinelMemReq }}
+                  limits:
+                    memory: {{ sentinelMemLim }}
+                ports:
+                  - name: sentinel
+                    containerPort: {{ sentinelPort }}
+                readinessProbe:
+                  exec:
+                    command: ["sh", "-ec", "valkey-cli -p {{ sentinelPort }} ping | grep -q PONG"]
+                  initialDelaySeconds: 2
+                  periodSeconds: 5
+                livenessProbe:
+                  exec:
+                    command: ["sh", "-ec", "valkey-cli -p {{ sentinelPort }} ping | grep -q PONG"]
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                volumeMounts:
+                  - name: sentinel
+                    mountPath: /sentinel
+            volumes:
+              - name: sentinel
+                emptyDir: {}
+      {%- if pdbEnabled == "true" %}
+      ---
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: {{ base }}
+        namespace: {{ ns }}
+        labels:
+          app.kubernetes.io/name: haptic-rate-limit-store
+          app.kubernetes.io/instance: {{ base }}
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        maxUnavailable: {{ pdbMaxUnavailable }}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: haptic-rate-limit-store
+            app.kubernetes.io/instance: {{ base }}
+      {%- end %}
+      {%- end %}

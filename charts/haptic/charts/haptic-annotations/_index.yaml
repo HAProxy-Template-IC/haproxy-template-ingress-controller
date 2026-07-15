@@ -63,6 +63,29 @@ templatingSettings:
     hapticCacheReplicas: "2"
     hapticCacheImage: "varnish:7.6"
     hapticCacheMalloc: "256m"                    # -s malloc,<size> (≈75% of the mem limit)
+    # Shared request-rate limiting (SPOA rate-limit + optional Valkey store).
+    # The chart overrides these from controller.rateLimit.* via
+    # templates/haproxytemplateconfig.yaml when enabled.
+    hapticRateLimitSharedEnabled: "false"
+    hapticRateLimitStoreEnabled: "false"
+    hapticRateLimitStoreBaseName: "haptic-rate-limit-store"
+    hapticRateLimitStoreNamespace: "default"
+    hapticRateLimitStorePort: "6379"
+    hapticRateLimitStoreImage: "valkey/valkey:8-alpine"
+    hapticRateLimitStoreReplicas: "3"
+    hapticRateLimitStoreCpuRequest: "50m"
+    hapticRateLimitStoreMemRequest: "128Mi"
+    hapticRateLimitStoreMemLimit: "128Mi"
+    hapticRateLimitStoreSentinelPort: "26379"
+    hapticRateLimitStoreSentinelQuorum: "2"
+    hapticRateLimitStoreSentinelDownAfterMs: "2000"
+    hapticRateLimitStoreSentinelFailoverTimeoutMs: "10000"
+    hapticRateLimitStoreSentinelParallelSyncs: "1"
+    hapticRateLimitStoreSentinelCpuRequest: "25m"
+    hapticRateLimitStoreSentinelMemRequest: "64Mi"
+    hapticRateLimitStoreSentinelMemLimit: "64Mi"
+    hapticRateLimitStorePDBEnabled: "true"
+    hapticRateLimitStorePDBMaxUnavailable: "1"
 
 watchedResources:
   secrets:

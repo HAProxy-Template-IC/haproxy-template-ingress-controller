@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boot the published spoa-hub image with a minimal config that loads all six
+# Boot the published spoa-hub image with a minimal config that loads all seven
 # bundled plugins, then assert the hub log reports each plugin loaded and
 # the SPOP listener bound. Run inside a docker-in-docker job.
 #
@@ -18,6 +18,7 @@ declare -A PLUGIN_LIBS=(
     [maxmind]="libmaxmind_plugin.so"
     [mirror]="libmirror_plugin.so"
     [otel]="libotel_plugin.so"
+    [rate-limit]="librate_limit_plugin.so"
     [sso-auth]="libhaproxy_spoa_hub_plugin_sso_auth.so"
 )
 # Per-plugin minimal `[plugins.params]` body. The hub's plugin loader
@@ -27,7 +28,7 @@ declare -A PLUGIN_LIBS=(
 # zero external-resource dependency:
 #  - sso-auth needs cookie_secret_1 (>=16 chars) + cookie_domain.
 #  - otel needs an `instrumentation` block (single name + scopes).
-#  - coraza / external-auth / fingerprinting tolerate empty params.
+#  - coraza / external-auth / fingerprinting / rate-limit tolerate empty params.
 # maxmind is excluded entirely because its schema requires at least
 # one `databases.<name>.path` pointing at a real MMDB file we can't
 # realistically synthesize in CI; smoke for that plugin happens via
@@ -41,17 +42,18 @@ declare -A PLUGIN_PARAMS=(
     [otel]='[plugins.params.instrumentation]
 name = "smoke-test"
 scopes = ["request"]'
+    [rate-limit]=""
     [sso-auth]='[plugins.params]
 cookie_secret_1 = "0123456789abcdef0"
 cookie_domain = "smoke.example.com"'
 )
-PLUGINS=(coraza external-auth fingerprinting mirror otel sso-auth)
+PLUGINS=(coraza external-auth fingerprinting mirror otel rate-limit sso-auth)
 
 echo "==> Pulling ${IMAGE}"
 docker pull "${IMAGE}"
 
 # Build a derived image with a minimal config bound on TCP that lists all
-# six bundled plugins. Each plugin block matches the libname produced by
+# seven bundled plugins. Each plugin block matches the libname produced by
 # prep-spoa-plugins.sh (suffix stripped, so the file is plain libfoo_plugin.so).
 echo "==> Building smoke image with all-plugin config"
 

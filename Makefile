@@ -468,6 +468,10 @@ test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e te
 	@# CI sets SKIP_DOCKER_BUILD=1 and pre-tags from the registry-pulled image,
 	@# so this re-tag is a no-op there.
 	docker tag haptic:test haptic:test-haproxy$(HAPROXY_VERSION) 2>/dev/null || true
+	@if [ "$(HAPTIC_E2E_PROFILE)" = "rate-limit" ] && [ -z "$(SPOA_TAG)" ]; then \
+		echo "Rate-limit e2e profile without SPOA_TAG: building local spoa-hub:dev image"; \
+		$(MAKE) spoa-hub-image; \
+	fi
 	@echo "Note: This creates kind cluster 'haptic-e2e', helm-installs the chart, deploys fixtures."
 	@echo "Environment variables:"
 	@echo "  KEEP_CLUSTER        - Keep cluster after tests (default: true; set false to destroy)"
@@ -480,9 +484,9 @@ test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e te
 	@echo "                        from 4 up through 16 on a 16-core box. Override with"
 	@echo "                        PARALLEL=N for constrained environments"
 ifdef TEST_RUN_PATTERN
-	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) -run "$(TEST_RUN_PATTERN)" ./tests/e2e/...
+	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -count=1 -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) -run "$(TEST_RUN_PATTERN)" ./tests/e2e/...
 else
-	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) ./tests/e2e/...
+	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -count=1 -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) ./tests/e2e/...
 endif
 
 build-integration-test: ## Build integration test binary (without running)

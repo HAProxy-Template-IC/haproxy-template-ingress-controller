@@ -113,6 +113,16 @@ var ControllerImageName = "haptic:test-haproxy" + ChartHAProxyVersion
 // Loaded into kind by the cache shard so the StatefulSet needn't reach Docker Hub.
 const VarnishImage = "varnish:7.6"
 
+// ValkeyImage is the stock upstream Valkey image the shared-rate-limit tier
+// deploys. Must match charts/haptic/values.yaml controller.rateLimit.store.image.
+// Loaded into kind by the rate-limit shard so the StatefulSet needn't reach Docker Hub.
+const ValkeyImage = "valkey/valkey:8-alpine"
+
+// LocalSPOAHubImage is the image tag produced by `make spoa-hub-image`.
+// The local shared-rate-limit shard uses it when SPOA_TAG is unset, because
+// registry main-latest does not necessarily contain MR-local bundled plugins.
+const LocalSPOAHubImage = "spoa-hub:dev"
+
 // Debug endpoint paths, mirrored from tests/acceptance/constants.go.
 const (
 	DebugPathConfig    = "/debug/vars/config"

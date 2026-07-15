@@ -2,7 +2,7 @@
 
 ## Overview
 
-HAPTIC ships a `spoa-hub` container image that bundles the [haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) plus a curated set of plugin shared libraries. Deployed as a sidecar to each HAProxy pod, the hub is a Stream Processing Offload Agent (SPOA): it speaks the [Stream Processing Offload Protocol (SPOP) wire protocol](https://docs.haproxy.org/spoe.html) over a shared Unix domain socket and delegates per-request work to plugins: Web Application Firewall (WAF) inspection, geoip, JA3/JA4 fingerprinting, OpenTelemetry export, OpenID Connect (OIDC) / Security Assertion Markup Language (SAML) auth, request mirroring, and nginx-style external auth.
+HAPTIC ships a `spoa-hub` container image that bundles the [haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) plus a curated set of plugin shared libraries. Deployed as a sidecar to each HAProxy pod, the hub is a Stream Processing Offload Agent (SPOA): it speaks the [Stream Processing Offload Protocol (SPOP) wire protocol](https://docs.haproxy.org/spoe.html) over a shared Unix domain socket and delegates per-request work to plugins: Web Application Firewall (WAF) inspection, geoip, JA3/JA4 fingerprinting, OpenTelemetry export, OpenID Connect (OIDC) / Security Assertion Markup Language (SAML) auth, request mirroring, nginx-style external auth, and shared request-rate limiting.
 
 This page documents the exact components bundled with the version of HAPTIC you are reading docs for, how to verify them end-to-end, and how to tune the HAProxy-side Stream Processing Offload Engine (SPOE) wiring the chart emits when the sidecar is enabled.
 
@@ -18,7 +18,8 @@ Some plugins auto-enable with the template library that consumes them — each p
 
 - **coraza** follows `controller.templateLibraries.nginxIngress.enabled` or `controller.templateLibraries.haproxyIngress.enabled`,
 - **external-auth** follows `controller.templateLibraries.nginxIngress.enabled`,
-- **mirror** follows `controller.templateLibraries.gateway.enabled`.
+- **mirror** follows `controller.templateLibraries.gateway.enabled`,
+- **rate-limit** follows `controller.rateLimit.shared.enabled`.
 
 The gateway library is on by default and auto-enables the `mirror` plugin, so a default install already runs the hub with `mirror`. The `coraza` plugin auto-enables when you turn on the opt-in haproxy-ingress or nginx-ingress annotation library, and `external-auth` when you turn on nginx-ingress; `fingerprinting`, `maxmind`, `otel`, and `sso-auth` stay off until you enable them.
 
@@ -39,6 +40,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 | `maxmind`         | `v0.4.0`          |
 | `mirror`          | `v0.5.0`           |
 | `otel`            | `v0.5.0`             |
+| `rate-limit`      | `v0.1.6`       |
 | `sso-auth`        | `v0.3.0`         |
 
 Plugin `.so` files target glibc `2.36` (Debian bookworm).
@@ -55,9 +57,74 @@ The table is generated from `versions-spoa.env` at the repository root. CI fails
 - **maxmind** — performs in-memory MaxMind MMDB lookups against operator-provided database files: City, Country, Autonomous System Number (ASN), and so on.
 - **otel** — emits OpenTelemetry traces, metrics, and log records via OpenTelemetry Protocol (OTLP) gRPC or HTTP.
 - **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
+- **rate-limit** — enforces shared request-rate budgets for native `haproxy-haptic.org/rate-limit-*` annotations. By default, `controller.rateLimit.store.enabled=true` deploys a chart-managed HA Valkey store: three StatefulSet pods, one writable primary, replicas, Sentinel failover, a PodDisruptionBudget, and a store NetworkPolicy. You can also disable the managed store and provide your own Redis/Valkey/Sentinel/Cluster `store_url` or `store_urls`. Shared mode requires one of those stores; HAPTIC fails the render rather than silently falling back to per-pod limiting. If the hub/plugin produces no verdict for an annotated route, HAProxy fails closed with 429 to avoid bypassing the configured limit. The default token-bucket mode bounds local key state and disables optimistic cold-starts under capacity pressure. Exact `gcra` mode performs a synchronous store check with a short default store timeout, so store trouble fails closed instead of adding a long request tail. The managed store is HA but intentionally fixed-size; use bring-your-own infrastructure for horizontal Valkey scaling.
 - **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
 
 When several hub plugins are enabled, the bundled frontend dispatchers run in a fixed order: the Coraza WAF pass (`frontend-spoe-filters-050-coraza`) inspects each request and can deny it before the external-auth subrequest (`frontend-spoe-filters-100-external-auth`) — WAF first, auth second. Basic authentication (`haproxy.org/auth-type: basic-auth` or `haproxy-ingress.github.io/auth-secret`) runs later still, as a backend directive, so it too happens after WAF inspection.
+
+## Managed shared rate-limit store
+
+Enable shared rate limiting with:
+
+```yaml
+controller:
+  rateLimit:
+    shared:
+      enabled: true
+```
+
+The managed store is enabled by default once shared rate limiting is enabled:
+
+```yaml
+controller:
+  rateLimit:
+    store:
+      enabled: true
+      replicas: 3
+      sentinel:
+        quorum: 2
+```
+
+HAPTIC renders a fixed-size HA Valkey topology:
+
+- one `StatefulSet` with three pods by default;
+- one writable Valkey primary and replicas;
+- one Sentinel sidecar per pod for failover;
+- a PodDisruptionBudget with `maxUnavailable: 1`;
+- a NetworkPolicy that admits HAProxy/SPOA traffic plus store-internal Valkey/Sentinel traffic.
+
+This gives automatic failover for the default shared limiter store without adding a HAPTIC-owned Valkey operator. It's deliberately not an automatically horizontally scaled Valkey Cluster. A hot limiter key still maps to one writable primary, so DoS-facing protection relies on the plugin's bounded local key state, bounded background refresh queue, default store timeout of 10 milliseconds for exact store checks, circuit breaker, and fail-closed HAProxy verdict handling.
+
+If you already run a Redis/Valkey platform, disable the managed store and provide the endpoint directly:
+
+```yaml
+controller:
+  rateLimit:
+    shared:
+      enabled: true
+    store:
+      enabled: false
+
+spoaHub:
+  plugins:
+    rate-limit:
+      params: |
+        store_url = "redis-sentinel://valkey-sentinel.data.svc:26379/0?sentinelServiceName=mymaster"
+```
+
+The plugin also accepts `store_urls = [...]` for bring-your-own deployments that intentionally shard across several independent stores.
+
+Tune the timeout budget with the first-class shared limiter values:
+
+```yaml
+controller:
+  rateLimit:
+    shared:
+      pluginTimeoutMs: 50
+      storeTimeoutMs: 10
+```
+
+`storeTimeoutMs` is the important request-latency bound for exact `gcra` mode because that mode performs a synchronous store operation per request. Set it from measured in-cluster Valkey/Sentinel round-trip time plus a small margin; raising it improves tolerance for slow cross-zone or external stores, but also raises the worst-case fail-closed request tail when the store is unhealthy. Keep the default token-bucket mode for DoS-facing edge limits.
 
 ## Geolocation lookups
 

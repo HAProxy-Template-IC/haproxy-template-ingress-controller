@@ -1,0 +1,221 @@
+# haptic-annotations library — SHARED rate-limiting validation tests.
+# Covers the map producer (80-rate-limit-shared.yaml) and the spoa-hub
+# dispatch it feeds (frontend-spoe-filters-150-rate-limit).
+validationTests:
+  test-haptic-rate-limit-shared-ip:
+    _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    description: shared rate-limit-requests (ip key, token-bucket) → packed map + SPOE dispatch
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-ip
+            annotations:
+              haproxy-haptic.org/rate-limit-requests: "100"
+              haproxy-haptic.org/rate-limit-period: "1m"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-ip.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      # Packed rule: limit=100, period 1m→60s, burst defaults to limit,
+      # mode lease (token-bucket default), keyspec ip (default).
+      - type: contains
+        target: map:rate-limit.map
+        pattern: "default/rl-ip 100 60 100 lease ip"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request send-spoe-group spoa-hub check-ratelimit-group"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 429 hdr Retry-After"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "!\\{ var\\(txn\\.hub\\.rate_limit\\.allowed\\) -m found \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-after-response set-header X-RateLimit-Limit"
+
+  test-haptic-rate-limit-shared-exact-consumer:
+    _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    description: rate-limit-algorithm gcra → exact mode; rate-limit-key consumer; burst override
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-exact
+            annotations:
+              haproxy-haptic.org/rate-limit-requests: "50"
+              haproxy-haptic.org/rate-limit-burst: "75"
+              haproxy-haptic.org/rate-limit-key: "consumer"
+              haproxy-haptic.org/rate-limit-algorithm: "gcra"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-exact.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      # limit=50, period default 1s→1, burst=75, mode exact (gcra), keyspec consumer.
+      - type: contains
+        target: map:rate-limit.map
+        pattern: "default/rl-exact 50 1 75 exact consumer"
+
+  test-haptic-rate-limit-shared-invalid-requests:
+    _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    description: non-positive rate-limit-requests fails the render
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-bad
+            annotations:
+              haproxy-haptic.org/rate-limit-requests: "0"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-bad.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Must be a positive integer"
+
+  test-haptic-rate-limit-shared-invalid-period-zero:
+    _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    description: zero period fails before the plugin receives an invalid rule
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-zero-period
+            annotations:
+              haproxy-haptic.org/rate-limit-requests: "10"
+              haproxy-haptic.org/rate-limit-period: "0ms"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-zero-period.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Must be greater than zero"
+
+  test-haptic-rate-limit-shared-requires-opt-in:
+    _helm_skip_test: '{{ if .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    description: rate-limit-requests fails loudly when the shared rate-limit feature is not enabled
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rl-disabled
+            annotations:
+              haproxy-haptic.org/rate-limit-requests: "10"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: rl-disabled.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "shared rate limiting is not enabled"
+
+  test-haptic-rate-limit-store-resource:
+    description: the optional Valkey store emits Sentinel-managed HA resources via k8sResources
+    extraContext:
+      hapticRateLimitStoreEnabled: "true"
+      hapticRateLimitStoreBaseName: "haptic-rate-limit-store"
+      hapticRateLimitStoreNamespace: "default"
+      hapticRateLimitStorePort: "6379"
+      hapticRateLimitStoreSentinelPort: "26379"
+      hapticRateLimitStoreSentinelMasterName: "haptic-rate-limit"
+      hapticRateLimitStoreReplicas: "3"
+      hapticRateLimitStoreSentinelQuorum: "2"
+      hapticRateLimitStoreImage: "valkey/valkey:8-alpine"
+    fixtures:
+      ingresses: []
+    assertions:
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "kind: Service"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "name: haptic-rate-limit-store-sentinel"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "kind: StatefulSet"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "kind: PodDisruptionBudget"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "name: haptic-rate-limit-store"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "app.kubernetes.io/instance: haptic-rate-limit-store"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "image: valkey/valkey:8-alpine"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "sentinel monitor haptic-rate-limit"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "containerPort: 6379"
+      - type: contains
+        target: "k8s:rate-limit-store"
+        pattern: "containerPort: 26379"

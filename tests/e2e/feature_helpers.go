@@ -71,6 +71,15 @@ func RequireCacheProfile(t *testing.T) {
 	}
 }
 
+// RequireRateLimitProfile skips the test unless the shared rate-limit shard is
+// active (HAPTIC_E2E_PROFILE=rate-limit) — the only profile that deploys Valkey.
+func RequireRateLimitProfile(t *testing.T) {
+	t.Helper()
+	if os.Getenv("HAPTIC_E2E_PROFILE") != "rate-limit" {
+		t.Skipf("shared rate-limit tier not deployed in this shard (HAPTIC_E2E_PROFILE=%q); it runs in the rate-limit shard", os.Getenv("HAPTIC_E2E_PROFILE"))
+	}
+}
+
 // skipIfVendorDisabled skips the test if any of its annotations use a vendor
 // prefix whose library isn't the one enabled in the current shard. This
 // auto-gates every RunSimpleIngressTest-based vendor test with no per-test

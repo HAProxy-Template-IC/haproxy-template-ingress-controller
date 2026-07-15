@@ -96,14 +96,18 @@ Speak TLS to the backend Service — protocol, verification, client certs, SNI, 
 
 ### Rate and bandwidth limiting
 
-Per-source request-rate caps (reload-surviving stick-tables) and per-connection download throttling.
+Per-source request-rate caps (reload-surviving stick-tables), shared fleet-wide request budgets through the rate-limit SPOA plugin, and per-connection download throttling.
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
 | `haproxy-haptic.org/download-bandwidth-limit` | ✅ Supported | Throttles the bandwidth (bytes per second) sent toward a single client connection, using a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Independent of the request-rate caps; both can apply to the same Ingress. Byte-size values are validated before interpolation. |
 | `haproxy-haptic.org/download-bandwidth-limit-after` | ✅ Supported | Sets the number of bytes sent on a connection before the download bandwidth limit begins to throttle, via the `bwlim-out` `min-size` parameter. Byte-size values are validated before interpolation. |
+| `haproxy-haptic.org/rate-limit-algorithm` | ✅ Supported | Shared limiter algorithm: `token-bucket` (default, low-latency lease mode) or `gcra` (exact mode, synchronous store check with a short fail-closed timeout). `gcra` is for low-volume contractual limits; use the default token-bucket mode for public-edge DoS protection. Requires `rate-limit-requests`, `controller.rateLimit.shared.enabled=true`, and an effective Redis/Valkey `store_url`/`store_urls`. |
+| `haproxy-haptic.org/rate-limit-burst` | ✅ Supported | Shared limiter burst allowance; defaults to `rate-limit-requests`. Must be a positive integer. |
 | `haproxy-haptic.org/rate-limit-connections` | ✅ Supported | Caps concurrent connections per source IP; ignored when `rate-limit-rps` or `rate-limit-rpm` is set. |
-| `haproxy-haptic.org/rate-limit-period` | ✅ Supported | Overrides the stick-table window. When unset, the window derives from the active cap: 1 second for requests per second, 60 seconds for requests per minute, and a 30-second table TTL for connection caps. Accepts a bare number or an HAProxy time suffix (`us`/`ms`/`s`/`m`/`h`/`d`); other values fail the render. |
+| `haproxy-haptic.org/rate-limit-key` | ✅ Supported | Shared limiter key dimension: `ip` (default) or `consumer` (the identity established by API-key/JWT auth, falling back to source IP when absent). |
+| `haproxy-haptic.org/rate-limit-period` | ✅ Supported | Overrides the rate window. For the per-pod stick-table limiter, when unset the window derives from the active cap: 1 second for requests per second, 60 seconds for requests per minute, and a 30-second table TTL for connection caps. For the shared limiter it defaults to `1s` and accepts `ms`/`s`/`m`/`h`/`d`; zero or malformed values fail the render. |
+| `haproxy-haptic.org/rate-limit-requests` | ✅ Supported | Enables the shared fleet-wide limiter for the Ingress: N requests per `rate-limit-period`, enforced through the rate-limit SPOA plugin. Requires `controller.rateLimit.shared.enabled=true` plus either the default chart-managed HA Valkey/Sentinel store (`controller.rateLimit.store.enabled=true`) or a bring-your-own `spoaHub.plugins.rate-limit.params.store_url`/`store_urls`; HAPTIC fails the render rather than silently falling back to a per-pod budget. If the SPOA hub/plugin returns no verdict for an annotated route, HAProxy fails closed with 429 to avoid a rate-limit bypass. The token-bucket mode bounds local key state with `max_keys`/`idle_ttl_ms`; under capacity pressure new keys wait for a shared lease rather than receiving fresh optimistic local tokens. Exact `gcra` mode uses a default store timeout of 10 milliseconds so store trouble fails closed instead of adding a long request tail. The managed store is a fixed-size HA topology: one writable primary, replicas, Sentinel failover, PodDisruptionBudget, and NetworkPolicy. Use bring-your-own infrastructure when you need horizontally scalable Valkey. |
 | `haproxy-haptic.org/rate-limit-rpm` | ✅ Supported | Caps requests per minute per source IP (a 60-second `http_req_rate` window); ignored when `rate-limit-rps` is also set. |
 | `haproxy-haptic.org/rate-limit-rps` | ✅ Supported | Caps requests per second per source IP via an `http_req_rate` stick-table; requests over the cap are rejected with the deny status (default `429`), with no burst allowance. |
 | `haproxy-haptic.org/rate-limit-size` | ✅ Supported | Sets the stick-table size (default `100k`). |
@@ -291,4 +295,4 @@ JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from 
 | `haproxy-haptic.org/require-content-type` | ✅ Supported | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). |
 | `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. |
 
-<!-- 171 annotations documented -->
+<!-- 175 annotations documented -->

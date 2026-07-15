@@ -4,6 +4,7 @@ templates:
   - haproxy-deployment.yaml
   - spoa-hub-configmap.yaml
   - haproxytemplateconfig.yaml
+  - rate-limit-store-networkpolicy.yaml
 
 tests:
   # Baseline: with the plugin-triggering libraries off, the spoa-hub sidecar
@@ -223,6 +224,136 @@ tests:
           path: data["config.toml"]
           pattern: 'library = "libhaproxy_spoa_hub_plugin_sso_auth\.so"'
 
+  - it: should auto-enable the rate-limit plugin from controller.rateLimit.shared.enabled
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'name = "rate_limit"'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'library = "librate_limit_plugin\.so"'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'messages = \["check-ratelimit"\]'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'timeout_ms = 50'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'store_timeout_ms = 10'
+
+  - it: should fail shared rate-limit rendering without a shared store_url
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.rateLimit.shared.enabled=true requires a shared store. Leave controller.rateLimit.store.enabled=true for chart-managed HA Valkey, or set spoaHub.plugins.rate-limit.params.store_url/store_urls to bring your own Redis/Valkey."
+
+  - it: should fail shared rate-limit rendering when spoa-hub is forced off
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: true
+      spoaHub.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.rateLimit.shared.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable shared rate limiting."
+
+  - it: should fail shared rate-limit rendering when the rate-limit plugin is forced off
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: true
+      spoaHub.plugins.rate-limit.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.rateLimit.shared.enabled=true requires spoaHub.plugins.rate-limit to be enabled. Remove spoaHub.plugins.rate-limit.enabled=false or disable shared rate limiting."
+
+  - it: should inject the chart-managed Valkey store_url into the rate-limit plugin
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'store_url = "redis-sentinel://.*haptic-rl-store-sentinel\.[^.]+\.svc:26379/0\?sentinelServiceName=haptic-rate-limit'
+
+  - it: should render shared rate-limit timeout knobs
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.shared.pluginTimeoutMs: 75
+      controller.rateLimit.shared.storeTimeoutMs: 20
+      controller.rateLimit.store.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'timeout_ms = 75'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'store_timeout_ms = 20'
+
+  - it: should fail invalid shared rate-limit plugin timeout
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.shared.pluginTimeoutMs: 0
+      controller.rateLimit.store.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.rate-limit.timeoutMs must resolve to a positive integer milliseconds value."
+
+  - it: should fail invalid shared rate-limit store timeout
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.shared.storeTimeoutMs: 0
+      controller.rateLimit.store.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.rateLimit.shared.storeTimeoutMs must be a positive integer milliseconds value."
+
+  - it: should render the managed rate-limit store NetworkPolicy
+    template: rate-limit-store-networkpolicy.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: true
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/name"]
+          value: haptic-rate-limit-store
+      - contains:
+          path: spec.policyTypes
+          content: Ingress
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+      - contains:
+          path: spec.ingress[0].ports
+          content:
+            port: 26379
+            protocol: TCP
+          any: true
+
+  - it: should not render the managed rate-limit store NetworkPolicy when disabled
+    template: rate-limit-store-networkpolicy.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: true
+      controller.rateLimit.store.networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
   - it: should let spoaHub.enabled=false force the sidecar off even when a plugin is enabled
     template: haproxy-deployment.yaml
     set:
@@ -314,6 +445,39 @@ tests:
       - contains:
           path: spec.templatingSettings.extraContext.spoaHub.messages
           content: get-fingerprint
+
+  - it: should surface shared rate-limit extraContext and store params
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: true
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.hapticRateLimitSharedEnabled
+          value: "true"
+      - equal:
+          path: spec.templatingSettings.extraContext.hapticRateLimitStoreEnabled
+          value: "true"
+      - contains:
+          path: spec.templatingSettings.extraContext.spoaHub.messages
+          content: check-ratelimit
+      - matchRegex:
+          path: spec.templatingSettings.extraContext.spoaHub.plugins[?(@.name == "rate_limit")].params
+          pattern: 'store_url = "redis-sentinel://.*haptic-rl-store-sentinel\.[^.]+\.svc:26379/0\?sentinelServiceName=haptic-rate-limit'
+      - matchRegex:
+          path: spec.templatingSettings.extraContext.spoaHub.plugins[?(@.name == "rate_limit")].params
+          pattern: 'store_timeout_ms = 10'
+
+  - it: should allow disabling the managed rate-limit store PodDisruptionBudget
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+      controller.rateLimit.store.enabled: true
+      controller.rateLimit.store.podDisruptionBudget.enabled: false
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.hapticRateLimitStorePDBEnabled
+          value: "false"
 
   - it: should union messages from multiple enabled plugins in extraContext
     template: haproxytemplateconfig.yaml

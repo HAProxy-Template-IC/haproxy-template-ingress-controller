@@ -211,6 +211,44 @@ echo -e "${YELLOW}Running validation tests...${NC}" >&2
 FULL_RC=0
 "$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@" || FULL_RC=$?
 
+# Optional shared-rate-limit profile. The normal render above must keep the
+# feature off so validationTests can assert that using
+# haproxy-haptic.org/rate-limit-requests without the opt-in fails loudly.
+# These tests need the opt-in because they assert the active map + SPOE
+# dispatch path.
+if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
+    RATE_LIMIT_CONFIG=$(mktemp /tmp/haptic-rate-limit-config-XXXXXX.yaml)
+    trap 'rm -f "$TEMP_CONFIG" "$RATE_LIMIT_CONFIG"' EXIT
+    echo -e "${YELLOW}Rendering shared rate-limit profile...${NC}" >&2
+    if ! helm template "$CHART_DIR" \
+        --namespace default \
+        $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.gateway.enabled=true \
+        --set controller.templateLibraries.gateway.experimentalChannel=true \
+        --set controller.templateLibraries.hapticAnnotations.enabled=true \
+        --set controller.templateLibraries.haproxytech.enabled=true \
+        --set controller.templateLibraries.haproxyIngress.enabled=true \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
+        --set controller.rateLimit.shared.enabled=true \
+        --set controller.rateLimit.store.enabled=true \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
+        > "$RATE_LIMIT_CONFIG"; then
+        echo -e "${RED}Error: Failed to render shared rate-limit Helm profile${NC}" >&2
+        exit 1
+    fi
+    for TEST in \
+        test-haptic-rate-limit-shared-ip \
+        test-haptic-rate-limit-shared-exact-consumer \
+        test-haptic-rate-limit-shared-invalid-requests \
+        test-haptic-rate-limit-shared-invalid-period-zero; do
+        echo -e "${YELLOW}Shared rate-limit profile: ${TEST}...${NC}" >&2
+        "$CONTROLLER_BIN" validate --file "$RATE_LIMIT_CONFIG" "${SCHEMA_DIR_ARGS[@]}" --test "$TEST" "$@" || FULL_RC=$?
+        if [[ $FULL_RC -ne 0 ]]; then
+            break
+        fi
+    done
+fi
+
 # ---------------------------------------------------------------------------
 # Degraded Gateway API profiles (skipped when a single --test is requested or
 # a custom schema dir is in play). For each committed old-release CRD bundle
