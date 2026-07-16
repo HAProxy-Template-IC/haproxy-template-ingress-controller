@@ -5,6 +5,8 @@
 {{- $debugPortInt := $debugPort | int }}
 {{- $webhookEnabled := .Values.webhook.enabled }}
 {{- $webhookSecretName := include "haptic.webhook.secretName" . }}
+{{- $webhookResourceTimeoutSeconds := include "haptic.webhook.resourceTimeoutSeconds" . | int }}
+{{- $webhookConfigTimeoutSeconds := include "haptic.webhook.configTimeoutSeconds" . | int }}
 {{- $labels := include "haptic.labels.withCommon" . }}
 {{- $validatorsEnabled := include "haptic.validators.enabled" . }}
 {{- $validators := $controller.validators }}
@@ -111,6 +113,10 @@ spec:
               value: {{ $ports.webhook | quote }}
             - name: WEBHOOK_CERT_DIR
               value: /etc/webhook/certs
+            - name: WEBHOOK_RESOURCE_ADMISSION_TIMEOUT
+              value: {{ printf "%ds" (sub $webhookResourceTimeoutSeconds 1) | quote }}
+            - name: WEBHOOK_CONFIG_ADMISSION_TIMEOUT
+              value: {{ printf "%ds" (sub $webhookConfigTimeoutSeconds 1) | quote }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

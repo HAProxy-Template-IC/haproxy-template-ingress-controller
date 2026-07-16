@@ -26,22 +26,26 @@ import (
 	"runtime/debug"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller"
+	controllerwebhook "gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
 
 var (
-	runCRDName        string
-	runSecretName     string
-	runWebhookCertDir string
-	runKubeconfig     string
-	runDebugPort      int
+	runCRDName                         string
+	runSecretName                      string
+	runWebhookCertDir                  string
+	runWebhookResourceAdmissionTimeout time.Duration
+	runWebhookConfigAdmissionTimeout   time.Duration
+	runKubeconfig                      string
+	runDebugPort                       int
 )
 
 // runCmd represents the run command (controller main loop).
@@ -81,6 +85,10 @@ func init() {
 		"Name of the Secret containing HAProxy Dataplane API credentials (env: SECRET_NAME)")
 	runCmd.Flags().StringVar(&runWebhookCertDir, "webhook-cert-dir", "",
 		"Directory holding the webhook TLS cert (tls.crt/tls.key); read per-handshake so a rotated cert is served without restart. Empty disables the webhook (env: WEBHOOK_CERT_DIR)")
+	runCmd.Flags().DurationVar(&runWebhookResourceAdmissionTimeout, "webhook-resource-admission-timeout", 0,
+		"Controller-side deadline for watched-resource admission; must be shorter than the ValidatingWebhookConfiguration timeout (env: WEBHOOK_RESOURCE_ADMISSION_TIMEOUT, default: 9s)")
+	runCmd.Flags().DurationVar(&runWebhookConfigAdmissionTimeout, "webhook-config-admission-timeout", 0,
+		"Controller-side deadline for HAProxyTemplateConfig admission; must be shorter than the ValidatingWebhookConfiguration timeout (env: WEBHOOK_CONFIG_ADMISSION_TIMEOUT, default: 29s)")
 	runCmd.Flags().StringVar(&runKubeconfig, "kubeconfig", "",
 		"Path to kubeconfig file (for out-of-cluster development)")
 	runCmd.Flags().IntVar(&runDebugPort, "debug-port", 0,
@@ -109,6 +117,23 @@ func runController(_ *cobra.Command, _ []string) error {
 	// Webhook certificate directory (optional - empty means webhooks disabled)
 	if runWebhookCertDir == "" {
 		runWebhookCertDir = os.Getenv("WEBHOOK_CERT_DIR")
+	}
+	var err error
+	runWebhookResourceAdmissionTimeout, err = resolveDurationOption(
+		runWebhookResourceAdmissionTimeout,
+		"WEBHOOK_RESOURCE_ADMISSION_TIMEOUT",
+		controllerwebhook.DefaultResourceAdmissionTimeout,
+	)
+	if err != nil {
+		return err
+	}
+	runWebhookConfigAdmissionTimeout, err = resolveDurationOption(
+		runWebhookConfigAdmissionTimeout,
+		"WEBHOOK_CONFIG_ADMISSION_TIMEOUT",
+		controllerwebhook.DefaultConfigAdmissionTimeout,
+	)
+	if err != nil {
+		return err
 	}
 
 	// Debug port
@@ -158,6 +183,8 @@ func runController(_ *cobra.Command, _ []string) error {
 		"crd_name", runCRDName,
 		"secret", runSecretName,
 		"webhook_cert_dir", runWebhookCertDir,
+		"webhook_resource_admission_timeout", runWebhookResourceAdmissionTimeout,
+		"webhook_config_admission_timeout", runWebhookConfigAdmissionTimeout,
 		"debug_port", runDebugPort,
 		"log_level", logging.GetLevel(),
 		"gomaxprocs", gomaxprocs,
@@ -186,7 +213,18 @@ func runController(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	// Run the controller
-	if err := controller.Run(ctx, k8sClient, runCRDName, runSecretName, runWebhookCertDir, runDebugPort); err != nil {
+	if err := controller.Run(
+		ctx,
+		k8sClient,
+		runCRDName,
+		runSecretName,
+		runWebhookCertDir,
+		controller.WebhookAdmissionTimeouts{
+			Resource:              runWebhookResourceAdmissionTimeout,
+			HAProxyTemplateConfig: runWebhookConfigAdmissionTimeout,
+		},
+		runDebugPort,
+	); err != nil {
 		// Only return error if it's not a graceful shutdown
 		if ctx.Err() == nil {
 			return fmt.Errorf("controller failed: %w", err)
@@ -195,4 +233,32 @@ func runController(_ *cobra.Command, _ []string) error {
 
 	logger.Info("Controller shutdown complete")
 	return nil
+}
+
+func resolveDurationOption(flagValue time.Duration, envName string, defaultValue time.Duration) (time.Duration, error) {
+	if flagValue != 0 {
+		if flagValue < 0 {
+			return 0, fmt.Errorf("admission timeout %s must be positive", envName)
+		}
+		if flagValue > controllerwebhook.MaximumAdmissionTimeout {
+			return 0, fmt.Errorf("admission timeout %s must not exceed %s", envName, controllerwebhook.MaximumAdmissionTimeout)
+		}
+		return flagValue, nil
+	}
+
+	raw := os.Getenv(envName)
+	if raw == "" {
+		return defaultValue, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parsing %s=%q as a duration: %w", envName, raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s must be positive", envName)
+	}
+	if d > controllerwebhook.MaximumAdmissionTimeout {
+		return 0, fmt.Errorf("%s must not exceed %s", envName, controllerwebhook.MaximumAdmissionTimeout)
+	}
+	return d, nil
 }

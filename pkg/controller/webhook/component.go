@@ -48,23 +48,30 @@ const (
 	// DefaultWebhookPath is the default URL path for validation requests.
 	DefaultWebhookPath = "/validate"
 
-	// configAdmissionTimeout is the internal deadline for HAProxyTemplateConfig
-	// admission (createConfigValidator). It's larger than the 5 s
-	// watched-resource deadline because the config path runs three phases on this
-	// context: per-admission schema bootstrap (≤2 s), render + `haproxy -c`
-	// (sub-second in practice), and the embedded validationTests suite
-	// (configValidationTestsBudget = 5 s). 2 + ~2 + 5 = 9 s; kept under the
-	// chart's 10 s timeoutSeconds so the controller returns a structured decision
-	// before the API server gives up.
-	configAdmissionTimeout = 9 * time.Second
+	// DefaultConfigAdmissionTimeout is the controller-side deadline for
+	// HAProxyTemplateConfig admission. The chart pairs it with a 30-second
+	// Kubernetes webhook timeout, leaving one second for the response to reach
+	// the API server. Config admission is deliberately separate from watched-
+	// resource admission: it compiles the prospective template set, performs a
+	// strict render, and runs the bounded validationTests admission gate.
+	DefaultConfigAdmissionTimeout = 29 * time.Second
 
-	// resourceAdmissionTimeout bounds a watched-resource (e.g. Ingress) dry-run
-	// admission: schema bootstrap + full render + `haproxy -c`. It matches
-	// configAdmissionTimeout's 9 s headroom under the chart's 10 s timeoutSeconds
-	// so a large config doesn't hit the deadline and fail open (failurePolicy=
-	// Ignore) before validation finishes. The watched-resource path skips the
-	// embedded validationTests suite, so 9 s is ample.
-	resourceAdmissionTimeout = 9 * time.Second
+	// DefaultResourceAdmissionTimeout bounds watched-resource (for example,
+	// Ingress) dry-run admission. The chart pairs it with a 10-second Kubernetes
+	// webhook timeout. Keeping this path at nine seconds limits per-request work
+	// and preserves fail-closed admission under untrusted routing-resource load.
+	DefaultResourceAdmissionTimeout = 9 * time.Second
+
+	// MaximumAdmissionTimeout is the largest safe controller-side deadline.
+	// Kubernetes caps ValidatingWebhookConfiguration.timeoutSeconds at 30;
+	// keeping one second of response margin makes 29 seconds the hard maximum.
+	MaximumAdmissionTimeout = 29 * time.Second
+
+	// webhookResponseGrace keeps the HTTP server's write deadline beyond the
+	// longest validator deadline. The API server's own timeout remains the
+	// authoritative outer bound; this only prevents net/http from cutting off a
+	// valid response before that bound.
+	webhookResponseGrace = 2 * time.Second
 )
 
 // Component is the webhook adapter component that manages webhook lifecycle.
@@ -162,6 +169,16 @@ type Config struct {
 	// pairs this with failurePolicy=Ignore so missing controller doesn't
 	// break the chicken-and-egg of first install / recovery.
 	ConfigValidator ConfigValidatorFunc
+
+	// ResourceAdmissionTimeout bounds watched-resource dry-run validation.
+	// Default: 9s. Keep it below the corresponding Kubernetes webhook
+	// timeoutSeconds value so the controller can return a structured decision.
+	ResourceAdmissionTimeout time.Duration
+
+	// ConfigAdmissionTimeout bounds HAProxyTemplateConfig validation.
+	// Default: 29s. A timed-out validation is admitted with a warning because
+	// the controller's load gate still enforces the prospective config.
+	ConfigAdmissionTimeout time.Duration
 }
 
 // New creates a new webhook component.
@@ -181,6 +198,12 @@ func New(logger *slog.Logger, config *Config, restMapper meta.RESTMapper, metric
 	}
 	if config.Path == "" {
 		config.Path = DefaultWebhookPath
+	}
+	if config.ResourceAdmissionTimeout <= 0 {
+		config.ResourceAdmissionTimeout = DefaultResourceAdmissionTimeout
+	}
+	if config.ConfigAdmissionTimeout <= 0 {
+		config.ConfigAdmissionTimeout = DefaultConfigAdmissionTimeout
 	}
 
 	return &Component{
@@ -239,7 +262,7 @@ func (c *Component) Start(ctx context.Context) error {
 		CertPEM:      c.config.CertPEM,
 		KeyPEM:       c.config.KeyPEM,
 		ReadTimeout:  timeouts.HTTPServerTimeout,
-		WriteTimeout: timeouts.HTTPServerTimeout,
+		WriteTimeout: c.serverWriteTimeout(),
 	})
 	if err != nil {
 		return fmt.Errorf("creating webhook server: %w", err)
@@ -292,6 +315,14 @@ func (c *Component) Start(ctx context.Context) error {
 		c.serverCancel()
 		return nil
 	}
+}
+
+func (c *Component) serverWriteTimeout() time.Duration {
+	return max(
+		c.config.ResourceAdmissionTimeout,
+		c.config.ConfigAdmissionTimeout,
+		timeouts.HTTPServerTimeout,
+	) + webhookResponseGrace
 }
 
 // resolveKind uses RESTMapper to convert GVR (Group/Version/Resource) to Kind.
@@ -444,8 +475,8 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 		// Derive from c.serverCtx (set in Start()) so iteration shutdown
 		// cancels in-flight validations promptly. Using context.Background()
 		// would orphan validation work past server cancellation, delaying
-		// graceful shutdown. The resourceAdmissionTimeout deadline still bounds
-		// each admission individually; failurePolicy=Ignore admits on timeout.
+		// graceful shutdown. ResourceAdmissionTimeout still bounds each admission
+		// individually; watched-resource admission remains fail closed.
 		// Fall back to context.Background() if serverCtx hasn't been set
 		// yet — happens in unit tests that call this validator without
 		// going through Start(); in production Start() always sets
@@ -454,7 +485,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 		if parent == nil {
 			parent = context.Background()
 		}
-		ctx, cancel := context.WithTimeout(parent, resourceAdmissionTimeout)
+		ctx, cancel := context.WithTimeout(parent, c.config.ResourceAdmissionTimeout)
 		defer cancel()
 
 		allowed, reason, warnings := c.dryRunValidator.ValidateDirect(
@@ -514,20 +545,17 @@ func (c *Component) createConfigValidator() webhook.ValidationFunc {
 			return false, err.Error(), nil, nil
 		}
 
-		// Internal deadline for the config admission. Longer than the 5 s
-		// watched-resource deadline because this path additionally runs the
-		// config's validationTests suite (~4 s for the bundled chart) on top of
-		// render + `haproxy -c`, so a config that fails its own tests is denied
-		// at admission rather than entering etcd to crash-loop a future pod.
-		// Kept under the chart-side timeoutSeconds (10 s, failurePolicy=Ignore so
-		// a timeout admits anyway and never blocks operator recovery). Parent is
-		// c.serverCtx so iteration shutdown cancels in-flight validations. See
+		// Config admission has its own deadline because this path compiles and
+		// strictly renders the complete prospective template set before running
+		// the bounded validationTests gate. The chart keeps this internal timeout
+		// one second below its HAProxyTemplateConfig timeoutSeconds value. Parent
+		// is c.serverCtx so iteration shutdown cancels in-flight validations. See
 		// createResourceValidator for the serverCtx-nil fallback rationale.
 		parent := c.serverCtx
 		if parent == nil {
 			parent = context.Background()
 		}
-		ctx, cancel := context.WithTimeout(parent, configAdmissionTimeout)
+		ctx, cancel := context.WithTimeout(parent, c.config.ConfigAdmissionTimeout)
 		defer cancel()
 
 		allowed, reason, warnings := c.configValidator(
@@ -538,6 +566,25 @@ func (c *Component) createConfigValidator() webhook.ValidationFunc {
 			valCtx.Object,
 			valCtx.Operation,
 		)
+		if !allowed && ctx.Err() != nil {
+			// The chart deliberately gives HAProxyTemplateConfig admission an
+			// Ignore failure policy: an overloaded or restarting controller must
+			// never make the config object impossible to repair. Convert an
+			// internal deadline/cancellation into the same explicit fail-open
+			// behaviour, with a warning for the operator. The daemon load gate
+			// remains authoritative and will reject an invalid prospective config.
+			c.logger.Warn("HAProxyTemplateConfig validation did not complete; admitting (load gate still enforces)",
+				"operation", valCtx.Operation,
+				"namespace", valCtx.Namespace,
+				"name", valCtx.Name,
+				"error", ctx.Err())
+			allowed = true
+			reason = ""
+			warnings = append(warnings, fmt.Sprintf(
+				"HAProxyTemplateConfig admission validation did not complete: %v — the controller's load gate will still enforce this config",
+				ctx.Err(),
+			))
+		}
 
 		duration := time.Since(start).Seconds()
 		if c.metrics != nil {

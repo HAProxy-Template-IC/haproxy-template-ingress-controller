@@ -713,6 +713,13 @@ webhook:
   # library-contributed one) to have enableValidationWebhook: true
   enabled: true
   # Webhook HTTPS server port is defined in controller.ports.webhook
+  # API-server deadline for watched-resource admission (Ingress, HTTPRoute,
+  # and other resources with enableValidationWebhook). The controller uses a
+  # deadline one second shorter so it can return a structured allow/deny
+  # response. Keep this path tight because routing resources may be
+  # user-controlled and high-volume. Kubernetes permits 1..30; HAPTIC requires
+  # 2..30 to retain that one-second response margin.
+  timeoutSeconds: 10
 
   # Secret name containing webhook TLS certificates
   # The Secret must contain keys: tls.crt, tls.key, ca.crt
@@ -796,6 +803,13 @@ webhook:
   # raw push, surfacing a delayed but clear failure via HAProxyCfg.status.
   haproxyTemplateConfig:
     enabled: true
+    # API-server deadline for the privileged HAProxyTemplateConfig admission
+    # path. This path compiles and strictly renders the complete prospective
+    # configuration and is therefore substantially more expensive than
+    # watched-resource admission. Kubernetes caps this at 30 seconds; the
+    # controller uses 29 seconds internally and admits with a warning if it
+    # cannot finish, leaving the daemon load gate authoritative.
+    timeoutSeconds: 30
 # IngressClass resource
 # Creates an IngressClass resource for Kubernetes 1.18+
 # Only created when ingress library is enabled and API is available

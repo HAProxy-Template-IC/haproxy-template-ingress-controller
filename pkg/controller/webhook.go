@@ -43,6 +43,15 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
+// WebhookAdmissionTimeouts contains the controller-side deadlines for the two
+// admission paths. They are separate because watched resources are an
+// untrusted, high-volume path, while HAProxyTemplateConfig updates are
+// privileged and run a substantially more expensive prospective-config gate.
+type WebhookAdmissionTimeouts struct {
+	Resource              time.Duration
+	HAProxyTemplateConfig time.Duration
+}
+
 // setupWebhook creates and starts the webhook component if webhook validation is enabled.
 //
 // This function:
@@ -57,6 +66,7 @@ func setupWebhook(
 	iterCtx context.Context,
 	cfg *coreconfig.Config,
 	webhookCertDir string,
+	admissionTimeouts WebhookAdmissionTimeouts,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component, // Pre-created validator (may be nil)
 	configValidator webhook.ConfigValidatorFunc, // Pre-created HAProxyTemplateConfig validator (may be nil)
@@ -90,12 +100,14 @@ func setupWebhook(
 	webhookComponent := webhook.New(
 		logger,
 		&webhook.Config{
-			Port:            9443, // Default webhook port
-			Path:            "/validate",
-			Rules:           rules,
-			CertDir:         webhookCertDir,
-			DryRunValidator: dryrunValidator, // Direct validation, nil = fail-open
-			ConfigValidator: configValidator, // HAProxyTemplateConfig admission, nil = fail-open
+			Port:                     9443, // Default webhook port
+			Path:                     "/validate",
+			Rules:                    rules,
+			CertDir:                  webhookCertDir,
+			DryRunValidator:          dryrunValidator, // Direct validation, nil = fail-open
+			ConfigValidator:          configValidator, // HAProxyTemplateConfig admission, nil = fail-open
+			ResourceAdmissionTimeout: admissionTimeouts.Resource,
+			ConfigAdmissionTimeout:   admissionTimeouts.HAProxyTemplateConfig,
 		},
 		mapper,
 		metricsRecorder,

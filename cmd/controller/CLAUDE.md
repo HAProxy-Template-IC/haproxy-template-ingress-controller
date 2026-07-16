@@ -238,6 +238,8 @@ Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cm
 | `--crd-name` | `CRD_NAME` | `haproxy-config` | Name of the `HAProxyTemplateConfig` CRD the controller reads. |
 | `--secret-name` | `SECRET_NAME` | `haproxy-credentials` | Name of the `Secret` with `dataplane_username` / `dataplane_password`. |
 | `--webhook-cert-dir` | `WEBHOOK_CERT_DIR` | `""` (disabled) | Directory holding the validating-admission-webhook server's TLS cert (`tls.crt`/`tls.key`); the chart mounts the cert Secret here and sets this to `/etc/webhook/certs`. The server reads and hot-reloads the files on rotation. Empty disables the webhook entirely. |
+| `--webhook-resource-admission-timeout` | `WEBHOOK_RESOURCE_ADMISSION_TIMEOUT` | `9s` | Controller-side deadline for watched-resource dry-run admission. Keep it below the matching `ValidatingWebhookConfiguration.timeoutSeconds`; the chart derives it automatically. |
+| `--webhook-config-admission-timeout` | `WEBHOOK_CONFIG_ADMISSION_TIMEOUT` | `29s` | Controller-side deadline for prospective `HAProxyTemplateConfig` admission. Keep it below the matching `ValidatingWebhookConfiguration.timeoutSeconds`; the chart derives it automatically. |
 | `--debug-port` | `DEBUG_PORT` | `0` (disabled) | Port for the introspection HTTP server (`/healthz` + `/debug/vars` + `/debug/pprof`). The Helm chart sets this to `8080` by default. |
 | `--kubeconfig` | — | (in-cluster) | Out-of-cluster development. |
 | — | `LOG_LEVEL` | `INFO` | Initial log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive; `WARNING` accepted as alias for `WARN`). The CRD's `spec.logging.level`, when non-empty, takes over at runtime via the dynamic logger. |

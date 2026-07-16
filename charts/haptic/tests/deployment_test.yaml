@@ -155,6 +155,27 @@ tests:
             mountPath: /etc/webhook/certs
             readOnly: true
 
+  - it: should configure controller admission deadlines below the API-server defaults
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_RESOURCE_ADMISSION_TIMEOUT")].value
+          value: 9s
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_CONFIG_ADMISSION_TIMEOUT")].value
+          value: 29s
+
+  - it: should derive controller admission deadlines from custom API-server timeouts
+    set:
+      webhook.timeoutSeconds: 7
+      webhook.haproxyTemplateConfig.timeoutSeconds: 23
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_RESOURCE_ADMISSION_TIMEOUT")].value
+          value: 6s
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_CONFIG_ADMISSION_TIMEOUT")].value
+          value: 22s
+
   # Extra volumes and volume mounts
   - it: should include extra volumes when specified
     set:
