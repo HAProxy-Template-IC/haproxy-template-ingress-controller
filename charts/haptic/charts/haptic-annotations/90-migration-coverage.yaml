@@ -48,7 +48,7 @@ migrationCoverage:
         note: "Query parameter carrying the API key; mutually exclusive with api-key-header."
       haproxy-haptic.org/api-key-secret:
         status: supported
-        note: "Secret (data key `keys`, newline apikey[:consumer]) → reload-free apikeys map; deny 401 on unknown key; sets the shared txn.haptic_consumer identity."
+        note: "Secret (data key `keys`, newline apikey[:consumer]) → reload-free apikeys map; deny 401 on unknown key; sets the shared txn.haptic_consumer identity; fails closed with 503 while the Secret is absent."
       haproxy-haptic.org/root-redirect:
         status: supported
         note: "Redirects requests for the host root path (`/`) to the given sub-path."
@@ -186,7 +186,7 @@ migrationCoverage:
         note: "Overrides the `Connection` header sent to the backend server."
       haproxy-haptic.org/consumer-groups-secret:
         status: supported
-        note: "Secret (data key `groups`, newline `<consumer>:<group>`) → reload-free consumer→group map (one group per consumer), checked against allowed-consumer-groups; requires an authenticated consumer."
+        note: "Secret (data key `groups`, newline `<consumer>:<group>`) → reload-free consumer→group map (one group per consumer), checked against allowed-consumer-groups; requires an authenticated consumer and fails closed with 503 while the Secret is absent."
       haproxy-haptic.org/cors-allow-credentials:
         status: supported
         note: "Access-Control-Allow-Credentials 'true' when set (via macro)"
