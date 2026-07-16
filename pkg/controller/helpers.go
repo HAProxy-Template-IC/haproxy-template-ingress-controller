@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"runtime"
 	"strings"
@@ -53,16 +54,22 @@ func startBackgroundComponents(
 	logger *slog.Logger,
 ) {
 	go func() {
-		if err := stateCache.Start(ctx); err != nil {
-			logger.Error("State cache failed", "error", err)
-		}
+		logBackgroundComponentError(ctx, logger, "State cache", stateCache.Start(ctx))
 	}()
 
 	go func() {
-		if err := metricsComponent.Start(ctx); err != nil {
-			logger.Error("Metrics component failed", "error", err)
-		}
+		logBackgroundComponentError(ctx, logger, "Metrics component", metricsComponent.Start(ctx))
 	}()
+}
+
+func logBackgroundComponentError(ctx context.Context, logger *slog.Logger, componentName string, err error) {
+	if err == nil {
+		return
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+		return
+	}
+	logger.Error(componentName+" failed", "error", err)
 }
 
 // startInErrGroup starts a component in the errgroup with consistent error handling.
