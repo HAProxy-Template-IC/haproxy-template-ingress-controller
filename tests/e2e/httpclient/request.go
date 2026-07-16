@@ -17,6 +17,7 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -43,6 +44,8 @@ type Request struct {
 
 	method  string
 	headers http.Header
+	body    []byte
+	chunked bool
 
 	basicAuth *basicAuth
 	mtls      *mtlsConfig
@@ -116,6 +119,23 @@ func (r *Request) WithHeader(name, value string) *Request {
 	return r
 }
 
+// WithBody attaches a request body. It intentionally does not imply a method
+// or Content-Type; tests set those explicitly to keep request shape visible.
+func (r *Request) WithBody(body string) *Request {
+	r.body = []byte(body)
+	r.chunked = false
+	return r
+}
+
+// WithChunkedBody attaches a request body without a Content-Length so Go sends
+// it using HTTP/1.1 chunked transfer encoding. Use this when tests need to
+// exercise proxy behavior for unknown-length request bodies.
+func (r *Request) WithChunkedBody(body string) *Request {
+	r.body = []byte(body)
+	r.chunked = true
+	return r
+}
+
 // WithBasicAuth attaches HTTP Basic credentials.
 func (r *Request) WithBasicAuth(user, password string) *Request {
 	r.basicAuth = &basicAuth{user, password}
@@ -143,11 +163,23 @@ func (r *Request) WithClientCert(certPEM, keyPEM, caPEM []byte) *Request {
 // to inspect Response directly (e.g., counting backend hits across requests).
 func (r *Request) Do(ctx context.Context) (*Response, error) {
 	url := r.url()
-	req, err := http.NewRequestWithContext(ctx, r.method, url, nil)
+	var requestBody io.Reader
+	if r.body != nil {
+		if r.chunked {
+			requestBody = io.LimitReader(bytes.NewReader(r.body), int64(len(r.body)))
+		} else {
+			requestBody = bytes.NewReader(r.body)
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, r.method, url, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request: %w", err)
 	}
 	req.Host = r.host
+	if r.chunked {
+		req.ContentLength = -1
+		req.TransferEncoding = []string{"chunked"}
+	}
 	for k, vs := range r.headers {
 		for _, v := range vs {
 			req.Header.Add(k, v)

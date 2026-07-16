@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Boot the published spoa-hub image with a minimal config that loads all seven
-# bundled plugins, then assert the hub log reports each plugin loaded and
-# the SPOP listener bound. Run inside a docker-in-docker job.
+# Boot the published spoa-hub image with a minimal config that loads the
+# bundled plugins that do not require fixture files, then assert the hub log
+# reports each plugin loaded and the SPOP listener bound. Run inside a
+# docker-in-docker job.
 #
 # Usage: scripts/smoke-spoa-image.sh <image-ref>
 
@@ -12,6 +13,7 @@ IMAGE="${1:?usage: $0 <image-ref>}"
 # Plugin name -> library filename (matches what prep-spoa-plugins.sh stages
 # under /etc/haproxy-spoa-hub/plugins/). sso-auth differs from the rest.
 declare -A PLUGIN_LIBS=(
+    [api-gateway]="libapi_gateway_plugin.so"
     [coraza]="libcoraza_plugin.so"
     [external-auth]="libexternal_auth_plugin.so"
     [fingerprinting]="libfingerprinting_plugin.so"
@@ -28,13 +30,14 @@ declare -A PLUGIN_LIBS=(
 # zero external-resource dependency:
 #  - sso-auth needs cookie_secret_1 (>=16 chars) + cookie_domain.
 #  - otel needs an `instrumentation` block (single name + scopes).
-#  - coraza / external-auth / fingerprinting / rate-limit tolerate empty params.
+#  - api-gateway / coraza / external-auth / fingerprinting / mirror / rate-limit tolerate empty params.
 # maxmind is excluded entirely because its schema requires at least
 # one `databases.<name>.path` pointing at a real MMDB file we can't
 # realistically synthesize in CI; smoke for that plugin happens via
 # the chart's test-integration / test-acceptance jobs which mount a
 # fixture MMDB into a real container.
 declare -A PLUGIN_PARAMS=(
+    [api-gateway]=""
     [coraza]=""
     [external-auth]=""
     [fingerprinting]=""
@@ -47,13 +50,13 @@ scopes = ["request"]'
 cookie_secret_1 = "0123456789abcdef0"
 cookie_domain = "smoke.example.com"'
 )
-PLUGINS=(coraza external-auth fingerprinting mirror otel rate-limit sso-auth)
+PLUGINS=(api-gateway coraza external-auth fingerprinting mirror otel rate-limit sso-auth)
 
 echo "==> Pulling ${IMAGE}"
 docker pull "${IMAGE}"
 
 # Build a derived image with a minimal config bound on TCP that lists all
-# seven bundled plugins. Each plugin block matches the libname produced by
+# bundled plugins. Each plugin block matches the libname produced by
 # prep-spoa-plugins.sh (suffix stripped, so the file is plain libfoo_plugin.so).
 echo "==> Building smoke image with all-plugin config"
 

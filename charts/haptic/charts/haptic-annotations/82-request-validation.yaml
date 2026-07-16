@@ -1,0 +1,177 @@
+# HAPTIC-native JSON request validation annotations (haproxy-haptic.org/*).
+#
+# API-gateway request validation via the haproxy-spoa-hub api-gateway plugin
+# (spoaHub.plugins.api-gateway). This validates buffered JSON request bodies
+# against JSON Schemas resolved at render time from ConfigMaps or Secrets.
+#
+#   haproxy-haptic.org/request-schema-configmap    [<ns>/]<name>[:<key>]
+#   haproxy-haptic.org/request-schema-secret       [<ns>/]<name>[:<key>]
+#   haproxy-haptic.org/request-schema-content-types comma-separated media types (default application/json)
+#   haproxy-haptic.org/request-schema-max-body-size positive bytes (default controller.apiGateway.validation.maxBodyBytes)
+#   haproxy-haptic.org/request-schema-fail-open    true | false (default controller.apiGateway.validation.failOpen)
+#
+# Exactly one of request-schema-configmap / request-schema-secret activates
+# validation. ConfigMap schemas are read from .data[key] and base64-encoded into
+# the plugin TOML; Secret schemas use .data[key] as-is. The plugin compiles all
+# schemas during init/validate, so invalid JSON/JSON Schema is rejected before
+# serving traffic. Runtime dispatch is limited to POST/PUT/PATCH, rejects
+# bodies over the configured cap before the SPOE roundtrip, and waits for
+# request bodies only on routes that actually opted into validation.
+templateSnippets:
+  util-820-api-gateway-schemas:
+    template: |-
+      {%- var enabled = extraContext | dig("hapticRequestValidationEnabled") | fallback("false") | tostring() -%}
+      {%- var defaultMaxBody = extraContext | dig("hapticRequestValidationMaxBodyBytes") | fallback("8192") | tostring() -%}
+      {%- var validationBuffer = extraContext | dig("hapticRequestValidationBufferSize") | fallback("16384") | tostring() -%}
+      {%- var validationBufferN = toint(validationBuffer) -%}
+      {%- var validationBufferHeadroom = extraContext | dig("hapticRequestValidationBufferHeadroomBytes") | fallback("8192") | tostring() -%}
+      {%- var validationBufferHeadroomN = toint(validationBufferHeadroom) -%}
+      {%- var validationBodyCapacityN = validationBufferN - validationBufferHeadroomN -%}
+      {%- var defaultFailOpen = extraContext | dig("hapticRequestValidationFailOpen") | fallback("false") | tostring() -%}
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- if gf["apiGatewaySchemas"] == nil -%}
+        {%- gf["apiGatewaySchemas"] = []any{} -%}
+      {%- end -%}
+      {%- if gf["apiGatewaySchemaRules"] == nil -%}
+        {%- gf["apiGatewaySchemaRules"] = []any{} -%}
+      {%- end -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var ns = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {%- var key = ns + "/" + name -%}
+        {%- var cmRef = ingress.Metadata.Annotations["haproxy-haptic.org/request-schema-configmap"] -%}
+        {%- var secretRef = ingress.Metadata.Annotations["haproxy-haptic.org/request-schema-secret"] -%}
+        {%- var contentTypesRaw = ingress.Metadata.Annotations["haproxy-haptic.org/request-schema-content-types"] -%}
+        {%- var maxBodyRaw = ingress.Metadata.Annotations["haproxy-haptic.org/request-schema-max-body-size"] -%}
+        {%- var failOpenRaw = ingress.Metadata.Annotations["haproxy-haptic.org/request-schema-fail-open"] -%}
+        {%- var hasAny = cmRef != "" || secretRef != "" || contentTypesRaw != "" || maxBodyRaw != "" || failOpenRaw != "" -%}
+        {%- if hasAny -%}
+          {%- if enabled != "true" -%}
+            {{- fail("Ingress " + key + " sets haproxy-haptic.org/request-schema-* annotations but request validation is not enabled. Set controller.apiGateway.validation.enabled=true, or remove the annotations.") -}}
+          {%- end -%}
+          {%- if cmRef != "" && secretRef != "" -%}
+            {{- fail("Ingress " + key + " sets both 'haproxy-haptic.org/request-schema-configmap' and 'haproxy-haptic.org/request-schema-secret'; request validation requires exactly one schema source.") -}}
+          {%- end -%}
+          {%- if cmRef == "" && secretRef == "" -%}
+            {{- fail("Ingress " + key + " sets request-schema options without a schema source; set exactly one of 'haproxy-haptic.org/request-schema-configmap' or 'haproxy-haptic.org/request-schema-secret'.") -}}
+          {%- end -%}
+
+          {%- var sourceKind = "configmap" -%}
+          {%- var sourceRef = cmRef -%}
+          {%- if secretRef != "" -%}{%- sourceKind = "secret" -%}{%- sourceRef = secretRef -%}{%- end -%}
+          {%- var refMain = sourceRef -%}
+          {%- var dataKey = "schema.json" -%}
+          {%- if strings_contains(sourceRef, ":") -%}
+            {%- var refParts = strings_splitn(sourceRef, ":", 2) -%}
+            {%- refMain = strip(refParts[0]) -%}
+            {%- dataKey = strip(refParts[1]) -%}
+          {%- end -%}
+          {%- if refMain == "" || dataKey == "" -%}
+            {{- fail("Invalid request schema reference '" + sourceRef + "' on Ingress '" + key + "'. Expected [<namespace>/]<name>[:<key>].") -}}
+          {%- end -%}
+          {%- if !regex_search(dataKey, "^[A-Za-z0-9._-]+$") -%}
+            {{- fail("Invalid schema key '" + dataKey + "' in request schema reference on Ingress '" + key + "'. Allowed characters: letters, digits, '.', '_' and '-'.") -}}
+          {%- end -%}
+          {%- var sourceNs = ns -%}
+          {%- var sourceName = refMain -%}
+          {%- if strings_contains(refMain, "/") -%}
+            {%- var nn = strings_splitn(refMain, "/", 2) -%}
+            {%- sourceNs = strip(nn[0]) -%}
+            {%- sourceName = strip(nn[1]) -%}
+          {%- end -%}
+          {%- if sourceNs == "" || sourceName == "" -%}
+            {{- fail("Invalid request schema reference '" + sourceRef + "' on Ingress '" + key + "'. Namespace and name must be non-empty.") -}}
+          {%- end -%}
+
+          {%- var schemaB64 = "" -%}
+          {%- if sourceKind == "configmap" -%}
+            {%- var cmAny, _ = shared.ComputeIfAbsent("api_gateway_schema_cm:" + sourceNs + "/" + sourceName, func() any { return resources.configmaps.GetSingle(sourceNs, sourceName) }) -%}
+            {%- var cm, _ = cmAny.(*resources.configmaps.T) -%}
+            {%- if cm == nil -%}
+              {{- fail("ConfigMap '" + sourceNs + "/" + sourceName + "' referenced by 'haproxy-haptic.org/request-schema-configmap' on Ingress '" + key + "' was not found.") -}}
+            {%- end -%}
+            {%- var schemaText = cm.Data[dataKey] | tostring() -%}
+            {%- if strip(schemaText) == "" -%}
+              {{- fail("ConfigMap '" + sourceNs + "/" + sourceName + "' referenced by 'haproxy-haptic.org/request-schema-configmap' on Ingress '" + key + "' has an empty or missing '" + dataKey + "' data key.") -}}
+            {%- end -%}
+            {%- schemaB64 = schemaText | b64encode() -%}
+          {%- else -%}
+            {%- var secAny, _ = shared.ComputeIfAbsent("api_gateway_schema_secret:" + sourceNs + "/" + sourceName, func() any { return resources.secrets.GetSingle(sourceNs, sourceName) }) -%}
+            {%- var sec, _ = secAny.(*resources.secrets.T) -%}
+            {%- if sec == nil -%}
+              {{- fail("Secret '" + sourceNs + "/" + sourceName + "' referenced by 'haproxy-haptic.org/request-schema-secret' on Ingress '" + key + "' was not found.") -}}
+            {%- end -%}
+            {%- schemaB64 = sec.Data[dataKey] | tostring() -%}
+            {%- if strip(schemaB64) == "" -%}
+              {{- fail("Secret '" + sourceNs + "/" + sourceName + "' referenced by 'haproxy-haptic.org/request-schema-secret' on Ingress '" + key + "' has an empty or missing '" + dataKey + "' data key.") -}}
+            {%- end -%}
+            {%- if !regex_search(schemaB64, "^[A-Za-z0-9+/=]+$") -%}
+              {{- fail("Secret '" + sourceNs + "/" + sourceName + "' referenced by 'haproxy-haptic.org/request-schema-secret' on Ingress '" + key + "' has a malformed base64 schema value in key '" + dataKey + "'.") -}}
+            {%- end -%}
+          {%- end -%}
+
+          {%- var maxBody = defaultMaxBody -%}
+          {%- if maxBodyRaw != "" -%}{%- maxBody = strip(maxBodyRaw) -%}{%- end -%}
+          {%- var maxBodyN = toint(maxBody) -%}
+          {%- if maxBodyN <= 0 || maxBodyN > 1048576 -%}
+            {{- fail("Invalid request schema max body size '" + maxBody + "' on Ingress '" + key + "'. Must be between 1 and 1048576 bytes.") -}}
+          {%- end -%}
+          {%- if maxBodyN > validationBodyCapacityN -%}
+            {{- fail("Invalid request schema max body size '" + maxBody + "' on Ingress '" + key + "'. Must not exceed controller.apiGateway.validation.bufferSize minus controller.apiGateway.validation.bufferHeadroomBytes (" + tostring(validationBodyCapacityN) + " bytes body capacity with current chart values, " + tostring(validationBufferHeadroomN) + " bytes reserved), otherwise HAProxy may validate a truncated request body.") -}}
+          {%- end -%}
+
+          {%- var failOpen = defaultFailOpen -%}
+          {%- if failOpenRaw != "" -%}{%- failOpen = strings_lower(strip(failOpenRaw)) -%}{%- end -%}
+          {%- if failOpen != "true" && failOpen != "false" -%}
+            {{- fail("Invalid value '" + failOpenRaw + "' for annotation 'haproxy-haptic.org/request-schema-fail-open' on Ingress '" + key + "'. Expected 'true' or 'false'.") -}}
+          {%- end -%}
+
+          {%- var contentTypes = []any{} -%}
+          {%- if contentTypesRaw == "" -%}{%- contentTypesRaw = "application/json" -%}{%- end -%}
+          {%- for _, tok := range split(contentTypesRaw, ",") -%}
+            {%- var ct = strings_lower(strip(tok)) -%}
+            {%- if ct != "" -%}
+              {%- if !regex_search(ct, "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$") -%}
+                {{- fail("Invalid media type '" + ct + "' in annotation 'haproxy-haptic.org/request-schema-content-types' on Ingress '" + key + "'.") -}}
+              {%- end -%}
+              {%- contentTypes = append(contentTypes, ct) -%}
+            {%- end -%}
+          {%- end -%}
+          {%- if len(contentTypes) == 0 -%}
+            {{- fail("Annotation 'haproxy-haptic.org/request-schema-content-types' on Ingress '" + key + "' must contain at least one media type.") -}}
+          {%- end -%}
+
+          {%- var contentTypesJoined = contentTypes | toStringSlice() | join(",") -%}
+          {#- Content types are route policy. Include them in the effective schema
+              id so two routes can reuse the same schema source with different
+              accepted media types without sharing the wrong compiled policy. -#}
+          {%- var schemaID = sourceKind + "/" + sourceNs + "/" + sourceName + "/" + dataKey + "/" + contentTypesJoined -%}
+          {%- if first_seen("api_gateway_schema:" + schemaID, schemaID) -%}
+            {%- gf["apiGatewaySchemas"] = append(gf["apiGatewaySchemas"].([]any), map[string]any{
+              "id": schemaID,
+              "schemaBase64": schemaB64,
+              "contentTypes": contentTypes,
+            }) -%}
+          {%- end -%}
+          {%- if first_seen("api_gateway_schema_rule:" + key, key) -%}
+            {%- gf["apiGatewaySchemaRules"] = append(gf["apiGatewaySchemaRules"].([]any), map[string]any{
+              "resourceID": key,
+              "schemaID": schemaID,
+              "maxBodyBytes": tostring(maxBodyN),
+              "failOpen": failOpen,
+              "contentTypes": contentTypesJoined,
+            }) -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  map-request-schema-820-haptic:
+    template: |-
+      {{- render "util-820-api-gateway-schemas" -}}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- var rules = gf["apiGatewaySchemaRules"].([]any) -%}
+      {%- for _, rule := range rules -%}
+        {%- var r = rule.(map[string]any) -%}
+      {{ "\n" }}{{ r["resourceID"].(string) }} {{ r["schemaID"].(string) }} {{ r["maxBodyBytes"].(string) }} {{ r["failOpen"].(string) }} {{ r["contentTypes"].(string) }}
+      {%- end -%}

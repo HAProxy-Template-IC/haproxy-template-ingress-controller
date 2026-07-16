@@ -8,9 +8,9 @@
 #   2. cosign verify-blob against the upstream project's tag identity
 #
 # Outputs (overwrites):
-#   plugins/amd64/<libname>.so   (× 8 plugins)
-#   plugins/arm64/<libname>.so   (× 8 plugins)
-#   plugins/armv7/<libname>.so   (× 8 plugins)
+#   plugins/amd64/<libname>.so   (× 9 plugins)
+#   plugins/arm64/<libname>.so   (× 9 plugins)
+#   plugins/armv7/<libname>.so   (× 9 plugins)
 #
 # Requires: bash, curl, sha256sum, cosign, awk.
 
@@ -26,6 +26,7 @@ ISSUER="${GITLAB_HOST}"
 
 # plugin shortname -> upstream version variable
 declare -A PLUGINS=(
+    [api-gateway]="${SPOA_PLUGIN_API_GATEWAY_VERSION}"
     [coraza]="${SPOA_PLUGIN_CORAZA_VERSION}"
     [external-auth]="${SPOA_PLUGIN_EXTERNAL_AUTH_VERSION}"
     [fingerprinting]="${SPOA_PLUGIN_FINGERPRINTING_VERSION}"
@@ -41,6 +42,7 @@ declare -A PLUGINS=(
 # `lib<name>_plugin` convention; sso-auth's Cargo `name = ...` differs and
 # produces `libhaproxy_spoa_hub_plugin_sso_auth.so` instead.
 declare -A LIB_NAMES=(
+    [api-gateway]="libapi_gateway_plugin"
     [coraza]="libcoraza_plugin"
     [external-auth]="libexternal_auth_plugin"
     [fingerprinting]="libfingerprinting_plugin"

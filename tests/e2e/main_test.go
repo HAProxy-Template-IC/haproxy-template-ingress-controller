@@ -363,6 +363,12 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 			}
 		}
 	}
+	if os.Getenv("HAPTIC_E2E_PROFILE") == "api-gateway" && os.Getenv("SPOA_TAG") == "" {
+		fmt.Fprintf(os.Stderr, "e2e: api-gateway profile — loading local %s into kind\n", LocalSPOAHubImage)
+		if err := loadImageIntoKind(ctx, LocalSPOAHubImage); err != nil {
+			return ctx, err
+		}
+	}
 	return ctx, nil
 }
 
@@ -583,6 +589,8 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	cacheProfile := profile == "cache"
 	// rateLimitProfile enables shared rate limiting and its Valkey store.
 	rateLimitProfile := profile == "rate-limit"
+	// apiGatewayProfile enables the api-gateway SPOA plugin for JSON request validation.
+	apiGatewayProfile := profile == "api-gateway"
 	switch profile {
 	case "conformance":
 		valuesBytes = devassets.ConformanceValuesYAML
@@ -684,6 +692,18 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 			fmt.Fprintln(os.Stderr, "e2e: rate-limit shard — using local spoa-hub:dev image")
 		}
 		fmt.Fprintln(os.Stderr, "e2e: rate-limit shard — enabling shared rate limiting with Valkey")
+	}
+	if apiGatewayProfile {
+		args = append(args,
+			"--set", "controller.apiGateway.validation.enabled=true")
+		if os.Getenv("SPOA_TAG") == "" {
+			args = append(args,
+				"--set", "spoaHub.image.repository=spoa-hub",
+				"--set", "spoaHub.image.tag=dev",
+				"--set", "spoaHub.image.pullPolicy=Never")
+			fmt.Fprintln(os.Stderr, "e2e: api-gateway shard — using local spoa-hub:dev image")
+		}
+		fmt.Fprintln(os.Stderr, "e2e: api-gateway shard — enabling request validation")
 	}
 	// dev-values.yaml hardcodes spoaHub.image.tag=main-latest. CI sets
 	// SPOA_TAG to ci-${CI_PIPELINE_ID} so the test loads the spoa-hub

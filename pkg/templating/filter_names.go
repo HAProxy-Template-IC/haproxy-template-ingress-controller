@@ -31,6 +31,9 @@ const (
 	// FilterB64Decode decodes base64-encoded strings.
 	FilterB64Decode = "b64decode"
 
+	// FilterB64Encode encodes strings as standard base64.
+	FilterB64Encode = "b64encode"
+
 	// FilterDebug outputs debug information for items.
 	FilterDebug = "debug"
 

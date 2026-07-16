@@ -119,8 +119,8 @@ const VarnishImage = "varnish:7.6"
 const ValkeyImage = "valkey/valkey:8-alpine"
 
 // LocalSPOAHubImage is the image tag produced by `make spoa-hub-image`.
-// The local shared-rate-limit shard uses it when SPOA_TAG is unset, because
-// registry main-latest does not necessarily contain MR-local bundled plugins.
+// Local SPOA-backed shards use it when SPOA_TAG is unset, because registry
+// main-latest does not necessarily contain MR-local bundled plugins.
 const LocalSPOAHubImage = "spoa-hub:dev"
 
 // Debug endpoint paths, mirrored from tests/acceptance/constants.go.

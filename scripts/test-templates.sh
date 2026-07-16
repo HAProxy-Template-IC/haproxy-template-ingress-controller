@@ -249,6 +249,152 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
     done
 fi
 
+# Optional API-gateway request-validation profile. The normal render keeps the
+# feature off so validationTests can assert that request-schema annotations fail
+# loudly without the opt-in. These tests assert the enabled map + SPOE dispatch
+# path and render-time guardrails.
+if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
+    REQUEST_VALIDATION_CONFIG=$(mktemp /tmp/haptic-request-validation-config-XXXXXX.yaml)
+    trap 'rm -f "$TEMP_CONFIG" "${RATE_LIMIT_CONFIG:-}" "$REQUEST_VALIDATION_CONFIG"' EXIT
+    echo -e "${YELLOW}Rendering request-validation profile...${NC}" >&2
+    if ! helm template "$CHART_DIR" \
+        --namespace default \
+        $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.gateway.enabled=true \
+        --set controller.templateLibraries.gateway.experimentalChannel=true \
+        --set controller.templateLibraries.hapticAnnotations.enabled=true \
+        --set controller.templateLibraries.haproxytech.enabled=true \
+        --set controller.templateLibraries.haproxyIngress.enabled=true \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
+        --set controller.apiGateway.validation.enabled=true \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
+        > "$REQUEST_VALIDATION_CONFIG"; then
+        echo -e "${RED}Error: Failed to render request-validation Helm profile${NC}" >&2
+        exit 1
+    fi
+    for TEST in \
+        test-haptic-request-validation-configmap \
+        test-haptic-request-validation-secret \
+        test-haptic-request-validation-rejects-two-sources \
+        test-haptic-request-validation-missing-key \
+        test-haptic-request-validation-max-body-bounded \
+        test-haptic-request-validation-max-body-fits-buffer; do
+        echo -e "${YELLOW}Request-validation profile: ${TEST}...${NC}" >&2
+        "$CONTROLLER_BIN" validate --file "$REQUEST_VALIDATION_CONFIG" "${SCHEMA_DIR_ARGS[@]}" --test "$TEST" "$@" || FULL_RC=$?
+        if [[ $FULL_RC -ne 0 ]]; then
+            break
+        fi
+    done
+    if [[ $FULL_RC -eq 0 ]]; then
+        echo -e "${YELLOW}Request-validation Helm guard: maxBodyBytes hard cap...${NC}" >&2
+        GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
+        if helm template "$CHART_DIR" \
+            --namespace default \
+            $HAPROXY_VERSION_ARG \
+            --set controller.templateLibraries.hapticAnnotations.enabled=true \
+            --set controller.apiGateway.validation.enabled=true \
+            --set controller.apiGateway.validation.maxBodyBytes=1048577 \
+            > /dev/null 2> "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation maxBodyBytes hard-cap guard did not fail${NC}" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        if ! grep -q "controller.apiGateway.validation.maxBodyBytes must be between 1 and 1048576 bytes" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation maxBodyBytes hard-cap guard returned unexpected error:${NC}" >&2
+            cat "$GUARD_ERR" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        rm -f "$GUARD_ERR"
+
+        echo -e "${YELLOW}Request-validation Helm guard: bufferSize lower bound...${NC}" >&2
+        GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
+        if helm template "$CHART_DIR" \
+            --namespace default \
+            $HAPROXY_VERSION_ARG \
+            --set controller.templateLibraries.hapticAnnotations.enabled=true \
+            --set controller.apiGateway.validation.enabled=true \
+            --set controller.apiGateway.validation.bufferSize=8192 \
+            > /dev/null 2> "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation bufferSize lower-bound guard did not fail${NC}" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        if ! grep -q "controller.apiGateway.validation.bufferSize must be between 16384 and 2097152 bytes" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation bufferSize lower-bound guard returned unexpected error:${NC}" >&2
+            cat "$GUARD_ERR" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        rm -f "$GUARD_ERR"
+
+        echo -e "${YELLOW}Request-validation Helm guard: bufferHeadroomBytes fits bufferSize...${NC}" >&2
+        GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
+        if helm template "$CHART_DIR" \
+            --namespace default \
+            $HAPROXY_VERSION_ARG \
+            --set controller.templateLibraries.hapticAnnotations.enabled=true \
+            --set controller.apiGateway.validation.enabled=true \
+            --set controller.apiGateway.validation.bufferSize=16384 \
+            --set controller.apiGateway.validation.bufferHeadroomBytes=16384 \
+            > /dev/null 2> "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation bufferHeadroomBytes guard did not fail${NC}" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        if ! grep -q "bufferHeadroomBytes must be a positive integer smaller than controller.apiGateway.validation.bufferSize" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation bufferHeadroomBytes guard returned unexpected error:${NC}" >&2
+            cat "$GUARD_ERR" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        rm -f "$GUARD_ERR"
+
+        echo -e "${YELLOW}Request-validation Helm guard: maxBodyBytes leaves buffer headroom...${NC}" >&2
+        GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
+        if helm template "$CHART_DIR" \
+            --namespace default \
+            $HAPROXY_VERSION_ARG \
+            --set controller.templateLibraries.hapticAnnotations.enabled=true \
+            --set controller.apiGateway.validation.enabled=true \
+            --set controller.apiGateway.validation.maxBodyBytes=9000 \
+            --set controller.apiGateway.validation.bufferSize=16384 \
+            > /dev/null 2> "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation buffer-headroom guard did not fail${NC}" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        if ! grep -q "maxBodyBytes must not exceed controller.apiGateway.validation.bufferSize minus controller.apiGateway.validation.bufferHeadroomBytes" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation buffer-headroom guard returned unexpected error:${NC}" >&2
+            cat "$GUARD_ERR" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        rm -f "$GUARD_ERR"
+
+        echo -e "${YELLOW}Request-validation Helm guard: bodyWaitTimeout duration...${NC}" >&2
+        GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
+        if helm template "$CHART_DIR" \
+            --namespace default \
+            $HAPROXY_VERSION_ARG \
+            --set controller.templateLibraries.hapticAnnotations.enabled=true \
+            --set controller.apiGateway.validation.enabled=true \
+            --set-string 'controller.apiGateway.validation.bodyWaitTimeout=100ms http-request deny' \
+            > /dev/null 2> "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation bodyWaitTimeout guard did not fail${NC}" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        if ! grep -q "bodyWaitTimeout must be a positive HAProxy duration" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation bodyWaitTimeout guard returned unexpected error:${NC}" >&2
+            cat "$GUARD_ERR" >&2
+            rm -f "$GUARD_ERR"
+            exit 1
+        fi
+        rm -f "$GUARD_ERR"
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # Degraded Gateway API profiles (skipped when a single --test is requested or
 # a custom schema dir is in play). For each committed old-release CRD bundle

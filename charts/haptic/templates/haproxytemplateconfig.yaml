@@ -6,6 +6,13 @@
 {{- if and $controller.rateLimit.shared.enabled (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $rateLimitPlugin "root" .))) }}
   {{- fail "controller.rateLimit.shared.enabled=true requires spoaHub.plugins.rate-limit to be enabled. Remove spoaHub.plugins.rate-limit.enabled=false or disable shared rate limiting." }}
 {{- end }}
+{{- if and $controller.apiGateway.validation.enabled (eq (toString .Values.spoaHub.enabled) "false") }}
+  {{- fail "controller.apiGateway.validation.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable request validation." }}
+{{- end }}
+{{- $apiGatewayPlugin := (index (.Values.spoaHub.plugins | default dict) "api-gateway") | default dict }}
+{{- if and $controller.apiGateway.validation.enabled (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $apiGatewayPlugin "root" .))) }}
+  {{- fail "controller.apiGateway.validation.enabled=true requires spoaHub.plugins.api-gateway to be enabled. Remove spoaHub.plugins.api-gateway.enabled=false or disable request validation." }}
+{{- end }}
 {{- if $controller.config }}
 apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
@@ -157,6 +164,47 @@ spec:
       {{- $_ := set $extraContext "hapticRateLimitStorePDBEnabled" "false" }}
     {{- end }}
     {{- $_ := set $extraContext "hapticRateLimitStorePDBMaxUnavailable" ($rlPDB.maxUnavailable | default 1 | toString) }}
+  {{- end }}
+
+  {{- /* API-gateway request validation. The haptic-annotations library uses
+         these flat keys to fail-loud when schema annotations are present
+         without the chart opt-in and to pass bounded defaults to the SPOA
+         dispatch map. */ -}}
+  {{- if $controller.apiGateway.validation.enabled }}
+    {{- $validation := $controller.apiGateway.validation }}
+    {{- $maxBodyBytes := int $validation.maxBodyBytes }}
+    {{- if or (le $maxBodyBytes 0) (gt $maxBodyBytes 1048576) }}
+      {{- fail "controller.apiGateway.validation.maxBodyBytes must be between 1 and 1048576 bytes." }}
+    {{- end }}
+    {{- $bufferSize := int ($validation.bufferSize | default 16384) }}
+    {{- if or (lt $bufferSize 16384) (gt $bufferSize 2097152) }}
+      {{- fail "controller.apiGateway.validation.bufferSize must be between 16384 and 2097152 bytes." }}
+    {{- end }}
+    {{- $bufferHeadroomBytes := int ($validation.bufferHeadroomBytes | default 8192) }}
+    {{- if or (le $bufferHeadroomBytes 0) (ge $bufferHeadroomBytes $bufferSize) }}
+      {{- fail "controller.apiGateway.validation.bufferHeadroomBytes must be a positive integer smaller than controller.apiGateway.validation.bufferSize." }}
+    {{- end }}
+    {{- $maxBufferedBodyBytes := sub $bufferSize $bufferHeadroomBytes }}
+    {{- if gt $maxBodyBytes $maxBufferedBodyBytes }}
+      {{- fail "controller.apiGateway.validation.maxBodyBytes must not exceed controller.apiGateway.validation.bufferSize minus controller.apiGateway.validation.bufferHeadroomBytes, so request validation never sees a truncated HAProxy body." }}
+    {{- end }}
+    {{- $pluginTimeoutMs := int $validation.pluginTimeoutMs }}
+    {{- if le $pluginTimeoutMs 0 }}
+      {{- fail "controller.apiGateway.validation.pluginTimeoutMs must be a positive integer milliseconds value." }}
+    {{- end }}
+    {{- $bodyWaitTimeout := ($validation.bodyWaitTimeout | default "100ms" | toString) }}
+    {{- if not (regexMatch "^[0-9]+(us|ms|s|m|h|d)?$" $bodyWaitTimeout) }}
+      {{- fail "controller.apiGateway.validation.bodyWaitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
+    {{- end }}
+    {{- if le (int (regexFind "^[0-9]+" $bodyWaitTimeout)) 0 }}
+      {{- fail "controller.apiGateway.validation.bodyWaitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
+    {{- end }}
+    {{- $_ := set $extraContext "hapticRequestValidationEnabled" "true" }}
+    {{- $_ := set $extraContext "hapticRequestValidationMaxBodyBytes" ($maxBodyBytes | toString) }}
+    {{- $_ := set $extraContext "hapticRequestValidationBufferSize" ($bufferSize | toString) }}
+    {{- $_ := set $extraContext "hapticRequestValidationBufferHeadroomBytes" ($bufferHeadroomBytes | toString) }}
+    {{- $_ := set $extraContext "hapticRequestValidationFailOpen" ($validation.failOpen | toString) }}
+    {{- $_ := set $extraContext "hapticRequestValidationBodyWaitTimeout" $bodyWaitTimeout }}
   {{- end }}
 
   {{- /* Controller's own namespace + HAProxy pod selector. Templates that

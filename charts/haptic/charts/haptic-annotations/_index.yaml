@@ -86,9 +86,24 @@ templatingSettings:
     hapticRateLimitStoreSentinelMemLimit: "64Mi"
     hapticRateLimitStorePDBEnabled: "true"
     hapticRateLimitStorePDBMaxUnavailable: "1"
+    # API-gateway JSON request validation (SPOA api-gateway plugin). The chart
+    # overrides these from controller.apiGateway.validation when enabled.
+    hapticRequestValidationEnabled: "false"
+    hapticRequestValidationMaxBodyBytes: "8192"
+    hapticRequestValidationBufferHeadroomBytes: "8192"
+    hapticRequestValidationFailOpen: "false"
+    hapticRequestValidationBodyWaitTimeout: "100ms"
 
 watchedResources:
   secrets:
     apiVersion: v1
     resources: secrets
+    indexBy: ["metadata.namespace", "metadata.name"]
+  configmaps:
+    apiVersion: v1
+    resources: configmaps
+    # Request-validation schemas are looked up by exact reference only. Keep
+    # ConfigMap bodies on-demand so enabling this library doesn't retain every
+    # cluster ConfigMap body in controller memory.
+    store: on-demand
     indexBy: ["metadata.namespace", "metadata.name"]

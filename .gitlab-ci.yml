@@ -1636,6 +1636,18 @@ test-e2e-rate-limit:
     HAPROXY_VERSION: "3.2"
     HAPTIC_E2E_PROFILE: "rate-limit"
 
+# API-gateway request-validation e2e shard. Installs with
+# controller.apiGateway.validation.enabled=true and runs
+# TestHapticRequestValidation, proving ConfigMap-backed JSON Schema resolution,
+# SPOE dispatch to the api-gateway plugin, fail-closed denials, and the
+# pre-plugin body-size guard. One HAProxy version — the validation path is
+# version-agnostic and the version matrix is covered by test-e2e.
+test-e2e-api-gateway:
+  extends: .test-e2e-base
+  variables:
+    HAPROXY_VERSION: "3.2"
+    HAPTIC_E2E_PROFILE: "api-gateway"
+
 # Upstream Gateway API conformance suite (sigs.k8s.io/gateway-api/conformance).
 #
 # Runs the same kind+helm setup as test-e2e (including MetalLB so Gateways

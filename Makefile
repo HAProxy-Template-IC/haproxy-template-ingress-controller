@@ -80,7 +80,7 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 		jq empty "$$f" || exit 1; \
 	done
 	@echo "Linting Markdown files..."
-	markdownlint-cli2 "**/*.md" "#node_modules" "#**/node_modules" "#.claude" "#vendor" "#.cache" "#.remember"
+	markdownlint-cli2 "**/*.md" "#node_modules" "#**/node_modules" "#.claude" "#.codex" "#vendor" "#.cache" "#.remember"
 	@echo "Linting docs prose (vale)..."
 	@command -v vale >/dev/null 2>&1 \
 		|| { echo "vale not found — install it (Arch: pacman -S vale; other: https://vale.sh)"; exit 1; }
@@ -468,8 +468,8 @@ test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e te
 	@# CI sets SKIP_DOCKER_BUILD=1 and pre-tags from the registry-pulled image,
 	@# so this re-tag is a no-op there.
 	docker tag haptic:test haptic:test-haproxy$(HAPROXY_VERSION) 2>/dev/null || true
-	@if [ "$(HAPTIC_E2E_PROFILE)" = "rate-limit" ] && [ -z "$(SPOA_TAG)" ]; then \
-		echo "Rate-limit e2e profile without SPOA_TAG: building local spoa-hub:dev image"; \
+	@if { [ "$(HAPTIC_E2E_PROFILE)" = "rate-limit" ] || [ "$(HAPTIC_E2E_PROFILE)" = "api-gateway" ]; } && [ -z "$(SPOA_TAG)" ]; then \
+		echo "$(HAPTIC_E2E_PROFILE) e2e profile without SPOA_TAG: building local spoa-hub:dev image"; \
 		$(MAKE) spoa-hub-image; \
 	fi
 	@echo "Note: This creates kind cluster 'haptic-e2e', helm-installs the chart, deploys fixtures."

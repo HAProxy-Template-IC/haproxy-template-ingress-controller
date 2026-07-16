@@ -43,9 +43,11 @@ templateSnippets:
           ignore is impossible because the vendor library fail()s at
           render time if its annotations are present without the plugin. -#}
       {{- render_glob "util-*-coraza-scan" -}}
+      {{- render_glob "util-*-api-gateway-schemas" -}}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- var modsecApps = gf | dig("sphCorazaApps") | fallback([]any{}) | toSlice() -%}
+      {%- var apiGatewaySchemas = gf | dig("apiGatewaySchemas") | fallback([]any{}) | toSlice() -%}
 
       plugin_dir = "{{ hub | dig("pluginDir") | fallback("/etc/haproxy-spoa-hub/plugins") }}"
       default_timeout_ms = {{ hub | dig("defaultTimeoutMs") | fallback(500) }}
@@ -223,6 +225,28 @@ templateSnippets:
       """
           {%- end %}
         {%- end %}
+        {%- if pName == "api_gateway" && len(apiGatewaySchemas) > 0 %}
+          {#- API-gateway request validation schemas. The haptic-annotations
+              library resolves per-Ingress ConfigMap/Secret references at render
+              time and registers one schema block per unique schema id. The
+              plugin compiles these at init/reload; requests only pass the schema
+              id and bounded request body. -#}
+          {%- for _, schema := range apiGatewaySchemas %}
+            {%- var s = schema.(map[string]any) %}
+            {%- var schemaID = s["id"].(string) %}
+            {%- var schemaB64 = s["schemaBase64"].(string) %}
+            {%- var contentTypes = s["contentTypes"] | toSlice() %}
+
+      [plugins.params.schemas."{{ schemaID }}"]
+      schema_base64 = "{{ schemaB64 }}"
+      content_types = [
+            {%- for i, ct := range contentTypes -%}
+              {%- if i > 0 -%}, {% end -%}
+              "{{ tostring(ct) }}"
+            {%- end -%}
+      ]
+          {%- end %}
+        {%- end %}
       {# Newline between plugin iterations so the next [[plugins]] table
          header lands on its own line. Without it the rendered TOML
          reads `transaction_ttl_ms = 10000[[plugins]]` and the hub's
@@ -322,6 +346,8 @@ templateSnippets:
       {{ render "spoe-message-check-request-body" }}
       {%- else if msg == "check-ratelimit" -%}
       {{ render "spoe-message-check-ratelimit-body" }}
+      {%- else if msg == "validate-request" -%}
+      {{ render "spoe-message-validate-request-body" }}
       {%- else if hasPrefix(msg, "mirror-") -%}
       {{ render "spoe-message-mirror-body" inherit_context }}
       {%- else -%}
@@ -470,6 +496,38 @@ templateSnippets:
     template: |-
       spoe-message check-ratelimit
           args key=var(txn.rl_key) limit=var(txn.rl_limit) period=var(txn.rl_period) burst=var(txn.rl_burst) mode=var(txn.rl_mode)
+
+  # Canonical spoe-message validate-request body. Rendered when the
+  # api-gateway plugin is enabled. Args follow the plugin process() contract:
+  #
+  #   - schema_id      — per-route schema key from request-schema.map.
+  #   - body           — buffered request body. The frontend filter uses
+  #                      route-conditional `http-request wait-for-body`, not
+  #                      frontend-wide `option http-buffer-request`, so routes
+  #                      without validation don't pay the buffering cost. The
+  #                      chart emits tune.bufsize from
+  #                      controller.apiGateway.validation.bufferSize, reserves
+  #                      header/rewrite headroom, requires Content-Length, and
+  #                      rejects ambiguous multiple Content-Length values. It
+  #                      also rejects if req.body_len remains below req.body_size
+  #                      after wait-for-body, so this never validates a truncated
+  #                      body inside the accepted size cap.
+  #   - content_type   — request Content-Type header; the plugin strips
+  #                      parameters and compares against the schema's configured
+  #                      accepted media types.
+  #   - max_body_bytes — per-route body cap. HAProxy enforces the same cap before
+  #                      the SPOE call; the plugin repeats it as a defensive
+  #                      bound.
+  #   - fail_open      — per-route failure policy for missing schema ids inside
+  #                      the plugin. Render-time missing ConfigMaps/Secrets fail
+  #                      before a config reaches HAProxy.
+  #
+  # Output variables are exposed as txn.hub.api_gateway.{allowed,outcome,detail,
+  # schema_known}. The frontend filter fails closed on missing verdicts.
+  spoe-message-validate-request-body:
+    template: |-
+      spoe-message validate-request
+          args schema_id=var(txn.req_schema_id) body=req.body content_type=req.hdr(Content-Type) max_body_bytes=var(txn.req_schema_max_body) fail_open=var(txn.req_schema_fail_open)
 
   # Canonical spoe-message mirror body. Rendered by name from
   # spoe-conf-content's per-message dispatch when "mirror" is in the

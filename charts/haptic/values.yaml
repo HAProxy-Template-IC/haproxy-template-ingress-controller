@@ -260,6 +260,38 @@ controller:
           memory: 128Mi
         limits:
           memory: 128Mi
+  # API gateway features backed by the bundled api-gateway SPOA plugin.
+  apiGateway:
+    validation:
+      # Enables native JSON request-body validation annotations and auto-enables
+      # the spoaHub.plugins.api-gateway plugin. Off by default; annotations fail
+      # the render loudly while this is false.
+      enabled: false
+      # Outer SPOE/plugin processing timeout in milliseconds. Keep this tight on
+      # public edges: JSON parsing and schema validation must fail closed quickly
+      # under overload instead of adding a long request tail.
+      pluginTimeoutMs: 25
+      # HAProxy-side maximum time to wait for a matching POST/PUT/PATCH body to
+      # become available before returning 408. This is route-conditional; routes
+      # without request-schema annotations do not wait for bodies. Must be a
+      # positive HAProxy duration with optional us, ms, s, m, h, or d suffix.
+      bodyWaitTimeout: 100ms
+      # HAProxy request buffer size used by validation routes. The chart emits a
+      # matching tune.bufsize when validation is enabled, and maxBodyBytes must
+      # leave bufferHeadroomBytes for request headers and HAProxy rewrite space
+      # so the plugin never validates a truncated body.
+      bufferSize: 16384
+      # Buffer bytes reserved for request line, headers, and HAProxy rewrite
+      # space. Increase this for deployments with large cookies, JSON Web
+      # Tokens, tracing headers, or other large request headers on validation
+      # routes.
+      bufferHeadroomBytes: 8192
+      # Default per-route body size cap in bytes. HAProxy rejects larger bodies
+      # before the SPOE roundtrip, so oversized requests do not spend plugin CPU.
+      maxBodyBytes: 8192
+      # Default failure policy for missing schema ids inside the plugin. The
+      # chart still fails render-time for missing referenced ConfigMaps/Secrets.
+      failOpen: false
   # Pluggable validator sidecar
   # Runs a second instance of the haproxy-spoa-hub binary alongside the
   # controller pod, in --validate-socket mode. The admission webhook
@@ -1648,6 +1680,21 @@ spoaHub:
   # .enabled=<bool>` always wins. Inside `params:` use dotted keys or the
   # full `[plugins.params.<x>]` header — a bare `[x]` closes the scope.
   plugins:
+    api-gateway:
+      # JSON request-body validation via the api-gateway plugin. Opt-in (off by
+      # default). Drive it per route with the
+      # haproxy-haptic.org/request-schema-* annotations.
+      enabled: '{{ .Values.controller.apiGateway.validation.enabled }}'
+      # The plugin does no I/O on the request path: schemas are compiled at
+      # init, then each request is bounded by max_body_bytes, content-type
+      # checked, parsed as JSON, and validated in memory. Keep the SPOE timeout
+      # tight so overload fails closed quickly.
+      timeoutMs: '{{ .Values.controller.apiGateway.validation.pluginTimeoutMs }}'
+      messages: ["validate-request"]
+      dependsOn: []
+      params: |
+        default_fail_open = {{ .Values.controller.apiGateway.validation.failOpen }}
+        max_body_bytes = {{ .Values.controller.apiGateway.validation.maxBodyBytes }}
     coraza:
       # Auto-enabled when nginx-ingress OR haproxy-ingress is on. Configures
       # the WAF *service* (rules, limits, runtime knobs → spoa-hub TOML);

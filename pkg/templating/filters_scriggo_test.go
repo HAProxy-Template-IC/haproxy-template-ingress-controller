@@ -426,6 +426,25 @@ func TestScriggoB64Decode_TypeConversion(t *testing.T) {
 	}
 }
 
+func TestScriggoB64Encode_TypeConversion(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    any
+		expected string
+	}{
+		{"string", "Hello", base64.StdEncoding.EncodeToString([]byte("Hello"))},
+		{"nil", nil, ""},
+		{"int", 123, base64.StdEncoding.EncodeToString([]byte("123"))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := scriggoB64Encode(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestScriggoDebug_Basic(t *testing.T) {
 	value := map[string]any{
 		"name": "test",
