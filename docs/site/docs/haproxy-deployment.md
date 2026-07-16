@@ -161,7 +161,15 @@ HAProxy writes its access logs to the container's stdout, so `kubectl logs` show
 kubectl logs -n haptic -l app.kubernetes.io/component=loadbalancer -c haproxy
 ```
 
-The default template libraries emit `log stdout len 4096 local0 info` in the `global` section and `option httplog` in the `defaults` section, which produces HAProxy's standard HTTP log line per request. To use a custom format, add a `log-format` directive through a `defaults-settings-*` snippet — it runs after the built-in `defaults-settings-100-options` and overrides `option httplog`:
+The default template libraries emit `log stdout len 4096 local0 info` in the
+`global` section and `option httplog` in the `defaults` section, which produces
+HAProxy's standard HTTP log line per request. Generated TCP frontends override
+that inherited format with `option tcplog`; the status frontend keeps its log
+target but uses `option dontlog-normal`, avoiding both probe noise and the
+HAProxy warning caused by combining `no log` with an inherited log format. To
+use a custom HTTP format, add a `log-format` directive through a
+`defaults-settings-*` snippet — it runs after the built-in
+`defaults-settings-100-options` and overrides `option httplog`:
 
 ```yaml
 controller:

@@ -33,7 +33,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 
 | Component       | Pinned version                          |
 | --------------- | --------------------------------------- |
-| Hub               | `v0.7.3`                     |
+| Hub               | `v0.7.4`                     |
 | `api-gateway`    | `v0.1.0`      |
 | `coraza`          | `v0.5.0`           |
 | `external-auth`   | `v0.5.0`    |
@@ -49,6 +49,20 @@ Plugin `.so` files target glibc `2.36` (Debian bookworm).
 <!-- END: spoa-hub-bundle -->
 
 The table is generated from `versions-spoa.env` at the repository root. CI fails if the rendered output drifts from the source of truth.
+
+### Reload and upgrade behavior
+
+Plugin configuration and instance state are hot-reloadable. When a reload
+retires a plugin generation, the hub drains its in-flight work and calls its
+`shutdown` and `destroy` hooks. The native plugin library itself remains mapped
+until the hub process exits: a plugin can embed a foreign runtime or retain
+process-global threads, callbacks, statics, and thread-local cleanup routines that a
+generic host can't prove are safe to unload. This prevents reload-time crashes
+when a plugin such as Coraza is removed.
+
+Replacing a plugin `.so` therefore requires a hub process restart, not only a
+configuration reload. HAPTIC chart upgrades do this normally by rolling the
+HAProxy pods when the bundled `spoa-hub` image changes.
 
 ## What each plugin does
 

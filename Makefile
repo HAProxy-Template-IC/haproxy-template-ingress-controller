@@ -1,5 +1,5 @@
 .PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
-        test test-integration test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance build-integration-test \
+        test test-integration test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance test-helm-defaults build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
@@ -488,6 +488,14 @@ ifdef TEST_RUN_PATTERN
 else
 	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -count=1 -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) ./tests/e2e/...
 endif
+
+test-helm-defaults: $(if $(HELM_DEFAULTS_IMAGE),,docker-build-test) ## Install the default chart in kind and run its deployment smoke tests
+	@# Local runs must test this worktree's controller against this worktree's
+	@# chart. CI supplies HELM_DEFAULTS_IMAGE explicitly and skips the build.
+	@if [ -z "$(HELM_DEFAULTS_IMAGE)" ]; then \
+		docker tag haptic:test haptic:test-haproxy$(HAPROXY_VERSION); \
+	fi
+	bash scripts/test-helm-defaults.sh --image "$(or $(HELM_DEFAULTS_IMAGE),haptic:test-haproxy$(HAPROXY_VERSION))"
 
 build-integration-test: ## Build integration test binary (without running)
 	@echo "Building integration test binary..."
