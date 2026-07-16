@@ -60,22 +60,19 @@ const HAProxyTemplateConfigGVK = "haproxy-haptic.org/v1alpha1.HAProxyTemplateCon
 
 // configValidationTestsBudget bounds the validationTests run at admission.
 //
-// It is sized so the suite RELIABLY gets its full budget within the config-GVK
-// internal deadline (configAdmissionTimeout = 9s in component.go), accounting
-// for everything that runs first on the same context:
+// It is sized so the suite reliably gets a useful bounded run within the
+// config-GVK deadline, accounting for everything that runs first on the same
+// context:
 //
 //	schema bootstrap (≤ typeBootstrapFetchTimeout = 2s)
-//	+ render + `haproxy -c`        (≤ ~2s even for a large config)
-//	+ this budget                  (5s)
-//	= 9s internal deadline         (< 10s chart timeoutSeconds)
+//	+ prospective render + `haproxy -c`
+//	+ this budget (5s)
 //
 // Because RunValidationTests bounds the run with context.WithTimeout(ctx,
 // budget) — i.e. min(budget, time left on the admission ctx) — the suite gets
-// the full 5s whenever bootstrap+render ≤ 4s, which always holds (bootstrap
-// self-caps at 2s, render is sub-second in practice). The bundled suite is
-// ~3.9s, so 5s leaves margin. A suite that still can't finish is admitted with a
-// warning (the load gate enforces authoritatively on load) rather than blocking
-// the apply.
+// up to 5s after the prospective render. A suite that still cannot finish is
+// admitted with a warning (the load gate enforces authoritatively on load)
+// rather than blocking the apply.
 const configValidationTestsBudget = 5 * time.Second
 
 // ConfigValidator validates a prospective HAProxyTemplateConfig admission by:

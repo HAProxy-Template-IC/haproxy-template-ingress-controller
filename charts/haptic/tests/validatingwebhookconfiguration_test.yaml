@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: validating webhook configuration
+templates:
+  - validatingwebhookconfiguration.yaml
+tests:
+  - it: should keep watched-resource admission on the tight default timeout
+    asserts:
+      - equal:
+          path: webhooks[?(@.name == "ingresses.validation.RELEASE-NAME-haptic-webhook")].timeoutSeconds
+          value: 10
+
+  - it: should give HAProxyTemplateConfig admission the maximum default timeout
+    asserts:
+      - equal:
+          path: webhooks[?(@.name == "haproxytemplateconfig.validation.RELEASE-NAME-haptic-webhook")].timeoutSeconds
+          value: 30
+
+  - it: should render custom split admission timeouts
+    set:
+      webhook.timeoutSeconds: 7
+      webhook.haproxyTemplateConfig.timeoutSeconds: 23
+    asserts:
+      - equal:
+          path: webhooks[?(@.name == "ingresses.validation.RELEASE-NAME-haptic-webhook")].timeoutSeconds
+          value: 7
+      - equal:
+          path: webhooks[?(@.name == "haproxytemplateconfig.validation.RELEASE-NAME-haptic-webhook")].timeoutSeconds
+          value: 23
+
+  - it: should reject a watched-resource timeout without controller response margin
+    set:
+      webhook.timeoutSeconds: 1
+    asserts:
+      - failedTemplate:
+          errorMessage: "webhook.timeoutSeconds must be an integer between 2 and 30."
+
+  - it: should reject a fractional watched-resource timeout
+    set:
+      webhook.timeoutSeconds: 2.5
+    asserts:
+      - failedTemplate:
+          errorMessage: "webhook.timeoutSeconds must be an integer between 2 and 30."
+
+  - it: should reject a HAProxyTemplateConfig timeout above the Kubernetes maximum
+    set:
+      webhook.haproxyTemplateConfig.timeoutSeconds: 31
+    asserts:
+      - failedTemplate:
+          errorMessage: "webhook.haproxyTemplateConfig.timeoutSeconds must be an integer between 2 and 30."

@@ -22,6 +22,8 @@
   {{- end }}
 {{- end }}
 {{- $htcCfg := default (dict "enabled" true) $webhook.haproxyTemplateConfig }}
+{{- $resourceTimeoutSeconds := include "haptic.webhook.resourceTimeoutSeconds" . | int }}
+{{- $configTimeoutSeconds := include "haptic.webhook.configTimeoutSeconds" . | int }}
 {{- $webhookSvcName := include "haptic.webhook.serviceName" . }}
 {{- $ns := .Release.Namespace }}
 {{- if or $webhookRules $htcCfg.enabled }}
@@ -71,7 +73,7 @@ webhooks:
     sideEffects: None
     admissionReviewVersions:
       - v1
-    timeoutSeconds: 10
+    timeoutSeconds: {{ $resourceTimeoutSeconds }}
 {{- end }}
 {{- /*
   HAProxyTemplateConfig admission webhook. Validates the controller's own
@@ -92,13 +94,13 @@ webhooks:
   able to apply CRD fixes while the controller is degraded — an unreachable
   webhook fails open).
 
-  timeoutSeconds: 10 (raised from 5) — the admission path now runs three
-  phases: per-admission schema bootstrap (≤2 s), render + haproxy -c, and the
-  validationTests suite (~4 s for the bundled chart), so it needs headroom. The
-  controller self-imposes a shorter internal deadline (configAdmissionTimeout,
-  9 s = 2 s bootstrap + ~2 s render + 5 s test budget) and admits-with-warning
-  if a phase can't finish, so a slow suite or a degraded controller never
-  blocks the apply — the load gate still enforces.
+  timeoutSeconds defaults to 30 (Kubernetes' maximum) because this privileged,
+  low-volume path compiles and strictly renders the complete prospective
+  template set before running a bounded validationTests gate. The controller
+  self-imposes a deadline one second shorter and admits-with-warning if it
+  cannot finish, so a slow suite or a degraded controller never blocks the
+  apply — the load gate still enforces. Watched-resource admission remains on
+  its separate, tighter timeout.
 */}}
 {{- if $htcCfg.enabled }}
   - name: haproxytemplateconfig.validation.{{ $webhookSvcName }}
@@ -126,7 +128,7 @@ webhooks:
     sideEffects: None
     admissionReviewVersions:
       - v1
-    timeoutSeconds: 10
+    timeoutSeconds: {{ $configTimeoutSeconds }}
 {{- end }}
 {{- end }}
 {{- end }}

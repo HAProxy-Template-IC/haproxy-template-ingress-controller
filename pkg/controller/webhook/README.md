@@ -52,7 +52,7 @@ Registration happens once at `Start`:
 1. For each `Rule`, resolve `Kind` via `restMapper` and build a `group/version.Kind` key.
 2. Register a thin wrapper `ValidationFunc` that:
    - Performs basic structural sanity (`validateBasicStructure`) and short-circuits on failure before touching the validator.
-   - Wraps the call in a 5-second `context.WithTimeout` — kept shorter than the chart's `timeoutSeconds: 10` so a stuck render returns a structured deny rather than an HTTP transport failure.
+   - Wraps the call in a configurable `context.WithTimeout` — the chart defaults watched-resource validation to 9 seconds under a 10-second API-server timeout, so a stuck render returns a structured deny rather than an HTTP transport failure.
    - Delegates to `DryRunValidator.ValidateDirect(ctx, gvk, namespace, name, object, operation)`.
    - Records metrics and logs the outcome.
 
@@ -62,7 +62,7 @@ Registration happens once at `Start`:
 
 - **Upstream** — cert-manager provisions the Secret, the chart mounts it, and the controller passes the mount path into this component's `Config.CertDir`. There is no API fetch of the Secret and no dedicated cert event: the pure server reads `tls.crt`/`tls.key` from `CertDir` and hot-reloads them when cert-manager renews the cert — served within ~a minute, no controller iteration restart or pod restart needed.
 - **Downstream** — `pkg/controller/dryrunvalidator` is the only implementation of the `DryRunValidator` interface in the tree. It in turn delegates the actual render+validate to `pkg/controller/proposalvalidator`, which is the same pipeline the leader-side reconciler uses — so anything that passes admission will also pass at deploy time.
-- **Chart** — `charts/haptic/templates/validatingwebhookconfiguration.yaml` defines the `ValidatingWebhookConfiguration` with two webhook entries: watched-resource webhooks use `failurePolicy: Fail`, `timeoutSeconds: 10`; the HAProxyTemplateConfig webhook uses `failurePolicy: Ignore`, `timeoutSeconds: 5`. When `webhook.certManager.enabled`, cert-manager's `cert-manager.io/inject-ca-from` annotation is added. The chart does **not** set an `objectSelector`; multi-controller isolation comes from each release deploying its own webhook configuration whose `clientConfig.service` points at that release's controller `Service`.
+- **Chart** — `charts/haptic/templates/validatingwebhookconfiguration.yaml` defines the `ValidatingWebhookConfiguration` with two webhook classes: watched-resource webhooks use `failurePolicy: Fail` and default to `timeoutSeconds: 10`; the HAProxyTemplateConfig webhook uses `failurePolicy: Ignore` and defaults to `timeoutSeconds: 30`. The controller deadlines are derived one second shorter. A timed-out config check is admitted with a warning and remains subject to the daemon load gate, so operator recovery is never blocked. When `webhook.certManager.enabled`, cert-manager's `cert-manager.io/inject-ca-from` annotation is added. The chart does **not** set an `objectSelector`; multi-controller isolation comes from each release deploying its own webhook configuration whose `clientConfig.service` points at that release's controller `Service`.
 
 ## See Also
 

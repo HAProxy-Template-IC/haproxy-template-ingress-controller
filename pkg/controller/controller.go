@@ -265,12 +265,20 @@ func (p *persistentInfra) InReinitGrace() bool {
 //   - crdName: Name of the HAProxyTemplateConfig CRD
 //   - secretName: Name of the Secret containing HAProxy Dataplane API credentials
 //   - webhookCertDir: Directory holding the webhook TLS cert (tls.crt/tls.key); empty disables the webhook
+//   - webhookAdmissionTimeouts: Controller-side admission deadlines. Zero
+//     values use the webhook component defaults.
 //   - debugPort: Port for debug HTTP server (0 to disable)
 //
 // Returns:
 //   - Error if the controller cannot start or encounters a fatal error
 //   - nil if the context is cancelled (graceful shutdown)
-func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, webhookCertDir string, debugPort int) error {
+func Run(
+	ctx context.Context,
+	k8sClient *client.Client,
+	crdName, secretName, webhookCertDir string,
+	webhookAdmissionTimeouts WebhookAdmissionTimeouts,
+	debugPort int,
+) error {
 	logger := slog.Default()
 
 	logger.Debug("HAProxy Template Ingress Controller starting",
@@ -313,7 +321,7 @@ func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, web
 			return nil
 		default:
 			// Run one iteration
-			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertDir, debugPort, infra, logger)
+			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, infra, logger)
 			if err != nil {
 				// Check if error is context cancellation (graceful shutdown)
 				if ctx.Err() != nil {

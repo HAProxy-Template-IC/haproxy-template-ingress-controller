@@ -60,6 +60,8 @@ component := webhook.New(logger, &webhook.Config{
     CertDir:         "/etc/webhook/certs", // mounted cert Secret; server reads + hot-reloads tls.crt/tls.key
     Rules:           rules,               // []WebhookRule -- per-GVK list
     DryRunValidator: dryRunComponent,     // implements ValidateDirect
+    ResourceAdmissionTimeout: 9 * time.Second,
+    ConfigAdmissionTimeout:   29 * time.Second,
 }, restMapper, metricsRecorder)
 ```
 
@@ -91,14 +93,14 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
             return true, "", nil
         }
 
-        // 3. Hard internal deadline — the controller imposes 9s here
-        //    (resourceAdmissionTimeout), in addition to the API server's
+        // 3. Configurable internal deadline — the chart uses 9s here
+        //    (Config.ResourceAdmissionTimeout), in addition to the API server's
         //    `timeoutSeconds` on the ValidatingWebhookConfiguration.
         parent := c.serverCtx  // allows iteration shutdown to cancel in-flight validations
         if parent == nil {
             parent = context.Background()  // nil only in unit tests that skip Start()
         }
-        ctx, cancel := context.WithTimeout(parent, resourceAdmissionTimeout)
+        ctx, cancel := context.WithTimeout(parent, c.config.ResourceAdmissionTimeout)
         defer cancel()
 
         // 4. Direct synchronous call into the proposal pipeline.
@@ -117,16 +119,19 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 
 Two deadlines apply, in this order:
 
-1. The component's hard 9-second `context.WithTimeout` around `ValidateDirect`
-   (`resourceAdmissionTimeout`; HAProxyTemplateConfig admission uses the equally
-   sized `configAdmissionTimeout`).
+1. The component's configurable `context.WithTimeout` around validation. The
+   chart defaults watched resources to 9 seconds and HAProxyTemplateConfig to
+   29 seconds because prospective-config validation compiles and strictly
+   renders the entire template set.
 2. The API server's `timeoutSeconds` on the `ValidatingWebhookConfiguration`
-   (default 10s) cuts the whole HTTP request if either deadline doesn't fire first.
+   (defaults: watched resources 10 seconds, HAProxyTemplateConfig 30 seconds)
+   cuts the whole HTTP request if either deadline doesn't fire first.
 
-If you change the internal 9s, update both this section and the
-`resourceAdmissionTimeout` constant — keeping the inner timeout shorter than the
-outer one means the controller can return a structured deny rather than letting
-the API server treat the whole request as a transport failure.
+The chart validates both outer values to `2..30` and derives each controller
+deadline one second shorter. Watched-resource timeout remains fail closed. A
+HAProxyTemplateConfig timeout is admitted with a warning because its
+`failurePolicy: Ignore` is specifically intended to preserve operator recovery;
+the daemon load gate remains authoritative.
 
 ## Metrics
 

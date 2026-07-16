@@ -166,7 +166,9 @@ Every Helm value the chart accepts, with its type and default.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `webhook.enabled` | bool | `true` | Enable admission webhook validation |
+| `webhook.timeoutSeconds` | int | `10` | API-server timeout for watched-resource admission. HAPTIC configures the controller deadline one second shorter. Allowed range: `2..30` |
 | `webhook.haproxyTemplateConfig.enabled` | bool | `true` | Also validate `HAProxyTemplateConfig` CRD updates via the webhook (`failurePolicy: Ignore`, not configurable — controller downtime never blocks CRD edits). When active, the leader-side reconcile can skip `haproxy -c` on every render |
+| `webhook.haproxyTemplateConfig.timeoutSeconds` | int | `30` | API-server timeout for the more expensive prospective-config admission path. HAPTIC configures the controller deadline one second shorter and admits with a warning on timeout so recovery remains possible. Allowed range: `2..30` |
 | `webhook.secretName` | string | Auto-generated | Webhook TLS certificate secret name |
 | `webhook.service.port` | int | `443` | Webhook service port |
 | `webhook.certManager.enabled` | bool | `false` | cert-manager integration for the webhook cert. Default `false`: the chart issues a self-signed cert itself. Set `true` for cert-manager-managed issuance and auto-rotation; for manual certs keep `false` and set `webhook.caBundle` |

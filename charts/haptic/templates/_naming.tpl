@@ -143,6 +143,31 @@ operator sets webhook.secretName.
 {{- end -}}
 
 {{/*
+Kubernetes admissionregistration.k8s.io/v1 restricts timeoutSeconds to 1..30.
+HAPTIC requires at least two seconds so the controller can keep its internal
+deadline one second shorter and return a structured response before the API
+server's outer deadline. Keep these helpers as the single validation point used
+by both the ValidatingWebhookConfiguration and controller Deployment.
+*/}}
+{{- define "haptic.webhook.resourceTimeoutSeconds" -}}
+{{- $raw := toString .Values.webhook.timeoutSeconds -}}
+{{- $timeout := int $raw -}}
+{{- if or (not (regexMatch "^[0-9]+$" $raw)) (lt $timeout 2) (gt $timeout 30) -}}
+{{- fail "webhook.timeoutSeconds must be an integer between 2 and 30." -}}
+{{- end -}}
+{{- $timeout -}}
+{{- end -}}
+
+{{- define "haptic.webhook.configTimeoutSeconds" -}}
+{{- $raw := toString .Values.webhook.haproxyTemplateConfig.timeoutSeconds -}}
+{{- $timeout := int $raw -}}
+{{- if or (not (regexMatch "^[0-9]+$" $raw)) (lt $timeout 2) (gt $timeout 30) -}}
+{{- fail "webhook.haproxyTemplateConfig.timeoutSeconds must be an integer between 2 and 30." -}}
+{{- end -}}
+{{- $timeout -}}
+{{- end -}}
+
+{{/*
 Extract the API group from a Kubernetes apiVersion string and render it as
 a YAML scalar suitable for an `apiGroups:` list item. Core resources
 ("v1") render as the literal "" (empty quoted string); grouped resources
@@ -174,4 +199,3 @@ group (e.g. "v1" -> "v1", "networking.k8s.io/v1" -> "v1").
 {{- define "haptic.apiVersionOf" -}}
 {{- regexFind "[^/]+$" . -}}
 {{- end -}}
-
