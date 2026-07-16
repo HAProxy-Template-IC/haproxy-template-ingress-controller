@@ -12,5 +12,5 @@
     "MD056": false,
     "MD060": false
   },
-  "ignores": ["node_modules/**", ".claude/**", ".cache/**"]
+  "ignores": ["node_modules/**", ".claude/**", ".codex/**", ".cache/**"]
 }

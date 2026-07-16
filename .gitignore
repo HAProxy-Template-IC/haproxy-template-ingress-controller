@@ -103,6 +103,8 @@ charts/haptic/Chart.lock
 
 # Claude Code working files
 .claude/
+# Codex working files
+.codex/
 plugins/
 
 # Serena MCP server working files

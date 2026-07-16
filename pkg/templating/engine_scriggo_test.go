@@ -485,6 +485,20 @@ func TestScriggoEngine_B64DecodeFilter(t *testing.T) {
 	assert.Equal(t, "Hello World\n", output)
 }
 
+func TestScriggoEngine_B64EncodeFilter(t *testing.T) {
+	templates := map[string]string{
+		"encode": `{{ b64encode("Hello World") }}`,
+	}
+
+	entryPoints := []string{"encode"}
+	engine, err := New(templates, &Options{EntryPoints: entryPoints})
+	require.NoError(t, err)
+
+	output, err := engine.Render(context.Background(), "encode", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "SGVsbG8gV29ybGQ=\n", output)
+}
+
 func TestScriggoEngine_TemplateCount(t *testing.T) {
 	templates := map[string]string{
 		"a": "A",

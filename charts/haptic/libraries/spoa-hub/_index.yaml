@@ -119,3 +119,14 @@ maps:
       # rate-limit SPOE args. Empty → route isn't rate-limited (SPOE skipped).
       # See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
       {{ render_glob "map-rate-limit-*" -}}
+
+  request-schema.map:
+    template: |
+      # API-gateway request validation per-route rule: <ns>/<name> (resource id) →
+      # "schema_id max_body_bytes fail_open content_types" (space-separated;
+      # content_types is comma-separated). Populated by haptic-annotations
+      # map-request-schema-*; split in frontend-spoe-filters-200-request-validation
+      # and shipped to the api-gateway SPOE plugin. Empty → route is not
+      # schema-validated (SPOE skipped).
+      # See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
+      {{ render_glob "map-request-schema-*" -}}

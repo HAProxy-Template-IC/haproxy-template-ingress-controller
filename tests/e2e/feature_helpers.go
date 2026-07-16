@@ -80,6 +80,16 @@ func RequireRateLimitProfile(t *testing.T) {
 	}
 }
 
+// RequireAPIGatewayProfile skips the test unless the API-gateway shard is
+// active (HAPTIC_E2E_PROFILE=api-gateway) — the only profile that enables the
+// api-gateway SPOA plugin.
+func RequireAPIGatewayProfile(t *testing.T) {
+	t.Helper()
+	if os.Getenv("HAPTIC_E2E_PROFILE") != "api-gateway" {
+		t.Skipf("API-gateway validation plugin not deployed in this shard (HAPTIC_E2E_PROFILE=%q); it runs in the api-gateway shard", os.Getenv("HAPTIC_E2E_PROFILE"))
+	}
+}
+
 // skipIfVendorDisabled skips the test if any of its annotations use a vendor
 // prefix whose library isn't the one enabled in the current shard. This
 // auto-gates every RunSimpleIngressTest-based vendor test with no per-test

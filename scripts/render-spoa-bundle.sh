@@ -35,6 +35,7 @@ ${BEGIN_MARK}
 | Component       | Pinned version                          |
 | --------------- | --------------------------------------- |
 | Hub               | \`${SPOA_HUB_VERSION}\`                     |
+| \`api-gateway\`    | \`${SPOA_PLUGIN_API_GATEWAY_VERSION}\`      |
 | \`coraza\`          | \`${SPOA_PLUGIN_CORAZA_VERSION}\`           |
 | \`external-auth\`   | \`${SPOA_PLUGIN_EXTERNAL_AUTH_VERSION}\`    |
 | \`fingerprinting\`  | \`${SPOA_PLUGIN_FINGERPRINTING_VERSION}\`   |

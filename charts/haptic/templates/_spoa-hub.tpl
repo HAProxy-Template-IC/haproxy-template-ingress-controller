@@ -257,7 +257,7 @@ endpoints.
 {{- $plugin := default dict .plugin -}}
 {{- $rawParams := ($plugin.params | default "") -}}
 {{- $params := $rawParams -}}
-{{- if and (eq $name "rate-limit") (eq (kindOf $rawParams) "string") -}}
+{{- if and (or (eq $name "rate-limit") (eq $name "api-gateway")) (eq (kindOf $rawParams) "string") -}}
   {{- $params = tpl $rawParams $root -}}
 {{- end -}}
 {{- $hasStoreURL := regexMatch "(?m)^\\s*store_urls?\\s*=" $params -}}

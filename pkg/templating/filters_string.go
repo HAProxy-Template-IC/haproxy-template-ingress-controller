@@ -60,6 +60,19 @@ func scriggoB64Decode(s any) (string, error) {
 	return string(decoded), nil
 }
 
+// scriggoB64Encode encodes a value as standard base64.
+// The input is converted to string using lenient type conversion.
+// Useful for emitting Kubernetes ConfigMap string values into plugin configs
+// that expect base64 payloads.
+//
+// Example:
+//
+//	b64encode("Hello World") => "SGVsbG8gV29ybGQ="
+func scriggoB64Encode(s any) string {
+	str := scriggoToString(s)
+	return base64.StdEncoding.EncodeToString([]byte(str))
+}
+
 // scriggoDebug outputs the structure of a variable as formatted JSON comments.
 // Uses the shared debug implementation from filters.go.
 //

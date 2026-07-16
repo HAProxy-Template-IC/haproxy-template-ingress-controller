@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.25
-# HAPTIC SPOA hub image: layers all eight plugin shared libraries on top of
+# HAPTIC SPOA hub image: layers all nine plugin shared libraries on top of
 # the upstream haproxy-spoa-hub container so they're loaded at hub startup.
 #
 # Plugins/ is staged by CI's prep-spoa-plugins job (downloads, verifies
@@ -23,6 +23,6 @@ ARG TARGETVARIANT
 COPY --from=plugins ${TARGETARCH}${TARGETVARIANT}/ /etc/haproxy-spoa-hub/plugins/
 
 LABEL org.opencontainers.image.title="haptic-spoa-hub"
-LABEL org.opencontainers.image.description="HAProxy SPOA hub bundled with HAPTIC plugins (coraza, external-auth, fingerprinting, maxmind, mirror, otel, rate-limit, sso-auth)"
+LABEL org.opencontainers.image.description="HAProxy SPOA hub bundled with HAPTIC plugins (api-gateway, coraza, external-auth, fingerprinting, maxmind, mirror, otel, rate-limit, sso-auth)"
 LABEL org.opencontainers.image.source="https://gitlab.com/haproxy-haptic/haptic"
 LABEL org.opencontainers.image.licenses="Apache-2.0"

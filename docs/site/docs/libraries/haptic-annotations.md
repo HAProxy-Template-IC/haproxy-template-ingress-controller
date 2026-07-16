@@ -259,9 +259,13 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 
 ### API gateway
 
-API-management controls expressed as pure HAProxy config: token authentication (API key, JWT, HMAC) that establishes a shared consumer identity, consumer-group authorization, stateless request gating (method/content-type/header validation, mocking, termination), and request correlation IDs.
+API-management controls expressed as pure HAProxy config plus low-latency SPOA plugins where HAProxy can't do the work natively: token authentication (API key, JWT, HMAC) that establishes a shared consumer identity, consumer-group authorization, stateless request gating (method/content-type/header validation, mocking, termination), JSON request-body validation, and request correlation IDs.
 
 JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from the `sub` claim, API key from its map), which consumer-group authorization and — in later releases — per-consumer quotas build on.
+
+JSON request-body validation is opt-in via `controller.apiGateway.validation.enabled=true`. It uses the bundled `api-gateway` SPOA plugin; schemas are resolved from ConfigMaps or Secrets at render time and compiled when the plugin initializes/reloads. The request path is deliberately bounded: HAProxy rejects bodies larger than `request-schema-max-body-size` before the SPOE call, waits up to `controller.apiGateway.validation.bodyWaitTimeout` for matching POST/PUT/PATCH request bodies, then the plugin validates against an in-memory compiled schema. The chart emits `tune.bufsize` from `controller.apiGateway.validation.bufferSize`, reserves `controller.apiGateway.validation.bufferHeadroomBytes` (default `8192`) for request headers and HAProxy rewrite space, rejects any validation body cap above that remaining body capacity, and rejects body-carrying validation requests without `Content-Length` (`411`) or with ambiguous multiple `Content-Length` values (`400`). If HAProxy still can't buffer the advertised body after `wait-for-body`, it returns `413` instead of calling the plugin with a truncated body. Request-body transformation isn't supported.
+
+`haproxy-haptic.org/request-schema-max-body-size` is a validator input cap, not the general upload/body-size policy. Use `haproxy-haptic.org/max-request-body-size` when you want to limit the body size a backend may receive. Use `request-schema-max-body-size` to bound how much body data HAProxy may pass to the API-gateway validator and how much JSON the plugin may parse. If both apply to a validated POST/PUT/PATCH request, either one may return `413`; in practice the stricter applicable limit wins.
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
@@ -288,6 +292,11 @@ JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from 
 | `haproxy-haptic.org/request-id` | ✅ Supported | The value `true` generates a per-request correlation id and forwards it upstream (HAProxy `unique-id`). |
 | `haproxy-haptic.org/request-id-accept-inbound` | ✅ Supported | The value `true` preserves a client-supplied id (used only when the header is absent) instead of always generating a fresh one. |
 | `haproxy-haptic.org/request-id-header` | ✅ Supported | Header carrying the correlation id (default `X-Request-ID`). |
+| `haproxy-haptic.org/request-schema-configmap` | ✅ Supported | Enables JSON request-body validation using a ConfigMap schema reference: `[namespace/]name[:key]`, default key `schema.json`. Exactly one of `request-schema-configmap` or `request-schema-secret` is required. Requires `controller.apiGateway.validation.enabled=true`. |
+| `haproxy-haptic.org/request-schema-content-types` | ✅ Supported | Comma-separated accepted media types for the schema (default `application/json`). The plugin strips `; charset=...` parameters before matching; mismatches return `415`. |
+| `haproxy-haptic.org/request-schema-fail-open` | ✅ Supported | Per-route policy for missing plugin verdicts/schema ids (`true` or `false`, default from `controller.apiGateway.validation.failOpen`, chart default `false`). The default fails closed with `422` on hub/plugin timeout or missing verdict. |
+| `haproxy-haptic.org/request-schema-max-body-size` | ✅ Supported | Per-route request validation input cap in bytes (1..1048576, default from `controller.apiGateway.validation.maxBodyBytes`, chart default `8192`). It must fit within `controller.apiGateway.validation.bufferSize - controller.apiGateway.validation.bufferHeadroomBytes` (chart default body capacity `8192`) because HAProxy can only pass buffered body bytes to SPOE after request headers and rewrite space. Oversized POST/PUT/PATCH validation requests return `413` before the SPOE roundtrip. Body-carrying validation requests without `Content-Length` return `411`; ambiguous multiple `Content-Length` values return `400`. This doesn't replace `haproxy-haptic.org/max-request-body-size`, which is the general backend body-size limit. |
+| `haproxy-haptic.org/request-schema-secret` | ✅ Supported | Enables JSON request-body validation using a Secret schema reference: `[namespace/]name[:key]`, default key `schema.json`. The Secret data value must be base64-encoded JSON Schema. Exactly one schema source is required. |
 | `haproxy-haptic.org/fixed-response` | ✅ Supported | The value `true` returns a fixed response for every request matching the route's hosts via `http-request return` — for maintenance windows or sunset routes. Runs before mocking and the validators. Defaults to status 503 / `text/plain`, and can return a bare status with no body. |
 | `haproxy-haptic.org/fixed-response-body` | ✅ Supported | Optional response body for `fixed-response`. |
 | `haproxy-haptic.org/fixed-response-code` | ✅ Supported | HTTP status for `fixed-response` (default 503; must be 100-599). |
@@ -295,4 +304,4 @@ JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from 
 | `haproxy-haptic.org/require-content-type` | ✅ Supported | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). |
 | `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. |
 
-<!-- 175 annotations documented -->
+<!-- 180 annotations documented -->

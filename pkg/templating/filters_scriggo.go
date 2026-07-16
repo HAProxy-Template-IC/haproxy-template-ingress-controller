@@ -107,6 +107,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FilterStrip] = scriggoStrip
 	decl[FilterTrim] = scriggoTrim
 	decl[FilterB64Decode] = scriggoB64Decode
+	decl[FilterB64Encode] = scriggoB64Encode
 	decl[FilterDebug] = scriggoDebug
 
 	// Scriggo-specific fail function (uses native.Env)

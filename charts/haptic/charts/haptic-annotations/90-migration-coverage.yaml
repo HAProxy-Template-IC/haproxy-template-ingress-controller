@@ -415,6 +415,21 @@ migrationCoverage:
       haproxy-haptic.org/request-id-header:
         status: supported
         note: "Header carrying the correlation id (default X-Request-ID); validated single token."
+      haproxy-haptic.org/request-schema-configmap:
+        status: supported
+        note: "Enables JSON request-body validation via the api-gateway SPOA plugin using a ConfigMap data key (`[ns/]name[:key]`, default key schema.json). Requires controller.apiGateway.validation.enabled; schemas compile at plugin init/validate."
+      haproxy-haptic.org/request-schema-content-types:
+        status: supported
+        note: "Comma-separated media types accepted for request-schema validation (default application/json). The plugin compares Content-Type after stripping parameters and rejects mismatches with 415."
+      haproxy-haptic.org/request-schema-fail-open:
+        status: supported
+        note: "Per-route missing-verdict policy for request-schema validation. Defaults to controller.apiGateway.validation.failOpen; false fails closed on hub/plugin timeout or missing verdict."
+      haproxy-haptic.org/request-schema-max-body-size:
+        status: supported
+        note: "Per-route request validation input cap in bytes (1..1048576). It must fit within controller.apiGateway.validation.bufferSize minus bufferHeadroomBytes. HAProxy returns 413 before the SPOE call when the validation body is larger; the plugin repeats the bound defensively. This does not replace haproxy-haptic.org/max-request-body-size, the general backend body-size limit."
+      haproxy-haptic.org/request-schema-secret:
+        status: supported
+        note: "Enables JSON request-body validation via the api-gateway SPOA plugin using a Secret data key (`[ns/]name[:key]`, default key schema.json) whose value is already base64 encoded."
       haproxy-haptic.org/request-set-header:
         status: supported
         note: "newline-separated '<name> <value>' lines -> http-request set-header, host-scoped; name (no-space) and value ValidateConfigValue-guarded"
