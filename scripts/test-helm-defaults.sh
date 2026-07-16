@@ -4,7 +4,8 @@
 #
 # Tests that the helm chart works out-of-the-box with default values when
 # cert-manager is installed. Verifies: pods running, SSL certificate created,
-# warning-free HAProxy configuration, and HTTP/HTTPS connectivity.
+# warning-free config admission and HAProxy configuration, and HTTP/HTTPS
+# connectivity.
 #
 # Usage:
 #   ./scripts/test-helm-defaults.sh [options]
@@ -32,6 +33,8 @@
 #   6 - HTTP smoke test failed
 #   7 - HTTPS smoke test failed
 #   8 - HAProxy configuration check failed or emitted warnings
+#   9 - HAProxy bootstrap worker-retirement check failed
+#  10 - HAProxyTemplateConfig admission failed or emitted warnings
 
 set -euo pipefail
 
@@ -354,6 +357,36 @@ verify_haproxy_configs_warning_free() {
     done
 
     ok "haproxy -c is clean on all ${#pods[@]} HAProxy replicas"
+}
+
+verify_config_admission_warning_free() {
+    info "Checking the default HAProxyTemplateConfig through admission (warnings are fatal)..."
+
+    local configs=()
+    mapfile -t configs < <(
+        kubectl get haproxytemplateconfigs -n "$NAMESPACE" \
+            -l "app.kubernetes.io/instance=${RELEASE_NAME}" \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+    )
+    if [[ ${#configs[@]} -ne 1 ]]; then
+        die "Expected exactly one default HAProxyTemplateConfig, found ${#configs[@]}" 10
+    fi
+
+    local output rc=0
+    output=$(kubectl get haproxytemplateconfig "${configs[0]}" -n "$NAMESPACE" -o json \
+        | kubectl replace --dry-run=server -f - 2>&1) || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        error "HAProxyTemplateConfig server-side dry-run failed (exit $rc):"
+        printf '%s\n' "$output" >&2
+        die "Default HAProxyTemplateConfig failed admission" 10
+    fi
+    if grep -q '^Warning:' <<< "$output"; then
+        error "HAProxyTemplateConfig admission emitted warnings:"
+        printf '%s\n' "$output" >&2
+        die "Default HAProxyTemplateConfig was not fully validated at admission" 10
+    fi
+
+    ok "Default HAProxyTemplateConfig passes admission without warnings"
 }
 
 verify_bootstrap_workers_retired() {
@@ -821,6 +854,7 @@ main() {
     # Verify certificates BEFORE waiting for pods - pods need the cert secrets to start
     verify_certificates
     wait_for_pods
+    verify_config_admission_warning_free
     verify_haproxy_configs_warning_free
     verify_bootstrap_workers_retired
     # Start port-forward for smoke tests (more reliable than NodePort in DinD)

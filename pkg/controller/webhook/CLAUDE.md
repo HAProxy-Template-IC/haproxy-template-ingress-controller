@@ -133,6 +133,13 @@ HAProxyTemplateConfig timeout is admitted with a warning because its
 `failurePolicy: Ignore` is specifically intended to preserve operator recovery;
 the daemon load gate remains authoritative.
 
+Within the HAProxyTemplateConfig deadline, `ConfigValidator` gives embedded
+`validationTests` the same suite-size-scaled run budget as the daemon load gate,
+capped by the time remaining after schema bootstrap and strict prospective
+rendering. Do not add a second fixed admission-test timeout: the chart's own
+suite is large enough to exceed a small constant, and the configurable parent
+deadline already provides the required bound and API-server response margin.
+
 ## Metrics
 
 `MetricsRecorder` (the small interface this package depends on, *not* the full `*pkg/controller/metrics.Component`) gets two calls per request:

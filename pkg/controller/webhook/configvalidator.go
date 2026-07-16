@@ -33,6 +33,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
@@ -58,22 +59,19 @@ type SchemaBootstrapper func(ctx context.Context, cfg *coreconfig.Config) (*type
 // uses to dispatch admission requests for the controller's own CRD.
 const HAProxyTemplateConfigGVK = "haproxy-haptic.org/v1alpha1.HAProxyTemplateConfig"
 
-// configValidationTestsBudget bounds the validationTests run at admission.
-//
-// It is sized so the suite reliably gets a useful bounded run within the
-// config-GVK deadline, accounting for everything that runs first on the same
-// context:
-//
-//	schema bootstrap (≤ typeBootstrapFetchTimeout = 2s)
-//	+ prospective render + `haproxy -c`
-//	+ this budget (5s)
-//
-// Because RunValidationTests bounds the run with context.WithTimeout(ctx,
-// budget) — i.e. min(budget, time left on the admission ctx) — the suite gets
-// up to 5s after the prospective render. A suite that still cannot finish is
-// admitted with a warning (the load gate enforces authoritatively on load)
-// rather than blocking the apply.
-const configValidationTestsBudget = 5 * time.Second
+// validationTestsAdmissionBudget gives the embedded suite the same
+// suite-size-scaled budget as the daemon load gate, capped by whatever remains
+// of the user-configurable HAProxyTemplateConfig admission deadline after
+// schema bootstrap and strict prospective rendering. The parent context is
+// already one second inside Kubernetes' outer webhook timeout, so consuming
+// its remaining budget still leaves the configured response margin.
+func validationTestsAdmissionBudget(ctx context.Context, testCount int) time.Duration {
+	budget := validator.SuiteRunBudget(testCount)
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = min(budget, time.Until(deadline))
+	}
+	return budget
+}
 
 // ConfigValidator validates a prospective HAProxyTemplateConfig admission by:
 //  1. Parsing the admitted CRD spec into a *config.Config.
@@ -297,13 +295,15 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 	// prospective-config schema set the daemon load gate uses. This is what
 	// keeps the two consistent: a config admitted here will load — so a config
 	// that FAILS its own tests is refused now, never entering etcd to crash-loop
-	// the next fresh controller pod. The run is bounded so it can't approach the
-	// webhook timeout; on an incomplete run (pathologically large suite /
-	// contention) we admit with a warning and let the load gate enforce — the
-	// webhook is failurePolicy:Ignore, so this path never blocks an operator's
-	// recovery apply. (Already-observed failures still deny even on a cut-short
-	// run; see configtest.RunValidationTests.)
-	testResult, testErr := configtest.RunValidationTests(ctx, cfg, engine, typedResourceTypes, configValidationTestsBudget, v.logger)
+	// the next fresh controller pod. The suite gets the same size-scaled budget
+	// as the load gate, bounded by the remaining configurable admission
+	// deadline. On an incomplete run (pathologically large suite / contention)
+	// we admit with a warning and let the load gate enforce — the webhook is
+	// failurePolicy:Ignore, so this path never blocks an operator's recovery
+	// apply. (Already-observed failures still deny even on a cut-short run; see
+	// configtest.RunValidationTests.)
+	testBudget := validationTestsAdmissionBudget(ctx, len(cfg.ValidationTests))
+	testResult, testErr := configtest.RunValidationTests(ctx, cfg, engine, typedResourceTypes, testBudget, v.logger)
 	switch {
 	case testErr != nil:
 		v.logger.Warn("ValidationTests could not run at admission; admitting (load gate still enforces)",
@@ -311,8 +311,8 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 		return true, "", []string{fmt.Sprintf("validationTests could not run at admission: %v — the controller's load gate will still enforce them", testErr)}
 	case testResult.Incomplete:
 		v.logger.Warn("ValidationTests did not finish within the admission budget; admitting (load gate still enforces)",
-			"namespace", namespace, "name", name, "budget", configValidationTestsBudget)
-		return true, "", []string{fmt.Sprintf("validationTests did not finish within %s at admission and were not fully checked here — the controller's load gate will enforce them", configValidationTestsBudget)}
+			"namespace", namespace, "name", name, "budget", testBudget)
+		return true, "", []string{"validationTests did not finish before the HAProxyTemplateConfig admission deadline and were not fully checked here — the controller's load gate will enforce them"}
 	case !testResult.Passed:
 		v.logger.Info("HAProxyTemplateConfig admission denied: validationTests failed",
 			"namespace", namespace, "name", name, "failures", testResult.Failures)
