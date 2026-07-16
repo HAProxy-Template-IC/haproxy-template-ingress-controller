@@ -1684,6 +1684,102 @@ validationTests:
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.42:80 "
 
+  test-ingress-named-port-skips-portless-slices:
+    description: |
+      A Service selector may also match pods that do not expose its named
+      targetPort. Kubernetes places those endpoints in a separate EndpointSlice
+      without that port. HAPTIC must skip the slice instead of falling back to
+      the Service port and sending application traffic to the unrelated pod.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: mixed-workload
+            namespace: default
+          spec:
+            selector:
+              app: mixed-workload
+            ports:
+              - name: http
+                port: 4000
+                targetPort: http
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mixed-workload-http
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mixed-workload
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.10"]
+              conditions: {ready: true}
+              targetRef: {kind: Pod, name: application}
+          ports:
+            - name: http
+              port: 4000
+              protocol: TCP
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mixed-workload-portless
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mixed-workload
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.20"]
+              conditions: {ready: true}
+              targetRef: {kind: Pod, name: database}
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mixed-workload-unrelated-port
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mixed-workload
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.30"]
+              conditions: {ready: true}
+              targetRef: {kind: Pod, name: metrics-sidecar}
+          ports:
+            - name: metrics
+              port: 9090
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: mixed-workload
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: mixed-workload.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mixed-workload
+                          port:
+                            name: http
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10\\.0\\.0\\.10:4000 .*# Pod: application"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "10\\.0\\.0\\.20"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "10\\.0\\.0\\.30"
+
   test-ingress-named-port-typo-fails:
     description: Ingress referencing a non-existent port name must fail rendering loudly with a clear message
     fixtures:

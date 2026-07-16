@@ -142,6 +142,29 @@ spec:
     driftPreventionInterval: "60s"
 ```
 
+### Graceful reload drain bound
+
+HAProxy normally lets an old worker drain established connections after a
+reload. HAPTIC bounds that drain with `hard-stop-after 10s` so a persistent
+connection or master-socket subscriber can't retain stale worker generations
+indefinitely. The chart's bootstrap worker uses the same bound when the
+controller installs the first rendered configuration.
+
+Tune both bootstrap and rendered configurations with one Helm value:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        hardStopAfter: 30s
+```
+
+Set `hardStopAfter: ""` to disable the bound. This isn't recommended for
+production because a connection that never drains can otherwise retain an old
+worker until its pod restarts. If you replace `haproxy.initialConfig` entirely,
+include your own `hard-stop-after` directive in that custom bootstrap config.
+
 Resource deletions take the same path as any structural change: the watch delete fires, the leading-edge debouncer forwards it (the first change in a quiet window fires immediately, so an isolated delete isn't held for the 2 s window), the reconciler re-renders without the resource, and the deployer pushes a reload paced by `minDeploymentInterval`. Unlike EndpointSlice pod-IP rotations, a deletion isn't runtime-fast-path eligible — that path covers only server weight, address, port, and admin-state updates — so it always reloads. An isolated deletion typically converges in about one to a few seconds.
 
 **Tuning guidelines:**

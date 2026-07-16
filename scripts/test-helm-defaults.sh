@@ -356,6 +356,56 @@ verify_haproxy_configs_warning_free() {
     ok "haproxy -c is clean on all ${#pods[@]} HAProxy replicas"
 }
 
+verify_bootstrap_workers_retired() {
+    info "Checking that bootstrap HAProxy workers retire after the first reload..."
+
+    local pods=()
+    mapfile -t pods < <(
+        kubectl get pods -n "$NAMESPACE" \
+            -l "app.kubernetes.io/component=loadbalancer" \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+    )
+    if [[ ${#pods[@]} -eq 0 ]]; then
+        die "No HAProxy pods found for worker-retirement validation" 9
+    fi
+
+    local pod output rc reloads old_workers deadline
+    for pod in "${pods[@]}"; do
+        deadline=$((SECONDS + 30))
+        while true; do
+            output=""
+            rc=0
+            output=$(kubectl exec -n "$NAMESPACE" "$pod" -c haproxy -- sh -c \
+                "printf 'show proc\\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock" 2>&1) || rc=$?
+            if [[ $rc -ne 0 ]]; then
+                error "Could not inspect HAProxy processes in pod $pod (exit $rc):"
+                printf '%s\n' "$output" >&2
+                die "HAProxy worker-retirement validation failed in pod $pod" 9
+            fi
+
+            reloads=$(awk '$2 == "master" {print $3; exit}' <<< "$output")
+            old_workers=$(awk '
+                /^# old workers/ { in_old_workers=1; next }
+                in_old_workers && $1 ~ /^[0-9]+$/ { print }
+            ' <<< "$output")
+
+            if [[ "${reloads:-0}" =~ ^[0-9]+$ ]] && (( reloads > 0 )) && [[ -z "$old_workers" ]]; then
+                break
+            fi
+            if (( SECONDS >= deadline )); then
+                error "Bootstrap HAProxy worker did not retire in pod $pod:"
+                printf '%s\n' "$output" >&2
+                kubectl exec -n "$NAMESPACE" "$pod" -c haproxy -- \
+                    ps -eo pid,ppid,stat,etime,cmd >&2 || true
+                die "Default bootstrap worker survived beyond hard-stop-after" 9
+            fi
+            sleep 1
+        done
+    done
+
+    ok "Bootstrap workers retired on all ${#pods[@]} HAProxy replicas"
+}
+
 #------------------------------------------------------------------------------
 # Certificate verification
 #------------------------------------------------------------------------------
@@ -772,6 +822,7 @@ main() {
     verify_certificates
     wait_for_pods
     verify_haproxy_configs_warning_free
+    verify_bootstrap_workers_retired
     # Start port-forward for smoke tests (more reliable than NodePort in DinD)
     start_port_forward
     smoke_test_http

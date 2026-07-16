@@ -1438,6 +1438,16 @@ haproxy:
         {{- with include "haptic.haproxy.nbthread" . }}
         nbthread {{ . }}
         {{- end }}
+        {{- $hardStopAfter := "10s" }}
+        {{- if hasKey .Values.controller.config.templatingSettings.extraContext "hardStopAfter" }}
+        {{- $hardStopAfter = .Values.controller.config.templatingSettings.extraContext.hardStopAfter }}
+        {{- end }}
+        {{- if $hardStopAfter }}
+        # Bound the bootstrap worker's drain after the controller installs the
+        # real configuration. Keep this aligned with extraContext.hardStopAfter,
+        # which controls the same directive in the rendered configuration.
+        hard-stop-after {{ $hardStopAfter }}
+        {{- end }}
 
     defaults
         mode http

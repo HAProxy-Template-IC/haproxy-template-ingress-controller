@@ -542,21 +542,31 @@ templateSnippets:
           for _, slice := range allSlices {
             // Resolve pod port from EndpointSlice's ports array
             var slicePorts = slice.Ports
-            var resolvedPort = port  // Default: use service port
+            var resolvedPort = 0
 
             if pn != "" {
-              // Look up port by name
+              // A Service selector may match pods that do not expose the
+              // requested named targetPort. Kubernetes represents those pods
+              // in a separate EndpointSlice whose ports list omits that name
+              // (and may be empty). Never fall back to the Service port for
+              // such a slice: the endpoint is not valid for this Service port.
               for _, p := range slicePorts {
                 if p.Name == pn {
                   resolvedPort = toint(p.Port)
-                  if resolvedPort == 0 { resolvedPort = port }
                   break
                 }
               }
-            } else if len(slicePorts) == 1 {
-              // Single port case: use it directly (common scenario)
-              resolvedPort = toint(slicePorts[0].Port)
-              if resolvedPort == 0 { resolvedPort = port }
+            } else {
+              // Without a port name, retain the resolved Service port as the
+              // compatibility fallback. A single concrete EndpointSlice port
+              // is more precise and wins when present.
+              resolvedPort = port
+              if len(slicePorts) == 1 {
+                var endpointPort = toint(slicePorts[0].Port)
+                if endpointPort > 0 {
+                  resolvedPort = endpointPort
+                }
+              }
             }
             // Note: If multiple ports exist but no name available,
             // we use the service port as fallback.
