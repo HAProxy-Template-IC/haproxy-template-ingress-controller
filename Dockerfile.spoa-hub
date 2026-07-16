@@ -6,7 +6,10 @@
 # upstream sha256 + cosign signatures, strips the per-arch suffix so the
 # *.so glob below picks up the bare libname).
 
-ARG SPOA_HUB_VERSION
+# Make/CI always override this with versions-spoa.env. The syntactically valid
+# nonexistent fallback keeps BuildKit analysis warning-free but makes an
+# unpinned direct build fail fast instead of silently consuming a mutable tag.
+ARG SPOA_HUB_VERSION=version-must-be-supplied
 FROM registry.gitlab.com/haproxy-haptic/haproxy-spoa-hub:${SPOA_HUB_VERSION}
 
 # Plugin runtime dependencies the upstream debian:bookworm-slim base doesn't

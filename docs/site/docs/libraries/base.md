@@ -30,7 +30,13 @@ global-settings-500-tuning:
     tune.bufsize 262144
 ```
 
-Its `tune.bufsize 262144` line lands in `global` right after the built-in `tune.ssl.default-dh-param 2048` — `global-settings-400-ssl` sorts before your `-500-tuning`.
+Its `tune.bufsize 262144` line lands in `global` after the built-in path and
+process settings. The bundled chart deliberately doesn't emit
+`tune.ssl.default-dh-param`: the supported community images use AWS-LC, where
+HAProxy doesn't support this setting and warns that the directive was ignored.
+An OpenSSL-based deployment that needs finite-field Diffie-Hellman can add its
+own `global-settings-*` snippet or, preferably, an explicit
+`ssl-dh-param-file`.
 
 </details>
 
@@ -498,9 +504,6 @@ global
     # global-settings-300-paths — emits the BaseDir from pathResolver (chart default /etc/haproxy)
     default-path origin /etc/haproxy
     crt-base ssl/                              # relative to default-path origin
-    # global-settings-400-ssl
-    tune.ssl.default-dh-param 2048
-
 defaults
     # defaults-settings-100-options
     mode http
@@ -508,7 +511,6 @@ defaults
     option httplog
     option dontlognull
     option log-health-checks
-    option forwardfor
     # defaults-settings-200-balance
     balance roundrobin
     # defaults-settings-300-timeouts
@@ -522,10 +524,18 @@ defaults
 # global-top-* snippets here (userlists, etc.)
 
 frontend status
+    mode http
     bind *:8404
+    option dontlog-normal
     # Health check endpoints
 
+frontend http-tcp
+    mode tcp
+    option tcplog
+
 frontend http_frontend
+    mode http
+    option forwardfor
     bind *:80
     # frontend-extra-* snippets (options, captures, ACLs)
     # Routing logic

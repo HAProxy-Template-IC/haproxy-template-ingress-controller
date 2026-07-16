@@ -4,7 +4,7 @@
 #
 # Tests that the helm chart works out-of-the-box with default values when
 # cert-manager is installed. Verifies: pods running, SSL certificate created,
-# HTTP/HTTPS connectivity.
+# warning-free HAProxy configuration, and HTTP/HTTPS connectivity.
 #
 # Usage:
 #   ./scripts/test-helm-defaults.sh [options]
@@ -31,6 +31,7 @@
 #   5 - Certificate verification failed
 #   6 - HTTP smoke test failed
 #   7 - HTTPS smoke test failed
+#   8 - HAProxy configuration check failed or emitted warnings
 
 set -euo pipefail
 
@@ -116,7 +117,10 @@ create_cluster() {
         fi
         info "Using DinD configuration: $kind_config"
     else
-        # Create minimal config for local testing with NodePort mappings
+        # The smoke tests use kubectl port-forward, so the local cluster needs
+        # no fixed host-port mappings. Avoiding 30080/30443 keeps this suite
+        # isolated from haptic-dev and any other concurrently running kind
+        # cluster.
         TEMP_KIND_CONFIG=$(mktemp)
         kind_config="$TEMP_KIND_CONFIG"
         cat > "$kind_config" << 'EOF'
@@ -124,15 +128,6 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
-    extraPortMappings:
-      - containerPort: 30080
-        hostPort: 30080
-        listenAddress: "0.0.0.0"
-        protocol: TCP
-      - containerPort: 30443
-        hostPort: 30443
-        listenAddress: "0.0.0.0"
-        protocol: TCP
 EOF
         info "Using minimal local configuration"
     fi
@@ -315,6 +310,50 @@ wait_for_pods() {
     fi
 
     ok "All pods are ready"
+}
+
+#------------------------------------------------------------------------------
+# Live HAProxy configuration validation
+#------------------------------------------------------------------------------
+
+verify_haproxy_configs_warning_free() {
+    info "Checking every HAProxy replica with haproxy -c (warnings are fatal)..."
+
+    local pods=()
+    mapfile -t pods < <(
+        kubectl get pods -n "$NAMESPACE" \
+            -l "app.kubernetes.io/component=loadbalancer" \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+    )
+    if [[ ${#pods[@]} -eq 0 ]]; then
+        die "No HAProxy pods found for configuration validation" 8
+    fi
+
+    local pod output rc
+    for pod in "${pods[@]}"; do
+        output=""
+        rc=0
+        output=$(kubectl exec -n "$NAMESPACE" "$pod" -c haproxy -- \
+            haproxy -c -f /etc/haproxy/haproxy.cfg 2>&1) || rc=$?
+
+        if [[ $rc -ne 0 ]]; then
+            error "haproxy -c failed in pod $pod (exit $rc):"
+            printf '%s\n' "$output" >&2
+            die "HAProxy configuration validation failed in pod $pod" 8
+        fi
+
+        # HAProxy returns zero for advisory warnings, including ignored
+        # provider-specific directives and options inherited by an
+        # incompatible proxy mode. Treat them as test failures: this is the
+        # default chart contract, not an operator-supplied custom config.
+        if grep -qE '^[[:space:]]*\[WARNING\]|Warnings were found\.' <<< "$output"; then
+            error "haproxy -c emitted warnings in pod $pod:"
+            printf '%s\n' "$output" >&2
+            die "Default chart generated an HAProxy configuration with warnings" 8
+        fi
+    done
+
+    ok "haproxy -c is clean on all ${#pods[@]} HAProxy replicas"
 }
 
 #------------------------------------------------------------------------------
@@ -732,6 +771,7 @@ main() {
     # Verify certificates BEFORE waiting for pods - pods need the cert secrets to start
     verify_certificates
     wait_for_pods
+    verify_haproxy_configs_warning_free
     # Start port-forward for smoke tests (more reliable than NodePort in DinD)
     start_port_forward
     smoke_test_http

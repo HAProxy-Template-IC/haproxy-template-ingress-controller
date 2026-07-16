@@ -164,13 +164,13 @@ There is no separate global OCSP configuration — the per-certificate option is
 
 ### Restricting frontend TLS versions and ciphers
 
-The client-facing HTTPS listener inherits HAProxy's default cipher list and protocol versions. To harden it, emit `ssl-default-bind-*` directives into the `global` section through a `global-settings-*` snippet (the same [extension point](base.md#extension-points) the base library uses for `tune.ssl.default-dh-param`). These directives set the defaults for every frontend `bind ... ssl` line:
+The client-facing HTTPS listener inherits HAProxy's default cipher list and protocol versions. To harden it, emit `ssl-default-bind-*` directives into the `global` section through a [`global-settings-*` extension point](base.md#extension-points). These directives set the defaults for every frontend `bind ... ssl` line:
 
 ```yaml
 controller:
   config:
     templateSnippets:
-      global-settings-450-tls-hardening:
+      global-settings-400-tls-hardening:
         template: |
           ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305
           ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
@@ -181,7 +181,12 @@ controller:
 - `ssl-default-bind-ciphersuites` sets the cipher suites for TLS 1.3.
 - `ssl-default-bind-options ssl-min-ver TLSv1.2` rejects handshakes below TLS 1.2.
 
-The `450` prefix places the snippet after the built-in `global-settings-400-ssl`, so it doesn't collide with any bundled snippet.
+The bundled community HAProxy images use AWS-LC, so HAPTIC doesn't emit
+`tune.ssl.default-dh-param`: HAProxy doesn't support that setting with AWS-LC
+and warns that the directive was ignored. If a custom OpenSSL build must
+support finite-field Diffie-Hellman-only clients, add `ssl-dh-param-file` (preferred) or
+`tune.ssl.default-dh-param` in another `global-settings-*` snippet.
+Elliptic-curve Diffie-Hellman and TLS 1.3 key exchange are unaffected.
 
 !!! warning "These harden the client-facing listener, not the backend"
     `ssl-default-bind-*` directives apply to the frontend — traffic between clients and HAProxy. They don't affect TLS between HAProxy and your upstream pods. Backend TLS ciphers and versions are set per route with annotations instead: the default [haptic-annotations](haptic-annotations.md) library exposes `haproxy-haptic.org/backend-ciphers` / `backend-ciphersuites` / `backend-ssl-protocols`; the opt-in vendor libraries name the same thing as `nginx.ingress.kubernetes.io/proxy-ssl-ciphers` / `proxy-ssl-protocols` or haproxy-ingress `ssl-ciphers-backend`.

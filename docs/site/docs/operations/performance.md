@@ -276,7 +276,6 @@ global
     maxconn {{ fallback(maxconn, 2000) }}
     nbthread {{ fallback(nbthread, 4) }}
     tune.bufsize {{ fallback(bufsize, 16384) }}
-    tune.ssl.default-dh-param 2048
 
 defaults
     timeout connect 5s

@@ -2503,7 +2503,8 @@ test-ingress-conformance:
     expire_in: 1 week
 
 # Helm chart default values test with cert-manager
-# Verifies that the chart works out-of-the-box with default values when cert-manager is installed
+# Verifies that the chart works out-of-the-box with default values when
+# cert-manager is installed, including a warning-free live `haproxy -c` check.
 test-helm-defaults:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
@@ -2572,7 +2573,7 @@ test-helm-defaults:
       # Load test image into kind cluster
       kind load docker-image ${TEST_IMAGE} --name ${CLUSTER_NAME}
   script:
-    - ./scripts/test-helm-defaults.sh --image "${TEST_IMAGE}"
+    - make test-helm-defaults HELM_DEFAULTS_IMAGE="${TEST_IMAGE}"
   after_script:
     - |
       if [ "$CI_JOB_STATUS" = "failed" ]; then
