@@ -8,6 +8,9 @@
 # Reload-free: the key→consumer map is delivered as an HAProxyMapFile, so keys
 # can be added/rotated via the runtime map API without an HAProxy reload — the
 # strongest reload-free story in the API-gateway feature set.
+# Missing Secrets fail closed per route with 503 until the watch cache observes
+# the Secret; a propagation race must never disable authentication or make the
+# rendered config reference a map that was not registered.
 #
 # Secret format (data key `keys`, base64-encoded): one entry per line, either a
 # bare `<apikey>` (the key is its own consumer id) or `<apikey>:<consumer>`.
@@ -36,7 +39,7 @@ templateSnippets:
             {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_apikey_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
             {%- var secret, _ = secretAny.(*resources.secrets.T) %}
             {%- if secret == nil %}
-      # WARNING haproxy-haptic.org/api-key-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ key }} not found at render time; skipping API-key auth for this Ingress.
+      # WARNING haproxy-haptic.org/api-key-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ key }} not found at render time; failing closed (503) for this route until it is present.
             {%- else %}
               {%- var keysData = secret.Data["keys"] | b64decode() | tostring() %}
               {%- if keysData == "" %}
@@ -121,8 +124,14 @@ templateSnippets:
             {%- fetch = "req.hdr(" + h + ")" %}
           {%- end %}
           {%- var mapName = "haptic-apikeys-" + secretNs + "-" + secretName + ".map" %}
-          {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
+          {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_apikey_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
+          {%- var secret, _ = secretAny.(*resources.secrets.T) %}
       # haptic/api-key ({{ key }})
+          {%- if secret == nil %}
+      # WARNING haproxy-haptic.org/api-key-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      http-request deny deny_status 503
+          {%- else %}
+            {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
       http-request set-var(txn.haptic_apikey) {{ fetch }}
       http-request deny deny_status 401 unless { var(txn.haptic_apikey),map({{ mapPath }}) -m found }
       http-request set-var(txn.haptic_consumer) var(txn.haptic_apikey),map({{ mapPath }}) unless { var(txn.haptic_consumer) -m found }
@@ -130,6 +139,7 @@ templateSnippets:
           {%- if consumerHdr != "" %}
             {%- var ch = ValidateConfigValue(consumerHdr, "haproxy-haptic.org/api-key-consumer-header", key, false) %}
       http-request set-header {{ ch }} %[var(txn.haptic_consumer)] if { var(txn.haptic_consumer) -m found }
+          {%- end %}
           {%- end %}
         {%- end %}
       {%- end -%}

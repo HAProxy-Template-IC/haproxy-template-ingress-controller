@@ -53,3 +53,37 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Consumer-ID %\\[var\\(txn.haptic_consumer\\)\\] if \\{ var\\(txn.haptic_consumer\\) -m found \\}"
+
+  test-haptic-api-key-missing-secret-fails-closed:
+    description: >-
+      An API-key-protected route fails closed with 503 while its Secret is
+      absent from the watch cache and never references an unregistered map.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: api-ingress-missing-secret
+            annotations:
+              haproxy-haptic.org/api-key-secret: "not-observed-yet"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: api-missing.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "WARNING haproxy-haptic.org/api-key-secret: Secret 'default/not-observed-yet'.*failing closed \\(503\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 503"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "haptic-apikeys-default-not-observed-yet\\.map"
