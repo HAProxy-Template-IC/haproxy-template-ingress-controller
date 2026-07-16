@@ -370,7 +370,7 @@ templateSnippets:
             {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_cg_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
             {%- var secret, _ = secretAny.(*resources.secrets.T) %}
             {%- if secret == nil %}
-      # WARNING haproxy-haptic.org/consumer-groups-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ key }} not found at render time; skipping consumer-group map for this Secret.
+      # WARNING haproxy-haptic.org/consumer-groups-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ key }} not found at render time; failing closed (503) for this route until it is present.
             {%- else %}
               {%- var groupsData = secret.Data["groups"] | b64decode() | tostring() %}
               {%- if strip(groupsData) == "" %}
@@ -446,10 +446,17 @@ templateSnippets:
             {%- end %}
           {%- end %}
           {%- var mapName = "haptic-consumer-groups-" + secretNs + "-" + secretName + ".map" %}
-          {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
           {%- if len(groups) > 0 %}
+            {%- var secretAny, _ = shared.ComputeIfAbsent("haptic_cg_secret:" + secretNs + "/" + secretName, func() any { return resources.secrets.GetSingle(secretNs, secretName) }) %}
+            {%- var secret, _ = secretAny.(*resources.secrets.T) %}
       # haptic/consumer-groups ({{ key }})
+            {%- if secret == nil %}
+      # WARNING haproxy-haptic.org/consumer-groups-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      http-request deny deny_status 503
+            {%- else %}
+              {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
       http-request deny deny_status 403 unless { var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ groups | toStringSlice() | join(" ") }} }
+            {%- end %}
           {%- end %}
         {%- end %}
       {%- end -%}

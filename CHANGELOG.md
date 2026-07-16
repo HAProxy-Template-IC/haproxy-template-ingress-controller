@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- **Security:** API-key authentication and consumer-group authorization now fail closed with `503` while their referenced Secrets are absent from the controller watch cache. Previously each map producer skipped a missing Secret while its backend directive still referenced the unregistered map, rejecting an Ingress during Secret propagation races instead of admitting a fail-closed route.
 - EndpointSlices that do not expose a Service's requested named target port are no longer rendered as HAProxy servers using the Service port; this prevents unrelated pods matched by a broad Service selector from receiving application traffic.
 - The default HAProxy bootstrap configuration now applies the same configurable `extraContext.hardStopAfter` drain bound as the controller-rendered configuration, so the initial worker cannot remain stuck after the first reload.
 - The bundled SPOA hub was updated to v0.7.4 so removing Coraza or another native plugin during a config reload no longer crashes the sidecar with SIGSEGV / exit 139 during `dlclose`; retired plugin instances are still drained and destroyed, while native library mappings remain safe for the process lifetime.

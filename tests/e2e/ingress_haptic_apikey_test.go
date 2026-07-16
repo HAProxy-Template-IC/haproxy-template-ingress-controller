@@ -24,6 +24,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/klient"
+	"sigs.k8s.io/e2e-framework/pkg/envconf"
+	"sigs.k8s.io/e2e-framework/pkg/features"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
@@ -85,6 +87,64 @@ func TestHapticAPIKey(t *testing.T) {
 	})
 }
 
+// TestHapticAPIKeyMissingSecretFailsClosed verifies that an Ingress can be
+// admitted before its referenced Secret reaches the controller's watch cache
+// without opening the protected route or producing an internally inconsistent
+// HAProxyCfg. The route must fail closed while the Secret is absent and recover
+// automatically after the Secret is created.
+func TestHapticAPIKeyMissingSecretFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	const host = "ingress-haptic-apikey-secret-race.localdev.me"
+	var namespace string
+
+	feature := features.New("Ingress: HAPTIC API-key auth fails closed until Secret exists").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			namespace = NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, namespace)
+			backend := NewEchoServerBackend(ctx, t, client, namespace)
+
+			// Deliberately create the Ingress before api-keys. Admission must
+			// succeed, but the generated route must not reference a missing map.
+			NewIngress(ctx, t, client, namespace, IngressSpec{
+				Name:           "echo",
+				Host:           host,
+				BackendService: backend.Service,
+				BackendPort:    backend.Port,
+				Annotations: map[string]string{
+					"haproxy-haptic.org/api-key-secret":          "api-keys",
+					"haproxy-haptic.org/api-key-header":          "X-API-Key",
+					"haproxy-haptic.org/api-key-consumer-header": "X-Consumer-ID",
+				},
+			})
+			return ctx
+		}).
+		Assess("missing Secret fails closed with 503", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
+			httpclient.New(t).GET(host, "/").WithHeader("X-API-Key", "apikey-abc123").
+				ExpectStatus(t, http.StatusServiceUnavailable)
+			return ctx
+		}).
+		Assess("creating Secret restores authenticated traffic", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			mustCreateSecret(ctx, t, client, namespace, "api-keys", map[string][]byte{
+				"keys": []byte("apikey-abc123:alice\n"),
+			})
+
+			httpclient.New(t).GET(host, "/").WithHeader("X-API-Key", "apikey-abc123").
+				ExpectEchoHeader(t, "X-Consumer-ID", "alice")
+			return ctx
+		})
+
+	testEnv.Test(t, feature.Feature())
+}
+
 // TestHapticConsumerGroups verifies consumer-group authorization (64-gateway-
 // security.yaml): after API-key auth establishes the consumer, the route only
 // admits consumers whose group is in allowed-consumer-groups (deny 403 otherwise).
@@ -123,4 +183,64 @@ func TestHapticConsumerGroups(t *testing.T) {
 			},
 		},
 	})
+}
+
+// TestHapticConsumerGroupsMissingSecretFailsClosed covers the same
+// informer-propagation boundary for the authorization map: both authentication
+// and authorization must remain closed until every referenced Secret exists,
+// then recover without recreating the Ingress.
+func TestHapticConsumerGroupsMissingSecretFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	const host = "ingress-haptic-consumergroups-secret-race.localdev.me"
+	var namespace string
+
+	feature := features.New("Ingress: HAPTIC consumer groups fail closed until Secret exists").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			namespace = NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, namespace)
+			backend := NewEchoServerBackend(ctx, t, client, namespace)
+			mustCreateSecret(ctx, t, client, namespace, "api-keys", map[string][]byte{
+				"keys": []byte("apikey-abc123:alice\n"),
+			})
+
+			// Deliberately leave the consumer-groups Secret absent.
+			NewIngress(ctx, t, client, namespace, IngressSpec{
+				Name:           "echo",
+				Host:           host,
+				BackendService: backend.Service,
+				BackendPort:    backend.Port,
+				Annotations: map[string]string{
+					"haproxy-haptic.org/api-key-secret":          "api-keys",
+					"haproxy-haptic.org/api-key-header":          "X-API-Key",
+					"haproxy-haptic.org/consumer-groups-secret":  "groups",
+					"haproxy-haptic.org/allowed-consumer-groups": "admins",
+				},
+			})
+			return ctx
+		}).
+		Assess("missing groups Secret fails closed with 503", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
+			httpclient.New(t).GET(host, "/").WithHeader("X-API-Key", "apikey-abc123").
+				ExpectStatus(t, http.StatusServiceUnavailable)
+			return ctx
+		}).
+		Assess("creating groups Secret restores authorized traffic", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			mustCreateSecret(ctx, t, client, namespace, "groups", map[string][]byte{
+				"groups": []byte("alice:admins\n"),
+			})
+
+			httpclient.New(t).GET(host, "/").WithHeader("X-API-Key", "apikey-abc123").
+				ExpectStatus(t, http.StatusOK)
+			return ctx
+		})
+
+	testEnv.Test(t, feature.Feature())
 }

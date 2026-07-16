@@ -113,3 +113,38 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "requires BOTH"
+
+  test-haptic-consumer-groups-missing-secret-fails-closed:
+    description: >-
+      Consumer-group authorization fails closed with 503 while its Secret is
+      absent from the watch cache and never references an unregistered map.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cg-missing-secret
+            annotations:
+              haproxy-haptic.org/consumer-groups-secret: "not-observed-yet"
+              haproxy-haptic.org/allowed-consumer-groups: "admins"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cg-missing.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "WARNING haproxy-haptic.org/consumer-groups-secret: Secret 'default/not-observed-yet'.*failing closed \\(503\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 503"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "haptic-consumer-groups-default-not-observed-yet\\.map"
