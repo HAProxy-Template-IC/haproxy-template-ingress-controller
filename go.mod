@@ -11,7 +11,7 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.19.0
 	github.com/oapi-codegen/oapi-codegen/v2 v2.7.2
-	github.com/oapi-codegen/runtime v1.5.0
+	github.com/oapi-codegen/runtime v1.6.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
