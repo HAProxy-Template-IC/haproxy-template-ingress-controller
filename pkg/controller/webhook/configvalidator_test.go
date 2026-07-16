@@ -19,6 +19,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -26,6 +27,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
@@ -47,6 +49,29 @@ func newConfigValidatorForTest(t *testing.T) *ConfigValidator {
 			Logger: testutil.NewTestLogger(),
 		}),
 		StoreProvider: stubProvider{},
+	})
+}
+
+func TestValidationTestsAdmissionBudget(t *testing.T) {
+	t.Run("uses suite-size-scaled load-gate budget without parent deadline", func(t *testing.T) {
+		assert.Equal(t, validator.SuiteRunBudget(316), validationTestsAdmissionBudget(context.Background(), 316))
+	})
+
+	t.Run("caps suite budget to remaining configurable admission deadline", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		budget := validationTestsAdmissionBudget(ctx, 316)
+		assert.Positive(t, budget)
+		assert.LessOrEqual(t, budget, 5*time.Second)
+		assert.Less(t, budget, validator.SuiteRunBudget(316))
+	})
+
+	t.Run("expired admission deadline produces an immediately expired budget", func(t *testing.T) {
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+
+		assert.LessOrEqual(t, validationTestsAdmissionBudget(ctx, 1), time.Duration(0))
 	})
 }
 

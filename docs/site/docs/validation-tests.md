@@ -9,7 +9,7 @@ Beyond running the controller (`haptic-controller run`), the controller binary p
 !!! note "Tests also run automatically before deployment"
     The same suite runs at two gates besides the CLI, so a config whose tests fail never reaches HAProxy:
 
-    - **Admission** — the validating webhook runs a `HAProxyTemplateConfig`'s `validationTests` on every CREATE and UPDATE and rejects the change if any test fails, so a failing config never lands in the cluster. (This webhook is `failurePolicy: Ignore`; if the suite can't finish within its admission budget, it admits with a warning and defers to the load gate below.)
+    - **Admission** — the validating webhook runs a `HAProxyTemplateConfig`'s `validationTests` on every CREATE and UPDATE and rejects the change if any test fails, so a failing config never lands in the cluster. The suite uses the same size-scaled budget as the load gate, capped by the time left after schema bootstrap and prospective rendering in `webhook.haproxyTemplateConfig.timeoutSeconds`. This webhook is `failurePolicy: Ignore`; if the suite still can't finish before that deadline, it admits with a warning and defers to the load gate below.
     - **Config load** — the controller re-runs the suite whenever it loads a config. A live update whose tests fail is refused and the last-good config keeps serving; at startup, a failing initial config crash-loops the pod rather than serving untested config.
 
     The `validate` CLI, the webhook, and the load gate run the identical suite through the same runner, so a passing local `validate` run predicts a clean admission and load.
