@@ -229,8 +229,10 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
         --set controller.templateLibraries.haproxytech.enabled=true \
         --set controller.templateLibraries.haproxyIngress.enabled=true \
         --set controller.templateLibraries.nginxIngress.enabled=true \
+        --set controller.cache.varnish.enabled=true \
         --set controller.rateLimit.shared.enabled=true \
         --set controller.rateLimit.store.enabled=true \
+        --set spoaHub.plugins.coraza.enabled=true \
         | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > "$RATE_LIMIT_CONFIG"; then
         echo -e "${RED}Error: Failed to render shared rate-limit Helm profile${NC}" >&2
@@ -239,6 +241,8 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
     for TEST in \
         test-haptic-rate-limit-shared-ip \
         test-haptic-rate-limit-shared-exact-consumer \
+        test-haptic-cache-shared-rate-limit-loopback \
+        test-haptic-cache-autoscaling \
         test-haptic-rate-limit-shared-invalid-requests \
         test-haptic-rate-limit-shared-invalid-period-zero; do
         echo -e "${YELLOW}Shared rate-limit profile: ${TEST}...${NC}" >&2

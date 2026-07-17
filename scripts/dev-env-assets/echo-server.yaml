@@ -1,6 +1,6 @@
 # echo-server: stateless backend used as the upstream for routing tests.
 #
-# Image: jmalloc/echo-server (well-known echo-style HTTP server that
+# Image: ealen/echo-server (well-known echo-style HTTP server that
 # returns the incoming request as JSON, including headers and body).
 # Used by both the e2e test suite (tests/e2e) and the dev-env script
 # (scripts/start-dev-env.sh). Identical to what start-dev-env.sh applies
@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
         - name: server
-          image: ealen/echo-server:latest
+          image: ealen/echo-server@sha256:ec8a6e95890df937a1eb5fafca033a32172d4f43c1fea1f302931d5f230a137f
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80

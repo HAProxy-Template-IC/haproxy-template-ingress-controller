@@ -80,9 +80,9 @@ controller:
   # These are the ports the controller container listens on
   # Services and health probes reference these by name
   ports:
-    healthz: 8080 # Health check endpoint
-    metrics: 9090 # Prometheus metrics endpoint
-    webhook: 9443 # Admission webhook HTTPS endpoint
+    healthz: 8080  # Health check endpoint
+    metrics: 9090  # Prometheus metrics endpoint
+    webhook: 9443  # Admission webhook HTTPS endpoint
   # Template libraries. Merge order is fixed in templates/_libraries.tpl
   # (haptic.mergeLibraries). Merge-order docs and per-library references:
   # https://haproxy-haptic.org/docs/dev/template-libraries/
@@ -176,6 +176,12 @@ controller:
           memory: 384Mi
         limits:
           memory: 384Mi
+      # Keep at least one cache shard serving during voluntary disruptions.
+      # The workload also prefers one shard per node, while remaining usable
+      # on single-node clusters.
+      podDisruptionBudget:
+        enabled: true
+        maxUnavailable: 1
       # Bounded-load consistent hashing: cap any one shard's share to this factor
       # of the mean (prevents a hot key pinning a pod). 0 disables.
       hashBalanceFactor: 150
@@ -399,9 +405,9 @@ controller:
         kind: Issuer
         # group: cert-manager.io  # Optional, defaults to cert-manager.io
       # Certificate validity duration (default: 1 year for self-signed)
-      duration: 8760h # 1 year
+      duration: 8760h  # 1 year
       # Renew certificate when this much time is left (default: 30 days)
-      renewBefore: 720h # 30 days
+      renewBefore: 720h  # 30 days
     #
     # Manual certificate management
     # Set certManager.enabled=false and create the TLS Secret externally
@@ -461,7 +467,7 @@ controller:
     # Complies with Pod Security Standards (PSS) Restricted profile
     podSecurityContext:
       runAsNonRoot: true
-      runAsUser: 65532 # nonroot user
+      runAsUser: 65532  # nonroot user
       runAsGroup: 65532
       fsGroup: 65532
       seccompProfile:
@@ -502,7 +508,7 @@ controller:
     # The Secret is automatically created by the Helm chart
     credentialsSecretRef:
       # Name will be set by the template to: {{ include "haptic.fullname" . }}-credentials
-      name: "" # Will be filled in by Helm template
+      name: ""  # Will be filled in by Helm template
       # Namespace defaults to Release.Namespace if not specified
     podSelector:
       matchLabels:
@@ -554,7 +560,7 @@ controller:
         retryPeriod: 5s
     dataplane:
       # Port is defined in haproxy.ports.dataplane and referenced here
-      port: 5555 # Must match haproxy.ports.dataplane value
+      port: 5555  # Must match haproxy.ports.dataplane value
       # Minimum time between reload-inducing (structural) deployments.
       # A new or changed Ingress / Gateway route reloads HAProxy at most
       # once per this interval; bursts coalesce (latest-wins) into the
@@ -607,7 +613,7 @@ controller:
     # Template rendering settings
     # extraContext provides custom variables available to all templates
     templatingSettings:
-      engine: scriggo # Template engine: "scriggo" (Go templates)
+      engine: scriggo  # Template engine: "scriggo" (Go templates)
       extraContext:
         # Enable debug headers in HAProxy responses
         # When enabled, HAProxy adds headers like X-HAProxy-Backend, X-Gateway-Matched-Route
@@ -766,9 +772,9 @@ webhook:
       kind: Issuer
       # group: cert-manager.io  # Optional, defaults to cert-manager.io
     # Certificate validity duration (default: 1 year)
-    duration: 8760h # 1 year
+    duration: 8760h  # 1 year
     # Renew certificate when this much time is left (default: 30 days)
-    renewBefore: 720h # 30 days
+    renewBefore: 720h  # 30 days
   # Option 1 (DEFAULT) self-signed cert settings — used when
   # certManager.enabled=false AND caBundle is empty.
   selfSigned:
@@ -777,14 +783,14 @@ webhook:
     # once and reused across upgrades (lookup-based, no churn). For automatic
     # rotation use cert-manager (Option 2). To rotate manually: delete the
     # Secret (webhook.secretName) and run `helm upgrade`.
-    certValidityDays: 3650 # 10 years
+    certValidityDays: 3650  # 10 years
   #
   # Option 3: Manual certificate management
   # Provide base64-encoded CA bundle for the ValidatingWebhookConfiguration and
   # create the cert Secret (webhook.secretName) yourself, with keys tls.crt,
   # tls.key, ca.crt. Only needed if you set certManager.enabled=false AND want
   # to supply your own cert instead of the chart self-signed one.
-  caBundle: "" # Base64-encoded CA certificate
+  caBundle: ""  # Base64-encoded CA certificate
   # Example:
   # caBundle: LS0tLS1CRUdJTi...
 
@@ -1155,10 +1161,10 @@ haproxy:
   # listener-port numbers (80/443) so Gateway listeners on those ports
   # never collide with the chart-static internal binds.
   ports:
-    http: 80 # HTTP frontend
-    https: 443 # HTTPS frontend
-    stats: 8404 # Health/stats page
-    dataplane: 5555 # Dataplane API (for controller communication)
+    http: 80  # HTTP frontend
+    https: 443  # HTTPS frontend
+    stats: 8404  # Health/stats page
+    dataplane: 5555  # Dataplane API (for controller communication)
   # Number of HAProxy replicas
   replicaCount: 2
   # HAProxy image configuration
@@ -1565,8 +1571,8 @@ networkPolicy:
       # http.Fetch() work against cluster services out of the box.
       # Set to [] to lock controller egress down to DNS, the Kubernetes API, and HAProxy pods.
       - to:
-          - namespaceSelector: {} # All namespaces
-          - podSelector: {} # All pods
+          - namespaceSelector: {}  # All namespaces
+          - podSelector: {}  # All pods
             # Example of additional custom rule:
             # - to:
             #     - namespaceSelector:
@@ -1581,7 +1587,7 @@ networkPolicy:
     # IMPORTANT: Enable this if using ServiceMonitor with NetworkPolicy
     # Without this, Prometheus cannot access the metrics endpoint
     monitoring:
-      enabled: false # Set to true when using Prometheus with NetworkPolicy
+      enabled: false  # Set to true when using Prometheus with NetworkPolicy
       # Pod selector for monitoring systems (e.g., Prometheus)
       # Match the labels of your Prometheus pods
       podSelector: {}
@@ -1615,7 +1621,7 @@ networkPolicy:
     # silently fail the selector match → 502s). Both v4 and v6 catch-alls
     # present because ipBlock.cidr is single-family.
     webhook:
-      enabled: true # Automatically enabled when webhook.enabled is true
+      enabled: true  # Automatically enabled when webhook.enabled is true
       from:
         - ipBlock:
             cidr: 0.0.0.0/0

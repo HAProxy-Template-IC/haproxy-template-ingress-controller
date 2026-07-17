@@ -378,7 +378,7 @@ migrationCoverage:
         note: "Shared SPOA limiter burst allowance; positive integer, defaults to rate-limit-requests."
       haproxy-haptic.org/rate-limit-key:
         status: supported
-        note: "Shared SPOA limiter key dimension: ip (default) or consumer (txn.haptic_consumer, falling back to source IP when no consumer is present)."
+        note: "Shared SPOA limiter key dimension: ip (default, dispatched before Coraza for DoS protection) or consumer (dispatched after native auth establishes txn.haptic_consumer, falling back to source IP when absent)."
       haproxy-haptic.org/rate-limit-period:
         status: supported
         note: "Overrides the rate window. For stick-tables, derives from rps/rpm/connections when unset and accepts HAProxy time suffixes; for shared SPOA limiting defaults to 1s and accepts ms/s/m/h/d. Malformed or zero shared periods fail the render."

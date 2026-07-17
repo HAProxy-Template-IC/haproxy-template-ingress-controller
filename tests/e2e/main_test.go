@@ -331,16 +331,19 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 	if err := loadImageIntoKind(ctx, ControllerImageName); err != nil {
 		return ctx, err
 	}
+	// Every non-conformance shard deploys the echo-server fixture. Preload its
+	// pinned image so individual test namespaces never depend on a kind node's
+	// Docker Hub path while their short endpoint-readiness deadline is running.
+	if os.Getenv("HAPTIC_E2E_PROFILE") != "conformance" {
+		if err := pullImageIntoKind(ctx, echoServerImage); err != nil {
+			return ctx, err
+		}
+	}
 	// The cache shard deploys the Varnish tier. Pull the (stock upstream) image
 	// on the host and load it into kind so the StatefulSet doesn't depend on the
 	// kind node reaching Docker Hub (and no rate-limit flakiness in CI).
 	if os.Getenv("HAPTIC_E2E_PROFILE") == "cache" {
-		pull := exec.CommandContext(ctx, "docker", "pull", VarnishImage)
-		pull.Stdout, pull.Stderr = os.Stderr, os.Stderr
-		if err := pull.Run(); err != nil {
-			return ctx, fmt.Errorf("docker pull %s: %w", VarnishImage, err)
-		}
-		if err := loadImageIntoKind(ctx, VarnishImage); err != nil {
+		if err := pullImageIntoKind(ctx, VarnishImage); err != nil {
 			return ctx, err
 		}
 	}
@@ -348,12 +351,7 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 	// for the same reason as the cache shard's Varnish image: deterministic CI
 	// and no dependency on the kind node reaching Docker Hub.
 	if os.Getenv("HAPTIC_E2E_PROFILE") == "rate-limit" {
-		pull := exec.CommandContext(ctx, "docker", "pull", ValkeyImage)
-		pull.Stdout, pull.Stderr = os.Stderr, os.Stderr
-		if err := pull.Run(); err != nil {
-			return ctx, fmt.Errorf("docker pull %s: %w", ValkeyImage, err)
-		}
-		if err := loadImageIntoKind(ctx, ValkeyImage); err != nil {
+		if err := pullImageIntoKind(ctx, ValkeyImage); err != nil {
 			return ctx, err
 		}
 		if os.Getenv("SPOA_TAG") == "" {
@@ -370,6 +368,15 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 		}
 	}
 	return ctx, nil
+}
+
+func pullImageIntoKind(ctx context.Context, image string) error {
+	pull := exec.CommandContext(ctx, "docker", "pull", image)
+	pull.Stdout, pull.Stderr = os.Stderr, os.Stderr
+	if err := pull.Run(); err != nil {
+		return fmt.Errorf("docker pull %s: %w", image, err)
+	}
+	return loadImageIntoKind(ctx, image)
 }
 
 // loadImageIntoKind pipes `docker save <image>` into `ctr image import` inside

@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: shared Varnish cache tier
+templates:
+  - haproxytemplateconfig.yaml
+  - role.yaml
+
+tests:
+  - it: should surface the default Varnish disruption budget in extraContext
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.cache.varnish.enabled: true
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.hapticCachePDBEnabled
+          value: "true"
+      - equal:
+          path: spec.templatingSettings.extraContext.hapticCachePDBMaxUnavailable
+          value: "1"
+
+  - it: should allow disabling the Varnish disruption budget
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      controller.cache.varnish.podDisruptionBudget.enabled: false
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.hapticCachePDBEnabled
+          value: "false"
+
+  - it: should omit the combined cache and rate-limit validation when cache is disabled
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.rateLimit.shared.enabled: true
+    asserts:
+      - notExists:
+          path: spec.validationTests.test-haptic-cache-shared-rate-limit-loopback
+
+  - it: should include the combined cache and rate-limit validation when both are enabled
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      controller.rateLimit.shared.enabled: true
+    asserts:
+      - exists:
+          path: spec.validationTests.test-haptic-cache-shared-rate-limit-loopback
+
+  - it: should keep default-true Varnish disruption budget RBAC for a null block
+    template: role.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      controller.cache.varnish.podDisruptionBudget: null
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: should grant PodDisruptionBudget access when the Varnish budget is enabled
+    template: role.yaml
+    set:
+      controller.cache.varnish.enabled: true
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: should not grant PodDisruptionBudget access when auxiliary budgets are disabled
+    template: role.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      controller.cache.varnish.podDisruptionBudget.enabled: false
+      controller.rateLimit.shared.enabled: false
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

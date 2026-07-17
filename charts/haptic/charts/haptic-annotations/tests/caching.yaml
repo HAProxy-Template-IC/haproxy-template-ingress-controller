@@ -88,6 +88,18 @@ validationTests:
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "cpu: 100m"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "kind: PodDisruptionBudget"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "maxUnavailable: 1"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "podAntiAffinity:"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "topologySpreadConstraints:"
       # The VCL no longer sets a loopback marker header (source-based loop-break).
       - type: not_contains
         target: "k8s:varnish-cache"
@@ -123,6 +135,42 @@ validationTests:
         target: "k8s:varnish-cache"
         pattern: "set resp.http.X-Cache = \"HIT\""
 
+  test-haptic-cache-shared-rate-limit-loopback:
+    _helm_skip_test: '{{ if not (and .Values.controller.cache.varnish.enabled .Values.controller.rateLimit.shared.enabled) }}true{{ end }}'
+    description: >-
+      Cache-miss loopbacks clear the already-consumed shared limit after rule
+      parsing and before SPOE dispatch, so one external request consumes one
+      budget and Varnish pod IPs cannot self-throttle a cold cache.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cache-rate-ingress
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60"
+              haproxy-haptic.org/rate-limit-requests: "100"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cache-rate.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: match_order
+        target: haproxy.cfg
+        description: Varnish loopbacks must clear the parsed limit before shared limiter dispatch
+        patterns:
+          - "http-request set-var\\(txn\\.rl_limit\\)"
+          - "http-request unset-var\\(txn\\.rl_limit\\) if \\{ src,map\\([^)]*haptic-varnish-src\\.map\\) -m found \\}"
+          - "http-request send-spoe-group spoa-hub check-ratelimit-group"
+
   test-haptic-cache-autoscaling:
     description: >-
       With autoscaling enabled, the Varnish tier emits a HorizontalPodAutoscaler
@@ -135,6 +183,7 @@ validationTests:
       hapticCacheMaxReplicas: "9"
       hapticCacheTargetCPU: "65"
       hapticCacheScaleDownWindow: "900"
+      hapticCachePDBEnabled: "false"
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -160,7 +209,7 @@ validationTests:
         pattern: "kind: HorizontalPodAutoscaler"
       - type: contains
         target: "k8s:varnish-cache"
-        pattern: "kind: StatefulSet\\s+name: haptic-varnish-cache"
+        pattern: "kind: StatefulSet\\s+metadata:\\s+name: [^\\s]*varnish-cache"
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "minReplicas: 3"
@@ -177,3 +226,6 @@ validationTests:
       - type: not_contains
         target: "k8s:varnish-cache"
         pattern: "replicas: 2"
+      - type: not_contains
+        target: "k8s:varnish-cache"
+        pattern: "kind: PodDisruptionBudget"

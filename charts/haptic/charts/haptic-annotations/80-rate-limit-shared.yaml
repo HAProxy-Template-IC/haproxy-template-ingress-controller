@@ -19,8 +19,10 @@
 # `controller.rateLimit.store.enabled=true`, or operators can provide their own
 # Redis/Valkey store_url under spoaHub.plugins.rate-limit.params.
 #
-# This fragment only PRODUCES the rate-limit.map that the spoa-hub library's
-# frontend-spoe-filters-150-rate-limit dispatch consumes. Map value is
+# This fragment produces the rate-limit.map that the spoa-hub library parses at
+# frontend priority 020. Source-IP rules dispatch at priority 025 before Coraza;
+# consumer rules dispatch in the selected backend after native authentication.
+# Map value is
 # "<limit> <period_seconds> <burst> <mode> <keyspec>" keyed by <ns>/<name>;
 # the dispatch splits it positionally with field() and ships it as the
 # rate-limit SPOE args. The deny status is always 429 (the standard); the
@@ -89,6 +91,28 @@ templateSnippets:
             {{- fail("Invalid value '" + algo + "' for annotation 'haproxy-haptic.org/rate-limit-algorithm' on Ingress '" + key + "'. Expected 'token-bucket' or 'gcra'.") -}}
           {%- end -%}
       {{ "\n" }}{{ key }} {{ n }} {{ tostring(periodS) }} {{ burst }} {{ mode }} {{ keyspec }}
+        {%- end -%}
+      {%- end -%}
+
+  # Consumer-keyed quotas must run after native API-key/JWT backend rules have
+  # established txn.haptic_consumer. Attach the SPOE filter only to backends
+  # that opt into this key mode, then reuse the same fail-closed dispatcher as
+  # the pre-WAF source-IP path. The source IP remains the documented fallback
+  # for routes without an authenticated consumer identity.
+  backend-directives-807-haptic-shared-rate-limit-consumer:
+    template: |
+      {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}
+      {%- if ingress != nil -%}
+        {%- var requests = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] -%}
+        {%- var keySpec = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] -%}
+        {%- if requests != "" && keySpec == "consumer" -%}
+          {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) -%}
+          {%- var messages = toStringSlice(messagesAny) -%}
+          {%- if messages contains "check-ratelimit" %}
+      # haptic/shared-rate-limit consumer ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
+      filter spoe engine spoa-hub config {{ pathResolver.GetPath("spoe.conf", "file") }}
+      {{ DispatchSharedRateLimit("consumer") }}
+          {%- end -%}
         {%- end -%}
       {%- end -%}
 

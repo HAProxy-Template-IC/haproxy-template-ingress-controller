@@ -104,6 +104,13 @@ spec:
     {{- $_ := set $extraContext "hapticCacheCpuRequest" (dig "requests" "cpu" "100m" $vres | toString) }}
     {{- $_ := set $extraContext "hapticCacheMemRequest" (dig "requests" "memory" "384Mi" $vres | toString) }}
     {{- $_ := set $extraContext "hapticCacheMemLimit" (dig "limits" "memory" "384Mi" $vres | toString) }}
+    {{- $vPDB := $varnish.podDisruptionBudget | default dict }}
+    {{- $vPDBEnabled := true }}
+    {{- if hasKey $vPDB "enabled" }}
+      {{- $vPDBEnabled = $vPDB.enabled }}
+    {{- end }}
+    {{- $_ := set $extraContext "hapticCachePDBEnabled" ($vPDBEnabled | toString) }}
+    {{- $_ := set $extraContext "hapticCachePDBMaxUnavailable" (dig "maxUnavailable" 1 $vPDB | toString) }}
     {{- if $varnish.autoscaling.enabled }}
     {{- $_ := set $extraContext "hapticCacheAutoscalingEnabled" "true" }}
     {{- $_ := set $extraContext "hapticCacheMinReplicas" ($varnish.autoscaling.minReplicas | toString) }}
