@@ -115,8 +115,9 @@ maps:
       # Shared rate-limit per-route rule: <ns>/<name> (resource id) →
       # "limit period burst mode keyspec" (space-separated, always all five).
       # Populated by the haptic-annotations map-rate-limit-* producer; split
-      # positionally in frontend-spoe-filters-150-rate-limit and shipped as the
-      # rate-limit SPOE args. Empty → route isn't rate-limited (SPOE skipped).
+      # positionally in frontend-spoe-filters-020-rate-limit-config. Source-IP
+      # rules dispatch before Coraza; consumer rules dispatch after native auth
+      # in the selected backend. Empty → route isn't rate-limited (SPOE skipped).
       # See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
       {{ render_glob "map-rate-limit-*" -}}
 

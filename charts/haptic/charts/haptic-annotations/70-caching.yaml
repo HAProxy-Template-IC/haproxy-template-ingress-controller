@@ -92,6 +92,23 @@ templateSnippets:
       {%- end %}
 
   # ==========================================================================
+  # Varnish cache misses loop back through HAProxy to reach the original app.
+  # The external request has already consumed its shared-rate-limit budget, so
+  # remove the parsed limit before the priority-025 dispatch for source-verified
+  # Varnish traffic. This prevents every miss from being counted twice and
+  # prevents all clients' misses from self-throttling on one Varnish pod IP.
+  # ==========================================================================
+  frontend-spoe-filters-024-haptic-cache-rate-limit-loopback:
+    template: |
+      {%- var enabled = extraContext | dig("hapticCacheEnabled") | fallback("false") | tostring() %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messages = toStringSlice(messagesAny) %}
+      {%- if enabled == "true" && (messages contains "check-ratelimit") %}
+        {%- var srcMap, _ = pathResolver.GetPath("haptic-varnish-src.map", "map") %}
+      http-request unset-var(txn.rl_limit) if { src,map({{ srcMap }}) -m found }
+      {%- end %}
+
+  # ==========================================================================
   # Frontend routing: excluded paths go straight to the app; everything else on
   # a cache-enabled route (that isn't a Varnish loopback) goes to varnish_cache.
   # Runs in every frontend after txn.resource_id is set, before the default
@@ -218,6 +235,8 @@ k8sResources:
       {%- var cpuReq = extraContext | dig("hapticCacheCpuRequest") | fallback("100m") | tostring() %}
       {%- var memReq = extraContext | dig("hapticCacheMemRequest") | fallback("384Mi") | tostring() %}
       {%- var memLim = extraContext | dig("hapticCacheMemLimit") | fallback("384Mi") | tostring() %}
+      {%- var pdbEnabled = extraContext | dig("hapticCachePDBEnabled") | fallback("true") | tostring() %}
+      {%- var pdbMaxUnavailable = extraContext | dig("hapticCachePDBMaxUnavailable") | fallback("1") | tostring() %}
       {%- var vcl = "vcl 4.1;\nimport std;\n\nbackend default {\n    .host = \"" + originHost + "\";\n    .port = \"" + originPort + "\";\n}\n\nsub vcl_recv {\n    # When a custom cache key is set (X-Haptic-Cache-Vary), the key already\n    # includes the caller identity, so it is safe to cache Authorization/Cookie\n    # requests too — bypass the builtin pass for idempotent methods. Without a\n    # key, the builtin vcl_recv still passes authenticated/cookie'd requests.\n    if (req.http.X-Haptic-Cache-Vary && (req.method == \"GET\" || req.method == \"HEAD\")) {\n        return (hash);\n    }\n}\n\nsub vcl_hash {\n    if (req.http.X-Haptic-Cache-Vary) {\n        hash_data(req.http.X-Haptic-Cache-Vary);\n    }\n}\n\nsub vcl_backend_response {\n    if (bereq.http.X-Haptic-Cache-Skip-CT && beresp.http.Content-Type && std.strstr(bereq.http.X-Haptic-Cache-Skip-CT, \"|\" + regsub(beresp.http.Content-Type, \";.*$\", \"\") + \"|\")) {\n        set beresp.uncacheable = true;\n        set beresp.ttl = 120s;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Max-Size && beresp.http.Content-Length && std.integer(beresp.http.Content-Length, 0) > std.integer(bereq.http.X-Haptic-Cache-Max-Size, 0)) {\n        set beresp.uncacheable = true;\n        set beresp.ttl = 120s;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-TTL) {\n        if (beresp.http.Set-Cookie || beresp.status != 200) {\n            set beresp.uncacheable = true;\n            set beresp.ttl = 120s;\n            return (deliver);\n        }\n        set beresp.ttl = std.duration(bereq.http.X-Haptic-Cache-TTL + \"s\", 0s);\n        return (deliver);\n    }\n}\n\nsub vcl_deliver {\n    if (obj.hits > 0) {\n        set resp.http.X-Cache = \"HIT\";\n    } else {\n        set resp.http.X-Cache = \"MISS\";\n    }\n}\n" %}
       {%- var vclHash = sha256(vcl) %}
       apiVersion: v1
@@ -280,6 +299,22 @@ k8sResources:
             annotations:
               haproxy-haptic.org/vcl-checksum: "{{ vclHash }}"
           spec:
+            affinity:
+              podAntiAffinity:
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 100
+                    podAffinityTerm:
+                      topologyKey: kubernetes.io/hostname
+                      labelSelector:
+                        matchLabels:
+                          app.kubernetes.io/name: haptic-varnish-cache
+            topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: kubernetes.io/hostname
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic-varnish-cache
             containers:
               - name: varnish
                 image: {{ img }}
@@ -346,5 +381,21 @@ k8sResources:
             # A scale event re-maps ~1/(N±1) of keys to a cold shard; a generous
             # window keeps the HPA from thrashing a warm cache.
             stabilizationWindowSeconds: {{ scaleDownWindow }}
+      {%- end %}
+      {%- if pdbEnabled == "true" %}
+      ---
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: {{ vSvc }}
+        namespace: {{ vNs }}
+        labels:
+          app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        maxUnavailable: {{ pdbMaxUnavailable }}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: haptic-varnish-cache
       {%- end %}
       {%- end %}

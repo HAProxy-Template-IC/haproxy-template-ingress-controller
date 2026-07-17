@@ -153,7 +153,7 @@ spec:
     spec:
       containers:
         - name: server
-          image: ealen/echo-server:latest
+          image: ealen/echo-server@sha256:ec8a6e95890df937a1eb5fafca033a32172d4f43c1fea1f302931d5f230a137f
           imagePullPolicy: IfNotPresent
           env:
             # Set environment variable to distinguish v2 in responses

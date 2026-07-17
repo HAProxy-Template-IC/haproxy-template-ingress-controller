@@ -2,10 +2,40 @@
 #
 # Frontend-scope directives that dispatch into the SPOA hub:
 #   - frontend-filters-100-spoa-hub        (filter spoe directive)
+#   - frontend-spoe-filters-020-rate-limit-config (shared-limit map lookup)
+#   - frontend-spoe-filters-025-rate-limit-ip (pre-WAF source-IP limit)
 #   - frontend-spoe-filters-050-coraza     (WAF dispatch + deny)
 #   - frontend-spoe-filters-100-external-auth (external-auth subrequest)
 
 templateSnippets:
+  # Shared implementation for source-IP and authenticated-consumer rate-limit
+  # dispatch. The caller chooses the key dimension and is responsible for
+  # attaching the SPOE filter to its proxy. Keeping verdict handling here makes
+  # the pre-WAF frontend path and post-auth backend path fail closed identically.
+  util-spoa-rate-limit-dispatch:
+    template: |
+      {% macro DispatchSharedRateLimit(keySpec string) string %}
+      {#- Build <ns>/<name>|<dimension>. Consumer mode uses the identity set by
+          native API-key/JWT backend rules and falls back to source IP when the
+          route has no authenticated identity. -#}
+      http-request set-var(txn.rl_dim) src if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }
+      {%- if keySpec == "consumer" %}
+      http-request set-var(txn.rl_dim) var(txn.haptic_consumer) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str consumer } { var(txn.haptic_consumer) -m found }
+      {%- end %}
+      http-request set-var(txn.rl_key) var(txn.resource_id),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }
+      http-request send-spoe-group spoa-hub check-ratelimit-group if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} }
+      {#- Missing verdicts can happen if the hub/plugin is unavailable or times
+          out. An explicitly limited route fails closed so overload cannot
+          bypass the budget. The plugin's fail_open setting still controls
+          malformed-rule handling inside the plugin. -#}
+      http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } !{ var(txn.hub.rate_limit.allowed) -m found }
+      http-request deny deny_status 429 hdr Retry-After %[var(txn.hub.rate_limit.retry_after)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }
+      {#- http-after-response also covers HAProxy's internally generated 429. -#}
+      http-after-response set-header X-RateLimit-Limit %[var(txn.hub.rate_limit.limit)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }
+      http-after-response set-header X-RateLimit-Remaining %[var(txn.hub.rate_limit.remaining)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }
+      http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }
+      {% end %}
+
   # Request validation passes req.body to SPOE, and HAProxy only exposes bytes
   # currently buffered. The chart validates maxBodyBytes <= this buffer size
   # minus fixed header/rewrite headroom before rendering a config, so the
@@ -25,6 +55,39 @@ templateSnippets:
 
       filter spoe engine spoa-hub config {{ pathResolver.GetPath("spoe.conf", "file") }}
       {{- render_glob "frontend-spoe-filters-*" }}
+      {%- end %}
+
+  # Resolve and parse the packed shared-rate-limit rule before any plugin is
+  # dispatched. Priority 020 lets source-IP limits reject abusive traffic at
+  # 025, before the more expensive Coraza pass at 050. Consumer-keyed limits
+  # reuse these transaction variables later in the selected Ingress backend,
+  # after native API-key/JWT rules have established txn.haptic_consumer.
+  frontend-spoe-filters-020-rate-limit-config:
+    template: |
+      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messages = toStringSlice(messagesAny) %}
+      {%- if messages contains "check-ratelimit" %}
+      {#- One packed map keyed by resource_id -> "limit period burst mode
+          keyspec". Routes without an annotation miss and skip all later
+          rate-limit rules. -#}
+      http-request set-var(txn.rl_cfg) var(txn.resource_id),map({{ pathResolver.GetPath("rate-limit.map", "map") }}) unless { var(txn.rl_cfg) -m found }
+      http-request set-var(txn.rl_limit) var(txn.rl_cfg),field(1,' ') if { var(txn.rl_cfg) -m found }
+      http-request set-var(txn.rl_period) var(txn.rl_cfg),field(2,' ') if { var(txn.rl_cfg) -m found }
+      http-request set-var(txn.rl_burst) var(txn.rl_cfg),field(3,' ') if { var(txn.rl_cfg) -m found }
+      http-request set-var(txn.rl_mode) var(txn.rl_cfg),field(4,' ') if { var(txn.rl_cfg) -m found }
+      http-request set-var(txn.rl_keyspec) var(txn.rl_cfg),field(5,' ') if { var(txn.rl_cfg) -m found }
+      {%- end %}
+
+  # Source-IP limits are the public-edge DoS guard. Run them before Coraza so
+  # rejected floods do not consume WAF CPU. Consumer quotas deliberately run
+  # later in the selected backend because their identity is established there.
+  frontend-spoe-filters-025-rate-limit-ip:
+    template: |
+      {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messages = toStringSlice(messagesAny) %}
+      {%- if messages contains "check-ratelimit" %}
+      {{ DispatchSharedRateLimit("ip") }}
       {%- end %}
 
   # Coraza WAF dispatch. Triggers the check-request SPOE message and
@@ -155,66 +218,15 @@ templateSnippets:
       {{- render_glob "frontend-spoe-set-fail-headers-*" }}{{ "\n" }}
       {%- end %}
 
-  # Shared rate-limit dispatch. Resolves the per-route rule from maps
-  # (populated by the haptic-annotations map-rate-limit-* producers),
-  # builds an opaque bucket key, triggers the rate-limit SPOE group, and
-  # denies 429 on the plugin's verdict. Conditional on `check-ratelimit` being
-  # in the chart's messages union — only emits when the rate-limit plugin
-  # is enabled. Priority 150 runs AFTER external-auth (100), so a route's
-  # consumer identity (txn.haptic_consumer) is resolved before it's used
-  # as a rate-limit key dimension.
-  frontend-spoe-filters-150-rate-limit:
-    template: |
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
-      {%- var messages = toStringSlice(messagesAny) %}
-      {%- if messages contains "check-ratelimit" %}
-      {#- One packed map keyed by resource_id → "limit period burst mode
-          keyspec" (space-separated, always all five fields; populated by the
-          haptic-annotations map-rate-limit-* producer). Split positionally
-          with field(). rl_cfg -m found gates the whole block: routes without
-          a rate-limit annotation are looked up, miss, and skip the roundtrip. -#}
-      http-request set-var(txn.rl_cfg) var(txn.resource_id),map({{ pathResolver.GetPath("rate-limit.map", "map") }}) unless { var(txn.rl_cfg) -m found }
-      http-request set-var(txn.rl_limit) var(txn.rl_cfg),field(1,' ') if { var(txn.rl_cfg) -m found }
-      http-request set-var(txn.rl_period) var(txn.rl_cfg),field(2,' ') if { var(txn.rl_cfg) -m found }
-      http-request set-var(txn.rl_burst) var(txn.rl_cfg),field(3,' ') if { var(txn.rl_cfg) -m found }
-      http-request set-var(txn.rl_mode) var(txn.rl_cfg),field(4,' ') if { var(txn.rl_cfg) -m found }
-      http-request set-var(txn.rl_keyspec) var(txn.rl_cfg),field(5,' ') if { var(txn.rl_cfg) -m found }
-      {#- Build the bucket key <ns>/<name>|<dimension>. Default dimension is
-          the source IP; rate-limit-key: consumer partitions by the resolved
-          consumer identity (txn.haptic_consumer, set by the api-key / jwt
-          fragments) when present, else falls back to source IP. Bounded and
-          reload-free — the keyspec map picks which line wins. -#}
-      http-request set-var(txn.rl_dim) src if { var(txn.rl_limit) -m found }
-      http-request set-var(txn.rl_dim) var(txn.haptic_consumer) if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str consumer } { var(txn.haptic_consumer) -m found }
-      http-request set-var(txn.rl_key) var(txn.resource_id),concat(|,txn.rl_dim) if { var(txn.rl_limit) -m found }
-      http-request send-spoe-group spoa-hub check-ratelimit-group if { var(txn.rl_limit) -m found }
-      {#- Deny 429 when the plugin returned a deny verdict OR when an annotated
-          shared-limit route got no verdict at all. Missing verdicts can happen
-          if the hub/plugin is unavailable or times out; failing closed prevents
-          a DoS bypass of routes whose operator explicitly asked for shared
-          limiting. The plugin's fail_open param still controls bad-rule
-          handling inside the plugin. deny_status takes a literal, so unlike the
-          per-pod limiter this isn't per-route customisable. Retry-After is
-          seconds, RFC 9110. -#}
-      http-request deny deny_status 429 hdr Retry-After 1 if { var(txn.rl_limit) -m found } !{ var(txn.hub.rate_limit.allowed) -m found }
-      http-request deny deny_status 429 hdr Retry-After %[var(txn.hub.rate_limit.retry_after)] if { var(txn.rl_limit) -m found } { var(txn.hub.rate_limit.allowed) -m found } !{ var(txn.hub.rate_limit.allowed) -m bool }
-      {#- Standard rate-limit headers on every rate-limited response,
-          including the internally-generated 429 — hence http-after-response
-          (http-response skips deny-generated replies, per external-auth's
-          fail-headers note above). -#}
-      http-after-response set-header X-RateLimit-Limit %[var(txn.hub.rate_limit.limit)] if { var(txn.rl_limit) -m found } { var(txn.hub.rate_limit.allowed) -m found }
-      http-after-response set-header X-RateLimit-Remaining %[var(txn.hub.rate_limit.remaining)] if { var(txn.rl_limit) -m found } { var(txn.hub.rate_limit.allowed) -m found }
-      http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } { var(txn.hub.rate_limit.allowed) -m found }
-      {%- end %}
-
   # API-gateway request validation. Resolves the per-route schema rule from
   # request-schema.map (populated by haptic-annotations), rejects oversized
   # bodies before the SPOE call, waits for a body only on matching validation
   # routes, sends bounded request bodies to the api-gateway plugin, and fails
   # closed when the plugin denies or returns no verdict.
   #
-  # Priority 200 runs after auth (100) and shared rate-limit (150): cheap
-  # request rejection happens before JSON parsing/schema validation under DoS.
+  # Priority 200 runs after auth (100) and the source-IP shared limiter (025):
+  # cheap public-edge rejection happens before JSON parsing/schema validation
+  # under DoS. Consumer quotas run in the selected backend after native auth.
   frontend-spoe-filters-200-request-validation:
     template: |
       {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}

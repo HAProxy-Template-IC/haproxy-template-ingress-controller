@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -48,8 +49,8 @@ const (
 // hits two HAProxy pod IPs directly from one in-cluster curl pod. A per-pod
 // limiter with the same limit would allow all direct requests; the shared
 // Valkey-backed budget returns 429 once the fleet-wide limit is exhausted. It
-// also deletes the current managed Valkey primary and proves Sentinel failover
-// leaves the shared limiter usable.
+// also proves source-IP rejection runs before Coraza, consumer keys are applied
+// after native authentication, and Sentinel failover leaves limiting usable.
 func TestHapticSharedRateLimit(t *testing.T) {
 	RequireRateLimitProfile(t)
 	t.Parallel()
@@ -58,8 +59,10 @@ func TestHapticSharedRateLimit(t *testing.T) {
 	host := fmt.Sprintf("rl-%d.localdev.me", runID)
 	leaseHost := fmt.Sprintf("rl-lease-%d.localdev.me", runID)
 	failoverHost := fmt.Sprintf("rl-failover-%d.localdev.me", runID)
+	consumerHost := fmt.Sprintf("rl-consumer-%d.localdev.me", runID)
 	readinessHost := fmt.Sprintf("rl-ready-%d.localdev.me", runID)
 	warmupHost := fmt.Sprintf("rl-warmup-%d.localdev.me", runID)
+	consumerSecretName := fmt.Sprintf("rl-consumers-%d", runID)
 
 	const (
 		limit         = 5
@@ -80,6 +83,16 @@ func TestHapticSharedRateLimit(t *testing.T) {
 			ns := NamespaceForTest(ctx, t, client)
 			DumpLogsOnFailure(t, ns)
 			backend := NewEchoServerBackend(ctx, t, client, ns)
+			consumerSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consumerSecretName, Namespace: ns},
+				Type:       corev1.SecretTypeOpaque,
+				StringData: map[string]string{
+					"keys": "key-alice:alice\nkey-bob:bob\n",
+				},
+			}
+			if err := client.Resources(ns).Create(ctx, consumerSecret); err != nil {
+				t.Fatalf("create consumer API-key Secret: %v", err)
+			}
 			ingresses := createSharedRateLimitIngresses(ctx, t, client, ns,
 				IngressSpec{
 					Name:           fmt.Sprintf("echo-shared-ratelimit-%d", time.Now().UnixNano()),
@@ -104,6 +117,8 @@ func TestHapticSharedRateLimit(t *testing.T) {
 						"haproxy-haptic.org/rate-limit-requests": fmt.Sprintf("%d", leaseLimit),
 						"haproxy-haptic.org/rate-limit-period":   "60s",
 						"haproxy-haptic.org/rate-limit-burst":    fmt.Sprintf("%d", leaseLimit),
+						"haproxy-haptic.org/waf":                 "modsecurity",
+						"haproxy-haptic.org/waf-mode":            "deny",
 					},
 				},
 				IngressSpec{
@@ -116,6 +131,21 @@ func TestHapticSharedRateLimit(t *testing.T) {
 						"haproxy-haptic.org/rate-limit-requests":  fmt.Sprintf("%d", failoverLimit),
 						"haproxy-haptic.org/rate-limit-period":    "60s",
 						"haproxy-haptic.org/rate-limit-burst":     fmt.Sprintf("%d", failoverLimit),
+						"haproxy-haptic.org/rate-limit-algorithm": "gcra",
+					},
+				},
+				IngressSpec{
+					Name:           fmt.Sprintf("echo-shared-ratelimit-consumer-%d", time.Now().UnixNano()),
+					Host:           consumerHost,
+					Path:           "/",
+					BackendService: backend.Service,
+					BackendPort:    backend.Port,
+					Annotations: map[string]string{
+						"haproxy-haptic.org/api-key-secret":       consumerSecretName,
+						"haproxy-haptic.org/rate-limit-requests":  "1",
+						"haproxy-haptic.org/rate-limit-period":    "60s",
+						"haproxy-haptic.org/rate-limit-burst":     "1",
+						"haproxy-haptic.org/rate-limit-key":       "consumer",
 						"haproxy-haptic.org/rate-limit-algorithm": "gcra",
 					},
 				},
@@ -161,7 +191,7 @@ func TestHapticSharedRateLimit(t *testing.T) {
 			}
 			podIPs := routableHAProxyPodIPs(ctx, t, client, ns, readinessHost, 2)
 			waitForSharedRateLimitReadyOnPods(ctx, t, ns, warmupHost, podIPs[:2])
-			result := sharedRateLimitBurstAcrossPods(ctx, t, ns, host, podIPs[:2], burstTotal)
+			result := sharedRateLimitBurstAcrossPods(ctx, t, ns, host, podIPs[:2], burstTotal, false)
 			t.Logf("shared rate-limit direct-pod burst: %s", result.String())
 			if result.byTarget["A"] == 0 || result.byTarget["B"] == 0 {
 				t.Fatalf("expected burst to hit both HAProxy pods; got %s", result.String())
@@ -174,7 +204,7 @@ func TestHapticSharedRateLimit(t *testing.T) {
 				!result.headerLimit || !result.headerRemaining || !result.headerReset {
 				t.Fatalf("expected exhausted same-source probe to return 429 with rate-limit headers; got %s", result.String())
 			}
-			leaseResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, leaseHost, podIPs[:2], leaseBurst)
+			leaseResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, leaseHost, podIPs[:2], leaseBurst, true)
 			t.Logf("shared rate-limit lease-mode direct-pod burst: %s", leaseResult.String())
 			if leaseResult.byTarget["A"] == 0 || leaseResult.byTarget["B"] == 0 {
 				t.Fatalf("expected lease-mode burst to hit both HAProxy pods; got %s", leaseResult.String())
@@ -185,12 +215,19 @@ func TestHapticSharedRateLimit(t *testing.T) {
 			}
 			if leaseResult.headerProbeCode != "429" || !leaseResult.headerRetryAfter ||
 				!leaseResult.headerLimit || !leaseResult.headerRemaining || !leaseResult.headerReset {
-				t.Fatalf("expected exhausted lease-mode probe to return 429 with rate-limit headers; got %s", leaseResult.String())
+				t.Fatalf("expected exhausted malicious lease-mode probe to return 429 with rate-limit headers before Coraza could return 403; got %s", leaseResult.String())
+			}
+
+			consumerCodes := probeSharedConsumerRateLimits(ctx, t, ns, consumerHost, podIPs[:2])
+			t.Logf("shared rate-limit authenticated-consumer probes: %v", consumerCodes)
+			if consumerCodes["alice-1"] != "200" || consumerCodes["alice-2"] != "429" ||
+				consumerCodes["bob-1"] != "200" || consumerCodes["bob-2"] != "429" {
+				t.Fatalf("expected independent one-request budgets for authenticated consumers alice and bob; got %v", consumerCodes)
 			}
 
 			deleteManagedRateLimitPrimary(ctx, t, client)
 			waitForSharedRateLimitReadyOnPods(ctx, t, ns, warmupHost, podIPs[:2])
-			failoverResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, failoverHost, podIPs[:2], failoverBurst)
+			failoverResult := sharedRateLimitBurstAcrossPods(ctx, t, ns, failoverHost, podIPs[:2], failoverBurst, false)
 			t.Logf("shared rate-limit after Valkey primary failover: %s", failoverResult.String())
 			if failoverResult.byCode["200"] == 0 {
 				t.Fatalf("expected at least one 200 after deleting the managed Valkey primary; got %s", failoverResult.String())
@@ -758,7 +795,14 @@ func (r sharedRateLimitBurstResult) String() string {
 		r.headerProbeCode, r.headerRetryAfter, r.headerLimit, r.headerRemaining, r.headerReset, r.lines)
 }
 
-func sharedRateLimitBurstAcrossPods(ctx context.Context, t *testing.T, namespace, host string, podIPs []string, total int) sharedRateLimitBurstResult {
+func sharedRateLimitBurstAcrossPods(
+	ctx context.Context,
+	t *testing.T,
+	namespace, host string,
+	podIPs []string,
+	total int,
+	wafBlockProbe bool,
+) sharedRateLimitBurstResult {
 	t.Helper()
 	if len(podIPs) < 2 {
 		t.Fatalf("need at least two HAProxy pod IPs, got %v", podIPs)
@@ -777,16 +821,20 @@ func sharedRateLimitBurstAcrossPods(ctx context.Context, t *testing.T, namespace
 			`code=$(curl -s --max-time 5 -o /dev/null -H "Host: %s" -w "%%{http_code}" http://%s:80/); echo "%s $code"; `,
 			host, ip, label)
 	}
+	probeHeader := ""
+	if wafBlockProbe {
+		probeHeader = ` -H "User-Agent: haptic-waf-block-probe"`
+	}
 	fmt.Fprintf(&script, `
 headers=$(mktemp);
-code=$(curl -s --max-time 5 -o /dev/null -D "$headers" -H "Host: %s" -w "%%{http_code}" http://%s:80/);
+code=$(curl -s --max-time 5 -o /dev/null -D "$headers" -H "Host: %s"%s -w "%%{http_code}" http://%s:80/);
 retry_after=$(awk 'BEGIN{v=0} tolower($1)=="retry-after:"{v=1} END{print v}' "$headers");
 limit=$(awk 'BEGIN{v=0} tolower($1)=="x-ratelimit-limit:"{v=1} END{print v}' "$headers");
 remaining=$(awk 'BEGIN{v=0} tolower($1)=="x-ratelimit-remaining:"{v=1} END{print v}' "$headers");
 reset=$(awk 'BEGIN{v=0} tolower($1)=="x-ratelimit-reset:"{v=1} END{print v}' "$headers");
 echo "H $code $retry_after $limit $remaining $reset";
 `,
-		host, podIPs[0])
+		host, probeHeader, podIPs[0])
 
 	podName := fmt.Sprintf("shared-ratelimit-burst-%d", time.Now().UnixNano())
 	kubectlArgs := func(extra ...string) []string {
@@ -861,4 +909,85 @@ echo "H $code $retry_after $limit $remaining $reset";
 			total, len(result.lines), result.String())
 	}
 	return result
+}
+
+// probeSharedConsumerRateLimits proves that consumer-keyed quotas dispatch
+// after native API-key authentication. Both requests originate from one pod;
+// an accidental source-IP fallback would make bob's first request a 429.
+func probeSharedConsumerRateLimits(
+	ctx context.Context,
+	t *testing.T,
+	namespace, host string,
+	podIPs []string,
+) map[string]string {
+	t.Helper()
+	if len(podIPs) < 2 {
+		t.Fatalf("need at least two HAProxy pod IPs, got %v", podIPs)
+	}
+
+	var script strings.Builder
+	script.WriteString("set -eu; ")
+	probes := []struct {
+		label, key, ip string
+	}{
+		{label: "alice-1", key: "key-alice", ip: podIPs[0]},
+		{label: "alice-2", key: "key-alice", ip: podIPs[1]},
+		{label: "bob-1", key: "key-bob", ip: podIPs[1]},
+		{label: "bob-2", key: "key-bob", ip: podIPs[0]},
+	}
+	for _, probe := range probes {
+		fmt.Fprintf(&script,
+			`code=$(curl -s --max-time 5 -o /dev/null -H "Host: %s" -H "X-API-Key: %s" -w "%%{http_code}" http://%s:80/); echo "%s $code"; `,
+			host, probe.key, probe.ip, probe.label)
+	}
+
+	podName := fmt.Sprintf("shared-ratelimit-consumers-%d", time.Now().UnixNano())
+	kubectlArgs := func(extra ...string) []string {
+		return append([]string{"--kubeconfig", kubeconfigPath, "-n", namespace}, extra...)
+	}
+	runCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
+		"run", podName,
+		"--restart=Never",
+		"--image=alpine/curl:latest",
+		"--quiet",
+		"--command", "--",
+		"sh", "-c", script.String(),
+	)...)
+	var runErr bytes.Buffer
+	runCmd.Stderr = &runErr
+	if err := runCmd.Run(); err != nil {
+		t.Fatalf("create shared consumer rate-limit probe pod: %v\nstderr: %s", err, runErr.String())
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = exec.CommandContext(cleanupCtx, "kubectl", kubectlArgs("delete", "pod", podName, "--now", "--ignore-not-found")...).Run()
+	}()
+
+	waitCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs(
+		"wait", "--for=jsonpath={.status.phase}=Succeeded",
+		"pod/"+podName, "--timeout=45s")...)
+	var waitErr bytes.Buffer
+	waitCmd.Stderr = &waitErr
+	if err := waitCmd.Run(); err != nil {
+		t.Fatalf("wait for shared consumer rate-limit probe pod: %v\nstderr: %s", err, waitErr.String())
+	}
+
+	var out, logsErr bytes.Buffer
+	logsCmd := exec.CommandContext(ctx, "kubectl", kubectlArgs("logs", podName)...)
+	logsCmd.Stdout = &out
+	logsCmd.Stderr = &logsErr
+	if err := logsCmd.Run(); err != nil {
+		t.Fatalf("read shared consumer rate-limit probe logs: %v\nstderr: %s", err, logsErr.String())
+	}
+
+	codes := map[string]string{}
+	for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		fields := strings.Fields(raw)
+		if len(fields) != 2 {
+			t.Fatalf("unexpected shared consumer rate-limit probe output %q", raw)
+		}
+		codes[fields[0]] = fields[1]
+	}
+	return codes
 }

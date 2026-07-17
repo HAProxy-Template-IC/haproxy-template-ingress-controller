@@ -63,6 +63,8 @@ templatingSettings:
     hapticCacheReplicas: "2"
     hapticCacheImage: "varnish:7.6"
     hapticCacheMalloc: "256m"                    # -s malloc,<size> (≈75% of the mem limit)
+    hapticCachePDBEnabled: "true"
+    hapticCachePDBMaxUnavailable: "1"
     # Shared request-rate limiting (SPOA rate-limit + optional Valkey store).
     # The chart overrides these from controller.rateLimit.* via
     # templates/haproxytemplateconfig.yaml when enabled.

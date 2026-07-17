@@ -470,7 +470,7 @@ templateSnippets:
   #
   #   - key    (required) — the opaque bucket key. The plugin never
   #     interprets it; identical keys share one limit fleet-wide. The
-  #     chart builds it in frontend-spoe-filters-150-rate-limit as
+  #     chart builds it in the shared rate-limit dispatch as
   #     `<ns>/<name>|<dimension>` so each route gets its own bucket and
   #     the dimension (source IP or consumer) partitions within it. An
   #     empty key makes the plugin fail open (allow, no accounting).
@@ -490,8 +490,8 @@ templateSnippets:
   # (rate_limit.*); HAProxy exposes them under the spoa-hub engine namespace
   # as txn.hub.rate_limit.{allowed (bool), limit, remaining, reset,
   # retry_after (uint32)}. The dispatcher in
-  # frontend-spoe-filters-150-rate-limit denies (429) on !allowed and publishes
-  # the X-RateLimit-* / Retry-After headers.
+  # The source-IP frontend and authenticated-consumer backend dispatchers deny
+  # 429 on !allowed and publish the X-RateLimit-* / Retry-After headers.
   spoe-message-check-ratelimit-body:
     template: |-
       spoe-message check-ratelimit

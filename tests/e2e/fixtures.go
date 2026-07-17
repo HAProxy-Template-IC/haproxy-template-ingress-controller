@@ -144,7 +144,7 @@ var EchoServerBackend = BackendRef{Service: "echo-server", Port: 80}
 // echoServerImage is the upstream image used for routing tests. echo-server
 // returns the incoming request as JSON, which lets assertions check headers
 // and rewritten paths without setting up custom backends.
-const echoServerImage = "ealen/echo-server:latest"
+const echoServerImage = "ealen/echo-server@sha256:ec8a6e95890df937a1eb5fafca033a32172d4f43c1fea1f302931d5f230a137f"
 
 // NewEchoServerBackend deploys an echo-server Deployment + Service into the
 // test namespace and waits for at least one endpoint to be Ready. Returns

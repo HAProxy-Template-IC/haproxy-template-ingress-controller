@@ -1,4 +1,14 @@
 {{- if .Values.rbac.create }}
+{{- $cachePDB := .Values.controller.cache.varnish.podDisruptionBudget | default dict }}
+{{- $cachePDBEnabled := true }}
+{{- if hasKey $cachePDB "enabled" }}
+  {{- $cachePDBEnabled = $cachePDB.enabled }}
+{{- end }}
+{{- $ratePDB := .Values.controller.rateLimit.store.podDisruptionBudget | default dict }}
+{{- $ratePDBEnabled := true }}
+{{- if hasKey $ratePDB "enabled" }}
+  {{- $ratePDBEnabled = $ratePDB.enabled }}
+{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -61,9 +71,9 @@ rules:
     resources: ["statefulsets", "deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   {{- end }}
-  {{- if and .Values.controller.rateLimit.shared.enabled .Values.controller.rateLimit.store.enabled }}
-  # Shared-rate-limit Valkey HA store: the haptic-annotations library emits a
-  # PodDisruptionBudget alongside the Sentinel-managed StatefulSet.
+  {{- if or (and .Values.controller.cache.varnish.enabled $cachePDBEnabled) (and .Values.controller.rateLimit.shared.enabled .Values.controller.rateLimit.store.enabled $ratePDBEnabled) }}
+  # Template-owned auxiliary workloads can emit PodDisruptionBudgets alongside
+  # their Varnish or Sentinel-managed Valkey workloads.
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

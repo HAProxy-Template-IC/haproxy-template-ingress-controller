@@ -1,6 +1,6 @@
 # haptic-annotations library — SHARED rate-limiting validation tests.
 # Covers the map producer (80-rate-limit-shared.yaml) and the spoa-hub
-# dispatch it feeds (frontend-spoe-filters-150-rate-limit).
+# source-IP/frontend and consumer/backend dispatch paths it feeds.
 validationTests:
   test-haptic-rate-limit-shared-ip:
     _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
@@ -15,6 +15,8 @@ validationTests:
             annotations:
               haproxy-haptic.org/rate-limit-requests: "100"
               haproxy-haptic.org/rate-limit-period: "1m"
+              haproxy-haptic.org/waf: modsecurity
+              haproxy-haptic.org/waf-mode: deny
           spec:
             ingressClassName: haptic
             rules:
@@ -47,11 +49,24 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header X-RateLimit-Limit"
+      - type: match_order
+        target: haproxy.cfg
+        description: source-IP rate limiting must reject floods before Coraza spends WAF CPU
+        patterns:
+          - "send-spoe-group spoa-hub check-ratelimit-group if .*txn\\.rl_keyspec.* ip"
+          - "send-spoe-group spoa-hub check-request-group"
 
   test-haptic-rate-limit-shared-exact-consumer:
     _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
     description: rate-limit-algorithm gcra → exact mode; rate-limit-key consumer; burst override
     fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata: { namespace: default, name: api-keys }
+          type: Opaque
+          data:
+            keys: YXBpa2V5LWFiYzEyMzphbGljZQo=
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -63,6 +78,7 @@ validationTests:
               haproxy-haptic.org/rate-limit-burst: "75"
               haproxy-haptic.org/rate-limit-key: "consumer"
               haproxy-haptic.org/rate-limit-algorithm: "gcra"
+              haproxy-haptic.org/api-key-secret: "api-keys"
           spec:
             ingressClassName: haptic
             rules:
@@ -82,6 +98,15 @@ validationTests:
       - type: contains
         target: map:rate-limit.map
         pattern: "default/rl-exact 50 1 75 exact consumer"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "haptic/shared-rate-limit consumer \\(default/rl-exact\\)"
+      - type: match_order
+        target: haproxy.cfg
+        description: consumer quota dispatch must use the identity established by native authentication
+        patterns:
+          - "set-var\\(txn\\.haptic_consumer\\).*haptic-apikeys-default-api-keys\\.map"
+          - "send-spoe-group spoa-hub check-ratelimit-group if .*txn\\.rl_keyspec.* consumer"
 
   test-haptic-rate-limit-shared-invalid-requests:
     _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
