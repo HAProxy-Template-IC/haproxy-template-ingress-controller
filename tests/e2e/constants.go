@@ -53,6 +53,12 @@ const (
 	// share. Deployed once during TestMain.
 	SharedFixturesNamespace = "echo"
 
+	// DefaultHAProxyServiceHTTPPort is the ordinary in-cluster HAProxy
+	// Service port. The cache profile deliberately overrides it so its
+	// NetworkPolicy e2e covers Service-port to container-port translation.
+	DefaultHAProxyServiceHTTPPort = 80
+	CacheHAProxyServiceHTTPPort   = 18080
+
 	// HTTPHostPort is the host-side TCP port the kind cluster exposes for
 	// HAProxy HTTP traffic. Distinct from the dev cluster's 30080 so the
 	// two clusters can coexist on a developer's machine. The chart still
@@ -108,10 +114,26 @@ var ChartHAProxyVersion = func() string {
 // re-tags it with the haproxy-version suffix the chart expects.
 var ControllerImageName = "haptic:test-haproxy" + ChartHAProxyVersion
 
+// ChartHAProxyServiceHTTPPort is the HAProxy Service port installed by the
+// active profile. The cache profile intentionally differs from the pod's port
+// 80 so a passing cache test proves the NetworkPolicy permits the post-Service
+// destination seen by the policy engine.
+var ChartHAProxyServiceHTTPPort = func() int {
+	if os.Getenv("HAPTIC_E2E_PROFILE") == "cache" {
+		return CacheHAProxyServiceHTTPPort
+	}
+	return DefaultHAProxyServiceHTTPPort
+}()
+
 // VarnishImage is the stock upstream Varnish image the shared-cache tier
 // deploys. Must match charts/haptic/values.yaml controller.cache.varnish.image.
 // Loaded into kind by the cache shard so the StatefulSet needn't reach Docker Hub.
-const VarnishImage = "varnish:7.6"
+const VarnishImage = "varnish:7.7"
+
+// VarnishPolicyProbeImage runs the same-namespace NetworkPolicy denial probe.
+// Pin the multi-architecture manifest so a fresh cache shard loads exactly the
+// image its pod requests instead of depending on a mutable tag or a cold pull.
+const VarnishPolicyProbeImage = "alpine/curl@sha256:71597a4f6ac6c7515c77084d2a216aa2f302cd6f9ec311d2f55eb9320f161ce2"
 
 // ValkeyImage is the stock upstream Valkey image the shared-rate-limit tier
 // deploys. Must match charts/haptic/values.yaml controller.rateLimit.store.image.

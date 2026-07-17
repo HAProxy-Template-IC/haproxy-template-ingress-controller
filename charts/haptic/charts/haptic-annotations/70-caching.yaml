@@ -225,7 +225,7 @@ k8sResources:
       {%- var vSvc = extraContext | dig("hapticCacheVarnishService") | fallback("haptic-varnish-cache") | tostring() %}
       {%- var vNs = extraContext | dig("hapticCacheVarnishNamespace") | fallback("default") | tostring() %}
       {%- var vPort = extraContext | dig("hapticCacheVarnishPort") | fallback("6081") | tostring() %}
-      {%- var img = extraContext | dig("hapticCacheImage") | fallback("varnish:7.6") | tostring() %}
+      {%- var img = extraContext | dig("hapticCacheImage") | fallback("varnish:7.7") | tostring() %}
       {%- var replicas = extraContext | dig("hapticCacheReplicas") | fallback("2") | tostring() %}
       {%- var malloc = extraContext | dig("hapticCacheMalloc") | fallback("256m") | tostring() %}
       {%- var workload = extraContext | dig("hapticCacheWorkload") | fallback("statefulset") | tostring() %}
@@ -246,6 +246,7 @@ k8sResources:
         namespace: {{ vNs }}
         labels:
           app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
           app.kubernetes.io/managed-by: haptic
       data:
         default.vcl: |
@@ -258,11 +259,13 @@ k8sResources:
         namespace: {{ vNs }}
         labels:
           app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
           app.kubernetes.io/managed-by: haptic
       spec:
         clusterIP: None
         selector:
           app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
         ports:
           - name: http
             port: {{ vPort }}
@@ -280,6 +283,7 @@ k8sResources:
         namespace: {{ vNs }}
         labels:
           app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
           app.kubernetes.io/managed-by: haptic
       spec:
         {%- if autoscaling != "true" %}
@@ -296,6 +300,7 @@ k8sResources:
           metadata:
             labels:
               app.kubernetes.io/name: haptic-varnish-cache
+              app.kubernetes.io/instance: {{ vSvc }}
             annotations:
               haproxy-haptic.org/vcl-checksum: "{{ vclHash }}"
           spec:
@@ -308,6 +313,7 @@ k8sResources:
                       labelSelector:
                         matchLabels:
                           app.kubernetes.io/name: haptic-varnish-cache
+                          app.kubernetes.io/instance: {{ vSvc }}
             topologySpreadConstraints:
               - maxSkew: 1
                 topologyKey: kubernetes.io/hostname
@@ -315,6 +321,7 @@ k8sResources:
                 labelSelector:
                   matchLabels:
                     app.kubernetes.io/name: haptic-varnish-cache
+                    app.kubernetes.io/instance: {{ vSvc }}
             containers:
               - name: varnish
                 image: {{ img }}
@@ -361,6 +368,7 @@ k8sResources:
         namespace: {{ vNs }}
         labels:
           app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
           app.kubernetes.io/managed-by: haptic
       spec:
         scaleTargetRef:
@@ -391,11 +399,13 @@ k8sResources:
         namespace: {{ vNs }}
         labels:
           app.kubernetes.io/name: haptic-varnish-cache
+          app.kubernetes.io/instance: {{ vSvc }}
           app.kubernetes.io/managed-by: haptic
       spec:
         maxUnavailable: {{ pdbMaxUnavailable }}
         selector:
           matchLabels:
             app.kubernetes.io/name: haptic-varnish-cache
+            app.kubernetes.io/instance: {{ vSvc }}
       {%- end %}
       {%- end %}

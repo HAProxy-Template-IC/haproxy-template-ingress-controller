@@ -108,6 +108,15 @@ app.kubernetes.io/component: loadbalancer
 {{- end }}
 
 {{/*
+Release-scoped name for the managed Varnish cache tier. Keep the suffix in one
+helper so the Helm-owned NetworkPolicies and controller-emitted resources cannot
+drift, and truncate after suffixing to stay within DNS label limits.
+*/}}
+{{- define "haptic.varnish.cacheName" -}}
+{{- printf "%s-varnish-cache" (include "haptic.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "haptic.serviceAccountName" -}}

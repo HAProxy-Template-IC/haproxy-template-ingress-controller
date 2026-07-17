@@ -108,10 +108,11 @@ Outbound, the controller talks to the Kubernetes API server and to each HAProxy 
 
 The Dataplane API is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release `fullname`, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
 
-**The chart already ships default-on `NetworkPolicy` resources** for both the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods — both default `true`. Know what the defaults actually allow before relying on them:
+**The chart already ships default-on `NetworkPolicy` resources** for the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods. Enabling the managed Varnish or Valkey tiers adds release-scoped default-on policies controlled by `controller.cache.varnish.networkPolicy.enabled` and `controller.rateLimit.store.networkPolicy.enabled`. Know what the defaults actually allow before relying on them:
 
 - The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports, **plus a default `networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
 - The HAProxy policy defaults to `allowExternal: true`, which renders a permissive all-port ingress rule — deliberate, because Gateway listeners bind dynamic ports.
+- The Varnish policy admits only same-release HAProxy cache requests and permits egress only to DNS and the same HAProxy HTTP origin. The managed Valkey/Sentinel policy admits only same-release HAProxy/SPOA and store-internal traffic.
 
 To tighten, replace, or debug these policies — including a copy-pastable replacement policy and its selector caveat — see [Networking](./networking.md#replacing-the-shipped-policies). If you keep the debug port enabled, pair it with a NetworkPolicy that restricts ingress to your observability namespace.
 

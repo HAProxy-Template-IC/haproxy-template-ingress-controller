@@ -126,7 +126,7 @@ HAProxy-side response compression, per Ingress.
 
 ### Shared response cache
 
-Routes cache-eligible requests through a chart-deployed, consistent-hash-sharded Varnish tier, so the cache is shared across the whole HAProxy fleet. These annotations take effect only when the tier is enabled (`controller.cache.varnish.enabled`). Per-route behaviour is driven by internal `X-Haptic-Cache-*` headers that HAProxy strips from the client request first, so a client can't influence the cache key or the exclusion rules. Source-verified Varnish cache-miss loopback requests bypass the shared rate limiter because the external request has already consumed its budget; this prevents double counting and cache-cold self-throttling.
+Routes cache-eligible requests through a chart-deployed, consistent-hash-sharded Varnish tier, so the cache is shared across the whole HAProxy fleet. These annotations take effect only when the tier is enabled (`controller.cache.varnish.enabled`). The tier's default-on NetworkPolicy admits cache requests only from the same release's HAProxy pods and limits Varnish egress to DNS plus the same HAProxy HTTP origin; disable `controller.cache.varnish.networkPolicy.enabled` only when replacing it with equivalent isolation. Per-route behaviour is driven by internal `X-Haptic-Cache-*` headers that HAProxy strips from the client request first, so a client can't influence the cache key or the exclusion rules. Source-verified Varnish cache-miss loopback requests bypass the shared rate limiter because the external request has already consumed its budget; this prevents double counting and cache-cold self-throttling.
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|

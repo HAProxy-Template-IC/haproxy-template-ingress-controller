@@ -61,7 +61,7 @@ templatingSettings:
     # Varnish workload shape (chart-overridden from controller.cache.varnish.*).
     hapticCacheWorkload: "statefulset"          # statefulset | deployment
     hapticCacheReplicas: "2"
-    hapticCacheImage: "varnish:7.6"
+    hapticCacheImage: "varnish:7.7"
     hapticCacheMalloc: "256m"                    # -s malloc,<size> (≈75% of the mem limit)
     hapticCachePDBEnabled: "true"
     hapticCachePDBMaxUnavailable: "1"

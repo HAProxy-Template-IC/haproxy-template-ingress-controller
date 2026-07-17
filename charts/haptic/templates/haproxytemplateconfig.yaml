@@ -90,8 +90,15 @@ spec:
          The Varnish loopback origin is the chart's HAProxy Service. */ -}}
   {{- if $controller.cache.varnish.enabled }}
     {{- $varnish := $controller.cache.varnish }}
+    {{- if not .Values.haproxy.enabled }}
+      {{- fail "controller.cache.varnish.enabled=true requires the chart-managed HAProxy workload and Service (haproxy.enabled=true) for cache-miss loopback requests." }}
+    {{- end }}
+    {{- $originServicePort := int (.Values.haproxy.service.http.port | default 0) }}
+    {{- if le $originServicePort 0 }}
+      {{- fail "controller.cache.varnish.enabled=true requires haproxy.service.http.port to be a positive Service port for cache-miss loopback requests." }}
+    {{- end }}
     {{- $_ := set $extraContext "hapticCacheEnabled" "true" }}
-    {{- $_ := set $extraContext "hapticCacheVarnishService" (printf "%s-varnish-cache" (include "haptic.fullname" .)) }}
+    {{- $_ := set $extraContext "hapticCacheVarnishService" (include "haptic.varnish.cacheName" .) }}
     {{- $_ := set $extraContext "hapticCacheVarnishNamespace" .Release.Namespace }}
     {{- $_ := set $extraContext "hapticCacheWorkload" $varnish.workload }}
     {{- $_ := set $extraContext "hapticCacheReplicas" ($varnish.replicas | toString) }}
@@ -99,7 +106,7 @@ spec:
     {{- $_ := set $extraContext "hapticCacheMalloc" $varnish.malloc }}
     {{- $_ := set $extraContext "hapticCacheHashBalanceFactor" ($varnish.hashBalanceFactor | toString) }}
     {{- $_ := set $extraContext "hapticCacheOriginHost" (include "haptic.haproxyFullname" .) }}
-    {{- $_ := set $extraContext "hapticCacheOriginPort" (.Values.haproxy.ports.http | toString) }}
+    {{- $_ := set $extraContext "hapticCacheOriginPort" ($originServicePort | toString) }}
     {{- $vres := $varnish.resources | default dict }}
     {{- $_ := set $extraContext "hapticCacheCpuRequest" (dig "requests" "cpu" "100m" $vres | toString) }}
     {{- $_ := set $extraContext "hapticCacheMemRequest" (dig "requests" "memory" "384Mi" $vres | toString) }}

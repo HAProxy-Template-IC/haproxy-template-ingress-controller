@@ -276,8 +276,9 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 		// back through stdout. The trailing echo also pins the script's
 		// exit status to 0, so individual curl transfer failures show
 		// up only as `000` lines, never as a pod-run error.
+		serviceURL := fmt.Sprintf("http://haptic-haproxy.haptic.svc:%d/", ChartHAProxyServiceHTTPPort)
 		urls := strings.TrimSpace(strings.Repeat(
-			"-o /dev/null http://haptic-haproxy.haptic.svc/ ", total))
+			"-o /dev/null "+serviceURL+" ", total))
 		cmdScript := fmt.Sprintf(
 			`t0=$(cut -d" " -f1 /proc/uptime); `+
 				`curl -s --max-time 5 -H "Host: %s" -w "%%{http_code}\n" %s; `+

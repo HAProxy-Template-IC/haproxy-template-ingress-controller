@@ -2,9 +2,143 @@
 suite: shared Varnish cache tier
 templates:
   - haproxytemplateconfig.yaml
+  - haproxy-networkpolicy.yaml
   - role.yaml
+  - varnish-networkpolicy.yaml
 
 tests:
+  - it: should not render Varnish isolation while the cache tier is disabled
+    template: varnish-networkpolicy.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should isolate Varnish by default when the cache tier is enabled
+    template: varnish-networkpolicy.yaml
+    set:
+      controller.cache.varnish.enabled: true
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/name"]
+          value: haptic-varnish-cache
+      - matchRegex:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/instance"]
+          pattern: ".+-varnish-cache$"
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: 6081
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: haptic
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/component"]
+          value: loadbalancer
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 53
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: kube-system
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["k8s-app"]
+          value: kube-dns
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 80
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: haptic
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/component"]
+          value: loadbalancer
+
+  - it: should keep the release-scoped Varnish name within DNS label limits
+    template: varnish-networkpolicy.yaml
+    release:
+      name: haptic-release-abcdefghijklmnopqrstuvwxyz-123456789
+    set:
+      controller.cache.varnish.enabled: true
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+
+  - it: should allow disabling Varnish isolation explicitly
+    template: varnish-networkpolicy.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      controller.cache.varnish.networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should keep default-true Varnish isolation for a null block
+    template: varnish-networkpolicy.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      controller.cache.varnish.networkPolicy: null
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+
+  - it: should admit release-scoped Varnish loopback traffic in restrictive HAProxy mode
+    template: haproxy-networkpolicy.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      haproxy.networkPolicy.allowExternal: false
+      haproxy.networkPolicy.allowedSources:
+        - ipBlock:
+            cidr: 192.0.2.0/24
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            ports:
+              - port: 80
+                protocol: TCP
+            from:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: haptic-varnish-cache
+                    app.kubernetes.io/instance: RELEASE-NAME-haptic-varnish-cache
+
+  - it: should use the HAProxy Service port for Varnish origin requests
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      haproxy.service.http.port: 18080
+      haproxy.ports.http: 8080
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.hapticCacheOriginPort
+          value: "18080"
+
+  - it: should reject a cache tier without the chart-managed HAProxy origin
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      haproxy.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.cache.varnish.enabled=true requires the chart-managed HAProxy workload and Service (haproxy.enabled=true) for cache-miss loopback requests.
+
+  - it: should reject a cache tier without an HAProxy HTTP Service port
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.cache.varnish.enabled: true
+      haproxy.service.http.port: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: controller.cache.varnish.enabled=true requires haproxy.service.http.port to be a positive Service port for cache-miss loopback requests.
+
   - it: should surface the default Varnish disruption budget in extraContext
     template: haproxytemplateconfig.yaml
     set:

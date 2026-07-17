@@ -17,6 +17,24 @@ By default, the NetworkPolicy allows egress to four targets:
 
 Helm replaces list values wholesale rather than merging them. When you override `kubernetesApi`, you restate the entire list — every `cidr` entry and its `ports` array — because your value fully replaces the default. The examples below are complete on purpose.
 
+When an auxiliary edge tier is enabled, the chart adds a separate default-on
+policy for that tier:
+
+- `controller.cache.varnish.networkPolicy.enabled` admits port 6081 only from
+  the same release's HAProxy pods. Varnish egress is limited to cluster DNS and
+  the same HAProxy pods' HTTP container port for cache-miss loopback requests.
+  The HAProxy policy contains the reciprocal ingress rule, including when
+  `haproxy.networkPolicy.allowExternal` is false.
+- `controller.rateLimit.store.networkPolicy.enabled` admits Valkey and Sentinel
+  only from the same release's HAProxy/SPOA pods and from the managed store pods
+  themselves. Store egress is limited to DNS and store-internal replication,
+  quorum, and failover traffic.
+
+These policies select release-scoped labels, so two HAPTIC releases in one
+namespace don't gain access to each other's cache or limiter tiers. As with all
+Kubernetes NetworkPolicies, enforcement requires a compatible Container Network
+Interface (CNI) plugin.
+
 ## Production hardening
 
 For production, clear the default allow-all egress rule (only needed when templates call `http.Fetch()` against in-cluster services) and restrict Kubernetes API access to the CIDRs your apiserver actually uses:
@@ -74,7 +92,7 @@ networkPolicy:
 
 ## Replacing the shipped policies
 
-Set `networkPolicy.enabled: false` (controller) or `haproxy.networkPolicy.enabled: false` (HAProxy) to manage your own policies. The example below is a narrowed, controller-only variant — the shipped policy's selector matches **every** release pod (name + instance labels, no component discriminator) and therefore also carries the Dataplane port 5555 ingress allowance for the HAProxy pods; if you replace it, cover the HAProxy pods separately:
+Set `networkPolicy.enabled: false` (controller), `haproxy.networkPolicy.enabled: false` (HAProxy), `controller.cache.varnish.networkPolicy.enabled: false` (Varnish), or `controller.rateLimit.store.networkPolicy.enabled: false` (managed Valkey/Sentinel) only for the policies you replace yourself. The example below is a narrowed, controller-only variant — the shipped policy's selector matches **every** release pod (name + instance labels, no component discriminator) and therefore also carries the Dataplane port 5555 ingress allowance for the HAProxy pods; if you replace it, cover the HAProxy pods separately:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
