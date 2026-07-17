@@ -45,7 +45,7 @@ ARG VALE_VERSION=3.15.1
 # renovate: datasource=github-releases depName=goreleaser/goreleaser
 ARG GORELEASER_VERSION=2.17.0
 # renovate: datasource=github-releases depName=sigstore/cosign
-ARG COSIGN_VERSION=3.1.1
+ARG COSIGN_VERSION=3.1.2
 # renovate: datasource=github-releases depName=anchore/syft
 ARG SYFT_VERSION=1.48.0
 # renovate: datasource=github-releases depName=helm/helm versioning=semver allowedVersions=<4
