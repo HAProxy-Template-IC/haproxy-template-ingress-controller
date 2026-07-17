@@ -1,0 +1,57 @@
+{{- $varnish := .Values.controller.cache.varnish }}
+{{- $np := $varnish.networkPolicy | default dict }}
+{{- $npEnabled := true }}
+{{- if hasKey $np "enabled" }}
+  {{- $npEnabled = $np.enabled }}
+{{- end }}
+{{- if and $varnish.enabled .Values.haproxy.enabled $npEnabled }}
+{{- $varnishName := include "haptic.varnish.cacheName" . }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $varnishName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "haptic.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: haptic-varnish-cache
+      app.kubernetes.io/instance: {{ $varnishName }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only this release's HAProxy pods may send cache lookups to Varnish.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "haptic.haproxy.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 6081
+          protocol: TCP
+  egress:
+    # The headless cache Service and HAProxy origin Service are resolved by DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Cache misses may reach only this release's HAProxy HTTP frontend. The
+    # destination port is the pod/container port after Service translation.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "haptic.haproxy.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.haproxy.ports.http }}
+          protocol: TCP
+{{- end }}

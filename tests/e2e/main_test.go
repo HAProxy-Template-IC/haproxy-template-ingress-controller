@@ -346,6 +346,9 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 		if err := pullImageIntoKind(ctx, VarnishImage); err != nil {
 			return ctx, err
 		}
+		if err := pullImageIntoKind(ctx, VarnishPolicyProbeImage); err != nil {
+			return ctx, err
+		}
 	}
 	// The shared rate-limit shard deploys Valkey. Load the stock image into kind
 	// for the same reason as the cache shard's Varnish image: deterministic CI
@@ -682,8 +685,9 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	if cacheProfile {
 		args = append(args,
 			"--set", "controller.cache.varnish.enabled=true",
-			"--set", "controller.cache.varnish.replicas=1")
-		fmt.Fprintln(os.Stderr, "e2e: cache shard — enabling the Varnish cache tier")
+			"--set", "controller.cache.varnish.replicas=1",
+			"--set", fmt.Sprintf("haproxy.service.http.port=%d", ChartHAProxyServiceHTTPPort))
+		fmt.Fprintf(os.Stderr, "e2e: cache shard — enabling Varnish with HAProxy Service port %d and kindnet policy enforcement\n", ChartHAProxyServiceHTTPPort)
 	}
 	// Shared rate-limit shard: deploy Valkey and auto-wire the bundled
 	// rate-limit plugin. TestHapticSharedRateLimit is gated on this profile.

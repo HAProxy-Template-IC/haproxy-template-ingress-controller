@@ -182,6 +182,12 @@ controller:
       podDisruptionBudget:
         enabled: true
         maxUnavailable: 1
+      # Isolate the cache shards from the rest of the cluster. The default
+      # policy admits cache requests only from this release's HAProxy pods and
+      # permits Varnish egress only to DNS and the HAProxy HTTP origin. Effective
+      # only when the cluster CNI enforces NetworkPolicy.
+      networkPolicy:
+        enabled: true
       # Bounded-load consistent hashing: cap any one shard's share to this factor
       # of the mean (prevents a hot key pinning a pod). 0 disables.
       hashBalanceFactor: 150

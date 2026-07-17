@@ -64,6 +64,20 @@ spec:
         {{- end }}
     {{- end }}
 
+    {{- if .Values.controller.cache.varnish.enabled }}
+    # Varnish cache misses loop back through the release's HAProxy HTTP
+    # frontend. This explicit rule keeps that path working in restrictive mode;
+    # the Varnish policy independently limits egress to the same destination.
+    - ports:
+        - port: {{ $ports.http }}
+          protocol: TCP
+      from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: haptic-varnish-cache
+              app.kubernetes.io/instance: {{ include "haptic.varnish.cacheName" . }}
+    {{- end }}
+
     # Allow HAProxy Dataplane API access from controller
     - ports:
         - port: {{ $ports.dataplane }}
