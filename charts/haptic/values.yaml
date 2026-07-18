@@ -1222,7 +1222,7 @@ cache:
     replicas: 2
     # Stock upstream Varnish image — no custom build needed for the loopback
     # topology. Pin to a digest in production.
-    image: varnish:7.7
+    image: varnish:9.0
     imagePullPolicy: IfNotPresent
     # -s malloc,<size> — size at roughly 75% of the pod memory limit (Varnish
     # adds ~1 KB/object of management overhead). OSS Varnish is RAM-only.
