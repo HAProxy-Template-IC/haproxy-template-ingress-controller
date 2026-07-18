@@ -397,16 +397,22 @@ templateSnippets:
   #       unconditional default-on dispatch in frontend-spoe-filters-050-coraza.
   #     "true" is accepted as a no-op (modsecurity-snippet already implies opt-in).
   #
-  # Validation (fail-loud at render time → admission denial):
+  # Validation (route-scoped, like the native library's rejectRoute):
   #   - modsec-snippet contains TOML triple-quote (injection vector — TOML
   #     multi-line basic strings have no escape; """ would let an Ingress-
   #     write RBAC holder break out of the directives string and inject
   #     arbitrary TOML keys).
   #   - enable-modsecurity value other than "true"/"false".
-  #   - modsec-snippet OR enable-modsecurity set without coraza plugin
-  #     enabled in spoaHub.plugins (silent ignore would hide a real
-  #     misconfiguration where the operator wrote per-Ingress WAF
-  #     directives and nothing enforces them).
+  #   - governance denials (allowCustomRules / allowWafDisable) and the
+  #     per-Ingress rule byte/count limits.
+  #   A violation hard-fails ONLY the violating Ingress's own admission
+  #   (admissionSubject match); on any other render the route fails closed
+  #   with 503 (frontend-filters-114 below) plus a Warning Event, so one
+  #   already-present bad Ingress can never wedge unrelated admissions or
+  #   config updates. Still fail() (all modes): annotations present without
+  #   the coraza plugin enabled in spoaHub.plugins — the 503 fail-closed
+  #   machinery itself needs the plugin, and silent ignore would hide a real
+  #   misconfiguration where nothing enforces the declared WAF intent.
   util-nginx-ingress-coraza-scan:
     template: |-
       {%- import "util-waf-governance" for WafGovernance -%}
@@ -442,6 +448,8 @@ templateSnippets:
           // version — exactly what the dryrun-validator should be checking.
           var byKey = map[string]any{}
           var disabledKeys = []any{}
+          var brokenRoutes = []any{}
+          var rejectedKeys = map[string]bool{}
           var firstAnnotationKey = ""
           var firstAnnotationName = ""
           var anyAnnotation = false
@@ -450,17 +458,38 @@ templateSnippets:
             var ns = ingress.Metadata.Namespace
             var name = ingress.Metadata.Name
             var key = ns + "/" + name
+            // Route-scoped rejection, mirroring the native library's
+            // rejectRoute: hard-fail ONLY when this Ingress is the resource
+            // under admission review; otherwise record a Warning Event and
+            // fail the route closed (503 via this library's own
+            // frontend-filters-114 emission) so one already-present bad
+            // Ingress can never wedge an unrelated admission or a config
+            // update. First reason wins.
+            var underAdmission = renderMode == "admission" && tostring(admissionSubject | dig("store") | fallback("")) == "ingresses" && tostring(admissionSubject | dig("namespace") | fallback("")) == ns && tostring(admissionSubject | dig("name") | fallback("")) == name
+            var rejectIngress = func(reason string, message string) {
+              if underAdmission { fail(message) }
+              if rejectedKeys[key] { return }
+              rejectedKeys[key] = true
+              recordEvent(ingress, reason, message)
+              brokenRoutes = append(brokenRoutes, map[string]any{"resourceID": key, "reason": message})
+            }
 
             var snippet = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/modsecurity-snippet"]
             if snippet != "" {
               if !hapticAllowCustomRules {
-                fail("Ingress " + key + " sets 'nginx.ingress.kubernetes.io/modsecurity-snippet', but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
+                rejectIngress("WafPermissionDenied", "Ingress " + key + " sets 'nginx.ingress.kubernetes.io/modsecurity-snippet', but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
               }
               if strings_contains(snippet, "\"\"\"") {
-                fail("Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
+                rejectIngress("WafAnnotationInvalid", "Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
               }
               if len(snippet) > maxCustomRuleBytesPerIngress {
-                fail("Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' is " + tostring(len(snippet)) + " bytes; the configured per-Ingress custom-rule limit is " + tostring(maxCustomRuleBytesPerIngress) + ".")
+                rejectIngress("WafAnnotationInvalid", "Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' is " + tostring(len(snippet)) + " bytes; the configured per-Ingress custom-rule limit is " + tostring(maxCustomRuleBytesPerIngress) + ".")
+              }
+              if byKey[key] == nil && len(byKey) >= maxCustomRuleIngresses {
+                rejectIngress("WafAnnotationInvalid", "Ingress " + key + " exceeds the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named HAPTIC policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
+              }
+              if rejectedKeys[key] {
+                continue
               }
               // coraza-app.map is keyed by <ns>/<name> (resource id), not
               // by <host><path> — see frontend-spoe-filters-050-coraza
@@ -483,7 +512,8 @@ templateSnippets:
             var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-modsecurity"]
             if v == "false" {
               if !hapticAllowWafDisable {
-                fail("Ingress " + key + " disables WAF with 'nginx.ingress.kubernetes.io/enable-modsecurity: false', but the HAPTIC administrator disabled Ingress WAF opt-outs with extraContext.waf.ingressPermissions.allowWafDisable=false.")
+                rejectIngress("WafPermissionDenied", "Ingress " + key + " disables WAF with 'nginx.ingress.kubernetes.io/enable-modsecurity: false', but the HAPTIC administrator disabled Ingress WAF opt-outs with extraContext.waf.ingressPermissions.allowWafDisable=false.")
+                continue
               }
               disabledKeys = append(disabledKeys, key)
               if !anyAnnotation {
@@ -504,12 +534,8 @@ templateSnippets:
                 anyAnnotation = true
               }
             } else if v != "" {
-              fail("Ingress " + key + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"" + v + "\"; allowed values are \"true\" or \"false\".")
+              rejectIngress("WafAnnotationInvalid", "Ingress " + key + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"" + v + "\"; allowed values are \"true\" or \"false\".")
             }
-          }
-
-          if len(byKey) > maxCustomRuleIngresses {
-            fail("nginx-ingress modsecurity-snippet annotations create more than the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named HAPTIC policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
           }
 
           if anyAnnotation && !corazaEnabled {
@@ -523,10 +549,15 @@ templateSnippets:
           var sortedKeys = keys(byKey)
           var modsecApps = []any{}
           for _, k := range sortedKeys {
+            // Under UPDATE admission the overlay can carry base + proposed
+            // versions of one Ingress; if any version was rejected the key
+            // is broken and must not register an app.
+            if rejectedKeys[k] { continue }
             modsecApps = append(modsecApps, byKey[k])
           }
           gf["sphCorazaApps"] = modsecApps
           gf["sphCorazaDisabledKeys"] = disabledKeys
+          gf["sphNginxBrokenRoutes"] = brokenRoutes
           return true
         })
       %%}
@@ -537,6 +568,25 @@ templateSnippets:
   # `var(txn.resource_id),map(...)` (see frontend-spoe-filters-050-coraza in
   # spoa-hub.yaml), so the value sent to the SPOE plugin is the resource id
   # itself.
+  # Fail-closed guard for routes whose nginx-ingress WAF annotations were
+  # rejected on a live render (governance denial, invalid value, or limit).
+  # The admission webhook rejects proposed changes that would introduce
+  # these, so this only covers breakage that pre-dates the webhook (e.g. an
+  # ingress-nginx migration) or raced past it — such routes declared WAF
+  # intent and must fail closed with 503 rather than silently serve with the
+  # annotation ignored. Numbered 114 so it never collides with the native
+  # library's frontend-filters-113 emission in the render_glob.
+  frontend-filters-114-nginx-ingress-waf-fail-closed:
+    template: |-
+      {%- var _ = render "util-nginx-ingress-coraza-scan" -%}
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, entry := range (gf | dig("sphNginxBrokenRoutes") | fallback([]any{}) | toSlice()) -%}
+        {%- var e = entry.(map[string]any) -%}
+      # WARNING nginx-ingress WAF annotations on Ingress {{ e["resourceID"].(string) }}: {{ replace(e["reason"].(string), "\n", " ") }} Failing closed (503) for this route until it is fixed.
+      http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ e["resourceID"].(string) }} }
+      {%- end -%}
+
   map-coraza-app-500-nginx-ingress:
     template: |-
       {%- var _ = render "util-nginx-ingress-coraza-scan" -%}

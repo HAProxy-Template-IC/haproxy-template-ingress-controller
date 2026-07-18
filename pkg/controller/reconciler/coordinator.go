@@ -33,7 +33,7 @@ import (
 // PipelineExecutor defines the interface for executing the render-validate pipeline.
 // This allows mocking in tests.
 type PipelineExecutor interface {
-	Execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) (*pipeline.PipelineResult, error)
+	Execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*pipeline.PipelineResult, error)
 }
 
 const (

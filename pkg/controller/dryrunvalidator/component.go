@@ -33,6 +33,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // ComponentName identifies this validator in log records.
@@ -158,7 +159,47 @@ func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, nam
 		"resource_type", resourceType,
 		"duration_ms", result.DurationMs)
 
+	// Surface template-recorded Warning events as admission warnings so the
+	// operator sees consequences at apply time (kubectl prints them) instead
+	// of only in Events afterwards — e.g. a route that will fail closed with
+	// 503 under the proposed state. PipelineResult is nil on the admitted-
+	// via-baseline path, where no proposed-state render (and no event set)
+	// exists.
+	if pipelineResult != nil {
+		warnings = append(warnings, formatRenderedEventWarnings(pipelineResult.Events)...)
+	}
+
 	return true, "", warnings
+}
+
+// maxEventWarnings bounds how many template-recorded Warning events are
+// surfaced per admission response; the rest collapse into a count so a
+// cluster-wide breakage can't bloat every AdmissionReview.
+const maxEventWarnings = 10
+
+// formatRenderedEventWarnings renders template-recorded Warning events as
+// human-readable admission warning strings, capped at maxEventWarnings.
+func formatRenderedEventWarnings(events []templating.RenderedEvent) []string {
+	var out []string
+	suppressed := 0
+	for _, e := range events {
+		if e.Type != templating.EventTypeWarning {
+			continue
+		}
+		if len(out) >= maxEventWarnings {
+			suppressed++
+			continue
+		}
+		subject := e.Name
+		if e.Namespace != "" {
+			subject = e.Namespace + "/" + e.Name
+		}
+		out = append(out, fmt.Sprintf("%s on %s %s: %s", e.Reason, e.Kind, subject, e.Message))
+	}
+	if suppressed > 0 {
+		out = append(out, fmt.Sprintf("... and %d more warnings (see the Kubernetes Events on the affected resources)", suppressed))
+	}
+	return out
 }
 
 // buildPluggableFiles flattens a pipeline result into the file set the

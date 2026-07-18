@@ -215,7 +215,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 // Returns:
 //   - RenderResult containing the rendered configuration and auxiliary files
 //   - Error if rendering fails
-func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) (*RenderResult, error) {
+func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*RenderResult, error) {
 	startTime := time.Now()
 
 	// Apply render timeout if configured
@@ -226,7 +226,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	}
 
 	// Build rendering context from stores
-	bctx := s.buildRenderingContext(ctx, provider, mode)
+	bctx := s.buildRenderingContext(ctx, provider, mode, extraOpts...)
 	renderContext, fileRegistry := bctx.Context, bctx.FileRegistry
 	statusPatchCollector, renderedResourceCollector := bctx.StatusPatchCollector, bctx.RenderedResourceCollector
 	eventCollector := bctx.EventCollector
@@ -304,7 +304,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 // StoreProvider, resolving the current deployed config, and wiring the HTTP
 // fetcher (whose overlay depends on the provider type); everything else is the
 // Builder's responsibility.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) *rendercontext.BuildResult {
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) *rendercontext.BuildResult {
 	// Snapshot the live stores off the provider. The haproxy-pods store is
 	// separated out by the Builder (WithHAProxyPodStore) into
 	// controller.haproxy_pods; the rest land in `resources`.
@@ -328,6 +328,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		rendercontext.WithTypedResources(s.typedResourceTypes),
 		rendercontext.WithRenderMode(mode),
 	}
+	opts = append(opts, extraOpts...)
 
 	// Add current config if available (for slot preservation). Passing a nil
 	// *StructuredConfig is fine — the Builder omits the key (Scriggo panics on

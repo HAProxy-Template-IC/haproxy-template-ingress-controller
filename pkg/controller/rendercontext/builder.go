@@ -64,6 +64,17 @@ type Builder struct {
 	typedResourceTypes map[string]reflect.Type
 	capabilities       dataplane.Capabilities
 	renderMode         RenderMode
+	admissionSubject   map[string]any
+}
+
+// admissionSubjectOrEmpty returns the subject map for the template context.
+// Always non-nil so templates can `admissionSubject | dig("name")` without a
+// presence check regardless of render mode.
+func (b *Builder) admissionSubjectOrEmpty() map[string]any {
+	if b.admissionSubject == nil {
+		return map[string]any{}
+	}
+	return b.admissionSubject
 }
 
 // RenderMode tells conflict-style template checks whether this render is an
@@ -141,6 +152,26 @@ func WithCapabilities(caps dataplane.Capabilities) Option {
 func WithRenderMode(mode RenderMode) Option {
 	return func(b *Builder) {
 		b.renderMode = mode
+	}
+}
+
+// WithAdmissionSubject identifies the single watched resource under admission
+// review, exposed to templates as the `admissionSubject` map global
+// ({"store", "namespace", "name"}). Route-scoped template checks use it to
+// hard-fail only when the violating route belongs to the resource being
+// admitted; violations on other, already-present resources degrade to
+// warn-and-fail-closed-per-route so one bad existing object can never block
+// an unrelated admission. Resource-agnostic by construction: the subject is
+// the store name plus object identity, never a kind-specific shape. When
+// unset (reconcile renders, config-proposal renders, bulk overlays), Build()
+// emits an empty map so templates can dig() it unconditionally.
+func WithAdmissionSubject(store, namespace, name string) Option {
+	return func(b *Builder) {
+		b.admissionSubject = map[string]any{
+			"store":     store,
+			"namespace": namespace,
+			"name":      name,
+		}
 	}
 }
 
@@ -286,6 +317,7 @@ func (b *Builder) Build() *BuildResult {
 		"dataplane":                 b.config.Dataplane,
 		"capabilities":              CapabilitiesToMap(&b.capabilities),
 		"renderMode":                string(cmp.Or(b.renderMode, RenderModeReconcile)),
+		"admissionSubject":          b.admissionSubjectOrEmpty(),
 		"shared":                    templating.NewSharedContext(),
 		"runtimeEnvironment": &templating.RuntimeEnvironment{
 			GOMAXPROCS: runtime.GOMAXPROCS(0),
@@ -315,10 +347,12 @@ func (b *Builder) Build() *BuildResult {
 	// Merge extraContext variables into top-level context
 	MergeExtraContextInto(templateContext, b.config)
 
-	// renderMode is controller-set, never user-set: re-assert it AFTER the
-	// extraContext merge so a user's extraContext.renderMode can't overwrite the
-	// top-level global and silently flip a webhook render from fail to warn.
+	// renderMode and admissionSubject are controller-set, never user-set:
+	// re-assert them AFTER the extraContext merge so a user's extraContext
+	// can't overwrite the top-level globals and silently flip a webhook
+	// render from fail to warn (or spoof the resource under admission).
 	templateContext["renderMode"] = string(cmp.Or(b.renderMode, RenderModeReconcile))
+	templateContext["admissionSubject"] = b.admissionSubjectOrEmpty()
 
 	if b.config.TemplatingSettings.ExtraContext != nil {
 		b.logger.Debug("Added extra context variables to template context",
