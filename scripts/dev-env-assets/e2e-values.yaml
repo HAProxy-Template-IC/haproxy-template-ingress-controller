@@ -183,6 +183,12 @@ controller:
               - namespace: security
                 name: haptic-waf-policies
                 key: policies.yaml
+            # Keep namespaced self-service authoring enabled in CI so the
+            # enabled path is exercised at the daemon load gate on every e2e
+            # run — a baked test that only holds with self-service off (or
+            # on) fails here instead of in a user's cluster.
+            selfService:
+              enabled: true
 
     # HTTP Store Demo: Block requests based on header values from HTTP-fetched blocklist.
     #
