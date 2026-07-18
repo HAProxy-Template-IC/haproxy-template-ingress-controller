@@ -1281,7 +1281,7 @@ rateLimit:
       # Enabled by default so turning on the shared limiter is production-ready
       # without another hidden opt-in.
       enabled: true
-      image: valkey/valkey:8-alpine
+      image: valkey/valkey:9-alpine
       imagePullPolicy: IfNotPresent
       port: 6379
       # One writable primary with Sentinel failover. Three replicas gives
