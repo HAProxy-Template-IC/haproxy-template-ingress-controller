@@ -445,11 +445,20 @@ templateSnippets:
         Populates `gov` with the administrator's WAF governance state from
         extraContext.waf. Governance activates when a reusable policy
         catalog is configured (inline policies, trusted configMapRefs, or a
-        defaultPolicy) or when dispatch.mode is "default-on". While
-        governance is off every Ingress permission stays permissive
-        (upstream compatibility behavior); once it is on, permissions come
-        from extraContext.waf.ingressPermissions with deny-by-default for
-        everything except allowPolicySelection.
+        defaultPolicy), when dispatch.mode is "default-on", or when
+        namespaced self-service authoring (policies.selfService.enabled) is
+        on. While governance is off every Ingress permission stays
+        permissive (upstream compatibility behavior); once it is on,
+        permissions come from extraContext.waf.ingressPermissions with
+        deny-by-default for everything except allowPolicySelection.
+
+        Self-service keys written to gov (all always set):
+          selfServiceEnabled                  bool
+          selfServiceConfigMapName            string (default "waf-policies")
+          selfServiceKey                      string (default "policies.yaml")
+          selfServiceAllowSecLang             bool (default false)
+          selfServiceMaxPoliciesPerNamespace  int (bounded 1..64, default 4)
+          selfServiceMaxTotalPolicies         int (bounded 1..1024, default 64)
 
         Keys written to gov (all always set):
           governanceEnabled        bool
@@ -486,14 +495,52 @@ templateSnippets:
           if policyRefsAny == nil { policyRefsAny = []any{} }
           var policyRefs, policyRefsOK = policyRefsAny.([]any)
           if !policyRefsOK { fail("extraContext.waf.policies.configMapRefs must be a list.") }
+          var selfServiceAny = policies | dig("selfService")
+          if selfServiceAny == nil { selfServiceAny = map[string]any{} }
+          var selfService, selfServiceOK = selfServiceAny.(map[string]any)
+          if !selfServiceOK { fail("extraContext.waf.policies.selfService must be a map.") }
+          for _, field := range keys(selfService) {
+            if field != "enabled" && field != "configMapName" && field != "key" && field != "allowSecLang" && field != "limits" {
+              fail("extraContext.waf.policies.selfService contains unknown field '" + field + "'. Valid fields: enabled, configMapName, key, allowSecLang, limits.")
+            }
+          }
+          var selfServiceEnabled = false
+          if selfService["enabled"] != nil {
+            var selfServiceEnabledOK = false
+            selfServiceEnabled, selfServiceEnabledOK = selfService["enabled"].(bool)
+            if !selfServiceEnabledOK { fail("extraContext.waf.policies.selfService.enabled must be a boolean.") }
+          }
+          var selfServiceConfigMapName = selfService | dig("configMapName") | fallback("waf-policies") | tostring()
+          if !regex_search(selfServiceConfigMapName, "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$") {
+            fail("extraContext.waf.policies.selfService.configMapName '" + selfServiceConfigMapName + "' is not a valid ConfigMap name.")
+          }
+          var selfServiceKey = selfService | dig("key") | fallback("policies.yaml") | tostring()
+          if !regex_search(selfServiceKey, "^[-._A-Za-z0-9]+$") {
+            fail("extraContext.waf.policies.selfService.key '" + selfServiceKey + "' is not a valid ConfigMap data key.")
+          }
+          var selfServiceAllowSecLang = false
+          if selfService["allowSecLang"] != nil {
+            var selfServiceAllowSecLangOK = false
+            selfServiceAllowSecLang, selfServiceAllowSecLangOK = selfService["allowSecLang"].(bool)
+            if !selfServiceAllowSecLangOK { fail("extraContext.waf.policies.selfService.allowSecLang must be a boolean.") }
+          }
+          var selfServiceLimitsAny = selfService | dig("limits")
+          if selfServiceLimitsAny == nil { selfServiceLimitsAny = map[string]any{} }
+          var selfServiceLimits, selfServiceLimitsOK = selfServiceLimitsAny.(map[string]any)
+          if !selfServiceLimitsOK { fail("extraContext.waf.policies.selfService.limits must be a map.") }
+          for _, field := range keys(selfServiceLimits) {
+            if field != "maxPoliciesPerNamespace" && field != "maxTotalPolicies" {
+              fail("extraContext.waf.policies.selfService.limits contains unknown field '" + field + "'. Valid fields: maxPoliciesPerNamespace, maxTotalPolicies.")
+            }
+          }
           var defaultPolicy = policies | dig("defaultPolicy") | fallback("") | tostring()
           var dispatchMode = waf | dig("dispatch", "mode") | fallback("opt-in") | tostring()
           var policyCatalogConfigured = len(inlinePolicies) > 0 || len(policyRefs) > 0 || defaultPolicy != ""
           // Ingress permissions protect any administrator-owned WAF
-          // baseline: either a reusable policy catalog or global default-on
-          // dispatch. Plain opt-in compatibility mode retains upstream
-          // behavior.
-          var governanceEnabled = policyCatalogConfigured || dispatchMode == "default-on"
+          // baseline: a reusable policy catalog, global default-on dispatch,
+          // or enabled namespaced self-service authoring. Plain opt-in
+          // compatibility mode retains upstream behavior.
+          var governanceEnabled = policyCatalogConfigured || dispatchMode == "default-on" || selfServiceEnabled
 
           var ingressPermissionsAny = waf | dig("ingressPermissions")
           if ingressPermissionsAny == nil { ingressPermissionsAny = map[string]any{} }
@@ -555,6 +602,12 @@ templateSnippets:
             "allowRawHAProxyConfig": permission("allowRawHAProxyConfig", false),
             "maxCustomRuleIngresses": boundedInteger(customRuleLimits["maxIngresses"], 32, "extraContext.waf.customRules.limits.maxIngresses", 1, 1024),
             "maxCustomRuleBytesPerIngress": boundedInteger(customRuleLimits["maxBytesPerIngress"], 16384, "extraContext.waf.customRules.limits.maxBytesPerIngress", 1, 1048576),
+            "selfServiceEnabled": selfServiceEnabled,
+            "selfServiceConfigMapName": selfServiceConfigMapName,
+            "selfServiceKey": selfServiceKey,
+            "selfServiceAllowSecLang": selfServiceAllowSecLang,
+            "selfServiceMaxPoliciesPerNamespace": boundedInteger(selfServiceLimits["maxPoliciesPerNamespace"], 4, "extraContext.waf.policies.selfService.limits.maxPoliciesPerNamespace", 1, 64),
+            "selfServiceMaxTotalPolicies": boundedInteger(selfServiceLimits["maxTotalPolicies"], 64, "extraContext.waf.policies.selfService.limits.maxTotalPolicies", 1, 1024),
           }
         })
         var resolved = resolvedAny.(map[string]any)

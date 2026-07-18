@@ -262,8 +262,9 @@ validationTests:
 
   test-haptic-waf-policy-invalid-rejected:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
-    description: unknown exact policy name fails with the approved names
+    description: under the admission webhook, an unknown exact policy name is rejected with the approved names
     extraContext:
+      renderMode: admission
       waf:
         ingressPermissions:
           allowPolicySelection: true
@@ -286,6 +287,48 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
     assertions:
       - { type: contains, target: rendering_error, pattern: "Unknown WAF policy 'typo-policy'.*available policies: approved-policy.*exact and case-sensitive" }
+
+  test-haptic-waf-policy-invalid-reconcile-fails-closed:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      On a live reconcile, an unknown policy (e.g. deleted out from under an
+      existing Ingress) no longer aborts the whole render: the route fails
+      closed with 503, a Warning Event lands on the Ingress, and every other
+      route keeps rendering.
+    extraContext:
+      renderMode: reconcile
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            approved-policy: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: invalid-policy, annotations: { haproxy-haptic.org/waf-policy: typo-policy } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: invalid.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str default/invalid-policy \\}"
+      - type: contains
+        target: events
+        pattern: "Warning WafPolicyUnavailable networking.k8s.io/v1 Ingress default/invalid-policy:.*Unknown WAF policy 'typo-policy'"
+      # The broken route must not be dispatched to Coraza with a half-applied policy.
+      - type: not_contains
+        target: "map:coraza-app.map"
+        pattern: "default/invalid-policy"
 
   test-haptic-waf-policy-body-limit-without-inspection-rejected:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
@@ -755,3 +798,507 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
     assertions:
       - { type: contains, target: rendering_error, pattern: "config-defaults.*allowRawHAProxyConfig=false.*bypass WAF enforcement" }
+
+  # ---------------------------------------------------------------------------
+  # Namespaced self-service policy authoring (waf.policies.selfService).
+  # ---------------------------------------------------------------------------
+
+  test-haptic-waf-selfservice-policy-applied:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: a namespace's own waf-policies ConfigMap is discovered and its policy is selectable by bare name from that namespace, registered under the namespace-scoped app key
+    extraContext:
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              app-baseline:
+                description: Team A baseline, metadata only
+                enforcement: detect
+                requestBody:
+                  mode: none
+                excludedTargetsByTag:
+                  attack-sqli: ["ARGS:q"]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: app-baseline } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-app.map", pattern: "team-a/app policy:team-a/app-baseline" }
+      - { type: contains, target: "map:haproxy-ingress-waf.map", pattern: "team-a/app detect" }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: '\[plugins\.params\.applications\."policy:team-a/app-baseline"\]' }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: 'SecRuleUpdateTargetByTag "attack-sqli" "!ARGS:q"' }
+
+  test-haptic-waf-selfservice-foreign-namespace-invisible:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: another namespace's self-service policy is invisible — selecting it from a different namespace is an unknown policy (admission)
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              app-baseline:
+                requestBody:
+                  mode: none
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-b, name: freeloader, annotations: { haproxy-haptic.org/waf-policy: app-baseline } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: b.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "Unknown WAF policy 'app-baseline' on Ingress team-b/freeloader" }
+
+  test-haptic-waf-selfservice-cross-namespace-address-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: explicit cross-namespace addressing (ns/name) in waf-policy is rejected — self-service selection is bare-name, own-namespace only
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              app-baseline:
+                requestBody:
+                  mode: none
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-b, name: sneaky, annotations: { haproxy-haptic.org/waf-policy: team-a/app-baseline } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: sneaky.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "policy names must not contain '/'" }
+
+  test-haptic-waf-selfservice-broken-catalog-scoped:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      A broken self-service catalog is SCOPED on a live reconcile: the render
+      succeeds, a Warning Event lands on the ConfigMap, the selecting route in
+      that namespace fails closed with 503 — and a trusted-catalog route in
+      another namespace renders untouched.
+    extraContext:
+      renderMode: reconcile
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          inline:
+            approved-policy:
+              requestBody:
+                mode: none
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              this: [is: not, valid yaml
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: app-baseline } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: trusted-user, annotations: { haproxy-haptic.org/waf-policy: approved-policy } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: trusted.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: events, pattern: "Warning WafPolicyCatalogInvalid v1 ConfigMap team-a/waf-policies:.*invalid YAML" }
+      - { type: contains, target: events, pattern: "Warning WafPolicyUnavailable networking.k8s.io/v1 Ingress team-a/app:.*self-service catalog is broken" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/app \\}" }
+      - { type: not_contains, target: "map:coraza-app.map", pattern: "team-a/app" }
+      - { type: contains, target: "map:coraza-app.map", pattern: "default/trusted-user policy:approved-policy" }
+
+  test-haptic-waf-selfservice-broken-catalog-admission-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: under the admission webhook, a broken self-service catalog is rejected loudly so a proposed change cannot introduce it
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              this: [is: not, valid yaml
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "self-service WAF ConfigMap team-a/waf-policies key policies.yaml is invalid YAML" }
+
+  test-haptic-waf-selfservice-seclang-denied-by-default:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: self-service policies may not carry secLang unless allowSecLang=true — the policy is scoped-broken (event + 503 for selectors), not silently loaded
+    extraContext:
+      renderMode: reconcile
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              rule-smuggler:
+                requestBody:
+                  mode: none
+                secLang: |
+                  SecRuleEngine Off
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: rule-smuggler } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-a/waf-policies:.*uses secLang, which is disabled for self-service catalogs" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/app \\}" }
+      - { type: not_contains, target: "file:spoa-hub-config.toml", pattern: "SecRuleEngine Off" }
+
+  test-haptic-waf-selfservice-seclang-allowed-when-opted-in:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: with allowSecLang=true a self-service policy may carry bounded secLang
+    extraContext:
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+            allowSecLang: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              tuned:
+                requestBody:
+                  mode: none
+                secLang: |
+                  SecRuleRemoveById 941320
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: tuned } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-app.map", pattern: "team-a/app policy:team-a/tuned" }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: "SecRuleRemoveById 941320" }
+
+  test-haptic-waf-selfservice-trusted-collision-never-silent:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      A self-service policy whose name collides with a trusted-catalog policy
+      is never resolved silently in either direction: the colliding namespace's
+      selector fails closed with an event, while another namespace selecting
+      the same name still gets the trusted policy.
+    extraContext:
+      renderMode: reconcile
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          inline:
+            shared-name:
+              requestBody:
+                mode: none
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              shared-name:
+                enforcement: detect
+                requestBody:
+                  mode: none
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: shared-name } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: other, annotations: { haproxy-haptic.org/waf-policy: shared-name } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: other.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-a/waf-policies:.*collides with the trusted-catalog policy" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/app \\}" }
+      - { type: contains, target: "map:coraza-app.map", pattern: "default/other policy:shared-name" }
+      - { type: not_contains, target: "map:coraza-app.map", pattern: "team-a/app" }
+
+  test-haptic-waf-selfservice-per-namespace-budget:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: the per-namespace policy budget cuts deterministically (sorted names) — policies beyond the limit are scoped-broken, the rest stay usable
+    extraContext:
+      renderMode: reconcile
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+            limits:
+              maxPoliciesPerNamespace: 2
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              p-alpha:
+                requestBody:
+                  mode: none
+              p-beta:
+                requestBody:
+                  mode: none
+              p-gamma:
+                requestBody:
+                  mode: none
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: first, annotations: { haproxy-haptic.org/waf-policy: p-alpha } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: first.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: over, annotations: { haproxy-haptic.org/waf-policy: p-gamma } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: over.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-app.map", pattern: "team-a/first policy:team-a/p-alpha" }
+      - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-a/waf-policies:.*more than the per-namespace self-service limit 2.*'p-gamma'" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/over \\}" }
+
+  test-haptic-waf-selfservice-default-on-weakening-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: under default-on deny dispatch, a tenant-authored detect policy may not weaken the baseline — rejected at admission
+    extraContext:
+      renderMode: admission
+      waf:
+        dispatch:
+          mode: default-on
+          defaultEnforcement: deny
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              softener:
+                enforcement: detect
+                requestBody:
+                  mode: none
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: softener } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "would weaken the default-on baseline enforcement 'deny'" }
+
+  test-haptic-waf-selfservice-disabled-stays-unknown:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: with selfService disabled (default), a namespace waf-policies ConfigMap stays inert — its policy is not resolvable (exact message depends on whether the deployment carries a trusted catalog, which per-test extraContext cannot fully remove)
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              app-baseline:
+                requestBody:
+                  mode: none
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: app-baseline } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "(no reusable WAF policy catalog is configured|Unknown WAF policy 'app-baseline')" }
+
+  test-haptic-waf-selfservice-broken-policy-does-not-consume-budget:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: a broken self-service policy (denied secLang, sorted first) does not consume a per-namespace budget slot — the namespace's valid policy still loads within limit 1
+    extraContext:
+      renderMode: reconcile
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+            limits:
+              maxPoliciesPerNamespace: 1
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              a-broken:
+                requestBody:
+                  mode: none
+                secLang: |
+                  SecRuleEngine Off
+              b-valid:
+                requestBody:
+                  mode: none
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: b-valid } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-app.map", pattern: "team-a/app policy:team-a/b-valid" }
+      - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-a/waf-policies:.*'a-broken'.*uses secLang" }
+      - { type: not_contains, target: haproxy.cfg, pattern: "more than the per-namespace self-service limit" }
