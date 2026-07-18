@@ -24,6 +24,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -32,7 +33,7 @@ import (
 // PipelineExecutor defines the interface for executing the render-validate pipeline.
 // This allows mocking in tests.
 type PipelineExecutor interface {
-	Execute(ctx context.Context, provider stores.StoreProvider) (*pipeline.PipelineResult, error)
+	Execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) (*pipeline.PipelineResult, error)
 }
 
 const (
@@ -238,7 +239,7 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 	c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason, events.PropagateCorrelation(event)))
 
 	// Execute the render-validate pipeline
-	result, err := c.pipeline.Execute(ctx, c.storeProvider)
+	result, err := c.pipeline.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile)
 	if err != nil {
 		c.handlePipelineFailure(err, event, startTime)
 		return

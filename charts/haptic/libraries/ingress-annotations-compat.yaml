@@ -526,3 +526,543 @@ templateSnippets:
         }
       %%}
       {%- end macro %}
+
+  # Cross-family feature-collision guard. Rejects an Ingress that configures
+  # the SAME feature through annotations from two different families (e.g.
+  # `haproxy-haptic.org/waf` AND `haproxy-ingress.github.io/waf`), even when the
+  # values don't conflict — the effective result would otherwise be
+  # order-dependent (which family's map row / snippet wins). Distinct features
+  # across families are fine (WAF from one family + CORS from another; two
+  # different timeout parameters), so the registry is keyed by canonical
+  # feature/parameter, not a coarse category: every WAF annotation maps to one
+  # `WAF` entry, but each timeout type is its own entry.
+  #
+  # Runs once per config as a features-* side-effect snippet (output discarded).
+  # Enforcement is renderMode-aware: on the admission webhook's dry-run render
+  # (renderMode == "admission") a conflict fail()s, so the API server denies the
+  # proposed Ingress; on the live reconcile render and the daemon load gate it
+  # records a Warning Event on the Ingress and proceeds, so one already-present
+  # conflicting Ingress can't abort the whole config render and brick the fleet.
+  # Only ENABLED families count — a disabled library's annotations are inert —
+  # via extraContext.annotationLibraries, injected by
+  # templates/haproxytemplateconfig.yaml from controller.templateLibraries.*.enabled.
+  features-950-annotation-family-feature-conflict:
+    template: |-
+      {%%
+        var familyPrefix = map[string]string{
+          "haptic":         "haproxy-haptic.org/",
+          "haproxyIngress": "haproxy-ingress.github.io/",
+          "haproxytech":    "haproxy.org/",
+          "nginx":          "nginx.ingress.kubernetes.io/",
+        }
+        // Deterministic iteration order → stable fail() messages.
+        var familyOrder = []string{"haptic", "haproxyIngress", "haproxytech", "nginx"}
+
+        // Canonical feature/parameter → family → annotation-key suffixes.
+        // ≥2 enabled families each carrying ≥1 key for the SAME entry on one
+        // Ingress is rejected. Listing a key a family doesn't actually use is
+        // harmless (it simply never matches); the correctness requirement is
+        // that every key sits under the feature it truly configures.
+        var registry = []map[string]any{
+          {"name": "WAF", "families": map[string][]string{
+            "haptic":         {"waf", "waf-mode", "waf-policy", "waf-rules", "waf-rules-before"},
+            "haproxyIngress": {"waf", "waf-mode"},
+            "nginx":          {"enable-modsecurity", "modsecurity-snippet"},
+          }},
+          {"name": "external authentication", "families": map[string][]string{
+            "haptic":         {"auth-url", "auth-signin", "auth-method", "auth-headers-request", "auth-headers-succeed", "auth-headers-fail", "oauth", "oauth-uri-prefix", "oauth-headers"},
+            "haproxyIngress": {"auth-url", "auth-signin", "auth-method", "auth-headers-request", "auth-headers-succeed", "auth-headers-fail", "oauth", "oauth-uri-prefix", "oauth-headers"},
+            "nginx":          {"auth-url", "auth-signin", "auth-method", "auth-response-headers"},
+          }},
+          {"name": "basic authentication", "families": map[string][]string{
+            "haptic":         {"auth-type", "auth-secret", "auth-secret-type", "auth-realm", "satisfy"},
+            "haproxyIngress": {"auth-secret", "auth-realm"},
+            "haproxytech":    {"auth-type", "auth-secret", "auth-realm"},
+            "nginx":          {"auth-type", "auth-secret", "auth-secret-type", "auth-realm", "satisfy"},
+          }},
+          {"name": "client-certificate (mTLS) authentication", "families": map[string][]string{
+            "haptic":         {"auth-tls-secret", "auth-tls-verify-client", "auth-tls-error-page", "auth-tls-cert-header"},
+            "haproxyIngress": {"auth-tls-secret", "auth-tls-verify-client", "auth-tls-error-page", "auth-tls-cert-header", "auth-tls-strict"},
+            "nginx":          {"auth-tls-secret", "auth-tls-verify-client", "auth-tls-error-page", "auth-tls-pass-certificate-to-upstream", "auth-tls-verify-depth"},
+          }},
+          {"name": "CORS", "families": map[string][]string{
+            "haptic":         {"cors-enable", "cors-allow-origin", "cors-allow-methods", "cors-allow-headers", "cors-allow-credentials", "cors-expose-headers", "cors-max-age"},
+            "haproxyIngress": {"cors-enable", "cors-allow-origin", "cors-allow-methods", "cors-allow-headers", "cors-allow-credentials", "cors-expose-headers", "cors-max-age"},
+            "haproxytech":    {"cors-enable", "cors-allow-origin", "cors-allow-methods", "cors-allow-headers", "cors-allow-credentials", "cors-max-age", "cors-respond-to-options"},
+            "nginx":          {"enable-cors", "cors-allow-origin", "cors-allow-methods", "cors-allow-headers", "cors-allow-credentials", "cors-expose-headers", "cors-max-age"},
+          }},
+          {"name": "shared rate limiting", "families": map[string][]string{
+            "haptic":         {"rate-limit-requests", "rate-limit-rps", "rate-limit-rpm", "rate-limit-connections", "rate-limit-period", "rate-limit-size", "rate-limit-status-code", "rate-limit-allowlist", "rate-limit-burst", "rate-limit-algorithm", "rate-limit-key"},
+            "haproxyIngress": {"limit-rps", "limit-rpm", "limit-connections", "limit-whitelist"},
+            "haproxytech":    {"rate-limit-requests", "rate-limit-period", "rate-limit-size", "rate-limit-status-code", "rate-limit-whitelist"},
+            "nginx":          {"limit-rps", "limit-rpm", "limit-connections", "limit-whitelist", "limit-rate", "limit-rate-after"},
+          }},
+          {"name": "HTTPS redirect", "families": map[string][]string{
+            "haptic":         {"https-redirect", "https-redirect-code", "https-redirect-port"},
+            "haproxyIngress": {"ssl-redirect", "ssl-redirect-code"},
+            "haproxytech":    {"ssl-redirect", "ssl-redirect-code", "ssl-redirect-port"},
+            "nginx":          {"ssl-redirect", "force-ssl-redirect"},
+          }},
+          {"name": "backend protocol", "families": map[string][]string{
+            "haptic":         {"backend-protocol"},
+            "haproxyIngress": {"backend-protocol"},
+            "haproxytech":    {"server-proto"},
+            "nginx":          {"backend-protocol"},
+          }},
+          {"name": "request body size limit", "families": map[string][]string{
+            "haptic":         {"max-request-body-size"},
+            "haproxyIngress": {"proxy-body-size"},
+            "nginx":          {"proxy-body-size"},
+          }},
+          {"name": "source-IP allowlist", "families": map[string][]string{
+            "haptic":         {"allowlist-source-range"},
+            "haproxyIngress": {"allowlist-source-range", "whitelist-source-range"},
+            "haproxytech":    {"allow-list", "whitelist"},
+            "nginx":          {"whitelist-source-range"},
+          }},
+          {"name": "source-IP denylist", "families": map[string][]string{
+            "haptic":         {"denylist-source-range"},
+            "haproxyIngress": {"denylist-source-range"},
+            "haproxytech":    {"deny-list", "blacklist"},
+            "nginx":          {"denylist-source-range"},
+          }},
+          {"name": "canary traffic splitting", "families": map[string][]string{
+            "haptic": {"canary", "canary-by-cookie", "canary-by-header", "canary-by-header-pattern", "canary-by-header-value", "canary-weight"},
+            "nginx":  {"canary", "canary-by-header", "canary-by-header-value", "canary-by-header-pattern", "canary-by-cookie", "canary-weight", "canary-weight-total"},
+          }},
+          {"name": "session affinity", "families": map[string][]string{
+            "haptic":         {"affinity", "session-cookie-name", "session-cookie-domain", "session-cookie-dynamic", "session-cookie-keywords", "session-cookie-max-age", "session-cookie-path", "session-cookie-preserve", "session-cookie-samesite", "session-cookie-secure", "session-cookie-strategy"},
+            "haproxyIngress": {"affinity", "session-cookie-name", "session-cookie-strategy", "session-cookie-dynamic", "session-cookie-keywords", "session-cookie-domain", "session-cookie-same-site", "session-cookie-preserve"},
+            "haproxytech":    {"cookie-persistence", "cookie-persistence-no-dynamic"},
+            "nginx":          {"affinity", "session-cookie-name", "session-cookie-path", "session-cookie-domain", "session-cookie-secure", "session-cookie-samesite", "session-cookie-max-age", "session-cookie-expires", "session-cookie-hash"},
+          }},
+          {"name": "Host header rewrite", "families": map[string][]string{
+            "haptic":      {"set-host"},
+            "haproxytech": {"set-host"},
+            "nginx":       {"upstream-vhost"},
+          }},
+          // Timeouts are per-parameter: mixing families across DIFFERENT timeout
+          // types is fine; only the same timeout from two families collides.
+          {"name": "connect timeout", "families": map[string][]string{
+            "haptic":         {"timeout-connect"},
+            "haproxyIngress": {"timeout-connect"},
+            "haproxytech":    {"timeout-connect"},
+            "nginx":          {"proxy-connect-timeout"},
+          }},
+          {"name": "server (read) timeout", "families": map[string][]string{
+            "haptic":         {"timeout-server"},
+            "haproxyIngress": {"timeout-server"},
+            "haproxytech":    {"timeout-server"},
+            "nginx":          {"proxy-read-timeout"},
+          }},
+        }
+
+        var enabled = extraContext | dig("annotationLibraries") | fallback(map[string]any{})
+        var enabledCount = 0
+        for _, fam := range familyOrder {
+          if en, ok := enabled.(map[string]any)[fam].(bool); ok && en {
+            enabledCount++
+          }
+        }
+        // Cross-family collision is impossible with fewer than two active families.
+        if enabledCount >= 2 {
+          for _, ingress := range resources.ingresses.List() {
+            var anns = ingress.Metadata.Annotations
+            if len(anns) == 0 {
+              continue
+            }
+            for _, entry := range registry {
+              var fams = entry["families"].(map[string][]string)
+              var hitFamilies = []string{}
+              var hitDetail = []string{}
+              for _, fam := range familyOrder {
+                if en, ok := enabled.(map[string]any)[fam].(bool); !ok || !en {
+                  continue
+                }
+                var keys, has = fams[fam]
+                if !has {
+                  continue
+                }
+                var present = []string{}
+                for _, k := range keys {
+                  if _, kp := anns[familyPrefix[fam]+k]; kp {
+                    present = append(present, familyPrefix[fam]+k)
+                  }
+                }
+                if len(present) > 0 {
+                  hitFamilies = append(hitFamilies, fam)
+                  hitDetail = append(hitDetail, join(present, ", "))
+                }
+              }
+              if len(hitFamilies) >= 2 {
+                var msg = "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " configures the " + entry["name"].(string) + " feature through annotations from multiple families (" + join(hitDetail, "; ") + "). Configure each feature through a single annotation family: mixing families for one feature is rejected even when the values agree, because the effective configuration is order-dependent."
+                // Explicit fail-on-webhook / warn-on-reconcile split (see the
+                // `renderMode` global). "admission" is a webhook dry-run of a
+                // PROPOSED change: fail() so the API server denies it and a new
+                // cross-family conflict never lands. Any other mode ("reconcile",
+                // the load gate) is the live config of ALREADY-present state:
+                // fail() there would abort the whole haproxy.cfg render over one
+                // bad Ingress and brick the fleet, so instead record a Warning
+                // Event on the offending Ingress and let the render proceed.
+                if renderMode == "admission" {
+                  fail(msg)
+                } else {
+                  recordEvent(ingress, "AnnotationFamilyConflict", msg)
+                }
+              }
+            }
+          }
+        }
+      %%}
+
+# Cross-family feature-collision guard tests. Each test drives the validator via
+# extraContext.annotationLibraries (which families are "enabled") independently
+# of which vendor libraries are actually merged, so the guard's gating logic is
+# exercised in isolation. Uses plugin-free features (CORS, timeouts,
+# backend-protocol) so no test depends on a SPOA plugin being present.
+validationTests:
+  test-annotation-family-conflict-cors-rejected:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: >-
+      Under the admission webhook (renderMode admission), one Ingress enabling
+      CORS via both haproxy-haptic.org/cors-enable and
+      nginx.ingress.kubernetes.io/enable-cors is rejected — even though both
+      values are "true" and thus don't conflict — because the effective result
+      is order-dependent.
+    extraContext:
+      renderMode: admission
+      annotationLibraries:
+        haptic: true
+        nginx: true
+        haproxyIngress: false
+        haproxytech: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mixed-cors
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              nginx.ingress.kubernetes.io/enable-cors: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: mixed-cors.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "configures the CORS feature through annotations from multiple families"
+      - type: contains
+        target: rendering_error
+        pattern: "haproxy-haptic.org/cors-enable"
+      - type: contains
+        target: rendering_error
+        pattern: "nginx.ingress.kubernetes.io/enable-cors"
+      - type: contains
+        target: rendering_error
+        pattern: "rejected even when the values agree"
+
+  test-annotation-family-conflict-different-features-allowed:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: Two families configuring DIFFERENT features on one Ingress (CORS vs backend-protocol) is allowed.
+    extraContext:
+      annotationLibraries:
+        haptic: true
+        nginx: true
+        haproxyIngress: false
+        haproxytech: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: diff-features
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: diff-features.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+
+  test-annotation-family-conflict-different-timeouts-allowed:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: Two families setting DIFFERENT timeout parameters (connect vs server) is allowed — timeouts are per-parameter, not one feature.
+    extraContext:
+      annotationLibraries:
+        haptic: true
+        nginx: false
+        haproxyIngress: false
+        haproxytech: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: diff-timeouts
+            annotations:
+              haproxy-haptic.org/timeout-connect: "5s"
+              haproxy.org/timeout-server: "30s"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: diff-timeouts.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+
+  test-annotation-family-conflict-same-timeout-rejected:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: Under the admission webhook, the SAME timeout parameter (server) from two families collides and is rejected.
+    extraContext:
+      renderMode: admission
+      annotationLibraries:
+        haptic: true
+        nginx: false
+        haproxyIngress: false
+        haproxytech: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: same-timeout
+            annotations:
+              haproxy-haptic.org/timeout-server: "30s"
+              haproxy.org/timeout-server: "60s"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: same-timeout.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "configures the server \\(read\\) timeout feature through annotations from multiple families"
+
+  test-annotation-family-conflict-disabled-family-inert:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: A disabled family's annotation is inert, so native CORS plus a disabled-nginx CORS annotation does NOT collide.
+    extraContext:
+      annotationLibraries:
+        haptic: true
+        nginx: false
+        haproxyIngress: false
+        haproxytech: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: disabled-family
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              nginx.ingress.kubernetes.io/enable-cors: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: disabled-family.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+
+  test-annotation-family-conflict-single-family-allowed:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: Multiple CORS keys from ONE family on one Ingress is allowed (not a cross-family mix).
+    extraContext:
+      annotationLibraries:
+        haptic: true
+        nginx: true
+        haproxyIngress: false
+        haproxytech: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: single-family
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              haproxy-haptic.org/cors-max-age: "600"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: single-family.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+
+  test-annotation-family-conflict-waf-rejected:
+    # The concrete case this guard was created for: a leftover vendor WAF
+    # annotation must not silently coexist with (and reorder) the native WAF
+    # policy. Needs the coraza plugin so neither family's own WAF processing
+    # fails first; the vendor/native ingress libraries auto-enable it.
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.haproxyIngress.enabled) (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: Under the admission webhook, an Ingress with both haproxy-haptic.org/waf-policy and haproxy-ingress.github.io/waf is rejected — the deny-vs-detect downgrade this guard prevents.
+    extraContext:
+      renderMode: admission
+      annotationLibraries:
+        haptic: true
+        nginx: false
+        haproxyIngress: true
+        haproxytech: false
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          inline:
+            baseline:
+              enforcement: deny
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mixed-waf
+            annotations:
+              haproxy-haptic.org/waf-policy: baseline
+              haproxy-ingress.github.io/waf: modsecurity
+              haproxy-ingress.github.io/waf-mode: detect
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: mixed-waf.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "configures the WAF feature through annotations from multiple families"
+      - type: contains
+        target: rendering_error
+        pattern: "haproxy-haptic.org/waf-policy"
+      - type: contains
+        target: rendering_error
+        pattern: "haproxy-ingress.github.io/waf"
+
+  test-annotation-family-conflict-cors-reconcile-warns:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: >-
+      During a live reconcile (renderMode reconcile), the same cross-family CORS
+      conflict does NOT abort the render — it records a Warning Event on the
+      offending Ingress and proceeds, so one already-present conflicting Ingress
+      can't brick the whole config.
+    extraContext:
+      renderMode: reconcile
+      annotationLibraries:
+        haptic: true
+        nginx: true
+        haproxyIngress: false
+        haproxytech: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mixed-cors
+            annotations:
+              haproxy-haptic.org/cors-enable: "true"
+              nginx.ingress.kubernetes.io/enable-cors: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: mixed-cors.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      # The render succeeds (no fail()) despite the conflict.
+      - type: haproxy_valid
+      # A Warning Event is recorded against the offending Ingress instead.
+      - type: contains
+        target: events
+        pattern: "Warning AnnotationFamilyConflict networking.k8s.io/v1 Ingress default/mixed-cors:"
+      - type: contains
+        target: events
+        pattern: "configures the CORS feature through annotations from multiple families"
+
+  test-annotation-family-conflict-load-gate-warns-not-fails:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: >-
+      With renderMode unset (the daemon load gate default), a cross-family
+      timeout conflict warns rather than failing, so a pre-existing conflict
+      can't crash-loop the controller at startup.
+    extraContext:
+      annotationLibraries:
+        haptic: true
+        nginx: false
+        haproxyIngress: false
+        haproxytech: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: same-timeout
+            annotations:
+              haproxy-haptic.org/timeout-server: "30s"
+              haproxy.org/timeout-server: "60s"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: same-timeout.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      # The guard warns instead of failing: no conflict fail() reached the
+      # render error. (haproxy_valid is intentionally not asserted here — with
+      # both native and haproxytech merged, the same timeout may be emitted
+      # twice; that double-emit is a separate concern from the guard's
+      # warn-vs-fail behaviour under test.)
+      - type: not_contains
+        target: rendering_error
+        pattern: "configures the server \\(read\\) timeout feature through annotations from multiple families"
+      - type: contains
+        target: events
+        pattern: "Warning AnnotationFamilyConflict networking.k8s.io/v1 Ingress default/same-timeout:"

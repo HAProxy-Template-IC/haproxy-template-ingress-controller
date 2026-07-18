@@ -229,9 +229,10 @@ const (
 	FuncStatusPatch = "statusPatch"
 
 	// FuncRecordEvent registers a Kubernetes Warning Event to emit against a
-	// resource during rendering (resource-agnostic — the involved object is
-	// identified by apiVersion/kind/namespace/name supplied by the template).
-	// Syntax: recordEvent(namespace, name, apiVersion, kind, reason, message).
+	// resource during rendering (resource-agnostic — namespace/name/apiVersion/
+	// kind are read off the passed resource object via dig, so it works for any
+	// watched resource or CRD).
+	// Syntax: recordEvent(resource, reason, message).
 	FuncRecordEvent = "recordEvent"
 
 	// FuncCondition builds a metav1.Condition-compatible map.

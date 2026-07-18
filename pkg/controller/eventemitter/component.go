@@ -13,10 +13,10 @@
 // limitations under the License.
 
 // Package eventemitter emits template-requested Kubernetes Events against the
-// resources they concern. Templates call recordEvent(namespace, name,
-// apiVersion, kind, reason, message) during rendering; those events ride on
-// ReconciliationCompletedEvent and this leader-only component forwards each to
-// the API server via an EventRecorder.
+// resources they concern. Templates call recordEvent(resource, reason, message)
+// during rendering (the resource's namespace/name/apiVersion/kind are read off
+// it); those events ride on ReconciliationCompletedEvent and this leader-only
+// component forwards each to the API server via an EventRecorder.
 //
 // It is resource-agnostic (RULE #1): every event carries its own
 // apiVersion/kind/namespace/name, so the emitter builds a bare

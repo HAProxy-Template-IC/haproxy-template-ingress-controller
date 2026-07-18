@@ -215,7 +215,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 // Returns:
 //   - RenderResult containing the rendered configuration and auxiliary files
 //   - Error if rendering fails
-func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvider) (*RenderResult, error) {
+func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) (*RenderResult, error) {
 	startTime := time.Now()
 
 	// Apply render timeout if configured
@@ -226,7 +226,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	}
 
 	// Build rendering context from stores
-	bctx := s.buildRenderingContext(ctx, provider)
+	bctx := s.buildRenderingContext(ctx, provider, mode)
 	renderContext, fileRegistry := bctx.Context, bctx.FileRegistry
 	statusPatchCollector, renderedResourceCollector := bctx.StatusPatchCollector, bctx.RenderedResourceCollector
 	eventCollector := bctx.EventCollector
@@ -304,7 +304,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 // StoreProvider, resolving the current deployed config, and wiring the HTTP
 // fetcher (whose overlay depends on the provider type); everything else is the
 // Builder's responsibility.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) *rendercontext.BuildResult {
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) *rendercontext.BuildResult {
 	// Snapshot the live stores off the provider. The haproxy-pods store is
 	// separated out by the Builder (WithHAProxyPodStore) into
 	// controller.haproxy_pods; the rest land in `resources`.
@@ -326,6 +326,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithCapabilities(s.capabilities),
 		rendercontext.WithTypedResources(s.typedResourceTypes),
+		rendercontext.WithRenderMode(mode),
 	}
 
 	// Add current config if available (for slot preservation). Passing a nil
@@ -436,7 +437,9 @@ func (s *RenderService) RenderSourceMaps(ctx context.Context, provider stores.St
 	if !ok {
 		return map[string]TemplateSourceMap{}, nil
 	}
-	renderCtx := s.buildRenderingContext(ctx, provider).Context
+	// Source-map introspection is read-only provenance, not enforcement — use
+	// the lenient reconcile mode so it never fails on a conflict.
+	renderCtx := s.buildRenderingContext(ctx, provider, rendercontext.RenderModeReconcile).Context
 	out := make(map[string]TemplateSourceMap)
 	add := func(name string) {
 		if raw, spans, err := sm.RenderWithSourceMap(ctx, name, renderCtx); err == nil {

@@ -44,6 +44,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/migratecheck"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
@@ -460,7 +461,10 @@ func renderWarm(resourcesYAML []byte) (*renderResult, error) {
 	}
 	provider := stores.NewRealStoreProvider(storeMap)
 
-	out, err := warm.svc.Render(context.Background(), provider)
+	// The playground is a preview: render in the lenient reconcile mode so a
+	// cross-family conflict surfaces as a Warning Event in the events tab rather
+	// than aborting the whole preview render.
+	out, err := warm.svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
 	if err != nil {
 		return nil, fmt.Errorf("rendering: %s", dataplane.SimplifyRenderingError(err))
 	}

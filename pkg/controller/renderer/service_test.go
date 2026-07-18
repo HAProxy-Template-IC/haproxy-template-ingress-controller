@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -192,7 +193,7 @@ func TestRenderService_Render_SimpleConfig(t *testing.T) {
 		storeMap: map[string]stores.Store{},
 	}
 
-	result, err := svc.Render(context.Background(), provider)
+	result, err := svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -255,7 +256,7 @@ func TestRenderService_Render_WithStores(t *testing.T) {
 		},
 	}
 
-	result, err := svc.Render(context.Background(), provider)
+	result, err := svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -294,7 +295,7 @@ func TestRenderService_Render_WithMapFiles(t *testing.T) {
 		storeMap: map[string]stores.Store{},
 	}
 
-	result, err := svc.Render(context.Background(), provider)
+	result, err := svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -334,7 +335,7 @@ func TestRenderService_Render_WithGeneralFiles(t *testing.T) {
 		storeMap: map[string]stores.Store{},
 	}
 
-	result, err := svc.Render(context.Background(), provider)
+	result, err := svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -367,7 +368,7 @@ func TestRenderService_Render_Error(t *testing.T) {
 		storeMap: map[string]stores.Store{},
 	}
 
-	result, err := svc.Render(context.Background(), provider)
+	result, err := svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -398,7 +399,7 @@ func TestRenderService_Render_PathResolverAvailable(t *testing.T) {
 		storeMap: map[string]stores.Store{},
 	}
 
-	result, err := svc.Render(context.Background(), provider)
+	result, err := svc.Render(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -448,7 +449,7 @@ func TestRenderService_buildRenderingContext_PropagatesIndexBy(t *testing.T) {
 		},
 	}
 
-	bctx := svc.buildRenderingContext(context.Background(), provider)
+	bctx := svc.buildRenderingContext(context.Background(), provider, rendercontext.RenderModeReconcile)
 	renderCtx := bctx.Context
 	require.NotNil(t, bctx.FileRegistry, "fileRegistry collector must be wired so templates can register dynamic aux files")
 	require.NotNil(t, bctx.StatusPatchCollector, "statusPatchCollector must be wired so filters_status.go can capture mutations")

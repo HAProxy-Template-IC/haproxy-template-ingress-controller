@@ -172,6 +172,19 @@ spec:
   {{- $_ := set $config.templatingSettings "extraContext" ($config.templatingSettings.extraContext | default dict) }}
   {{- $extraContext := $config.templatingSettings.extraContext }}
 
+  {{- /* Which Ingress annotation families are active, for the cross-family
+         feature-collision validator in the ingress-annotations-compat
+         library. A disabled family's annotations are inert, so the validator
+         must only flag collisions between enabled families — and
+         templateLibraries.*.enabled is a Helm value the Scriggo runtime can't
+         otherwise see. Chart-managed and reserved (see _controller.tpl). */ -}}
+  {{- $tl := .Values.controller.templateLibraries }}
+  {{- $_ := set $extraContext "annotationLibraries" (dict
+        "haptic" (dig "hapticAnnotations" "enabled" false $tl)
+        "nginx" (dig "nginxIngress" "enabled" false $tl)
+        "haproxyIngress" (dig "haproxyIngress" "enabled" false $tl)
+        "haproxytech" (dig "haproxytech" "enabled" false $tl)) }}
+
   {{- /* Default SSL certificate */ -}}
   {{- $defaultSSL := .Values.defaultSSLCertificate }}
   {{- if $defaultSSL.enabled }}

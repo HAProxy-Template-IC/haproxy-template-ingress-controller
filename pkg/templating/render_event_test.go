@@ -103,9 +103,14 @@ func TestEventCollector_Register(t *testing.T) {
 // production renderer and testrunner use — including the best-effort contract
 // that a bad call never fails the render.
 func TestScriggoRecordEvent_EndToEnd(t *testing.T) {
-	t.Run("valid call records one event", func(t *testing.T) {
+	// resourceLiteral builds a Scriggo map literal for an Ingress-shaped resource
+	// object, so the tests exercise the same identity extraction (metadata +
+	// TypeMeta) a real watched-resource value goes through.
+	resourceLiteral := `map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "metadata": map[string]any{"namespace": "team-a", "name": "route-x"}}`
+
+	t.Run("valid call records one event, identity read off the resource", func(t *testing.T) {
 		engine, err := New(map[string]string{
-			"t": `{% recordEvent("team-a", "route-x", "networking.k8s.io/v1", "Ingress", "RouteConflict", "collision on /x") %}rendered`,
+			"t": `{% var res = ` + resourceLiteral + ` %}{% recordEvent(res, "RouteConflict", "collision on /x") %}rendered`,
 		}, nil)
 		require.NoError(t, err)
 
@@ -119,6 +124,8 @@ func TestScriggoRecordEvent_EndToEnd(t *testing.T) {
 		require.Len(t, events, 1)
 		assert.Equal(t, "team-a", events[0].Namespace)
 		assert.Equal(t, "route-x", events[0].Name)
+		assert.Equal(t, "networking.k8s.io/v1", events[0].APIVersion)
+		assert.Equal(t, "Ingress", events[0].Kind)
 		assert.Equal(t, EventTypeWarning, events[0].Type)
 		assert.Equal(t, "RouteConflict", events[0].Reason)
 		assert.Equal(t, "collision on /x", events[0].Message)
@@ -126,7 +133,7 @@ func TestScriggoRecordEvent_EndToEnd(t *testing.T) {
 
 	t.Run("invalid arg (empty reason) does not fail the render", func(t *testing.T) {
 		engine, err := New(map[string]string{
-			"t": `{% recordEvent("ns", "n", "networking.k8s.io/v1", "Ingress", "", "msg") %}rendered`,
+			"t": `{% var res = ` + resourceLiteral + ` %}{% recordEvent(res, "", "msg") %}rendered`,
 		}, nil)
 		require.NoError(t, err)
 
@@ -139,12 +146,25 @@ func TestScriggoRecordEvent_EndToEnd(t *testing.T) {
 
 	t.Run("missing collector does not fail the render", func(t *testing.T) {
 		engine, err := New(map[string]string{
-			"t": `{% recordEvent("ns", "n", "networking.k8s.io/v1", "Ingress", "RouteConflict", "msg") %}rendered`,
+			"t": `{% var res = ` + resourceLiteral + ` %}{% recordEvent(res, "RouteConflict", "msg") %}rendered`,
 		}, nil)
 		require.NoError(t, err)
 
 		out, err := engine.Render(context.Background(), "t", map[string]any{}) // no recordEventCollector
 		require.NoError(t, err, "a missing collector must not abort the render (best-effort)")
 		assert.Contains(t, out, "rendered")
+	})
+
+	t.Run("nil resource does not fail the render and records nothing", func(t *testing.T) {
+		engine, err := New(map[string]string{
+			"t": `{% var res any = nil %}{% recordEvent(res, "RouteConflict", "msg") %}rendered`,
+		}, nil)
+		require.NoError(t, err)
+
+		collector := NewEventCollector()
+		out, err := engine.Render(context.Background(), "t", map[string]any{"recordEventCollector": collector})
+		require.NoError(t, err, "a nil resource must not abort the render (best-effort)")
+		assert.Contains(t, out, "rendered")
+		assert.Empty(t, collector.Events(), "a nil resource yields no name, so the event is dropped")
 	})
 }

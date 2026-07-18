@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -134,14 +135,14 @@ backend http_back
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
 	ctx := context.Background()
 
-	resExec, err := pipeline.Execute(ctx, provider)
+	resExec, err := pipeline.Execute(ctx, provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err, "Execute must succeed for the contract test")
 	require.NotNil(t, resExec)
 	require.NotEmpty(t, resExec.ContentChecksum,
 		"Execute MUST always populate ContentChecksum so downstream consumers "+
 			"can use it for drift detection without an extra hashing step")
 
-	resWith, _, err := pipeline.ExecuteWithResult(ctx, provider)
+	resWith, _, err := pipeline.ExecuteWithResult(ctx, provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
 	require.NotNil(t, resWith)
 	require.NotEmpty(t, resWith.ContentChecksum,
@@ -196,11 +197,11 @@ backend http_back
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
 	ctx := context.Background()
 
-	first, err := pipeline.Execute(ctx, provider)
+	first, err := pipeline.Execute(ctx, provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
-	second, err := pipeline.Execute(ctx, provider)
+	second, err := pipeline.Execute(ctx, provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
-	third, err := pipeline.Execute(ctx, provider)
+	third, err := pipeline.Execute(ctx, provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
 
 	assert.Equal(t, first.ContentChecksum, second.ContentChecksum,

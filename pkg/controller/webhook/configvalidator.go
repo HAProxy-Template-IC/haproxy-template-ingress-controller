@@ -30,6 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	ctrlhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
@@ -277,7 +278,12 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 		Logger:    v.logger,
 	})
 
-	_, valResult, execErr := p.ExecuteWithResult(ctx, v.storeProvider)
+	// Reconcile (lenient) mode: this gate admits a prospective HAProxyTemplateConfig
+	// against the cluster's CURRENT routing resources. A cross-family annotation
+	// conflict on some existing Ingress must not deny an unrelated config change —
+	// new routing-resource conflicts are denied at the per-resource webhook
+	// (proposalvalidator, admission mode), and this render still warns on them.
+	_, valResult, execErr := p.ExecuteWithResult(ctx, v.storeProvider, rendercontext.RenderModeReconcile)
 	if execErr != nil {
 		var perr *pipeline.PipelineError
 		if errors.As(execErr, &perr) && perr.Phase == pipeline.PhaseRender {

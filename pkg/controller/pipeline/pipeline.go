@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -183,8 +184,8 @@ func New(cfg *PipelineConfig) *Pipeline {
 // Returns:
 //   - PipelineResult containing rendered config and validation status
 //   - Error if rendering or validation fails
-func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (*PipelineResult, error) {
-	result, validationResult, err := p.execute(ctx, provider)
+func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) (*PipelineResult, error) {
+	result, validationResult, err := p.execute(ctx, provider, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -213,8 +214,8 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (
 //   - PipelineResult with config and timing (nil if render failed)
 //   - ValidationResult with validation details (nil if render failed)
 //   - Error if rendering fails (validation failures return non-nil ValidationResult)
-func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreProvider) (*PipelineResult, *validation.ValidationResult, error) {
-	return p.execute(ctx, provider)
+func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) (*PipelineResult, *validation.ValidationResult, error) {
+	return p.execute(ctx, provider, mode)
 }
 
 // execute is the shared render-validate body behind Execute and
@@ -223,11 +224,11 @@ func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreP
 // how to treat a validation failure (Execute turns it into a PipelineError;
 // ExecuteWithResult hands the details back). A render failure short-circuits
 // with a PipelineError and nil results.
-func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider) (*PipelineResult, *validation.ValidationResult, error) {
+func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode) (*PipelineResult, *validation.ValidationResult, error) {
 	startTime := time.Now()
 
 	// Phase 1: Render configuration
-	renderResult, err := p.renderer.Render(ctx, provider)
+	renderResult, err := p.renderer.Render(ctx, provider, mode)
 	if err != nil {
 		return nil, nil, &PipelineError{
 			Phase: PhaseRender,

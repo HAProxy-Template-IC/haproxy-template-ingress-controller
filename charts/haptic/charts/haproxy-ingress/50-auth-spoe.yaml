@@ -133,7 +133,7 @@ templateSnippets:
               still works), and a hard render failure would block every config
               update cluster-wide over one misconfigured Ingress. -#}
           {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-passthrough"] == "true" -%}
-            {{- recordEvent(ns, name, "networking.k8s.io/v1", "Ingress", "AuthIgnored",
+            {{- recordEvent(ingress, "AuthIgnored",
                   "haproxy-ingress.github.io/auth-url is set together with ssl-passthrough; external auth cannot run on SSL-passthrough (L4) traffic and is ignored for this Ingress") -}}
           {%- end -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
