@@ -245,12 +245,13 @@ templateSnippets:
           features-170-redirect-location-map dedups hosts locally. This keeps the
           map registration and the rule emitter in lockstep under churn, matching
           the features-160-ssl-redirect-map rationale. -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
           {%- var permUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect"] %}
           {%- if permUrl != "" %}
-            {%- if regex_search(permUrl, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- if regex_search(permUrl, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'nginx.ingress.kubernetes.io/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {%- var pc = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect-code"] %}
             {%- if pc == "" %}{%- pc = "301" %}{%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -262,7 +263,7 @@ templateSnippets:
           {%- end %}
           {%- var tempUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect"] %}
           {%- if tempUrl != "" %}
-            {%- if regex_search(tempUrl, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/temporal-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- if regex_search(tempUrl, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'nginx.ingress.kubernetes.io/temporal-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {%- var tc = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect-code"] %}
             {%- if tc == "" %}{%- tc = "302" %}{%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -283,12 +284,13 @@ templateSnippets:
         is a map-only, reload-free update (replaces the inline-ACL app-root redirect).
         Annotation: nginx.ingress.kubernetes.io/app-root
       -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var appRoot = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/app-root"] %}
         {%- if appRoot != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/app-root' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'nginx.ingress.kubernetes.io/app-root' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}
               {%- var ar []any = coalesce(gf["appRootHosts"], []any{}) -%}

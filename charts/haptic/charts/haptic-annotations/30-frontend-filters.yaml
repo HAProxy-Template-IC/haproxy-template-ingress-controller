@@ -251,6 +251,7 @@ templateSnippets:
           capture request header <name> len <len>
       -#}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -260,7 +261,8 @@ templateSnippets:
           {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
           {%- if reqCapture != "" %}
             {%- if toint(captureLen) <= 0 %}
-              {{- fail("Invalid value '" + captureLen + "' for annotation 'haproxy-haptic.org/request-capture-len' on Ingress '" + key + "'. Must be a positive integer.") -}}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + captureLen + "' for annotation 'haproxy-haptic.org/request-capture-len' on Ingress '" + key + "'. Must be a positive integer.") -}}
+              {%- continue %}
             {%- end %}
       # haptic/request-capture ({{ key }})
             {%- for _, line := range split(reqCapture, "\n") %}
@@ -292,6 +294,7 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -311,7 +314,8 @@ templateSnippets:
       # haptic/response-cookie-domain ({{ key }})
       http-response replace-header Set-Cookie (.*)Domain={{ ValidateConfigValue(parts[0], "haproxy-haptic.org/response-cookie-domain", key, false) }}(.*) \1Domain={{ ValidateConfigValue(parts[1], "haproxy-haptic.org/response-cookie-domain", key, false) }}\2 if {{ cond }}
                 {%- else %}
-                  {{- fail("Annotation 'haproxy-haptic.org/response-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
+                  {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy-haptic.org/response-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
+                  {%- continue %}
                 {%- end %}
               {%- end %}
               {%- if cookiePath != "" %}
@@ -320,7 +324,8 @@ templateSnippets:
       # haptic/response-cookie-path ({{ key }})
       http-response replace-header Set-Cookie (.*)Path={{ ValidateConfigValue(parts[0], "haproxy-haptic.org/response-cookie-path", key, false) }}(.*) \1Path={{ ValidateConfigValue(parts[1], "haproxy-haptic.org/response-cookie-path", key, false) }}\2 if {{ cond }}
                 {%- else %}
-                  {{- fail("Annotation 'haproxy-haptic.org/response-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
+                  {{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Annotation 'haproxy-haptic.org/response-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
+                  {%- continue %}
                 {%- end %}
               {%- end %}
             {%- end %}
@@ -350,6 +355,7 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -360,7 +366,8 @@ templateSnippets:
       # Warning: haproxy-haptic.org/response-location-rewrite-from=default on Ingress {{ key }} is not supported — HAProxy has no proxy_pass-derived rewrite; specify an explicit from/to pair.
           {%- else if from != "" && from != "off" %}
             {%- if to == "" %}
-              {{- fail("Annotation 'haproxy-haptic.org/response-location-rewrite-from' on Ingress '" + key + "' requires 'haproxy-haptic.org/response-location-rewrite-to'.") -}}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation 'haproxy-haptic.org/response-location-rewrite-from' on Ingress '" + key + "' requires 'haproxy-haptic.org/response-location-rewrite-to'.") -}}
+              {%- continue %}
             {%- end %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}

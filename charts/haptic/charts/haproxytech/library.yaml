@@ -48,6 +48,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var value = ingress.Metadata.Annotations["haproxy.org/forwarded-for"] %}
           {%- if value != "" && value != "true" && value != "false" %}
+            {#- Security-adjacent: silently skipping this would drop `option forwardfor`,
+                letting a spoofable X-Forwarded-For reach the backend — so hard-fail
+                even on reconcile rather than warn-and-skip. -#}
             {{- fail("Invalid value '" + value + "' for annotation 'haproxy.org/forwarded-for' on Ingress '" + key + "'. Valid values: 'true', 'false'") -}}
           {%- end %}
           {%- if value == "true" %}{%- forwardforEnabled = true %}{%- end %}
@@ -93,6 +96,7 @@ templateSnippets:
           upstream controller: origin / methods / headers "*", credentials off,
           max-age 5 (seconds). -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -116,7 +120,7 @@ templateSnippets:
             {%- if maxAge == "" %}{%- maxAge = "5" %}{%- end %}
             {%- var respondOptions = ingress.Metadata.Annotations["haproxy.org/cors-respond-to-options"] %}
             {%- if credentials == "true" && origin == "*" %}
-              {{- fail("CORS configuration error on Ingress '" + key + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "CORS configuration error on Ingress '" + key + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}{%- continue %}
             {%- end %}
               {%- var cond = HostMatchCondition(hosts) %}
               {#- Wildcard: allow any origin, echo "*". Non-wildcard: regex-match the
@@ -230,6 +234,7 @@ templateSnippets:
           the port from ssl-redirect-port-<code>.map, so changing a port is a map-only,
           reload-free update. First-writer-wins per host; hosts sorted for deterministic
           map output. -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var sslRedirectDefault = extraContext | dig_string("", "ssl_redirect_default") -%}
       {%- var portByCode = map[string]map[string]string{} -%}
       {%- var codeHosts = map[string][]any{} -%}
@@ -239,7 +244,7 @@ templateSnippets:
         {%- if redirectPort != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
           {%- if toint(redirectPort) <= 0 %}
-            {{- fail("Invalid value '" + redirectPort + "' for annotation 'haproxy.org/ssl-redirect-port' on Ingress '" + key + "'. Must be a positive integer port.") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + redirectPort + "' for annotation 'haproxy.org/ssl-redirect-port' on Ingress '" + key + "'. Must be a positive integer port.") -}}{%- continue %}
           {%- end %}
           {%- var sslRedirect = ingress.Metadata.Annotations["haproxy.org/ssl-redirect"] %}
           {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && sslRedirectDefault == "true") %}
@@ -285,19 +290,20 @@ templateSnippets:
       {#- Iterates unconditionally (no cross-render first_seen): features-* renders
           once, and features-170-redirect-location-map dedups hosts locally so the
           map and rule emitter stay in lockstep under churn. -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
           {%- var target = ingress.Metadata.Annotations["haproxy.org/request-redirect"] %}
           {%- if target != "" %}
             {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-            {%- if regex_search(target, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy.org/request-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- if regex_search(target, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy.org/request-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {%- var code = ingress.Metadata.Annotations["haproxy.org/request-redirect-code"] %}
             {%- if code == "" %}{%- code = "302" %}{%- end %}
             {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
             {%- var codeValid = false %}
             {%- for _, v := range validCodes %}{%- if code == v %}{%- codeValid = true %}{%- end %}{%- end %}
             {%- if !codeValid %}
-              {{- fail("Invalid value '" + code + "' for annotation 'haproxy.org/request-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + code + "' for annotation 'haproxy.org/request-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}{%- continue %}
             {%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}

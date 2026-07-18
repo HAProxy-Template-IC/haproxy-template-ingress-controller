@@ -208,6 +208,7 @@ templateSnippets:
   backend-directives-790-nginx-ingress-proxy-cookie:
     template: |
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         Nginx Ingress Proxy Cookie Domain / Path Rewriting
 
@@ -239,7 +240,7 @@ templateSnippets:
       # nginx-ingress/proxy-cookie-domain ({{ key }})
       http-response replace-header Set-Cookie (.*)Domain={{ ValidateConfigValue(parts[0], "nginx.ingress.kubernetes.io/proxy-cookie-domain", key, false) }}(.*) \1Domain={{ ValidateConfigValue(parts[1], "nginx.ingress.kubernetes.io/proxy-cookie-domain", key, false) }}\2
           {%- else %}
-            {{- fail("Annotation 'nginx.ingress.kubernetes.io/proxy-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation 'nginx.ingress.kubernetes.io/proxy-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
           {%- end %}
         {%- end %}
         {%- if cookiePath != "" %}
@@ -248,7 +249,7 @@ templateSnippets:
       # nginx-ingress/proxy-cookie-path ({{ key }})
       http-response replace-header Set-Cookie (.*)Path={{ ValidateConfigValue(parts[0], "nginx.ingress.kubernetes.io/proxy-cookie-path", key, false) }}(.*) \1Path={{ ValidateConfigValue(parts[1], "nginx.ingress.kubernetes.io/proxy-cookie-path", key, false) }}\2
           {%- else %}
-            {{- fail("Annotation 'nginx.ingress.kubernetes.io/proxy-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Annotation 'nginx.ingress.kubernetes.io/proxy-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
           {%- end %}
         {%- end %}
       {%- end -%}

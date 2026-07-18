@@ -99,6 +99,12 @@ EmitAnnotationAccessControl(
 
 Validation tests assert on the names of the generated ACLs (`ni_allowlist_*`, `hi_allowlist_*`, `haproxytech_allowlist_*`), so each library passes its distinct `aclPrefix`.
 
+### `WebhookRejectOrWarn`
+
+`WebhookRejectOrWarn(resource, reason, message)` (from the `util-webhook-reject-or-warn` snippet) is the shared way to reject a misconfigured watched resource. It branches on the `renderMode` global: under the admission webhook it `fail()`s (so the API server denies the proposed resource), and on a live reconcile or the daemon load gate it records a `Warning` Event against `resource` and returns, so one already-present bad resource can't abort the whole render. The vendor libraries **and** the native [`haptic-annotations`](haptic-annotations.md) library import it for per-resource routing/presentation validation.
+
+Callers must skip the offending resource's output in the warn path (`{% continue %}` in the Ingress loop). Use it only where skipping the feature is safe to serve without — routing/presentation guards — and keep a plain `fail()` for security features (skipping those would be fail-open) and for guards where a clean skip isn't possible. The full decision rule lives in the chart development guide (`charts/CLAUDE.md`).
+
 ## Design rationale
 
 Why the scaffold sits at level 2.5, which patterns were extracted, which were surveyed and deliberately left duplicated (cookie-based session affinity, backend timeouts, header manipulation), and the rename from `annotation-compat` to `ingress-annotations-compat`: see Architecture Decision Record (ADR) [ADR-0003](../development/adr/0003-annotation-compat-scaffold-level-2-5.md).

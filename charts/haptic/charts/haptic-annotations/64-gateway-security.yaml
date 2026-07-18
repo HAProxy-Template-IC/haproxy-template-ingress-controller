@@ -37,6 +37,7 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -57,7 +58,7 @@ templateSnippets:
             {%- if len(hosts) > 0 %}
       # haptic/fixed-response ({{ key }})
               {%- if body != "" %}
-                {%- if regex_search(body, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/fixed-response-body' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+                {%- if regex_search(body, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-haptic.org/fixed-response-body' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
                 {#- Escape for HAProxy's double-quoted string: backslash first, then quote. -#}
                 {%- var safeBody = replace(replace(body, "\\", "\\\\"), "\"", "\\\"") %}
       http-request return status {{ code }} content-type "{{ ValidateConfigValue(ct, "haproxy-haptic.org/fixed-response-content-type", key, false) }}" string "{{ safeBody }}" if {{ HostMatchCondition(hosts) }}
@@ -89,13 +90,14 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
           {%- var body = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response"] %}
           {%- if body != "" %}
-            {%- if regex_search(body, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/mock-response' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- if regex_search(body, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-haptic.org/mock-response' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {#- Escape for HAProxy's double-quoted string: backslash first, then quote. -#}
             {%- var safeBody = replace(replace(body, "\\", "\\\\"), "\"", "\\\"") %}
             {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/mock-response-code"] %}

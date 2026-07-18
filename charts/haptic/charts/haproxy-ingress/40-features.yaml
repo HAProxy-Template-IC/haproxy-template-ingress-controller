@@ -186,12 +186,13 @@ templateSnippets:
       {#- Iterates unconditionally (no cross-render first_seen): features-* renders
           once, and features-170-redirect-location-map dedups hosts locally so the
           map and rule emitter stay in lockstep under churn. -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
           {%- var redirectTo = ingress.Metadata.Annotations["haproxy-ingress.github.io/redirect-to"] %}
           {%- if redirectTo != "" %}
             {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-            {%- if regex_search(redirectTo, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-ingress.github.io/redirect-to' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- if regex_search(redirectTo, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-ingress.github.io/redirect-to' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/redirect-to-code"] %}
             {%- if code == "" %}{%- code = "302" %}{%- end %}
             {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
@@ -235,12 +236,13 @@ templateSnippets:
         app-root is a map-only, reload-free update (replaces the inline-ACL redirect).
         Annotation: haproxy-ingress.github.io/app-root
       -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var appRoot = ingress.Metadata.Annotations["haproxy-ingress.github.io/app-root"] %}
         {%- if appRoot != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-ingress.github.io/app-root' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-ingress.github.io/app-root' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}
               {%- var ar []any = coalesce(gf["appRootHosts"], []any{}) -%}

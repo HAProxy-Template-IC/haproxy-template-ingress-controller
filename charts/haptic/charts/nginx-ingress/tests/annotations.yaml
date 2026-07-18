@@ -1769,6 +1769,8 @@ validationTests:
   test-nginx-ingress-mirror-target-hostless-rejected:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
     description: "mirror-target on a host-less Ingress is rejected (no host to gate on)."
+    extraContext:
+      renderMode: admission
     fixtures:
       services:
         - apiVersion: v1

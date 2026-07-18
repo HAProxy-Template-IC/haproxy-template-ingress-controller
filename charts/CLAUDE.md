@@ -777,6 +777,59 @@ templateSnippets:
       {%- endfor %}
 ```
 
+### Validating watched-resource input: `fail()` vs `WebhookRejectOrWarn`
+
+When a snippet validates a value that came off a **watched resource** (an Ingress
+annotation, a route field), do **not** reach for a bare `fail()` by default —
+`fail()` aborts the *entire* config render, so one already-present bad Ingress
+bricks the whole fleet and can crash-loop the controller at the load gate.
+
+Instead decide by the render's `renderMode` (a global string: `"admission"` for a
+webhook dry-run of a proposed change, `"reconcile"` for the live config and the
+load gate). The shared macro `WebhookRejectOrWarn(resource, reason, message)` in
+`libraries/ingress-annotations-compat.yaml` encapsulates the split: it `fail()`s
+under admission (so the API server denies the proposed resource) but records a
+`Warning` Event and returns on any other render (so the fleet keeps serving).
+
+```scriggo
+{%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+...
+{%- for _, ingress := range resources.ingresses.List() %}
+  {%- if <value is invalid> %}
+    {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "<message>") -}}
+    {%- continue %}   {#- caller MUST skip this resource's output in the warn path -#}
+  {%- end %}
+  ... emit this Ingress's config ...
+{%- end %}
+```
+
+**Decide fail vs warn by what a *skip* would mean** — the warn path skips the
+offending resource's contribution, so it must be safe to serve *without* that
+feature:
+
+- **Warn (use `WebhookRejectOrWarn` + skip)** — routing/presentation features
+  where skipping just drops that one behaviour: redirects, CORS, cookie/header/
+  location rewrites, canary, compression, traffic mirroring, host rewrites,
+  fixed/mock responses. Injection guards on these values are still fine to warn —
+  the `continue` means the rejected value is never emitted.
+- **Keep `fail()` (hard-fail every mode)** in these cases:
+    - **Security features** — auth, client/backend mTLS or TLS-verify, WAF, rate
+      limiting, request-body validation, `X-Forwarded-For` handling. Silently
+      skipping a security control is fail-**open**; hard-fail instead so the
+      misconfiguration is loud. (Root `CLAUDE.md` → "No useless fail-open".)
+    - **Skip isn't clean** — the guard sits in a value-returning macro, or in a
+      `backend-directives-*` snippet rendered via `render_glob … inherit_context`
+      (no enclosing `resources.ingresses.List()` loop, so `{% continue %}` can't
+      skip the resource and the fall-through would emit partial/corrupt config).
+    - **Global config / engine errors** — `extraContext.*` validation, "failed to
+      register … map", missing Secret/ConfigMap, aggregate limits ("… more than
+      the configured limit"). These aren't tied to one watched resource.
+
+When in doubt, keep `fail()`. If you convert one guard in a package, sweep the
+package for sibling guards that qualify. Whenever you add a `WebhookRejectOrWarn`
+guard whose message a `validationTest` asserts via `rendering_error`, pin that
+test with `extraContext.renderMode: admission` so it still exercises the fail.
+
 ### Annotation Template Documentation Standards
 
 **Every annotation template MUST include comprehensive inline documentation** to prevent confusion about expected formats and behavior.
