@@ -5,6 +5,13 @@ validationTests:
   test-haptic-rate-limit-shared-ip:
     _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
     description: shared rate-limit-requests (ip key, token-bucket) → packed map + SPOE dispatch
+    # The fixture Ingress also sets waf/waf-mode; waf-mode is an enforcement
+    # override gated once any WAF policy activates governance. Set it here so the
+    # test is self-contained whether or not the deployment defines a policy.
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowEnforcementOverride: true
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1

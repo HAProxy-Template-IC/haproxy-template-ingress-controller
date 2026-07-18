@@ -263,6 +263,13 @@ validationTests:
 
   test-haptic-config-injection:
     description: haproxy-haptic.org config-global/config-defaults/config-frontend inject raw directives verbatim into their sections
+    # Self-contained w.r.t. WAF governance: raw-config injection is gated by
+    # allowRawHAProxyConfig once any WAF policy activates governance. Set it here
+    # so this test passes whether or not the deployment defines a policy.
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowRawHAProxyConfig: true
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
