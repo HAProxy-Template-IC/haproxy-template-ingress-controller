@@ -67,8 +67,8 @@ templateSnippets:
       # haproxy-ingress/global-top-auth ({{ key }})
       userlist {{ userlistName }}
               {% var secretData = secret.Data -%}
-              {%- var hashRegex = extraContext | dig_string("^.*$", "password_hash_validation_regex") %}
-              {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "password_hash_validation_error_message") %}
+              {%- var hashRegex = extraContext | dig_string("^.*$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex") %}
+              {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage") %}
               {#- haproxy-ingress (and ingress-nginx) store credentials as an
                   htpasswd file under a single `auth` Secret key — one
                   "user:hash" (or "user::plaintext") line each. Parse that when
@@ -619,12 +619,16 @@ templateSnippets:
           coraza-plugin-enabled check fails loud at the first offending
           Ingress when the operator wires the annotation without enabling
           the plugin — silent ignore would hide a real misconfiguration. -#}
+      {%- import "util-waf-governance" for WafGovernance -%}
       {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
       {%- var corazaEnabled = false -%}
       {%- for _, p := range plugins -%}
         {%- var pName = p.(map[string]any)["name"].(string) -%}
         {%- if pName == "coraza" -%}{%- corazaEnabled = true -%}{%- end -%}
       {%- end -%}
+      {%- var gov = map[string]any{} -%}
+      {%- var _ = WafGovernance(gov) -%}
+      {%- var hapticAllowEnforcementOverride = gov["allowEnforcementOverride"].(bool) -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var ns = ingress.Metadata.Namespace -%}
         {%- var name = ingress.Metadata.Name -%}
@@ -636,6 +640,9 @@ templateSnippets:
             drop into shadow mode. -#}
         {%- if waf == "" && mode != "" -%}
           {{- fail("Ingress " + key + " sets 'haproxy-ingress.github.io/waf-mode' but not 'haproxy-ingress.github.io/waf'. waf-mode is meaningful only when waf is also set; remove waf-mode or add 'haproxy-ingress.github.io/waf: modsecurity'.") -}}
+        {%- end -%}
+        {%- if mode != "" && !hapticAllowEnforcementOverride -%}
+          {{- fail("Ingress " + key + " sets 'haproxy-ingress.github.io/waf-mode', but the HAPTIC administrator disabled Ingress enforcement overrides with extraContext.waf.ingressPermissions.allowEnforcementOverride=false.") -}}
         {%- end -%}
         {%- if waf != "" -%}
           {%- if !corazaEnabled -%}

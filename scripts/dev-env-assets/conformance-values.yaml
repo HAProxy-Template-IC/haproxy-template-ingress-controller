@@ -36,12 +36,35 @@ credentials:
 ingressClass:
   name: haptic
 
-image:
-  repository: haptic
-  tag: dev
-  pullPolicy: Never
-
 controller:
+  image:
+    repository: haptic
+    tag: dev
+    pullPolicy: Never
+  resources:
+    limits:
+      cpu: "4"
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  autoscaling:
+    enabled: false
+  networkPolicy:
+    enabled: true
+  podSpec:
+    podLabels:
+      environment: conformance
+      managed-by: conformance-suite
+  livenessProbe: {}
+  readinessProbe: {}
+  monitoring:
+    serviceMonitor:
+      enabled: false
+  webhook:
+    enabled: true
+    certManager:
+      enabled: false
   templateLibraries:
     gateway:
       enabled: true
@@ -90,7 +113,9 @@ controller:
 
     templatingSettings:
       extraContext:
-        debug: true
+        diagnostics:
+          routingHeaders:
+            enabled: true
 
 haproxy:
   # Enable per-request μs duration in the dataplane API access log
@@ -109,36 +134,6 @@ haproxy:
   networkPolicy:
     enabled: true
     allowExternal: true
-
-resources:
-  limits:
-    cpu: "4"
-    memory: 512Mi
-  requests:
-    cpu: 100m
-    memory: 128Mi
-
-autoscaling:
-  enabled: false
-
-networkPolicy:
-  enabled: true
-
-podLabels:
-  environment: conformance
-  managed-by: conformance-suite
-
-livenessProbe: {}
-readinessProbe: {}
-
-monitoring:
-  serviceMonitor:
-    enabled: false
-
-webhook:
-  enabled: true
-  certManager:
-    enabled: false
 
 # SPOA hub kept enabled so any chart paths that wire SPOE messages
 # (e.g. SupportHTTPRouteRequestMirror conformance — bundled mirror

@@ -734,7 +734,6 @@ spec:
   templatingSettings:
     extraContext:
       environment: production
-      debug: true
       limits:
         maxConn: 10000
 ```
@@ -742,8 +741,8 @@ spec:
 Access in templates:
 
 ```go
-{% if extraContext.debug %}
-  http-response set-header X-Debug %[be_name]
+{% if extraContext.environment == "production" %}
+  http-response set-header X-Environment production
 {% end %}
 
 global

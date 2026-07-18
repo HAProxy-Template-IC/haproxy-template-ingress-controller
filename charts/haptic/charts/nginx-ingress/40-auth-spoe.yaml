@@ -409,6 +409,7 @@ templateSnippets:
   #     directives and nothing enforces them).
   util-nginx-ingress-coraza-scan:
     template: |-
+      {%- import "util-waf-governance" for WafGovernance -%}
       {%%
         var _, _ = shared.ComputeIfAbsent("sphCorazaScanNginx", func() any {
           var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} })
@@ -424,6 +425,12 @@ templateSnippets:
               corazaEnabled = true
             }
           }
+          var gov = map[string]any{}
+          var _ = WafGovernance(gov)
+          var hapticAllowWafDisable = gov["allowWafDisable"].(bool)
+          var hapticAllowCustomRules = gov["allowCustomRules"].(bool)
+          var maxCustomRuleIngresses = gov["maxCustomRuleIngresses"].(int)
+          var maxCustomRuleBytesPerIngress = gov["maxCustomRuleBytesPerIngress"].(int)
 
           // Dedupe modsec apps by `ns/name`. Under UPDATE admission, the
           // dryrun-validator's overlay may carry both the existing Ingress
@@ -446,15 +453,26 @@ templateSnippets:
 
             var snippet = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/modsecurity-snippet"]
             if snippet != "" {
+              if !hapticAllowCustomRules {
+                fail("Ingress " + key + " sets 'nginx.ingress.kubernetes.io/modsecurity-snippet', but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
+              }
               if strings_contains(snippet, "\"\"\"") {
                 fail("Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
+              }
+              if len(snippet) > maxCustomRuleBytesPerIngress {
+                fail("Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' is " + tostring(len(snippet)) + " bytes; the configured per-Ingress custom-rule limit is " + tostring(maxCustomRuleBytesPerIngress) + ".")
               }
               // coraza-app.map is keyed by <ns>/<name> (resource id), not
               // by <host><path> — see frontend-spoe-filters-050-coraza
               // and base.yaml's resource_id extraction. Host-less rules
               // are fine because the routing chain still produces a
               // resource_id whatever path/host pattern matched.
-              byKey[key] = map[string]any{"ns": ns, "name": name, "snippet": snippet}
+              byKey[key] = map[string]any{
+                "ns": ns,
+                "name": name,
+                "source": "nginx-ingress modsecurity-snippet from " + key,
+                "snippet": snippet,
+              }
               if !anyAnnotation {
                 firstAnnotationKey = key
                 firstAnnotationName = "nginx.ingress.kubernetes.io/modsecurity-snippet"
@@ -464,6 +482,9 @@ templateSnippets:
 
             var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-modsecurity"]
             if v == "false" {
+              if !hapticAllowWafDisable {
+                fail("Ingress " + key + " disables WAF with 'nginx.ingress.kubernetes.io/enable-modsecurity: false', but the HAPTIC administrator disabled Ingress WAF opt-outs with extraContext.waf.ingressPermissions.allowWafDisable=false.")
+              }
               disabledKeys = append(disabledKeys, key)
               if !anyAnnotation {
                 firstAnnotationKey = key
@@ -485,6 +506,10 @@ templateSnippets:
             } else if v != "" {
               fail("Ingress " + key + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"" + v + "\"; allowed values are \"true\" or \"false\".")
             }
+          }
+
+          if len(byKey) > maxCustomRuleIngresses {
+            fail("nginx-ingress modsecurity-snippet annotations create more than the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named HAPTIC policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
           }
 
           if anyAnnotation && !corazaEnabled {
@@ -520,14 +545,16 @@ templateSnippets:
       {%- var modsecApps = gf | dig("sphCorazaApps") | fallback([]any{}) | toSlice() -%}
       {%- for _, app := range modsecApps -%}
         {%- var a = app.(map[string]any) -%}
-        {%- var aNs = a["ns"].(string) -%}
-        {%- var aName = a["name"].(string) -%}
+        {%- var aNs = a | dig_string("", "ns") -%}
+        {%- var aName = a | dig_string("", "name") -%}
+        {%- if aNs != "" && aName != "" -%}
       {{ "\n" }}{{ aNs }}/{{ aName }} {{ aNs }}/{{ aName }}
+        {%- end -%}
       {%- end -%}
 
   # coraza-disabled.map population: one `<ns>/<name> 1` row per Ingress
   # carrying `nginx.ingress.kubernetes.io/enable-modsecurity: "false"`.
-  # Consumed under default-on dispatch (controller.templatingSettings.extraContext.coraza.dispatch.mode == "default-on")
+  # Consumed under default-on dispatch (extraContext.waf.dispatch.mode == "default-on")
   # to skip the SPOE roundtrip for resources that opt out. Keyed by
   # `<ns>/<name>` (resource id) — the host dimension is not part of the
   # key, so host-less Ingress rules are fine (the routing chain still

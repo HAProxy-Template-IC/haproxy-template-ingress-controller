@@ -268,7 +268,7 @@ http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_
 ```
 
 !!! note "Overriding Path Match Order"
-    Setting `controller.config.routing.regexMatchOrder=last` swaps in the alternate `frontend-routing-logic-regex-last` variant of this snippet at Helm load time, producing performance-first ordering (Exact > Prefix-exact > Prefix > Regex). Faster matchers run first and regex matching is only evaluated as a fallback. The variant snippet is unset before the merged config is rendered, so it never appears in the operator-visible output.
+    Setting `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last` swaps in the alternate `frontend-routing-logic-regex-last` variant of this snippet at Helm load time, producing performance-first ordering (Exact > Prefix-exact > Prefix > Regex). Faster matchers run first and regex matching is only evaluated as a fallback. The variant snippet is unset before the merged config is rendered; the effective setting remains visible in `extraContext`.
 
 **3. Qualifier system** — the first `:`-separated field of `path_match` selects the routing mode: `BACKEND:<name>` routes directly, `MULTIBACKEND:<weight>:<key>` selects a weighted backend via random draw. Advanced matchers (method / header / query, contributed by the gateway library through `frontend-matchers-advanced-*`) may rewrite `path_match`, so the qualifier is re-parsed after they run.
 
@@ -412,7 +412,7 @@ The base library watches controller LoadBalancer Services and discovers external
 
 Controller Services are discovered via label selector (`app.kubernetes.io/name=<name>,app.kubernetes.io/component=loadbalancer`). If no Service has LoadBalancer addresses assigned yet, `gf["addresses"]` remains nil and status patches that depend on addresses are skipped.
 
-Address discovery can be disabled via `controller.statusPatches.enabled: false`. When disabled, `gf["addresses"]` is never set, which prevents all `status-patches-*` snippets from writing to Ingress or Gateway status. This is useful during migration from another ingress controller to avoid premature DNS cutover when tools like external-dns watch status fields.
+Address discovery can be disabled via `controller.config.templatingSettings.extraContext.statusPatches.enabled: false`. When disabled, `gf["addresses"]` is never set, which prevents all `status-patches-*` snippets from writing to Ingress or Gateway status. This is useful during migration from another ingress controller to avoid premature DNS cutover when tools like external-dns watch status fields.
 
 ### Status-patch extension point
 

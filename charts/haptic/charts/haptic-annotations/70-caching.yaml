@@ -16,7 +16,7 @@
 # off the client first (a client must not be able to poison the key or skip rules).
 #
 # Everything is gated on extraContext.hapticCacheEnabled (set by the chart from
-# controller.cache.varnish.enabled); when off, nothing is emitted.
+# cache.varnish.enabled); when off, nothing is emitted.
 templateSnippets:
 
   # ==========================================================================
@@ -27,10 +27,10 @@ templateSnippets:
   features-870-haptic-cache-maps:
     template: |
       {#- HAPTIC shared cache — build the cache-enable / ttl / skip-ct / maxsize maps. -#}
-      {%- var enabled = extraContext | dig("hapticCacheEnabled") | fallback("false") | tostring() %}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
-        {%- var vSvc = extraContext | dig("hapticCacheVarnishService") | fallback("haptic-varnish-cache") | tostring() %}
-        {%- var vNs = extraContext | dig("hapticCacheVarnishNamespace") | fallback("default") | tostring() %}
+        {%- var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring() %}
+        {%- var vNs = extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring() %}
         {%- var enLines = []any{} %}
         {%- var ttlLines = []any{} %}
         {%- var skipLines = []any{} %}
@@ -100,8 +100,8 @@ templateSnippets:
   # ==========================================================================
   frontend-spoe-filters-024-haptic-cache-rate-limit-loopback:
     template: |
-      {%- var enabled = extraContext | dig("hapticCacheEnabled") | fallback("false") | tostring() %}
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if enabled == "true" && (messages contains "check-ratelimit") %}
         {%- var srcMap, _ = pathResolver.GetPath("haptic-varnish-src.map", "map") %}
@@ -118,7 +118,7 @@ templateSnippets:
     template: |
       {#- HAPTIC shared cache — route cache-eligible requests to varnish_cache. -#}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- var enabled = extraContext | dig("hapticCacheEnabled") | fallback("false") | tostring() %}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
         {%- var enMap, _ = pathResolver.GetPath("haptic-cache-enable.map", "map") %}
         {%- var srcMap, _ = pathResolver.GetPath("haptic-varnish-src.map", "map") %}
@@ -163,12 +163,12 @@ templateSnippets:
       {#- HAPTIC shared cache — the sharded varnish_cache backend + header injection. -#}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
-      {%- var enabled = extraContext | dig("hapticCacheEnabled") | fallback("false") | tostring() %}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
-        {%- var vSvc = extraContext | dig("hapticCacheVarnishService") | fallback("haptic-varnish-cache") | tostring() %}
-        {%- var vNs = extraContext | dig("hapticCacheVarnishNamespace") | fallback("default") | tostring() %}
-        {%- var vPort = toint(extraContext | dig("hapticCacheVarnishPort") | fallback("6081") | tostring()) %}
-        {%- var hbf = extraContext | dig("hapticCacheHashBalanceFactor") | fallback("150") | tostring() %}
+        {%- var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring() %}
+        {%- var vNs = extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring() %}
+        {%- var vPort = toint(extraContext | dig("cache", "varnish", "servicePort") | fallback("6081") | tostring()) %}
+        {%- var hbf = extraContext | dig("cache", "haproxy", "hashBalanceFactor") | fallback("150") | tostring() %}
         {%- var ttlMap, _ = pathResolver.GetPath("haptic-cache-ttl.map", "map") %}
         {%- var skipMap, _ = pathResolver.GetPath("haptic-cache-skip-ct.map", "map") %}
         {%- var sizeMap, _ = pathResolver.GetPath("haptic-cache-maxsize.map", "map") %}
@@ -220,23 +220,24 @@ templateSnippets:
 k8sResources:
   varnish-cache:
     template: |
-      {%- var enabled = extraContext | dig("hapticCacheEnabled") | fallback("false") | tostring() %}
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
-      {%- var vSvc = extraContext | dig("hapticCacheVarnishService") | fallback("haptic-varnish-cache") | tostring() %}
-      {%- var vNs = extraContext | dig("hapticCacheVarnishNamespace") | fallback("default") | tostring() %}
-      {%- var vPort = extraContext | dig("hapticCacheVarnishPort") | fallback("6081") | tostring() %}
-      {%- var img = extraContext | dig("hapticCacheImage") | fallback("varnish:7.7") | tostring() %}
-      {%- var replicas = extraContext | dig("hapticCacheReplicas") | fallback("2") | tostring() %}
-      {%- var malloc = extraContext | dig("hapticCacheMalloc") | fallback("256m") | tostring() %}
-      {%- var workload = extraContext | dig("hapticCacheWorkload") | fallback("statefulset") | tostring() %}
-      {%- var originHost = extraContext | dig("hapticCacheOriginHost") | fallback("haptic") | tostring() %}
-      {%- var originPort = extraContext | dig("hapticCacheOriginPort") | fallback("80") | tostring() %}
-      {%- var autoscaling = extraContext | dig("hapticCacheAutoscalingEnabled") | fallback("false") | tostring() %}
-      {%- var cpuReq = extraContext | dig("hapticCacheCpuRequest") | fallback("100m") | tostring() %}
-      {%- var memReq = extraContext | dig("hapticCacheMemRequest") | fallback("384Mi") | tostring() %}
-      {%- var memLim = extraContext | dig("hapticCacheMemLimit") | fallback("384Mi") | tostring() %}
-      {%- var pdbEnabled = extraContext | dig("hapticCachePDBEnabled") | fallback("true") | tostring() %}
-      {%- var pdbMaxUnavailable = extraContext | dig("hapticCachePDBMaxUnavailable") | fallback("1") | tostring() %}
+      {%- var vSvc = extraContext | dig("cache", "varnish", "serviceName") | fallback("haptic-varnish-cache") | tostring() %}
+      {%- var vNs = extraContext | dig("cache", "varnish", "namespace") | fallback("default") | tostring() %}
+      {%- var vPort = extraContext | dig("cache", "varnish", "servicePort") | fallback("6081") | tostring() %}
+      {%- var img = extraContext | dig("cache", "varnish", "image") | fallback("varnish:7.7") | tostring() %}
+      {%- var imagePullPolicy = extraContext | dig("cache", "varnish", "imagePullPolicy") | fallback("IfNotPresent") | tostring() %}
+      {%- var replicas = extraContext | dig("cache", "varnish", "replicas") | fallback("2") | tostring() %}
+      {%- var malloc = extraContext | dig("cache", "varnish", "malloc") | fallback("256m") | tostring() %}
+      {%- var workload = extraContext | dig("cache", "varnish", "workload") | fallback("statefulset") | tostring() %}
+      {%- var originHost = extraContext | dig("cache", "varnish", "originHost") | fallback("haptic") | tostring() %}
+      {%- var originPort = extraContext | dig("cache", "varnish", "originPort") | fallback("80") | tostring() %}
+      {%- var autoscaling = extraContext | dig("cache", "varnish", "autoscaling", "enabled") | fallback("false") | tostring() %}
+      {%- var cpuReq = extraContext | dig("cache", "varnish", "resources", "requests", "cpu") | fallback("100m") | tostring() %}
+      {%- var memReq = extraContext | dig("cache", "varnish", "resources", "requests", "memory") | fallback("384Mi") | tostring() %}
+      {%- var memLim = extraContext | dig("cache", "varnish", "resources", "limits", "memory") | fallback("384Mi") | tostring() %}
+      {%- var pdbEnabled = extraContext | dig("cache", "varnish", "podDisruptionBudget", "enabled") | fallback("true") | tostring() %}
+      {%- var pdbMaxUnavailable = extraContext | dig("cache", "varnish", "podDisruptionBudget", "maxUnavailable") | fallback("1") | tostring() %}
       {%- var vcl = "vcl 4.1;\nimport std;\n\nbackend default {\n    .host = \"" + originHost + "\";\n    .port = \"" + originPort + "\";\n}\n\nsub vcl_recv {\n    # When a custom cache key is set (X-Haptic-Cache-Vary), the key already\n    # includes the caller identity, so it is safe to cache Authorization/Cookie\n    # requests too — bypass the builtin pass for idempotent methods. Without a\n    # key, the builtin vcl_recv still passes authenticated/cookie'd requests.\n    if (req.http.X-Haptic-Cache-Vary && (req.method == \"GET\" || req.method == \"HEAD\")) {\n        return (hash);\n    }\n}\n\nsub vcl_hash {\n    if (req.http.X-Haptic-Cache-Vary) {\n        hash_data(req.http.X-Haptic-Cache-Vary);\n    }\n}\n\nsub vcl_backend_response {\n    if (bereq.http.X-Haptic-Cache-Skip-CT && beresp.http.Content-Type && std.strstr(bereq.http.X-Haptic-Cache-Skip-CT, \"|\" + regsub(beresp.http.Content-Type, \";.*$\", \"\") + \"|\")) {\n        set beresp.uncacheable = true;\n        set beresp.ttl = 120s;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-Max-Size && beresp.http.Content-Length && std.integer(beresp.http.Content-Length, 0) > std.integer(bereq.http.X-Haptic-Cache-Max-Size, 0)) {\n        set beresp.uncacheable = true;\n        set beresp.ttl = 120s;\n        return (deliver);\n    }\n    if (bereq.http.X-Haptic-Cache-TTL) {\n        if (beresp.http.Set-Cookie || beresp.status != 200) {\n            set beresp.uncacheable = true;\n            set beresp.ttl = 120s;\n            return (deliver);\n        }\n        set beresp.ttl = std.duration(bereq.http.X-Haptic-Cache-TTL + \"s\", 0s);\n        return (deliver);\n    }\n}\n\nsub vcl_deliver {\n    if (obj.hits > 0) {\n        set resp.http.X-Cache = \"HIT\";\n    } else {\n        set resp.http.X-Cache = \"MISS\";\n    }\n}\n" %}
       {%- var vclHash = sha256(vcl) %}
       apiVersion: v1
@@ -325,6 +326,7 @@ k8sResources:
             containers:
               - name: varnish
                 image: {{ img }}
+                imagePullPolicy: {{ imagePullPolicy }}
                 command: ["varnishd"]
                 args: ["-F", "-a", ":6081", "-f", "/etc/varnish/default.vcl", "-s", "malloc,{{ malloc }}"]
                 resources:
@@ -356,10 +358,10 @@ k8sResources:
                 configMap:
                   name: {{ vSvc }}-vcl
       {%- if autoscaling == "true" %}
-      {%- var minR = extraContext | dig("hapticCacheMinReplicas") | fallback("2") | tostring() %}
-      {%- var maxR = extraContext | dig("hapticCacheMaxReplicas") | fallback("6") | tostring() %}
-      {%- var cpuTarget = extraContext | dig("hapticCacheTargetCPU") | fallback("70") | tostring() %}
-      {%- var scaleDownWindow = extraContext | dig("hapticCacheScaleDownWindow") | fallback("600") | tostring() %}
+      {%- var minR = extraContext | dig("cache", "varnish", "autoscaling", "minReplicas") | fallback("2") | tostring() %}
+      {%- var maxR = extraContext | dig("cache", "varnish", "autoscaling", "maxReplicas") | fallback("6") | tostring() %}
+      {%- var cpuTarget = extraContext | dig("cache", "varnish", "autoscaling", "targetCPUUtilizationPercentage") | fallback("70") | tostring() %}
+      {%- var scaleDownWindow = extraContext | dig("cache", "varnish", "autoscaling", "scaleDownStabilizationSeconds") | fallback("600") | tostring() %}
       ---
       apiVersion: autoscaling/v2
       kind: HorizontalPodAutoscaler

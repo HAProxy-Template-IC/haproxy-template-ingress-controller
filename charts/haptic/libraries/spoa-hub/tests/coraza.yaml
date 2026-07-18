@@ -18,20 +18,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -86,20 +85,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -159,20 +157,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -236,20 +233,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -308,14 +304,15 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -358,20 +355,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -411,20 +407,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-auth"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-auth"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: external_auth
             library: libhaproxy_spoa_hub_plugin_external_auth.so
@@ -457,20 +452,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request", "get-fingerprint"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request", "get-fingerprint"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -525,7 +519,7 @@ validationTests:
         pattern: 'ja4 = true'
 
   # =============================================================================
-  # Coraza dispatch mode (controller.templatingSettings.extraContext.coraza.dispatch)
+  # WAF dispatch mode (raw config: spec.templatingSettings.extraContext.waf.dispatch)
   # =============================================================================
 
   test-coraza-dispatch-opt-in-default:
@@ -537,20 +531,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -589,7 +582,10 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_app\) -m found \} \|\| \{ var\(txn\.coraza_mode\) -m found \}'
+        pattern: 'set-var\(txn\.coraza_active\) bool\(true\) if \{ var\(txn\.coraza_app\) -m found \} \|\| \{ var\(txn\.coraza_mode\) -m found \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_active\) -m bool \}'
       - type: not_contains
         target: haproxy.cfg
         pattern: 'coraza-disabled\.map'
@@ -599,29 +595,28 @@ validationTests:
 
   test-coraza-dispatch-default-on-no-annotations:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: "With dispatch.mode=default-on and no per-Ingress annotations, the rendered haproxy.cfg has the unconditional send-spoe-group line gated only on the coraza-disabled map lookup, plus the str(deny) fallback for txn.coraza_mode. coraza-disabled.map is empty (no Ingress opted out)."
+    description: "With dispatch.mode=default-on and no per-Ingress annotations, the rendered haproxy.cfg activates Coraza unless the route is in coraza-disabled.map, falls back to deny mode, and dispatches only when the explicit active flag is true."
     extraContext:
       haproxyVersion: "3.2"
-      coraza:
+      waf:
         dispatch:
           mode: default-on
           defaultEnforcement: deny
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -667,36 +662,38 @@ validationTests:
         pattern: 'set-var\(txn\.coraza_mode\) str\(deny\) unless \{ var\(txn\.coraza_mode\) -m found \}'
       - type: contains
         target: haproxy.cfg
-        pattern: 'send-spoe-group spoa-hub check-request-group unless \{ var\(txn\.coraza_disabled\) -m found \}'
+        pattern: 'set-var\(txn\.coraza_active\) bool\(true\) unless \{ var\(txn\.coraza_disabled\) -m found \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_active\) -m bool \}'
       - type: not_contains
         target: haproxy.cfg
         pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_app\)'
 
   test-coraza-dispatch-default-on-detect:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: "With dispatch.mode=default-on and defaultEnforcement=detect, the str fallback line uses str(detect) so the existing deny-rule predicate `!{ var(txn.coraza_mode) -m str detect }` short- circuits enforcement on every path that didn't have a per-path waf-mode annotation override."
+    description: "With dispatch.mode=default-on and defaultEnforcement=detect, the mode fallback causes detect-only=true to be sent to Coraza. Rule decisions are observed but coerced to allow by the plugin, while plugin and hub failures still fail closed."
     extraContext:
       haproxyVersion: "3.2"
-      coraza:
+      waf:
         dispatch:
           mode: default-on
           defaultEnforcement: detect
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -737,7 +734,7 @@ validationTests:
         pattern: 'set-var\(txn\.coraza_mode\) str\(detect\) unless \{ var\(txn\.coraza_mode\) -m found \}'
       - type: contains
         target: haproxy.cfg
-        pattern: '!\{ var\(txn\.coraza_mode\) -m str detect \}'
+        pattern: 'set-var\(txn\.coraza_detect_only\) bool\(true\) if \{ var\(txn\.coraza_active\) -m bool \} \{ var\(txn\.coraza_mode\) -m str detect \}'
 
   test-coraza-dispatch-default-on-with-opt-out:
     # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
@@ -747,26 +744,27 @@ validationTests:
     description: "With dispatch.mode=default-on and one Ingress carrying nginx.ingress.kubernetes.io/enable-modsecurity: \"false\", the coraza-disabled.map gets a `<ns>/<name> 1` entry; the send-spoe-group dispatch line is gated only on txn.coraza_disabled (so the opted-out resource skips the WAF)."
     extraContext:
       haproxyVersion: "3.2"
-      coraza:
+      waf:
         dispatch:
           mode: default-on
           defaultEnforcement: deny
+        ingressPermissions:
+          allowWafDisable: true
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -848,10 +846,12 @@ validationTests:
     description: "An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity: \"false\" and a host-less rule renders successfully — coraza-disabled.map is now keyed by <ns>/<name> (resource id), so the host dimension is irrelevant and the previous fail-loud guard is obsolete."
     extraContext:
       haproxyVersion: "3.2"
-      coraza:
+      waf:
         dispatch:
           mode: default-on
           defaultEnforcement: deny
+        ingressPermissions:
+          allowWafDisable: true
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -877,3 +877,46 @@ validationTests:
       - type: contains
         target: map:coraza-disabled.map
         pattern: '(?m)^default/host-less 1$'
+
+  test-coraza-dispatch-default-on-rejects-unauthorized-opt-out:
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
+    description: "Default-on dispatch treats WAF coverage as an administrator-owned baseline: an Ingress cannot opt out unless extraContext.waf.ingressPermissions.allowWafDisable is explicitly true."
+    extraContext:
+      haproxyVersion: "3.2"
+      waf:
+        dispatch:
+          mode: default-on
+          defaultEnforcement: deny
+        # Per-test extraContext deep-merges into the global context, so pin
+        # the permission this test asserts instead of relying on the global
+        # values leaving it unset.
+        ingressPermissions:
+          allowWafDisable: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: unauthorized-opt-out
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/enable-modsecurity: "false"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port: { number: 80 }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'disabled Ingress WAF opt-outs'
+      - type: contains
+        target: rendering_error
+        pattern: 'default/unauthorized-opt-out'

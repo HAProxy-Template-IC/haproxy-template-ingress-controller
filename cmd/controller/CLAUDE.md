@@ -247,9 +247,9 @@ Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cm
 The chart injects `POD_NAME` and `POD_NAMESPACE` via the downward API (`fieldRef` to `metadata.name` / `metadata.namespace`). `POD_NAMESPACE` is the controller's own namespace — used for owned-resource `OwnerReference`s and the leader-election lease — and falls back to the service-account token mount (`/var/run/secrets/kubernetes.io/serviceaccount/namespace`) when unset; `POD_NAME` is the leader-election lease identity and falls back to the OS hostname. There is no `CONTROLLER_NAMESPACE` env var. Other surfaces:
 
 - **Log output** — always structured slog (logfmt-ish text on stdout); no `LOG_FORMAT` env var.
-- **Metrics port** — read from the `METRICS_PORT` env var (default `9090`; set to `0` to disable). The CRD has a `controller.metricsPort` field but the controller does **not** read it; the chart strips it before serialising the CRD. To change the port, set `METRICS_PORT` (via the top-level `extraEnv` in Helm).
-- **Healthz port** — runs on the same listener as `--debug-port` (default `0` = disabled when running the binary directly; the chart sets `8080`). There is no separate healthz listener: setting `--debug-port` / `controller.debugPort` to `0` disables both `/debug/*` and `/healthz` (and breaks Kubernetes probes). The chart's `controller.ports.healthz` only configures the Service port and the container-port declaration used by probes — the actual listener is still the introspection server.
-- **Webhook port** — hardcoded `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag for it. Disabled entirely when `--webhook-cert-dir` is empty.
+- **Metrics port** — read from the `METRICS_PORT` env var (default `9090`; set to `0` to disable). The Helm chart owns that env var through `controller.ports.metrics` and rejects a duplicate `extraEnv` override so the process, pod, Service, and monitors cannot drift.
+- **Healthz port** — runs on the same listener as `--debug-port` (default `0` = disabled when running the binary directly; the chart sets `DEBUG_PORT`, the container port, Service, probes, and NetworkPolicy from `controller.ports.healthz`, default `8080`). There is no separate healthz listener, and the chart requires this port because its probes depend on `/healthz`.
+- **Webhook port** — read from `WEBHOOK_PORT` (default `9443`). The Helm chart owns it through `controller.ports.webhook`, alongside the container port, Service target, and NetworkPolicy. Disabled entirely when `--webhook-cert-dir` is empty.
 - **pprof** — always mounted at `/debug/pprof/*` whenever the introspection server is enabled; no `ENABLE_PPROF` env var.
 
 ## Signal Handling
@@ -287,8 +287,8 @@ don't add another shutdown-timeout layer in `cmd/controller`.
 The controller doesn't hand-roll its HTTP servers — three reusable infra packages own the surfaces:
 
 - **`pkg/introspection`** — `/healthz` (also aliased as `/health`), `/debug/vars`, `/debug/vars/<name>?field={…}`, `/debug/events`, `/debug/pprof/*`. Backed by an instance-based registry of `Var` implementations. Listening port comes from `--debug-port` / `DEBUG_PORT` (default 0 = disabled; the Helm chart sets 8080). Setting it to 0 disables both `/debug/*` and `/healthz` (no separate healthz listener exists), so probes break — restrict access via NetworkPolicy instead. The chart's `controller.ports.healthz` only configures the Service port and container-port declaration used by probes; it doesn't open an extra listener. There is no separate `/readyz` — Kubernetes readiness probes hit `/healthz` too.
-- **`pkg/metrics`** — `/metrics` via Prometheus `promhttp` against an instance-based `prometheus.Registerer`. Port comes from the `METRICS_PORT` env var (default 9090, set to 0 to disable; the CRD's `controller.metricsPort` field is **not** read by the controller — the chart strips it before serialising). The instance-scoped registry is critical: every reinitialization iteration creates a fresh registry so metrics get GC'd cleanly when the iteration ends.
-- **`pkg/webhook`** — admission webhook HTTPS (`/validate`) and a sidecar `/healthz`. Disabled when `--webhook-cert-dir` is empty. Port is **hardcoded** `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag override.
+- **`pkg/metrics`** — `/metrics` via Prometheus `promhttp` against an instance-based `prometheus.Registerer`. Port comes from the `METRICS_PORT` env var (default 9090, set to 0 to disable; chart owner `controller.ports.metrics`). The instance-scoped registry is critical: every reinitialization iteration creates a fresh registry so metrics get GC'd cleanly when the iteration ends.
+- **`pkg/webhook`** — admission webhook HTTPS (`/validate`) and a sidecar `/healthz`. Disabled when `--webhook-cert-dir` is empty. Port comes from `WEBHOOK_PORT` (default `9443`; chart owner `controller.ports.webhook`).
 
 Don't add new HTTP surfaces in `cmd/controller`. Add a `Var` to `pkg/introspection`, a metric to `pkg/controller/metrics`, or a handler on the existing webhook server.
 
@@ -584,7 +584,10 @@ go tool pprof http://localhost:8080/debug/pprof/profile?seconds=30
 go tool pprof http://localhost:8080/debug/pprof/heap
 ```
 
-`/debug/pprof/*` and `/healthz` share the same listener, so setting `controller.debugPort: 0` would also drop `/healthz` and break Kubernetes probes. To shield profiling endpoints in production, restrict access via NetworkPolicy rather than disabling the port. To move both endpoints to a dedicated port, set `controller.debugPort: <port>`.
+`/debug/pprof/*` and `/healthz` share the same listener. In the Helm chart,
+`controller.ports.healthz` moves the process listener, pod, Service, probes, and
+NetworkPolicy together. To shield profiling endpoints in production, restrict
+access via NetworkPolicy rather than disabling the required health listener.
 
 ## Kubernetes Deployment
 

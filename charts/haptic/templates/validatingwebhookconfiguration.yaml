@@ -1,4 +1,4 @@
-{{- $webhook := .Values.webhook }}
+{{- $webhook := .Values.controller.webhook }}
 {{- $cm := $webhook.certManager }}
 {{- if $webhook.enabled }}
 {{- /*

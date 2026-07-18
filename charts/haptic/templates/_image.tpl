@@ -13,7 +13,7 @@ Combines base tag (defaults to Chart.AppVersion) with HAProxy version suffix
 Example: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.12-haproxy3.2
 */}}
 {{- define "haptic.controller.image" -}}
-{{- printf "%s:%s-haproxy%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) .Values.haproxyVersion -}}
+{{- printf "%s:%s-haproxy%s" .Values.controller.image.repository (.Values.controller.image.tag | default .Chart.AppVersion) .Values.haproxyVersion -}}
 {{- end -}}
 
 {{/*
@@ -26,7 +26,8 @@ Enterprise example: hapee-registry.haproxy.com/haproxy-enterprise:3.2r1
 */}}
 {{- define "haptic.haproxy.image" -}}
 {{- $patchVersions := ternary .Values.haproxyEnterprisePatchVersions .Values.haproxyPatchVersions .Values.haproxy.enterprise.enabled -}}
-{{- printf "%s:%s" .Values.haproxy.image.repository (.Values.haproxy.image.tag | default (index $patchVersions .Values.haproxyVersion) | default .Values.haproxyVersion) -}}
+{{- $defaultRepository := ternary "hapee-registry.haproxy.com/haproxy-enterprise" "haproxytech/haproxy-debian" .Values.haproxy.enterprise.enabled -}}
+{{- printf "%s:%s" (.Values.haproxy.image.repository | default $defaultRepository) (.Values.haproxy.image.tag | default (index $patchVersions .Values.haproxyVersion) | default .Values.haproxyVersion) -}}
 {{- end -}}
 
 {{/*
@@ -35,7 +36,7 @@ Enterprise: /opt/hapee-{version}/sbin/hapee-lb
 Community: /usr/local/sbin/haproxy
 */}}
 {{- define "haptic.haproxy.bin" -}}
-{{- .Values.haproxy.haproxyBin | default (ternary (printf "/opt/hapee-%s/sbin/hapee-lb" .Values.haproxy.enterprise.version) "/usr/local/sbin/haproxy" .Values.haproxy.enterprise.enabled) -}}
+{{- .Values.haproxy.haproxyBin | default (ternary (printf "/opt/hapee-%s/sbin/hapee-lb" .Values.haproxyVersion) "/usr/local/sbin/haproxy" .Values.haproxy.enterprise.enabled) -}}
 {{- end -}}
 
 {{/*

@@ -64,13 +64,15 @@ controller:
     nginxIngress:
       enabled: false  # nginx-ingress compat — opt-in migration aid
   config:
-    routing:
-      regexMatchOrder: default  # "default" or "last" — see Path Matching Order below
+    templatingSettings:
+      extraContext:
+        routing:
+          regexMatchOrder: default  # "default" or "last" — see Path Matching Order below
 ```
 
 ## Path matching order
 
-Path-based routing inside the rendered `frontend-routing-logic` snippet evaluates four map types: exact, regex, prefix-exact, and prefix. The evaluation order is selected by `controller.config.routing.regexMatchOrder`:
+Path-based routing inside the rendered `frontend-routing-logic` snippet evaluates four map types: exact, regex, prefix-exact, and prefix. The evaluation order is selected by `controller.config.templatingSettings.extraContext.routing.regexMatchOrder`:
 
 | Value | Order | Use case |
 |-------|-------|----------|

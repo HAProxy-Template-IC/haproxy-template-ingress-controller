@@ -42,59 +42,114 @@ templatingSettings:
     # the vendor libraries' hash-validation guard. Default accepts bcrypt
     # ($2a/$2b/$2y), Apache MD5 ($apr1), and crypt SHA-256/512 ($5/$6) / MD5 ($1).
     hapticPasswordHashRegex: '^\$(2[aby]|apr1|1|5|6)\$'
-    # Shared-cache (Varnish tier) wiring. The chart overrides these from
-    # controller.cache.varnish via templates/haproxytemplateconfig.yaml when the
-    # tier is enabled; the fallbacks keep the caching snippets renderable
-    # (offline/standalone) when it is not. hapticCacheEnabled gates whether the
-    # varnish_cache backend + routing are emitted at all.
-    hapticCacheEnabled: "false"
-    hapticCacheVarnishService: "haptic-varnish-cache"
-    hapticCacheVarnishNamespace: "default"
-    hapticCacheVarnishPort: "6081"
-    # HAProxy origin the Varnish tier loops back to on a miss; the chart sets
-    # these to the controller-managed HAProxy Service (host + HTTP port).
-    hapticCacheOriginHost: "haptic"
-    hapticCacheOriginPort: "80"
-    # Bounded-load consistent hashing: cap any one Varnish shard's share to this
-    # factor of the mean (prevents a hot key pinning a pod). 0 disables.
-    hapticCacheHashBalanceFactor: "150"
-    # Varnish workload shape (chart-overridden from controller.cache.varnish.*).
-    hapticCacheWorkload: "statefulset"          # statefulset | deployment
-    hapticCacheReplicas: "2"
-    hapticCacheImage: "varnish:7.7"
-    hapticCacheMalloc: "256m"                    # -s malloc,<size> (≈75% of the mem limit)
-    hapticCachePDBEnabled: "true"
-    hapticCachePDBMaxUnavailable: "1"
-    # Shared request-rate limiting (SPOA rate-limit + optional Valkey store).
-    # The chart overrides these from controller.rateLimit.* via
-    # templates/haproxytemplateconfig.yaml when enabled.
-    hapticRateLimitSharedEnabled: "false"
-    hapticRateLimitStoreEnabled: "false"
-    hapticRateLimitStoreBaseName: "haptic-rate-limit-store"
-    hapticRateLimitStoreNamespace: "default"
-    hapticRateLimitStorePort: "6379"
-    hapticRateLimitStoreImage: "valkey/valkey:8-alpine"
-    hapticRateLimitStoreReplicas: "3"
-    hapticRateLimitStoreCpuRequest: "50m"
-    hapticRateLimitStoreMemRequest: "128Mi"
-    hapticRateLimitStoreMemLimit: "128Mi"
-    hapticRateLimitStoreSentinelPort: "26379"
-    hapticRateLimitStoreSentinelQuorum: "2"
-    hapticRateLimitStoreSentinelDownAfterMs: "2000"
-    hapticRateLimitStoreSentinelFailoverTimeoutMs: "10000"
-    hapticRateLimitStoreSentinelParallelSyncs: "1"
-    hapticRateLimitStoreSentinelCpuRequest: "25m"
-    hapticRateLimitStoreSentinelMemRequest: "64Mi"
-    hapticRateLimitStoreSentinelMemLimit: "64Mi"
-    hapticRateLimitStorePDBEnabled: "true"
-    hapticRateLimitStorePDBMaxUnavailable: "1"
-    # API-gateway JSON request validation (SPOA api-gateway plugin). The chart
-    # overrides these from controller.apiGateway.validation when enabled.
-    hapticRequestValidationEnabled: "false"
-    hapticRequestValidationMaxBodyBytes: "8192"
-    hapticRequestValidationBufferHeadroomBytes: "8192"
-    hapticRequestValidationFailOpen: "false"
-    hapticRequestValidationBodyWaitTimeout: "100ms"
+    # Feature-resource contracts. The chart copies its public cache and
+    # rateLimit trees here and enriches them with release-derived names. These
+    # defaults keep the annotation library independently renderable.
+    cache:
+      haproxy:
+        hashBalanceFactor: 150
+      varnish:
+        enabled: false
+        serviceName: haptic-varnish-cache
+        namespace: default
+        servicePort: 6081
+        originHost: haptic
+        originPort: 80
+        workload: statefulset
+        replicas: 2
+        image: varnish:7.7
+        imagePullPolicy: IfNotPresent
+        malloc: 256m
+        resources:
+          requests:
+            cpu: 100m
+            memory: 384Mi
+          limits:
+            memory: 384Mi
+        podDisruptionBudget:
+          enabled: true
+          maxUnavailable: 1
+        autoscaling:
+          enabled: false
+          minReplicas: 2
+          maxReplicas: 6
+          targetCPUUtilizationPercentage: 70
+          scaleDownStabilizationSeconds: 600
+    rateLimit:
+      shared:
+        enabled: false
+        managedStore:
+          enabled: false
+          serviceName: haptic-rate-limit-store
+          namespace: default
+          port: 6379
+          image: valkey/valkey:8-alpine
+          imagePullPolicy: IfNotPresent
+          replicas: 3
+          maxMemory: 96mb
+          maxMemoryPolicy: volatile-ttl
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 128Mi
+          sentinel:
+            masterName: haptic-rate-limit
+            port: 26379
+            quorum: 2
+            downAfterMilliseconds: 2000
+            failoverTimeoutMilliseconds: 10000
+            parallelSyncs: 1
+            resources:
+              requests:
+                cpu: 25m
+                memory: 64Mi
+              limits:
+                memory: 64Mi
+          podDisruptionBudget:
+            enabled: true
+            maxUnavailable: 1
+    # Shared process-wide HAProxy buffer for request-body inspectors.
+    requestBodyInspection:
+      haproxyBuffer:
+        sizeBytes: "16384"
+        reservedBytes: "8192"
+    # API-gateway JSON request validation (SPOA api-gateway plugin).
+    apiGateway:
+      requestSchemaValidation:
+        enabled: false
+        requestBody:
+          waitTimeout: "100ms"
+          defaultMaxBytes: "8192"
+        defaultFailOpen: false
+    # WAF dispatch, custom-rule resource bounds, and reusable policies.
+    waf:
+      dispatch:
+        mode: opt-in
+        defaultEnforcement: deny
+      ingressPermissions:
+        allowPolicySelection: true
+        allowEnforcementOverride: false
+        allowWafDisable: false
+        allowCustomRules: false
+        allowRawHAProxyConfig: false
+      customRules:
+        limits:
+          maxIngresses: "32"
+          maxBytesPerIngress: "16384"
+      policies:
+        defaultPolicy: ""
+        requestBody:
+          waitTimeout: "100ms"
+          defaultMaxBytes: "8192"
+          maxBytes: "8192"
+        limits:
+          maxCount: "16"
+          maxSecLangBytes: "65536"
+          maxExcludedTargets: "256"
+        inline: {}
+        configMapRefs: []
 
 watchedResources:
   secrets:

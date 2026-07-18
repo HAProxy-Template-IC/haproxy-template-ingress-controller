@@ -93,7 +93,7 @@ graph TB
 
 ## HTTP endpoints
 
-The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`; `/healthz` shares the same listener, so setting the port to `0` breaks Kubernetes probes). The endpoint reference — every `/debug/vars/*` path, JSONPath field selection, `/debug/events` correlation-ID search, and `pprof` usage — lives in the [Debugging Guide](../../operations/debugging.md).
+The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart derives that environment variable, the container port, Service, probes, and NetworkPolicy from `controller.ports.healthz`, defaulting to `8080`; `/healthz` shares the same required listener). The endpoint reference — every `/debug/vars/*` path, JSONPath field selection, `/debug/events` correlation-ID search, and `pprof` usage — lives in the [Debugging Guide](../../operations/debugging.md).
 
 ## Event history
 
@@ -158,7 +158,7 @@ Tests observe controller state directly — no log parsing, no timing heuristics
 Two design constraints matter here; everything operational about them lives elsewhere:
 
 - **Debug variables never expose secret material.** Credential variables return metadata only (`version`, `has_dataplane_creds`) — `pkg/controller/debug/setup.go` enforces this. Access control and NetworkPolicy examples: [Security — Network Exposure](../../operations/security.md#network-exposure).
-- **The server binds `0.0.0.0:<port>` deliberately**, so kubelet health probes and the Kubernetes API service-proxy (used by acceptance tests) can reach it on the pod IP; restrict access via NetworkPolicy, not bind-address filtering. Port configuration, the shared `/healthz` listener, and the probe-breaking caveat of `controller.debugPort: 0`: [Debugging — Accessing the Server](../../operations/debugging.md#accessing-the-server).
+- **The server binds `0.0.0.0:<port>` deliberately**, so kubelet health probes and the Kubernetes API service-proxy (used by acceptance tests) can reach it on the pod IP; restrict access via NetworkPolicy, not bind-address filtering. Port configuration and the shared `/healthz` listener: [Debugging — Accessing the Server](../../operations/debugging.md#accessing-the-server).
 
 For detailed implementation and API documentation, see:
 

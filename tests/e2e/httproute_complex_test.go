@@ -30,10 +30,10 @@ import (
 // with rules declared out-of-order to verify the chart sorts by match
 // specificity per the Gateway API spec. Rule order in declaration:
 //
-//	0. Medium: GET + X-Version=v1 → default
-//	1. Catch-all: / → default
-//	2. Highest: GET + X-Version=v2 + X-Environment=prod + ?debug=true → v2
-//	3. Low: GET → v2
+//  0. Medium: GET + X-Version=v1 → default
+//  1. Catch-all: / → default
+//  2. Highest: GET + X-Version=v2 + X-Environment=prod + ?debug=true → v2
+//  3. Low: GET → v2
 //
 // Effective routing should be:
 //   - GET + (v2 + prod + debug=true) → v2 (rule 2 wins on most criteria)
@@ -204,4 +204,3 @@ func TestHTTPRouteCombined(t *testing.T) {
 		Feature()
 	testEnv.Test(t, feature)
 }
-

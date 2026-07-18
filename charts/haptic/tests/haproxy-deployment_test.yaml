@@ -30,6 +30,18 @@ tests:
           path: spec.template.spec.containers[1].name
           value: dataplane
 
+  - it: should derive the Enterprise repository and binary path from one series
+    set:
+      haproxyVersion: "3.2"
+      haproxy.enterprise.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: hapee-registry.haproxy.com/haproxy-enterprise:3.2r1
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'exec /opt/hapee-3\.2/sbin/hapee-lb '
+
   - it: should configure readiness probe for haproxy
     asserts:
       - isNotNull:

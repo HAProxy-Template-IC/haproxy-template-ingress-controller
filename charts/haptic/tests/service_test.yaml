@@ -36,7 +36,7 @@ tests:
 
   - it: should use custom service type when specified
     set:
-      service.type: LoadBalancer
+      controller.service.type: LoadBalancer
     asserts:
       - equal:
           path: spec.type
@@ -62,18 +62,36 @@ tests:
             targetPort: metrics
             protocol: TCP
 
+  - it: should omit the metrics Service port when metrics are disabled
+    set:
+      controller.ports.metrics: 0
+    asserts:
+      - notContains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 0
+            targetPort: metrics
+            protocol: TCP
+
   - it: should include standard labels
     asserts:
       - exists:
           path: metadata.labels["app.kubernetes.io/name"]
       - exists:
           path: metadata.labels["app.kubernetes.io/instance"]
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: controller
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: controller
 
   # Tests for service configuration values that should be rendered
   - it: should render clusterIP when specified
     set:
-      service.type: ClusterIP
-      service.clusterIP: "10.0.0.100"
+      controller.service.type: ClusterIP
+      controller.service.clusterIP: "10.0.0.100"
     asserts:
       - equal:
           path: spec.clusterIP
@@ -81,8 +99,8 @@ tests:
 
   - it: should render loadBalancerIP when type is LoadBalancer
     set:
-      service.type: LoadBalancer
-      service.loadBalancerIP: "192.168.1.100"
+      controller.service.type: LoadBalancer
+      controller.service.loadBalancerIP: "192.168.1.100"
     asserts:
       - equal:
           path: spec.loadBalancerIP
@@ -90,8 +108,8 @@ tests:
 
   - it: should render loadBalancerSourceRanges when type is LoadBalancer
     set:
-      service.type: LoadBalancer
-      service.loadBalancerSourceRanges:
+      controller.service.type: LoadBalancer
+      controller.service.loadBalancerSourceRanges:
         - "10.0.0.0/8"
         - "192.168.0.0/16"
     asserts:
@@ -103,17 +121,17 @@ tests:
 
   - it: should render loadBalancerClass when type is LoadBalancer
     set:
-      service.type: LoadBalancer
-      service.loadBalancerClass: "service.k8s.aws/nlb"
+      controller.service.type: LoadBalancer
+      controller.service.loadBalancerClass: "controller.service.k8s.aws/nlb"
     asserts:
       - equal:
           path: spec.loadBalancerClass
-          value: "service.k8s.aws/nlb"
+          value: "controller.service.k8s.aws/nlb"
 
   - it: should render externalTrafficPolicy when specified
     set:
-      service.type: LoadBalancer
-      service.externalTrafficPolicy: Local
+      controller.service.type: LoadBalancer
+      controller.service.externalTrafficPolicy: Local
     asserts:
       - equal:
           path: spec.externalTrafficPolicy
@@ -121,7 +139,7 @@ tests:
 
   - it: should render internalTrafficPolicy when specified
     set:
-      service.internalTrafficPolicy: Local
+      controller.service.internalTrafficPolicy: Local
     asserts:
       - equal:
           path: spec.internalTrafficPolicy
@@ -129,7 +147,7 @@ tests:
 
   - it: should render sessionAffinity when specified
     set:
-      service.sessionAffinity: ClientIP
+      controller.service.sessionAffinity: ClientIP
     asserts:
       - equal:
           path: spec.sessionAffinity
@@ -137,8 +155,8 @@ tests:
 
   - it: should render sessionAffinityConfig when specified
     set:
-      service.sessionAffinity: ClientIP
-      service.sessionAffinityConfig:
+      controller.service.sessionAffinity: ClientIP
+      controller.service.sessionAffinityConfig:
         clientIP:
           timeoutSeconds: 10800
     asserts:
@@ -148,9 +166,9 @@ tests:
 
   - it: should render service annotations when specified
     set:
-      service.annotations:
-        service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      controller.service.annotations:
+        controller.service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
     asserts:
       - equal:
-          path: metadata.annotations["service.beta.kubernetes.io/aws-load-balancer-type"]
+          path: metadata.annotations["controller.service.beta.kubernetes.io/aws-load-balancer-type"]
           value: "nlb"

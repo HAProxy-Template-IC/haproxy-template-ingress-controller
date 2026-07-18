@@ -43,10 +43,9 @@ controller:
 Configure the default certificate used when no SNI match is found via the chart-level values (recommended):
 
 ```yaml
-controller:
-  defaultSSLCertificate:
-    secretName: default-ssl-cert
-    namespace: haptic            # defaults to the Helm release namespace
+defaultSSLCertificate:
+  secretName: default-ssl-cert
+  namespace: haptic            # defaults to the Helm release namespace
 ```
 
 The chart wires those values into the template engine as `extraContext.default_ssl_cert_name` and `extraContext.default_ssl_cert_namespace`; the SSL library reads them and emits the corresponding `default.pem` entry in `certificate-list.txt`.

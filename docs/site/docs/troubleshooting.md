@@ -68,7 +68,7 @@ For kind clusters, ensure:
 
 - Calico or Cilium Container Network Interface (CNI) is installed
 - DNS access is allowed
-- The `networkPolicy.egress.kubernetesApi` CIDRs cover your API server (see [Networking](./operations/networking.md))
+- The `controller.networkPolicy.egress.kubernetesApi` CIDRs cover your API server (see [Networking](./operations/networking.md))
 
 Debug NetworkPolicy:
 
@@ -117,7 +117,7 @@ kubectl describe pod -n haptic <pod>   # read the Events and per-container State
 
 - **A container is in `Waiting` with `CrashLoopBackOff` or `ImagePullBackOff`**: the pod never starts, so it can't be Ready. Follow [Controller not starting](#controller-not-starting) for crashes, or [Image pull errors](#image-pull-errors) for pull failures.
 - **Every container is `Running` but the pod stays not Ready**: a readiness probe is failing. Branch by which pod:
-    - **Controller pod** (`0/1`): the readiness probe hits `/healthz` on the debug port (`8080` by default), which returns ready only once the controller has loaded a valid `HAProxyTemplateConfig` and rendered its first config. A render or config-load failure keeps it not Ready — check `kubectl logs -n haptic <pod>` for template or validation errors and follow [Invalid template syntax](#invalid-template-syntax). Don't set `controller.debugPort: 0`: `/healthz` shares that listener, so disabling it breaks the probe and pins the pod not Ready (see [Debugging](./operations/debugging.md)).
+    - **Controller pod** (`0/1`): the readiness probe hits `/healthz` on `controller.ports.healthz` (`8080` by default), which returns ready only once the controller has loaded a valid `HAProxyTemplateConfig` and rendered its first config. A render or config-load failure keeps it not Ready — check `kubectl logs -n haptic <pod>` for template or validation errors and follow [Invalid template syntax](#invalid-template-syntax). `/healthz` shares the `/debug/*` listener and is required by the probe (see [Debugging](./operations/debugging.md)).
     - **HAProxy pod** (`1/2` or `2/3`, depending on sidecars): the HAProxy or Dataplane API container is up but not passing its probe. The controller also can't converge config onto an unreachable Dataplane API — follow [Can't connect to Dataplane API](#cannot-connect-to-dataplane-api).
 
 ### Controller running but not processing
@@ -519,7 +519,10 @@ The Helm chart enables the debug server on port `8080` by default (same port as 
 kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 ```
 
-Don't disable it with `controller.debugPort: 0` — `/healthz` shares the listener, so that breaks the liveness/readiness probes; restrict access via NetworkPolicy instead. See the [Debugging Guide](./operations/debugging.md) for the endpoint catalogue and usage.
+The listener is configured by `controller.ports.healthz` and also serves
+`/healthz`, so it's required by the liveness/readiness probes. Restrict access
+via NetworkPolicy instead of disabling it. See the [Debugging Guide](./operations/debugging.md)
+for the endpoint catalogue and usage.
 
 ## See also
 

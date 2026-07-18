@@ -8,7 +8,7 @@ YAML-based library system providing composable HAProxy configuration through a s
 
 ### Requirement: Library Merge Order
 
-Libraries SHALL be merged using mustMergeOverwrite in the following fixed order: base, ssl, ingress, gateway, ingress-annotations-compat, haproxytech, haproxy-ingress, nginx-ingress, spoa-hub, values.yaml. The base, ssl, ingress, and ingress-annotations-compat libraries live as files (or split-library directories) under `libraries/`; the gateway, haproxytech, haproxy-ingress, and nginx-ingress libraries are conditional SUBCHARTS (`charts/haptic/charts/<name>/`) referenced as `subchart:<name>` entries in `haptic.mergeLibraries`. A disabled subchart is pruned from the release Secret, so its `.Subcharts.<name>` is absent and the entry is skipped during merge. Later libraries SHALL override earlier ones for the same keys. Each library SHALL be independently enableable via values.yaml under controller.templateLibraries.<name>.enabled. The gateway library SHALL additionally require Gateway API CRDs to be present (Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass"). The regex-last path matching order is NOT a separate library; it is selected via controller.config.routing.regexMatchOrder ("default" or "last") which swaps a snippet inside base.yaml at Helm render time.
+Libraries SHALL be merged using mustMergeOverwrite in the following fixed order: base, ssl, ingress, gateway, ingress-annotations-compat, haproxytech, haproxy-ingress, nginx-ingress, spoa-hub, values.yaml. The base, ssl, ingress, and ingress-annotations-compat libraries live as files (or split-library directories) under `libraries/`; the gateway, haproxytech, haproxy-ingress, and nginx-ingress libraries are conditional SUBCHARTS (`charts/haptic/charts/<name>/`) referenced as `subchart:<name>` entries in `haptic.mergeLibraries`. A disabled subchart is pruned from the release Secret, so its `.Subcharts.<name>` is absent and the entry is skipped during merge. Later libraries SHALL override earlier ones for the same keys. Each library SHALL be independently enableable via values.yaml under controller.templateLibraries.<name>.enabled. The gateway library SHALL additionally require Gateway API CRDs to be present (Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass"). The regex-last path matching order is NOT a separate library; it is selected via controller.config.templatingSettings.extraContext.routing.regexMatchOrder ("default" or "last") which swaps a snippet inside base.yaml at Helm render time.
 
 #### Scenario: Later library overrides earlier for same snippet name
 
@@ -283,16 +283,16 @@ THEN the path SHALL be added to path-regex.map instead of path-prefix.map.
 
 ### Requirement: Path Regex Last Library
 
-The regex-last routing order SHALL change path matching from Exact > Regex > Prefix-exact > Prefix (default) to Exact > Prefix-exact > Prefix > Regex. This SHALL be opt-in via the Helm value controller.config.routing.regexMatchOrder set to "last" (default is "default"). The alternate snippet is defined in base.yaml and swapped in at Helm render time; there is no separate path-regex-last library file. The overriding snippet SHALL preserve all other routing logic (host extraction, wildcard matching, MULTIBACKEND/BACKEND qualifier handling).
+The regex-last routing order SHALL change path matching from Exact > Regex > Prefix-exact > Prefix (default) to Exact > Prefix-exact > Prefix > Regex. This SHALL be opt-in via the Helm value controller.config.templatingSettings.extraContext.routing.regexMatchOrder set to "last" (default is "default"). The alternate snippet is defined in base.yaml and swapped in at Helm render time; there is no separate path-regex-last library file. The overriding snippet SHALL preserve all other routing logic (host extraction, wildcard matching, MULTIBACKEND/BACKEND qualifier handling).
 
 #### Scenario: Regex evaluated after prefix when enabled
 
-WHEN controller.config.routing.regexMatchOrder is set to "last"
+WHEN controller.config.templatingSettings.extraContext.routing.regexMatchOrder is set to "last"
 THEN the frontend-routing-logic SHALL evaluate path-prefix.map before path-regex.map.
 
 #### Scenario: Default order without library
 
-WHEN controller.config.routing.regexMatchOrder is set to "default" (or left unset)
+WHEN controller.config.templatingSettings.extraContext.routing.regexMatchOrder is set to "default" (or left unset)
 THEN the frontend-routing-logic SHALL evaluate path-regex.map before path-prefix-exact.map and path-prefix.map.
 
 ### Requirement: Cross-Library Shared State
@@ -477,7 +477,7 @@ The chart SHALL NOT emit `server-state-file` or `load-server-state-from-file`, a
 
 ### Requirement: Library Enable/Disable via Values
 
-Each library SHALL be independently toggleable via values.yaml at controller.templateLibraries.<name>.enabled. The base and ssl libraries SHALL be enabled by default. The ingress library SHALL be enabled by default. The gateway library SHALL be enabled by default (subject to CRD availability). The haproxytech, haproxy-ingress, nginx-ingress, ingress-annotations-compat, and spoa-hub libraries SHALL have their default enabled state defined in values.yaml. The path-regex-last library no longer exists; the regex-last routing variant is activated via controller.config.routing.regexMatchOrder.
+Each library SHALL be independently toggleable via values.yaml at controller.templateLibraries.<name>.enabled. The base and ssl libraries SHALL be enabled by default. The ingress library SHALL be enabled by default. The gateway library SHALL be enabled by default (subject to CRD availability). The haproxytech, haproxy-ingress, nginx-ingress, ingress-annotations-compat, and spoa-hub libraries SHALL have their default enabled state defined in values.yaml. The path-regex-last library no longer exists; the regex-last routing variant is activated via controller.config.templatingSettings.extraContext.routing.regexMatchOrder.
 
 #### Scenario: All libraries disabled except base
 

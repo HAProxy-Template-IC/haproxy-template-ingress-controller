@@ -1,4 +1,4 @@
-{{- $default := .Values.controller.defaultSSLCertificate }}
+{{- $default := .Values.defaultSSLCertificate }}
 {{- $cm := $default.certManager }}
 {{- if and $default.enabled $cm.enabled $cm.createIssuer (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
 apiVersion: cert-manager.io/v1

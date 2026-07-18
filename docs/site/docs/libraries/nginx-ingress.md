@@ -1438,9 +1438,9 @@ http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { hdr(host) -i ex
 
 ## Request mirroring
 
-`nginx.ingress.kubernetes.io/mirror-target` **is** supported, via the bundled SPOA hub **mirror** plugin (the same machinery the Gateway API `RequestMirror` filter uses) — enable it with `spoaHub.plugins.mirror`. Mirroring is fire-and-forget: a copy of each matching request is sent to the target and its response is discarded. Only the authority (`host[:port]`) of the `scheme://host[:port]$request_uri` value is used; the plugin re-attaches the live request path/query. Each mirror-target Ingress gets its own mirror slot, capped at `spoaHub.mirrorStaticMinSlots` (default 4).
+`nginx.ingress.kubernetes.io/mirror-target` **is** supported, via the bundled SPOA hub **mirror** plugin (the same machinery the Gateway API `RequestMirror` filter uses) — enable it with `spoaHub.plugins.mirror`. Mirroring is fire-and-forget: a copy of each matching request is sent to the target and its response is discarded. Only the authority (`host[:port]`) of the `scheme://host[:port]$request_uri` value is used; the plugin re-attaches the live request path/query. Each mirror-target Ingress gets its own mirror slot, capped at `spoaHub.haproxy.mirror.minMessageSlots` (default 4).
 
-These constraints **fail the config** with an actionable message rather than silently doing nothing: the mirror plugin must be enabled, the Ingress must define a `host` (host-less / default-backend mirroring is unsupported), and the number of mirror-target Ingresses must not exceed the slot count (raise `spoaHub.mirrorStaticMinSlots`). `mirror-host` and `mirror-request-body: off` **aren't** honoured — the plugin always forces the mirrored Host to the target authority and always forwards the buffered request body.
+These constraints **fail the config** with an actionable message rather than silently doing nothing: the mirror plugin must be enabled, the Ingress must define a `host` (host-less / default-backend mirroring is unsupported), and the number of mirror-target Ingresses must not exceed the slot count (raise `spoaHub.haproxy.mirror.minMessageSlots`). `mirror-host` and `mirror-request-body: off` **aren't** honoured — the plugin always forces the mirrored Host to the target authority and always forwards the buffered request body.
 
 ---
 

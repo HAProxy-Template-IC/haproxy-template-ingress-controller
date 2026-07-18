@@ -12,7 +12,7 @@ Around this single override sat the full library scaffold: a top-level entry in 
 
 ## Decision
 
-Demote the variant from a library to a values flag. The choice is expressed as `controller.config.routing.regexMatchOrder` with values `default` (current order) or `last` (regex evaluated after exact and prefix matches), consumed inside `base.yaml`'s `frontend-routing-logic` snippet via a small conditional around the path-matching `set-var` statements.
+Demote the variant from a library to a values flag. The choice is expressed as `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` with values `default` (current order) or `last` (regex evaluated after exact and prefix matches), consumed at Helm library-load time to select the matching `base.yaml` snippet variant. Keeping it in `extraContext` also preserves the effective choice in the rendered `HAProxyTemplateConfig` instead of placing a chart-only key beside CRD fields and then stripping it.
 
 Delete `libraries/path-regex-last.yaml`, its load entry in `_helpers.tpl`, the `controller.templateLibraries.pathRegexLast.enabled` flag, and `docs/libraries/path-regex-last.md`. Document the migration (renamed flag, removed library) in `charts/haptic/CHANGELOG.md`.
 

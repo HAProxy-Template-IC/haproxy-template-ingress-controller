@@ -223,15 +223,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -295,15 +296,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       services:
         - apiVersion: v1
@@ -360,14 +362,15 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -439,14 +442,15 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: []
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: []
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         plugins: []
     fixtures:
       ingresses:
@@ -470,4 +474,4 @@ validationTests:
     assertions:
       - type: contains
         target: rendering_error
-        pattern: "default/orphan-waf sets annotation 'haproxy-haptic\\.org/waf' but the spoaHub coraza plugin is not enabled"
+        pattern: "default/orphan-waf sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled"

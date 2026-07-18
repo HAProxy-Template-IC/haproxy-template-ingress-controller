@@ -1,5 +1,5 @@
-{{- $pdb := .Values.podDisruptionBudget }}
-{{- if and $pdb.enabled (gt (.Values.replicaCount | int) 1) }}
+{{- $pdb := .Values.controller.podDisruptionBudget }}
+{{- if and $pdb.enabled (gt (.Values.controller.replicaCount | int) 1) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -17,4 +17,5 @@ spec:
   selector:
     matchLabels:
       {{- include "haptic.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controller
 {{- end }}

@@ -269,7 +269,7 @@ func (s *CompositeStore) matchesKeys(resource any, keys []string) bool {
 
 // getResourceKey extracts namespace/name from a resource.
 func (s *CompositeStore) getResourceKey(resource any) *ktypes.NamespacedName {
-	// Try to get metadata via accessor
+	// Try to get metadata via accessor (typed objects, *unstructured.Unstructured).
 	if accessor, ok := resource.(interface {
 		GetNamespace() string
 		GetName() string
@@ -277,6 +277,17 @@ func (s *CompositeStore) getResourceKey(resource any) *ktypes.NamespacedName {
 		return &ktypes.NamespacedName{
 			Namespace: accessor.GetNamespace(),
 			Name:      accessor.GetName(),
+		}
+	}
+	// Fallback for pre-converted map[string]any base-store items (the shape the
+	// watcher stores, per pkg/k8s/indexer). Without this the overlay can't match
+	// a base copy to its modification, so List() returns both the base and the
+	// overlaid version of the same object during dry-run admission.
+	if m, ok := resource.(map[string]any); ok {
+		if metadata, ok := m["metadata"].(map[string]any); ok {
+			namespace, _ := metadata["namespace"].(string)
+			name, _ := metadata["name"].(string)
+			return &ktypes.NamespacedName{Namespace: namespace, Name: name}
 		}
 	}
 	return nil

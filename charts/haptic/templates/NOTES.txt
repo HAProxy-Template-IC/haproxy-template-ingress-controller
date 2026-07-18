@@ -1,8 +1,8 @@
 {{- $controller := .Values.controller }}
 {{- $metricsPort := $controller.ports.metrics }}
-{{- $debugPort := $controller.debugPort }}
+{{- $debugPort := $controller.ports.healthz }}
 {{- $le := $controller.config.controller.leaderElection }}
-{{- $replicaCount := .Values.replicaCount | int }}
+{{- $replicaCount := $controller.replicaCount | int }}
 {{- $name := include "haptic.name" . }}
 {{- $ns := .Release.Namespace }}
 HAPTIC (HAProxy Template Ingress Controller) has been installed!
@@ -35,7 +35,7 @@ View Logs:
   kubectl logs -f -l app.kubernetes.io/name={{ $name }},app.kubernetes.io/component=controller -n {{ $ns }}
 
 Configuration:
-  HAProxyTemplateConfig: {{ $controller.crdName }}
+  HAProxyTemplateConfig: {{ $controller.configName }}
   Credentials Secret: {{ include "haptic.dataplane.credentialsSecretName" . }}
 {{- if not .Values.credentials.dataplane.password }}
 
@@ -52,12 +52,16 @@ Introspection Endpoint:
   Access via: kubectl port-forward -n {{ $ns }} pod/<controller-pod> {{ $debugPort }}:{{ $debugPort }}
   Endpoints: /healthz, /debug/vars, /debug/pprof
 
+{{- if gt ($metricsPort | int) 0 }}
 Metrics Endpoint:
   Prometheus metrics are available on port {{ $metricsPort }}
   Access via: kubectl port-forward -n {{ $ns }} pod/<controller-pod> {{ $metricsPort }}:{{ $metricsPort }}
   URL: http://localhost:{{ $metricsPort }}/metrics
+{{- else }}
+Metrics Endpoint: disabled (`controller.ports.metrics=0`)
+{{- end }}
 
-{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- if $controller.monitoring.serviceMonitor.enabled }}
 
   ✓ ServiceMonitor has been created for Prometheus Operator
   Prometheus will automatically discover and scrape metrics
@@ -85,7 +89,7 @@ notice and slim the config by setting:
         enabled: false
 {{- end }}
 
-{{- with .Values.networkPolicy }}
+{{- with $controller.networkPolicy }}
 {{- if .enabled }}
 
 NetworkPolicy:

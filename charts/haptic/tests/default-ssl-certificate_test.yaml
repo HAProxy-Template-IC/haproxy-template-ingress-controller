@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: default SSL certificate ownership
+templates:
+  - haproxytemplateconfig.yaml
+  - default-ssl-cert.yaml
+
+tests:
+  - it: should project the top-level default certificate into HAProxy template context
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.secretName: edge-default-tls
+      defaultSSLCertificate.namespace: security
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.tls.defaultCertificate.name
+          value: edge-default-tls
+      - equal:
+          path: spec.templatingSettings.extraContext.tls.defaultCertificate.namespace
+          value: security
+
+  - it: should reject the former controller-owned default certificate path
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.defaultSSLCertificate.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.defaultSSLCertificate has moved to the top-level defaultSSLCertificate tree."
+
+  - it: should reject unknown default certificate fields
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.secretNamespace: security
+    asserts:
+      - failedTemplate:
+          errorMessage: 'defaultSSLCertificate contains unknown field "secretNamespace".'
+
+  - it: should reject two actors owning the same TLS Secret
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.create: true
+      defaultSSLCertificate.cert: certificate
+      defaultSSLCertificate.key: private-key
+    asserts:
+      - failedTemplate:
+          errorMessage: "defaultSSLCertificate.create=true requires defaultSSLCertificate.certManager.enabled=false so only one actor owns the TLS Secret."
+
+  - it: should reject incomplete inline TLS credentials
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.certManager.enabled: false
+      defaultSSLCertificate.create: true
+      defaultSSLCertificate.cert: certificate
+    asserts:
+      - failedTemplate:
+          errorMessage: "defaultSSLCertificate.create=true requires non-empty defaultSSLCertificate.cert and defaultSSLCertificate.key PEM strings."
+
+  - it: should reject ignored inline TLS credentials
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.certManager.enabled: false
+      defaultSSLCertificate.cert: certificate
+    asserts:
+      - failedTemplate:
+          errorMessage: "defaultSSLCertificate.cert and key are ignored unless defaultSSLCertificate.create=true; remove them or enable inline Secret creation."

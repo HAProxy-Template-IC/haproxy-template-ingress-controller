@@ -120,7 +120,7 @@ drift, and truncate after suffixing to stay within DNS label limits.
 Create the name of the service account to use
 */}}
 {{- define "haptic.serviceAccountName" -}}
-{{- .Values.serviceAccount.name | default (ternary (include "haptic.fullname" .) "default" .Values.serviceAccount.create) -}}
+{{- .Values.controller.serviceAccount.name | default (ternary (include "haptic.fullname" .) "default" .Values.controller.serviceAccount.create) -}}
 {{- end }}
 
 {{/*
@@ -137,7 +137,7 @@ deployment.yaml (WEBHOOK_SERVICE_NAME env var).
 
 {{/*
 Webhook TLS Secret / Certificate name. Resolves the operator override
-.Values.webhook.secretName, or falls back to "<fullname>-webhook-cert".
+.Values.controller.webhook.secretName, or falls back to "<fullname>-webhook-cert".
 Used by every place that points at the webhook TLS material —
 templates/webhook-certificate.yaml (Certificate metadata.name and
 spec.secretName), templates/validatingwebhookconfiguration.yaml
@@ -145,10 +145,10 @@ spec.secretName), templates/validatingwebhookconfiguration.yaml
 (the webhook-certs volume mounted at /etc/webhook/certs, which the
 controller reads via WEBHOOK_CERT_DIR).
 Centralising this here keeps those references aligned when an
-operator sets webhook.secretName.
+operator sets controller.webhook.secretName.
 */}}
 {{- define "haptic.webhook.secretName" -}}
-{{- .Values.webhook.secretName | default (printf "%s-webhook-cert" (include "haptic.fullname" .)) -}}
+{{- .Values.controller.webhook.secretName | default (printf "%s-webhook-cert" (include "haptic.fullname" .)) -}}
 {{- end -}}
 
 {{/*
@@ -159,19 +159,19 @@ server's outer deadline. Keep these helpers as the single validation point used
 by both the ValidatingWebhookConfiguration and controller Deployment.
 */}}
 {{- define "haptic.webhook.resourceTimeoutSeconds" -}}
-{{- $raw := toString .Values.webhook.timeoutSeconds -}}
+{{- $raw := toString .Values.controller.webhook.timeoutSeconds -}}
 {{- $timeout := int $raw -}}
 {{- if or (not (regexMatch "^[0-9]+$" $raw)) (lt $timeout 2) (gt $timeout 30) -}}
-{{- fail "webhook.timeoutSeconds must be an integer between 2 and 30." -}}
+{{- fail "controller.webhook.timeoutSeconds must be an integer between 2 and 30." -}}
 {{- end -}}
 {{- $timeout -}}
 {{- end -}}
 
 {{- define "haptic.webhook.configTimeoutSeconds" -}}
-{{- $raw := toString .Values.webhook.haproxyTemplateConfig.timeoutSeconds -}}
+{{- $raw := toString .Values.controller.webhook.haproxyTemplateConfig.timeoutSeconds -}}
 {{- $timeout := int $raw -}}
 {{- if or (not (regexMatch "^[0-9]+$" $raw)) (lt $timeout 2) (gt $timeout 30) -}}
-{{- fail "webhook.haproxyTemplateConfig.timeoutSeconds must be an integer between 2 and 30." -}}
+{{- fail "controller.webhook.haproxyTemplateConfig.timeoutSeconds must be an integer between 2 and 30." -}}
 {{- end -}}
 {{- $timeout -}}
 {{- end -}}

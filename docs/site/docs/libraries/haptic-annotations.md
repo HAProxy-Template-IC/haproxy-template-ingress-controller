@@ -102,12 +102,12 @@ Per-source request-rate caps (reload-surviving stick-tables), shared fleet-wide 
 |------------|--------|-----------|
 | `haproxy-haptic.org/download-bandwidth-limit` | ✅ Supported | Throttles the bandwidth (bytes per second) sent toward a single client connection, using a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Independent of the request-rate caps; both can apply to the same Ingress. Byte-size values are validated before interpolation. |
 | `haproxy-haptic.org/download-bandwidth-limit-after` | ✅ Supported | Sets the number of bytes sent on a connection before the download bandwidth limit begins to throttle, via the `bwlim-out` `min-size` parameter. Byte-size values are validated before interpolation. |
-| `haproxy-haptic.org/rate-limit-algorithm` | ✅ Supported | Shared limiter algorithm: `token-bucket` (default, low-latency lease mode) or `gcra` (exact mode, synchronous store check with a short fail-closed timeout). `gcra` is for low-volume contractual limits; use the default token-bucket mode for public-edge DoS protection. Requires `rate-limit-requests`, `controller.rateLimit.shared.enabled=true`, and an effective Redis/Valkey `store_url`/`store_urls`. |
+| `haproxy-haptic.org/rate-limit-algorithm` | ✅ Supported | Shared limiter algorithm: `token-bucket` (default, low-latency lease mode) or `gcra` (exact mode, synchronous store check with a short fail-closed timeout). `gcra` is for low-volume contractual limits; use the default token-bucket mode for public-edge DoS protection. Requires `rate-limit-requests`, `rateLimit.shared.enabled=true`, and an effective Redis/Valkey `store_url`/`store_urls`. |
 | `haproxy-haptic.org/rate-limit-burst` | ✅ Supported | Shared limiter burst allowance; defaults to `rate-limit-requests`. Must be a positive integer. |
 | `haproxy-haptic.org/rate-limit-connections` | ✅ Supported | Caps concurrent connections per source IP; ignored when `rate-limit-rps` or `rate-limit-rpm` is set. |
 | `haproxy-haptic.org/rate-limit-key` | ✅ Supported | Shared limiter key dimension: `ip` (default) or `consumer`. Source-IP limits run in the frontend before Coraza and request-schema validation, making them the correct DoS guard. Consumer limits run in the selected backend after native API-key/JWT authentication has established the identity, falling back to source IP when no identity is present; use them for authenticated quotas, not as the sole public-edge flood control. |
 | `haproxy-haptic.org/rate-limit-period` | ✅ Supported | Overrides the rate window. For the per-pod stick-table limiter, when unset the window derives from the active cap: 1 second for requests per second, 60 seconds for requests per minute, and a 30-second table TTL for connection caps. For the shared limiter it defaults to `1s` and accepts `ms`/`s`/`m`/`h`/`d`; zero or malformed values fail the render. |
-| `haproxy-haptic.org/rate-limit-requests` | ✅ Supported | Enables the shared fleet-wide limiter for the Ingress: N requests per `rate-limit-period`, enforced through the rate-limit SPOA plugin. Requires `controller.rateLimit.shared.enabled=true` plus either the default chart-managed HA Valkey/Sentinel store (`controller.rateLimit.store.enabled=true`) or a bring-your-own `spoaHub.plugins.rate-limit.params.store_url`/`store_urls`; HAPTIC fails the render rather than silently falling back to a per-pod budget. If the SPOA hub/plugin returns no verdict for an annotated route, HAProxy fails closed with 429 to avoid a rate-limit bypass. Source-IP rules execute before Coraza to keep rejected floods from consuming WAF CPU. The token-bucket mode bounds local key state with `max_keys`/`idle_ttl_ms`; under capacity pressure new keys wait for a shared lease rather than receiving fresh optimistic local tokens. Exact `gcra` mode uses a default store timeout of 10 milliseconds so store trouble fails closed instead of adding a long request tail. The managed store is a fixed-size HA topology: one writable primary, replicas, Sentinel failover, PodDisruptionBudget, and NetworkPolicy. Use bring-your-own infrastructure when you need horizontally scalable Valkey. |
+| `haproxy-haptic.org/rate-limit-requests` | ✅ Supported | Enables the shared fleet-wide limiter for the Ingress: N requests per `rate-limit-period`, enforced through the rate-limit SPOA plugin. Requires `rateLimit.shared.enabled=true` plus either the default chart-managed HA Valkey/Sentinel store (`rateLimit.shared.managedStore.enabled=true`) or bring-your-own `rateLimit.shared.externalStore.urls`; HAPTIC fails the render rather than silently falling back to a per-pod budget. If the SPOA hub/plugin returns no verdict for an annotated route, HAProxy fails closed with 429 to avoid a rate-limit bypass. Source-IP rules execute before Coraza to keep rejected floods from consuming WAF CPU. The token-bucket mode bounds local key state with `max_keys`/`idle_ttl_ms`; under capacity pressure new keys wait for a shared lease rather than receiving fresh optimistic local tokens. Exact `gcra` mode uses a default store timeout of 10 milliseconds so store trouble fails closed instead of adding a long request tail. The managed store is a fixed-size HA topology: one writable primary, replicas, Sentinel failover, PodDisruptionBudget, and NetworkPolicy. Use bring-your-own infrastructure when you need horizontally scalable Valkey. |
 | `haproxy-haptic.org/rate-limit-rpm` | ✅ Supported | Caps requests per minute per source IP (a 60-second `http_req_rate` window); ignored when `rate-limit-rps` is also set. |
 | `haproxy-haptic.org/rate-limit-rps` | ✅ Supported | Caps requests per second per source IP via an `http_req_rate` stick-table; requests over the cap are rejected with the deny status (default `429`), with no burst allowance. |
 | `haproxy-haptic.org/rate-limit-size` | ✅ Supported | Sets the stick-table size (default `100k`). |
@@ -126,7 +126,7 @@ HAProxy-side response compression, per Ingress.
 
 ### Shared response cache
 
-Routes cache-eligible requests through a chart-deployed, consistent-hash-sharded Varnish tier, so the cache is shared across the whole HAProxy fleet. These annotations take effect only when the tier is enabled (`controller.cache.varnish.enabled`). The tier's default-on NetworkPolicy admits cache requests only from the same release's HAProxy pods and limits Varnish egress to DNS plus the same HAProxy HTTP origin; disable `controller.cache.varnish.networkPolicy.enabled` only when replacing it with equivalent isolation. Per-route behaviour is driven by internal `X-Haptic-Cache-*` headers that HAProxy strips from the client request first, so a client can't influence the cache key or the exclusion rules. Source-verified Varnish cache-miss loopback requests bypass the shared rate limiter because the external request has already consumed its budget; this prevents double counting and cache-cold self-throttling.
+Routes cache-eligible requests through a chart-deployed, consistent-hash-sharded Varnish tier, so the cache is shared across the whole HAProxy fleet. These annotations take effect only when the tier is enabled (`cache.varnish.enabled`). The tier's default-on NetworkPolicy admits cache requests only from the same release's HAProxy pods and limits Varnish egress to DNS plus the same HAProxy HTTP origin; disable `cache.varnish.networkPolicy.enabled` only when replacing it with equivalent isolation. Per-route behaviour is driven by internal `X-Haptic-Cache-*` headers that HAProxy strips from the client request first, so a client can't influence the cache key or the exclusion rules. Source-verified Varnish cache-miss loopback requests bypass the shared rate limiter because the external request has already consumed its budget; this prevents double counting and cache-cold self-throttling.
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
@@ -249,13 +249,107 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | `haproxy-haptic.org/auth-tls-verify-client` | ⚠️ Caveat | Sets client-certificate verification: `on` requires it, `optional` and `optional_no_ca` both map to `verify optional` (HAProxy has no distinct `optional_no_ca` mode), and `off` disables it. |
 | `haproxy-haptic.org/auth-type` | ✅ Supported | Enables basic authentication; the only accepted value is `basic`. |
 | `haproxy-haptic.org/auth-url` | ✅ Supported | Sets the external authentication service URL; requires the SPOA hub's external-auth plugin. |
-| `haproxy-haptic.org/waf-rules` | ✅ Supported | Adds per-application WAF rules (ModSecurity SecLang `SecRule` directives) for the Ingress. Requires the Coraza plugin. |
+| `haproxy-haptic.org/waf-policy` | ✅ Supported | Selects one exact reusable Coraza policy approved by the HAPTIC administrator. Definitions come only from `extraContext.waf.policies.inline` or explicitly trusted ConfigMaps; an Ingress can't define or redirect a source. Configuring any catalog source activates policy governance and Coraza automatically. |
+| `haproxy-haptic.org/waf-rules` | ✅ Supported | Advanced SecLang appended after the selected reusable policy. It creates a private Coraza application and, while Coraza governance is active, requires `extraContext.waf.ingressPermissions.allowCustomRules=true`. Without a policy it remains the compatibility rule path, still subject to `waf.customRules.limits`. |
+| `haproxy-haptic.org/waf-rules-before` | ✅ Supported | Advanced SecLang inserted before the selected reusable policy. Requires `waf-policy` and the same explicit `allowCustomRules` authorization. |
 | `haproxy-haptic.org/oauth` | ✅ Supported | Enables authentication through `oauth2-proxy` (the only supported provider), building on external auth; skipped when `auth-url` is set. |
 | `haproxy-haptic.org/oauth-headers` | ✅ Supported | Lists headers forwarded from the `oauth2-proxy` response on success (default `X-Auth-Request-Email`). |
 | `haproxy-haptic.org/oauth-uri-prefix` | ✅ Supported | Sets the `oauth2-proxy` callback path prefix (default `/oauth2`). |
 | `haproxy-haptic.org/satisfy` | ✅ Supported | The value `any` grants access when either the source-IP allowlist or basic authentication passes, instead of requiring both. |
 | `haproxy-haptic.org/waf` | ✅ Supported | The value `modsecurity` enables the Coraza WAF for the Ingress; requires the Coraza plugin. |
-| `haproxy-haptic.org/waf-mode` | ✅ Supported | Sets the WAF mode: `deny` (default) or `detect`; requires `waf` to be set. |
+| `haproxy-haptic.org/waf-mode` | ✅ Supported | Sets `deny` or `detect`, overriding the selected policy only when `waf.ingressPermissions.allowEnforcementOverride` permits it. Without a policy, the legacy `waf` or rules annotation must be present. |
+
+#### Reusable WAF policies
+
+Reusable policies separate three responsibilities cleanly:
+
+- The HAPTIC administrator chooses trusted policy sources and owns all Ingress override permissions; configuring the catalog activates policy governance automatically.
+- A security team can maintain policy contents in a ConfigMap in a dedicated namespace.
+- An Ingress author normally adds only `haproxy-haptic.org/waf-policy: <name>`.
+
+There are no route-selectable built-in profiles and no policy-definition annotation. A name is resolved exactly and case-sensitively against `extraContext.waf.policies.inline` plus the exact `namespace`/`name`/`key` triples in `configMapRefs`. A same-named ConfigMap in an application namespace is ignored. Duplicate names, missing sources, unknown fields, invalid SecLang, and unknown selections fail admission/rendering rather than silently weakening protection.
+
+`controller.config.templatingSettings.extraContext.waf.dispatch.mode` controls the global activation model. The default `opt-in` mode sends only annotated routes to Coraza. `default-on` inspects all routes and uses `dispatch.defaultEnforcement` where no selected policy or authorized route override supplies an enforcement mode. This stays in `extraContext` because request dispatch is template-library behaviour and must also be configurable in a raw `HAProxyTemplateConfig`. Coraza's chart-wide directives and low-level plugin parameters remain under `spoaHub.plugins.coraza`.
+
+The following example lets a security team own the catalog in the `security` namespace while application teams select approved policies:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        waf:
+          ingressPermissions:
+            allowPolicySelection: true
+            allowEnforcementOverride: false
+            allowWafDisable: false
+            allowCustomRules: false
+            allowRawHAProxyConfig: false
+          policies:
+            configMapRefs:
+              - namespace: security
+                name: haptic-waf-policies
+                key: policies.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: security
+  name: haptic-waf-policies
+data:
+  policies.yaml: |
+    public-web:
+      description: Public browser applications without request-body inspection
+      requestBody:
+        mode: none
+      enforcement: deny
+      excludedTargetsByTag:
+        attack-sqli: ["ARGS:q"]
+        attack-xss: ["ARGS:q"]
+    json-api:
+      requestBody:
+        mode: json
+        maxBytes: 4096
+      enforcement: deny
+```
+
+```yaml
+metadata:
+  annotations:
+    haproxy-haptic.org/waf-policy: public-web
+```
+
+Each policy supports `description`, `enforcement`, nested `requestBody.mode`/`maxBytes`, `excludedTargetsByTag`, and `secLang`. `excludedTargetsByTag` is the low-maintenance path for common false positives: it removes exact variables such as `ARGS:q` from an Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) tag without requiring application teams to write SecLang. `secLang` remains available to trusted policy authors for cases the structured fields can't express.
+
+`requestBody.mode: none` inspects metadata without buffering or limiting uploads. `any` inspects a complete bounded body; `json` additionally requires a JSON media type. Body routes require an unambiguous `Content-Length`; oversized or incomplete bodies are rejected before Coraza. A policy that omits `requestBody.maxBytes` uses `policies.requestBody.defaultMaxBytes`; it may never exceed `policies.requestBody.maxBytes`. Keeping those two settings separate lets an administrator approve one larger policy without silently enlarging every policy that relied on the default. The effective per-policy cap is set both in HAProxy and in that Coraza application, so neither layer silently inspects a different amount. Template body behavior lives under `extraContext.waf.policies.requestBody`; SPOA timeout/concurrency live only under `spoaHub.plugins.coraza`; the process-global HAProxy buffer lives under `extraContext.requestBodyInspection.haproxyBuffer`.
+
+For an immutable cluster baseline, configure a default and disable selection:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        waf:
+          ingressPermissions:
+            allowPolicySelection: false
+            allowEnforcementOverride: false
+            allowWafDisable: false
+            allowCustomRules: false
+            allowRawHAProxyConfig: false
+          policies:
+            defaultPolicy: public-web
+```
+
+Removing all WAF annotations doesn't remove this default. HAPTIC also rejects HAPTIC and vendor annotations that select another application, switch to detect mode, disable the WAF, inject SecLang, or inject raw HAProxy configuration. Raw configuration is checked cluster-wide because a frontend, defaults, or global snippet from one Ingress can short-circuit processing for other routes.
+
+The safe defaults are `allowEnforcementOverride: false`, `allowWafDisable: false`, `allowCustomRules: false`, and `allowRawHAProxyConfig: false`. Enforcement-mode overrides and complete WAF opt-outs are deliberately separate permissions: allowing an application team to choose `deny`/`detect` doesn't also let it disable inspection. Turning on `allowCustomRules` grants every Ingress writer arbitrary SecLang capability, including directives that can disable or rewrite policy rules. Turning on `allowRawHAProxyConfig` grants every Ingress writer HAProxy-configuration-administrator capability. Use those switches only where Ingress write access is already trusted at that level. `allowPolicySelection: true` authorizes every Ingress writer to choose any policy in the approved catalog; set it to false with a `defaultPolicy` when that's too broad.
+
+Protect every referenced ConfigMap with Kubernetes RBAC. Anyone who can update one is a WAF policy author. HAPTIC intentionally can't infer the human identity or RBAC path behind a ConfigMap update; the chart establishes the exact source boundary, while Kubernetes authorizes writers to that source.
+
+When route-local rules are deliberately authorized, their order is deterministic: chart-wide Coraza/CRS directives, `waf-rules-before`, policy SecLang and exclusions, `waf-rules`, then HAPTIC's non-overridable body-safety directives. Policies without route-local rules compile once and are shared. Native and nginx-compatible custom rules share `waf.customRules.limits.maxIngresses` and `maxBytesPerIngress`; these DoS bounds apply even when no reusable policy catalog is configured.
 
 ### API gateway
 
@@ -263,7 +357,7 @@ API-management controls expressed as pure HAProxy config plus low-latency SPOA p
 
 JWT and API-key auth both set a shared `txn.haptic_consumer` identity (JWT from the `sub` claim, API key from its map), which consumer-group authorization and — in later releases — per-consumer quotas build on.
 
-JSON request-body validation is opt-in via `controller.apiGateway.validation.enabled=true`. It uses the bundled `api-gateway` SPOA plugin; schemas are resolved from ConfigMaps or Secrets at render time and compiled when the plugin initializes/reloads. The request path is deliberately bounded: HAProxy rejects bodies larger than `request-schema-max-body-size` before the SPOE call, waits up to `controller.apiGateway.validation.bodyWaitTimeout` for matching POST/PUT/PATCH request bodies, then the plugin validates against an in-memory compiled schema. The chart emits `tune.bufsize` from `controller.apiGateway.validation.bufferSize`, reserves `controller.apiGateway.validation.bufferHeadroomBytes` (default `8192`) for request headers and HAProxy rewrite space, rejects any validation body cap above that remaining body capacity, and rejects body-carrying validation requests without `Content-Length` (`411`) or with ambiguous multiple `Content-Length` values (`400`). If HAProxy still can't buffer the advertised body after `wait-for-body`, it returns `413` instead of calling the plugin with a truncated body. Request-body transformation isn't supported.
+JSON request-body validation is opt-in via `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true`. Schemas are resolved from ConfigMaps or Secrets and compiled when the bundled plugin initializes/reloads. HAProxy rejects bodies above the route cap before SPOE, waits up to `requestBody.waitTimeout` only on matching POST/PUT/PATCH routes, and then validates against an in-memory compiled schema. The process-global `tune.bufsize` comes from `extraContext.requestBodyInspection.haproxyBuffer.sizeBytes`; `reservedBytes` (default `8192`) protects request headers and rewrite space. Any validator or policy body cap above the remaining capacity fails. Requests without `Content-Length` return `411`, duplicate lengths return `400`, and incomplete buffering returns `413` instead of validating truncated input. Request-body transformation isn't supported.
 
 `haproxy-haptic.org/request-schema-max-body-size` is a validator input cap, not the general upload/body-size policy. Use `haproxy-haptic.org/max-request-body-size` when you want to limit the body size a backend may receive. Use `request-schema-max-body-size` to bound how much body data HAProxy may pass to the API-gateway validator and how much JSON the plugin may parse. If both apply to a validated POST/PUT/PATCH request, either one may return `413`; in practice the stricter applicable limit wins.
 
@@ -292,10 +386,10 @@ JSON request-body validation is opt-in via `controller.apiGateway.validation.ena
 | `haproxy-haptic.org/request-id` | ✅ Supported | The value `true` generates a per-request correlation id and forwards it upstream (HAProxy `unique-id`). |
 | `haproxy-haptic.org/request-id-accept-inbound` | ✅ Supported | The value `true` preserves a client-supplied id (used only when the header is absent) instead of always generating a fresh one. |
 | `haproxy-haptic.org/request-id-header` | ✅ Supported | Header carrying the correlation id (default `X-Request-ID`). |
-| `haproxy-haptic.org/request-schema-configmap` | ✅ Supported | Enables JSON request-body validation using a ConfigMap schema reference: `[namespace/]name[:key]`, default key `schema.json`. Exactly one of `request-schema-configmap` or `request-schema-secret` is required. Requires `controller.apiGateway.validation.enabled=true`. |
+| `haproxy-haptic.org/request-schema-configmap` | ✅ Supported | Enables JSON request-body validation using a ConfigMap schema reference: `[namespace/]name[:key]`, default key `schema.json`. Exactly one schema source is required. Requires `extraContext.apiGateway.requestSchemaValidation.enabled=true`. |
 | `haproxy-haptic.org/request-schema-content-types` | ✅ Supported | Comma-separated accepted media types for the schema (default `application/json`). The plugin strips `; charset=...` parameters before matching; mismatches return `415`. |
-| `haproxy-haptic.org/request-schema-fail-open` | ✅ Supported | Per-route policy for missing plugin verdicts/schema ids (`true` or `false`, default from `controller.apiGateway.validation.failOpen`, chart default `false`). The default fails closed with `422` on hub/plugin timeout or missing verdict. |
-| `haproxy-haptic.org/request-schema-max-body-size` | ✅ Supported | Per-route request validation input cap in bytes (1..1048576, default from `controller.apiGateway.validation.maxBodyBytes`, chart default `8192`). It must fit within `controller.apiGateway.validation.bufferSize - controller.apiGateway.validation.bufferHeadroomBytes` (chart default body capacity `8192`) because HAProxy can only pass buffered body bytes to SPOE after request headers and rewrite space. Oversized POST/PUT/PATCH validation requests return `413` before the SPOE roundtrip. Body-carrying validation requests without `Content-Length` return `411`; ambiguous multiple `Content-Length` values return `400`. This doesn't replace `haproxy-haptic.org/max-request-body-size`, which is the general backend body-size limit. |
+| `haproxy-haptic.org/request-schema-fail-open` | ✅ Supported | Per-route policy for missing plugin verdicts/schema ids (`true` or `false`, default from `extraContext.apiGateway.requestSchemaValidation.defaultFailOpen`, chart default `false`). The default fails closed with `422`. |
+| `haproxy-haptic.org/request-schema-max-body-size` | ✅ Supported | Per-route validator input cap (1..1048576; default `requestSchemaValidation.requestBody.defaultMaxBytes`, chart default `8192`). It must fit within `requestBodyInspection.haproxyBuffer.sizeBytes - reservedBytes`. Oversized requests return `413` before SPOE. This doesn't replace `haproxy-haptic.org/max-request-body-size`, the general backend body-size limit. |
 | `haproxy-haptic.org/request-schema-secret` | ✅ Supported | Enables JSON request-body validation using a Secret schema reference: `[namespace/]name[:key]`, default key `schema.json`. The Secret data value must be base64-encoded JSON Schema. Exactly one schema source is required. |
 | `haproxy-haptic.org/fixed-response` | ✅ Supported | The value `true` returns a fixed response for every request matching the route's hosts via `http-request return` — for maintenance windows or sunset routes. Runs before mocking and the validators. Defaults to status 503 / `text/plain`, and can return a bare status with no body. |
 | `haproxy-haptic.org/fixed-response-body` | ✅ Supported | Optional response body for `fixed-response`. |
@@ -304,4 +398,4 @@ JSON request-body validation is opt-in via `controller.apiGateway.validation.ena
 | `haproxy-haptic.org/require-content-type` | ✅ Supported | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). |
 | `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. |
 
-<!-- 180 annotations documented -->
+<!-- 182 annotations documented -->

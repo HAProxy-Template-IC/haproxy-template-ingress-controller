@@ -215,6 +215,35 @@ tests:
           path: data["config.toml"]
           pattern: 'ja4 = true'
 
+  - it: should auto-enable Coraza when dispatch is default-on
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.templateLibraries.gateway.enabled: false
+      controller.config.templatingSettings.extraContext.waf.dispatch.mode: default-on
+    asserts:
+      - hasDocuments:
+          count: 1
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'name = "coraza"'
+
+  - it: should reject forcing Coraza off while dispatch is default-on
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.waf.dispatch.mode: default-on
+      spoaHub.plugins.coraza.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "The configured WAF dispatch/policy behavior requires spoaHub.plugins.coraza. Remove spoaHub.plugins.coraza.enabled=false, set waf.dispatch.mode=opt-in, or remove the WAF policy catalog."
+
+  - it: should reject unknown Coraza dispatch fields
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.waf.dispatch.mod: default-on
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.templatingSettings.extraContext.waf.dispatch contains unknown field "mod". Valid fields: mode, defaultEnforcement.'
+
   - it: should map the sso-auth plugin to its quirk lib filename
     template: spoa-hub-configmap.yaml
     set:
@@ -224,11 +253,11 @@ tests:
           path: data["config.toml"]
           pattern: 'library = "libhaproxy_spoa_hub_plugin_sso_auth\.so"'
 
-  - it: should auto-enable the rate-limit plugin from controller.rateLimit.shared.enabled
+  - it: should auto-enable the rate-limit plugin from rateLimit.shared.enabled
     template: spoa-hub-configmap.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
     asserts:
       - matchRegex:
           path: data["config.toml"]
@@ -246,40 +275,96 @@ tests:
           path: data["config.toml"]
           pattern: 'store_timeout_ms = 10'
 
-  - it: should fail shared rate-limit rendering without a shared store_url
-    template: spoa-hub-configmap.yaml
+  - it: should reject the former controller-owned shared rate-limit path
+    template: haproxytemplateconfig.yaml
     set:
       controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "controller.rateLimit.shared.enabled=true requires a shared store. Leave controller.rateLimit.store.enabled=true for chart-managed HA Valkey, or set spoaHub.plugins.rate-limit.params.store_url/store_urls to bring your own Redis/Valkey."
+          errorMessage: "controller.rateLimit has moved to the top-level rateLimit tree; use rateLimit.shared instead."
+
+  - it: should fail shared rate-limit rendering without a shared store
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "rateLimit.shared.enabled=true requires a shared store. Leave rateLimit.shared.managedStore.enabled=true for chart-managed HA Valkey, or set rateLimit.shared.externalStore.urls to bring your own Redis/Valkey."
+
+  - it: should inject a single external store URL as store_url
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: false
+      rateLimit.shared.externalStore.urls:
+        - redis://my-valkey.my-namespace.svc:6379
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'store_url = "redis://my-valkey\.my-namespace\.svc:6379"'
+
+  - it: should inject several external store URLs as store_urls
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: false
+      rateLimit.shared.externalStore.urls:
+        - redis://shard-a.svc:6379
+        - redis://shard-b.svc:6379
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'store_urls = \["redis://shard-a\.svc:6379", "redis://shard-b\.svc:6379"\]'
+
+  - it: should fail when the managed store and an external store are both configured
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      rateLimit.shared.externalStore.urls:
+        - redis://my-valkey.my-namespace.svc:6379
+    asserts:
+      - failedTemplate:
+          errorMessage: "rateLimit.shared.managedStore.enabled=true and rateLimit.shared.externalStore.urls are mutually exclusive; disable the managed store to bring your own Redis/Valkey."
+
+  - it: should fail when store_url is set manually in the rate-limit params scalar
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: false
+      spoaHub.plugins.rate-limit.params: |
+        fail_open = false
+        store_url = "redis://my-valkey.my-namespace.svc:6379"
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.rate-limit.params must not define store_url or store_urls; rateLimit.shared.managedStore (chart-managed HA Valkey) or rateLimit.shared.externalStore.urls (bring your own store) is their single owner."
 
   - it: should fail shared rate-limit rendering when spoa-hub is forced off
     template: haproxytemplateconfig.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
       spoaHub.enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "controller.rateLimit.shared.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable shared rate limiting."
+          errorMessage: "rateLimit.shared.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable shared rate limiting."
 
   - it: should fail shared rate-limit rendering when the rate-limit plugin is forced off
     template: haproxytemplateconfig.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
       spoaHub.plugins.rate-limit.enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "controller.rateLimit.shared.enabled=true requires spoaHub.plugins.rate-limit to be enabled. Remove spoaHub.plugins.rate-limit.enabled=false or disable shared rate limiting."
+          errorMessage: "rateLimit.shared.enabled=true requires spoaHub.plugins.rate-limit to be enabled. Remove spoaHub.plugins.rate-limit.enabled=false or disable shared rate limiting."
 
   - it: should inject the chart-managed Valkey store_url into the rate-limit plugin
     template: spoa-hub-configmap.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
     asserts:
       - matchRegex:
           path: data["config.toml"]
@@ -288,10 +373,10 @@ tests:
   - it: should render shared rate-limit timeout knobs
     template: spoa-hub-configmap.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.shared.pluginTimeoutMs: 75
-      controller.rateLimit.shared.storeTimeoutMs: 20
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      spoaHub.plugins.rate-limit.timeoutMs: 75
+      spoaHub.plugins.rate-limit.storeOperationTimeoutMs: 20
+      rateLimit.shared.managedStore.enabled: true
     asserts:
       - matchRegex:
           path: data["config.toml"]
@@ -300,12 +385,36 @@ tests:
           path: data["config.toml"]
           pattern: 'store_timeout_ms = 20'
 
+  - it: should prepend managed rate-limit params before user nested tables
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      spoaHub.plugins.rate-limit.params: |
+        [plugins.params.custom]
+        enabled = true
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: '(?s)store_timeout_ms = 10\nstore_url = .*\n\[plugins.params.custom\]'
+
+  - it: should reject duplicate managed rate-limit store timeout params
+    template: spoa-hub-configmap.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      spoaHub.plugins.rate-limit.params: |
+        store_timeout_ms = 99
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.rate-limit.params must not define store_timeout_ms; spoaHub.plugins.rate-limit.storeOperationTimeoutMs is its single owner."
+
   - it: should fail invalid shared rate-limit plugin timeout
     template: spoa-hub-configmap.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.shared.pluginTimeoutMs: 0
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      spoaHub.plugins.rate-limit.timeoutMs: 0
+      rateLimit.shared.managedStore.enabled: true
     asserts:
       - failedTemplate:
           errorMessage: "spoaHub.plugins.rate-limit.timeoutMs must resolve to a positive integer milliseconds value."
@@ -313,18 +422,18 @@ tests:
   - it: should fail invalid shared rate-limit store timeout
     template: spoa-hub-configmap.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.shared.storeTimeoutMs: 0
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      spoaHub.plugins.rate-limit.storeOperationTimeoutMs: "0"
+      rateLimit.shared.managedStore.enabled: true
     asserts:
       - failedTemplate:
-          errorMessage: "controller.rateLimit.shared.storeTimeoutMs must be a positive integer milliseconds value."
+          errorMessage: "spoaHub.plugins.rate-limit.storeOperationTimeoutMs must resolve to an integer greater than or equal to 1."
 
   - it: should render the managed rate-limit store NetworkPolicy
     template: rate-limit-store-networkpolicy.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
     asserts:
       - isKind:
           of: NetworkPolicy
@@ -347,9 +456,9 @@ tests:
   - it: should not render the managed rate-limit store NetworkPolicy when disabled
     template: rate-limit-store-networkpolicy.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: true
-      controller.rateLimit.store.networkPolicy.enabled: false
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      rateLimit.shared.managedStore.networkPolicy.enabled: false
     asserts:
       - hasDocuments:
           count: 0
@@ -437,29 +546,227 @@ tests:
           path: spec.templatingSettings.extraContext.spoaHub.enabled
           value: true
       - equal:
-          path: spec.templatingSettings.extraContext.spoaHub.socketPath
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.socketPath
           value: /run/spoa/hub.sock
       - equal:
-          path: spec.templatingSettings.extraContext.spoaHub.modeSpop
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.modeSpop
           value: true
       - contains:
-          path: spec.templatingSettings.extraContext.spoaHub.messages
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.messages
           content: get-fingerprint
+
+  - it: should derive HAProxy processing timeout from the slowest enabled plugin
+    template: haproxytemplateconfig.yaml
+    set:
+      spoaHub.plugins.sso-auth.enabled: true
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.timeoutProcessing
+          value: 6100ms
+
+  - it: should accept an explicit HAProxy processing timeout above all plugin deadlines
+    template: haproxytemplateconfig.yaml
+    set:
+      spoaHub.plugins.sso-auth.enabled: true
+      spoaHub.haproxy.timeoutProcessing: 7s
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.timeoutProcessing
+          value: 7s
+
+  - it: should reject an explicit HAProxy processing timeout below a plugin deadline
+    template: haproxytemplateconfig.yaml
+    set:
+      spoaHub.plugins.sso-auth.enabled: true
+      spoaHub.haproxy.timeoutProcessing: 500ms
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.haproxy.timeoutProcessing (500ms) must be at least the largest enabled SPOE message budget (6000ms) plus timeoutProcessingMarginMs (100ms). Lower the relevant plugin timeouts or raise the HAProxy processing timeout."
+
+  - it: should sum plugin timeouts only when plugins share one SPOE message
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.templateLibraries.gateway.enabled: false
+      spoaHub.plugins.fingerprinting.enabled: true
+      spoaHub.plugins.fingerprinting.timeoutMs: 20
+      spoaHub.plugins.fingerprinting.messages: [shared-check]
+      spoaHub.plugins.maxmind.enabled: true
+      spoaHub.plugins.maxmind.timeoutMs: 30
+      spoaHub.plugins.maxmind.messages: [shared-check]
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.timeoutProcessing
+          value: 150ms
+
+  - it: should reject zero hub worker threads instead of treating zero as unset
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+      spoaHub.hub.workerThreads: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.hub.workerThreads must be an integer greater than or equal to 1."
+
+  - it: should reject zero maximum blocking threads instead of treating zero as unset
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+      spoaHub.hub.maxBlockingThreads: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.hub.maxBlockingThreads must be an integer greater than or equal to 1."
+
+  - it: should render an explicit reload drain timeout including the documented zero opt-out
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+      spoaHub.hub.reloadDrainTimeoutMs: 0
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'reload_drain_timeout_ms = 0'
+
+  - it: should reject an explicit zero request inspection buffer
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled: true
+      controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes."
+
+  - it: should reject an explicit zero custom-rule ingress limit
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.waf.customRules.limits.maxIngresses: 0
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.waf.customRules.limits.maxIngresses must be between 1 and 1024."
+
+  - it: should reject a Coraza policy body default above the policy ceiling
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.waf.policies.requestBody.defaultMaxBytes: 8193
+      controller.config.templatingSettings.extraContext.waf.policies.requestBody.maxBytes: 8192
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.waf.policies.requestBody.defaultMaxBytes must not exceed requestBody.maxBytes."
+
+  # The unknown-ConfigMap-reference-field rejection is checked in
+  # scripts/test-templates.sh (run_helm_failure_guard): helm-unittest's
+  # per-leaf `set` merger cannot reliably build an array element carrying a
+  # key absent from values.yaml, while Helm's real --set path preserves it.
+
+  - it: should reject non-string inline Coraza policy descriptions
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.waf.policies.inline.bad.description: 123
+    asserts:
+      - failedTemplate:
+          errorMessage: "waf.policies.inline.bad.description must be a string."
+
+  - it: should reject explicit zero inline policy body caps instead of applying the default
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.waf.policies.inline.bad.requestBody.mode: any
+      controller.config.templatingSettings.extraContext.waf.policies.inline.bad.requestBody.maxBytes: "0"
+    asserts:
+      - failedTemplate:
+          errorMessage: "waf.policies.inline.bad.requestBody.maxBytes must be between 1 and waf.policies.requestBody.maxBytes (8192)."
+
+  - it: should inject API-gateway managed defaults even with custom params
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled: true
+      controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.defaultFailOpen: true
+      controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes: 4096
+      spoaHub.plugins.api-gateway.params: |
+        # custom plugin parameters remain after chart-owned defaults
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'default_fail_open = true'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'max_body_bytes = 4096'
+
+  - it: should reject duplicate API-gateway managed params
+    template: spoa-hub-configmap.yaml
+    set:
+      controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled: true
+      spoaHub.plugins.api-gateway.params: |
+        max_body_bytes = 999
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.api-gateway.params must not define default_fail_open or max_body_bytes; controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation is their single owner."
+
+  - it: should reject duplicate Coraza directives ownership
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.coraza.enabled: true
+      spoaHub.plugins.coraza.params: |
+        directives = "SecRuleEngine Off"
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.coraza.params must not define directives; spoaHub.plugins.coraza.directives is its single owner."
+
+  - it: should derive Coraza request limits from the shared HAProxy body capacity
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.coraza.enabled: true
+      controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes: 32768
+      controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.reservedBytes: 8192
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'request_body_limit = 24576'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'request_body_in_memory_limit = 24576'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'response_check = false'
+
+  - it: should reject manual Coraza body-contract params
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.coraza.enabled: true
+      spoaHub.plugins.coraza.params: |
+        response_check = true
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.plugins.coraza.params must not define request_body_limit, request_body_in_memory_limit, response_body_limit, or response_check. The chart derives request limits from controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer and disables unsupported response-body inspection."
+
+  - it: should reject mirror message slots under plugin runtime settings
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.mirror.minMessageSlots: 8
+    asserts:
+      - failedTemplate:
+          errorMessage: 'spoaHub.plugins.mirror contains unknown field "minMessageSlots". Plugin runtime settings belong inside params.'
+
+  - it: should reject a negative HAProxy mirror message-slot floor
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.haproxy.mirror.minMessageSlots: -1
+    asserts:
+      - failedTemplate:
+          errorMessage: "spoaHub.haproxy.mirror.minMessageSlots must be an integer between 0 and 1024."
 
   - it: should surface shared rate-limit extraContext and store params
     template: haproxytemplateconfig.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: true
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
     asserts:
       - equal:
-          path: spec.templatingSettings.extraContext.hapticRateLimitSharedEnabled
-          value: "true"
+          path: spec.templatingSettings.extraContext.rateLimit.shared.enabled
+          value: true
       - equal:
-          path: spec.templatingSettings.extraContext.hapticRateLimitStoreEnabled
-          value: "true"
+          path: spec.templatingSettings.extraContext.rateLimit.shared.managedStore.enabled
+          value: true
       - contains:
-          path: spec.templatingSettings.extraContext.spoaHub.messages
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.messages
           content: check-ratelimit
       - matchRegex:
           path: spec.templatingSettings.extraContext.spoaHub.plugins[?(@.name == "rate_limit")].params
@@ -471,13 +778,13 @@ tests:
   - it: should allow disabling the managed rate-limit store PodDisruptionBudget
     template: haproxytemplateconfig.yaml
     set:
-      controller.rateLimit.shared.enabled: true
-      controller.rateLimit.store.enabled: true
-      controller.rateLimit.store.podDisruptionBudget.enabled: false
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+      rateLimit.shared.managedStore.podDisruptionBudget.enabled: false
     asserts:
       - equal:
-          path: spec.templatingSettings.extraContext.hapticRateLimitStorePDBEnabled
-          value: "false"
+          path: spec.templatingSettings.extraContext.rateLimit.shared.managedStore.podDisruptionBudget.enabled
+          value: false
 
   - it: should union messages from multiple enabled plugins in extraContext
     template: haproxytemplateconfig.yaml
@@ -486,10 +793,10 @@ tests:
       spoaHub.plugins.coraza.enabled: true
     asserts:
       - contains:
-          path: spec.templatingSettings.extraContext.spoaHub.messages
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.messages
           content: get-fingerprint
       - contains:
-          path: spec.templatingSettings.extraContext.spoaHub.messages
+          path: spec.templatingSettings.extraContext.spoaHub.haproxy.messages
           content: check-request
 
   - it: should preserve a user-supplied params blob verbatim

@@ -1,4 +1,4 @@
-{{- $varnish := .Values.controller.cache.varnish }}
+{{- $varnish := .Values.cache.varnish }}
 {{- $np := $varnish.networkPolicy | default dict }}
 {{- $npEnabled := true }}
 {{- if hasKey $np "enabled" }}

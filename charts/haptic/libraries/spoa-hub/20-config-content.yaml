@@ -32,7 +32,7 @@ templateSnippets:
     template: |
       {%- var hub = extraContext | dig("spoaHub", "hub") | fallback(map[string]any{}) -%}
       {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
-      {%- var socketPath = extraContext | dig_string("/run/spoa/hub.sock", "spoaHub", "socketPath") -%}
+      {%- var socketPath = extraContext | dig_string("/run/spoa/hub.sock", "spoaHub", "haproxy", "socketPath") -%}
 
       {#- Pull the per-app coraza modsec-snippet list out of shared state.
           Vendor annotation libraries (nginx-ingress.yaml) populate
@@ -49,11 +49,25 @@ templateSnippets:
       {%- var modsecApps = gf | dig("sphCorazaApps") | fallback([]any{}) | toSlice() -%}
       {%- var apiGatewaySchemas = gf | dig("apiGatewaySchemas") | fallback([]any{}) | toSlice() -%}
 
+      {#- plugin_dir is the bundled image's fixed layout and default_timeout_ms
+          is a fallback deadline only used when a [[plugins]] entry omits
+          timeout_ms — which the Helm chart never does. Neither is part of the
+          Helm values surface (spoaHub.hub rejects them, see _spoa-hub.tpl), so
+          the dig() knobs only apply to a hand-authored standalone
+          HAProxyTemplateConfig that sets extraContext.spoaHub.hub directly. -#}
       plugin_dir = "{{ hub | dig("pluginDir") | fallback("/etc/haproxy-spoa-hub/plugins") }}"
       default_timeout_ms = {{ hub | dig("defaultTimeoutMs") | fallback(500) }}
       log_level = "{{ hub | dig("logLevel") | fallback("info") }}"
       max_connections = {{ hub | dig("maxConnections") | fallback(1000) }}
       blocking_thread_keep_alive_secs = {{ hub | dig("blockingThreadKeepAliveSecs") | fallback(30) }}
+      {%- var maxBlockingThreads = hub | dig("maxBlockingThreads") -%}
+      {%- if maxBlockingThreads != nil %}
+      max_blocking_threads = {{ maxBlockingThreads }}
+      {%- end %}
+      {%- var reloadDrainTimeoutMs = hub | dig("reloadDrainTimeoutMs") -%}
+      {%- if reloadDrainTimeoutMs != nil %}
+      reload_drain_timeout_ms = {{ reloadDrainTimeoutMs }}
+      {%- end %}
       {#- Prometheus metrics endpoint. Default bound on the pod loopback
           so the sidecar surface stays cluster-internal (the haproxy pod's
           ServiceMonitor / PodMonitor can scrape from inside via the
@@ -67,7 +81,11 @@ templateSnippets:
           fire-and-forget dispatch then runs async, and the only signal
           for whether it succeeded / dropped / errored is the
           /metrics scrape). -#}
-      metrics_addr = "{{ hub | dig("metricsAddr") | fallback("127.0.0.1:9095") }}"
+      {%- var metricsAddr = hub | dig("metricsAddr") -%}
+      {%- if metricsAddr == nil -%}{%- metricsAddr = "127.0.0.1:9095" -%}{%- end -%}
+      {%- if tostring(metricsAddr) != "" %}
+      metrics_addr = "{{ metricsAddr }}"
+      {%- end %}
       {%- var workerThreads = hub | dig("workerThreads") -%}
       {%- if workerThreads != nil %}
       worker_threads = {{ workerThreads }}
@@ -82,8 +100,11 @@ templateSnippets:
         {%- var pLibrary = p["library"].(string) -%}
         {%- var pMessages = p["messages"] | toSlice() -%}
         {%- var pTimeoutMs = p["timeoutMs"] -%}
+        {%- var pMaxConcurrency = p | dig("maxConcurrency") -%}
+        {%- var pMaxQueue = p | dig("maxQueue") -%}
+        {%- var pQueueTimeoutMs = p | dig("queueTimeoutMs") -%}
         {#- Mirror plugin's messages list. Floored at a static minimum
-            (mirrorStaticMinSlots, default 4) and extended dynamically
+            (mirrorMinMessageSlots, default 4) and extended dynamically
             beyond that based on the cluster-wide max number of mirror
             filters on any single rule (mirrorFanout, computed by the
             gateway library's 20-route-analysis pass into
@@ -92,14 +113,14 @@ templateSnippets:
             that produces mirror filters would write into the same key.
 
             Why the static floor: two consumers depend on slots
-            [1, mirrorStaticMinSlots] existing unconditionally.
+            [1, mirrorMinMessageSlots] existing unconditionally.
 
             1. Capacity contract for libraries that don't feed the
                dynamic fanout. nginx-ingress's mirror-target
                annotation (frontend-filters-555-nginx-ingress-mirror)
                allocates one slot per mirror-target Ingress up to
                this floor and fail()s beyond it, telling the operator
-               to raise mirrorStaticMinSlots. Its send-spoe-group
+               to raise mirrorMinMessageSlots. Its send-spoe-group
                references need the floor-declared groups in
                spoe.conf, or `haproxy -c` fails on an unknown group.
 
@@ -140,17 +161,19 @@ templateSnippets:
             below — a 12-mirror route allocates 12 slots — and slots
             above the floor shrink dynamically; mirrors fired into
             the shrink window on those slots are lost loudly. Bump
-            mirrorStaticMinSlots if a workload regularly exceeds 4
+            mirrorMinMessageSlots if a workload regularly exceeds 4
             mirrors per rule (or 4 mirror-target Ingresses) and
             spoa_messages_unhandled_total moves. -#}
         {%- if pName == "mirror" -%}
           {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
           {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
           {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() -%}
-          {%- var mirrorStaticMinSlots = extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback(4) | toint() -%}
+          {%- var mirrorMinMessageSlots = 4 -%}
+          {%- var mirrorMinMessageSlotsAny = extraContext | dig("spoaHub", "haproxy", "mirror", "minMessageSlots") -%}
+          {%- if mirrorMinMessageSlotsAny != nil -%}{%- mirrorMinMessageSlots = toint(mirrorMinMessageSlotsAny) -%}{%- end -%}
           {%- var effectiveSlots = mirrorFanout -%}
-          {%- if mirrorStaticMinSlots > effectiveSlots -%}
-            {%- effectiveSlots = mirrorStaticMinSlots -%}
+          {%- if mirrorMinMessageSlots > effectiveSlots -%}
+            {%- effectiveSlots = mirrorMinMessageSlots -%}
           {%- end -%}
           {%- pMessages = []any{} -%}
           {%- for i := 1; i <= effectiveSlots; i++ -%}
@@ -170,6 +193,15 @@ templateSnippets:
         {%- end -%}
       ]
       timeout_ms = {{ pTimeoutMs }}
+        {%- if pMaxConcurrency != nil %}
+      max_concurrency = {{ pMaxConcurrency }}
+        {%- end %}
+        {%- if pMaxQueue != nil %}
+      max_queue = {{ pMaxQueue }}
+        {%- end %}
+        {%- if pQueueTimeoutMs != nil %}
+      queue_timeout_ms = {{ pQueueTimeoutMs }}
+        {%- end %}
         {%- if len(pDependsOn) > 0 %}
       depends_on = [
           {%- for i, d := range pDependsOn -%}
@@ -200,27 +232,34 @@ templateSnippets:
       {{ pParams | trimSpace() }}
         {%- end %}
         {%- if pName == "coraza" && len(modsecApps) > 0 %}
-          {#- Per-app WAF instances. The plugin's config schema parses
-              `applications` as a TOML table keyed by app name (see
-              haproxy-spoa-hub-plugin-coraza/src/config.rs:124-130).
-              `<ns>/<name>` is quoted because the slash isn't a bare-key
-              char in TOML. Each block contains the chart-default base
-              directives PRE-PENDED to the per-Ingress modsec-snippet,
-              so per-app WAF instances inherit the base ruleset
-              (operator's chart-wide config) plus their own custom
-              rules. coraza-app.map (populated by nginx-ingress.yaml)
-              binds <host><path> → "<ns>/<name>" so SPOE check-request
-              sets `app=` and the plugin routes to this app's WAF. -#}
+          {#- Per-app WAF instances. Vendor scans use ns/name app identities;
+              HAPTIC's reusable policies provide an explicit appName so many
+              routes can share one compiled WAF generation. Every app receives
+              the operator's base directives followed by its profile/custom
+              fragment. -#}
           {%- for _, app := range modsecApps %}
             {%- var a = app.(map[string]any) %}
-            {%- var aNs = a["ns"].(string) %}
-            {%- var aName = a["name"].(string) %}
+            {%- var appName = a | dig_string("", "appName") %}
+            {%- var source = a | dig_string("", "source") %}
+            {%- var requestBodyMaxBytes = a | dig_string("", "requestBodyMaxBytes") %}
+            {%- if appName == "" %}
+              {%- var aNs = a["ns"].(string) %}
+              {%- var aName = a["name"].(string) %}
+              {%- appName = aNs + "/" + aName %}
+              {%- if source == "" %}
+                {%- source = "Ingress " + appName %}
+              {%- end %}
+            {%- end %}
 
-      [plugins.params.applications."{{ aNs }}/{{ aName }}"]
+      [plugins.params.applications."{{ appName }}"]
+            {%- if requestBodyMaxBytes != "" %}
+      request_body_limit = {{ requestBodyMaxBytes }}
+      request_body_in_memory_limit = {{ requestBodyMaxBytes }}
+            {%- end %}
       directives = """
       {{ corazaDirectives | trimSpace() }}
 
-      # nginx-ingress modsecurity-snippet from {{ aNs }}/{{ aName }}
+      # {{ source }}
       {{ a["snippet"].(string) | trimSpace() }}
       """
           {%- end %}
@@ -269,7 +308,7 @@ templateSnippets:
           shared.ComputeIfAbsent inside util-gateway-analysis so
           repeated invocations across the same render are free. -#}
       {{- render_glob "util-gateway-analysis" -}}
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) %}
       {#- Dynamic mirror messages: each rule with N mirror filters
@@ -281,7 +320,7 @@ templateSnippets:
           ..`mirror-<effectiveSlots>` here, replacing the "mirror"
           placeholder from values.yaml.
 
-          Floored at `mirrorStaticMinSlots` (default 4) — see the
+          Floored at `mirrorMinMessageSlots` (default 4) — see the
           parallel logic in `spoa-hub-config-content` above for the
           full rationale: the floor is the slot-capacity contract for
           consumers that don't feed the dynamic fanout (nginx-ingress
@@ -293,14 +332,16 @@ templateSnippets:
           haproxy-side SPOE group declarations in sync with the
           plugin-side floor means haproxy can safely fire
           `send-spoe-group mirror-N-group` for N in
-          [1, mirrorStaticMinSlots] without depending on the
+          [1, mirrorMinMessageSlots] without depending on the
           per-render route observation race. -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() %}
-      {%- var mirrorStaticMinSlots = extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback(4) | toint() %}
+      {%- var mirrorMinMessageSlots = 4 %}
+      {%- var mirrorMinMessageSlotsAny = extraContext | dig("spoaHub", "haproxy", "mirror", "minMessageSlots") %}
+      {%- if mirrorMinMessageSlotsAny != nil %}{%- mirrorMinMessageSlots = toint(mirrorMinMessageSlotsAny) %}{%- end %}
       {%- var effectiveSlots = mirrorFanout %}
-      {%- if mirrorStaticMinSlots > effectiveSlots %}
-        {%- effectiveSlots = mirrorStaticMinSlots %}
+      {%- if mirrorMinMessageSlots > effectiveSlots %}
+        {%- effectiveSlots = mirrorMinMessageSlots %}
       {%- end %}
       {%- var expanded = []any{} %}
       {%- for _, m := range messages %}
@@ -324,9 +365,9 @@ templateSnippets:
           option var-prefix       hub
           option pipelining
           option async
-          timeout hello      {{ extraContext | dig("spoaHub", "timeoutHello") | fallback("2s") }}
-          timeout idle       {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
-          timeout processing {{ extraContext | dig("spoaHub", "timeoutProcessing") | fallback("500ms") }}
+          timeout hello      {{ extraContext | dig("spoaHub", "haproxy", "timeoutHello") | fallback("2s") }}
+          timeout idle       {{ extraContext | dig("spoaHub", "haproxy", "timeoutIdle") | fallback("5m") }}
+          timeout processing {{ extraContext | dig("spoaHub", "haproxy", "timeoutProcessing") | fallback("500ms") }}
           use-backend spoa-hub
       {{ render_glob "spoe-agents-*" }}
       {#- Per-message SPOE-message bodies. Each known plugin message
@@ -434,9 +475,12 @@ templateSnippets:
   #     varint-encoded SPOE-wire bytes which the plugin would split
   #     wrong, leaving header-targeted SecRules
   #     (`REQUEST_HEADERS:X-*`) silently unmatched.
-  #   - body — phase-2 body inspection. HAProxy buffers up to
-  #     `tune.bufsize` bytes; SecRules see whatever was buffered when
-  #     the request body completed (or was cut off by maxbody).
+  #   - body / body-mode / body-complete — phase-2 input plus an explicit
+  #     completeness contract. Header-only profiles send `none`; buffered
+  #     profiles are bounded and set complete only after HAProxy proves the
+  #     advertised body fits and was received in full.
+  #   - detect-only — per-route shadow mode. Coraza still evaluates all rules
+  #     but only coerces completed WAF decisions; engine failures stay closed.
   #
   # `app` is intentionally omitted — single-WAF deployments use the
   # default WAF instance the plugin loads from `params.directives`.
@@ -460,7 +504,7 @@ templateSnippets:
   spoe-message-check-request-body:
     template: |-
       spoe-message check-request
-          args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body app=var(txn.coraza_app)
+          args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body body-mode=var(txn.coraza_body_mode) body-complete=var(txn.coraza_body_complete) detect-only=var(txn.coraza_detect_only) app=var(txn.coraza_app)
 
   # Canonical spoe-message check-ratelimit body. Rendered by name from
   # spoe-conf-content's per-message dispatch when "check-ratelimit" is in the
@@ -506,8 +550,8 @@ templateSnippets:
   #                      frontend-wide `option http-buffer-request`, so routes
   #                      without validation don't pay the buffering cost. The
   #                      chart emits tune.bufsize from
-  #                      controller.apiGateway.validation.bufferSize, reserves
-  #                      header/rewrite headroom, requires Content-Length, and
+  #                      extraContext.requestBodyInspection.haproxyBuffer.sizeBytes,
+  #                      reserves header/rewrite capacity, requires Content-Length, and
   #                      rejects ambiguous multiple Content-Length values. It
   #                      also rejects if req.body_len remains below req.body_size
   #                      after wait-for-body, so this never validates a truncated

@@ -218,22 +218,42 @@ func (r *Runner) RenderFixtures(fixtures map[string][]any) (RenderOutput, error)
 }
 
 // mergeTestExtraContext folds a per-test extraContext map into the rendering
-// context built from the global config. The merge is destructive on a fresh
-// per-test copy (never the shared global map) so parallel test workers don't
+// context built from the global config. Nested maps merge recursively with
+// per-test leaves winning — the same mergeOverwrite semantics the chart uses
+// for extraContext — so a test overriding one key of a subtree (for example
+// tls.hsts.enabled) doesn't clobber sibling keys the chart set (for example
+// tls.defaultCertificate). The merge builds fresh maps along every merged
+// path (never mutating the shared global map) so parallel test workers don't
 // leak state into each other.
 func mergeTestExtraContext(renderCtx, testExtraContext map[string]any) {
 	if testExtraContext == nil {
 		return
 	}
 	globalExtraContext := renderCtx["extraContext"].(map[string]any)
-	merged := make(map[string]any, len(globalExtraContext)+len(testExtraContext))
-	maps.Copy(merged, globalExtraContext)
-	for key, value := range testExtraContext {
-		merged[key] = value
+	merged := deepMergeMaps(globalExtraContext, testExtraContext)
+	for key := range testExtraContext {
 		// Also merge into top-level context for direct access.
-		renderCtx[key] = value
+		renderCtx[key] = merged[key]
 	}
 	renderCtx["extraContext"] = merged
+}
+
+// deepMergeMaps returns a new map with override folded into base: keys whose
+// values are maps on both sides merge recursively, any other value replaces
+// the base value. Neither input map is mutated.
+func deepMergeMaps(base, override map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(override))
+	maps.Copy(merged, base)
+	for key, value := range override {
+		baseMap, baseOk := merged[key].(map[string]any)
+		overrideMap, overrideOk := value.(map[string]any)
+		if baseOk && overrideOk {
+			merged[key] = deepMergeMaps(baseMap, overrideMap)
+			continue
+		}
+		merged[key] = value
+	}
+	return merged
 }
 
 // collectStatusPatches drains the StatusPatchCollector that the templates'

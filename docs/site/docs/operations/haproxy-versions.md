@@ -119,35 +119,37 @@ The chart's own `renovate.json` ([source](https://gitlab.com/haproxy-haptic/hapt
 Enterprise deployments require:
 
 1. Setting `haproxy.enterprise.enabled: true`
-2. Pointing `haproxy.image.repository` to the enterprise registry
-3. Configuring `haproxy.podSpec.imagePullSecrets` with your registry credentials
-4. Building your own controller image and pointing `image.repository` (and optionally `image.tag`) at it — the HAPTIC project doesn't distribute enterprise controller images (see the note below)
+2. Configuring `haproxy.podSpec.imagePullSecrets` with your registry credentials
+3. Building your own controller image and pointing `controller.image.repository` (and optionally `controller.image.tag`) at it — the HAPTIC project doesn't distribute enterprise controller images (see the note below)
 
 ```yaml
 haproxyVersion: "3.2"
 haproxy:
-  image:
-    repository: hapee-registry.haproxy.com/haproxy-enterprise
   enterprise:
     enabled: true
-    version: "3.2"
   podSpec:
     imagePullSecrets:
       - name: hapee-registry-secret
 ```
 
-With `enterprise.enabled: true`, the pod image tag defaults to the enterprise revision from `haproxyEnterprisePatchVersions` (for example `3.2r1`). To pin a specific revision:
+With `enterprise.enabled: true`, an empty `haproxy.image.repository` selects
+`hapee-registry.haproxy.com/haproxy-enterprise`, and the tag defaults to the
+tested revision from `haproxyEnterprisePatchVersions` (for example `3.2r1`).
+The same `haproxyVersion` also derives the Enterprise binary path, so image and
+binary series can't drift. The chart fails if the selected series has no tested
+Enterprise revision. To use a custom registry or pin a specific revision:
 
 ```yaml
 haproxy:
   image:
+    repository: registry.example.com/haproxy-enterprise
     tag: "3.2r2"
 ```
 
 Check [HAProxy Enterprise release notes](https://www.haproxy.com/documentation/haproxy-enterprise/release-notes/) for available revisions.
 
 !!! note "Building the controller"
-    Enterprise controller images aren't distributed by the HAPTIC project. You must build the controller yourself and push it to your own registry, then set `image.repository` and optionally `image.tag` accordingly.
+    Enterprise controller images aren't distributed by the HAPTIC project. You must build the controller yourself and push it to your own registry, then set `controller.image.repository` and optionally `controller.image.tag` accordingly.
 
 ## Upgrading to a new series
 

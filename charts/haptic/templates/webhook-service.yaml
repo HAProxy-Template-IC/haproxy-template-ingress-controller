@@ -10,8 +10,9 @@ spec:
   type: ClusterIP
   ports:
     - name: https-webhook
-      port: {{ .Values.webhook.service.port }}
+      port: {{ .Values.controller.webhook.service.port }}
       targetPort: webhook
       protocol: TCP
   selector:
     {{- include "haptic.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: controller

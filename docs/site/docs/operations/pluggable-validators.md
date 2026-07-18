@@ -204,22 +204,22 @@ The chart's default sidecar is `haproxy-spoa-hub --validate-socket /var/run/hapt
 controller:
   validators:
     enabled: false  # turn off the default sidecar
-sidecars:
-  - name: my-validator
-    image: registry.example.com/my-validator:v1.2.3
-    args: ["--validate-socket", "/var/run/haptic-validators/my-validator.sock"]
-    volumeMounts:
-      - name: haptic-validators
-        mountPath: /var/run/haptic-validators
-# Mount the shared socket dir into the controller too — with the default
-# sidecar off, the chart doesn't add this mount for you, so the controller
-# can't reach the socket without it.
-extraVolumeMounts:
-  - name: haptic-validators
-    mountPath: /var/run/haptic-validators
-extraVolumes:
-  - name: haptic-validators
-    emptyDir: {}
+  sidecars:
+    - name: my-validator
+      image: registry.example.com/my-validator:v1.2.3
+      args: ["--validate-socket", "/var/run/haptic-validators/my-validator.sock"]
+      volumeMounts:
+        - name: haptic-validators
+          mountPath: /var/run/haptic-validators
+  # Mount the shared socket dir into the controller too — with the default
+  # sidecar off, the chart doesn't add this mount for you, so the controller
+  # can't reach the socket without it.
+  extraVolumeMounts:
+    - name: haptic-validators
+      mountPath: /var/run/haptic-validators
+  extraVolumes:
+    - name: haptic-validators
+      emptyDir: {}
 ```
 
 ```yaml

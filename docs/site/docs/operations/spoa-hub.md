@@ -16,12 +16,15 @@ The sidecar renders whenever at least one plugin is enabled: with the default `s
 
 Some plugins auto-enable with the template library that consumes them — each per-plugin `enabled` default is a chart-evaluated template string:
 
-- **coraza** follows `controller.templateLibraries.nginxIngress.enabled` or `controller.templateLibraries.haproxyIngress.enabled`,
+- **api-gateway** follows `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled`,
+- **coraza** follows a non-empty WAF policy catalog, `waf.dispatch.mode=default-on`, `controller.templateLibraries.nginxIngress.enabled`, or `controller.templateLibraries.haproxyIngress.enabled`,
 - **external-auth** follows `controller.templateLibraries.nginxIngress.enabled`,
 - **mirror** follows `controller.templateLibraries.gateway.enabled`,
-- **rate-limit** follows `controller.rateLimit.shared.enabled`.
+- **rate-limit** follows `rateLimit.shared.enabled`.
 
 The gateway library is on by default and auto-enables the `mirror` plugin, so a default install already runs the hub with `mirror`. The `coraza` plugin auto-enables when you turn on the opt-in haproxy-ingress or nginx-ingress annotation library, and `external-auth` when you turn on nginx-ingress; `fingerprinting`, `maxmind`, `otel`, and `sso-auth` stay off until you enable them.
+
+Adding an inline policy, a trusted ConfigMap reference, or a default policy auto-enables Coraza; no redundant policy enable flag is required. All template behavior—dispatch, policy catalogs, permissions, body contracts, and custom-rule bounds—shares the structured `extraContext.waf` tree documented in the [native annotation reference](../libraries/haptic-annotations.md#reusable-waf-policies). Coraza execution belongs only to `spoaHub.plugins.coraza`: `timeoutMs`, `maxConcurrency`, `maxQueue`, directives, and plugin parameters have no feature-level aliases.
 
 An explicit boolean on `spoaHub.enabled` always wins: `false` forces the sidecar off even with plugins enabled; `true` renders it with none. See the [Chart Values Reference](../reference.md#spoa-hub-sidecar) for every `spoaHub.*` value.
 
@@ -33,9 +36,9 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 
 | Component       | Pinned version                          |
 | --------------- | --------------------------------------- |
-| Hub               | `v0.7.4`                     |
+| Hub               | `v0.8.0`                     |
 | `api-gateway`    | `v0.1.0`      |
-| `coraza`          | `v0.5.0`           |
+| `coraza`          | `v0.6.0`           |
 | `external-auth`   | `v0.5.0`    |
 | `fingerprinting`  | `v0.3.0`   |
 | `maxmind`         | `v0.4.0`          |
@@ -66,34 +69,34 @@ HAProxy pods when the bundled `spoa-hub` image changes.
 
 ## What each plugin does
 
+- **api-gateway** — performs bounded JSON request validation against schemas compiled at plugin initialization/reload.
 - **coraza** — embeds the [Coraza WAF](https://coraza.io/) engine and runs HTTP request inspection against the Open Worldwide Application Security Project (OWASP) Core Rule Set v4. HAPTIC wires the request phase only — there's no response-body inspection stage, so response compression doesn't interact with the WAF.
 - **external-auth** — implements nginx-style `auth_request` semantics: makes an HTTP subrequest to an upstream auth service and returns allow/deny plus identity headers to HAProxy.
 - **fingerprinting** — computes JA3, JA3N, and JA4 TLS fingerprints from the ClientHello.
 - **maxmind** — performs in-memory MaxMind MMDB lookups against operator-provided database files: City, Country, Autonomous System Number (ASN), and so on.
 - **otel** — emits OpenTelemetry traces, metrics, and log records via OpenTelemetry Protocol (OTLP) gRPC or HTTP.
 - **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
-- **rate-limit** — enforces shared request-rate budgets for native `haproxy-haptic.org/rate-limit-*` annotations. By default, `controller.rateLimit.store.enabled=true` deploys a chart-managed HA Valkey store: three StatefulSet pods, one writable primary, replicas, Sentinel failover, a PodDisruptionBudget, and a store NetworkPolicy. You can also disable the managed store and provide your own Redis/Valkey/Sentinel/Cluster `store_url` or `store_urls`. Shared mode requires one of those stores; HAPTIC fails the render rather than silently falling back to per-pod limiting. If the hub/plugin produces no verdict for an annotated route, HAProxy fails closed with 429 to avoid bypassing the configured limit. The default token-bucket mode bounds local key state and disables optimistic cold-starts under capacity pressure. Exact `gcra` mode performs a synchronous store check with a short default store timeout, so store trouble fails closed instead of adding a long request tail. The managed store is HA but intentionally fixed-size; use bring-your-own infrastructure for horizontal Valkey scaling.
+- **rate-limit** — enforces shared request-rate budgets for native `haproxy-haptic.org/rate-limit-*` annotations. By default, `rateLimit.shared.managedStore.enabled=true` deploys a chart-managed HA Valkey store: three StatefulSet pods, one writable primary, replicas, Sentinel failover, a PodDisruptionBudget, and a store NetworkPolicy. You can also disable the managed store and provide your own Redis/Valkey/Sentinel/Cluster endpoints via `rateLimit.shared.externalStore.urls`. Shared mode requires one of those stores; HAPTIC fails the render rather than silently falling back to per-pod limiting. If the hub/plugin produces no verdict for an annotated route, HAProxy fails closed with 429 to avoid bypassing the configured limit. The default token-bucket mode bounds local key state and disables optimistic cold-starts under capacity pressure. Exact `gcra` mode performs a synchronous store check with a short default store timeout, so store trouble fails closed instead of adding a long request tail. The managed store is HA but intentionally fixed-size; use bring-your-own infrastructure for horizontal Valkey scaling.
 - **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
 
-When several hub plugins are enabled, the bundled frontend dispatchers run in a fixed order: the Coraza WAF pass (`frontend-spoe-filters-050-coraza`) inspects each request and can deny it before the external-auth subrequest (`frontend-spoe-filters-100-external-auth`) — WAF first, auth second. Basic authentication (`haproxy.org/auth-type: basic-auth` or `haproxy-ingress.github.io/auth-secret`) runs later still, as a backend directive, so it too happens after WAF inspection.
+When several plugins are enabled, cheap source-IP shared rate limiting runs first (`025`) so rejected floods don't consume WAF CPU. Coraza follows (`050`), then external auth (`100`), then JSON request validation (`200`). Authenticated-consumer rate limits run in the selected backend after native authentication establishes the consumer identity.
 
 ## Managed shared rate-limit store
 
 Enable shared rate limiting with:
 
 ```yaml
-controller:
-  rateLimit:
-    shared:
-      enabled: true
+rateLimit:
+  shared:
+    enabled: true
 ```
 
 The managed store is enabled by default once shared rate limiting is enabled:
 
 ```yaml
-controller:
-  rateLimit:
-    store:
+rateLimit:
+  shared:
+    managedStore:
       enabled: true
       replicas: 3
       sentinel:
@@ -113,33 +116,29 @@ This gives automatic failover for the default shared limiter store without addin
 If you already run a Redis/Valkey platform, disable the managed store and provide the endpoint directly:
 
 ```yaml
-controller:
-  rateLimit:
-    shared:
-      enabled: true
-    store:
+rateLimit:
+  shared:
+    enabled: true
+    managedStore:
       enabled: false
+    externalStore:
+      urls:
+        - "redis-sentinel://valkey-sentinel.data.svc:26379/0?sentinelServiceName=mymaster"
+```
 
+Listing several URLs generates the plugin's `store_urls = [...]` form for deployments that intentionally shard keys across independent stores. The chart generates the store lines itself and rejects a manual `store_url`/`store_urls` inside `spoaHub.plugins.rate-limit.params`, so overriding that scalar can't drop or duplicate the store wiring.
+
+Both the outer plugin budget and its store-operation budget are plugin execution settings:
+
+```yaml
 spoaHub:
   plugins:
     rate-limit:
-      params: |
-        store_url = "redis-sentinel://valkey-sentinel.data.svc:26379/0?sentinelServiceName=mymaster"
+      timeoutMs: 50
+      storeOperationTimeoutMs: 10
 ```
 
-The plugin also accepts `store_urls = [...]` for bring-your-own deployments that intentionally shard across several independent stores.
-
-Tune the timeout budget with the first-class shared limiter values:
-
-```yaml
-controller:
-  rateLimit:
-    shared:
-      pluginTimeoutMs: 50
-      storeTimeoutMs: 10
-```
-
-`storeTimeoutMs` is the important request-latency bound for exact `gcra` mode because that mode performs a synchronous store operation per request. Set it from measured in-cluster Valkey/Sentinel round-trip time plus a small margin; raising it improves tolerance for slow cross-zone or external stores, but also raises the worst-case fail-closed request tail when the store is unhealthy. Keep the default token-bucket mode for DoS-facing edge limits.
+`storeOperationTimeoutMs` is the important request-latency bound for exact `gcra` mode because that mode performs a synchronous store operation per request. Set it from measured in-cluster Valkey/Sentinel round-trip time plus a small margin; raising it improves tolerance for slow cross-zone or external stores, but also raises the worst-case fail-closed request tail when the store is unhealthy. Keep the default token-bucket mode for DoS-facing edge limits.
 
 ## Geolocation lookups
 
@@ -257,7 +256,8 @@ The chart's `spoaHub.haproxy.*` values map directly to HAProxy directives the ch
 | `spoaHub.haproxy.modeSpop`          | `mode` line in `backend spoa-hub` — `mode spop` (true) or `mode tcp` (false); the `filter spoe engine` directive on the frontend is emitted either way | `true`               | Auto-falls back to `mode tcp` on HAProxy 3.0 (`mode spop` was introduced in 3.1). Set `false` to force `mode tcp` on 3.1+ as well — rare, mostly compat testing.                                           |
 | `spoaHub.haproxy.timeoutHello`      | `timeout hello` on `spoe-agent`                                    | `2s`                 | Raise if the hub regularly logs `HELLO` timeouts under cold-start (for example heavy plugin init like MaxMind DB load).        |
 | `spoaHub.haproxy.timeoutIdle`       | `timeout idle` on `spoe-agent` and `timeout server` on the backend | `5m`                 | Lower to free pooled connections faster in low-traffic clusters; raise to match upstream auth-service idle budgets.   |
-| `spoaHub.haproxy.timeoutProcessing` | `timeout processing` on `spoe-agent`                               | `500ms`              | Raise per slow plugin (Coraza WAF inspection, large MaxMind lookups). Keep tight to fail fast on hub regressions.     |
+| `spoaHub.haproxy.timeoutProcessing` | `timeout processing` on `spoe-agent`                               | largest enabled message budget + `100ms` | Leave null to derive a deadline that can honor every plugin handling one message, including sequential dependency stages. Plugins on unrelated messages don't inflate one another. An explicit shorter value fails rendering. |
+| `spoaHub.haproxy.timeoutProcessingMarginMs` | derivation margin                                         | `100`                | Scheduling and serialization margin in milliseconds between the hub's largest message budget and HAProxy's outer deadline. |
 | `spoaHub.haproxy.poolMaxConn`       | `pool-max-conn` on the `server hub` line                           | `100`                | Tune to peak concurrent in-flight SPOE messages — usually `request-rate × p99-processing-latency`.                    |
 | `spoaHub.haproxy.poolPurgeDelay`    | `pool-purge-delay` on the `server hub` line                        | `30s`                | Lower to release idle pooled connections sooner during traffic dips.                                                  |
 

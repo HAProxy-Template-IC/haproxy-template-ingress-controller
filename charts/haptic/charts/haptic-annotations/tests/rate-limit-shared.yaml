@@ -3,7 +3,7 @@
 # source-IP/frontend and consumer/backend dispatch paths it feeds.
 validationTests:
   test-haptic-rate-limit-shared-ip:
-    _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
     description: shared rate-limit-requests (ip key, token-bucket) → packed map + SPOE dispatch
     fixtures:
       ingresses:
@@ -57,7 +57,7 @@ validationTests:
           - "send-spoe-group spoa-hub check-request-group"
 
   test-haptic-rate-limit-shared-exact-consumer:
-    _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
     description: rate-limit-algorithm gcra → exact mode; rate-limit-key consumer; burst override
     fixtures:
       secrets:
@@ -109,7 +109,7 @@ validationTests:
           - "send-spoe-group spoa-hub check-ratelimit-group if .*txn\\.rl_keyspec.* consumer"
 
   test-haptic-rate-limit-shared-invalid-requests:
-    _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
     description: non-positive rate-limit-requests fails the render
     fixtures:
       ingresses:
@@ -139,7 +139,7 @@ validationTests:
         pattern: "Must be a positive integer"
 
   test-haptic-rate-limit-shared-invalid-period-zero:
-    _helm_skip_test: '{{ if not .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
     description: zero period fails before the plugin receives an invalid rule
     fixtures:
       ingresses:
@@ -170,7 +170,7 @@ validationTests:
         pattern: "Must be greater than zero"
 
   test-haptic-rate-limit-shared-requires-opt-in:
-    _helm_skip_test: '{{ if .Values.controller.rateLimit.shared.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if .Values.rateLimit.shared.enabled }}true{{ end }}'
     description: rate-limit-requests fails loudly when the shared rate-limit feature is not enabled
     fixtures:
       ingresses:
@@ -202,15 +202,19 @@ validationTests:
   test-haptic-rate-limit-store-resource:
     description: the optional Valkey store emits Sentinel-managed HA resources via k8sResources
     extraContext:
-      hapticRateLimitStoreEnabled: "true"
-      hapticRateLimitStoreBaseName: "haptic-rate-limit-store"
-      hapticRateLimitStoreNamespace: "default"
-      hapticRateLimitStorePort: "6379"
-      hapticRateLimitStoreSentinelPort: "26379"
-      hapticRateLimitStoreSentinelMasterName: "haptic-rate-limit"
-      hapticRateLimitStoreReplicas: "3"
-      hapticRateLimitStoreSentinelQuorum: "2"
-      hapticRateLimitStoreImage: "valkey/valkey:8-alpine"
+      rateLimit:
+        shared:
+          managedStore:
+            enabled: true
+            serviceName: haptic-rate-limit-store
+            namespace: default
+            port: 6379
+            image: valkey/valkey:8-alpine
+            replicas: 3
+            sentinel:
+              port: 26379
+              masterName: haptic-rate-limit
+              quorum: 2
     fixtures:
       ingresses: []
     assertions:

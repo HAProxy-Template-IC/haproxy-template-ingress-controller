@@ -64,7 +64,7 @@ a reload.
 - `skip_reload=true` closes the HAProxy reload-ordering race (race A)
   only. The chart-side static floor of 4 mirror message slots was
   removed on that basis, but has since been re-added
-  (`mirrorStaticMinSlots`, default 4): the floor independently masked
+  (`mirrorMinMessageSlots`, default 4): the floor independently masked
   a second, unrelated race in the SPOA hub's plugin loader (race B,
   spoa-hub issue #47), where a transient render emitting an empty
   `messages` list made the hub unregister the mirror handler on TOML

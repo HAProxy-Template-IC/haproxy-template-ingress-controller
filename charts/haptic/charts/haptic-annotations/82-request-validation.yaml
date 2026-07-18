@@ -7,8 +7,8 @@
 #   haproxy-haptic.org/request-schema-configmap    [<ns>/]<name>[:<key>]
 #   haproxy-haptic.org/request-schema-secret       [<ns>/]<name>[:<key>]
 #   haproxy-haptic.org/request-schema-content-types comma-separated media types (default application/json)
-#   haproxy-haptic.org/request-schema-max-body-size positive bytes (default controller.apiGateway.validation.maxBodyBytes)
-#   haproxy-haptic.org/request-schema-fail-open    true | false (default controller.apiGateway.validation.failOpen)
+#   haproxy-haptic.org/request-schema-max-body-size positive bytes (default extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes)
+#   haproxy-haptic.org/request-schema-fail-open    true | false (default extraContext.apiGateway.requestSchemaValidation.defaultFailOpen)
 #
 # Exactly one of request-schema-configmap / request-schema-secret activates
 # validation. ConfigMap schemas are read from .data[key] and base64-encoded into
@@ -20,14 +20,63 @@
 templateSnippets:
   util-820-api-gateway-schemas:
     template: |-
-      {%- var enabled = extraContext | dig("hapticRequestValidationEnabled") | fallback("false") | tostring() -%}
-      {%- var defaultMaxBody = extraContext | dig("hapticRequestValidationMaxBodyBytes") | fallback("8192") | tostring() -%}
-      {%- var validationBuffer = extraContext | dig("hapticRequestValidationBufferSize") | fallback("16384") | tostring() -%}
+      {%- var apiGatewayAny = extraContext | dig("apiGateway") -%}
+      {%- if apiGatewayAny == nil %}{%- apiGatewayAny = map[string]any{} %}{%- end -%}
+      {%- var apiGateway, apiGatewayOK = apiGatewayAny.(map[string]any) -%}
+      {%- if !apiGatewayOK %}{{- fail("extraContext.apiGateway must be a map.") -}}{%- end -%}
+      {%- for _, field := range keys(apiGateway) -%}
+        {%- if field != "requestSchemaValidation" %}{{- fail("extraContext.apiGateway contains unknown field '" + field + "'.") -}}{%- end -%}
+      {%- end -%}
+      {%- var validationAny = apiGateway | dig("requestSchemaValidation") -%}
+      {%- if validationAny == nil %}{%- validationAny = map[string]any{} %}{%- end -%}
+      {%- var validation, validationOK = validationAny.(map[string]any) -%}
+      {%- if !validationOK %}{{- fail("extraContext.apiGateway.requestSchemaValidation must be a map.") -}}{%- end -%}
+      {%- for _, field := range keys(validation) -%}
+        {%- if field != "enabled" && field != "requestBody" && field != "defaultFailOpen" %}{{- fail("extraContext.apiGateway.requestSchemaValidation contains unknown field '" + field + "'.") -}}{%- end -%}
+      {%- end -%}
+      {%- var enabled = false -%}
+      {%- var enabledAny, enabledSet = validation["enabled"] -%}
+      {%- if enabledSet -%}
+        {%- var enabledOK = false -%}
+        {%- enabled, enabledOK = enabledAny.(bool) -%}
+        {%- if !enabledOK %}{{- fail("extraContext.apiGateway.requestSchemaValidation.enabled must be a boolean.") -}}{%- end -%}
+      {%- end -%}
+      {%- var requestBodyAny = validation | dig("requestBody") -%}
+      {%- if requestBodyAny == nil %}{%- requestBodyAny = map[string]any{} %}{%- end -%}
+      {%- var requestBody, requestBodyOK = requestBodyAny.(map[string]any) -%}
+      {%- if !requestBodyOK %}{{- fail("extraContext.apiGateway.requestSchemaValidation.requestBody must be a map.") -}}{%- end -%}
+      {%- for _, field := range keys(requestBody) -%}
+        {%- if field != "waitTimeout" && field != "defaultMaxBytes" %}{{- fail("extraContext.apiGateway.requestSchemaValidation.requestBody contains unknown field '" + field + "'.") -}}{%- end -%}
+      {%- end -%}
+      {%- var defaultMaxBody = "8192" -%}
+      {%- var defaultMaxBodyAny, defaultMaxBodySet = requestBody["defaultMaxBytes"] -%}
+      {%- if defaultMaxBodySet %}{%- defaultMaxBody = tostring(defaultMaxBodyAny) %}{%- end -%}
+      {%- if !regex_search(defaultMaxBody, "^[0-9]+$") || toint(defaultMaxBody) < 1 || toint(defaultMaxBody) > 1048576 %}{{- fail("extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes must be an integer between 1 and 1048576 bytes.") -}}{%- end -%}
+      {%- var waitTimeout = "100ms" -%}
+      {%- var waitTimeoutAny, waitTimeoutSet = requestBody["waitTimeout"] -%}
+      {%- if waitTimeoutSet %}{%- waitTimeout = tostring(waitTimeoutAny) %}{%- end -%}
+      {%- if !regex_search(waitTimeout, "^[1-9][0-9]*(us|ms|s|m|h|d)?$") %}{{- fail("extraContext.apiGateway.requestSchemaValidation.requestBody.waitTimeout must be a positive HAProxy duration.") -}}{%- end -%}
+      {%- var defaultFailOpen = false -%}
+      {%- var defaultFailOpenAny, defaultFailOpenSet = validation["defaultFailOpen"] -%}
+      {%- if defaultFailOpenSet -%}
+        {%- var defaultFailOpenOK = false -%}
+        {%- defaultFailOpen, defaultFailOpenOK = defaultFailOpenAny.(bool) -%}
+        {%- if !defaultFailOpenOK %}{{- fail("extraContext.apiGateway.requestSchemaValidation.defaultFailOpen must be a boolean.") -}}{%- end -%}
+      {%- end -%}
+      {%- var validationBuffer = "16384" -%}
+      {%- var validationBufferAny = extraContext | dig("requestBodyInspection", "haproxyBuffer", "sizeBytes") -%}
+      {%- if validationBufferAny != nil %}{%- validationBuffer = tostring(validationBufferAny) %}{%- end -%}
+      {%- if !regex_search(validationBuffer, "^[0-9]+$") %}{{- fail("extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be an integer.") -}}{%- end -%}
       {%- var validationBufferN = toint(validationBuffer) -%}
-      {%- var validationBufferHeadroom = extraContext | dig("hapticRequestValidationBufferHeadroomBytes") | fallback("8192") | tostring() -%}
-      {%- var validationBufferHeadroomN = toint(validationBufferHeadroom) -%}
-      {%- var validationBodyCapacityN = validationBufferN - validationBufferHeadroomN -%}
-      {%- var defaultFailOpen = extraContext | dig("hapticRequestValidationFailOpen") | fallback("false") | tostring() -%}
+      {%- var validationBufferReserved = "8192" -%}
+      {%- var validationBufferReservedAny = extraContext | dig("requestBodyInspection", "haproxyBuffer", "reservedBytes") -%}
+      {%- if validationBufferReservedAny != nil %}{%- validationBufferReserved = tostring(validationBufferReservedAny) %}{%- end -%}
+      {%- if !regex_search(validationBufferReserved, "^[0-9]+$") %}{{- fail("extraContext.requestBodyInspection.haproxyBuffer.reservedBytes must be an integer.") -}}{%- end -%}
+      {%- var validationBufferReservedN = toint(validationBufferReserved) -%}
+      {%- if validationBufferN < 16384 || validationBufferN > 2097152 %}{{- fail("extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes.") -}}{%- end -%}
+      {%- if validationBufferReservedN < 1 || validationBufferReservedN >= validationBufferN %}{{- fail("extraContext.requestBodyInspection.haproxyBuffer.reservedBytes must be positive and smaller than sizeBytes.") -}}{%- end -%}
+      {%- var validationBodyCapacityN = validationBufferN - validationBufferReservedN -%}
+      {%- if toint(defaultMaxBody) > validationBodyCapacityN %}{{- fail("extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes exceeds the shared HAProxy request-body capacity.") -}}{%- end -%}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- if gf["apiGatewaySchemas"] == nil -%}
@@ -47,8 +96,8 @@ templateSnippets:
         {%- var failOpenRaw = ingress.Metadata.Annotations["haproxy-haptic.org/request-schema-fail-open"] -%}
         {%- var hasAny = cmRef != "" || secretRef != "" || contentTypesRaw != "" || maxBodyRaw != "" || failOpenRaw != "" -%}
         {%- if hasAny -%}
-          {%- if enabled != "true" -%}
-            {{- fail("Ingress " + key + " sets haproxy-haptic.org/request-schema-* annotations but request validation is not enabled. Set controller.apiGateway.validation.enabled=true, or remove the annotations.") -}}
+          {%- if !enabled -%}
+            {{- fail("Ingress " + key + " sets haproxy-haptic.org/request-schema-* annotations but request validation is not enabled. Set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true, or remove the annotations.") -}}
           {%- end -%}
           {%- if cmRef != "" && secretRef != "" -%}
             {{- fail("Ingress " + key + " sets both 'haproxy-haptic.org/request-schema-configmap' and 'haproxy-haptic.org/request-schema-secret'; request validation requires exactly one schema source.") -}}
@@ -118,10 +167,10 @@ templateSnippets:
             {{- fail("Invalid request schema max body size '" + maxBody + "' on Ingress '" + key + "'. Must be between 1 and 1048576 bytes.") -}}
           {%- end -%}
           {%- if maxBodyN > validationBodyCapacityN -%}
-            {{- fail("Invalid request schema max body size '" + maxBody + "' on Ingress '" + key + "'. Must not exceed controller.apiGateway.validation.bufferSize minus controller.apiGateway.validation.bufferHeadroomBytes (" + tostring(validationBodyCapacityN) + " bytes body capacity with current chart values, " + tostring(validationBufferHeadroomN) + " bytes reserved), otherwise HAProxy may validate a truncated request body.") -}}
+            {{- fail("Invalid request schema max body size '" + maxBody + "' on Ingress '" + key + "'. Must not exceed requestBodyInspection.haproxyBuffer.sizeBytes minus requestBodyInspection.haproxyBuffer.reservedBytes (" + tostring(validationBodyCapacityN) + " bytes body capacity with current settings, " + tostring(validationBufferReservedN) + " bytes reserved), otherwise HAProxy may validate a truncated request body.") -}}
           {%- end -%}
 
-          {%- var failOpen = defaultFailOpen -%}
+          {%- var failOpen = tostring(defaultFailOpen) -%}
           {%- if failOpenRaw != "" -%}{%- failOpen = strings_lower(strip(failOpenRaw)) -%}{%- end -%}
           {%- if failOpen != "true" && failOpen != "false" -%}
             {{- fail("Invalid value '" + failOpenRaw + "' for annotation 'haproxy-haptic.org/request-schema-fail-open' on Ingress '" + key + "'. Expected 'true' or 'false'.") -}}

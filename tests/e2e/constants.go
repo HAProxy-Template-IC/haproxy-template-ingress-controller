@@ -75,7 +75,7 @@ const (
 	StatsHostPort = 31404
 
 	// DebugPort is the controller debug HTTP server port (matches helm
-	// chart's controller.debugPort default).
+	// chart's controller.ports.healthz default).
 	DebugPort = 8080
 
 	// ControllerMetricsPort is the controller's Prometheus /metrics port
@@ -126,7 +126,7 @@ var ChartHAProxyServiceHTTPPort = func() int {
 }()
 
 // VarnishImage is the stock upstream Varnish image the shared-cache tier
-// deploys. Must match charts/haptic/values.yaml controller.cache.varnish.image.
+// deploys. Must match charts/haptic/values.yaml cache.varnish.image.
 // Loaded into kind by the cache shard so the StatefulSet needn't reach Docker Hub.
 const VarnishImage = "varnish:7.7"
 
@@ -136,7 +136,7 @@ const VarnishImage = "varnish:7.7"
 const VarnishPolicyProbeImage = "alpine/curl@sha256:71597a4f6ac6c7515c77084d2a216aa2f302cd6f9ec311d2f55eb9320f161ce2"
 
 // ValkeyImage is the stock upstream Valkey image the shared-rate-limit tier
-// deploys. Must match charts/haptic/values.yaml controller.rateLimit.store.image.
+// deploys. Must match charts/haptic/values.yaml rateLimit.shared.managedStore.image.
 // Loaded into kind by the rate-limit shard so the StatefulSet needn't reach Docker Hub.
 const ValkeyImage = "valkey/valkey:8-alpine"
 

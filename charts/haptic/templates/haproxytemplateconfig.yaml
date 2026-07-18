@@ -1,46 +1,170 @@
+{{- $_ := include "haptic.controller.validateValues" . }}
+{{- $_ := include "haptic.haproxy.validateValues" . }}
+{{- $_ := include "haptic.spoaHub.validateValues" . }}
+{{- $_ := include "haptic.rateLimit.validateValues" . }}
+{{- $_ := include "haptic.cache.validateValues" . }}
+{{- $_ := include "haptic.defaultSSLCertificate.validateValues" . }}
 {{- $controller := .Values.controller }}
-{{- if and $controller.rateLimit.shared.enabled (eq (toString .Values.spoaHub.enabled) "false") }}
-  {{- fail "controller.rateLimit.shared.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable shared rate limiting." }}
+{{- if hasKey $controller "cache" }}{{- fail "controller.cache has moved to the top-level cache tree; use cache.varnish instead." }}{{- end }}
+{{- if hasKey $controller "rateLimit" }}{{- fail "controller.rateLimit has moved to the top-level rateLimit tree; use rateLimit.shared instead." }}{{- end }}
+{{- if hasKey $controller "defaultSSLCertificate" }}{{- fail "controller.defaultSSLCertificate has moved to the top-level defaultSSLCertificate tree." }}{{- end }}
+{{- $configuredExtraContext := dig "templatingSettings" "extraContext" dict ($controller.config | default dict) }}
+{{- $apiGatewaySettings := dict }}
+{{- if hasKey $configuredExtraContext "apiGateway" }}
+  {{- if not (kindIs "map" $configuredExtraContext.apiGateway) }}
+    {{- fail "controller.config.templatingSettings.extraContext.apiGateway must be a map." }}
+  {{- end }}
+  {{- $apiGatewaySettings = $configuredExtraContext.apiGateway }}
+{{- end }}
+{{- range $field := keys $apiGatewaySettings }}
+  {{- if ne $field "requestSchemaValidation" }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.apiGateway contains unknown field %q. Valid field: requestSchemaValidation." $field) }}
+  {{- end }}
+{{- end }}
+{{- $requestSchemaValidation := dict }}
+{{- if hasKey $apiGatewaySettings "requestSchemaValidation" }}
+  {{- if not (kindIs "map" $apiGatewaySettings.requestSchemaValidation) }}
+    {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation must be a map." }}
+  {{- end }}
+  {{- $requestSchemaValidation = $apiGatewaySettings.requestSchemaValidation }}
+{{- end }}
+{{- range $field := keys $requestSchemaValidation }}
+  {{- if not (has $field (list "enabled" "requestBody" "defaultFailOpen")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation contains unknown field %q. Valid fields: enabled, requestBody, defaultFailOpen." $field) }}
+  {{- end }}
+{{- end }}
+{{- if and (hasKey $requestSchemaValidation "enabled") (not (kindIs "bool" $requestSchemaValidation.enabled)) }}
+  {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled must be a boolean." }}
+{{- end }}
+{{- if and (hasKey $requestSchemaValidation "defaultFailOpen") (not (kindIs "bool" $requestSchemaValidation.defaultFailOpen)) }}
+  {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.defaultFailOpen must be a boolean." }}
+{{- end }}
+{{- $requestSchemaBody := dict }}
+{{- if hasKey $requestSchemaValidation "requestBody" }}
+  {{- if not (kindIs "map" $requestSchemaValidation.requestBody) }}
+    {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody must be a map." }}
+  {{- end }}
+  {{- $requestSchemaBody = $requestSchemaValidation.requestBody }}
+{{- end }}
+{{- range $field := keys $requestSchemaBody }}
+  {{- if not (has $field (list "waitTimeout" "defaultMaxBytes")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody contains unknown field %q. Valid fields: waitTimeout, defaultMaxBytes." $field) }}
+  {{- end }}
+{{- end }}
+{{- $requestSchemaValidationEnabled := eq (dig "enabled" false $requestSchemaValidation | toString) "true" }}
+{{- $wafSettings := dict }}
+{{- if hasKey $configuredExtraContext "waf" }}
+  {{- if not (kindIs "map" $configuredExtraContext.waf) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf must be a map." }}
+  {{- end }}
+  {{- $wafSettings = $configuredExtraContext.waf }}
+{{- end }}
+{{- range $field := keys $wafSettings }}
+  {{- if not (has $field (list "dispatch" "ingressPermissions" "customRules" "policies")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf contains unknown field %q. Valid fields: dispatch, ingressPermissions, customRules, policies." $field) }}
+  {{- end }}
+{{- end }}
+{{- $wafDispatch := dict }}
+{{- if hasKey $wafSettings "dispatch" }}
+  {{- if not (kindIs "map" $wafSettings.dispatch) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.dispatch must be a map." }}
+  {{- end }}
+  {{- $wafDispatch = $wafSettings.dispatch }}
+{{- end }}
+{{- range $field := keys $wafDispatch }}
+  {{- if not (has $field (list "mode" "defaultEnforcement")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.dispatch contains unknown field %q. Valid fields: mode, defaultEnforcement." $field) }}
+  {{- end }}
+{{- end }}
+{{- $wafDispatchMode := dig "mode" "opt-in" $wafDispatch | toString }}
+{{- if not (has $wafDispatchMode (list "opt-in" "default-on")) }}
+  {{- fail "controller.config.templatingSettings.extraContext.waf.dispatch.mode must be one of: opt-in, default-on." }}
+{{- end }}
+{{- $wafDefaultEnforcement := dig "defaultEnforcement" "deny" $wafDispatch | toString }}
+{{- if not (has $wafDefaultEnforcement (list "deny" "detect")) }}
+  {{- fail "controller.config.templatingSettings.extraContext.waf.dispatch.defaultEnforcement must be one of: deny, detect." }}
+{{- end }}
+{{- $wafPolicies := dict }}
+{{- if hasKey $wafSettings "policies" }}
+  {{- if not (kindIs "map" $wafSettings.policies) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.policies must be a map." }}
+  {{- end }}
+  {{- $wafPolicies = $wafSettings.policies }}
+{{- end }}
+{{- range $field := keys $wafPolicies }}
+  {{- if not (has $field (list "defaultPolicy" "requestBody" "limits" "inline" "configMapRefs")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies contains unknown field %q. Valid fields: defaultPolicy, requestBody, limits, inline, configMapRefs." $field) }}
+  {{- end }}
+{{- end }}
+{{- $wafPoliciesConfigured := false }}
+{{- if and (hasKey $wafPolicies "inline") (kindIs "map" $wafPolicies.inline) (gt (len $wafPolicies.inline) 0) }}{{- $wafPoliciesConfigured = true }}{{- end }}
+{{- if and (hasKey $wafPolicies "configMapRefs") (kindIs "slice" $wafPolicies.configMapRefs) (gt (len $wafPolicies.configMapRefs) 0) }}{{- $wafPoliciesConfigured = true }}{{- end }}
+{{- if and (hasKey $wafPolicies "defaultPolicy") (kindIs "string" $wafPolicies.defaultPolicy) (ne $wafPolicies.defaultPolicy "") }}{{- $wafPoliciesConfigured = true }}{{- end }}
+{{- $wafIngressPermissions := dict }}
+{{- if hasKey $wafSettings "ingressPermissions" }}
+  {{- if not (kindIs "map" $wafSettings.ingressPermissions) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.ingressPermissions must be a map." }}
+  {{- end }}
+  {{- $wafIngressPermissions = $wafSettings.ingressPermissions }}
+{{- end }}
+{{- range $field := keys $wafIngressPermissions }}
+  {{- if not (has $field (list "allowPolicySelection" "allowEnforcementOverride" "allowWafDisable" "allowCustomRules" "allowRawHAProxyConfig")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.ingressPermissions contains unknown field %q. Valid fields: allowPolicySelection, allowEnforcementOverride, allowWafDisable, allowCustomRules, allowRawHAProxyConfig." $field) }}
+  {{- end }}
+{{- end }}
+{{- range $field := list "allowPolicySelection" "allowEnforcementOverride" "allowWafDisable" "allowCustomRules" "allowRawHAProxyConfig" }}
+  {{- if and (hasKey $wafIngressPermissions $field) (not (kindIs "bool" (index $wafIngressPermissions $field))) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.ingressPermissions.%s must be a boolean." $field) }}
+  {{- end }}
+{{- end }}
+{{- $wafRequired := or $wafPoliciesConfigured (eq $wafDispatchMode "default-on") }}
+{{- if and .Values.rateLimit.shared.enabled (eq (toString .Values.spoaHub.enabled) "false") }}
+  {{- fail "rateLimit.shared.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable shared rate limiting." }}
 {{- end }}
 {{- $rateLimitPlugin := (index (.Values.spoaHub.plugins | default dict) "rate-limit") | default dict }}
-{{- if and $controller.rateLimit.shared.enabled (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $rateLimitPlugin "root" .))) }}
-  {{- fail "controller.rateLimit.shared.enabled=true requires spoaHub.plugins.rate-limit to be enabled. Remove spoaHub.plugins.rate-limit.enabled=false or disable shared rate limiting." }}
+{{- if and .Values.rateLimit.shared.enabled (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $rateLimitPlugin "root" . "name" "rate-limit"))) }}
+  {{- fail "rateLimit.shared.enabled=true requires spoaHub.plugins.rate-limit to be enabled. Remove spoaHub.plugins.rate-limit.enabled=false or disable shared rate limiting." }}
 {{- end }}
-{{- if and $controller.apiGateway.validation.enabled (eq (toString .Values.spoaHub.enabled) "false") }}
-  {{- fail "controller.apiGateway.validation.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable request validation." }}
+{{- if and $requestSchemaValidationEnabled (eq (toString .Values.spoaHub.enabled) "false") }}
+  {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true requires the spoaHub sidecar. Remove spoaHub.enabled=false or disable request validation." }}
 {{- end }}
 {{- $apiGatewayPlugin := (index (.Values.spoaHub.plugins | default dict) "api-gateway") | default dict }}
-{{- if and $controller.apiGateway.validation.enabled (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $apiGatewayPlugin "root" .))) }}
-  {{- fail "controller.apiGateway.validation.enabled=true requires spoaHub.plugins.api-gateway to be enabled. Remove spoaHub.plugins.api-gateway.enabled=false or disable request validation." }}
+{{- if and $requestSchemaValidationEnabled (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $apiGatewayPlugin "root" . "name" "api-gateway"))) }}
+  {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true requires spoaHub.plugins.api-gateway to be enabled. Remove spoaHub.plugins.api-gateway.enabled=false or disable request validation." }}
+{{- end }}
+{{- if and $requestSchemaValidationEnabled (not $controller.templateLibraries.hapticAnnotations.enabled) }}
+  {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true requires controller.templateLibraries.hapticAnnotations.enabled=true because request-schema validation is a HAPTIC Ingress annotation feature." }}
+{{- end }}
+{{- if and $wafRequired (eq (toString .Values.spoaHub.enabled) "false") }}
+  {{- fail "The configured WAF dispatch/policy behavior requires the spoaHub sidecar. Remove spoaHub.enabled=false, set waf.dispatch.mode=opt-in, or remove the WAF policy catalog." }}
+{{- end }}
+{{- $corazaPlugin := (index (.Values.spoaHub.plugins | default dict) "coraza") | default dict }}
+{{- if and $wafRequired (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $corazaPlugin "root" . "name" "coraza"))) }}
+  {{- fail "The configured WAF dispatch/policy behavior requires spoaHub.plugins.coraza. Remove spoaHub.plugins.coraza.enabled=false, set waf.dispatch.mode=opt-in, or remove the WAF policy catalog." }}
+{{- end }}
+{{- if and $wafPoliciesConfigured (not $controller.templateLibraries.hapticAnnotations.enabled) }}
+  {{- fail "controller.config.templatingSettings.extraContext.waf.policies requires controller.templateLibraries.hapticAnnotations.enabled=true because WAF policies are a HAPTIC Ingress annotation feature." }}
 {{- end }}
 {{- if $controller.config }}
 apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
-  name: {{ $controller.crdName }}
+  name: {{ $controller.configName }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
 spec:
   {{- $config := $controller.config | deepCopy }}
-  {{- /* routing.regexMatchOrder is a Helm-load-time switch consumed by
-         libraries/base.yaml's `_helm_load.inject.when` (it swaps in the
-         regex-last variant of frontend-routing-logic). The CRD has no
-         `routing` field, so leaving it on the rendered spec makes the
-         apiserver reject the manifest with `field not declared in
-         schema`. Drop it before serialising. */ -}}
-  {{- $_ := unset $config "routing" }}
   {{- with $config.credentialsSecretRef }}
     {{- $_ := set . "name" (.name | default (include "haptic.dataplane.credentialsSecretName" $)) }}
   {{- end }}
   {{- with $config.controller }}
-    {{- /* Remove fields that are not part of the CRD (configured via env vars instead) */ -}}
-    {{- $_ := unset . "healthzPort" }}
-    {{- $_ := unset . "metricsPort" }}
     {{- if and .leaderElection (not .leaderElection.leaseName) }}
       {{- $_ := set .leaderElection "leaseName" (include "haptic.fullname" $) }}
     {{- end }}
   {{- end }}
+  {{- $_ := set $config "dataplane" ($config.dataplane | default dict) }}
+  {{- $_ := set $config.dataplane "port" (.Values.haproxy.ports.dataplane | int) }}
   {{- /* Ensure templatingSettings.extraContext exists, then populate it.
          extraContext is a parameter bag the Scriggo runtime exposes to
          every template snippet. Each block below is a single concern. */ -}}
@@ -49,15 +173,14 @@ spec:
   {{- $extraContext := $config.templatingSettings.extraContext }}
 
   {{- /* Default SSL certificate */ -}}
-  {{- $defaultSSL := $controller.defaultSSLCertificate }}
+  {{- $defaultSSL := .Values.defaultSSLCertificate }}
   {{- if $defaultSSL.enabled }}
-    {{- $_ := set $extraContext "default_ssl_cert_name" $defaultSSL.secretName }}
-    {{- $_ := set $extraContext "default_ssl_cert_namespace" ($defaultSSL.namespace | default .Release.Namespace) }}
-  {{- end }}
-
-  {{- /* Disable status-patch snippets when the operator opts out */ -}}
-  {{- if ne ($controller.statusPatches.enabled | toString) "true" }}
-    {{- $_ := set $extraContext "statusPatchesDisabled" true }}
+    {{- $tls := $extraContext.tls | default dict }}
+    {{- if not (kindIs "map" $tls) }}{{- fail "controller.config.templatingSettings.extraContext.tls must be a map." }}{{- end }}
+    {{- $_ := set $extraContext "tls" $tls }}
+    {{- $_ := set $tls "defaultCertificate" (dict
+          "name" $defaultSSL.secretName
+          "namespace" ($defaultSSL.namespace | default .Release.Namespace)) }}
   {{- end }}
 
   {{- /* Gateway API controllerName for status patches */ -}}
@@ -78,147 +201,422 @@ spec:
           "controllerName" .Values.gatewayClass.controllerName
           "parametersGroup" $gcParams.group
           "parametersKind" $gcParams.kind
-          "parametersName" ($gcParams.name | default $controller.crdName)
+          "parametersName" ($gcParams.name | default $controller.configName)
           "parametersNamespace" ($gcParams.namespace | default .Release.Namespace)) }}
   {{- end }}
 
   {{- /* HAProxy version (used by version-gated features such as shm-stats-file) */ -}}
   {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
 
-  {{- /* Shared cache (Varnish tier). When enabled, the caching library emits the
-         varnish_cache routing/backend and the k8sResources Varnish workload.
-         The Varnish loopback origin is the chart's HAProxy Service. */ -}}
-  {{- if $controller.cache.varnish.enabled }}
-    {{- $varnish := $controller.cache.varnish }}
+  {{- /* Shared cache: copy the public feature tree into extraContext and add
+         only the release-derived service coordinates. This keeps chart values
+         and the standalone annotation library on one structured contract. */ -}}
+  {{- $cacheContext := deepCopy .Values.cache }}
+  {{- $varnish := $cacheContext.varnish }}
+  {{- $originServicePort := int (.Values.haproxy.service.http.port | default 0) }}
+  {{- if $varnish.enabled }}
     {{- if not .Values.haproxy.enabled }}
-      {{- fail "controller.cache.varnish.enabled=true requires the chart-managed HAProxy workload and Service (haproxy.enabled=true) for cache-miss loopback requests." }}
+      {{- fail "cache.varnish.enabled=true requires the chart-managed HAProxy workload and Service (haproxy.enabled=true) for cache-miss loopback requests." }}
     {{- end }}
-    {{- $originServicePort := int (.Values.haproxy.service.http.port | default 0) }}
     {{- if le $originServicePort 0 }}
-      {{- fail "controller.cache.varnish.enabled=true requires haproxy.service.http.port to be a positive Service port for cache-miss loopback requests." }}
-    {{- end }}
-    {{- $_ := set $extraContext "hapticCacheEnabled" "true" }}
-    {{- $_ := set $extraContext "hapticCacheVarnishService" (include "haptic.varnish.cacheName" .) }}
-    {{- $_ := set $extraContext "hapticCacheVarnishNamespace" .Release.Namespace }}
-    {{- $_ := set $extraContext "hapticCacheWorkload" $varnish.workload }}
-    {{- $_ := set $extraContext "hapticCacheReplicas" ($varnish.replicas | toString) }}
-    {{- $_ := set $extraContext "hapticCacheImage" $varnish.image }}
-    {{- $_ := set $extraContext "hapticCacheMalloc" $varnish.malloc }}
-    {{- $_ := set $extraContext "hapticCacheHashBalanceFactor" ($varnish.hashBalanceFactor | toString) }}
-    {{- $_ := set $extraContext "hapticCacheOriginHost" (include "haptic.haproxyFullname" .) }}
-    {{- $_ := set $extraContext "hapticCacheOriginPort" ($originServicePort | toString) }}
-    {{- $vres := $varnish.resources | default dict }}
-    {{- $_ := set $extraContext "hapticCacheCpuRequest" (dig "requests" "cpu" "100m" $vres | toString) }}
-    {{- $_ := set $extraContext "hapticCacheMemRequest" (dig "requests" "memory" "384Mi" $vres | toString) }}
-    {{- $_ := set $extraContext "hapticCacheMemLimit" (dig "limits" "memory" "384Mi" $vres | toString) }}
-    {{- $vPDB := $varnish.podDisruptionBudget | default dict }}
-    {{- $vPDBEnabled := true }}
-    {{- if hasKey $vPDB "enabled" }}
-      {{- $vPDBEnabled = $vPDB.enabled }}
-    {{- end }}
-    {{- $_ := set $extraContext "hapticCachePDBEnabled" ($vPDBEnabled | toString) }}
-    {{- $_ := set $extraContext "hapticCachePDBMaxUnavailable" (dig "maxUnavailable" 1 $vPDB | toString) }}
-    {{- if $varnish.autoscaling.enabled }}
-    {{- $_ := set $extraContext "hapticCacheAutoscalingEnabled" "true" }}
-    {{- $_ := set $extraContext "hapticCacheMinReplicas" ($varnish.autoscaling.minReplicas | toString) }}
-    {{- $_ := set $extraContext "hapticCacheMaxReplicas" ($varnish.autoscaling.maxReplicas | toString) }}
-    {{- $_ := set $extraContext "hapticCacheTargetCPU" ($varnish.autoscaling.targetCPUUtilizationPercentage | toString) }}
-    {{- $_ := set $extraContext "hapticCacheScaleDownWindow" ($varnish.autoscaling.scaleDownStabilizationSeconds | toString) }}
+      {{- fail "cache.varnish.enabled=true requires haproxy.service.http.port to be a positive Service port for cache-miss loopback requests." }}
     {{- end }}
   {{- end }}
+  {{- $_ := set $varnish "serviceName" (include "haptic.varnish.cacheName" .) }}
+  {{- $_ := set $varnish "namespace" .Release.Namespace }}
+  {{- $_ := set $varnish "servicePort" 6081 }}
+  {{- $_ := set $varnish "originHost" (include "haptic.haproxyFullname" .) }}
+  {{- $_ := set $varnish "originPort" $originServicePort }}
+  {{- $_ := set $extraContext "cache" $cacheContext }}
 
-  {{- /* Shared request-rate limiting. The haptic-annotations library consumes
-         these flat keys to fail-loud when route annotations are used without
-         the chart opt-in and, when requested, to emit the chart-owned Valkey
-         store through k8sResources. */ -}}
-  {{- if $controller.rateLimit.shared.enabled }}
-    {{- $_ := set $extraContext "hapticRateLimitSharedEnabled" "true" }}
-  {{- end }}
-  {{- if and $controller.rateLimit.shared.enabled $controller.rateLimit.store.enabled }}
-    {{- $rlStore := $controller.rateLimit.store }}
-    {{- $rlSentinel := $rlStore.sentinel | default dict }}
-    {{- $rlReplicas := int ($rlStore.replicas | default 3) }}
-    {{- $rlQuorum := int ($rlSentinel.quorum | default 2) }}
+  {{- /* Shared rate limiting follows the same structured ownership contract. */ -}}
+  {{- $rateLimitContext := deepCopy .Values.rateLimit }}
+  {{- $rlStore := $rateLimitContext.shared.managedStore }}
+  {{- $rlSentinel := $rlStore.sentinel | default dict }}
+  {{- if and $rateLimitContext.shared.enabled $rlStore.enabled }}
+    {{- $rlReplicas := int $rlStore.replicas }}
+    {{- $rlQuorum := int $rlSentinel.quorum }}
     {{- if lt $rlReplicas 3 }}
-      {{- fail "controller.rateLimit.store.replicas must be at least 3 for chart-managed Sentinel HA." }}
+      {{- fail "rateLimit.shared.managedStore.replicas must be at least 3 for chart-managed Sentinel HA." }}
     {{- end }}
     {{- if or (lt $rlQuorum 1) (gt $rlQuorum $rlReplicas) }}
-      {{- fail "controller.rateLimit.store.sentinel.quorum must be between 1 and controller.rateLimit.store.replicas." }}
+      {{- fail "rateLimit.shared.managedStore.sentinel.quorum must be between 1 and rateLimit.shared.managedStore.replicas." }}
     {{- end }}
-    {{- $rlRes := $rlStore.resources | default dict }}
-    {{- $rlSentinelRes := $rlSentinel.resources | default dict }}
-    {{- $rlPDB := $rlStore.podDisruptionBudget | default dict }}
-    {{- $rlPDBEnabled := true }}
-    {{- if hasKey $rlPDB "enabled" }}
-      {{- $rlPDBEnabled = $rlPDB.enabled }}
+  {{- end }}
+  {{- $_ := set $rlStore "serviceName" (include "haptic.rateLimit.storeServiceName" .) }}
+  {{- $_ := set $rlStore "namespace" .Release.Namespace }}
+  {{- $_ := set $rlSentinel "masterName" (include "haptic.rateLimit.storeSentinelMasterName" .) }}
+  {{- $_ := set $rlStore "sentinel" $rlSentinel }}
+  {{- $_ := set $extraContext "rateLimit" $rateLimitContext }}
+
+  {{- /* Shared request-body inspection buffer. HAProxy exposes one process-wide
+         tune.bufsize, so all body inspectors use one capacity contract. */ -}}
+  {{- $requestBodyInspection := dict }}
+  {{- if hasKey $extraContext "requestBodyInspection" }}
+    {{- if not (kindIs "map" $extraContext.requestBodyInspection) }}
+      {{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection must be a map." }}
     {{- end }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreEnabled" "true" }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreBaseName" (include "haptic.rateLimit.storeServiceName" .) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreNamespace" .Release.Namespace }}
-    {{- $_ := set $extraContext "hapticRateLimitStorePort" ($rlStore.port | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreImage" $rlStore.image }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreReplicas" ($rlReplicas | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreMaxmemory" ($rlStore.maxmemory | default "96mb" | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreMaxmemoryPolicy" ($rlStore.maxmemoryPolicy | default "volatile-ttl" | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelMasterName" (include "haptic.rateLimit.storeSentinelMasterName" .) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelPort" ($rlSentinel.port | default 26379 | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelQuorum" ($rlQuorum | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelDownAfterMs" ($rlSentinel.downAfterMilliseconds | default 2000 | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelFailoverTimeoutMs" ($rlSentinel.failoverTimeoutMilliseconds | default 10000 | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelParallelSyncs" ($rlSentinel.parallelSyncs | default 1 | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreCpuRequest" (dig "requests" "cpu" "50m" $rlRes | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreMemRequest" (dig "requests" "memory" "128Mi" $rlRes | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreMemLimit" (dig "limits" "memory" "128Mi" $rlRes | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelCpuRequest" (dig "requests" "cpu" "25m" $rlSentinelRes | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelMemRequest" (dig "requests" "memory" "64Mi" $rlSentinelRes | toString) }}
-    {{- $_ := set $extraContext "hapticRateLimitStoreSentinelMemLimit" (dig "limits" "memory" "64Mi" $rlSentinelRes | toString) }}
-    {{- if $rlPDBEnabled }}
-      {{- $_ := set $extraContext "hapticRateLimitStorePDBEnabled" "true" }}
-    {{- else }}
-      {{- $_ := set $extraContext "hapticRateLimitStorePDBEnabled" "false" }}
+    {{- $requestBodyInspection = $extraContext.requestBodyInspection }}
+  {{- end }}
+  {{- range $field := keys $requestBodyInspection }}
+    {{- if ne $field "haproxyBuffer" }}
+      {{- fail (printf "controller.config.templatingSettings.extraContext.requestBodyInspection contains unknown field %q. Valid field: haproxyBuffer." $field) }}
     {{- end }}
-    {{- $_ := set $extraContext "hapticRateLimitStorePDBMaxUnavailable" ($rlPDB.maxUnavailable | default 1 | toString) }}
+  {{- end }}
+  {{- $haproxyRequestBuffer := dict }}
+  {{- if hasKey $requestBodyInspection "haproxyBuffer" }}
+    {{- if not (kindIs "map" $requestBodyInspection.haproxyBuffer) }}
+      {{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer must be a map." }}
+    {{- end }}
+    {{- $haproxyRequestBuffer = $requestBodyInspection.haproxyBuffer }}
+  {{- end }}
+  {{- range $field := keys $haproxyRequestBuffer }}
+    {{- if not (has $field (list "sizeBytes" "reservedBytes")) }}
+      {{- fail (printf "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer contains unknown field %q. Valid fields: sizeBytes, reservedBytes." $field) }}
+    {{- end }}
+  {{- end }}
+  {{- $requestBodyBufferSizeRaw := dig "sizeBytes" 16384 $haproxyRequestBuffer | toString }}
+  {{- $requestBodyBufferReservedBytesRaw := dig "reservedBytes" 8192 $haproxyRequestBuffer | toString }}
+  {{- if not (regexMatch "^[0-9]+$" $requestBodyBufferSizeRaw) }}
+    {{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be an integer between 16384 and 2097152 bytes." }}
+  {{- end }}
+  {{- if not (regexMatch "^[0-9]+$" $requestBodyBufferReservedBytesRaw) }}
+    {{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.reservedBytes must be a positive integer smaller than requestBodyInspection.haproxyBuffer.sizeBytes." }}
+  {{- end }}
+  {{- $requestBodyBufferSize := int $requestBodyBufferSizeRaw }}
+  {{- $requestBodyBufferReservedBytes := int $requestBodyBufferReservedBytesRaw }}
+  {{- if or (lt $requestBodyBufferSize 16384) (gt $requestBodyBufferSize 2097152) }}
+    {{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes." }}
+  {{- end }}
+  {{- if or (le $requestBodyBufferReservedBytes 0) (ge $requestBodyBufferReservedBytes $requestBodyBufferSize) }}
+    {{- fail "controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.reservedBytes must be a positive integer smaller than requestBodyInspection.haproxyBuffer.sizeBytes." }}
   {{- end }}
 
   {{- /* API-gateway request validation. The haptic-annotations library uses
          these flat keys to fail-loud when schema annotations are present
          without the chart opt-in and to pass bounded defaults to the SPOA
          dispatch map. */ -}}
-  {{- if $controller.apiGateway.validation.enabled }}
-    {{- $validation := $controller.apiGateway.validation }}
-    {{- $maxBodyBytes := int $validation.maxBodyBytes }}
+  {{- /* Validate staged settings even while disabled. A disabled feature must
+         not make typos or lossy numeric coercion appear valid. */ -}}
+  {{- if or $requestSchemaValidationEnabled (gt (len $requestSchemaValidation) 0) }}
+    {{- $validation := $requestSchemaValidation }}
+    {{- $validationRequestBody := $requestSchemaBody }}
+    {{- $maxBodyBytesRaw := dig "defaultMaxBytes" 8192 $validationRequestBody | toString }}
+    {{- if not (regexMatch "^[0-9]+$" $maxBodyBytesRaw) }}
+      {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes must be an integer between 1 and 1048576 bytes." }}
+    {{- end }}
+    {{- $maxBodyBytes := int $maxBodyBytesRaw }}
     {{- if or (le $maxBodyBytes 0) (gt $maxBodyBytes 1048576) }}
-      {{- fail "controller.apiGateway.validation.maxBodyBytes must be between 1 and 1048576 bytes." }}
+      {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes must be between 1 and 1048576 bytes." }}
     {{- end }}
-    {{- $bufferSize := int ($validation.bufferSize | default 16384) }}
-    {{- if or (lt $bufferSize 16384) (gt $bufferSize 2097152) }}
-      {{- fail "controller.apiGateway.validation.bufferSize must be between 16384 and 2097152 bytes." }}
-    {{- end }}
-    {{- $bufferHeadroomBytes := int ($validation.bufferHeadroomBytes | default 8192) }}
-    {{- if or (le $bufferHeadroomBytes 0) (ge $bufferHeadroomBytes $bufferSize) }}
-      {{- fail "controller.apiGateway.validation.bufferHeadroomBytes must be a positive integer smaller than controller.apiGateway.validation.bufferSize." }}
-    {{- end }}
-    {{- $maxBufferedBodyBytes := sub $bufferSize $bufferHeadroomBytes }}
+    {{- $maxBufferedBodyBytes := sub $requestBodyBufferSize $requestBodyBufferReservedBytes }}
     {{- if gt $maxBodyBytes $maxBufferedBodyBytes }}
-      {{- fail "controller.apiGateway.validation.maxBodyBytes must not exceed controller.apiGateway.validation.bufferSize minus controller.apiGateway.validation.bufferHeadroomBytes, so request validation never sees a truncated HAProxy body." }}
+      {{- fail "apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes must not exceed requestBodyInspection.haproxyBuffer.sizeBytes minus requestBodyInspection.haproxyBuffer.reservedBytes, so request validation never sees a truncated HAProxy body." }}
     {{- end }}
-    {{- $pluginTimeoutMs := int $validation.pluginTimeoutMs }}
-    {{- if le $pluginTimeoutMs 0 }}
-      {{- fail "controller.apiGateway.validation.pluginTimeoutMs must be a positive integer milliseconds value." }}
+    {{- $requestBodyWaitTimeout := (dig "waitTimeout" "100ms" $validationRequestBody | toString) }}
+    {{- if not (regexMatch "^[0-9]+(us|ms|s|m|h|d)?$" $requestBodyWaitTimeout) }}
+      {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.waitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
     {{- end }}
-    {{- $bodyWaitTimeout := ($validation.bodyWaitTimeout | default "100ms" | toString) }}
-    {{- if not (regexMatch "^[0-9]+(us|ms|s|m|h|d)?$" $bodyWaitTimeout) }}
-      {{- fail "controller.apiGateway.validation.bodyWaitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
+    {{- if le (int (regexFind "^[0-9]+" $requestBodyWaitTimeout)) 0 }}
+      {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.waitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
     {{- end }}
-    {{- if le (int (regexFind "^[0-9]+" $bodyWaitTimeout)) 0 }}
-      {{- fail "controller.apiGateway.validation.bodyWaitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
+    {{- if and (hasKey $validation "defaultFailOpen") (not (kindIs "bool" $validation.defaultFailOpen)) }}
+      {{- fail "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.defaultFailOpen must be a boolean." }}
     {{- end }}
-    {{- $_ := set $extraContext "hapticRequestValidationEnabled" "true" }}
-    {{- $_ := set $extraContext "hapticRequestValidationMaxBodyBytes" ($maxBodyBytes | toString) }}
-    {{- $_ := set $extraContext "hapticRequestValidationBufferSize" ($bufferSize | toString) }}
-    {{- $_ := set $extraContext "hapticRequestValidationBufferHeadroomBytes" ($bufferHeadroomBytes | toString) }}
-    {{- $_ := set $extraContext "hapticRequestValidationFailOpen" ($validation.failOpen | toString) }}
-    {{- $_ := set $extraContext "hapticRequestValidationBodyWaitTimeout" $bodyWaitTimeout }}
+  {{- end }}
+
+  {{- /* WAF custom-rule limits apply independently of reusable policies.
+         Vendor compatibility annotations must not be able to bypass the
+         application-count and rule-byte admission bounds. */ -}}
+  {{- $customRules := dict }}
+  {{- if hasKey $wafSettings "customRules" }}
+    {{- if not (kindIs "map" $wafSettings.customRules) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.customRules must be a map." }}
+    {{- end }}
+    {{- $customRules = $wafSettings.customRules }}
+  {{- end }}
+  {{- range $field := keys $customRules }}
+    {{- if ne $field "limits" }}
+      {{- fail (printf "controller.config.templatingSettings.extraContext.waf.customRules contains unknown field %q. Valid field: limits." $field) }}
+    {{- end }}
+  {{- end }}
+  {{- $customRuleLimits := dict }}
+  {{- if hasKey $customRules "limits" }}
+    {{- if not (kindIs "map" $customRules.limits) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.customRules.limits must be a map." }}
+    {{- end }}
+    {{- $customRuleLimits = $customRules.limits }}
+  {{- end }}
+  {{- range $field := keys $customRuleLimits }}
+    {{- if not (has $field (list "maxIngresses" "maxBytesPerIngress")) }}
+      {{- fail (printf "controller.config.templatingSettings.extraContext.waf.customRules.limits contains unknown field %q. Valid fields: maxIngresses, maxBytesPerIngress." $field) }}
+    {{- end }}
+  {{- end }}
+  {{- $maxCustomRuleIngressesRaw := dig "maxIngresses" 32 $customRuleLimits | toString }}
+  {{- $maxCustomRuleBytesPerIngressRaw := dig "maxBytesPerIngress" 16384 $customRuleLimits | toString }}
+  {{- if not (regexMatch "^[0-9]+$" $maxCustomRuleIngressesRaw) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.customRules.limits.maxIngresses must be an integer between 1 and 1024." }}
+  {{- end }}
+  {{- if not (regexMatch "^[0-9]+$" $maxCustomRuleBytesPerIngressRaw) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.customRules.limits.maxBytesPerIngress must be an integer between 1 and 1048576." }}
+  {{- end }}
+  {{- $maxCustomRuleIngresses := int $maxCustomRuleIngressesRaw }}
+  {{- $maxCustomRuleBytesPerIngress := int $maxCustomRuleBytesPerIngressRaw }}
+  {{- if or (le $maxCustomRuleIngresses 0) (gt $maxCustomRuleIngresses 1024) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.customRules.limits.maxIngresses must be between 1 and 1024." }}
+  {{- end }}
+  {{- if or (le $maxCustomRuleBytesPerIngress 0) (gt $maxCustomRuleBytesPerIngress 1048576) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.customRules.limits.maxBytesPerIngress must be between 1 and 1048576." }}
+  {{- end }}
+
+  {{- /* Reusable WAF policies. The haptic-annotations library
+         turns one Ingress annotation into an application policy, body contract,
+         and enforcement map. These bounds keep HAProxy buffering and Coraza
+         CPU admission explicit and finite. */ -}}
+  {{- /* Validate and normalize policy configuration. A non-empty catalog is
+         itself the feature activation; there is no redundant enable flag. */ -}}
+  {{- if gt (len $wafPolicies) 0 }}
+    {{- $waf := $wafPolicies }}
+    {{- $policyRequestBody := dict }}
+    {{- if hasKey $waf "requestBody" }}
+      {{- if not (kindIs "map" $waf.requestBody) }}
+        {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody must be a map." }}
+      {{- end }}
+      {{- $policyRequestBody = $waf.requestBody }}
+    {{- end }}
+    {{- range $field := keys $policyRequestBody }}
+      {{- if not (has $field (list "waitTimeout" "defaultMaxBytes" "maxBytes")) }}
+        {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.requestBody contains unknown field %q. Valid fields: waitTimeout, defaultMaxBytes, maxBytes." $field) }}
+      {{- end }}
+    {{- end }}
+    {{- $defaultMaxBodyBytesRaw := dig "defaultMaxBytes" 8192 $policyRequestBody | toString }}
+    {{- $maxBodyBytesRaw := dig "maxBytes" 8192 $policyRequestBody | toString }}
+    {{- if not (regexMatch "^[0-9]+$" $defaultMaxBodyBytesRaw) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody.defaultMaxBytes must be an integer between 1 and 1048576 bytes." }}
+    {{- end }}
+    {{- if not (regexMatch "^[0-9]+$" $maxBodyBytesRaw) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody.maxBytes must be an integer between 1 and 1048576 bytes." }}
+    {{- end }}
+    {{- $defaultMaxBodyBytes := int $defaultMaxBodyBytesRaw }}
+    {{- $maxBodyBytes := int $maxBodyBytesRaw }}
+    {{- if or (le $defaultMaxBodyBytes 0) (gt $defaultMaxBodyBytes 1048576) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody.defaultMaxBytes must be between 1 and 1048576 bytes." }}
+    {{- end }}
+    {{- if or (le $maxBodyBytes 0) (gt $maxBodyBytes 1048576) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody.maxBytes must be between 1 and 1048576 bytes." }}
+    {{- end }}
+    {{- if gt $defaultMaxBodyBytes $maxBodyBytes }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody.defaultMaxBytes must not exceed requestBody.maxBytes." }}
+    {{- end }}
+    {{- if gt $maxBodyBytes (sub $requestBodyBufferSize $requestBodyBufferReservedBytes) }}
+      {{- fail "waf.policies.requestBody.maxBytes must not exceed requestBodyInspection.haproxyBuffer.sizeBytes minus requestBodyInspection.haproxyBuffer.reservedBytes, so the WAF never receives a truncated HAProxy body." }}
+    {{- end }}
+    {{- $requestBodyWaitTimeout := (dig "waitTimeout" "100ms" $policyRequestBody | toString) }}
+    {{- if or (not (regexMatch "^[0-9]+(us|ms|s|m|h|d)?$" $requestBodyWaitTimeout)) (le (int (regexFind "^[0-9]+" $requestBodyWaitTimeout)) 0) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.requestBody.waitTimeout must be a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
+    {{- end }}
+    {{- if and (hasKey $waf "defaultPolicy") (not (kindIs "string" $waf.defaultPolicy)) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.defaultPolicy must be a string." }}
+    {{- end }}
+    {{- $defaultPolicy := (dig "defaultPolicy" "" $waf | toString) }}
+    {{- if and (ne $defaultPolicy "") (not (regexMatch "^[a-z0-9][a-z0-9._-]{0,62}$" $defaultPolicy)) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.defaultPolicy must be empty or a valid exact policy name." }}
+    {{- end }}
+    {{- $allowPolicySelection := true }}
+    {{- if hasKey $wafIngressPermissions "allowPolicySelection" }}{{- $allowPolicySelection = $wafIngressPermissions.allowPolicySelection }}{{- end }}
+    {{- if and $wafPoliciesConfigured (not $allowPolicySelection) (eq $defaultPolicy "") }}
+      {{- fail "waf.policies.defaultPolicy is required when waf.ingressPermissions.allowPolicySelection=false; otherwise no policy could be applied." }}
+    {{- end }}
+    {{- $limits := dict }}
+    {{- if hasKey $waf "limits" }}
+      {{- if not (kindIs "map" $waf.limits) }}
+        {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits must be a map." }}
+      {{- end }}
+      {{- $limits = $waf.limits }}
+    {{- end }}
+    {{- range $field := keys $limits }}
+      {{- if not (has $field (list "maxCount" "maxSecLangBytes" "maxExcludedTargets")) }}
+        {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.limits contains unknown field %q. Valid fields: maxCount, maxSecLangBytes, maxExcludedTargets." $field) }}
+      {{- end }}
+    {{- end }}
+    {{- $maxPoliciesRaw := dig "maxCount" 16 $limits | toString }}
+    {{- $maxPolicySecLangBytesRaw := dig "maxSecLangBytes" 65536 $limits | toString }}
+    {{- $maxPolicyExcludedTargetsRaw := dig "maxExcludedTargets" 256 $limits | toString }}
+    {{- if not (regexMatch "^[0-9]+$" $maxPoliciesRaw) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxCount must be an integer between 1 and 1024." }}
+    {{- end }}
+    {{- if not (regexMatch "^[0-9]+$" $maxPolicySecLangBytesRaw) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxSecLangBytes must be an integer between 1 and 1048576." }}
+    {{- end }}
+    {{- if not (regexMatch "^[0-9]+$" $maxPolicyExcludedTargetsRaw) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxExcludedTargets must be an integer between 1 and 4096." }}
+    {{- end }}
+    {{- $maxPolicies := int $maxPoliciesRaw }}
+    {{- $maxPolicySecLangBytes := int $maxPolicySecLangBytesRaw }}
+    {{- $maxPolicyExcludedTargets := int $maxPolicyExcludedTargetsRaw }}
+    {{- if or (le $maxPolicies 0) (gt $maxPolicies 1024) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxCount must be between 1 and 1024." }}
+    {{- end }}
+    {{- if or (le $maxPolicySecLangBytes 0) (gt $maxPolicySecLangBytes 1048576) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxSecLangBytes must be between 1 and 1048576." }}
+    {{- end }}
+    {{- if or (le $maxPolicyExcludedTargets 0) (gt $maxPolicyExcludedTargets 4096) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxExcludedTargets must be between 1 and 4096." }}
+    {{- end }}
+    {{- $policies := dict }}
+    {{- $allowedPolicyFields := list "description" "requestBody" "enforcement" "excludedTargetsByTag" "secLang" }}
+    {{- $inlinePolicies := dict }}
+    {{- if hasKey $waf "inline" }}{{- $inlinePolicies = $waf.inline }}{{- end }}
+    {{- if not (kindIs "map" $inlinePolicies) }}
+      {{- fail "waf.policies.inline must be a map of policy names to policy documents." }}
+    {{- end }}
+    {{- range $name, $policy := $inlinePolicies }}
+      {{- if not (regexMatch "^[a-z0-9][a-z0-9._-]{0,62}$" $name) }}
+        {{- fail (printf "waf.policies.inline name %q must contain 1-63 lowercase letters, digits, dots, underscores, or hyphens and start with a letter or digit." $name) }}
+      {{- end }}
+      {{- if not (kindIs "map" $policy) }}
+        {{- fail (printf "waf.policies.inline.%s must be a map." $name) }}
+      {{- end }}
+      {{- range $field := keys $policy }}
+        {{- if not (has $field $allowedPolicyFields) }}
+          {{- fail (printf "waf.policies.inline.%s contains unknown field %q. Valid fields: %s." $name $field (join ", " $allowedPolicyFields)) }}
+        {{- end }}
+      {{- end }}
+      {{- if and (hasKey $policy "description") (not (kindIs "string" $policy.description)) }}
+        {{- fail (printf "waf.policies.inline.%s.description must be a string." $name) }}
+      {{- end }}
+      {{- if gt (len ($policy.description | default "")) 512 }}
+        {{- fail (printf "waf.policies.inline.%s.description must not exceed 512 bytes." $name) }}
+      {{- end }}
+      {{- if and (hasKey $policy "secLang") (not (kindIs "string" $policy.secLang)) }}
+        {{- fail (printf "waf.policies.inline.%s.secLang must be a string." $name) }}
+      {{- end }}
+      {{- $requestBody := dict }}
+      {{- if hasKey $policy "requestBody" }}
+        {{- if not (kindIs "map" $policy.requestBody) }}
+          {{- fail (printf "waf.policies.inline.%s.requestBody must be a map with mode and optional maxBytes fields." $name) }}
+        {{- end }}
+        {{- $requestBody = $policy.requestBody }}
+      {{- end }}
+      {{- if not (kindIs "map" $requestBody) }}
+        {{- fail (printf "waf.policies.inline.%s.requestBody must be a map with mode and optional maxBytes fields." $name) }}
+      {{- end }}
+      {{- range $field := keys $requestBody }}
+        {{- if not (has $field (list "mode" "maxBytes")) }}
+          {{- fail (printf "waf.policies.inline.%s.requestBody contains unknown field %q. Valid fields: mode, maxBytes." $name $field) }}
+        {{- end }}
+      {{- end }}
+      {{- $requestBodyMode := "none" }}
+      {{- if hasKey $requestBody "mode" }}{{- $requestBodyMode = $requestBody.mode | toString }}{{- end }}
+      {{- if not (has $requestBodyMode (list "none" "any" "json")) }}
+        {{- fail (printf "waf.policies.inline.%s.requestBody.mode must be one of: none, any, json." $name) }}
+      {{- end }}
+      {{- if and (eq $requestBodyMode "none") (hasKey $requestBody "maxBytes") }}
+        {{- fail (printf "waf.policies.inline.%s.requestBody.maxBytes requires requestBody.mode to be any or json; mode none does not inspect request bodies." $name) }}
+      {{- end }}
+      {{- $enforcement := "deny" }}
+      {{- if hasKey $policy "enforcement" }}{{- $enforcement = $policy.enforcement | toString }}{{- end }}
+      {{- if not (has $enforcement (list "deny" "detect")) }}
+        {{- fail (printf "waf.policies.inline.%s.enforcement must be one of: deny, detect." $name) }}
+      {{- end }}
+      {{- $secLang := ($policy.secLang | default "" | toString) }}
+      {{- if contains "\"\"\"" $secLang }}
+        {{- fail (printf "waf.policies.inline.%s.secLang must not contain a TOML triple-quote delimiter." $name) }}
+      {{- end }}
+      {{- if gt (len $secLang) $maxPolicySecLangBytes }}
+        {{- fail (printf "waf.policies.inline.%s.secLang is %d bytes; the configured limit is %d." $name (len $secLang) $maxPolicySecLangBytes) }}
+      {{- end }}
+      {{- $excludeTargetCount := 0 }}
+      {{- $excludedTargetsByTag := dict }}
+      {{- if hasKey $policy "excludedTargetsByTag" }}
+        {{- if not (kindIs "map" $policy.excludedTargetsByTag) }}
+          {{- fail (printf "waf.policies.inline.%s.excludedTargetsByTag must be a map of rule tags to exact Coraza variables." $name) }}
+        {{- end }}
+        {{- $excludedTargetsByTag = $policy.excludedTargetsByTag }}
+      {{- end }}
+      {{- range $tag, $targets := $excludedTargetsByTag }}
+        {{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$" $tag) }}
+          {{- fail (printf "waf.policies.inline.%s.excludedTargetsByTag tag %q contains unsupported characters." $name $tag) }}
+        {{- end }}
+        {{- if not (kindIs "slice" $targets) }}
+          {{- fail (printf "waf.policies.inline.%s.excludedTargetsByTag.%s must be a list of exact Coraza variables." $name $tag) }}
+        {{- end }}
+        {{- if eq (len $targets) 0 }}
+          {{- fail (printf "waf.policies.inline.%s.excludedTargetsByTag.%s must not be empty." $name $tag) }}
+        {{- end }}
+        {{- range $target := $targets }}
+          {{- $excludeTargetCount = add1 $excludeTargetCount }}
+          {{- $target = toString $target }}
+          {{- if not (regexMatch "^[A-Z][A-Z0-9_]*(:[A-Za-z0-9_.-]+)?$" $target) }}
+              {{- fail (printf "waf.policies.inline.%s.excludedTargetsByTag.%s target %q must be an exact Coraza variable such as ARGS:q." $name $tag $target) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- if gt $excludeTargetCount $maxPolicyExcludedTargets }}
+        {{- fail (printf "waf.policies.inline.%s defines %d excluded targets; the configured limit is %d." $name $excludeTargetCount $maxPolicyExcludedTargets) }}
+      {{- end }}
+      {{- $policyMaxBodyBytesRaw := $defaultMaxBodyBytes | toString }}
+      {{- if hasKey $requestBody "maxBytes" }}{{- $policyMaxBodyBytesRaw = $requestBody.maxBytes | toString }}{{- end }}
+      {{- if not (regexMatch "^[0-9]+$" $policyMaxBodyBytesRaw) }}
+        {{- fail (printf "waf.policies.inline.%s.requestBody.maxBytes must be an integer between 1 and waf.policies.requestBody.maxBytes (%d)." $name $maxBodyBytes) }}
+      {{- end }}
+      {{- $policyMaxBodyBytes := int $policyMaxBodyBytesRaw }}
+      {{- if or (le $policyMaxBodyBytes 0) (gt $policyMaxBodyBytes $maxBodyBytes) }}
+        {{- fail (printf "waf.policies.inline.%s.requestBody.maxBytes must be between 1 and waf.policies.requestBody.maxBytes (%d)." $name $maxBodyBytes) }}
+      {{- end }}
+      {{- $_ := set $policies $name (dict
+          "description" ($policy.description | default "" | toString)
+          "requestBody" (dict "mode" $requestBodyMode "maxBytes" ($policyMaxBodyBytes | toString))
+          "enforcement" $enforcement
+          "excludedTargetsByTag" $excludedTargetsByTag
+          "secLang" $secLang
+      ) }}
+    {{- end }}
+    {{- if gt (len $policies) $maxPolicies }}
+      {{- fail (printf "waf.policies.inline defines %d policies; the configured limit is %d." (len $policies) $maxPolicies) }}
+    {{- end }}
+    {{- $configuredPolicyConfigMapRefs := list }}
+    {{- if hasKey $waf "configMapRefs" }}{{- $configuredPolicyConfigMapRefs = $waf.configMapRefs }}{{- end }}
+    {{- if not (kindIs "slice" $configuredPolicyConfigMapRefs) }}
+      {{- fail "waf.policies.configMapRefs must be a list of maps with namespace, name, and key fields." }}
+    {{- end }}
+    {{- $policyConfigMapRefs := list }}
+    {{- $seenPolicyConfigMapRefs := dict }}
+    {{- range $index, $source := $configuredPolicyConfigMapRefs }}
+      {{- if not (kindIs "map" $source) }}
+        {{- fail (printf "waf.policies.configMapRefs[%d] must be a map." $index) }}
+      {{- end }}
+      {{- range $field := keys $source }}
+        {{- if not (has $field (list "namespace" "name" "key")) }}
+          {{- fail (printf "waf.policies.configMapRefs[%d] contains unknown field %q. Valid fields: namespace, name, key." $index $field) }}
+        {{- end }}
+      {{- end }}
+      {{- range $field := list "namespace" "name" "key" }}
+        {{- if and (hasKey $source $field) (not (kindIs "string" (index $source $field))) }}
+          {{- fail (printf "waf.policies.configMapRefs[%d].%s must be a string." $index $field) }}
+        {{- end }}
+      {{- end }}
+      {{- $namespace := ($source.namespace | default $.Release.Namespace | toString) }}
+      {{- $name := ($source.name | default "" | toString) }}
+      {{- $key := ($source.key | default "policies.yaml" | toString) }}
+      {{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $namespace) }}
+        {{- fail (printf "waf.policies.configMapRefs[%d].namespace must be a valid Kubernetes namespace." $index) }}
+      {{- end }}
+      {{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $name) }}
+        {{- fail (printf "waf.policies.configMapRefs[%d].name must be a valid ConfigMap name." $index) }}
+      {{- end }}
+      {{- if not (regexMatch "^[-._A-Za-z0-9]+$" $key) }}
+        {{- fail (printf "waf.policies.configMapRefs[%d].key must be a valid ConfigMap data key." $index) }}
+      {{- end }}
+      {{- $identity := printf "%s/%s:%s" $namespace $name $key }}
+      {{- if hasKey $seenPolicyConfigMapRefs $identity }}
+        {{- fail (printf "waf.policies.configMapRefs contains duplicate source %s." $identity) }}
+      {{- end }}
+      {{- $_ := set $seenPolicyConfigMapRefs $identity true }}
+      {{- $policyConfigMapRefs = append $policyConfigMapRefs (dict "namespace" $namespace "name" $name "key" $key) }}
+    {{- end }}
+    {{- $_ := set $waf "inline" $policies }}
+    {{- $_ := set $waf "configMapRefs" $policyConfigMapRefs }}
   {{- end }}
 
   {{- /* Controller's own namespace + HAProxy pod selector. Templates that
@@ -332,21 +730,44 @@ spec:
   {{- if include "haptic.spoaHub.enabled" . }}
     {{- $messages := list }}
     {{- $pluginEntries := list }}
+    {{- $messageTimeoutSums := dict }}
+    {{- $maxMessageTimeoutMs := 0 }}
     {{- range $name, $plugin := .Values.spoaHub.plugins }}
-      {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $) }}
+      {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $ "name" $name) }}
         {{- $messages = concat $messages $plugin.messages }}
+        {{- $pluginTimeoutMs := int (include "haptic.spoaHub.pluginTimeoutMs" (dict "plugin" $plugin "root" $ "name" $name)) }}
+        {{- range $message := uniq $plugin.messages }}
+          {{- $messageTimeoutMs := add (int (get $messageTimeoutSums $message | default 0)) $pluginTimeoutMs }}
+          {{- $_ := set $messageTimeoutSums $message $messageTimeoutMs }}
+          {{- if gt $messageTimeoutMs $maxMessageTimeoutMs }}
+            {{- $maxMessageTimeoutMs = $messageTimeoutMs }}
+          {{- end }}
+        {{- end }}
         {{- /* Plugin name in HAProxy variable namespace must be a valid identifier;
                TOML/YAML allow kebab-case but HAProxy var lookups don't. Sanitize
                dashes to underscores to match what the rendered TOML and the
                chart's bootstrap configmap use. */}}
+        {{- $normalizedDependencies := list }}
+        {{- range ($plugin.dependsOn | default list) }}
+          {{- $normalizedDependencies = append $normalizedDependencies (regexReplaceAll "-" . "_") }}
+        {{- end }}
         {{- $entry := dict
             "name" (regexReplaceAll "-" $name "_")
             "library" (include "haptic.spoaHub.libName" (dict "name" $name))
             "messages" $plugin.messages
-            "timeoutMs" (int (include "haptic.spoaHub.pluginTimeoutMs" (dict "plugin" $plugin "root" $ "name" $name)))
-            "dependsOn" ($plugin.dependsOn | default list)
+            "timeoutMs" $pluginTimeoutMs
+            "dependsOn" $normalizedDependencies
             "params" (include "haptic.spoaHub.effectivePluginParams" (dict "root" $ "name" $name "plugin" $plugin))
         }}
+        {{- if hasKey $plugin "maxConcurrency" }}
+          {{- $_ := set $entry "maxConcurrency" (int (include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $ "name" $name "field" "maxConcurrency" "min" 1))) }}
+        {{- end }}
+        {{- if hasKey $plugin "maxQueue" }}
+          {{- $_ := set $entry "maxQueue" (int (include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $ "name" $name "field" "maxQueue" "min" 0))) }}
+        {{- end }}
+        {{- if hasKey $plugin "queueTimeoutMs" }}
+          {{- $_ := set $entry "queueTimeoutMs" (int (include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $ "name" $name "field" "queueTimeoutMs" "min" 1))) }}
+        {{- end }}
         {{- /* Coraza-specific: surface the directives field separately so
                the runtime render snippet can append per-Ingress
                `nginx.ingress.kubernetes.io/modsecurity-snippet` values
@@ -360,31 +781,71 @@ spec:
     {{- with uniq $messages }}
       {{- $hub := $.Values.spoaHub.haproxy }}
       {{- $hubRuntime := $.Values.spoaHub.hub }}
-      {{- /* pluginDir and defaultTimeoutMs aren't typically operator-tuned —
-             the plugin path is baked into the spoa-hub container image,
-             and the default-timeout floor matches the upstream hub's
-             example config. Read with `default` anyway so an operator
-             who DOES add them to values.yaml propagates through to the
-             runtime renderer's `hub | dig | fallback` path; otherwise
-             chart and library would silently disagree. */}}
+      {{- $hubMaxConnections := int (include "haptic.spoaHub.hubInteger" (dict "root" $ "field" "maxConnections" "min" 1)) }}
+      {{- $hubBlockingThreadKeepAliveSecs := int (include "haptic.spoaHub.hubInteger" (dict "root" $ "field" "blockingThreadKeepAliveSecs" "min" 1)) }}
+      {{- $hubMaxBlockingThreads := $hubRuntime.maxBlockingThreads }}
+      {{- if ne $hubMaxBlockingThreads nil }}
+        {{- $hubMaxBlockingThreads = int (include "haptic.spoaHub.hubInteger" (dict "root" $ "field" "maxBlockingThreads" "min" 1)) }}
+      {{- end }}
+      {{- $hubReloadDrainTimeoutMs := $hubRuntime.reloadDrainTimeoutMs }}
+      {{- if ne $hubReloadDrainTimeoutMs nil }}
+        {{- $hubReloadDrainTimeoutMs = int (include "haptic.spoaHub.hubInteger" (dict "root" $ "field" "reloadDrainTimeoutMs" "min" 0)) }}
+      {{- end }}
+      {{- $hubWorkerThreads := $hubRuntime.workerThreads }}
+      {{- if ne $hubWorkerThreads nil }}
+        {{- $hubWorkerThreads = int (include "haptic.spoaHub.hubInteger" (dict "root" $ "field" "workerThreads" "min" 1)) }}
+      {{- end }}
+      {{- $processingMarginMs := int $hub.timeoutProcessingMarginMs }}
+      {{- if or (le $processingMarginMs 0) (gt $processingMarginMs 60000) }}
+        {{- fail "spoaHub.haproxy.timeoutProcessingMarginMs must be between 1 and 60000 milliseconds." }}
+      {{- end }}
+      {{- $minimumProcessingUs := mul (add $maxMessageTimeoutMs $processingMarginMs) 1000 }}
+      {{- $timeoutProcessing := $hub.timeoutProcessing }}
+      {{- if eq $timeoutProcessing nil }}
+        {{- $timeoutProcessing = printf "%dms" (add $maxMessageTimeoutMs $processingMarginMs) }}
+      {{- else }}
+        {{- $timeoutProcessing = toString $timeoutProcessing }}
+        {{- if not (regexMatch "^[0-9]+(us|ms|s|m|h|d)?$" $timeoutProcessing) }}
+          {{- fail "spoaHub.haproxy.timeoutProcessing must be null or a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
+        {{- end }}
+        {{- $durationValue := int64 (regexFind "^[0-9]+" $timeoutProcessing) }}
+        {{- if le $durationValue 0 }}
+          {{- fail "spoaHub.haproxy.timeoutProcessing must be null or a positive HAProxy duration using an optional us, ms, s, m, h, or d suffix." }}
+        {{- end }}
+        {{- $durationUnit := regexFind "(us|ms|s|m|h|d)$" $timeoutProcessing }}
+        {{- $durationFactorUs := 1000 }}
+        {{- if eq $durationUnit "us" }}{{- $durationFactorUs = 1 }}{{- end }}
+        {{- if eq $durationUnit "s" }}{{- $durationFactorUs = 1000000 }}{{- end }}
+        {{- if eq $durationUnit "m" }}{{- $durationFactorUs = 60000000 }}{{- end }}
+        {{- if eq $durationUnit "h" }}{{- $durationFactorUs = 3600000000 }}{{- end }}
+        {{- if eq $durationUnit "d" }}{{- $durationFactorUs = 86400000000 }}{{- end }}
+        {{- if lt (mul $durationValue $durationFactorUs) $minimumProcessingUs }}
+          {{- fail (printf "spoaHub.haproxy.timeoutProcessing (%s) must be at least the largest enabled SPOE message budget (%dms) plus timeoutProcessingMarginMs (%dms). Lower the relevant plugin timeouts or raise the HAProxy processing timeout." $timeoutProcessing $maxMessageTimeoutMs $processingMarginMs) }}
+        {{- end }}
+      {{- end }}
       {{- $spoaHubExtra := dict
           "enabled" true
-          "socketPath" $hub.socketPath
-          "modeSpop" $hub.modeSpop
-          "messages" .
-          "timeoutHello" (toString $hub.timeoutHello)
-          "timeoutIdle" (toString $hub.timeoutIdle)
-          "timeoutProcessing" (toString $hub.timeoutProcessing)
-          "poolMaxConn" (int $hub.poolMaxConn)
-          "poolPurgeDelay" (toString $hub.poolPurgeDelay)
-          "mirrorStaticMinSlots" (int ($.Values.spoaHub.mirrorStaticMinSlots | default 4))
+          "haproxy" (dict
+              "socketPath" $hub.socketPath
+              "modeSpop" $hub.modeSpop
+              "messages" .
+              "timeoutHello" (toString $hub.timeoutHello)
+              "timeoutIdle" (toString $hub.timeoutIdle)
+              "timeoutProcessing" $timeoutProcessing
+              "poolMaxConn" (int $hub.poolMaxConn)
+              "poolPurgeDelay" (toString $hub.poolPurgeDelay)
+              "mirror" (dict
+                  "minMessageSlots" (int $.Values.spoaHub.haproxy.mirror.minMessageSlots)
+              )
+          )
           "hub" (dict
               "logLevel" $hubRuntime.logLevel
-              "maxConnections" (int $hubRuntime.maxConnections)
-              "blockingThreadKeepAliveSecs" (int $hubRuntime.blockingThreadKeepAliveSecs)
-              "workerThreads" $hubRuntime.workerThreads
-              "pluginDir" ($hubRuntime.pluginDir | default "/etc/haproxy-spoa-hub/plugins")
-              "defaultTimeoutMs" (int ($hubRuntime.defaultTimeoutMs | default 500))
+              "maxConnections" $hubMaxConnections
+              "blockingThreadKeepAliveSecs" $hubBlockingThreadKeepAliveSecs
+              "maxBlockingThreads" $hubMaxBlockingThreads
+              "reloadDrainTimeoutMs" $hubReloadDrainTimeoutMs
+              "metricsAddr" $hubRuntime.metricsAddr
+              "workerThreads" $hubWorkerThreads
           )
           "plugins" $pluginEntries
       }}
@@ -468,13 +929,67 @@ spec:
       {{- end }}
     {{- end }}
   {{- end }}
+  {{- /* validationTests render against fixture stores, so a configured WAF
+         policy ConfigMap reference (extraContext.waf.policies.configMapRefs)
+         would fail every test's render with "was not found" — and the fatal
+         load gate would then block the very config whose referenced
+         ConfigMap exists live in the cluster. Mirror the default-ssl-cert
+         fixture above: inject a minimal catalog fixture per referenced
+         identity into validationTests._global. A per-test fixture with the
+         same namespace/name still overrides the injected one, and per-test
+         extraContext pointing at OTHER identities still exercises the
+         not-found failure. The catalog carries the values-declared
+         defaultPolicy (or a placeholder) so catalog-membership checks hold. */ -}}
+  {{- $wafRefs := dig "waf" "policies" "configMapRefs" (list) $extraContext }}
+  {{- if gt (len $wafRefs) 0 }}
+    {{- /* Policy names must be unique across the whole catalog
+           (registerPolicy rejects duplicates), so each injected source
+           carries a distinct per-source placeholder, and only the FIRST
+           source additionally carries the values-declared defaultPolicy —
+           unless an inline policy already defines it. */ -}}
+    {{- $defaultPolicy := (dig "waf" "policies" "defaultPolicy" "" $extraContext) | toString }}
+    {{- $inlinePolicies := dig "waf" "policies" "inline" (dict) $extraContext }}
+    {{- $defaultPolicyNeeded := and (ne $defaultPolicy "") (not (hasKey $inlinePolicies $defaultPolicy)) }}
+    {{- $byIdentity := dict }}
+    {{- $sourceIndex := 0 }}
+    {{- range $ref := $wafRefs }}
+      {{- $refNs := ((dig "namespace" "" $ref) | default $.Release.Namespace | toString) }}
+      {{- $refName := ((dig "name" "" $ref) | toString) }}
+      {{- $refKey := ((dig "key" "" $ref) | default "policies.yaml" | toString) }}
+      {{- $id := printf "%s/%s" $refNs $refName }}
+      {{- $catalog := printf "haptic-validation-fixture-%d:\n  description: Chart-injected validationTests catalog fixture\n" $sourceIndex }}
+      {{- if and $defaultPolicyNeeded (eq $sourceIndex 0) }}
+        {{- $catalog = printf "%s%s:\n  description: Chart-injected validationTests catalog fixture\n" $catalog $defaultPolicy }}
+      {{- end }}
+      {{- $entry := index $byIdentity $id | default (dict "apiVersion" "v1" "kind" "ConfigMap" "metadata" (dict "namespace" $refNs "name" $refName) "data" (dict)) }}
+      {{- $_ := set (index $entry "data") $refKey $catalog }}
+      {{- $_ := set $byIdentity $id $entry }}
+      {{- $sourceIndex = add1 $sourceIndex }}
+    {{- end }}
+    {{- $vt := $config.validationTests | default dict }}
+    {{- $vtGlobal := (index $vt "_global") | default dict }}
+    {{- $vtFixtures := (index $vtGlobal "fixtures") | default dict }}
+    {{- $vtCms := (index $vtFixtures "configmaps") | default list }}
+    {{- range $id, $entry := $byIdentity }}
+      {{- $vtCms = append $vtCms $entry }}
+    {{- end }}
+    {{- $_ := set $vtFixtures "configmaps" $vtCms }}
+    {{- $_ := set $vtGlobal "fixtures" $vtFixtures }}
+    {{- $_ := set $vt "_global" $vtGlobal }}
+    {{- $_ := set $config "validationTests" $vt }}
+  {{- end }}
   {{- /* Library-declared extraContext defaults. A template library may set
          top-level `templatingSettings.extraContext.<key>` to provide a default
          value its snippets read (e.g. nginx-ingress's nginxHttpRedirectCode).
-         Lowest precedence: `merge` fills only keys NOT already set by the
-         operator's controller.config or the chart-computed blocks above. */ -}}
+         Start from those defaults and mergeOverwrite the operator/chart map on
+         top. Sprig's plain `merge` uses zero-value semantics and therefore
+         replaces explicit false/0/"" values with library defaults — a severe
+         least-surprise and authorization bug (for example
+         ingressPermissions.allowPolicySelection=false became true). */ -}}
   {{- with ($mergedLibraries.templatingSettings | default dict).extraContext }}
-    {{- $_ := merge $extraContext . }}
+    {{- $mergedExtraContext := mergeOverwrite (deepCopy .) $extraContext }}
+    {{- $_ := set $config.templatingSettings "extraContext" $mergedExtraContext }}
+    {{- $extraContext = $mergedExtraContext }}
   {{- end }}
   {{- /* watchedResources: merge with the operator's override instead of replacing it */ -}}
   {{- with $mergedLibraries.watchedResources }}

@@ -1,4 +1,4 @@
-{{- $default := .Values.controller.defaultSSLCertificate }}
+{{- $default := .Values.defaultSSLCertificate }}
 {{- $cm := $default.certManager }}
 {{- if and $default.enabled $cm.enabled (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
 apiVersion: cert-manager.io/v1
@@ -13,13 +13,13 @@ spec:
   duration: {{ $cm.duration | default "8760h" }}
   renewBefore: {{ $cm.renewBefore | default "720h" }}
   dnsNames:
-    {{- toYaml (required "controller.defaultSSLCertificate.certManager.dnsNames is required when using cert-manager for SSL certificates" $cm.dnsNames) | nindent 4 }}
+    {{- toYaml (required "defaultSSLCertificate.certManager.dnsNames is required when using cert-manager for SSL certificates" $cm.dnsNames) | nindent 4 }}
   issuerRef:
     {{- if $cm.createIssuer }}
     name: {{ include "haptic.fullname" . }}-ssl-selfsigned
     kind: Issuer
     {{- else }}
-    {{- $_ := required "controller.defaultSSLCertificate.certManager.issuerRef.name is required when createIssuer is false" $cm.issuerRef.name }}
+    {{- $_ := required "defaultSSLCertificate.certManager.issuerRef.name is required when createIssuer is false" $cm.issuerRef.name }}
     {{- toYaml $cm.issuerRef | nindent 4 }}
     {{- end }}
   usages:

@@ -39,15 +39,16 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       # Trigger the http_frontend (where the SPOE filter directive +
       # frontend-filters auth-flow assertions live). The auth-url
@@ -128,15 +129,16 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       services:
         - apiVersion: v1
@@ -180,15 +182,16 @@ validationTests:
       haproxyVersion: "3.0"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures: {}
     assertions:
       - type: haproxy_valid
@@ -215,20 +218,19 @@ validationTests:
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages: ["check-request"]
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: ["check-request"]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
         hub:
           logLevel: info
           maxConnections: 1000
           blockingThreadKeepAliveSecs: 30
-          pluginDir: /etc/haproxy-spoa-hub/plugins
-          defaultTimeoutMs: 500
         plugins:
           - name: coraza
             library: libcoraza_plugin.so
@@ -243,7 +245,7 @@ validationTests:
               Include @coraza.conf-recommended
               SecRuleEngine On
             params: |
-              request_body_limit = 131072
+              request_body_limit = 8192
               detect_only = false
     fixtures: {}
     assertions:
@@ -280,7 +282,7 @@ validationTests:
         pattern: 'Include @coraza.conf-recommended\nSecRuleEngine On'
       - type: contains
         target: file:spoa-hub-config.toml
-        pattern: 'request_body_limit = 131072'
+        pattern: 'request_body_limit = 8192'
       - type: not_contains
         target: file:spoa-hub-config.toml
         pattern: '# nginx-ingress modsecurity-snippet from'

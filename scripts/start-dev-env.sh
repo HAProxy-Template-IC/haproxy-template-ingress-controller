@@ -74,18 +74,17 @@ NODEPORT_HOST="$(get_dind_hostname)"
 compute_haproxy_image() {
     if [[ "$HAPROXY_ENTERPRISE" == "true" ]]; then
         HAPROXY_REPO="hapee-registry.haproxy.com/haproxy-enterprise"
-        # Map community version to enterprise version format using versions.env mappings
+        # Map community version to the tested Enterprise revision tag.
         case "$HAPROXY_VERSION" in
-            3.0*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_30"; HAPROXY_ENTERPRISE_VERSION="3.0" ;;
-            3.1*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_31"; HAPROXY_ENTERPRISE_VERSION="3.1" ;;
-            3.2*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_32"; HAPROXY_ENTERPRISE_VERSION="3.2" ;;
-            *)    HAPROXY_TAG="$HAPROXY_VERSION"; HAPROXY_ENTERPRISE_VERSION="$HAPROXY_VERSION" ;;
+            3.0*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_30" ;;
+            3.1*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_31" ;;
+            3.2*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_32" ;;
+            *)    HAPROXY_TAG="$HAPROXY_VERSION" ;;
         esac
         debug "Using HAProxy Enterprise: ${HAPROXY_REPO}:${HAPROXY_TAG}"
     else
         HAPROXY_REPO="haproxytech/haproxy-debian"
         HAPROXY_TAG="$HAPROXY_VERSION"
-        HAPROXY_ENTERPRISE_VERSION=""
         debug "Using HAProxy Community: ${HAPROXY_REPO}:${HAPROXY_TAG}"
     fi
 }
@@ -662,7 +661,7 @@ build_helm_args() {
     fi
     HELM_ARGS+=(
         "--values" "${ASSETS_DIR}/dev-values.yaml"
-        "--set" "image.tag=${IMAGE_TAG}"
+        "--set" "controller.image.tag=${IMAGE_TAG}"
         "--set" "haproxyVersion=${HAPROXY_VERSION}"
         "--set" "haproxy.image.repository=${HAPROXY_REPO}"
         "--set" "haproxy.image.tag=${HAPROXY_TAG}"
@@ -679,7 +678,6 @@ build_helm_args() {
     # Note: UIDs are automatically derived by the Helm chart based on enterprise.enabled
     if [[ "$HAPROXY_ENTERPRISE" == "true" ]]; then
         HELM_ARGS+=("--set" "haproxy.enterprise.enabled=true")
-        HELM_ARGS+=("--set" "haproxy.enterprise.version=${HAPROXY_ENTERPRISE_VERSION}")
         debug "Added Enterprise Helm values"
     fi
 
@@ -693,8 +691,8 @@ build_helm_args() {
 
     # Add webhook CA bundle if set
     if [[ -n "${WEBHOOK_CA_BUNDLE:-}" ]]; then
-        HELM_ARGS+=("--set" "webhook.caBundle=${WEBHOOK_CA_BUNDLE}")
-        debug "Added webhook.caBundle to Helm values"
+        HELM_ARGS+=("--set" "controller.webhook.caBundle=${WEBHOOK_CA_BUNDLE}")
+        debug "Added controller.webhook.caBundle to Helm values"
     fi
 }
 
@@ -762,7 +760,7 @@ deploy_controller() {
     build_helm_args false false false
 
     # Use helm upgrade --install for idempotent deployment
-    # Override image.tag with unique SHA-based tag to force pod restart
+    # Override controller.image.tag with unique SHA-based tag to force pod restart
     if helm upgrade --install "${HELM_ARGS[@]}" 2>&1 | tee /tmp/helm-output.log; then
         ok "Controller Helm release deployed."
     else
@@ -1155,7 +1153,7 @@ dev_restart() {
 
     # Upgrade Helm release to pick up any changes
     # Using --install makes this idempotent (works even if release doesn't exist)
-    # Override image.tag with unique SHA-based tag to force pod restart
+    # Override controller.image.tag with unique SHA-based tag to force pod restart
     log INFO "Upgrading Helm release with image tag: ${IMAGE_TAG}..."
     log INFO "Using HAProxy: ${HAPROXY_REPO}:${HAPROXY_TAG}"
     helm upgrade --install "${HELM_ARGS[@]}" || {

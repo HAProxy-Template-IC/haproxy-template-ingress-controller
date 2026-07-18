@@ -43,13 +43,56 @@ tests:
 
   - it: should swap frontend-routing-logic to regex-last variant when configured
     set:
-      controller.config.routing.regexMatchOrder: last
+      controller.config.templatingSettings.extraContext.routing.regexMatchOrder: last
     asserts:
       - matchRegex:
           path: spec.templateSnippets["frontend-routing-logic"].template
           pattern: "Path matching: Exact > Prefix-exact > Prefix > Regex"
       - notExists:
           path: spec.templateSnippets["frontend-routing-logic-regex-last"]
+      - equal:
+          path: spec.templatingSettings.extraContext.routing.regexMatchOrder
+          value: last
+
+  - it: should inject the Dataplane API connection port from the HAProxy port owner
+    set:
+      haproxy.ports.dataplane: 6666
+    asserts:
+      - equal:
+          path: spec.dataplane.port
+          value: 6666
+
+  - it: should use controller configName for the HAProxyTemplateConfig object
+    set:
+      controller.configName: edge-config
+    asserts:
+      - equal:
+          path: metadata.name
+          value: edge-config
+
+  - it: should carry template-owned status patch policy in structured extraContext
+    set:
+      controller.config.templatingSettings.extraContext.statusPatches.enabled: false
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.statusPatches.enabled
+          value: false
+      - notExists:
+          path: spec.templatingSettings.extraContext.statusPatchesDisabled
+
+  - it: should disable routing diagnostics by default
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.diagnostics.routingHeaders.enabled
+          value: false
+
+  - it: should enable routing diagnostics only through the explicit nested value
+    set:
+      controller.config.templatingSettings.extraContext.diagnostics.routingHeaders.enabled: true
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.diagnostics.routingHeaders.enabled
+          value: true
 
   - it: should always strip frontend-routing-logic-regex-last variant from output
     asserts:

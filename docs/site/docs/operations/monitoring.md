@@ -19,16 +19,19 @@ The controller's `haptic_*` metrics cover:
 
 Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (default `:9090`), which is separate from the debug port. No additional configuration is needed beyond pointing Prometheus at this endpoint.
 
-The controller reads its metrics port from the `METRICS_PORT` env var (default `9090`). To disable the metrics server, set `METRICS_PORT=0` on the controller container. Via Helm, use `extraEnv`:
+The chart sets the controller process, container port, Service, and monitors from
+one value. To disable the metrics server, set `controller.ports.metrics: 0`:
 
 ```yaml
-# values.yaml — disable the metrics server entirely
-extraEnv:
-  - name: METRICS_PORT
-    value: "0"
+# values.yaml — disable the metrics server and monitoring resources
+controller:
+  ports:
+    metrics: 0
 ```
 
-The `controller.config.controller.metricsPort` Helm value is display-only: it isn't part of the CRD schema, and the chart strips it before serializing (the apiserver would reject it otherwise). Setting `controller.config.controller.metricsPort: 0` in Helm values does *not* disable the metrics server.
+`controller.ports.metrics=0` can't be combined with an enabled ServiceMonitor,
+PodMonitor, or PrometheusRule because those resources would target a listener
+that doesn't exist. The chart rejects that combination.
 
 ## Accessing metrics
 
@@ -56,38 +59,40 @@ If using Prometheus Operator, enable the ServiceMonitor in Helm:
 
 ```yaml
 # values.yaml
-monitoring:
-  serviceMonitor:
-    enabled: true
-    interval: 30s
-    labels:
-      release: prometheus  # Match your Prometheus selector
+controller:
+  monitoring:
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      labels:
+        release: prometheus  # Match your Prometheus selector
 ```
 
-The chart also ships a `PodMonitor` (`monitoring.podMonitor.enabled`) for setups that scrape pods directly instead of via the Service — enable whichever your Prometheus setup uses.
+The chart also ships a `PodMonitor` (`controller.monitoring.podMonitor.enabled`) for setups that scrape pods directly instead of via the Service — enable whichever your Prometheus setup uses.
 
 Add custom labels, a scrape timeout, `relabelings`, or `metricRelabelings` for larger setups:
 
 ```yaml
 # values.yaml
-monitoring:
-  serviceMonitor:
-    enabled: true
-    interval: 15s
-    scrapeTimeout: 10s
-    labels:
-      release: prometheus
-      team: platform
-    # Stamp a cluster label onto every scraped series
-    relabelings:
-      - sourceLabels: [__address__]
-        targetLabel: cluster
-        replacement: production
-    # Drop a metric you don't want to store
-    metricRelabelings:
-      - sourceLabels: [__name__]
-        regex: 'haptic_event_subscribers'
-        action: drop
+controller:
+  monitoring:
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 10s
+      labels:
+        release: prometheus
+        team: platform
+      # Stamp a cluster label onto every scraped series
+      relabelings:
+        - sourceLabels: [__address__]
+          targetLabel: cluster
+          replacement: production
+      # Drop a metric you don't want to store
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: 'haptic_event_subscribers'
+          action: drop
 ```
 
 If a NetworkPolicy is in effect, also allow Prometheus to reach the metrics port — see [Networking](./networking.md).
@@ -320,7 +325,7 @@ haptic_leader_election_transitions_total
 
 ### Webhook metrics
 
-Exposed when the validating admission webhook is enabled (`webhook.enabled=true`).
+Exposed when the validating admission webhook is enabled (`controller.webhook.enabled=true`).
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -437,11 +442,11 @@ The full metric set is HAProxy's own, not HAPTIC's — see the [HAProxy Promethe
 
 ## Alerting rules
 
-If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `monitoring.prometheusRule.enabled`) covering the nine controller alerts in [Shipped alerts](#shipped-alerts) below. The [Recommended alerts](#recommended-alerts) further down are a separate, broader example set you copy and adapt for any Prometheus setup — they're **not** what the chart deploys, and most use distinct `HAProxyIC*` names so you can run them alongside the shipped rules (`HAProxyFleetDiverged` is the one alert both sets define).
+If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `controller.monitoring.prometheusRule.enabled`) covering the nine controller alerts in [Shipped alerts](#shipped-alerts) below. The [Recommended alerts](#recommended-alerts) further down are a separate, broader example set you copy and adapt for any Prometheus setup — they're **not** what the chart deploys, and most use distinct `HAProxyIC*` names so you can run them alongside the shipped rules (`HAProxyFleetDiverged` is the one alert both sets define).
 
 ### Shipped alerts
 
-The chart's `PrometheusRule` deploys these nine alerts when `monitoring.prometheusRule.enabled: true`. Each is toggled by its own `monitoring.prometheusRule.defaultRules.<key>` flag (all default to `true`):
+The chart's `PrometheusRule` deploys these nine alerts when `controller.monitoring.prometheusRule.enabled: true`. Each is toggled by its own `controller.monitoring.prometheusRule.defaultRules.<key>` flag (all default to `true`):
 
 | Alert | Toggle key (`defaultRules.<key>`) | Fires when |
 |-------|-----------------------------------|------------|
@@ -459,15 +464,16 @@ Turn one rule off, or replace the whole set with your own:
 
 ```yaml
 # values.yaml
-monitoring:
-  prometheusRule:
-    enabled: true
-    defaultRules:
-      highQueueDepth: false   # drop a single shipped rule; the other eight stay
-    # Or set `rules:` to a non-empty list to replace ALL default rules with your own:
-    # rules:
-    #   - alert: MyCustomAlert
-    #     expr: ...
+controller:
+  monitoring:
+    prometheusRule:
+      enabled: true
+      defaultRules:
+        highQueueDepth: false   # drop a single shipped rule; the other eight stay
+      # Or set `rules:` to a non-empty list to replace ALL default rules with your own:
+      # rules:
+      #   - alert: MyCustomAlert
+      #     expr: ...
 ```
 
 The full names, toggle keys, and default thresholds also appear on the [Chart Values Reference](../reference.md#monitoring).
@@ -589,7 +595,7 @@ groups:
 
 ## Dashboard examples
 
-The chart ships a complete built-in Grafana dashboard (29 panels) — enable it with `monitoring.grafanaDashboard.enabled: true` (the default `useBuiltIn: true` renders `dashboards/haptic.json` into a `<release>-grafana-dashboard` ConfigMap that the Grafana sidecar auto-discovers; set a custom one via `grafanaDashboard.customDashboard`). The queries and JSON template below are for building your own dashboard or extending the bundled one.
+The chart ships a complete built-in Grafana dashboard (29 panels) — enable it with `controller.monitoring.grafanaDashboard.enabled: true` (the default `useBuiltIn: true` renders `dashboards/haptic.json` into a `<release>-grafana-dashboard` ConfigMap that the Grafana sidecar auto-discovers; set a custom one via `grafanaDashboard.customDashboard`). The queries and JSON template below are for building your own dashboard or extending the bundled one.
 
 ### Grafana dashboard queries
 
@@ -718,7 +724,7 @@ avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
 
 **Missing metrics:**
 
-1. Verify the metrics server is enabled — `METRICS_PORT` env var on the controller container is non-zero (default `9090`; the `controller.config.controller.metricsPort` Helm value is display-only and never reaches the controller)
+1. Verify the metrics server is enabled — `controller.ports.metrics` is non-zero (default `9090`), and the rendered controller container has the matching `METRICS_PORT` environment variable
 2. Check ServiceMonitor selector matches Prometheus configuration
 3. Verify network policies allow scraping
 

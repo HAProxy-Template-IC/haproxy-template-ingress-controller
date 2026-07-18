@@ -15,7 +15,7 @@ _helm_load:
       value: 'app.kubernetes.io/name={{ include "haptic.name" . }},app.kubernetes.io/component=loadbalancer'
     - path: templateSnippets.frontend-routing-logic
       from: templateSnippets.frontend-routing-logic-regex-last
-      when: '{{- with .Values.controller.config.routing -}}{{- if eq .regexMatchOrder "last" }}true{{ end -}}{{- end -}}'
+      when: '{{- with .Values.controller.config.templatingSettings.extraContext.routing -}}{{- if eq .regexMatchOrder "last" }}true{{ end -}}{{- end -}}'
   unset:
     - templateSnippets.frontend-routing-logic-regex-last
 #   - Composable macros: import and extend utility functions
@@ -189,7 +189,7 @@ templateSnippets:
 
         Path Matching Order: Exact > Regex > Prefix-exact > Prefix
         (To select the alternative performance-first order — Exact > Prefix-exact >
-         Prefix > Regex — set controller.config.routing.regexMatchOrder=last in
+         Prefix > Regex — set extraContext.routing.regexMatchOrder=last in
          values.yaml. The chart swaps in the frontend-routing-logic-regex-last
          variant below at load time.)
 
@@ -211,7 +211,7 @@ templateSnippets:
         Performance-first path matching variant: Exact > Prefix-exact > Prefix > Regex.
 
         This snippet exists only to be swapped into "frontend-routing-logic" by
-        haptic.mergeLibraries when controller.config.routing.regexMatchOrder=last.
+        haptic.mergeLibraries when extraContext.routing.regexMatchOrder=last.
         It is unset before the merged config is rendered, so it never appears in
         the operator-visible HAProxyTemplateConfig output.
 
@@ -848,8 +848,8 @@ templateSnippets:
             }
           }
         }
-        var statusPatchesDisabled bool = extraContext | dig("statusPatchesDisabled") | fallback(false)
-        if !statusPatchesDisabled {
+        var statusPatchesEnabled bool = extraContext | dig("statusPatches", "enabled") | fallback(true)
+        if statusPatchesEnabled {
           // Always set gf["addresses"] when status patches are enabled
           // (even as an empty slice). Downstream snippets gate on
           // `gf["addresses"] != nil`, so leaving it nil would suppress
@@ -1305,7 +1305,7 @@ templateSnippets:
   # block after the default health check rules.
   frontend-filters-999-debug:
     template: |
-      {%- var debug bool = extraContext | dig("debug") | fallback(false) -%}
+      {%- var debug bool = extraContext | dig("diagnostics", "routingHeaders", "enabled") | fallback(false) -%}
       {%- if debug %}
       # HAProxy routing decision introspection
       http-response set-header X-HAProxy-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }

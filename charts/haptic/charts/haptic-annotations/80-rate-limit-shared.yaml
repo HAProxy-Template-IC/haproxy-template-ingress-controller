@@ -13,11 +13,11 @@
 #   haproxy-haptic.org/rate-limit-key         ip (default) | consumer
 #   haproxy-haptic.org/rate-limit-algorithm   token-bucket (default) | gcra (exact, fails closed)
 #
-# The chart opt-in (`controller.rateLimit.shared.enabled=true`) must be set or
+# The chart opt-in (`rateLimit.shared.enabled=true`) must be set or
 # using rate-limit-requests fails the render. A shared store is required for
 # fleet-wide enforcement; the chart can deploy HA Valkey with Sentinel via
-# `controller.rateLimit.store.enabled=true`, or operators can provide their own
-# Redis/Valkey store_url under spoaHub.plugins.rate-limit.params.
+# `rateLimit.shared.managedStore.enabled=true`, or operators can provide their own
+# Redis/Valkey URLs under rateLimit.shared.externalStore.urls.
 #
 # This fragment produces the rate-limit.map that the spoa-hub library parses at
 # frontend priority 020. Source-IP rules dispatch at priority 025 before Coraza;
@@ -30,7 +30,7 @@
 templateSnippets:
   map-rate-limit-820-haptic:
     template: |-
-      {%- var sharedEnabled = extraContext | dig("hapticRateLimitSharedEnabled") | fallback("false") | tostring() -%}
+      {%- var sharedEnabled = extraContext | dig("rateLimit", "shared", "enabled") | fallback("false") | tostring() -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var requests = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] -%}
         {%- if requests != "" -%}
@@ -38,7 +38,7 @@ templateSnippets:
           {%- var name = ingress.Metadata.Name -%}
           {%- var key = ns + "/" + name -%}
           {%- if sharedEnabled != "true" -%}
-            {{- fail("Ingress " + key + " sets annotation 'haproxy-haptic.org/rate-limit-requests' but shared rate limiting is not enabled. Set controller.rateLimit.shared.enabled=true, or remove the annotation.") -}}
+            {{- fail("Ingress " + key + " sets annotation 'haproxy-haptic.org/rate-limit-requests' but shared rate limiting is not enabled. Set rateLimit.shared.enabled=true, or remove the annotation.") -}}
           {%- end -%}
           {#- requests: positive integer, the limit N. -#}
           {%- var n = toint(requests) -%}
@@ -106,7 +106,7 @@ templateSnippets:
         {%- var requests = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-requests"] -%}
         {%- var keySpec = ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-key"] -%}
         {%- if requests != "" && keySpec == "consumer" -%}
-          {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) -%}
+          {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) -%}
           {%- var messages = toStringSlice(messagesAny) -%}
           {%- if messages contains "check-ratelimit" %}
       # haptic/shared-rate-limit consumer ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }})
@@ -119,30 +119,31 @@ templateSnippets:
 k8sResources:
   rate-limit-store:
     template: |
-      {%- var enabled = extraContext | dig("hapticRateLimitStoreEnabled") | fallback("false") | tostring() %}
+      {%- var enabled = extraContext | dig("rateLimit", "shared", "managedStore", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
-      {%- var base = extraContext | dig("hapticRateLimitStoreBaseName") | fallback("haptic-rate-limit-store") | tostring() %}
+      {%- var base = extraContext | dig("rateLimit", "shared", "managedStore", "serviceName") | fallback("haptic-rate-limit-store") | tostring() %}
       {%- var sentinelSvc = base + "-sentinel" %}
-      {%- var ns = extraContext | dig("hapticRateLimitStoreNamespace") | fallback("default") | tostring() %}
-      {%- var port = extraContext | dig("hapticRateLimitStorePort") | fallback("6379") | tostring() %}
-      {%- var sentinelPort = extraContext | dig("hapticRateLimitStoreSentinelPort") | fallback("26379") | tostring() %}
-      {%- var sentinelMaster = extraContext | dig("hapticRateLimitStoreSentinelMasterName") | fallback("haptic-rate-limit") | tostring() %}
-      {%- var replicas = extraContext | dig("hapticRateLimitStoreReplicas") | fallback("3") | tostring() %}
-      {%- var quorum = extraContext | dig("hapticRateLimitStoreSentinelQuorum") | fallback("2") | tostring() %}
-      {%- var downAfterMs = extraContext | dig("hapticRateLimitStoreSentinelDownAfterMs") | fallback("2000") | tostring() %}
-      {%- var failoverTimeoutMs = extraContext | dig("hapticRateLimitStoreSentinelFailoverTimeoutMs") | fallback("10000") | tostring() %}
-      {%- var parallelSyncs = extraContext | dig("hapticRateLimitStoreSentinelParallelSyncs") | fallback("1") | tostring() %}
-      {%- var img = extraContext | dig("hapticRateLimitStoreImage") | fallback("valkey/valkey:8-alpine") | tostring() %}
-      {%- var maxmemory = extraContext | dig("hapticRateLimitStoreMaxmemory") | fallback("96mb") | tostring() %}
-      {%- var maxmemoryPolicy = extraContext | dig("hapticRateLimitStoreMaxmemoryPolicy") | fallback("volatile-ttl") | tostring() %}
-      {%- var cpuReq = extraContext | dig("hapticRateLimitStoreCpuRequest") | fallback("50m") | tostring() %}
-      {%- var memReq = extraContext | dig("hapticRateLimitStoreMemRequest") | fallback("128Mi") | tostring() %}
-      {%- var memLim = extraContext | dig("hapticRateLimitStoreMemLimit") | fallback("128Mi") | tostring() %}
-      {%- var sentinelCpuReq = extraContext | dig("hapticRateLimitStoreSentinelCpuRequest") | fallback("25m") | tostring() %}
-      {%- var sentinelMemReq = extraContext | dig("hapticRateLimitStoreSentinelMemRequest") | fallback("64Mi") | tostring() %}
-      {%- var sentinelMemLim = extraContext | dig("hapticRateLimitStoreSentinelMemLimit") | fallback("64Mi") | tostring() %}
-      {%- var pdbEnabled = extraContext | dig("hapticRateLimitStorePDBEnabled") | fallback("true") | tostring() %}
-      {%- var pdbMaxUnavailable = extraContext | dig("hapticRateLimitStorePDBMaxUnavailable") | fallback("1") | tostring() %}
+      {%- var ns = extraContext | dig("rateLimit", "shared", "managedStore", "namespace") | fallback("default") | tostring() %}
+      {%- var port = extraContext | dig("rateLimit", "shared", "managedStore", "port") | fallback("6379") | tostring() %}
+      {%- var sentinelPort = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "port") | fallback("26379") | tostring() %}
+      {%- var sentinelMaster = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "masterName") | fallback("haptic-rate-limit") | tostring() %}
+      {%- var replicas = extraContext | dig("rateLimit", "shared", "managedStore", "replicas") | fallback("3") | tostring() %}
+      {%- var quorum = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "quorum") | fallback("2") | tostring() %}
+      {%- var downAfterMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "downAfterMilliseconds") | fallback("2000") | tostring() %}
+      {%- var failoverTimeoutMs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "failoverTimeoutMilliseconds") | fallback("10000") | tostring() %}
+      {%- var parallelSyncs = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "parallelSyncs") | fallback("1") | tostring() %}
+      {%- var img = extraContext | dig("rateLimit", "shared", "managedStore", "image") | fallback("valkey/valkey:8-alpine") | tostring() %}
+      {%- var imagePullPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "imagePullPolicy") | fallback("IfNotPresent") | tostring() %}
+      {%- var maxMemory = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemory") | fallback("96mb") | tostring() %}
+      {%- var maxMemoryPolicy = extraContext | dig("rateLimit", "shared", "managedStore", "maxMemoryPolicy") | fallback("volatile-ttl") | tostring() %}
+      {%- var cpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "cpu") | fallback("50m") | tostring() %}
+      {%- var memReq = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "requests", "memory") | fallback("128Mi") | tostring() %}
+      {%- var memLim = extraContext | dig("rateLimit", "shared", "managedStore", "resources", "limits", "memory") | fallback("128Mi") | tostring() %}
+      {%- var sentinelCpuReq = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "requests", "cpu") | fallback("25m") | tostring() %}
+      {%- var sentinelMemReq = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "requests", "memory") | fallback("64Mi") | tostring() %}
+      {%- var sentinelMemLim = extraContext | dig("rateLimit", "shared", "managedStore", "sentinel", "resources", "limits", "memory") | fallback("64Mi") | tostring() %}
+      {%- var pdbEnabled = extraContext | dig("rateLimit", "shared", "managedStore", "podDisruptionBudget", "enabled") | fallback("true") | tostring() %}
+      {%- var pdbMaxUnavailable = extraContext | dig("rateLimit", "shared", "managedStore", "podDisruptionBudget", "maxUnavailable") | fallback("1") | tostring() %}
       apiVersion: v1
       kind: Service
       metadata:
@@ -229,6 +230,7 @@ k8sResources:
             containers:
               - name: valkey
                 image: {{ img }}
+                imagePullPolicy: {{ imagePullPolicy }}
                 command: ["/bin/sh", "-ec"]
                 args:
                   - |
@@ -252,8 +254,8 @@ k8sResources:
                         --protected-mode "no" \
                         --save "" \
                         --appendonly "no" \
-                        --maxmemory "{{ maxmemory }}" \
-                        --maxmemory-policy "{{ maxmemoryPolicy }}" \
+                        --maxmemory "{{ maxMemory }}" \
+                        --maxmemory-policy "{{ maxMemoryPolicy }}" \
                         --replicaof "$master_host" "$master_port"
                     fi
                     if [ "$ordinal" = "0" ]; then
@@ -263,8 +265,8 @@ k8sResources:
                         --protected-mode "no" \
                         --save "" \
                         --appendonly "no" \
-                        --maxmemory "{{ maxmemory }}" \
-                        --maxmemory-policy "{{ maxmemoryPolicy }}"
+                        --maxmemory "{{ maxMemory }}" \
+                        --maxmemory-policy "{{ maxMemoryPolicy }}"
                     fi
                     exec valkey-server \
                       --port "{{ port }}" \
@@ -272,8 +274,8 @@ k8sResources:
                       --protected-mode "no" \
                       --save "" \
                       --appendonly "no" \
-                      --maxmemory "{{ maxmemory }}" \
-                      --maxmemory-policy "{{ maxmemoryPolicy }}" \
+                      --maxmemory "{{ maxMemory }}" \
+                      --maxmemory-policy "{{ maxMemoryPolicy }}" \
                       --replicaof "{{ base }}-0.{{ base }}.${POD_NAMESPACE}.svc.cluster.local" "{{ port }}"
                 env:
                   - name: POD_NAME
@@ -305,6 +307,7 @@ k8sResources:
                   periodSeconds: 10
               - name: sentinel
                 image: {{ img }}
+                imagePullPolicy: {{ imagePullPolicy }}
                 command: ["/bin/sh", "-ec"]
                 args:
                   - |

@@ -26,6 +26,32 @@ warn() {
     echo -e "${YELLOW}Warning: $1${NC}" >&2
 }
 
+# Assert that one Helm values combination is rejected with the expected text.
+# Some ownership-migration checks deliberately add a key absent from
+# values.yaml; helm-unittest cannot preserve those unknown descendants through
+# its per-leaf `set` merger, while Helm itself does. Keep these checks on the
+# real `helm template --set` path operators use.
+run_helm_failure_guard() {
+    local label=$1
+    local expected=$2
+    shift 2
+    local guard_err
+    guard_err=$(mktemp /tmp/haptic-helm-guard-XXXXXX.log)
+    echo -e "${YELLOW}${label}...${NC}" >&2
+    if helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG "$@" > /dev/null 2> "$guard_err"; then
+        echo -e "${RED}Error: ${label} did not fail${NC}" >&2
+        rm -f "$guard_err"
+        exit 1
+    fi
+    if ! grep -Fq "$expected" "$guard_err"; then
+        echo -e "${RED}Error: ${label} returned unexpected error:${NC}" >&2
+        cat "$guard_err" >&2
+        rm -f "$guard_err"
+        exit 1
+    fi
+    rm -f "$guard_err"
+}
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -229,9 +255,9 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
         --set controller.templateLibraries.haproxytech.enabled=true \
         --set controller.templateLibraries.haproxyIngress.enabled=true \
         --set controller.templateLibraries.nginxIngress.enabled=true \
-        --set controller.cache.varnish.enabled=true \
-        --set controller.rateLimit.shared.enabled=true \
-        --set controller.rateLimit.store.enabled=true \
+        --set cache.varnish.enabled=true \
+        --set rateLimit.shared.enabled=true \
+        --set rateLimit.shared.managedStore.enabled=true \
         --set spoaHub.plugins.coraza.enabled=true \
         | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > "$RATE_LIMIT_CONFIG"; then
@@ -270,7 +296,7 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
         --set controller.templateLibraries.haproxytech.enabled=true \
         --set controller.templateLibraries.haproxyIngress.enabled=true \
         --set controller.templateLibraries.nginxIngress.enabled=true \
-        --set controller.apiGateway.validation.enabled=true \
+        --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true \
         | yq 'select(.kind == "HAProxyTemplateConfig")' \
         > "$REQUEST_VALIDATION_CONFIG"; then
         echo -e "${RED}Error: Failed to render request-validation Helm profile${NC}" >&2
@@ -290,85 +316,85 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
         fi
     done
     if [[ $FULL_RC -eq 0 ]]; then
-        echo -e "${YELLOW}Request-validation Helm guard: maxBodyBytes hard cap...${NC}" >&2
+        echo -e "${YELLOW}Request-validation Helm guard: requestBody.defaultMaxBytes hard cap...${NC}" >&2
         GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
         if helm template "$CHART_DIR" \
             --namespace default \
             $HAPROXY_VERSION_ARG \
             --set controller.templateLibraries.hapticAnnotations.enabled=true \
-            --set controller.apiGateway.validation.enabled=true \
-            --set controller.apiGateway.validation.maxBodyBytes=1048577 \
+            --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true \
+            --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes=1048577 \
             > /dev/null 2> "$GUARD_ERR"; then
-            echo -e "${RED}Error: request-validation maxBodyBytes hard-cap guard did not fail${NC}" >&2
+            echo -e "${RED}Error: request-validation requestBody.defaultMaxBytes hard-cap guard did not fail${NC}" >&2
             rm -f "$GUARD_ERR"
             exit 1
         fi
-        if ! grep -q "controller.apiGateway.validation.maxBodyBytes must be between 1 and 1048576 bytes" "$GUARD_ERR"; then
-            echo -e "${RED}Error: request-validation maxBodyBytes hard-cap guard returned unexpected error:${NC}" >&2
+        if ! grep -q "apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes must be between 1 and 1048576 bytes" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation requestBody.defaultMaxBytes hard-cap guard returned unexpected error:${NC}" >&2
             cat "$GUARD_ERR" >&2
             rm -f "$GUARD_ERR"
             exit 1
         fi
         rm -f "$GUARD_ERR"
 
-        echo -e "${YELLOW}Request-validation Helm guard: bufferSize lower bound...${NC}" >&2
+        echo -e "${YELLOW}Request-body inspection Helm guard: haproxyBuffer.sizeBytes lower bound...${NC}" >&2
         GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
         if helm template "$CHART_DIR" \
             --namespace default \
             $HAPROXY_VERSION_ARG \
             --set controller.templateLibraries.hapticAnnotations.enabled=true \
-            --set controller.apiGateway.validation.enabled=true \
-            --set controller.apiGateway.validation.bufferSize=8192 \
+            --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true \
+            --set controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes=8192 \
             > /dev/null 2> "$GUARD_ERR"; then
-            echo -e "${RED}Error: request-validation bufferSize lower-bound guard did not fail${NC}" >&2
+            echo -e "${RED}Error: request-body inspection haproxyBuffer.sizeBytes lower-bound guard did not fail${NC}" >&2
             rm -f "$GUARD_ERR"
             exit 1
         fi
-        if ! grep -q "controller.apiGateway.validation.bufferSize must be between 16384 and 2097152 bytes" "$GUARD_ERR"; then
-            echo -e "${RED}Error: request-validation bufferSize lower-bound guard returned unexpected error:${NC}" >&2
+        if ! grep -q "requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-body inspection haproxyBuffer.sizeBytes lower-bound guard returned unexpected error:${NC}" >&2
             cat "$GUARD_ERR" >&2
             rm -f "$GUARD_ERR"
             exit 1
         fi
         rm -f "$GUARD_ERR"
 
-        echo -e "${YELLOW}Request-validation Helm guard: bufferHeadroomBytes fits bufferSize...${NC}" >&2
+        echo -e "${YELLOW}Request-body inspection Helm guard: reservedBytes fits sizeBytes...${NC}" >&2
         GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
         if helm template "$CHART_DIR" \
             --namespace default \
             $HAPROXY_VERSION_ARG \
             --set controller.templateLibraries.hapticAnnotations.enabled=true \
-            --set controller.apiGateway.validation.enabled=true \
-            --set controller.apiGateway.validation.bufferSize=16384 \
-            --set controller.apiGateway.validation.bufferHeadroomBytes=16384 \
+            --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true \
+            --set controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes=16384 \
+            --set controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.reservedBytes=16384 \
             > /dev/null 2> "$GUARD_ERR"; then
-            echo -e "${RED}Error: request-validation bufferHeadroomBytes guard did not fail${NC}" >&2
+            echo -e "${RED}Error: request-validation reservedBytes guard did not fail${NC}" >&2
             rm -f "$GUARD_ERR"
             exit 1
         fi
-        if ! grep -q "bufferHeadroomBytes must be a positive integer smaller than controller.apiGateway.validation.bufferSize" "$GUARD_ERR"; then
-            echo -e "${RED}Error: request-validation bufferHeadroomBytes guard returned unexpected error:${NC}" >&2
+        if ! grep -q "haproxyBuffer.reservedBytes must be a positive integer smaller than requestBodyInspection.haproxyBuffer.sizeBytes" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation reservedBytes guard returned unexpected error:${NC}" >&2
             cat "$GUARD_ERR" >&2
             rm -f "$GUARD_ERR"
             exit 1
         fi
         rm -f "$GUARD_ERR"
 
-        echo -e "${YELLOW}Request-validation Helm guard: maxBodyBytes leaves buffer headroom...${NC}" >&2
+        echo -e "${YELLOW}Request-validation Helm guard: requestBody.defaultMaxBytes leaves reserved buffer capacity...${NC}" >&2
         GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
         if helm template "$CHART_DIR" \
             --namespace default \
             $HAPROXY_VERSION_ARG \
             --set controller.templateLibraries.hapticAnnotations.enabled=true \
-            --set controller.apiGateway.validation.enabled=true \
-            --set controller.apiGateway.validation.maxBodyBytes=9000 \
-            --set controller.apiGateway.validation.bufferSize=16384 \
+            --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true \
+            --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes=9000 \
+            --set controller.config.templatingSettings.extraContext.requestBodyInspection.haproxyBuffer.sizeBytes=16384 \
             > /dev/null 2> "$GUARD_ERR"; then
             echo -e "${RED}Error: request-validation buffer-headroom guard did not fail${NC}" >&2
             rm -f "$GUARD_ERR"
             exit 1
         fi
-        if ! grep -q "maxBodyBytes must not exceed controller.apiGateway.validation.bufferSize minus controller.apiGateway.validation.bufferHeadroomBytes" "$GUARD_ERR"; then
+        if ! grep -q "requestBody.defaultMaxBytes must not exceed requestBodyInspection.haproxyBuffer.sizeBytes minus requestBodyInspection.haproxyBuffer.reservedBytes" "$GUARD_ERR"; then
             echo -e "${RED}Error: request-validation buffer-headroom guard returned unexpected error:${NC}" >&2
             cat "$GUARD_ERR" >&2
             rm -f "$GUARD_ERR"
@@ -376,21 +402,21 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
         fi
         rm -f "$GUARD_ERR"
 
-        echo -e "${YELLOW}Request-validation Helm guard: bodyWaitTimeout duration...${NC}" >&2
+        echo -e "${YELLOW}Request-validation Helm guard: requestBody.waitTimeout duration...${NC}" >&2
         GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)
         if helm template "$CHART_DIR" \
             --namespace default \
             $HAPROXY_VERSION_ARG \
             --set controller.templateLibraries.hapticAnnotations.enabled=true \
-            --set controller.apiGateway.validation.enabled=true \
-            --set-string 'controller.apiGateway.validation.bodyWaitTimeout=100ms http-request deny' \
+            --set controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true \
+            --set-string 'controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.waitTimeout=100ms http-request deny' \
             > /dev/null 2> "$GUARD_ERR"; then
-            echo -e "${RED}Error: request-validation bodyWaitTimeout guard did not fail${NC}" >&2
+            echo -e "${RED}Error: request-validation requestBody.waitTimeout guard did not fail${NC}" >&2
             rm -f "$GUARD_ERR"
             exit 1
         fi
-        if ! grep -q "bodyWaitTimeout must be a positive HAProxy duration" "$GUARD_ERR"; then
-            echo -e "${RED}Error: request-validation bodyWaitTimeout guard returned unexpected error:${NC}" >&2
+        if ! grep -q "requestBody.waitTimeout must be a positive HAProxy duration" "$GUARD_ERR"; then
+            echo -e "${RED}Error: request-validation requestBody.waitTimeout guard returned unexpected error:${NC}" >&2
             cat "$GUARD_ERR" >&2
             rm -f "$GUARD_ERR"
             exit 1
@@ -398,6 +424,92 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
         rm -f "$GUARD_ERR"
     fi
 fi
+
+if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
+    run_helm_failure_guard \
+        "WAF policy Helm guard: reject unknown ConfigMap reference fields" \
+        'waf.policies.configMapRefs[0] contains unknown field "namespce". Valid fields: namespace, name, key.' \
+        --set-string 'controller.config.templatingSettings.extraContext.waf.policies.configMapRefs[0].name=policies' \
+        --set-string 'controller.config.templatingSettings.extraContext.waf.policies.configMapRefs[0].namespce=security'
+    run_helm_failure_guard \
+        "Reusable-WAF Helm guard: immutable policy requires a default" \
+        "waf.policies.defaultPolicy is required when waf.ingressPermissions.allowPolicySelection=false" \
+        --set controller.config.templatingSettings.extraContext.waf.ingressPermissions.allowPolicySelection=false \
+        --set controller.config.templatingSettings.extraContext.waf.policies.inline.baseline.enforcement=deny
+    run_helm_failure_guard \
+        "Shared rate-limit Helm guard: reject ambiguous legacy store ownership" \
+        'rateLimit.shared contains unknown field "store". Valid fields: enabled, managedStore, externalStore.' \
+        --set rateLimit.shared.store.enabled=false
+    run_helm_failure_guard \
+        "Shared rate-limit Helm guard: reject Redis CLI spelling in public values" \
+        "rateLimit.shared.managedStore.maxmemory and maxmemoryPolicy were renamed to maxMemory and maxMemoryPolicy" \
+        --set-string rateLimit.shared.managedStore.maxmemory=64mb
+    run_helm_failure_guard \
+        "Managed Valkey Helm guard: reject invalid image pull policy" \
+        "rateLimit.shared.managedStore.imagePullPolicy must be one of: Always, IfNotPresent, Never." \
+        --set-string rateLimit.shared.managedStore.imagePullPolicy=Sometimes
+    run_helm_failure_guard \
+        "SPOA Hub Helm guard: reject zero HAProxy processing margin" \
+        "spoaHub.haproxy.timeoutProcessingMarginMs must be between 1 and 60000 milliseconds." \
+        --set-string spoaHub.haproxy.timeoutProcessingMarginMs=0
+    run_helm_failure_guard \
+        "Controller Helm guard: reject CRD terminology for config object name" \
+        "controller.crdName was renamed to controller.configName" \
+        --set-string controller.crdName=legacy-config
+    run_helm_failure_guard \
+        "Controller Helm guard: reject duplicate debug listener owner" \
+        "controller.debugPort was removed; controller.ports.healthz is now the single source of truth" \
+        --set-string controller.debugPort=8081
+    run_helm_failure_guard \
+        "Controller Helm guard: reject no-op metrics CR field" \
+        "controller.config.controller.metricsPort was a no-op and has been removed" \
+        --set-string controller.config.controller.metricsPort=9191
+    run_helm_failure_guard \
+        "Controller Helm guard: reject duplicate Dataplane API port owner" \
+        "controller.config.dataplane.port was removed; haproxy.ports.dataplane is now the single source of truth" \
+        --set-string controller.config.dataplane.port=6666
+    run_helm_failure_guard \
+        "Controller Helm guard: reject chart-only routing field beside CR fields" \
+        "controller.config.routing moved to controller.config.templatingSettings.extraContext.routing" \
+        --set-string controller.config.routing.regexMatchOrder=last
+    run_helm_failure_guard \
+        "Controller Helm guard: reject ambiguous root workload values" \
+        "image moved to controller.image so every workload setting has an explicit component owner" \
+        --set-string image.repository=example.invalid/haptic
+    run_helm_failure_guard \
+        "Controller Helm guard: reject misplaced status-patch policy" \
+        "controller.statusPatches moved to controller.config.templatingSettings.extraContext.statusPatches" \
+        --set controller.statusPatches.enabled=false
+    run_helm_failure_guard \
+        "Controller Helm guard: reject broad legacy debug toggle" \
+        "extraContext.debug uses a removed flat value" \
+        --set controller.config.templatingSettings.extraContext.debug=true
+    run_helm_failure_guard \
+        "Controller Helm guard: reject direct metrics environment override" \
+        "controller.extraEnv must not override METRICS_PORT; use controller.ports.metrics" \
+        --set-string controller.extraEnv[0].name=METRICS_PORT \
+        --set-string controller.extraEnv[0].value=9191
+    run_helm_failure_guard \
+        "HAProxy Helm guard: reject duplicate Enterprise series owner" \
+        "haproxy.enterprise.version was removed; haproxyVersion now selects" \
+        --set-string haproxy.enterprise.version=3.2
+    # Enterprise enablement must fail only for series without a tested image
+    # pin (haproxyEnterprisePatchVersions maps them to ""). The effective
+    # series is the CI matrix's HAPROXY_VERSION or the chart default.
+    EFFECTIVE_HAPROXY_SERIES="${HAPROXY_VERSION:-$(yq '.haproxyVersion' "$CHART_DIR/values.yaml")}"
+    ENTERPRISE_PIN="$(yq ".haproxyEnterprisePatchVersions.\"${EFFECTIVE_HAPROXY_SERIES}\"" "$CHART_DIR/values.yaml")"
+    if [[ -z "$ENTERPRISE_PIN" || "$ENTERPRISE_PIN" == "null" ]]; then
+        run_helm_failure_guard \
+            "HAProxy Helm guard: reject unpinned Enterprise series" \
+            "haproxy.enterprise.enabled=true has no tested image pin for haproxyVersion \"${EFFECTIVE_HAPROXY_SERIES}\"" \
+            --set haproxy.enterprise.enabled=true
+    fi
+fi
+
+# The reusable-WAF validationTests are self-contained: each pins the exact
+# extraContext.waf values it needs (per-test extraContext deep-merges over the
+# global context at test run time), so they run in the main validation pass
+# above under the standard render — no per-profile helm renders are needed.
 
 # ---------------------------------------------------------------------------
 # Degraded Gateway API profiles (skipped when a single --test is requested or
@@ -417,7 +529,7 @@ fi
 # ---------------------------------------------------------------------------
 if [[ $FULL_RC -eq 0 && "$*" != *"--test"* && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]]; then
     STD_CONFIG=$(mktemp /tmp/haptic-std-config-XXXXXX.yaml)
-    trap 'rm -f "$TEMP_CONFIG" "$STD_CONFIG"' EXIT
+    trap 'rm -f "$TEMP_CONFIG" "${RATE_LIMIT_CONFIG:-}" "${REQUEST_VALIDATION_CONFIG:-}" "$STD_CONFIG"' EXIT
     helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \
         --set controller.templateLibraries.gateway.enabled=true \
         --set controller.templateLibraries.hapticAnnotations.enabled=true \

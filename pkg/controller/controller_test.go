@@ -24,6 +24,40 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+func TestListenerPortFromEnv(t *testing.T) {
+	const envName = "HAPTIC_TEST_LISTENER_PORT"
+
+	tests := []struct {
+		name          string
+		raw           string
+		defaultPort   int
+		allowDisabled bool
+		want          int
+		wantErr       string
+	}{
+		{name: "default", defaultPort: 9443, want: 9443},
+		{name: "override", raw: "19443", defaultPort: 9443, want: 19443},
+		{name: "disabled when allowed", raw: "0", defaultPort: 9090, allowDisabled: true, want: 0},
+		{name: "zero rejected", raw: "0", defaultPort: 9443, wantErr: "between 1 and 65535"},
+		{name: "negative rejected", raw: "-1", defaultPort: 9443, wantErr: "between 1 and 65535"},
+		{name: "overflow rejected", raw: "65536", defaultPort: 9443, wantErr: "between 1 and 65535"},
+		{name: "non-integer rejected", raw: "https", defaultPort: 9443, wantErr: "as a TCP port"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(envName, tt.raw)
+			got, err := listenerPortFromEnv(envName, tt.defaultPort, tt.allowDisabled)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestParseSecret(t *testing.T) {
 	tests := []struct {
 		name      string

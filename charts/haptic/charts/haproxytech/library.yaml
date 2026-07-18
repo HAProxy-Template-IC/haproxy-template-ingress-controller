@@ -398,8 +398,8 @@ templateSnippets:
       # haproxytech/global-top-haproxytech-ingress-auth
       userlist {{ userlistName }}
                 {% var secretData = secret.Data -%}
-                {%- var hashRegex = extraContext | dig_string("^.*$", "password_hash_validation_regex") %}
-                {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "password_hash_validation_error_message") %}
+                {%- var hashRegex = extraContext | dig_string("^.*$", "annotationCompatibility", "basicAuth", "passwordHashValidation", "regex") %}
+                {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "annotationCompatibility", "basicAuth", "passwordHashValidation", "errorMessage") %}
                 {%- for _, username := range keys(secretData) %}
                   {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
                   {%- if !regex_search(passwordHash, hashRegex) %}
@@ -1343,8 +1343,11 @@ validationTests:
   test-haproxytech-auth-password-hash-validation-reject:
     description: Password hash validation rejects non-matching hashes
     extraContext:
-      password_hash_validation_regex: "^\\$apr1\\$"
-      password_hash_validation_error_message: "Bcrypt hashes not allowed"
+      annotationCompatibility:
+        basicAuth:
+          passwordHashValidation:
+            regex: "^\\$apr1\\$"
+            errorMessage: "Bcrypt hashes not allowed"
     fixtures:
       secrets:
         - apiVersion: v1
@@ -1390,7 +1393,10 @@ validationTests:
   test-haproxytech-auth-password-hash-validation-allow:
     description: Password hash validation allows matching hashes
     extraContext:
-      password_hash_validation_regex: "^\\$2[ayb]\\$"
+      annotationCompatibility:
+        basicAuth:
+          passwordHashValidation:
+            regex: "^\\$2[ayb]\\$"
     fixtures:
       secrets:
         - apiVersion: v1

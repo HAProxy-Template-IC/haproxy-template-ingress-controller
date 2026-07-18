@@ -64,7 +64,7 @@ spec:
         {{- end }}
     {{- end }}
 
-    {{- if .Values.controller.cache.varnish.enabled }}
+    {{- if .Values.cache.varnish.enabled }}
     # Varnish cache misses loop back through the release's HAProxy HTTP
     # frontend. This explicit rule keeps that path working in restrictive mode;
     # the Varnish policy independently limits egress to the same destination.

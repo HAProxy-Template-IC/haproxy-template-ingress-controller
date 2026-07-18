@@ -1,4 +1,4 @@
-{{- $pr := .Values.monitoring.prometheusRule }}
+{{- $pr := .Values.controller.monitoring.prometheusRule }}
 {{- if $pr.enabled }}
 {{- $defaults := $pr.defaultRules }}
 apiVersion: monitoring.coreos.com/v1

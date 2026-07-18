@@ -1,0 +1,741 @@
+# HAPTIC-native reusable Coraza WAF policy tests.
+#
+# Every test is self-contained: it pins the exact extraContext.waf values its
+# fixtures and assertions depend on (per-test extraContext deep-merges into the
+# global context — map leaves win, list/scalar leaves replace — so a pinned
+# `configMapRefs: []` removes values-configured catalogs for that test while
+# sibling keys survive). The tests therefore run identically under any Helm
+# values. The only `_helm_skip_test` gates left are chart-render-time
+# infrastructure requirements that no per-test extraContext can satisfy:
+#   - the SPOA hub + coraza plugin must be in the bundle (the coraza maps and
+#     spoa-hub-config.toml only exist when the spoa-hub library is merged), and
+#   - the nginx-ingress / haproxy-ingress vendor library must be loaded when a
+#     fixture's vendor annotation is scanned by that library's snippets.
+validationTests:
+  test-haptic-waf-policy-cross-namespace-shared:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: exact cross-namespace catalog source is trusted; one policy compiles once and is shared by multiple Ingresses
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowEnforcementOverride: true
+        policies:
+          defaultPolicy: ""
+          requestBody:
+            defaultMaxBytes: 4096
+          configMapRefs:
+            - namespace: security
+              name: haptic-waf-policies
+              key: policies.yaml
+    fixtures:
+      configmaps:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: security, name: haptic-waf-policies }
+          data:
+            policies.yaml: |
+              streaming-search:
+                description: Metadata inspection with narrow search exclusions and no body buffering
+                requestBody:
+                  mode: none
+                enforcement: deny
+                excludedTargetsByTag:
+                  attack-sqli: ["ARGS:q"]
+                  attack-xss: ["ARGS:q"]
+        # An Ingress author may create a same-named ConfigMap in their own
+        # namespace, but it is not a configured source and must be ignored.
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: default, name: haptic-waf-policies }
+          data:
+            policies.yaml: |
+              streaming-search:
+                requestBody:
+                  mode: json
+                secLang: |
+                  SecRuleEngine Off
+                  # UNTRUSTED_INGRESS_NAMESPACE_POLICY
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: streaming-one
+            annotations:
+              haproxy-haptic.org/waf-policy: streaming-search
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: streaming-one.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: app, port: { number: 3000 } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: streaming-two
+            annotations:
+              haproxy-haptic.org/waf-policy: streaming-search
+              haproxy-haptic.org/waf-mode: detect
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: streaming-two.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: app, port: { number: 3000 } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-app.map", pattern: "default/streaming-one policy:streaming-search" }
+      - { type: contains, target: "map:coraza-app.map", pattern: "default/streaming-two policy:streaming-search" }
+      - { type: contains, target: "map:coraza-body.map", pattern: "default/streaming-one none any 4096" }
+      - { type: contains, target: "map:haproxy-ingress-waf.map", pattern: "default/streaming-two detect" }
+      - { type: match_count, target: "file:spoa-hub-config.toml", pattern: '\[plugins\.params\.applications\."policy:streaming-search"\]', expected: "1" }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: 'SecRuleUpdateTargetByTag "attack-sqli" "!ARGS:q"' }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: 'SecRuleUpdateTargetByTag "attack-xss" "!ARGS:q"' }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: "SecRequestBodyAccess Off" }
+      - { type: not_contains, target: "file:spoa-hub-config.toml", pattern: "UNTRUSTED_INGRESS_NAMESPACE_POLICY" }
+
+  test-haptic-waf-policy-buffered-contracts:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: policy authors opt into bounded complete body inspection and optional JSON media-type enforcement
+    extraContext:
+      requestBodyInspection:
+        haproxyBuffer:
+          sizeBytes: 16384
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          requestBody:
+            waitTimeout: "100ms"
+            defaultMaxBytes: 4096
+          inline:
+            form-body-inspection:
+              requestBody:
+                mode: any
+            json-api-inspection:
+              requestBody:
+                mode: json
+                maxBytes: 2048
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: web
+            annotations: { haproxy-haptic.org/waf-policy: form-body-inspection }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: web.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: web, port: { number: 80 } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: api
+            annotations: { haproxy-haptic.org/waf-policy: json-api-inspection }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: api, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-body.map", pattern: "default/web buffered any 4096" }
+      - { type: contains, target: "map:coraza-body.map", pattern: "default/api buffered json 2048" }
+      - { type: contains, target: haproxy.cfg, pattern: "tune.bufsize 16384" }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: '(?s)\[plugins\.params\.applications\."policy:form-body-inspection"\].*request_body_limit = 4096.*request_body_in_memory_limit = 4096' }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: '(?s)\[plugins\.params\.applications\."policy:json-api-inspection"\].*request_body_limit = 2048.*request_body_in_memory_limit = 2048' }
+      # Body-contract rejections skip detect (shadow) mode and never fire on a
+      # bodyless request; the 411 rejects only a chunked body with no length.
+      - { type: contains, target: haproxy.cfg, pattern: "return status 415 if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\} !\\{ var\\(txn.coraza_detect_only\\) -m bool \\} \\{ var\\(txn.coraza_content_policy\\) -m str json \\} \\{ req.hdr\\(Content-Length\\) -m found \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "return status 411 if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\} !\\{ var\\(txn.coraza_detect_only\\) -m bool \\} \\{ req.hdr\\(Transfer-Encoding\\) -m found \\} !\\{ req.hdr\\(Content-Length\\) -m found \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "wait-for-body time 100ms if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\}" }
+      - { type: contains, target: "file:spoe.conf", pattern: "body-mode=var\\(txn.coraza_body_mode\\) body-complete=var\\(txn.coraza_body_complete\\) detect-only=var\\(txn.coraza_detect_only\\)" }
+
+  test-haptic-waf-policy-seclang-shared:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: policy-authored SecLang compiles once and remains reusable across Ingresses
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            internal-app:
+              requestBody:
+                mode: json
+                maxBytes: 2048
+              secLang: |
+                SecRuleRemoveById 999999
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: custom-one, annotations: { haproxy-haptic.org/waf-policy: internal-app } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: custom-one.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: custom-two, annotations: { haproxy-haptic.org/waf-policy: internal-app } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: custom-two.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-body.map", pattern: "default/custom-one buffered json 2048" }
+      - { type: contains, target: "map:coraza-app.map", pattern: "default/custom-two policy:internal-app" }
+      - { type: match_count, target: "file:spoa-hub-config.toml", pattern: '\[plugins\.params\.applications\."policy:internal-app"\]', expected: "1" }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: "SecRuleRemoveById 999999" }
+
+  test-haptic-waf-policy-ingress-rule-order:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: admin-enabled Ingress SecLang has explicit before/after ordering while body-safety directives remain last
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowCustomRules: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            extensible:
+              requestBody:
+                mode: none
+              secLang: |
+                SecRuleRemoveById 999999
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: extended
+            annotations:
+              haproxy-haptic.org/waf-policy: extensible
+              haproxy-haptic.org/waf-rules-before: 'SecRule REQUEST_HEADERS:X-Before "@streq yes" "id:900001,phase:1,deny"'
+              haproxy-haptic.org/waf-rules: 'SecRule REQUEST_HEADERS:X-After "@streq yes" "id:900002,phase:1,deny"'
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: extended.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-app.map", pattern: "default/extended default/extended" }
+      - { type: contains, target: "file:spoa-hub-config.toml", pattern: '(?s)id:900001.*SecRuleRemoveById 999999.*id:900002.*SecRequestBodyAccess Off.*SecResponseBodyAccess Off' }
+
+  test-haptic-waf-policy-invalid-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: unknown exact policy name fails with the approved names
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            approved-policy: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: invalid-policy, annotations: { haproxy-haptic.org/waf-policy: typo-policy } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: invalid.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "Unknown WAF policy 'typo-policy'.*available policies: approved-policy.*exact and case-sensitive" }
+
+  test-haptic-waf-policy-body-limit-without-inspection-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: a body cap cannot silently do nothing under requestBody mode none
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            misleading-body-policy:
+              requestBody:
+                mode: none
+                maxBytes: 1024
+          configMapRefs: []
+    fixtures:
+      ingresses: []
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "sets requestBody.maxBytes while requestBody.mode is none.*mode to any or json" }
+
+  test-haptic-waf-policy-excluded-targets-must-be-list:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: a scalar excluded target is rejected instead of being silently coerced into a list
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            malformed-exclusions:
+              excludedTargetsByTag:
+                attack-sqli: ARGS:q
+          configMapRefs: []
+    fixtures:
+      ingresses: []
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "excludedTargetsByTag entry 'attack-sqli' must be a list" }
+
+  test-haptic-waf-policy-vendor-mixing-rejected:
+    # The mixing rejection is raised by the native haproxy-haptic.org scan
+    # itself (it inspects vendor WAF annotations on policy-governed Ingresses
+    # directly), so no vendor library is required. allowCustomRules is pinned
+    # true so a loaded nginx-ingress library accepts the snippet and the ONLY
+    # failure is the mixing rejection.
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: a vendor WAF annotation cannot replace the application selected by a HAPTIC policy
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowCustomRules: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            approved-policy: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mixed-waf
+            annotations:
+              haproxy-haptic.org/waf-policy: approved-policy
+              nginx.ingress.kubernetes.io/modsecurity-snippet: 'SecRuleEngine Off'
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mixed.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "Mixing annotation families is rejected.*cannot replace or weaken" }
+
+  test-haptic-waf-vendor-rule-size-limit:
+    # The byte-bound rejection is raised by nginx-ingress's
+    # util-nginx-ingress-coraza-scan, so that library must be loaded. No policy
+    # catalog is configured: the custom-rule bounds apply independently of
+    # policy governance.
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) (include "haptic.nginxIngress.disabled" .) }}true{{ end }}'
+    description: nginx compatibility SecLang obeys the custom-rule byte bound independently of policy governance
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowCustomRules: true
+        customRules:
+          limits:
+            maxBytesPerIngress: 256
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: oversized-nginx-rules
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: >-
+                SecRule REQUEST_HEADERS:X-One "@streq one" "id:910001,phase:1,deny"
+                SecRule REQUEST_HEADERS:X-Two "@streq two" "id:910002,phase:1,deny"
+                SecRule REQUEST_HEADERS:X-Three "@streq three" "id:910003,phase:1,deny"
+                SecRule REQUEST_HEADERS:X-Four "@streq four" "id:910004,phase:1,deny"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: oversized.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "modsecurity-snippet.*is [0-9]+ bytes.*limit is 256" }
+
+  test-haptic-waf-vendor-rule-app-limit:
+    # Requires nginx-ingress: the vendor-side private Coraza application must
+    # be registered by nginx-ingress's scan for the shared count to overflow
+    # when the native waf-rules Ingress claims the second slot.
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) (include "haptic.nginxIngress.disabled" .) }}true{{ end }}'
+    description: native and compatibility private Coraza applications share one bounded count
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowCustomRules: true
+        customRules:
+          limits:
+            maxIngresses: 1
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: nginx-private-rules
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: 'SecRule REQUEST_HEADERS:X-Nginx "@streq yes" "id:910011,phase:1,deny"'
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: nginx-private.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: haptic-private-rules
+            annotations:
+              haproxy-haptic.org/waf-policy: baseline
+              haproxy-haptic.org/waf-rules: 'SecRule REQUEST_HEADERS:X-Haptic "@streq yes" "id:910012,phase:1,deny"'
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: haptic-private.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "custom-rule Ingress limit 1" }
+
+  # Strict-baseline tests: each pins an immutable admin default policy and/or
+  # the specific ingressPermissions denial it asserts.
+  test-haptic-waf-strict-default-cannot-be-removed:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: an annotation-free Ingress still receives the immutable admin default policy
+    extraContext:
+      waf:
+        policies:
+          defaultPolicy: baseline
+          inline:
+            baseline:
+              enforcement: deny
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: no-annotation }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: baseline.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:haproxy-ingress-waf.map", pattern: "default/no-annotation deny" }
+      - { type: contains, target: "map:coraza-app.map", pattern: "default/no-annotation policy:baseline" }
+
+  test-haptic-waf-strict-policy-selection-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: Ingress owner cannot replace immutable default with another approved policy
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: false
+        policies:
+          defaultPolicy: baseline
+          inline:
+            baseline: {}
+            alternate: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: replace-policy, annotations: { haproxy-haptic.org/waf-policy: alternate } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: replace.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "disabled Ingress policy selection.*default policy 'baseline' applies automatically" }
+
+  test-haptic-waf-strict-haptic-rules-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: legacy HAPTIC waf-rules cannot bypass the global SecLang authorization boundary
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowCustomRules: false
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: inject-haptic
+            annotations: { haproxy-haptic.org/waf-rules: "SecRuleEngine Off" }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: inject.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "disabled Ingress-authored custom WAF rules.*allowCustomRules=false" }
+
+  test-haptic-waf-strict-nginx-rules-rejected:
+    # Requires nginx-ingress: the rejection is raised by that library's scan
+    # of nginx.ingress.kubernetes.io/modsecurity-snippet.
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) (include "haptic.nginxIngress.disabled" .) }}true{{ end }}'
+    description: nginx compatibility annotation cannot inject SecLang when HAPTIC admin disabled it
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowCustomRules: false
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: inject-nginx
+            annotations: { nginx.ingress.kubernetes.io/modsecurity-snippet: "SecRuleEngine Off" }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: nginx-inject.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "disabled Ingress-authored custom WAF rules.*allowCustomRules=false" }
+
+  test-haptic-waf-strict-mode-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: HAPTIC mode override cannot turn immutable deny baseline into detect mode
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowEnforcementOverride: false
+        policies:
+          defaultPolicy: baseline
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: detect-haptic, annotations: { haproxy-haptic.org/waf-mode: detect } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: detect.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "disabled Ingress enforcement overrides.*allowEnforcementOverride=false" }
+
+  test-haptic-waf-strict-vendor-mode-rejected:
+    # Requires haproxy-ingress: the rejection is raised by that library's
+    # haproxy-ingress.github.io/waf-mode map template.
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) (not .Values.controller.templateLibraries.haproxyIngress.enabled) }}true{{ end }}'
+    description: vendor detect mode cannot bypass immutable HAPTIC enforcement
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowEnforcementOverride: false
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: detect-vendor
+            annotations:
+              haproxy-ingress.github.io/waf: modsecurity
+              haproxy-ingress.github.io/waf-mode: detect
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: detect-vendor.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "disabled Ingress enforcement overrides.*allowEnforcementOverride=false" }
+
+  test-haptic-waf-strict-nginx-disable-rejected:
+    # Requires nginx-ingress: the rejection is raised by that library's scan
+    # of nginx.ingress.kubernetes.io/enable-modsecurity.
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) (include "haptic.nginxIngress.disabled" .) }}true{{ end }}'
+    description: nginx compatibility opt-out cannot disable immutable HAPTIC default policy
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowWafDisable: false
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: disable-nginx
+            annotations: { nginx.ingress.kubernetes.io/enable-modsecurity: "false" }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: disable.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "disables WAF.*disabled Ingress WAF opt-outs.*allowWafDisable=false" }
+
+  test-haptic-waf-strict-native-raw-config-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: native raw frontend injection cannot short-circuit an immutable WAF baseline
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowRawHAProxyConfig: false
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: native-raw-bypass
+            annotations:
+              haproxy-haptic.org/config-frontend: "http-request allow"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: native-raw.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "config-frontend.*allowRawHAProxyConfig=false.*bypass WAF enforcement" }
+
+  test-haptic-waf-strict-vendor-raw-config-rejected:
+    # The raw-annotation rejection is raised by the native scan (it checks the
+    # vendor config-* annotations directly), so no vendor library is required.
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: vendor raw defaults injection cannot affect an immutable WAF baseline
+    extraContext:
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+          allowRawHAProxyConfig: false
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: vendor-raw-bypass
+            annotations:
+              haproxy-ingress.github.io/config-defaults: "http-request allow"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: vendor-raw.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "config-defaults.*allowRawHAProxyConfig=false.*bypass WAF enforcement" }

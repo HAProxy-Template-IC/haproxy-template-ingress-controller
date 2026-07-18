@@ -27,10 +27,12 @@ templatingSettings:
     # hsts annotation still overrides the value for its hosts. HSTS only takes
     # effect over HTTPS — pair it with an HTTP→HTTPS redirect (the rendered config
     # emits a warning when HSTS is on but no redirect is configured).
-    hstsEnabled: false
-    hstsMaxAge: "31536000"          # one year
-    hstsIncludeSubdomains: false
-    hstsPreload: false
+    tls:
+      hsts:
+        enabled: false
+        maxAge: "31536000"          # one year
+        includeSubdomains: false
+        preload: false
 
 templateSnippets:
   # SSL bind options utility - used by both HTTPS frontend and SSL passthrough
@@ -220,13 +222,13 @@ templateSnippets:
         and, when no HTTP→HTTPS redirect is configured, a warning that HSTS is
         only effective over HTTPS).
       -#}
-      {%- var enabled bool = extraContext | dig("hstsEnabled") | fallback(false) -%}
+      {%- var enabled bool = extraContext | dig("tls", "hsts", "enabled") | fallback(false) -%}
       {%- if enabled -%}
-        {%- var maxAge = extraContext | dig("hstsMaxAge") | fallback("31536000") | tostring() -%}
+        {%- var maxAge = extraContext | dig("tls", "hsts", "maxAge") | fallback("31536000") | tostring() -%}
         {%- if regex_search(maxAge, "[[:cntrl:]]") -%}{{ fail("Invalid extraContext.hstsMaxAge '" + maxAge + "': must not contain control characters — config-injection guard.") }}{%- end -%}
         {%- var value = "max-age=" + maxAge -%}
-        {%- if extraContext | dig("hstsIncludeSubdomains") | fallback(false) -%}{%- value = value + "; includeSubDomains" -%}{%- end -%}
-        {%- if extraContext | dig("hstsPreload") | fallback(false) -%}{%- value = value + "; preload" -%}{%- end -%}
+        {%- if extraContext | dig("tls", "hsts", "includeSubdomains") | fallback(false) -%}{%- value = value + "; includeSubDomains" -%}{%- end -%}
+        {%- if extraContext | dig("tls", "hsts", "preload") | fallback(false) -%}{%- value = value + "; preload" -%}{%- end -%}
         {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
         {%- gf["hstsGlobalValue"] = value -%}
@@ -911,8 +913,8 @@ sslCertificates:
       {# Default SSL certificate for HTTPS frontend #}
       {# Loads certificate from TLS Secret (configurable via values.yaml) #}
       {# Secret name and namespace come from templatingSettings.extraContext #}
-      {%- var certNamespace = extraContext | dig("default_ssl_cert_namespace") | fallback("haptic") -%}
-      {%- var certName = extraContext | dig("default_ssl_cert_name") | fallback("default-ssl-cert") -%}
+      {%- var certNamespace = extraContext | dig("tls", "defaultCertificate", "namespace") | fallback("haptic") -%}
+      {%- var certName = extraContext | dig("tls", "defaultCertificate", "name") | fallback("default-ssl-cert") -%}
       {%- var secret = resources.secrets.GetSingle(certNamespace, certName) -%}
       {%- if secret == nil -%}
       {{ fail("TLS Secret not found: " + certNamespace + "/" + certName + ". Ensure the Secret exists and is watched.") }}
@@ -1019,11 +1021,13 @@ validationTests:
         pattern: "alpn h2,http/1.1"
 
   test-ssl-hsts-global-enabled:
-    description: extraContext.hstsEnabled emits a global Strict-Transport-Security header on TLS responses, plus a no-redirect warning
+    description: extraContext.tls.hsts.enabled emits a global Strict-Transport-Security header on TLS responses, plus a no-redirect warning
     extraContext:
-      hstsEnabled: true
-      hstsIncludeSubdomains: true
-      hstsPreload: true
+      tls:
+        hsts:
+          enabled: true
+          includeSubdomains: true
+          preload: true
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1058,7 +1062,7 @@ validationTests:
         pattern: "HSTS is enabled globally but no HTTP"
 
   test-ssl-hsts-global-disabled:
-    description: Without extraContext.hstsEnabled, no global HSTS header is emitted (default off)
+    description: Without extraContext.tls.hsts.enabled, no global HSTS header is emitted (default off)
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1199,8 +1203,10 @@ validationTests:
   test-ssl-certificate-custom-namespace:
     description: Default SSL certificate from a custom namespace (e.g. cert-manager) loads correctly
     extraContext:
-      default_ssl_cert_namespace: cert-manager
-      default_ssl_cert_name: cluster-cert
+      tls:
+        defaultCertificate:
+          namespace: cert-manager
+          name: cluster-cert
     fixtures:
       secrets:
         - apiVersion: v1

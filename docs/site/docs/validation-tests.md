@@ -9,7 +9,7 @@ Beyond running the controller (`haptic-controller run`), the controller binary p
 !!! note "Tests also run automatically before deployment"
     The same suite runs at two gates besides the CLI, so a config whose tests fail never reaches HAProxy:
 
-    - **Admission** — the validating webhook runs a `HAProxyTemplateConfig`'s `validationTests` on every CREATE and UPDATE and rejects the change if any test fails, so a failing config never lands in the cluster. The suite uses the same size-scaled budget as the load gate, capped by the time left after schema bootstrap and prospective rendering in `webhook.haproxyTemplateConfig.timeoutSeconds`. This webhook is `failurePolicy: Ignore`; if the suite still can't finish before that deadline, it admits with a warning and defers to the load gate below.
+    - **Admission** — the validating webhook runs a `HAProxyTemplateConfig`'s `validationTests` on every CREATE and UPDATE and rejects the change if any test fails, so a failing config never lands in the cluster. The suite uses the same size-scaled budget as the load gate, capped by the time left after schema bootstrap and prospective rendering in `controller.webhook.haproxyTemplateConfig.timeoutSeconds`. This webhook is `failurePolicy: Ignore`; if the suite still can't finish before that deadline, it admits with a warning and defers to the load gate below.
     - **Config load** — the controller re-runs the suite whenever it loads a config. A live update whose tests fail is refused and the last-good config keeps serving; at startup, a failing initial config crash-loops the pod rather than serving untested config.
 
     The `validate` CLI, the webhook, and the load gate run the identical suite through the same runner, so a passing local `validate` run predicts a clean admission and load.
@@ -150,7 +150,7 @@ Each test consists of:
 | **Assertions** | Checks on rendered output |
 | **HTTP fixtures** (`httpResources`) | Optional — mocked responses for `http.Fetch()` URLs (see [HTTP Fixtures](#http-fixtures)) |
 | **Min HAProxy version** (`minHAProxyVersion`) | Optional — skip the test unless the HAProxy version under test is at least this (for version-gated features) |
-| **Extra context** (`extraContext`) | Optional — per-test values merged into the render context, overriding the global `templatingSettings.extraContext` |
+| **Extra context** (`extraContext`) | Optional — per-test values deep-merged into the global `templatingSettings.extraContext`: nested maps merge key by key with per-test leaves winning, so overriding one key keeps its siblings. Pin every value your assertions depend on — a sibling you leave unset keeps its deployment-configured value |
 | **Current config** (`currentConfig`) | Optional — an existing `haproxy.cfg` the render treats as the current config, exercising slot-preservation / reload-vs-runtime logic |
 | **Requires** (`requires` / `requiresFields`) | Optional — strip the test when a watched resource or schema field is unavailable (see [Conditional Tests](#conditional-tests-requires-and-requiresfields)) |
 

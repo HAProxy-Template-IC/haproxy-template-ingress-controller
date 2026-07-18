@@ -28,9 +28,8 @@ Leader election is **enabled by default** when deploying with 2+ replicas via He
 
 ```yaml
 # values.yaml (chart defaults)
-replicaCount: 2  # Run 2 replicas for HA
-
 controller:
+  replicaCount: 2  # Run 2 replicas for HA
   config:
     controller:
       leaderElection:
@@ -50,9 +49,8 @@ For development or single-replica deployments:
 
 ```yaml
 # values.yaml
-replicaCount: 1
-
 controller:
+  replicaCount: 1
   config:
     controller:
       leaderElection:
@@ -97,7 +95,7 @@ Deploy with 2-3 replicas (default Helm configuration):
 
 ```bash
 helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.2.0-alpha.1 --set replicaCount=2
+  --version 0.2.0-alpha.1 --set controller.replicaCount=2
 ```
 
 ### Scaling
@@ -117,11 +115,12 @@ kubectl scale deployment haptic-controller -n haptic --replicas=2
 The chart ships an optional HorizontalPodAutoscaler:
 
 ```yaml
-autoscaling:
-  enabled: true
-  minReplicas: 2      # keep at least 2 for failover
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 80
+controller:
+  autoscaling:
+    enabled: true
+    minReplicas: 2      # keep at least 2 for failover
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
 ```
 
 Because the controller is leader-elected, autoscaling adds webhook-serving and warm-cache capacity (and faster failover) — **not** render/validate/deploy throughput. The reconciliation pipeline always runs on the single elected leader regardless of replica count, so CPU-based scaling driven by the leader's reconcile load adds standbys rather than parallel workers. To scale HAProxy data-plane throughput, scale HAProxy instead (`haproxy.keda` autoscaling or more HAProxy replicas).
@@ -210,7 +209,7 @@ Check these areas in order of likelihood:
 
 1. **Missing RBAC permissions:**
 
-    The controller's ServiceAccount name is the Helm release `fullname` (unless you overrode `serviceAccount.name`):
+    The controller's ServiceAccount name is the Helm release `fullname` (unless you overrode `controller.serviceAccount.name`):
 
     ```bash
     SA=$(kubectl get deployment haptic-controller -n haptic -o jsonpath='{.spec.template.spec.serviceAccountName}')
@@ -342,12 +341,13 @@ kubectl logs -n haptic <leader-pod> | grep -i "deployer starting\|deployment sch
 **Production:**
 
 - 2-3 replicas across multiple availability zones
-- A `PodDisruptionBudget` (`minAvailable: 1`) is created automatically once `replicaCount > 1` — no action needed. Tune or disable it via:
+- A `PodDisruptionBudget` (`minAvailable: 1`) is created automatically once `controller.replicaCount > 1` — no action needed. Tune or disable it via:
 
     ```yaml
-    podDisruptionBudget:
-      enabled: true
-      minAvailable: 1
+    controller:
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1
     ```
 
 ### Resource allocation
@@ -356,12 +356,13 @@ The leader does the heavy lifting (render + validate + deploy + status writes), 
 
 ```yaml
 # chart default — sized for the typical 50–200 Ingress range
-resources:
-  requests:
-    cpu: 100m
-    memory: 512Mi      # memory request = limit (pod stays Burstable — no CPU limit)
-  limits:
-    memory: 512Mi      # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
+controller:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi    # memory request = limit (pod stays Burstable — no CPU limit)
+    limits:
+      memory: 512Mi    # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
 ```
 
 For larger or smaller workloads see the sizing table in [Performance — Controller Resource Sizing](./performance.md#controller-resource-sizing). Don't shrink memory below what the watch-set needs (rule of thumb: ~1KB per Ingress + EndpointSlice churn) or the leader gets OOMKilled mid-deploy and the lease flaps.
@@ -371,20 +372,22 @@ For larger or smaller workloads see the sizing table in [Performance — Control
 Distribute replicas across nodes for better availability:
 
 ```yaml
-affinity:
-  podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        podAffinityTerm:
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: haptic
-          topologyKey: kubernetes.io/hostname
+controller:
+  podSpec:
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: haptic
+              topologyKey: kubernetes.io/hostname
 ```
 
 ### Monitoring and alerts
 
-The leader-election alerts (no leader, split-brain, frequent transitions) are part of the recommended alert set in [Monitoring — Alerting Rules](./monitoring.md#alerting-rules). The Helm chart ships them as a built-in `PrometheusRule` — enable it with `monitoring.prometheusRule.enabled`.
+The leader-election alerts (no leader, split-brain, frequent transitions) are part of the recommended alert set in [Monitoring — Alerting Rules](./monitoring.md#alerting-rules). The Helm chart ships them as a built-in `PrometheusRule` — enable it with `controller.monitoring.prometheusRule.enabled`.
 
 ## Migration from single-replica
 
@@ -395,8 +398,8 @@ To migrate an existing single-replica deployment to HA:
 2. **Update values.yaml:**
 
     ```yaml
-    replicaCount: 2
     controller:
+      replicaCount: 2
       config:
         controller:
           leaderElection:

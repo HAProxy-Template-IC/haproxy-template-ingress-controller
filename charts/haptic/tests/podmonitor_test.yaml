@@ -4,11 +4,11 @@ templates:
   - podmonitor.yaml
 set:
   # Default: PodMonitor enabled. Tests that need it off override per-case.
-  monitoring.podMonitor.enabled: true
+  controller.monitoring.podMonitor.enabled: true
 tests:
   - it: should not render when podMonitor is disabled
     set:
-      monitoring.podMonitor.enabled: false
+      controller.monitoring.podMonitor.enabled: false
     asserts:
       - hasDocuments:
           count: 0
@@ -39,7 +39,7 @@ tests:
 
   - it: should set custom scrape interval
     set:
-      monitoring.podMonitor.interval: 15s
+      controller.monitoring.podMonitor.interval: 15s
     asserts:
       - equal:
           path: spec.podMetricsEndpoints[0].interval
@@ -53,7 +53,7 @@ tests:
 
   - it: should set custom scrape timeout
     set:
-      monitoring.podMonitor.scrapeTimeout: 5s
+      controller.monitoring.podMonitor.scrapeTimeout: 5s
     asserts:
       - equal:
           path: spec.podMetricsEndpoints[0].scrapeTimeout
@@ -81,7 +81,7 @@ tests:
 
   - it: should include custom labels
     set:
-      monitoring.podMonitor.labels:
+      controller.monitoring.podMonitor.labels:
         prometheus: kube-prometheus
     asserts:
       - equal:
@@ -108,7 +108,7 @@ tests:
 
   - it: should include relabelings when specified
     set:
-      monitoring.podMonitor.relabelings:
+      controller.monitoring.podMonitor.relabelings:
         - sourceLabels: [__meta_kubernetes_pod_label_app]
           targetLabel: app
     asserts:
@@ -120,7 +120,7 @@ tests:
 
   - it: should include metricRelabelings when specified
     set:
-      monitoring.podMonitor.metricRelabelings:
+      controller.monitoring.podMonitor.metricRelabelings:
         - sourceLabels: [__name__]
           regex: "expensive_metric.*"
           action: drop

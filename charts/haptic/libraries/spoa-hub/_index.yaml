@@ -56,6 +56,14 @@ maps:
       # See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
       {{ render_glob "map-coraza-app-*" -}}
 
+  coraza-body.map:
+    template: |
+      # HAPTIC WAF body contract: <ns>/<name> →
+      # "none|buffered any|json max_body_bytes". The centrally authored policy
+      # decides whether this Ingress stays on the low-latency metadata path or
+      # waits for a bounded complete request body.
+      {{ render_glob "map-coraza-body-*" -}}
+
   haproxy-ingress-waf.map:
     template: |
       # Coraza WAF per-Ingress enforcement mode: <ns>/<name> → deny (block) | detect (shadow).
@@ -66,7 +74,7 @@ maps:
 
   coraza-disabled.map:
     template: |
-      # Coraza WAF per-path opt-out (only under coraza.dispatch.mode=default-on): an entry
+      # Coraza WAF per-path opt-out (only under waf.dispatch.mode=default-on): an entry
       # (keyed by host+path) excludes that path from the unconditional WAF SPOE dispatch.
       # Populated by nginx-ingress map-coraza-disabled-* (enable-modsecurity: "false");
       # empty under the default opt-in dispatch. See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/

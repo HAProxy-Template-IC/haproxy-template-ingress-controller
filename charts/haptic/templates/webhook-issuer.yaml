@@ -1,6 +1,6 @@
 {{- /* Webhook issuer is always in Release.Namespace since webhooks must be co-located with the controller */ -}}
-{{- $cm := .Values.webhook.certManager }}
-{{- if and .Values.webhook.enabled $cm.enabled $cm.createIssuer (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
+{{- $cm := .Values.controller.webhook.certManager }}
+{{- if and .Values.controller.webhook.enabled $cm.enabled $cm.createIssuer (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
