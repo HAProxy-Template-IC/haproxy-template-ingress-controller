@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ktypes "k8s.io/apimachinery/pkg/types"
 )
 
@@ -183,6 +184,58 @@ func TestCompositeStore_List_WithModifications(t *testing.T) {
 	resultCM, ok := resources[0].(*corev1.ConfigMap)
 	require.True(t, ok, "resource should be *corev1.ConfigMap (tests use typed objects)")
 	assert.Equal(t, "modified", resultCM.Data["key"])
+}
+
+// TestCompositeStore_List_MapBackedBaseModification pins the dry-run overlay
+// against map[string]any base items — the shape the watcher actually stores
+// (pkg/k8s/indexer converts to map before Add). If getResourceKey can't read
+// namespace/name from a map, isModified() never matches and List() returns
+// BOTH the base copy and the overlaid modification for the same object, which
+// under admission dry-run surfaced as a duplicate-resource render failure.
+func TestCompositeStore_List_MapBackedBaseModification(t *testing.T) {
+	original := map[string]any{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "Ingress",
+		"metadata":   map[string]any{"namespace": "default", "name": "ing1"},
+		"spec":       map[string]any{"rules": "original"},
+	}
+	modified := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "Ingress",
+		"metadata":   map[string]any{"namespace": "default", "name": "ing1"},
+		"spec":       map[string]any{"rules": "modified"},
+	}}
+
+	base := newMockStore()
+	_ = base.Add(original, []string{"default", "ing1"})
+
+	overlay := NewStoreOverlayForUpdate(modified)
+	composite := NewCompositeStore(base, overlay)
+
+	resources, err := composite.List()
+	require.NoError(t, err)
+	require.Len(t, resources, 1, "map-backed base copy must be replaced by the overlay, not returned alongside it")
+}
+
+// TestCompositeStore_List_MapBackedBaseDeletion pins the same getResourceKey
+// fallback for the deletion path: a deleted map-backed base item must be
+// filtered from List(), not leak through as an un-deleted copy.
+func TestCompositeStore_List_MapBackedBaseDeletion(t *testing.T) {
+	original := map[string]any{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "Ingress",
+		"metadata":   map[string]any{"namespace": "default", "name": "ing1"},
+	}
+
+	base := newMockStore()
+	_ = base.Add(original, []string{"default", "ing1"})
+
+	overlay := NewStoreOverlayForDelete("default", "ing1")
+	composite := NewCompositeStore(base, overlay)
+
+	resources, err := composite.List()
+	require.NoError(t, err)
+	require.Empty(t, resources, "map-backed base copy marked deleted must be filtered from List()")
 }
 
 func TestCompositeStore_Get_NoChanges(t *testing.T) {

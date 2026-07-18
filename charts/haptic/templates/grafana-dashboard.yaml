@@ -1,4 +1,4 @@
-{{- $gd := .Values.monitoring.grafanaDashboard }}
+{{- $gd := .Values.controller.monitoring.grafanaDashboard }}
 {{- if $gd.enabled }}
 apiVersion: v1
 kind: ConfigMap

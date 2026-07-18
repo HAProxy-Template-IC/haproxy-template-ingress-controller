@@ -1,10 +1,10 @@
-{{- if .Values.rbac.create }}
-{{- $cachePDB := .Values.controller.cache.varnish.podDisruptionBudget | default dict }}
+{{- if .Values.controller.rbac.create }}
+{{- $cachePDB := .Values.cache.varnish.podDisruptionBudget | default dict }}
 {{- $cachePDBEnabled := true }}
 {{- if hasKey $cachePDB "enabled" }}
   {{- $cachePDBEnabled = $cachePDB.enabled }}
 {{- end }}
-{{- $ratePDB := .Values.controller.rateLimit.store.podDisruptionBudget | default dict }}
+{{- $ratePDB := .Values.rateLimit.shared.managedStore.podDisruptionBudget | default dict }}
 {{- $ratePDBEnabled := true }}
 {{- if hasKey $ratePDB "enabled" }}
   {{- $ratePDBEnabled = $ratePDB.enabled }}
@@ -55,7 +55,7 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  {{- if .Values.controller.cache.varnish.enabled }}
+  {{- if .Values.cache.varnish.enabled }}
   # Shared-cache (Varnish) tier: the haptic-annotations library's k8sResources
   # emit a VCL ConfigMap into the controller's own namespace, applied via SSA by
   # the resource applier. SSA needs patch (with create for first apply); delete
@@ -64,22 +64,22 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   {{- end }}
-  {{- if or .Values.controller.cache.varnish.enabled (and .Values.controller.rateLimit.shared.enabled .Values.controller.rateLimit.store.enabled) }}
+  {{- if or .Values.cache.varnish.enabled (and .Values.rateLimit.shared.enabled .Values.rateLimit.shared.managedStore.enabled) }}
   # Template-owned auxiliary workloads: Varnish emits a StatefulSet or
   # Deployment, and shared rate limiting emits a Valkey StatefulSet.
   - apiGroups: ["apps"]
     resources: ["statefulsets", "deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   {{- end }}
-  {{- if or (and .Values.controller.cache.varnish.enabled $cachePDBEnabled) (and .Values.controller.rateLimit.shared.enabled .Values.controller.rateLimit.store.enabled $ratePDBEnabled) }}
+  {{- if or (and .Values.cache.varnish.enabled $cachePDBEnabled) (and .Values.rateLimit.shared.enabled .Values.rateLimit.shared.managedStore.enabled $ratePDBEnabled) }}
   # Template-owned auxiliary workloads can emit PodDisruptionBudgets alongside
   # their Varnish or Sentinel-managed Valkey workloads.
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   {{- end }}
-  {{- if .Values.controller.cache.varnish.enabled }}
-  {{- if .Values.controller.cache.varnish.autoscaling.enabled }}
+  {{- if .Values.cache.varnish.enabled }}
+  {{- if .Values.cache.varnish.autoscaling.enabled }}
   # The cache tier's HPA is applied via SSA when autoscaling is enabled.
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]

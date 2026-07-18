@@ -2,15 +2,16 @@
 Webhook TLS certificate helpers.
 
 The chart supports three mutually exclusive ways to provision the webhook
-serving certificate (see values.yaml `webhook`):
+serving certificate (see values.yaml `controller.webhook`):
 
-  1. cert-manager        — webhook.certManager.enabled=true (opt-in; recommended
+  1. cert-manager        — controller.webhook.certManager.enabled=true (opt-in; recommended
                            for production: real CA chains + automatic rotation).
-  2. chart self-signed   — webhook.certManager.enabled=false AND no
-                           webhook.caBundle (the DEFAULT): the chart generates a
+  2. chart self-signed   — controller.webhook.certManager.enabled=false AND no
+                           controller.webhook.caBundle (the DEFAULT): the chart generates a
                            long-lived self-signed serving cert so the webhook
                            works out of the box with no external dependency.
-  3. manual              — webhook.certManager.enabled=false AND webhook.caBundle
+  3. manual              — controller.webhook.certManager.enabled=false AND
+                           controller.webhook.caBundle
                            set: the operator manages the cert Secret + caBundle.
 */}}
 
@@ -19,7 +20,7 @@ haptic.webhook.selfSigned returns "true" when the chart should generate the
 self-signed webhook certificate itself (mode 2 above), empty otherwise.
 */}}
 {{- define "haptic.webhook.selfSigned" -}}
-{{- if and .Values.webhook.enabled (not .Values.webhook.certManager.enabled) (not .Values.webhook.caBundle) -}}
+{{- if and .Values.controller.webhook.enabled (not .Values.controller.webhook.certManager.enabled) (not .Values.controller.webhook.caBundle) -}}
 true
 {{- end -}}
 {{- end -}}
@@ -54,7 +55,7 @@ injected caBundle would not match).
         "key" (index $existing.data "tls.key" | b64dec)
         "ca"  ($ca | b64dec) -}}
   {{- else -}}
-    {{- $days := (.Values.webhook.selfSigned | default dict).certValidityDays | default 3650 | int -}}
+    {{- $days := (.Values.controller.webhook.selfSigned | default dict).certValidityDays | default 3650 | int -}}
     {{- $cert := genSelfSignedCert (printf "%s.%s.svc" $svc $ns) nil $altNames $days -}}
     {{- $result = dict "crt" $cert.Cert "key" $cert.Key "ca" $cert.Cert -}}
   {{- end -}}
@@ -66,13 +67,14 @@ injected caBundle would not match).
 {{/*
 haptic.webhook.caBundle returns the base64-encoded CA bundle to inject into the
 ValidatingWebhookConfiguration's clientConfig, for the non-cert-manager modes:
-the generated self-signed cert (mode 2) or the operator-provided webhook.caBundle
+the generated self-signed cert (mode 2) or the operator-provided
+controller.webhook.caBundle
 (mode 3, required). cert-manager (mode 1) injects via annotation, not this value.
 */}}
 {{- define "haptic.webhook.caBundle" -}}
 {{- if include "haptic.webhook.selfSigned" . -}}
 {{- (include "haptic.webhook.selfSignedCert" . | fromYaml).ca | b64enc -}}
 {{- else -}}
-{{- required "webhook.caBundle is required when webhook.certManager.enabled is false and no chart self-signed cert is generated" .Values.webhook.caBundle -}}
+{{- required "controller.webhook.caBundle is required when controller.webhook.certManager.enabled is false and no chart self-signed cert is generated" .Values.controller.webhook.caBundle -}}
 {{- end -}}
 {{- end -}}

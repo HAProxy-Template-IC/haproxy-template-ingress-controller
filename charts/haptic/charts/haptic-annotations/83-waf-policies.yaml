@@ -1,0 +1,611 @@
+# HAPTIC-native Coraza WAF policies (haproxy-haptic.org/*).
+#
+# Ingress owners select one exact policy name:
+#
+#   haproxy-haptic.org/waf-policy: public-web
+#
+# HAPTIC administrators and WAF policy authors own the policy catalog under
+# extraContext.waf.policies.inline and/or trusted cross-namespace ConfigMaps.
+# There are deliberately no route-selectable built-in policies: body inspection,
+# enforcement, exclusions, and permitted Ingress overrides are security policy.
+#
+# Advanced route-local SecLang is retained when the HAPTIC administrator allows
+# it globally. The effective per-Ingress application order is:
+#
+#   chart-wide Coraza/CRS directives
+#   -> waf-rules-before
+#   -> named-policy directives/exclusions
+#   -> waf-rules (append; existing annotation)
+#   -> HAPTIC body-safety directives
+#
+# The final safety directives are not overridable by Ingress annotations.
+templateSnippets:
+  # Central scan/validation pass. Its name sorts after the nginx-ingress vendor
+  # scan in spoa-hub's util-*-coraza-scan glob, so it preserves vendor apps and
+  # appends HAPTIC apps instead of clobbering them.
+  util-waf-haptic-coraza-scan:
+    template: |-
+      {%- import "util-waf-governance" for WafGovernance -%}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("sphCorazaScanHaptic", func() any {
+          var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} })
+          var gf = shared.Get("globalFeatures").(map[string]any)
+
+          var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice()
+          var corazaEnabled = false
+          for _, p := range plugins {
+            if p.(map[string]any)["name"].(string) == "coraza" {
+              corazaEnabled = true
+            }
+          }
+          var wafAny = extraContext | dig("waf")
+          if wafAny == nil { wafAny = map[string]any{} }
+          var waf, wafOK = wafAny.(map[string]any)
+          if !wafOK { fail("extraContext.waf must be a map.") }
+          var allowedWafSettings = map[string]bool{
+            "dispatch": true, "ingressPermissions": true,
+            "customRules": true, "policies": true,
+          }
+          for _, field := range keys(waf) {
+            if !allowedWafSettings[field] {
+              fail("extraContext.waf contains unknown field '" + field + "'.")
+            }
+          }
+          var boundedInteger = func(input any, defaultValue int, field string, minimum int, maximum int) int {
+            if input == nil { return defaultValue }
+            var text = tostring(input)
+            if !regex_search(text, "^[0-9]+$") {
+              fail(field + " must be an integer between " + tostring(minimum) + " and " + tostring(maximum) + ".")
+            }
+            var value = toint(text)
+            if value < minimum || value > maximum {
+              fail(field + " must be between " + tostring(minimum) + " and " + tostring(maximum) + ".")
+            }
+            return value
+          }
+          var dispatchAny = waf | dig("dispatch")
+          if dispatchAny == nil { dispatchAny = map[string]any{} }
+          var dispatch, dispatchOK = dispatchAny.(map[string]any)
+          if !dispatchOK { fail("extraContext.waf.dispatch must be a map.") }
+          for _, field := range keys(dispatch) {
+            if field != "mode" && field != "defaultEnforcement" {
+              fail("extraContext.waf.dispatch contains unknown field '" + field + "'.")
+            }
+          }
+          var dispatchMode = "opt-in"
+          if dispatch["mode"] != nil {
+            var dispatchModeOK = false
+            dispatchMode, dispatchModeOK = dispatch["mode"].(string)
+            if !dispatchModeOK { fail("extraContext.waf.dispatch.mode must be a string.") }
+          }
+          if dispatchMode != "opt-in" && dispatchMode != "default-on" {
+            fail("extraContext.waf.dispatch.mode must be one of: opt-in, default-on.")
+          }
+          var policiesAny = waf | dig("policies")
+          if policiesAny == nil { policiesAny = map[string]any{} }
+          var policies, policiesOK = policiesAny.(map[string]any)
+          if !policiesOK { fail("extraContext.waf.policies must be a map.") }
+          var allowedPolicySettings = map[string]bool{
+            "defaultPolicy": true, "requestBody": true,
+            "limits": true, "inline": true, "configMapRefs": true,
+          }
+          for _, field := range keys(policies) {
+            if !allowedPolicySettings[field] {
+              fail("extraContext.waf.policies contains unknown field '" + field + "'.")
+            }
+          }
+          var policyRequestBodyAny = policies | dig("requestBody")
+          if policyRequestBodyAny == nil { policyRequestBodyAny = map[string]any{} }
+          var policyRequestBody, policyRequestBodyOK = policyRequestBodyAny.(map[string]any)
+          if !policyRequestBodyOK { fail("extraContext.waf.policies.requestBody must be a map.") }
+          for _, field := range keys(policyRequestBody) {
+            if field != "waitTimeout" && field != "defaultMaxBytes" && field != "maxBytes" {
+              fail("extraContext.waf.policies.requestBody contains unknown field '" + field + "'.")
+            }
+          }
+          var defaultMaxBodyBytesN = boundedInteger(policyRequestBody["defaultMaxBytes"], 8192, "extraContext.waf.policies.requestBody.defaultMaxBytes", 1, 1048576)
+          var maxBodyBytesN = boundedInteger(policyRequestBody["maxBytes"], 8192, "extraContext.waf.policies.requestBody.maxBytes", 1, 1048576)
+          var defaultMaxBodyBytes = tostring(defaultMaxBodyBytesN)
+          var maxBodyBytes = tostring(maxBodyBytesN)
+          if defaultMaxBodyBytesN > maxBodyBytesN {
+            fail("extraContext.waf.policies.requestBody.defaultMaxBytes must not exceed maxBytes.")
+          }
+          var requestBufferSize = boundedInteger(extraContext | dig("requestBodyInspection", "haproxyBuffer", "sizeBytes"), 16384, "extraContext.requestBodyInspection.haproxyBuffer.sizeBytes", 16384, 2097152)
+          var requestBufferReserved = boundedInteger(extraContext | dig("requestBodyInspection", "haproxyBuffer", "reservedBytes"), 8192, "extraContext.requestBodyInspection.haproxyBuffer.reservedBytes", 1, 2097151)
+          if requestBufferReserved >= requestBufferSize {
+            fail("extraContext.requestBodyInspection.haproxyBuffer.reservedBytes must be positive and smaller than sizeBytes.")
+          }
+          if maxBodyBytesN > requestBufferSize-requestBufferReserved {
+            fail("extraContext.waf.policies.requestBody.maxBytes exceeds the shared HAProxy request-body capacity.")
+          }
+          var configuredDefaultPolicy = ""
+          if policies["defaultPolicy"] != nil {
+            var defaultPolicyOK = false
+            configuredDefaultPolicy, defaultPolicyOK = policies["defaultPolicy"].(string)
+            if !defaultPolicyOK { fail("extraContext.waf.policies.defaultPolicy must be a string.") }
+          }
+          var inlinePoliciesAny = policies | dig("inline")
+          if inlinePoliciesAny == nil { inlinePoliciesAny = map[string]any{} }
+          var inlinePolicies, inlinePoliciesOK = inlinePoliciesAny.(map[string]any)
+          if !inlinePoliciesOK { fail("extraContext.waf.policies.inline must be a map of policy names to policy documents.") }
+          var policyConfigMapRefsAny = policies | dig("configMapRefs")
+          if policyConfigMapRefsAny == nil { policyConfigMapRefsAny = []any{} }
+          var policyConfigMapRefs, policyConfigMapRefsOK = policyConfigMapRefsAny.([]any)
+          if !policyConfigMapRefsOK { fail("extraContext.waf.policies.configMapRefs must be a list of maps with namespace, name, and key fields.") }
+          var policyCatalogConfigured = len(inlinePolicies) > 0 || len(policyConfigMapRefs) > 0 || configuredDefaultPolicy != ""
+          var defaultPolicy = configuredDefaultPolicy
+          // Governance and Ingress-permission resolution — including
+          // ingressPermissions field validation and the defaultPolicy-
+          // required-when-selection-disabled invariant — is shared with the
+          // nginx-ingress and haproxy-ingress compat shims via the
+          // util-waf-governance macro, so the compat surfaces cannot drift
+          // from this policy engine.
+          var gov = map[string]any{}
+          var _ = WafGovernance(gov)
+          var governanceEnabled = gov["governanceEnabled"].(bool)
+          var allowPolicySelection = gov["allowPolicySelection"].(bool)
+          var allowEnforcementOverride = gov["allowEnforcementOverride"].(bool)
+          var allowCustomRules = gov["allowCustomRules"].(bool)
+          var allowRawHAProxyConfig = gov["allowRawHAProxyConfig"].(bool)
+          var limitsAny = policies | dig("limits")
+          if limitsAny == nil { limitsAny = map[string]any{} }
+          var limits, limitsOK = limitsAny.(map[string]any)
+          if !limitsOK { fail("extraContext.waf.policies.limits must be a map.") }
+          var maxPolicies = boundedInteger(limits["maxCount"], 16, "extraContext.waf.policies.limits.maxCount", 1, 1024)
+          var maxPolicySecLangBytes = boundedInteger(limits["maxSecLangBytes"], 65536, "extraContext.waf.policies.limits.maxSecLangBytes", 1, 1048576)
+          var maxPolicyExcludedTargets = boundedInteger(limits["maxExcludedTargets"], 256, "extraContext.waf.policies.limits.maxExcludedTargets", 1, 4096)
+          var maxCustomRuleIngresses = gov["maxCustomRuleIngresses"].(int)
+          var maxCustomRuleBytesPerIngress = gov["maxCustomRuleBytesPerIngress"].(int)
+
+          // Body-safety directives are always emitted last. Route-local or
+          // policy SecLang cannot request bytes HAProxy did not send or enable
+          // response-body buffering on this request-only integration.
+          var noBodySafety = "SecRequestBodyAccess Off\nSecResponseBodyAccess Off\n"
+          var bufferedBodySafety = "SecRequestBodyAccess On\nSecRequestBodyLimitAction Reject\nSecResponseBodyAccess Off\n"
+
+          var policyConfiguration = map[string]string{}
+          var policySafety = map[string]string{}
+          var policyBodyMode = map[string]string{}
+          var policyContentMode = map[string]string{}
+          var policyMaxBody = map[string]string{}
+          var policyEnforcement = map[string]string{}
+          var policySource = map[string]string{}
+          if policyCatalogConfigured {
+            var allowedPolicyFields = map[string]bool{
+              "description": true,
+              "requestBody": true,
+              "enforcement": true,
+              "excludedTargetsByTag": true,
+              "secLang": true,
+            }
+
+            // Normalize chart-value and ConfigMap policies through one strict
+            // path. Sources are trusted by the HAPTIC admin, but malformed or
+            // unbounded input still fails before it can destabilize Coraza.
+            var registerPolicy = func(policyName string, rawPolicy any, source string) any {
+            if !regex_search(policyName, "^[a-z0-9][a-z0-9._-]{0,62}$") {
+              fail("WAF policy name '" + policyName + "' from " + source + " must contain 1-63 lowercase letters, digits, dots, underscores, or hyphens and start with a letter or digit.")
+            }
+            if policySource[policyName] != "" {
+              fail("Duplicate WAF policy '" + policyName + "' from " + source + "; it is already defined by " + policySource[policyName] + ". Policy names must be unique across chart values and ConfigMaps.")
+            }
+            var policy, policyOK = rawPolicy.(map[string]any)
+            if !policyOK {
+              fail("WAF policy '" + policyName + "' from " + source + " must be a YAML map.")
+            }
+            for _, field := range keys(policy) {
+              if !allowedPolicyFields[field] {
+                fail("WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, excludedTargetsByTag, requestBody, secLang.")
+              }
+            }
+
+            var description = ""
+            if policy["description"] != nil {
+              var descriptionOK = false
+              description, descriptionOK = policy["description"].(string)
+              if !descriptionOK {
+                fail("WAF policy '" + policyName + "' from " + source + " field description must be a string.")
+              }
+            }
+            if len(description) > 512 {
+              fail("WAF policy '" + policyName + "' from " + source + " has a description longer than 512 bytes.")
+            }
+
+            var requestBodyAny = policy | dig("requestBody") | fallback(map[string]any{})
+            var requestBody, requestBodyOK = requestBodyAny.(map[string]any)
+            if !requestBodyOK {
+              fail("WAF policy '" + policyName + "' from " + source + " field requestBody must be a map with mode and optional maxBytes fields.")
+            }
+            for _, field := range keys(requestBody) {
+              if field != "mode" && field != "maxBytes" {
+                fail("WAF policy '" + policyName + "' from " + source + " requestBody contains unknown field '" + field + "'. Valid fields: mode, maxBytes.")
+              }
+            }
+            var requestBodyMode = "none"
+            if requestBody["mode"] != nil {
+              requestBodyMode = requestBody["mode"] | tostring()
+            }
+            if requestBodyMode != "none" && requestBodyMode != "any" && requestBodyMode != "json" {
+              fail("WAF policy '" + policyName + "' from " + source + " has invalid requestBody.mode '" + requestBodyMode + "'. Valid values: none, any, json.")
+            }
+            if requestBodyMode == "none" && requestBody["maxBytes"] != nil {
+              fail("WAF policy '" + policyName + "' from " + source + " sets requestBody.maxBytes while requestBody.mode is none. Set mode to any or json to inspect a bounded body, or remove maxBytes.")
+            }
+            var bodyMode = "none"
+            var contentMode = "any"
+            var bodySafety = noBodySafety
+            if requestBodyMode == "any" || requestBodyMode == "json" {
+              bodyMode = "buffered"
+              bodySafety = bufferedBodySafety
+            }
+            if requestBodyMode == "json" {
+              contentMode = "json"
+            }
+
+            var enforcement = "deny"
+            if policy["enforcement"] != nil {
+              enforcement = policy["enforcement"] | tostring()
+            }
+            if enforcement != "deny" && enforcement != "detect" {
+              fail("WAF policy '" + policyName + "' from " + source + " has invalid enforcement '" + enforcement + "'. Valid values: deny, detect.")
+            }
+
+            var policyBodyBytes = defaultMaxBodyBytes
+            if requestBody["maxBytes"] != nil {
+              policyBodyBytes = requestBody["maxBytes"] | tostring()
+            }
+            if !regex_search(policyBodyBytes, "^[0-9]+$") {
+              fail("WAF policy '" + policyName + "' from " + source + " field requestBody.maxBytes must be an integer.")
+            }
+            var policyBodyInt = toint(policyBodyBytes)
+            if policyBodyInt < 1 || policyBodyInt > maxBodyBytesN {
+              fail("WAF policy '" + policyName + "' from " + source + " has requestBody.maxBytes '" + policyBodyBytes + "'; it must be between 1 and the configured policy maximum " + maxBodyBytes + ".")
+            }
+
+            var secLang = ""
+            if policy["secLang"] != nil {
+              var secLangOK = false
+              secLang, secLangOK = policy["secLang"].(string)
+              if !secLangOK {
+                fail("WAF policy '" + policyName + "' from " + source + " field secLang must be a string.")
+              }
+            }
+            if strings_contains(secLang, "\"\"\"") {
+              fail("WAF policy '" + policyName + "' from " + source + " contains a TOML triple-quote delimiter in secLang; remove that sequence.")
+            }
+            if len(secLang) > maxPolicySecLangBytes {
+              fail("WAF policy '" + policyName + "' from " + source + " secLang is " + tostring(len(secLang)) + " bytes; the configured limit is " + tostring(maxPolicySecLangBytes) + ".")
+            }
+
+            var generatedExclusions = ""
+            var exclusionCount = 0
+            var exclusionsAny = policy | dig("excludedTargetsByTag") | fallback(map[string]any{})
+            var exclusions, exclusionsOK = exclusionsAny.(map[string]any)
+            if !exclusionsOK {
+              fail("WAF policy '" + policyName + "' from " + source + " field excludedTargetsByTag must be a map of rule tags to exact Coraza variables.")
+            }
+            for tag, rawTargets := range exclusions {
+              if !regex_search(tag, "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$") {
+                fail("WAF policy '" + policyName + "' from " + source + " has invalid excludedTargetsByTag tag '" + tag + "'.")
+              }
+              var targets, targetsOK = rawTargets.([]any)
+              if !targetsOK {
+                fail("WAF policy '" + policyName + "' from " + source + " excludedTargetsByTag entry '" + tag + "' must be a list of exact Coraza variables.")
+              }
+              if len(targets) == 0 {
+                fail("WAF policy '" + policyName + "' from " + source + " has no targets for tag '" + tag + "'.")
+              }
+              for _, rawTarget := range targets {
+                exclusionCount++
+                if exclusionCount > maxPolicyExcludedTargets {
+                  fail("WAF policy '" + policyName + "' from " + source + " exceeds the configured excluded-target limit " + tostring(maxPolicyExcludedTargets) + ".")
+                }
+                var target = rawTarget | tostring()
+                if !regex_search(target, "^[A-Z][A-Z0-9_]*(:[A-Za-z0-9_.-]+)?$") {
+                  fail("WAF policy '" + policyName + "' from " + source + " target '" + target + "' must be an exact Coraza variable such as ARGS:q.")
+                }
+                generatedExclusions += "SecRuleUpdateTargetByTag \"" + tag + "\" \"!" + target + "\"\n"
+              }
+            }
+
+            policyConfiguration[policyName] = generatedExclusions + secLang + "\n"
+            policySafety[policyName] = bodySafety
+            policyBodyMode[policyName] = bodyMode
+            policyContentMode[policyName] = contentMode
+            policyMaxBody[policyName] = policyBodyBytes
+            policyEnforcement[policyName] = enforcement
+            policySource[policyName] = source
+            if len(policySource) > maxPolicies {
+              fail("WAF policy catalogs define more than the configured limit " + tostring(maxPolicies) + ".")
+            }
+            return true
+          }
+
+          for policyName, rawPolicy := range inlinePolicies {
+            registerPolicy(policyName, rawPolicy, "extraContext.waf.policies.inline." + policyName)
+          }
+
+          for _, rawSource := range policyConfigMapRefs {
+            var policyConfigMap, sourceOK = rawSource.(map[string]any)
+            if !sourceOK {
+              fail("extraContext.waf.policies.configMapRefs entries must be maps with namespace, name, and key fields.")
+            }
+            for _, field := range keys(policyConfigMap) {
+              if field != "namespace" && field != "name" && field != "key" {
+                fail("extraContext.waf.policies.configMapRefs entry contains unknown field '" + field + "'. Valid fields: namespace, name, key.")
+              }
+            }
+            for _, field := range []string{"namespace", "name", "key"} {
+              if policyConfigMap[field] != nil {
+                var _, fieldOK = policyConfigMap[field].(string)
+                if !fieldOK { fail("extraContext.waf.policies.configMapRefs field '" + field + "' must be a string.") }
+              }
+            }
+            var sourceNamespace = extraContext | dig("controllerNamespace") | fallback("") | tostring()
+            if policyConfigMap["namespace"] != nil { sourceNamespace = policyConfigMap["namespace"].(string) }
+            var sourceName = ""
+            if policyConfigMap["name"] != nil { sourceName = policyConfigMap["name"].(string) }
+            var sourceKey = "policies.yaml"
+            if policyConfigMap["key"] != nil { sourceKey = policyConfigMap["key"].(string) }
+            if sourceNamespace == "" || sourceName == "" {
+              fail("extraContext.waf.policies.configMapRefs entries require a namespace and name (namespace defaults to the chart release namespace).")
+            }
+            if !regex_search(sourceNamespace, "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$") {
+              fail("extraContext.waf.policies.configMapRefs namespace '" + sourceNamespace + "' is not a valid Kubernetes namespace.")
+            }
+            if !regex_search(sourceName, "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$") {
+              fail("extraContext.waf.policies.configMapRefs name '" + sourceName + "' is not a valid ConfigMap name.")
+            }
+            if !regex_search(sourceKey, "^[-._A-Za-z0-9]+$") {
+              fail("extraContext.waf.policies.configMapRefs key '" + sourceKey + "' is not a valid ConfigMap data key.")
+            }
+            var sourceID = "ConfigMap " + sourceNamespace + "/" + sourceName + " key " + sourceKey
+            var cm = resources.configmaps.GetSingle(sourceNamespace, sourceName)
+            if cm == nil {
+              fail("WAF policy " + sourceID + " was not found.")
+            }
+            var policyYAML = cm.Data[sourceKey]
+            if strip(policyYAML) == "" {
+              fail("WAF policy " + sourceID + " is empty or missing.")
+            }
+            var parsedPolicies = map[string]any{}
+            var parseError = unmarshalYAML(policyYAML, &parsedPolicies)
+            if parseError != nil {
+              fail("WAF policy " + sourceID + " is invalid YAML: " + parseError.Error())
+            }
+            for policyName, rawPolicy := range parsedPolicies {
+              registerPolicy(policyName, rawPolicy, sourceID)
+            }
+          }
+            if defaultPolicy != "" && policyConfiguration[defaultPolicy] == "" {
+              var available = keys(policySource)
+              var availableText = "no policies are configured"
+              if len(available) > 0 {
+                availableText = "available policies: " + join(available, ", ")
+              }
+              fail("extraContext.waf.policies.defaultPolicy references unknown policy '" + defaultPolicy + "'; " + availableText + ".")
+            }
+          }
+
+          // Preserve apps produced by vendor compatibility libraries. New app
+          // entries use appName directly; legacy entries derive ns/name.
+          var appsByName = map[string]any{}
+          for _, existing := range (gf | dig("sphCorazaApps") | fallback([]any{}) | toSlice()) {
+            var e = existing.(map[string]any)
+            var appName = ""
+            if e["appName"] != nil {
+              appName = e["appName"].(string)
+            } else {
+              appName = e["ns"].(string) + "/" + e["name"].(string)
+            }
+            appsByName[appName] = e
+          }
+
+          var rules = []any{}
+          // Vendor and native per-Ingress applications consume the same Coraza
+          // application map and therefore share one admission bound.
+          var ingressRuleApps = len(appsByName)
+          if ingressRuleApps > maxCustomRuleIngresses {
+            fail("Ingress-authored WAF rules create more than the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
+          }
+          for _, ingress := range resources.ingresses.List() {
+            var ns = ingress.Metadata.Namespace
+            var name = ingress.Metadata.Name
+            var resourceID = ns + "/" + name
+            var annotations = ingress.Metadata.Annotations
+            if governanceEnabled && !allowRawHAProxyConfig {
+              var rawConfigAnnotation = ""
+              for _, annotationName := range []string{
+                "haproxy-haptic.org/config-global",
+                "haproxy-haptic.org/config-defaults",
+                "haproxy-haptic.org/config-frontend",
+                "haproxy-haptic.org/config-backend",
+                "haproxy-ingress.github.io/config-global",
+                "haproxy-ingress.github.io/config-defaults",
+                "haproxy-ingress.github.io/config-frontend",
+                "haproxy-ingress.github.io/config-backend",
+                "haproxy.org/backend-config-snippet",
+                "nginx.ingress.kubernetes.io/configuration-snippet",
+              } {
+                if strip(annotations[annotationName]) != "" && rawConfigAnnotation == "" {
+                  rawConfigAnnotation = annotationName
+                }
+              }
+              if rawConfigAnnotation != "" {
+                fail("Ingress " + resourceID + " sets raw HAProxy annotation '" + rawConfigAnnotation + "', but WAF governance disables all Ingress-authored raw configuration with extraContext.waf.ingressPermissions.allowRawHAProxyConfig=false. Raw frontend/defaults/global directives can bypass WAF enforcement for other routes; enable this only when every Ingress writer is a trusted HAProxy configuration administrator.")
+              }
+            }
+            var waf = strip(annotations["haproxy-haptic.org/waf"])
+            var mode = strip(annotations["haproxy-haptic.org/waf-mode"])
+            var requestedPolicy = strip(annotations["haproxy-haptic.org/waf-policy"])
+            var policy = requestedPolicy
+            var rulesBefore = annotations["haproxy-haptic.org/waf-rules-before"]
+            var rulesAfter = annotations["haproxy-haptic.org/waf-rules"]
+            if requestedPolicy != "" && !allowPolicySelection {
+              fail("Ingress " + resourceID + " sets waf-policy, but the HAPTIC administrator disabled Ingress policy selection. Remove the annotation; default policy '" + defaultPolicy + "' applies automatically.")
+            }
+            if policy == "" {
+              policy = defaultPolicy
+            }
+            var active = waf != "" || policy != "" || rulesBefore != "" || rulesAfter != ""
+
+            if mode != "" && !active {
+              fail("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-mode' without 'waf', 'waf-policy', or WAF rules. Add a WAF policy or remove waf-mode.")
+            }
+            if waf != "" && waf != "modsecurity" {
+              fail("Invalid value '" + waf + "' for annotation 'haproxy-haptic.org/waf' on Ingress '" + resourceID + "'. Only 'modsecurity' is supported.")
+            }
+            if policy != "" && waf != "" {
+              fail("Ingress " + resourceID + " uses legacy 'haproxy-haptic.org/waf' while named WAF policy '" + policy + "' applies. Remove the legacy annotation; the policy already enables Coraza.")
+            }
+            if requestedPolicy != "" && !policyCatalogConfigured {
+              fail("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-policy' but no reusable WAF policy catalog is configured. Define controller.config.templatingSettings.extraContext.waf.policies.inline/configMapRefs, or remove the annotation.")
+            }
+            if policy != "" && policyConfiguration[policy] == "" {
+              var available = keys(policySource)
+              var availableText = "no policies are configured"
+              if len(available) > 0 {
+                availableText = "available policies: " + join(available, ", ")
+              }
+              fail("Unknown WAF policy '" + policy + "' on Ingress " + resourceID + "; " + availableText + ". Policy names are exact and case-sensitive.")
+            }
+            if policy != "" {
+              var vendorWAFAnnotation = ""
+              for _, annotationName := range []string{
+                "haproxy-ingress.github.io/waf",
+                "haproxy-ingress.github.io/waf-mode",
+                "nginx.ingress.kubernetes.io/enable-modsecurity",
+                "nginx.ingress.kubernetes.io/modsecurity-snippet",
+              } {
+                if annotations[annotationName] != "" && vendorWAFAnnotation == "" {
+                  vendorWAFAnnotation = annotationName
+                }
+              }
+              if vendorWAFAnnotation != "" {
+                fail("Ingress " + resourceID + " is governed by HAPTIC WAF policy '" + policy + "' and also sets vendor WAF annotation '" + vendorWAFAnnotation + "'. Mixing annotation families is rejected so vendor annotations cannot replace or weaken the selected policy.")
+              }
+            }
+            if active && !corazaEnabled {
+              fail("Ingress " + resourceID + " sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled. Enable spoaHub.plugins.coraza or remove the annotations.")
+            }
+            if rulesBefore != "" && policy == "" {
+              fail("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-rules-before' without a named waf-policy. Use the existing waf-rules annotation when no policy ordering boundary exists.")
+            }
+            if strings_contains(rulesBefore, "\"\"\"") || strings_contains(rulesAfter, "\"\"\"") {
+              fail("Ingress " + resourceID + " WAF rules contain a TOML triple-quote delimiter (\"\"\"); remove that sequence from the SecLang directives.")
+            }
+            if len(rulesBefore) + len(rulesAfter) > maxCustomRuleBytesPerIngress {
+              fail("Ingress " + resourceID + " defines " + tostring(len(rulesBefore) + len(rulesAfter)) + " bytes of WAF rules; the configured per-Ingress limit is " + tostring(maxCustomRuleBytesPerIngress) + ".")
+            }
+            if !allowCustomRules && (rulesBefore != "" || rulesAfter != "") {
+              fail("Ingress " + resourceID + " defines route-local WAF rules, but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
+            }
+            if !allowEnforcementOverride && mode != "" {
+              fail("Ingress " + resourceID + " sets waf-mode, but the HAPTIC administrator disabled Ingress enforcement overrides with extraContext.waf.ingressPermissions.allowEnforcementOverride=false.")
+            }
+
+            if policy != "" {
+              if mode == "" {
+                mode = policyEnforcement[policy]
+              }
+            } else if mode == "" {
+              mode = "deny"
+            }
+            if mode != "deny" && mode != "detect" {
+              fail("Invalid value '" + mode + "' for annotation 'haproxy-haptic.org/waf-mode' on Ingress '" + resourceID + "'. Valid values: 'deny', 'detect'.")
+            }
+
+            if active {
+              var bodyMode = "none"
+              var contentMode = "any"
+              var ruleMaxBodyBytes = maxBodyBytes
+              if policy != "" {
+                bodyMode = policyBodyMode[policy]
+                contentMode = policyContentMode[policy]
+                ruleMaxBodyBytes = policyMaxBody[policy]
+              }
+
+              var appName = ""
+              if rulesBefore != "" || rulesAfter != "" {
+                ingressRuleApps++
+                if ingressRuleApps > maxCustomRuleIngresses {
+                  fail("HAPTIC WAF annotations create more than the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
+                }
+                appName = resourceID
+                if appsByName[appName] != nil {
+                  fail("Ingress " + resourceID + " defines HAPTIC WAF rules but another annotation library already owns Coraza application '" + appName + "'. Use only one WAF rule annotation family on an Ingress.")
+                }
+                var configuration = ""
+                var safety = noBodySafety
+                if policy != "" {
+                  configuration = policyConfiguration[policy]
+                  safety = policySafety[policy]
+                }
+                appsByName[appName] = map[string]any{
+                  "appName": appName,
+                  "source": "haproxy-haptic.org WAF rules from Ingress " + resourceID,
+                  "snippet": rulesBefore + "\n" + configuration + rulesAfter + "\n" + safety,
+                  "requestBodyMaxBytes": ruleMaxBodyBytes,
+                }
+              } else if policy != "" {
+                appName = "policy:" + policy
+                if appsByName[appName] == nil {
+                  appsByName[appName] = map[string]any{
+                    "appName": appName,
+                    "source": policySource[policy],
+                    "snippet": policyConfiguration[policy] + policySafety[policy],
+                    "requestBodyMaxBytes": ruleMaxBodyBytes,
+                  }
+                }
+              }
+
+              rules = append(rules, map[string]any{
+                "resourceID": resourceID,
+                "mode": mode,
+                "appName": appName,
+                "bodyMode": bodyMode,
+                "contentMode": contentMode,
+                "maxBodyBytes": ruleMaxBodyBytes,
+              })
+            }
+          }
+
+          var appNames = keys(appsByName)
+          var apps = []any{}
+          for _, appName := range appNames {
+            apps = append(apps, appsByName[appName])
+          }
+          gf["sphCorazaApps"] = apps
+          gf["corazaPolicyRoutes"] = rules
+          return true
+        })
+      %%}
+
+  map-haproxy-ingress-waf-820-haptic:
+    template: |-
+      {{- render "util-waf-haptic-coraza-scan" -}}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, rule := range (gf["corazaPolicyRoutes"].([]any)) -%}
+        {%- var r = rule.(map[string]any) -%}
+      {{ "\n" }}{{ r["resourceID"].(string) }} {{ r["mode"].(string) }}
+      {%- end -%}
+
+  map-coraza-app-820-haptic:
+    template: |-
+      {{- render "util-waf-haptic-coraza-scan" -}}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, rule := range (gf["corazaPolicyRoutes"].([]any)) -%}
+        {%- var r = rule.(map[string]any) -%}
+        {%- if r["appName"].(string) != "" -%}
+      {{ "\n" }}{{ r["resourceID"].(string) }} {{ r["appName"].(string) }}
+        {%- end -%}
+      {%- end -%}
+
+  map-coraza-body-820-haptic:
+    template: |-
+      {{- render "util-waf-haptic-coraza-scan" -}}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, rule := range (gf["corazaPolicyRoutes"].([]any)) -%}
+        {%- var r = rule.(map[string]any) -%}
+      {{ "\n" }}{{ r["resourceID"].(string) }} {{ r["bodyMode"].(string) }} {{ r["contentMode"].(string) }} {{ r["maxBodyBytes"].(string) }}
+      {%- end -%}

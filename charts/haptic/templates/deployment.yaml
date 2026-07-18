@@ -1,9 +1,7 @@
 {{- $controller := .Values.controller }}
 {{- $podSpec := $controller.podSpec }}
 {{- $ports := $controller.ports }}
-{{- $debugPort := $controller.debugPort }}
-{{- $debugPortInt := $debugPort | int }}
-{{- $webhookEnabled := .Values.webhook.enabled }}
+{{- $webhookEnabled := .Values.controller.webhook.enabled }}
 {{- $webhookSecretName := include "haptic.webhook.secretName" . }}
 {{- $webhookResourceTimeoutSeconds := include "haptic.webhook.resourceTimeoutSeconds" . | int }}
 {{- $webhookConfigTimeoutSeconds := include "haptic.webhook.configTimeoutSeconds" . | int }}
@@ -16,25 +14,25 @@ metadata:
   name: {{ include "haptic.controllerFullname" . }}
   labels:
     {{- $labels | nindent 4 }}
-  {{- if or .Values.deploymentAnnotations .Values.commonAnnotations }}
+  {{- if or $controller.deploymentAnnotations .Values.commonAnnotations }}
   annotations:
     {{- with .Values.commonAnnotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    {{- with .Values.deploymentAnnotations }}
+    {{- with $controller.deploymentAnnotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
   {{- end }}
 spec:
-  {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
+  {{- if not $controller.autoscaling.enabled }}
+  replicas: {{ $controller.replicaCount }}
   {{- end }}
-  {{- with .Values.updateStrategy }}
+  {{- with $controller.updateStrategy }}
   strategy:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  minReadySeconds: {{ .Values.minReadySeconds }}
-  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  minReadySeconds: {{ $controller.minReadySeconds }}
+  revisionHistoryLimit: {{ $controller.revisionHistoryLimit }}
   selector:
     matchLabels:
       {{- include "haptic.selectorLabels" . | nindent 6 }}
@@ -59,30 +57,27 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.initContainers }}
+      {{- with $controller.initContainers }}
       initContainers:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: controller
-          {{- with .Values.securityContext }}
+          {{- with $controller.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           image: {{ include "haptic.controller.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ $controller.image.pullPolicy }}
           command: ["/usr/local/bin/haptic-controller"]
           args: ["run"]
           ports:
             {{- range $name := list "healthz" "metrics" }}
+            {{- if gt (int (index $ports $name)) 0 }}
             - name: {{ $name }}
               containerPort: {{ index $ports $name }}
               protocol: TCP
             {{- end }}
-            {{- if and (gt $debugPortInt 0) (ne $debugPortInt ($ports.healthz | int)) }}
-            - name: debug
-              containerPort: {{ $debugPort }}
-              protocol: TCP
             {{- end }}
             {{- if $webhookEnabled }}
             - name: webhook
@@ -97,13 +92,15 @@ spec:
                   fieldPath: {{ $env.field }}
             {{- end }}
             - name: CRD_NAME
-              value: {{ $controller.crdName | quote }}
+              value: {{ $controller.configName | quote }}
             - name: SECRET_NAME
               value: {{ include "haptic.dataplane.credentialsSecretName" . }}
             - name: WEBHOOK_SERVICE_NAME
               value: {{ include "haptic.webhook.serviceName" . }}
             - name: DEBUG_PORT
-              value: {{ $debugPort | quote }}
+              value: {{ $ports.healthz | quote }}
+            - name: METRICS_PORT
+              value: {{ $ports.metrics | quote }}
             {{- with $controller.logLevel }}
             - name: LOG_LEVEL
               value: {{ . | quote }}
@@ -118,27 +115,27 @@ spec:
             - name: WEBHOOK_CONFIG_ADMISSION_TIMEOUT
               value: {{ printf "%ds" (sub $webhookConfigTimeoutSeconds 1) | quote }}
             {{- end }}
-            {{- with .Values.extraEnv }}
+            {{- with $controller.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- $startupProbe := .Values.startupProbe }}
+          {{- $startupProbe := $controller.startupProbe }}
           {{- if $startupProbe.enabled }}
           startupProbe:
             {{- toYaml (omit $startupProbe "enabled") | nindent 12 }}
           {{- end }}
-          {{- with .Values.livenessProbe }}
+          {{- with $controller.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.readinessProbe }}
+          {{- with $controller.readinessProbe }}
           readinessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.lifecycle }}
+          {{- with $controller.lifecycle }}
           lifecycle:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.resources }}
+          {{- with $controller.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -154,7 +151,7 @@ spec:
             - name: validators-socket
               mountPath: {{ $validators.socketDir }}
             {{- end }}
-            {{- with .Values.extraVolumeMounts }}
+            {{- with $controller.extraVolumeMounts }}
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
         {{- if $validatorsEnabled }}
@@ -230,7 +227,7 @@ spec:
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
         {{- end }}
-        {{- with .Values.sidecars }}
+        {{- with $controller.sidecars }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
       volumes:
@@ -252,6 +249,6 @@ spec:
             medium: Memory
             sizeLimit: 16Mi
         {{- end }}
-        {{- with .Values.extraVolumes }}
+        {{- with $controller.extraVolumes }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}

@@ -394,3 +394,135 @@ templateSnippets:
         {%- end %}
         {{- value -}}
       {%- end macro %}
+
+  # WAF governance — shared resolution. The HAPTIC-native policy engine
+  # (haptic-annotations) and the nginx-ingress / haproxy-ingress compat
+  # shims all decide "is WAF governance active, and what may an Ingress
+  # author do" from extraContext.waf. One macro owns that decision so the
+  # compat surfaces cannot drift from the native policy engine.
+  util-waf-governance:
+    template: |
+      {#-
+        Macro: WafGovernance(gov)
+
+        Populates `gov` with the administrator's WAF governance state from
+        extraContext.waf. Governance activates when a reusable policy
+        catalog is configured (inline policies, trusted configMapRefs, or a
+        defaultPolicy) or when dispatch.mode is "default-on". While
+        governance is off every Ingress permission stays permissive
+        (upstream compatibility behavior); once it is on, permissions come
+        from extraContext.waf.ingressPermissions with deny-by-default for
+        everything except allowPolicySelection.
+
+        Keys written to gov (all always set):
+          governanceEnabled        bool
+          policyCatalogConfigured  bool
+          defaultPolicy            string ("" when unset)
+          dispatchMode             string
+          allowPolicySelection     bool (default true under governance)
+          allowEnforcementOverride bool (default false under governance)
+          allowWafDisable          bool (default false under governance)
+          allowCustomRules         bool (default false under governance)
+          allowRawHAProxyConfig    bool (default false under governance)
+          maxCustomRuleIngresses       int (bounded 1..1024, default 32)
+          maxCustomRuleBytesPerIngress int (bounded 1..1048576, default 16384)
+
+        Resolution is memoized per render (shared.ComputeIfAbsent), so the
+        three consuming libraries share one computation and one verdict.
+      -#}
+      {%- macro WafGovernance(gov map[string]any) %}
+      {%%
+        var resolvedAny, _ = shared.ComputeIfAbsent("wafGovernance", func() any {
+          var wafAny = extraContext | dig("waf")
+          if wafAny == nil { wafAny = map[string]any{} }
+          var waf, wafOK = wafAny.(map[string]any)
+          if !wafOK { fail("extraContext.waf must be a map.") }
+          var policiesAny = waf | dig("policies")
+          if policiesAny == nil { policiesAny = map[string]any{} }
+          var policies, policiesOK = policiesAny.(map[string]any)
+          if !policiesOK { fail("extraContext.waf.policies must be a map.") }
+          var inlinePoliciesAny = policies | dig("inline")
+          if inlinePoliciesAny == nil { inlinePoliciesAny = map[string]any{} }
+          var inlinePolicies, inlinePoliciesOK = inlinePoliciesAny.(map[string]any)
+          if !inlinePoliciesOK { fail("extraContext.waf.policies.inline must be a map.") }
+          var policyRefsAny = policies | dig("configMapRefs")
+          if policyRefsAny == nil { policyRefsAny = []any{} }
+          var policyRefs, policyRefsOK = policyRefsAny.([]any)
+          if !policyRefsOK { fail("extraContext.waf.policies.configMapRefs must be a list.") }
+          var defaultPolicy = policies | dig("defaultPolicy") | fallback("") | tostring()
+          var dispatchMode = waf | dig("dispatch", "mode") | fallback("opt-in") | tostring()
+          var policyCatalogConfigured = len(inlinePolicies) > 0 || len(policyRefs) > 0 || defaultPolicy != ""
+          // Ingress permissions protect any administrator-owned WAF
+          // baseline: either a reusable policy catalog or global default-on
+          // dispatch. Plain opt-in compatibility mode retains upstream
+          // behavior.
+          var governanceEnabled = policyCatalogConfigured || dispatchMode == "default-on"
+
+          var ingressPermissionsAny = waf | dig("ingressPermissions")
+          if ingressPermissionsAny == nil { ingressPermissionsAny = map[string]any{} }
+          var ingressPermissions, ingressPermissionsOK = ingressPermissionsAny.(map[string]any)
+          if !ingressPermissionsOK { fail("extraContext.waf.ingressPermissions must be a map.") }
+          var allowedPermissionFields = map[string]bool{
+            "allowPolicySelection": true, "allowEnforcementOverride": true,
+            "allowWafDisable": true, "allowCustomRules": true,
+            "allowRawHAProxyConfig": true,
+          }
+          for _, field := range keys(ingressPermissions) {
+            if !allowedPermissionFields[field] {
+              fail("extraContext.waf.ingressPermissions contains unknown field '" + field + "'.")
+            }
+            var _, fieldOK = ingressPermissions[field].(bool)
+            if !fieldOK { fail("extraContext.waf.ingressPermissions." + field + " must be a boolean.") }
+          }
+          var permission = func(field string, governedDefault bool) bool {
+            if !governanceEnabled { return true }
+            // Handle absence explicitly: fallback treats boolean false as a
+            // zero value, which would otherwise turn an explicit denial back
+            // into the permissive default. The field types were validated
+            // above, so preserve the boolean directly.
+            var valueAny, isSet = ingressPermissions[field]
+            if isSet { return valueAny.(bool) }
+            return governedDefault
+          }
+          var allowPolicySelection = permission("allowPolicySelection", true)
+          if governanceEnabled && policyCatalogConfigured && !allowPolicySelection && defaultPolicy == "" {
+            fail("extraContext.waf.policies.defaultPolicy is required when extraContext.waf.ingressPermissions.allowPolicySelection=false.")
+          }
+
+          var customRuleLimitsAny = waf | dig("customRules", "limits")
+          if customRuleLimitsAny == nil { customRuleLimitsAny = map[string]any{} }
+          var customRuleLimits, customRuleLimitsOK = customRuleLimitsAny.(map[string]any)
+          if !customRuleLimitsOK { fail("extraContext.waf.customRules.limits must be a map.") }
+          var boundedInteger = func(input any, defaultValue int, field string, minimum int, maximum int) int {
+            if input == nil { return defaultValue }
+            var text = tostring(input)
+            if !regex_search(text, "^[0-9]+$") {
+              fail(field + " must be an integer between " + tostring(minimum) + " and " + tostring(maximum) + ".")
+            }
+            var value = toint(text)
+            if value < minimum || value > maximum {
+              fail(field + " must be between " + tostring(minimum) + " and " + tostring(maximum) + ".")
+            }
+            return value
+          }
+
+          return map[string]any{
+            "governanceEnabled": governanceEnabled,
+            "policyCatalogConfigured": policyCatalogConfigured,
+            "defaultPolicy": defaultPolicy,
+            "dispatchMode": dispatchMode,
+            "allowPolicySelection": allowPolicySelection,
+            "allowEnforcementOverride": permission("allowEnforcementOverride", false),
+            "allowWafDisable": permission("allowWafDisable", false),
+            "allowCustomRules": permission("allowCustomRules", false),
+            "allowRawHAProxyConfig": permission("allowRawHAProxyConfig", false),
+            "maxCustomRuleIngresses": boundedInteger(customRuleLimits["maxIngresses"], 32, "extraContext.waf.customRules.limits.maxIngresses", 1, 1024),
+            "maxCustomRuleBytesPerIngress": boundedInteger(customRuleLimits["maxBytesPerIngress"], 16384, "extraContext.waf.customRules.limits.maxBytesPerIngress", 1, 1048576),
+          }
+        })
+        var resolved = resolvedAny.(map[string]any)
+        for _, key := range keys(resolved) {
+          gov[key] = resolved[key]
+        }
+      %%}
+      {%- end macro %}

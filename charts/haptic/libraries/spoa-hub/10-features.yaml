@@ -53,12 +53,14 @@ templateSnippets:
           the legacy SPOE transport. The filter spoe directive in the
           frontend handles the protocol either way. Operators can force tcp
           on 3.1+ by setting spoaHub.haproxy.modeSpop: false. -#}
-      {%- var modeSpopRequested = extraContext | dig("spoaHub", "modeSpop") | fallback(true) | tostring() %}
+      {%- var modeSpopRequested = "true" %}
+      {%- var modeSpopRequestedAny = extraContext | dig("spoaHub", "haproxy", "modeSpop") %}
+      {%- if modeSpopRequestedAny != nil %}{%- modeSpopRequested = tostring(modeSpopRequestedAny) %}{%- end %}
       {%- var hapVersion = extraContext | dig_string("", "haproxyVersion") %}
       {%- var spopSupported = semver_gte(hapVersion, "3.1") %}
       backend spoa-hub
           mode {%- if modeSpopRequested == "true" && spopSupported %} spop{%- else %} tcp{%- end %}
           timeout connect 5s
-          timeout server  {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
-          server hub {{ extraContext | dig("spoaHub", "socketPath") | fallback("/run/spoa/hub.sock") }} pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "poolPurgeDelay") | fallback("30s") }}
+          timeout server  {{ extraContext | dig("spoaHub", "haproxy", "timeoutIdle") | fallback("5m") }}
+          server hub {{ extraContext | dig("spoaHub", "haproxy", "socketPath") | fallback("/run/spoa/hub.sock") }} pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "haproxy", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "haproxy", "poolPurgeDelay") | fallback("30s") }}
       {%- end %}

@@ -102,15 +102,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -156,15 +157,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -209,15 +211,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -259,15 +262,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -324,15 +328,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -388,15 +393,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -436,15 +442,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -484,15 +491,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -533,15 +541,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -581,15 +590,16 @@ validationTests:
     extraContext:
       spoaHub:
         enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
     fixtures:
       services:
         - apiVersion: v1

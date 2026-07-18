@@ -364,15 +364,16 @@ Mount a ConfigMap with dummy PEM files on the **controller** pod:
 ```yaml
 # Dummy certs for controller-side "haproxy -c" validation
 # (not real secrets — see ConfigMap below)
-extraVolumes:
-  - name: spiffe-validation-certs
-    configMap:
-      name: '{{ include "haptic.fullname" . }}-spiffe-validation-certs'
+controller:
+  extraVolumes:
+    - name: spiffe-validation-certs
+      configMap:
+        name: '{{ include "haptic.fullname" . }}-spiffe-validation-certs'
 
-extraVolumeMounts:
-  - name: spiffe-validation-certs
-    mountPath: /etc/haproxy/spiffe
-    readOnly: true
+  extraVolumeMounts:
+    - name: spiffe-validation-certs
+      mountPath: /etc/haproxy/spiffe
+      readOnly: true
 ```
 
 Generate the dummy certificate and add it as a ConfigMap via `extraDeploy`:

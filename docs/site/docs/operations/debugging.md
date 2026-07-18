@@ -11,7 +11,11 @@ kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 curl http://localhost:8080/debug/vars
 ```
 
-`/healthz` lives on the same listener, so setting `controller.debugPort: 0` disables both `/debug/*` and `/healthz` and breaks the liveness/readiness probes — restrict access with a NetworkPolicy instead (see [Security](./security.md#network-exposure)). To move both endpoints to a different port, set `controller.debugPort` **and** `controller.ports.healthz` to the same value — the probes target the `healthz` container port, so moving only `debugPort` breaks them.
+`/healthz` lives on the same listener. `controller.ports.healthz` is the single
+source for the process, container, Service, probes, and NetworkPolicy, so changing
+it moves every consumer together. The listener is required by the probes; restrict
+access to `/debug/*` with a NetworkPolicy instead of disabling it (see
+[Security](./security.md#network-exposure)).
 
 ## Debug variables
 

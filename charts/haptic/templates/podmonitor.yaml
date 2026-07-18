@@ -1,4 +1,4 @@
-{{- $pm := .Values.monitoring.podMonitor }}
+{{- $pm := .Values.controller.monitoring.podMonitor }}
 {{- if $pm.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor

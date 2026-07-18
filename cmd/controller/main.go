@@ -19,7 +19,9 @@
 //   - HAProxyTemplateConfig CRD name: --crd-name flag, CRD_NAME env var, or "haproxy-config" default
 //   - Secret name: --secret-name flag, SECRET_NAME env var, or "haproxy-credentials" default
 //   - Webhook cert directory: --webhook-cert-dir flag or WEBHOOK_CERT_DIR env var (directory holding tls.crt/tls.key; optional, empty disables the webhook)
+//   - Webhook HTTPS port: WEBHOOK_PORT env var (default 9443)
 //   - Debug HTTP port: --debug-port flag or DEBUG_PORT env var (default 0 = disabled)
+//   - Metrics HTTP port: METRICS_PORT env var (default 9090; 0 disables)
 //   - Kubeconfig: --kubeconfig flag (for out-of-cluster development)
 //
 // The controller runs until receiving SIGTERM or SIGINT, at which point it performs

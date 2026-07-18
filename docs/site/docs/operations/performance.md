@@ -32,17 +32,18 @@ These recommendations are based on the controller's primary memory consumers (wa
 !!! note "Chart defaults differ — deliberately"
     The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Burstable QoS — no CPU limit, by design), which differs from the table above for two reasons: omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel's out-of-memory killer from preferring this pod over Burstable neighbours (see [Robusta on Kubernetes memory limits](https://home.robusta.dev/blog/kubernetes-memory-limit) for the rationale). The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
 
-Configure via Helm values. Top-level `resources:` applies to the controller pod; HAProxy and the Dataplane API sidecar have their own blocks under `haproxy.resources` and `haproxy.dataplane.resources` (see [HAProxy Deployment](../haproxy-deployment.md)):
+Configure via Helm values. `controller.resources` applies to the controller pod; HAProxy and the Dataplane API sidecar have their own blocks under `haproxy.resources` and `haproxy.dataplane.resources` (see [HAProxy Deployment](../haproxy-deployment.md)):
 
 ```yaml
 # values.yaml
-resources:
-  requests:
-    cpu: 100m
-    memory: 512Mi
-  limits:
-    # No CPU limit — avoids throttling GOMAXPROCS-aware Go under bursts.
-    memory: 512Mi   # memory request == limit; no CPU limit → Burstable QoS (by design)
+controller:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      # No CPU limit — avoids throttling GOMAXPROCS-aware Go under bursts.
+      memory: 512Mi   # memory request == limit; no CPU limit → Burstable QoS (by design)
 ```
 
 ### Container awareness (`GOMAXPROCS` and `GOMEMLIMIT`)
@@ -60,12 +61,13 @@ INFO HAPTIC starting ... gomaxprocs=8 gomemlimit="483183820 bytes (460.80 MiB)"
 
 `gomemlimit` is 90% of the 512Mi memory limit (≈460.8 MiB). Because the chart omits a CPU limit, `gomaxprocs` matches the node's core count (8 here) rather than a container CPU limit — you only see `gomaxprocs=1` when you set a 1-CPU limit.
 
-The `AUTOMEMLIMIT` environment variable adjusts the memory limit ratio (default: 0.9; valid range `0.0 < AUTOMEMLIMIT <= 1.0`). Set it via the chart's top-level `extraEnv` list, which is injected into the controller container:
+The `AUTOMEMLIMIT` environment variable adjusts the memory limit ratio (default: 0.9; valid range `0.0 < AUTOMEMLIMIT <= 1.0`). Set it via the chart's `controller.extraEnv` list, which is injected into the controller container:
 
 ```yaml
-extraEnv:
-  - name: AUTOMEMLIMIT
-    value: "0.8"   # Set GOMEMLIMIT to 80% of container memory limit
+controller:
+  extraEnv:
+    - name: AUTOMEMLIMIT
+      value: "0.8"   # Set GOMEMLIMIT to 80% of container memory limit
 ```
 
 ### Memory considerations
@@ -329,12 +331,15 @@ Match `nbthread` to available CPU cores:
 
 ```yaml
 # HAProxy pod resources
-resources:
-  requests:
-    cpu: 2
-  limits:
-    cpu: 4
+haproxy:
+  resources:
+    requests:
+      cpu: 2
+    limits:
+      cpu: 4
+```
 
+```haproxy
 # HAProxy config
 global
     nbthread 4  # Match CPU limit

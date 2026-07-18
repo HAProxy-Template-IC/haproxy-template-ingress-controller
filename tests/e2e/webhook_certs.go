@@ -44,7 +44,7 @@ const webhookServiceName = HelmReleaseName + "-webhook"
 const defaultSSLCertSecretName = "default-ssl-cert"
 
 // setupWebhookCerts returns the base64-encoded CA bundle the helm install
-// step passes via `--set webhook.caBundle=...`. Tries to reuse the
+// step passes via `--set controller.webhook.caBundle=...`. Tries to reuse the
 // existing webhook-cert Secret first; if found and still valid (cert
 // parses + chains + is not within `webhookCertReuseWindow` of expiry),
 // returns its CA bundle without touching the Secret. Otherwise generates
@@ -245,13 +245,13 @@ func generateCA() (*rsa.PrivateKey, []byte, error) {
 // and an untrusted client cert (signed by a *different* CA — used to
 // verify HAProxy rejects mismatching CAs at the TLS handshake).
 type mTLSBundle struct {
-	CACertPEM      []byte // ca.crt — bundle the chart loads via auth-tls-secret
-	ServerCertPEM  []byte // tls.crt for the server-side TLS Secret
-	ServerKeyPEM   []byte // tls.key for the server-side TLS Secret
-	ClientCertPEM  []byte // trusted client cert (signed by CACertPEM)
-	ClientKeyPEM   []byte // matching key
-	WrongCertPEM   []byte // client cert signed by an UNTRUSTED CA
-	WrongKeyPEM    []byte // matching key for the wrong cert
+	CACertPEM     []byte // ca.crt — bundle the chart loads via auth-tls-secret
+	ServerCertPEM []byte // tls.crt for the server-side TLS Secret
+	ServerKeyPEM  []byte // tls.key for the server-side TLS Secret
+	ClientCertPEM []byte // trusted client cert (signed by CACertPEM)
+	ClientKeyPEM  []byte // matching key
+	WrongCertPEM  []byte // client cert signed by an UNTRUSTED CA
+	WrongKeyPEM   []byte // matching key for the wrong cert
 }
 
 // generateMTLSBundle is the all-in-one cert-fixture builder for tests

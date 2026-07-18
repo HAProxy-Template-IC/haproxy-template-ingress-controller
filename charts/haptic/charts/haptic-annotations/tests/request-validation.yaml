@@ -3,7 +3,7 @@
 # production, SPOE dispatch, and render-time guardrails.
 validationTests:
   test-haptic-request-validation-configmap:
-    _helm_skip_test: '{{ if not .Values.controller.apiGateway.validation.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema-configmap → schema TOML block, packed map, body-size gate, SPOE dispatch
     fixtures:
       configmaps:
@@ -112,7 +112,7 @@ validationTests:
         pattern: "http-request return status 422 if \\{ var\\(txn\\.req_schema_id\\) -m found \\} \\{ method POST PUT PATCH \\} !\\{ var\\(txn\\.hub\\.api_gateway\\.allowed\\) -m found \\}"
 
   test-haptic-request-validation-secret:
-    _helm_skip_test: '{{ if not .Values.controller.apiGateway.validation.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema-secret uses Secret data as base64 schema payload
     fixtures:
       secrets:
@@ -157,7 +157,7 @@ validationTests:
         pattern: "schema_base64 = \"eyJ0eXBlIjoib2JqZWN0In0=\""
 
   test-haptic-request-validation-requires-opt-in:
-    _helm_skip_test: '{{ if .Values.controller.apiGateway.validation.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema annotations fail loudly when request validation is not enabled
     fixtures:
       configmaps:
@@ -196,7 +196,7 @@ validationTests:
         pattern: "request validation is not enabled"
 
   test-haptic-request-validation-rejects-two-sources:
-    _helm_skip_test: '{{ if not .Values.controller.apiGateway.validation.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request validation requires exactly one schema source
     fixtures:
       ingresses:
@@ -227,7 +227,7 @@ validationTests:
         pattern: "requires exactly one schema source"
 
   test-haptic-request-validation-missing-key:
-    _helm_skip_test: '{{ if not .Values.controller.apiGateway.validation.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: missing ConfigMap schema key fails render-time
     fixtures:
       configmaps:
@@ -266,7 +266,7 @@ validationTests:
         pattern: "empty or missing 'schema\\.json' data key"
 
   test-haptic-request-validation-max-body-bounded:
-    _helm_skip_test: '{{ if not .Values.controller.apiGateway.validation.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema-max-body-size is bounded to protect HAProxy/plugin memory
     fixtures:
       configmaps:
@@ -306,7 +306,7 @@ validationTests:
         pattern: "Must be between 1 and 1048576 bytes"
 
   test-haptic-request-validation-max-body-fits-buffer:
-    _helm_skip_test: '{{ if not .Values.controller.apiGateway.validation.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if not .Values.controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled }}true{{ end }}'
     description: request-schema-max-body-size must fit the HAProxy validation buffer
     fixtures:
       configmaps:
@@ -343,4 +343,4 @@ validationTests:
     assertions:
       - type: contains
         target: rendering_error
-        pattern: "Must not exceed controller.apiGateway.validation.bufferSize minus controller.apiGateway.validation.bufferHeadroomBytes"
+        pattern: "Must not exceed requestBodyInspection.haproxyBuffer.sizeBytes minus requestBodyInspection.haproxyBuffer.reservedBytes"

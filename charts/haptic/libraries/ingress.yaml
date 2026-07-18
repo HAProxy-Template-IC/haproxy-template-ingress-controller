@@ -90,7 +90,7 @@ templateSnippets:
       -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var tlsDefault bool = extraContext | dig("ingressDefaultHTTPS") | fallback(true) %}
-      {%- var haveDefaultCert = tostring(extraContext | dig("default_ssl_cert_name") | fallback("")) != "" %}
+      {%- var haveDefaultCert = tostring(extraContext | dig("tls", "defaultCertificate", "name") | fallback("")) != "" %}
       {%- var httpsByDefault = tlsDefault && haveDefaultCert %}
       {#- Stash the default-HTTPS decision so features-105-ingress-ssl-redirect
           reuses the exact same gate (an Ingress host is only redirected to

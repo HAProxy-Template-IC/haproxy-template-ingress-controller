@@ -511,11 +511,10 @@ func applyGatewayAPICRDs(ctx context.Context, version string) error {
 	return nil
 }
 
-// ensureNamespaces idempotently creates the controller and shared-fixture
-// namespaces upfront so the parallel install/fixture phases don't race on
-// namespace creation. echo-server.yaml ships its own Namespace block, but
-// the other fixtures only reference namespace: echo and would otherwise
-// race against echo-server's apply when fanned out.
+// ensureNamespaces idempotently creates the controller, shared-fixture, and
+// security namespaces upfront so the parallel install/fixture phases don't
+// race on namespace creation. It also installs the centrally owned WAF policy
+// catalog that e2e-values.yaml references before the controller starts.
 func ensureNamespaces(ctx context.Context) error {
 	manifest := fmt.Sprintf(`apiVersion: v1
 kind: Namespace
@@ -526,6 +525,32 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: %s
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: security
+  name: haptic-waf-policies
+data:
+  policies.yaml: |
+    streaming-search:
+      description: Metadata inspection with a narrow search exception and no request-body buffering
+      requestBody:
+        mode: none
+      enforcement: deny
+      excludedTargetsByTag:
+        attack-sqli: ["ARGS:q"]
+        attack-xss: ["ARGS:q"]
+    form-body-inspection:
+      description: Form request policy with bounded complete body inspection
+      requestBody:
+        mode: any
+      enforcement: deny
 `, ControllerNamespace, SharedFixturesNamespace)
 	return kubectlApplyStdin(ctx, []byte(manifest))
 }
@@ -537,7 +562,7 @@ metadata:
 // sequential cost of this phase.
 //
 // Returns the base64 CA bundle from setupWebhookCerts so the helm step
-// can pass it as --set webhook.caBundle=...
+// can pass it as --set controller.webhook.caBundle=...
 func preInstallParallel(ctx context.Context) (string, error) {
 	g, gctx := errgroup.WithContext(ctx)
 	var caBundleB64 string
@@ -569,7 +594,7 @@ func preInstallParallel(ctx context.Context) (string, error) {
 }
 
 // helmInstallChart installs the chart from charts/haptic with dev-values.yaml
-// as the base, layering an image.tag=test override to point at the local
+// as the base, layering a controller.image.tag=test override to point at the local
 // haptic:test image. Idempotent: if the release already exists (e.g.,
 // from a previous run with KEEP_CLUSTER=true), this becomes a `helm upgrade`.
 //
@@ -643,7 +668,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		"--namespace", ControllerNamespace,
 		"--create-namespace",
 		"--values", valuesFile.Name(),
-		"--set", "image.tag=test",
+		"--set", "controller.image.tag=test",
 		// haproxyVersion gates two things in the chart: the controller image
 		// tag suffix (`<image.tag>-haproxy<haproxyVersion>`, e.g.
 		// "test-haproxy3.0") and the haproxy:VERSION sidecar image. The
@@ -653,7 +678,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		// 3.2) and only the 3.2 matrix entry happens to find its image.
 		// Every other matrix entry hits ImagePullBackOff.
 		"--set", "haproxyVersion=" + ChartHAProxyVersion,
-		"--set", "webhook.caBundle=" + caBundleB64,
+		"--set", "controller.webhook.caBundle=" + caBundleB64,
 		// LoadBalancer for the haproxy frontend service so MetalLB
 		// (installed in the install-metallb phase above) assigns a
 		// real reachable IP. The Gateway API conformance suite uses
@@ -684,8 +709,9 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	// by TestHapticVarnishCache (gated on this profile via RequireCacheProfile).
 	if cacheProfile {
 		args = append(args,
-			"--set", "controller.cache.varnish.enabled=true",
-			"--set", "controller.cache.varnish.replicas=1",
+			"--set", "cache.varnish.enabled=true",
+			"--set", "cache.varnish.replicas=1",
+			"--set", "cache.varnish.podDisruptionBudget.enabled=false",
 			"--set", fmt.Sprintf("haproxy.service.http.port=%d", ChartHAProxyServiceHTTPPort))
 		fmt.Fprintf(os.Stderr, "e2e: cache shard — enabling Varnish with HAProxy Service port %d and kindnet policy enforcement\n", ChartHAProxyServiceHTTPPort)
 	}
@@ -693,8 +719,8 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	// rate-limit plugin. TestHapticSharedRateLimit is gated on this profile.
 	if rateLimitProfile {
 		args = append(args,
-			"--set", "controller.rateLimit.shared.enabled=true",
-			"--set", "controller.rateLimit.store.enabled=true")
+			"--set", "rateLimit.shared.enabled=true",
+			"--set", "rateLimit.shared.managedStore.enabled=true")
 		if os.Getenv("SPOA_TAG") == "" {
 			args = append(args,
 				"--set", "spoaHub.image.repository=spoa-hub",
@@ -706,7 +732,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	}
 	if apiGatewayProfile {
 		args = append(args,
-			"--set", "controller.apiGateway.validation.enabled=true")
+			"--set", "controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.enabled=true")
 		if os.Getenv("SPOA_TAG") == "" {
 			args = append(args,
 				"--set", "spoaHub.image.repository=spoa-hub",

@@ -156,7 +156,7 @@ gatewayClass:
   parametersRef:
     group: haproxy-haptic.org
     kind: HAProxyTemplateConfig
-    name: ""        # Defaults to controller.crdName
+    name: ""        # Defaults to controller.configName
     namespace: ""   # Defaults to Release.Namespace
 ```
 
@@ -182,7 +182,7 @@ The GatewayClass automatically references the HAProxyTemplateConfig created by t
 
 **Default behavior:**
 
-- `parametersRef.name` defaults to `controller.crdName` (typically `haptic-config`)
+- `parametersRef.name` defaults to `controller.configName` (typically `haptic-config`)
 - `parametersRef.namespace` defaults to chart's release namespace
 
 **Inspect the reference:**

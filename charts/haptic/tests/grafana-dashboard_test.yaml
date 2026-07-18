@@ -4,11 +4,11 @@ templates:
   - grafana-dashboard.yaml
 set:
   # Default: dashboard ConfigMap rendered. The single disabled-render test overrides.
-  monitoring.grafanaDashboard.enabled: true
+  controller.monitoring.grafanaDashboard.enabled: true
 tests:
   - it: should not render when grafanaDashboard is disabled
     set:
-      monitoring.grafanaDashboard.enabled: false
+      controller.monitoring.grafanaDashboard.enabled: false
     asserts:
       - hasDocuments:
           count: 0
@@ -34,7 +34,7 @@ tests:
 
   - it: should allow adding extra annotations
     set:
-      monitoring.grafanaDashboard.annotations:
+      controller.monitoring.grafanaDashboard.annotations:
         k8s-sidecar-target-directory: "Kubernetes"
     asserts:
       - equal:
@@ -43,7 +43,7 @@ tests:
 
   - it: should include custom labels
     set:
-      monitoring.grafanaDashboard.labels:
+      controller.monitoring.grafanaDashboard.labels:
         custom-label: custom-value
     asserts:
       - equal:
@@ -52,7 +52,7 @@ tests:
 
   - it: should include custom annotations
     set:
-      monitoring.grafanaDashboard.annotations:
+      controller.monitoring.grafanaDashboard.annotations:
         custom-annotation: custom-value
     asserts:
       - equal:
@@ -79,7 +79,7 @@ tests:
 
   - it: should use custom namespace when specified
     set:
-      monitoring.grafanaDashboard.namespace: monitoring
+      controller.monitoring.grafanaDashboard.namespace: monitoring
     asserts:
       - equal:
           path: metadata.namespace
@@ -166,8 +166,8 @@ tests:
 
   - it: should use custom dashboard when useBuiltIn is false
     set:
-      monitoring.grafanaDashboard.useBuiltIn: false
-      monitoring.grafanaDashboard.customDashboard:
+      controller.monitoring.grafanaDashboard.useBuiltIn: false
+      controller.monitoring.grafanaDashboard.customDashboard:
         title: "Custom Dashboard"
         panels: []
     asserts:

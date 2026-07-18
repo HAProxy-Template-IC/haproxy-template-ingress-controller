@@ -4,11 +4,11 @@ templates:
   - prometheusrule.yaml
 set:
   # Default: PrometheusRule enabled. Tests that need it off override per-case.
-  monitoring.prometheusRule.enabled: true
+  controller.monitoring.prometheusRule.enabled: true
 tests:
   - it: should not render when prometheusRule is disabled
     set:
-      monitoring.prometheusRule.enabled: false
+      controller.monitoring.prometheusRule.enabled: false
     asserts:
       - hasDocuments:
           count: 0
@@ -69,7 +69,7 @@ tests:
 
   - it: should disable fleet diverged alert when configured
     set:
-      monitoring.prometheusRule.defaultRules.fleetDiverged: false
+      controller.monitoring.prometheusRule.defaultRules.fleetDiverged: false
     asserts:
       - notContains:
           path: spec.groups[0].rules
@@ -148,7 +148,7 @@ tests:
 
   - it: should disable no HAProxy pods alert when configured
     set:
-      monitoring.prometheusRule.defaultRules.noHAProxyPods: false
+      controller.monitoring.prometheusRule.defaultRules.noHAProxyPods: false
     asserts:
       - notContains:
           path: spec.groups[0].rules
@@ -158,7 +158,7 @@ tests:
 
   - it: should disable reconciliation errors alert when configured
     set:
-      monitoring.prometheusRule.defaultRules.reconciliationErrors: false
+      controller.monitoring.prometheusRule.defaultRules.reconciliationErrors: false
     asserts:
       - notContains:
           path: spec.groups[0].rules
@@ -168,7 +168,7 @@ tests:
 
   - it: should disable deployment failures alert when configured
     set:
-      monitoring.prometheusRule.defaultRules.deploymentFailures: false
+      controller.monitoring.prometheusRule.defaultRules.deploymentFailures: false
     asserts:
       - notContains:
           path: spec.groups[0].rules
@@ -178,7 +178,7 @@ tests:
 
   - it: should disable high queue depth alert when configured
     set:
-      monitoring.prometheusRule.defaultRules.highQueueDepth: false
+      controller.monitoring.prometheusRule.defaultRules.highQueueDepth: false
     asserts:
       - notContains:
           path: spec.groups[0].rules
@@ -188,7 +188,7 @@ tests:
 
   - it: should disable leader election alert when configured
     set:
-      monitoring.prometheusRule.defaultRules.leaderElectionLost: false
+      controller.monitoring.prometheusRule.defaultRules.leaderElectionLost: false
     asserts:
       - notContains:
           path: spec.groups[0].rules
@@ -198,7 +198,7 @@ tests:
 
   - it: should use custom rules when provided
     set:
-      monitoring.prometheusRule.rules:
+      controller.monitoring.prometheusRule.rules:
         - alert: CustomAlert
           expr: custom_metric > 100
           for: 10m
@@ -220,7 +220,7 @@ tests:
 
   - it: should not include default rules when custom rules provided
     set:
-      monitoring.prometheusRule.rules:
+      controller.monitoring.prometheusRule.rules:
         - alert: CustomAlert
           expr: custom_metric > 100
     asserts:
@@ -232,7 +232,7 @@ tests:
 
   - it: should include custom labels
     set:
-      monitoring.prometheusRule.labels:
+      controller.monitoring.prometheusRule.labels:
         prometheus: kube-prometheus
     asserts:
       - equal:

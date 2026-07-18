@@ -144,7 +144,7 @@ The Ingress library supports all standard Kubernetes Ingress path types:
 | `ImplementationSpecific` | `map_beg()` | Treated as Prefix by default |
 
 !!! note "Path match precedence"
-    When more than one path could match a request, HAProxy evaluates the path maps in a fixed order: Exact, then Regex, then Prefix-exact, then Prefix. Host matching runs first (exact host, then single-label wildcard, then host regex). Set `controller.config.routing.regexMatchOrder=last` to move regex evaluation after the prefix matchers (Exact > Prefix-exact > Prefix > Regex). See [Frontend routing logic](base.md#frontend-routing-logic) for the complete cascade.
+    When more than one path could match a request, HAProxy evaluates the path maps in a fixed order: Exact, then Regex, then Prefix-exact, then Prefix. Host matching runs first (exact host, then single-label wildcard, then host regex). Set `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last` to move regex evaluation after the prefix matchers (Exact > Prefix-exact > Prefix > Regex). See [Frontend routing logic](base.md#frontend-routing-logic) for the complete cascade.
 
 **Example Ingress:**
 

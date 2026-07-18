@@ -1,10 +1,10 @@
-{{- $store := .Values.controller.rateLimit.store }}
+{{- $store := .Values.rateLimit.shared.managedStore }}
 {{- $np := $store.networkPolicy | default dict }}
 {{- $npEnabled := true }}
 {{- if hasKey $np "enabled" }}
   {{- $npEnabled = $np.enabled }}
 {{- end }}
-{{- if and .Values.controller.rateLimit.shared.enabled $store.enabled $npEnabled }}
+{{- if and .Values.rateLimit.shared.enabled $store.enabled $npEnabled }}
 {{- $storeName := include "haptic.rateLimit.storeServiceName" . }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

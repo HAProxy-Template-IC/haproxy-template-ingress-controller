@@ -9,7 +9,7 @@ Full documentation: [haproxy-haptic.org/docs](https://haproxy-haptic.org/docs/de
 - Kubernetes **1.21+** (default `PodDisruptionBudget` is `policy/v1`; watches `discovery.k8s.io/v1` EndpointSlices)
 - Helm **3.0+**
 - **HAProxy 3.0+** — the chart deploys HAProxy by default and the SSL library requires 3.0+. Pin a specific series via `haproxyVersion`.
-- **cert-manager** (optional but recommended) — the default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without it, create the `default-ssl-cert` TLS Secret yourself before the HAProxy pods can become ready — see [SSL Certificates](https://haproxy-haptic.org/docs/dev/ssl-certificates/).
+- **cert-manager** (optional but recommended for production) — with its API present, the default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without it, the chart creates a long-lived self-signed development certificate; production users should provide a trusted certificate — see [SSL Certificates](https://haproxy-haptic.org/docs/dev/ssl-certificates/).
 
 ## Installation
 
@@ -38,21 +38,21 @@ The full values reference lives in [Chart Values Reference](https://haproxy-hapt
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
-| `replicaCount` | `2` | Controller replicas; 2+ runs with leader election |
+| `controller.replicaCount` | `2` | Controller replicas; 2+ runs with leader election |
 | `haproxyVersion` | `3.4` | Major.minor HAProxy series (`3.0` / `3.1` / `3.2` / `3.3` / `3.4`); pairs the controller image tag (`-haproxy3.4`) with the HAProxy pod image |
 | `haproxy.image.tag` | derived from `haproxyPatchVersions` | Override to pin a specific patch |
 | `haproxy.enabled` | `true` | Disable to manage HAProxy pods separately |
 | `haproxy.enterprise.enabled` | `false` | Switch to HAProxy Enterprise images |
 | `controller.templateLibraries.ingress.enabled` | `true` | Kubernetes Ingress support |
 | `controller.templateLibraries.gateway.enabled` | `true` | Gateway API (HTTPRoute / GRPCRoute / TLSRoute) support |
-| `controller.templateLibraries.haproxytech.enabled` | `true` | `haproxy.org/*` annotation compatibility |
-| `controller.templateLibraries.haproxyIngress.enabled` | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
+| `controller.templateLibraries.haproxytech.enabled` | `false` | `haproxy.org/*` annotation compatibility |
+| `controller.templateLibraries.haproxyIngress.enabled` | `false` | `haproxy-ingress.github.io/*` annotation compatibility |
 | `controller.templateLibraries.nginxIngress.enabled` | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
-| `controller.debugPort` | `8080` | Listener for `/healthz` + `/debug/vars` + `/debug/pprof`. Setting to `0` disables both `/debug/*` and `/healthz` (and breaks Kubernetes probes) — restrict `/debug/*` via NetworkPolicy instead |
+| `controller.ports.healthz` | `8080` | Single listener for `/healthz` + `/debug/vars` + `/debug/pprof`; drives the process, pod, Service, probes, and NetworkPolicy together |
 | `controller.logLevel` | `INFO` | Initial level — `TRACE` / `DEBUG` / `INFO` / `WARN` / `ERROR` (case-insensitive); runtime-adjustable via the `HAProxyTemplateConfig` CRD's `spec.logging.level` |
-| `monitoring.serviceMonitor.enabled` | `false` | Prometheus Operator `ServiceMonitor` |
-| `networkPolicy.enabled` | `true` | NetworkPolicy allowing controller ↔ HAProxy ↔ API server |
-| `controller.cache.varnish.networkPolicy.enabled` | `true` | When the Varnish tier is enabled, isolate it to same-release HAProxy cache traffic and loopback origin requests |
+| `controller.monitoring.serviceMonitor.enabled` | `false` | Prometheus Operator `ServiceMonitor` |
+| `controller.networkPolicy.enabled` | `true` | NetworkPolicy allowing controller ↔ HAProxy ↔ API server |
+| `cache.varnish.networkPolicy.enabled` | `true` | When the Varnish tier is enabled, isolate it to same-release HAProxy cache traffic and loopback origin requests |
 | `ingressClass.name` / `gatewayClass.name` | `haptic` | Class names the controller matches against — deliberately distinct from `haproxy` so HAPTIC can run side-by-side with other HAProxy-based ingress controllers; set to `haproxy` when replacing an incumbent |
 | `credentials.dataplane.username` / `credentials.dataplane.password` | `admin` / generated | Empty `password` generates a random 32-char password, preserved across upgrades by reading the existing Secret. GitOps tools that render without cluster access regenerate it every sync — **set explicitly there and in production**. See [Credentials](https://haproxy-haptic.org/docs/dev/reference/#credentials). |
 
@@ -67,8 +67,8 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 | `ingress` | on | Kubernetes `networking.k8s.io/v1` Ingress |
 | `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` / `TLSRoute` (requires Gateway CRDs installed) |
 | `ingressAnnotationsCompat` | on | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
-| `haproxytech` | on | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |
-| `haproxy-ingress` | on | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |
+| `haproxytech` | off | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |
+| `haproxy-ingress` | off | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |
 | `nginx-ingress` | off | `nginx.ingress.kubernetes.io/*` annotation compatibility |
 | `spoaHub` | auto | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 

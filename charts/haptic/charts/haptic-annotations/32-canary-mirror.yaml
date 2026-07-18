@@ -211,9 +211,9 @@ templateSnippets:
 
         INDEXING: each mirror-target Ingress gets its OWN mirror index (1, 2, …) so
         two Ingresses that share a host never overwrite each other's target on a
-        shared slot. The plugin floors its slot count at mirrorStaticMinSlots
+        shared slot. The plugin floors its slot count at mirrorMinMessageSlots
         (default 4); if there are MORE mirror-target Ingresses than slots, the
-        render fail()s and asks the operator to raise spoaHub.mirrorStaticMinSlots.
+        render fail()s and asks the operator to raise spoaHub.haproxy.mirror.minMessageSlots.
         Mirroring is host-scoped: a host-less Ingress is rejected.
 
         Generated HAProxy Config (per mirror-target Ingress, with index <i>):
@@ -223,7 +223,9 @@ templateSnippets:
           http-request set-var(txn.gw_mirror_retries_<i>) int(<n>) if <host-match>
           http-request send-spoe-group spoa-hub mirror-<i>-group if <host-match>
       -#}
-      {%- var maxSlots = toint(extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback("4")) %}
+      {%- var maxSlots = 4 %}
+      {%- var maxSlotsAny = extraContext | dig("spoaHub", "haproxy", "mirror", "minMessageSlots") %}
+      {%- if maxSlotsAny != nil %}{%- maxSlots = toint(maxSlotsAny) %}{%- end %}
       {%- var idx = 0 %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var mt = ingress.Metadata.Annotations["haproxy-haptic.org/mirror-target"] %}
@@ -242,7 +244,7 @@ templateSnippets:
           {%- end %}
           {%- idx = idx + 1 %}
           {%- if idx > maxSlots %}
-            {{- fail("Ingress '" + key + "' is mirror-target Ingress #" + tostring(idx) + ", exceeding the " + tostring(maxSlots) + " available mirror slots. Raise spoaHub.mirrorStaticMinSlots to >= " + tostring(idx) + " or reduce the number of mirror-target Ingresses.") -}}
+            {{- fail("Ingress '" + key + "' is mirror-target Ingress #" + tostring(idx) + ", exceeding the " + tostring(maxSlots) + " available mirror slots. Raise spoaHub.haproxy.mirror.minMessageSlots to >= " + tostring(idx) + " or reduce the number of mirror-target Ingresses.") -}}
           {%- end %}
           {#- Parse scheme + authority. The value is scheme://host[:port] optionally
               followed by a path (or an nginx $variable) appended with no '/'

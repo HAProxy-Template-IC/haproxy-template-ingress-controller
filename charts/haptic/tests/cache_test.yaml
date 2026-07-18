@@ -7,6 +7,65 @@ templates:
   - varnish-networkpolicy.yaml
 
 tests:
+  - it: should reject the former controller-owned cache path
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.cache.varnish.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.cache has moved to the top-level cache tree; use cache.varnish instead."
+
+  - it: should reject HAProxy balancing settings under the Varnish workload
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.varnish.hashBalanceFactor: 175
+    asserts:
+      - failedTemplate:
+          errorMessage: "cache.varnish.hashBalanceFactor has moved to cache.haproxy.hashBalanceFactor because HAProxy, not Varnish, consumes it."
+
+  - it: should surface HAProxy-owned cache balancing from the canonical path
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.varnish.enabled: true
+      cache.haproxy.hashBalanceFactor: 175
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.cache.haproxy.hashBalanceFactor
+          value: 175
+
+  - it: should reject unknown staged cache fields while disabled
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.varnish.autoscaling.scaleDownStabilisationSeconds: 60
+    asserts:
+      - failedTemplate:
+          errorMessage: 'cache.varnish.autoscaling contains unknown field "scaleDownStabilisationSeconds".'
+
+  - it: should reject an invalid staged Varnish pull policy while disabled
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.varnish.imagePullPolicy: Sometimes
+    asserts:
+      - failedTemplate:
+          errorMessage: "cache.varnish.imagePullPolicy must be one of: Always, IfNotPresent, Never."
+
+  - it: should reject a disruption budget that permits every minimum replica to disappear
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.varnish.replicas: 1
+    asserts:
+      - failedTemplate:
+          errorMessage: "cache.varnish.podDisruptionBudget.maxUnavailable must be smaller than the minimum Varnish replica count, so voluntary disruptions preserve at least one cache shard."
+
+  - it: should reject an impossible autoscaling range
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.varnish.autoscaling.minReplicas: 4
+      cache.varnish.autoscaling.maxReplicas: 3
+    asserts:
+      - failedTemplate:
+          errorMessage: "cache.varnish.autoscaling.maxReplicas must be greater than or equal to minReplicas."
+
   - it: should not render Varnish isolation while the cache tier is disabled
     template: varnish-networkpolicy.yaml
     asserts:
@@ -16,7 +75,7 @@ tests:
   - it: should isolate Varnish by default when the cache tier is enabled
     template: varnish-networkpolicy.yaml
     set:
-      controller.cache.varnish.enabled: true
+      cache.varnish.enabled: true
     asserts:
       - isKind:
           of: NetworkPolicy
@@ -65,7 +124,7 @@ tests:
     release:
       name: haptic-release-abcdefghijklmnopqrstuvwxyz-123456789
     set:
-      controller.cache.varnish.enabled: true
+      cache.varnish.enabled: true
     asserts:
       - matchRegex:
           path: metadata.name
@@ -74,8 +133,8 @@ tests:
   - it: should allow disabling Varnish isolation explicitly
     template: varnish-networkpolicy.yaml
     set:
-      controller.cache.varnish.enabled: true
-      controller.cache.varnish.networkPolicy.enabled: false
+      cache.varnish.enabled: true
+      cache.varnish.networkPolicy.enabled: false
     asserts:
       - hasDocuments:
           count: 0
@@ -83,8 +142,8 @@ tests:
   - it: should keep default-true Varnish isolation for a null block
     template: varnish-networkpolicy.yaml
     set:
-      controller.cache.varnish.enabled: true
-      controller.cache.varnish.networkPolicy: null
+      cache.varnish.enabled: true
+      cache.varnish.networkPolicy: null
     asserts:
       - isKind:
           of: NetworkPolicy
@@ -92,7 +151,7 @@ tests:
   - it: should admit release-scoped Varnish loopback traffic in restrictive HAProxy mode
     template: haproxy-networkpolicy.yaml
     set:
-      controller.cache.varnish.enabled: true
+      cache.varnish.enabled: true
       haproxy.networkPolicy.allowExternal: false
       haproxy.networkPolicy.allowedSources:
         - ipBlock:
@@ -113,58 +172,58 @@ tests:
   - it: should use the HAProxy Service port for Varnish origin requests
     template: haproxytemplateconfig.yaml
     set:
-      controller.cache.varnish.enabled: true
+      cache.varnish.enabled: true
       haproxy.service.http.port: 18080
       haproxy.ports.http: 8080
     asserts:
       - equal:
-          path: spec.templatingSettings.extraContext.hapticCacheOriginPort
-          value: "18080"
+          path: spec.templatingSettings.extraContext.cache.varnish.originPort
+          value: 18080
 
   - it: should reject a cache tier without the chart-managed HAProxy origin
     template: haproxytemplateconfig.yaml
     set:
-      controller.cache.varnish.enabled: true
+      cache.varnish.enabled: true
       haproxy.enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: controller.cache.varnish.enabled=true requires the chart-managed HAProxy workload and Service (haproxy.enabled=true) for cache-miss loopback requests.
+          errorMessage: cache.varnish.enabled=true requires the chart-managed HAProxy workload and Service (haproxy.enabled=true) for cache-miss loopback requests.
 
   - it: should reject a cache tier without an HAProxy HTTP Service port
     template: haproxytemplateconfig.yaml
     set:
-      controller.cache.varnish.enabled: true
+      cache.varnish.enabled: true
       haproxy.service.http.port: 0
     asserts:
       - failedTemplate:
-          errorMessage: controller.cache.varnish.enabled=true requires haproxy.service.http.port to be a positive Service port for cache-miss loopback requests.
+          errorMessage: cache.varnish.enabled=true requires haproxy.service.http.port to be a positive Service port for cache-miss loopback requests.
 
   - it: should surface the default Varnish disruption budget in extraContext
     template: haproxytemplateconfig.yaml
     set:
-      controller.cache.varnish.enabled: true
+      cache.varnish.enabled: true
     asserts:
       - equal:
-          path: spec.templatingSettings.extraContext.hapticCachePDBEnabled
-          value: "true"
+          path: spec.templatingSettings.extraContext.cache.varnish.podDisruptionBudget.enabled
+          value: true
       - equal:
-          path: spec.templatingSettings.extraContext.hapticCachePDBMaxUnavailable
-          value: "1"
+          path: spec.templatingSettings.extraContext.cache.varnish.podDisruptionBudget.maxUnavailable
+          value: 1
 
   - it: should allow disabling the Varnish disruption budget
     template: haproxytemplateconfig.yaml
     set:
-      controller.cache.varnish.enabled: true
-      controller.cache.varnish.podDisruptionBudget.enabled: false
+      cache.varnish.enabled: true
+      cache.varnish.podDisruptionBudget.enabled: false
     asserts:
       - equal:
-          path: spec.templatingSettings.extraContext.hapticCachePDBEnabled
-          value: "false"
+          path: spec.templatingSettings.extraContext.cache.varnish.podDisruptionBudget.enabled
+          value: false
 
   - it: should omit the combined cache and rate-limit validation when cache is disabled
     template: haproxytemplateconfig.yaml
     set:
-      controller.rateLimit.shared.enabled: true
+      rateLimit.shared.enabled: true
     asserts:
       - notExists:
           path: spec.validationTests.test-haptic-cache-shared-rate-limit-loopback
@@ -172,8 +231,8 @@ tests:
   - it: should include the combined cache and rate-limit validation when both are enabled
     template: haproxytemplateconfig.yaml
     set:
-      controller.cache.varnish.enabled: true
-      controller.rateLimit.shared.enabled: true
+      cache.varnish.enabled: true
+      rateLimit.shared.enabled: true
     asserts:
       - exists:
           path: spec.validationTests.test-haptic-cache-shared-rate-limit-loopback
@@ -181,8 +240,8 @@ tests:
   - it: should keep default-true Varnish disruption budget RBAC for a null block
     template: role.yaml
     set:
-      controller.cache.varnish.enabled: true
-      controller.cache.varnish.podDisruptionBudget: null
+      cache.varnish.enabled: true
+      cache.varnish.podDisruptionBudget: null
     asserts:
       - contains:
           path: rules
@@ -194,7 +253,7 @@ tests:
   - it: should grant PodDisruptionBudget access when the Varnish budget is enabled
     template: role.yaml
     set:
-      controller.cache.varnish.enabled: true
+      cache.varnish.enabled: true
     asserts:
       - contains:
           path: rules
@@ -206,9 +265,9 @@ tests:
   - it: should not grant PodDisruptionBudget access when auxiliary budgets are disabled
     template: role.yaml
     set:
-      controller.cache.varnish.enabled: true
-      controller.cache.varnish.podDisruptionBudget.enabled: false
-      controller.rateLimit.shared.enabled: false
+      cache.varnish.enabled: true
+      cache.varnish.podDisruptionBudget.enabled: false
+      rateLimit.shared.enabled: false
     asserts:
       - notContains:
           path: rules

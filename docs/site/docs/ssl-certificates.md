@@ -28,23 +28,22 @@ helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/h
     Both default certificates are self-signed and intended for development and testing only. For production, override with your own domain and issuer.
 
 !!! warning "GitOps tools that render without cluster access"
-    The no-cert-manager fallback checks for an existing Secret with Helm's `lookup` function, which returns nothing when the chart is rendered without cluster access (`helm template`, Argo CD) — every sync would then generate a fresh certificate. For those deployments, install cert-manager, or provide the certificate explicitly: inline via `controller.defaultSSLCertificate.create`/`cert`/`key`, or as a manually created Secret (see [Alternative: Manual Certificate](#alternative-manual-certificate)).
+    The no-cert-manager fallback checks for an existing Secret with Helm's `lookup` function, which returns nothing when the chart is rendered without cluster access (`helm template`, Argo CD) — every sync would then generate a fresh certificate. For those deployments, install cert-manager, or provide the certificate explicitly: inline via `defaultSSLCertificate.create`/`cert`/`key` together with `defaultSSLCertificate.certManager.enabled=false`, or as a manually created Secret (see [Alternative: Manual Certificate](#alternative-manual-certificate)). The chart rejects inline creation while cert-manager is enabled because two actors must not own the same Secret.
 
 ### Production Deployment
 
 For production, override the default certificate configuration with your actual domain and a trusted issuer:
 
 ```yaml
-controller:
-  defaultSSLCertificate:
-    certManager:
-      createIssuer: false  # Use your own issuer
-      dnsNames:
-        - "*.example.com"
-        - "example.com"
-      issuerRef:
-        name: letsencrypt-prod
-        kind: ClusterIssuer
+defaultSSLCertificate:
+  certManager:
+    createIssuer: false  # Use your own issuer
+    dnsNames:
+      - "*.example.com"
+      - "example.com"
+    issuerRef:
+      name: letsencrypt-prod
+      kind: ClusterIssuer
 ```
 
 This requires an existing ClusterIssuer or Issuer. Create one if you haven't already:
@@ -76,10 +75,9 @@ The Helm chart creates a Certificate resource that cert-manager uses to automati
 To manage certificates without cert-manager, disable cert-manager integration and create a TLS Secret manually:
 
 ```yaml
-controller:
-  defaultSSLCertificate:
-    certManager:
-      enabled: false
+defaultSSLCertificate:
+  certManager:
+    enabled: false
 ```
 
 ```bash
@@ -94,10 +92,9 @@ kubectl create secret tls default-ssl-cert \
 To use a different Secret name or namespace:
 
 ```yaml
-controller:
-  defaultSSLCertificate:
-    secretName: "my-wildcard-cert"
-    namespace: "certificates"
+defaultSSLCertificate:
+  secretName: "my-wildcard-cert"
+  namespace: "certificates"
 ```
 
 The controller references the Secret at `certificates/my-wildcard-cert`.
@@ -123,9 +120,8 @@ data:
 To run in HTTP-only mode (not recommended):
 
 ```yaml
-controller:
-  defaultSSLCertificate:
-    enabled: false
+defaultSSLCertificate:
+  enabled: false
 ```
 
 ### Certificate rotation
@@ -160,10 +156,12 @@ controller:
   config:
     templatingSettings:
       extraContext:
-        hstsEnabled: true
-        hstsMaxAge: "31536000"          # one year (default)
-        hstsIncludeSubdomains: false
-        hstsPreload: false
+        tls:
+          hsts:
+            enabled: true
+            maxAge: "31536000"          # one year (default)
+            includeSubdomains: false
+            preload: false
 ```
 
 HSTS takes effect only over HTTPS, so pair it with an HTTP-to-HTTPS redirect. The rendered config emits a warning when HSTS is on but no redirect is configured.
@@ -172,12 +170,13 @@ This sets the header for every host. To enable HSTS per host instead — or over
 
 ## Webhook certificates
 
-The admission webhook requires TLS certificates. By default the chart generates a self-signed certificate itself — no cert-manager required (`webhook.certManager.enabled` is `false`):
+The admission webhook requires TLS certificates. By default the chart generates a self-signed certificate itself — no cert-manager required (`controller.webhook.certManager.enabled` is `false`):
 
 ```yaml
-webhook:
-  enabled: true
-  # certManager.enabled defaults to false → the chart issues a self-signed cert
+controller:
+  webhook:
+    enabled: true
+    # certManager.enabled defaults to false → the chart issues a self-signed cert
 ```
 
 Rotate the self-signed certificate by deleting its Secret and re-running the upgrade:
@@ -190,11 +189,12 @@ helm upgrade <release> oci://registry.gitlab.com/haproxy-haptic/haptic/charts/ha
 If cert-manager is installed, hand it the certificate instead so it issues and **auto-rotates** with a real CA:
 
 ```yaml
-webhook:
-  enabled: true
-  certManager:
+controller:
+  webhook:
     enabled: true
-    createIssuer: true  # Creates a self-signed Issuer automatically
+    certManager:
+      enabled: true
+      createIssuer: true  # Creates a self-signed Issuer automatically
 ```
 
 The chart then creates:
@@ -206,22 +206,24 @@ The chart then creates:
 To use an existing Issuer or ClusterIssuer instead:
 
 ```yaml
-webhook:
-  certManager:
-    enabled: true
-    createIssuer: false
-    issuerRef:
-      name: my-existing-issuer
-      kind: ClusterIssuer
+controller:
+  webhook:
+    certManager:
+      enabled: true
+      createIssuer: false
+      issuerRef:
+        name: my-existing-issuer
+        kind: ClusterIssuer
 ```
 
 For manual certificate management without cert-manager, provide the CA bundle:
 
 ```yaml
-webhook:
-  certManager:
-    enabled: false
-  caBundle: "LS0tLS1CRUdJTi..."  # Base64-encoded CA certificate
+controller:
+  webhook:
+    certManager:
+      enabled: false
+    caBundle: "LS0tLS1CRUdJTi..."  # Base64-encoded CA certificate
 ```
 
 ## See also

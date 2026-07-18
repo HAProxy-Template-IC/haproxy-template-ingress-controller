@@ -117,7 +117,7 @@ Useful flags:
     helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
       --namespace haptic --create-namespace \
       --set haproxy.service.type=LoadBalancer \
-      --set controller.statusPatches.enabled=false   # no DNS writes yet
+      --set controller.config.templatingSettings.extraContext.statusPatches.enabled=false   # no DNS writes yet
     ```
 
     If HAPTIC is already installed, apply the same flags with `helm upgrade`:
@@ -126,7 +126,7 @@ Useful flags:
     helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
       --namespace haptic --reuse-values \
       --set haproxy.service.type=LoadBalancer \
-      --set controller.statusPatches.enabled=false   # no DNS writes yet
+      --set controller.config.templatingSettings.extraContext.statusPatches.enabled=false   # no DNS writes yet
     ```
 
 2. **Enable the right annotation library** for your source controller — see
@@ -154,7 +154,7 @@ Useful flags:
     ```bash
     helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
       --namespace haptic --reuse-values \
-      --set controller.statusPatches.enabled=true
+      --set controller.config.templatingSettings.extraContext.statusPatches.enabled=true
     ```
 
     Then repoint DNS to HAPTIC's load balancer if you manage it manually. Watch
@@ -177,7 +177,7 @@ Useful flags:
 | `controller.templateLibraries.nginxIngress.enabled` | `false` | Opt-in: turn on to keep `nginx.ingress.kubernetes.io/*` annotations working. |
 | `controller.templateLibraries.haproxyIngress.enabled` | `false` | Opt-in: turn on to keep `haproxy-ingress.github.io/*` annotations working. |
 | `controller.templateLibraries.haproxytech.enabled` | `false` | Opt-in: turn on to keep `haproxy.org/*` annotations working. |
-| `controller.statusPatches.enabled` | `true` | Writes Ingress/Gateway status; **disable during migration**. |
+| `controller.config.templatingSettings.extraContext.statusPatches.enabled` | `true` | Writes Ingress/Gateway status; **disable during migration**. |
 | `haproxy.service.type` | `NodePort` | Set to `LoadBalancer` for a routable external address. |
 
 ---
@@ -228,7 +228,7 @@ Basic host/path routing works without this library; only the `nginx.ingress.kube
 
 ### Control the DNS cutover
 
-Keep `controller.statusPatches.enabled=false` until you've verified routing.
+Keep `controller.config.templatingSettings.extraContext.statusPatches.enabled=false` until you've verified routing.
 With it on, the moment HAPTIC's HAProxy Service has an address it stamps
 `.status.loadBalancer` onto every adopted Ingress, and `external-dns`
 switches DNS to it — a premature, unverified cutover.

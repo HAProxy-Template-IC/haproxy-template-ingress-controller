@@ -16,7 +16,7 @@ tests:
 
   - it: should set replica count from values
     set:
-      replicaCount: 5
+      controller.replicaCount: 5
     asserts:
       - equal:
           path: spec.replicas
@@ -24,7 +24,7 @@ tests:
 
   - it: should not set replicas when autoscaling is enabled
     set:
-      autoscaling.enabled: true
+      controller.autoscaling.enabled: true
     asserts:
       - notExists:
           path: spec.replicas
@@ -71,9 +71,55 @@ tests:
             containerPort: 9090
             protocol: TCP
 
+  - it: should configure process listeners from the same controller port values
+    set:
+      controller.ports.healthz: 8888
+      controller.ports.metrics: 9999
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "DEBUG_PORT")].value
+          value: "8888"
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "METRICS_PORT")].value
+          value: "9999"
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: healthz
+            containerPort: 8888
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9999
+            protocol: TCP
+
+  - it: should disable the process and container metrics listener together
+    set:
+      controller.ports.metrics: 0
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "METRICS_PORT")].value
+          value: "0"
+      - notContains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 0
+            protocol: TCP
+
+  - it: should configure the watched HAProxyTemplateConfig name from configName
+    set:
+      controller.configName: edge-config
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "CRD_NAME")].value
+          value: edge-config
+
   - it: should set resources when specified
     set:
-      resources:
+      controller.resources:
         limits:
           cpu: 500m
           memory: 256Mi
@@ -135,7 +181,7 @@ tests:
 
   - it: should expose webhook port when enabled
     set:
-      webhook.enabled: true
+      controller.webhook.enabled: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -144,9 +190,24 @@ tests:
             containerPort: 9443
             protocol: TCP
 
+  - it: should configure the webhook process listener from the same port value
+    set:
+      controller.webhook.enabled: true
+      controller.ports.webhook: 10443
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_PORT")].value
+          value: "10443"
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: webhook
+            containerPort: 10443
+            protocol: TCP
+
   - it: should mount webhook certs when webhook enabled
     set:
-      webhook.enabled: true
+      controller.webhook.enabled: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
@@ -166,8 +227,8 @@ tests:
 
   - it: should derive controller admission deadlines from custom API-server timeouts
     set:
-      webhook.timeoutSeconds: 7
-      webhook.haproxyTemplateConfig.timeoutSeconds: 23
+      controller.webhook.timeoutSeconds: 7
+      controller.webhook.haproxyTemplateConfig.timeoutSeconds: 23
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "WEBHOOK_RESOURCE_ADMISSION_TIMEOUT")].value
@@ -179,7 +240,7 @@ tests:
   # Extra volumes and volume mounts
   - it: should include extra volumes when specified
     set:
-      extraVolumes:
+      controller.extraVolumes:
         - name: custom-config
           configMap:
             name: my-config
@@ -193,7 +254,7 @@ tests:
 
   - it: should include extra volume mounts when specified
     set:
-      extraVolumeMounts:
+      controller.extraVolumeMounts:
         - name: custom-config
           mountPath: /etc/custom
           readOnly: true
@@ -208,7 +269,7 @@ tests:
   # Init containers and sidecars
   - it: should include init containers when specified
     set:
-      initContainers:
+      controller.initContainers:
         - name: init-db
           image: busybox:1.28
           command: ["sh", "-c", "echo init"]
@@ -222,7 +283,7 @@ tests:
 
   - it: should include sidecars when specified
     set:
-      sidecars:
+      controller.sidecars:
         - name: log-collector
           image: fluent/fluent-bit:latest
     asserts:
@@ -242,14 +303,14 @@ tests:
 
   - it: should omit startup probe when disabled
     set:
-      startupProbe.enabled: false
+      controller.startupProbe.enabled: false
     asserts:
       - notExists:
           path: spec.template.spec.containers[0].startupProbe
 
   - it: should include startup probe when enabled
     set:
-      startupProbe.enabled: true
+      controller.startupProbe.enabled: true
     asserts:
       - exists:
           path: spec.template.spec.containers[0].startupProbe
@@ -262,7 +323,7 @@ tests:
 
   - it: should set startup probe parameters
     set:
-      startupProbe:
+      controller.startupProbe:
         enabled: true
         initialDelaySeconds: 5
         periodSeconds: 15
@@ -281,7 +342,7 @@ tests:
   # Lifecycle hooks
   - it: should include lifecycle hooks when specified
     set:
-      lifecycle:
+      controller.lifecycle:
         preStop:
           exec:
             command: ["/bin/sh", "-c", "sleep 15"]
@@ -320,7 +381,7 @@ tests:
 
   - it: should set custom update strategy
     set:
-      updateStrategy:
+      controller.updateStrategy:
         type: Recreate
     asserts:
       - equal:
@@ -336,7 +397,7 @@ tests:
 
   - it: should set custom minReadySeconds
     set:
-      minReadySeconds: 10
+      controller.minReadySeconds: 10
     asserts:
       - equal:
           path: spec.minReadySeconds
@@ -350,7 +411,7 @@ tests:
 
   - it: should set custom revisionHistoryLimit
     set:
-      revisionHistoryLimit: 5
+      controller.revisionHistoryLimit: 5
     asserts:
       - equal:
           path: spec.revisionHistoryLimit
@@ -443,7 +504,7 @@ tests:
 
   - it: should include deployment annotations
     set:
-      deploymentAnnotations:
+      controller.deploymentAnnotations:
         reloader.stakater.com/auto: "true"
     asserts:
       - equal:

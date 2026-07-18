@@ -1,4 +1,4 @@
-{{- $default := .Values.controller.defaultSSLCertificate }}
+{{- $default := .Values.defaultSSLCertificate }}
 {{- $cm := $default.certManager }}
 {{- $ns := $default.namespace | default .Release.Namespace }}
 {{- if and $default.enabled $default.create $default.cert $default.key }}
@@ -45,7 +45,7 @@ evaluation install never silently expires; it is not auto-rotated. Production
 setups use cert-manager or their own Secret (docs/site/docs/ssl-certificates.md).
 */}}
 {{- if not $cm.dnsNames }}
-{{- fail "controller.defaultSSLCertificate.certManager.dnsNames must be a non-empty list for the self-signed fallback certificate" }}
+{{- fail "defaultSSLCertificate.certManager.dnsNames must be a non-empty list for the self-signed fallback certificate" }}
 {{- end }}
 {{- $dnsNames := $cm.dnsNames }}
 {{- $cert := genSelfSignedCert (first $dnsNames) nil $dnsNames 3650 }}

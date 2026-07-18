@@ -24,7 +24,7 @@ Merge Order (lowest to highest priority):
 
 Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. The `spoa-hub` library is also auto-loaded by `haptic.mergeLibraries` whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
 
-The frontend path-matching order is selected at base-load time by `controller.config.routing.regexMatchOrder` (`default` or `last`). When `last`, `haptic.mergeLibraries` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before merge so it never appears in the rendered HAProxyTemplateConfig.
+The frontend path-matching order is selected at base-load time by `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` (`default` or `last`). When `last`, `haptic.mergeLibraries` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before merge so it never appears in the rendered HAProxyTemplateConfig.
 
 **Merge Logic** (`templates/_libraries.tpl`, `define "haptic.mergeLibraries"`):
 
@@ -80,7 +80,7 @@ Real examples in the source:
 
 - `libraries/ingress.yaml` — simple `enable` + one `inject` for the dynamic `ingressClassName` field selector.
 - `libraries/gateway/` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + `inject`s for the gateway and gateway-class field selectors.
-- `libraries/base.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
+- `libraries/base.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
 - `libraries/spoa-hub/` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
 
 Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:` block, and append its path to `$libraryFiles` in `_libraries.tpl`'s `mergeLibraries`. The merge function does not need a new branch.

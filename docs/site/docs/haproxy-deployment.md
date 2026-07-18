@@ -18,16 +18,17 @@ A single `ClusterIP` Service named after the chart's `fullname` (for example `<r
 
 | Name | Container port | Values key | Purpose |
 |------|----------------|------------|---------|
-| `healthz` | 8080 | `controller.ports.healthz` | Liveness/readiness probes and the `/debug/*` introspection endpoints (also served on `controller.debugPort`, which defaults to the same value) |
-| `metrics` | 9090 | `controller.ports.metrics` | Prometheus metrics |
+| `healthz` | 8080 | `controller.ports.healthz` | Single source for the process listener, liveness/readiness probes, Service, and `/debug/*` introspection endpoints |
+| `metrics` | 9090 | `controller.ports.metrics` | Single source for the process listener, Service, and Prometheus monitors; `0` disables metrics |
 | `webhook` | 9443 | `controller.ports.webhook` | Admission-webhook HTTPS endpoint |
 
-Override Service type, annotations, etc. under the top-level `service:` block:
+Override Service type, annotations, etc. under the `controller.service` block:
 
 ```yaml
-service:
-  type: ClusterIP
-  annotations: {}
+controller:
+  service:
+    type: ClusterIP
+    annotations: {}
 ```
 
 ### HAProxy Service

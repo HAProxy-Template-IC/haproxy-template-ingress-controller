@@ -30,7 +30,7 @@ import (
 // TestHapticVarnishCache exercises the shared Varnish cache tier (70-caching.yaml)
 // end-to-end: the chart-deployed Varnish StatefulSet, the loopback origin, and
 // per-route caching. Runs only in the cache shard (HAPTIC_E2E_PROFILE=cache),
-// which installs with controller.cache.varnish.enabled=true.
+// which installs with cache.varnish.enabled=true.
 //
 // The VCL tags every response with X-Cache: HIT|MISS (vcl_deliver). A HIT proves
 // the full path: the tier is deployed and reachable, the first request's MISS

@@ -1,4 +1,4 @@
-{{- if .Values.rbac.create }}
+{{- if .Values.controller.rbac.create }}
 {{- /* Merge watched resources from libraries */ -}}
 {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
 {{- $allWatchedResources := merge ($mergedLibraries.watchedResources | default dict) (.Values.controller.config.watchedResources | default dict) }}

@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: controller workload ownership and isolation
+templates:
+  - networkpolicy.yaml
+  - poddisruptionbudget.yaml
+  - webhook-service.yaml
+
+tests:
+  - it: should select only controller pods in the controller NetworkPolicy
+    template: networkpolicy.yaml
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/component"]
+          value: controller
+      - notContains:
+          path: spec.ingress
+          content:
+            ports:
+              - port: 5555
+                protocol: TCP
+
+  - it: should select only controller pods in the controller disruption budget
+    template: poddisruptionbudget.yaml
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+          value: controller
+
+  - it: should select only controller pods behind the webhook Service
+    template: webhook-service.yaml
+    asserts:
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: controller
+
+  - it: should allow the component-owned controller policy to be disabled
+    template: networkpolicy.yaml
+    set:
+      controller.networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

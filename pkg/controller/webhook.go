@@ -67,6 +67,7 @@ func setupWebhook(
 	cfg *coreconfig.Config,
 	webhookCertDir string,
 	admissionTimeouts WebhookAdmissionTimeouts,
+	webhookPort int,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component, // Pre-created validator (may be nil)
 	configValidator webhook.ConfigValidatorFunc, // Pre-created HAProxyTemplateConfig validator (may be nil)
@@ -100,7 +101,7 @@ func setupWebhook(
 	webhookComponent := webhook.New(
 		logger,
 		&webhook.Config{
-			Port:                     9443, // Default webhook port
+			Port:                     webhookPort,
 			Path:                     "/validate",
 			Rules:                    rules,
 			CertDir:                  webhookCertDir,
@@ -129,7 +130,7 @@ func setupWebhook(
 	// underlying error.
 	select {
 	case <-webhookComponent.Listening():
-		logger.Info("Webhook component listening", "port", 9443)
+		logger.Info("Webhook component listening", "port", webhookPort)
 	case <-iterCtx.Done():
 		logger.Info("Iteration cancelled while waiting for webhook bind")
 	case <-time.After(30 * time.Second):

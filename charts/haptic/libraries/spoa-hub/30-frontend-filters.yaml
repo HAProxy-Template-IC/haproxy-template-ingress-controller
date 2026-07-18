@@ -36,17 +36,22 @@ templateSnippets:
       http-after-response set-header X-RateLimit-Reset %[var(txn.hub.rate_limit.reset)] if { var(txn.rl_limit) -m found } { var(txn.rl_keyspec) -m str {{ keySpec }} } { var(txn.hub.rate_limit.allowed) -m found }
       {% end %}
 
-  # Request validation passes req.body to SPOE, and HAProxy only exposes bytes
-  # currently buffered. The chart validates maxBodyBytes <= this buffer size
-  # minus fixed header/rewrite headroom before rendering a config, so the
-  # api-gateway plugin never receives a truncated JSON document for a request
-  # that is within the declared cap.
-  global-settings-350-request-validation-buffer:
+  # Body-inspecting features pass req.body to SPOE, and HAProxy only exposes
+  # buffered bytes. Emit the one shared tune.bufsize configured for all request
+  # inspectors; duplicate feature-specific directives would be ambiguous.
+  global-settings-350-request-body-inspection-buffer:
     template: |
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
-      {%- if messages contains "validate-request" %}
-      tune.bufsize {{ extraContext | dig("hapticRequestValidationBufferSize") | fallback("16384") }}
+      {%- var bodyInspectionEnabled = messages contains "validate-request" || messages contains "check-request" %}
+      {%- if bodyInspectionEnabled %}
+        {%- var bufferSize = 16384 %}
+        {%- var configuredBufferSize = extraContext | dig("requestBodyInspection", "haproxyBuffer", "sizeBytes") %}
+        {%- if configuredBufferSize != nil %}{%- bufferSize = toint(configuredBufferSize) %}{%- end %}
+        {%- if bufferSize < 16384 || bufferSize > 2097152 %}
+          {%- fail("extraContext.requestBodyInspection.haproxyBuffer.sizeBytes must be between 16384 and 2097152 bytes.") %}
+        {%- end %}
+      tune.bufsize {{ bufferSize }}
       {%- end %}
 
   frontend-filters-100-spoa-hub:
@@ -64,7 +69,7 @@ templateSnippets:
   # after native API-key/JWT rules have established txn.haptic_consumer.
   frontend-spoe-filters-020-rate-limit-config:
     template: |
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-ratelimit" %}
       {#- One packed map keyed by resource_id -> "limit period burst mode
@@ -84,26 +89,16 @@ templateSnippets:
   frontend-spoe-filters-025-rate-limit-ip:
     template: |
       {%- import "util-spoa-rate-limit-dispatch" for DispatchSharedRateLimit %}
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-ratelimit" %}
       {{ DispatchSharedRateLimit("ip") }}
       {%- end %}
 
-  # Coraza WAF dispatch. Triggers the check-request SPOE message and
-  # denies on rule match. The plugin's response sets
-  # `txn.hub.coraza.rule_id` (uint32, 0 if no rule matched) and
-  # `txn.hub.coraza.action` ("allow"/"deny"/...). We deny only when
-  # BOTH conditions hold:
-  #   - rule_id >= 1: a real SecRule matched. The plugin's allowResult()
-  #     and denyResult() error path both leave rule_id at zero, so this
-  #     gate filters out "WAF init failed and we're denying every
-  #     request" or "rule engine off" failure modes that would otherwise
-  #     turn the deny into a default-deny on the whole frontend.
-  #   - action == "deny": the plugin's interruption decision was an HTTP
-  #     block (vs "drop" / "redirect" which would need different HAProxy
-  #     actions). Today the chart only emits 403 deny, so drop/redirect
-  #     actions correctly fall through to backend.
+  # Coraza WAF dispatch. Reusable HAPTIC policies add a per-Ingress body
+  # contract: requestBody:none never waits, while requestBody:any/json requires
+  # a bounded complete Content-Length body. The plugin receives explicit
+  # body-mode/body-complete and detect-only values.
   #
   # Multi-tenant per-path dispatch (no rule bleed across Ingresses):
   #
@@ -120,7 +115,7 @@ templateSnippets:
   #     for Ingresses with `haproxy-ingress.github.io/waf`. Drives the
   #     deny-skip predicate below for shadow-mode rollouts.
   #
-  # Dispatch fires when EITHER map matches the current resource_id.
+  # Dispatch fires when either the app or enforcement map matches resource_id.
   # Resources without any matching annotation skip the SPOE roundtrip entirely
   # (matches haproxy-ingress.github.io upstream semantic). The
   # haproxy-ingress.github.io/waf-mode annotation only matters when a
@@ -134,8 +129,7 @@ templateSnippets:
   # That's a privilege-escalation vector in multi-tenant clusters.
   # Now, modsec-snippets only fire on traffic owned by their carrying
   # Ingress (resource_id keying). Operators who depended on the
-  # rule-bleed behavior must
-  # move shared rules into chart-level
+  # rule-bleed behavior must move shared rules into chart-level
   # `spoaHub.plugins.coraza.directives` (the base ruleset, applied to
   # every per-Ingress app + the default WAF).
   #
@@ -145,27 +139,69 @@ templateSnippets:
   # (i.e. coraza is enabled).
   frontend-spoe-filters-050-coraza:
     template: |
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-request" %}
-      {%- var dispatchMode = extraContext | dig_string("opt-in", "coraza", "dispatch", "mode") %}
-      {%- var defaultEnforcement = extraContext | dig_string("deny", "coraza", "dispatch", "defaultEnforcement") %}
+      {%- var dispatchMode = extraContext | dig_string("opt-in", "waf", "dispatch", "mode") %}
+      {%- var defaultEnforcement = extraContext | dig_string("deny", "waf", "dispatch", "defaultEnforcement") %}
+      {%- var corazaBodyWaitTimeout = extraContext | dig_string("100ms", "waf", "policies", "requestBody", "waitTimeout") %}
       {%- if dispatchMode != "opt-in" && dispatchMode != "default-on" %}
-        {%- fail("Invalid value for controller.templatingSettings.extraContext.coraza.dispatch.mode: '" + dispatchMode + "'; must be 'opt-in' or 'default-on'.") %}
+        {%- fail("Invalid WAF dispatch mode '" + dispatchMode + "'; set controller.config.templatingSettings.extraContext.waf.dispatch.mode in Helm values or spec.templatingSettings.extraContext.waf.dispatch.mode in a raw HAProxyTemplateConfig to 'opt-in' or 'default-on'.") %}
       {%- end %}
       {%- if defaultEnforcement != "deny" && defaultEnforcement != "detect" %}
-        {%- fail("Invalid value for controller.templatingSettings.extraContext.coraza.dispatch.defaultEnforcement: '" + defaultEnforcement + "'; must be 'deny' or 'detect'.") %}
+        {%- fail("Invalid WAF default enforcement '" + defaultEnforcement + "'; set controller.config.templatingSettings.extraContext.waf.dispatch.defaultEnforcement in Helm values or spec.templatingSettings.extraContext.waf.dispatch.defaultEnforcement in a raw HAProxyTemplateConfig to 'deny' or 'detect'.") %}
+      {%- end %}
+      {%- if !regex_search(corazaBodyWaitTimeout, "^[1-9][0-9]*(us|ms|s|m|h|d)?$") %}
+        {%- fail("extraContext.waf.policies.requestBody.waitTimeout must be a positive HAProxy duration.") %}
       {%- end %}
       http-request set-var(txn.coraza_app) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
       http-request set-var(txn.coraza_mode) var(txn.resource_id),map({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
+      http-request set-var(txn.coraza_body_cfg) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-body.map", "map") }}) unless { var(txn.coraza_body_cfg) -m found }
+      http-request set-var(txn.coraza_body_policy) var(txn.coraza_body_cfg),field(1,' ') if { var(txn.coraza_body_cfg) -m found }
+      http-request set-var(txn.coraza_content_policy) var(txn.coraza_body_cfg),field(2,' ') if { var(txn.coraza_body_cfg) -m found }
+      http-request set-var(txn.coraza_max_body) var(txn.coraza_body_cfg),field(3,' ') if { var(txn.coraza_body_cfg) -m found }
+      http-request set-var(txn.coraza_body_mode) str(none)
+      http-request set-var(txn.coraza_body_complete) bool(false)
+      http-request set-var(txn.coraza_detect_only) bool(false)
+      http-request set-var(txn.coraza_active) bool(false)
       {%- if dispatchMode == "default-on" %}
       http-request set-var(txn.coraza_disabled) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-disabled.map", "map") }}) unless { var(txn.coraza_disabled) -m found }
       http-request set-var(txn.coraza_mode) str({{ defaultEnforcement }}) unless { var(txn.coraza_mode) -m found }
-      http-request send-spoe-group spoa-hub check-request-group unless { var(txn.coraza_disabled) -m found }
+      http-request set-var(txn.coraza_active) bool(true) unless { var(txn.coraza_disabled) -m found }
       {%- else %}
-      http-request send-spoe-group spoa-hub check-request-group if { var(txn.coraza_app) -m found } || { var(txn.coraza_mode) -m found }
+      http-request set-var(txn.coraza_active) bool(true) if { var(txn.coraza_app) -m found } || { var(txn.coraza_mode) -m found }
       {%- end %}
-      http-request deny deny_status 403 if { var(txn.hub.coraza.rule_id) -m int 1: } { var(txn.hub.coraza.action) -m str deny } !{ var(txn.coraza_mode) -m str detect }
+      http-request set-var(txn.coraza_body_mode) str(buffered) if { var(txn.coraza_active) -m bool } { var(txn.coraza_body_policy) -m str buffered } { method POST PUT PATCH DELETE }
+      http-request set-var(txn.coraza_detect_only) bool(true) if { var(txn.coraza_active) -m bool } { var(txn.coraza_mode) -m str detect }
+      {#- Buffered profiles inspect a bounded complete body. A chunked/streaming
+          request (Transfer-Encoding, no Content-Length) cannot prove
+          completeness from req.body and is rejected 411 — but a request with
+          NO body (neither header, e.g. an ordinary DELETE or empty POST) has
+          an empty complete body and is passed through to Coraza, not rejected.
+          The Content-Type check tolerates the RFC 9110 optional whitespace
+          before the parameter `;`. All body-contract rejections are skipped in
+          detect (shadow) mode: a detect policy observes without blocking live
+          traffic; truncated/uninspectable bodies simply aren't inspected. -#}
+      http-request return status 415 if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { var(txn.coraza_content_policy) -m str json } { req.hdr(Content-Length) -m found } !{ req.hdr(Content-Type),field(1,';'),lower -m reg ^application/([a-z0-9.+-]+\+)?json[[:space:]]*$ }
+      http-request return status 400 if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { req.hdr_cnt(Content-Length) gt 1 }
+      http-request return status 411 if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { req.hdr(Transfer-Encoding) -m found } !{ req.hdr(Content-Length) -m found }
+      http-request set-var(txn.coraza_body_size) req.body_size if { var(txn.coraza_body_mode) -m str buffered }
+      http-request return status 413 if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { var(txn.coraza_body_size),sub(txn.coraza_max_body) -m int gt 0 }
+      http-request wait-for-body time {{ corazaBodyWaitTimeout }} if { var(txn.coraza_body_mode) -m str buffered }
+      http-request set-var(txn.coraza_body_len) req.body_len if { var(txn.coraza_body_mode) -m str buffered }
+      http-request return status 413 if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { var(txn.coraza_body_len),sub(txn.coraza_body_size) -m int lt 0 }
+      http-request set-var(txn.coraza_body_complete) bool(true) if { var(txn.coraza_body_mode) -m str buffered }
+      http-request send-spoe-group spoa-hub check-request-group if { var(txn.coraza_active) -m bool }
+      {#- Hub admission and plugin engine failures fail closed in both enforce
+          and detect modes. Detect-only coercion happens inside Coraza only for
+          completed rule decisions, never for infrastructure errors. -#}
+      http-request return status 503 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m found }
+      http-request return status 503 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.__status) -m str ok }
+      http-request return status 503 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m found }
+      http-request return status 400 if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 400 }
+      http-request return status 413 if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 413 }
+      http-request return status 503 if { var(txn.coraza_active) -m bool } { var(txn.hub.coraza.status) -m int 500:599 }
+      http-request deny deny_status 403 if { var(txn.coraza_active) -m bool } !{ var(txn.hub.coraza.action) -m str allow }
       {%- end %}
 
   # External-auth wiring: looks up the per-ingress auth URL in
@@ -176,7 +212,7 @@ templateSnippets:
 
   frontend-spoe-filters-100-external-auth:
     template: |
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-auth" %}
       http-request set-var(txn.auth_url) var(txn.resource_id),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
@@ -229,9 +265,13 @@ templateSnippets:
   # under DoS. Consumer quotas run in the selected backend after native auth.
   frontend-spoe-filters-200-request-validation:
     template: |
-      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "validate-request" %}
+      {%- var requestValidationWaitTimeout = extraContext | dig_string("100ms", "apiGateway", "requestSchemaValidation", "requestBody", "waitTimeout") %}
+      {%- if !regex_search(requestValidationWaitTimeout, "^[1-9][0-9]*(us|ms|s|m|h|d)?$") %}
+        {%- fail("extraContext.apiGateway.requestSchemaValidation.requestBody.waitTimeout must be a positive HAProxy duration.") %}
+      {%- end %}
       {#- Packed map keyed by resource_id →
           "schema_id max_body_bytes fail_open content_types". Validation only
           applies to body-carrying methods; routes without a schema map entry
@@ -244,7 +284,7 @@ templateSnippets:
       http-request return status 411 if { var(txn.req_schema_id) -m found } { method POST PUT PATCH } !{ req.hdr(Content-Length) -m found }
       http-request set-var(txn.req_schema_body_size) req.body_size if { var(txn.req_schema_id) -m found } { method POST PUT PATCH }
       http-request return status 413 if { var(txn.req_schema_id) -m found } { method POST PUT PATCH } { var(txn.req_schema_body_size),sub(txn.req_schema_max_body) -m int gt 0 }
-      http-request wait-for-body time {{ extraContext | dig("hapticRequestValidationBodyWaitTimeout") | fallback("100ms") }} if { var(txn.req_schema_id) -m found } { method POST PUT PATCH }
+      http-request wait-for-body time {{ requestValidationWaitTimeout }} if { var(txn.req_schema_id) -m found } { method POST PUT PATCH }
       http-request set-var(txn.req_schema_body_len) req.body_len if { var(txn.req_schema_id) -m found } { method POST PUT PATCH }
       http-request return status 413 if { var(txn.req_schema_id) -m found } { method POST PUT PATCH } { var(txn.req_schema_body_len),sub(txn.req_schema_body_size) -m int lt 0 }
       http-request send-spoe-group spoa-hub validate-request-group if { var(txn.req_schema_id) -m found } { method POST PUT PATCH }

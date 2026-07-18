@@ -100,17 +100,17 @@ The controller pod exposes three HTTP ports (all chart defaults):
 
 | Port | Endpoint | Notes |
 |------|----------|-------|
-| `8080` | `/healthz`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `/healthz` and `/debug/*` share the same listener; setting `controller.debugPort: 0` disables both and breaks the liveness/readiness probes. To shield `/debug/*` in production, restrict access with a NetworkPolicy (example below) instead of disabling the port |
-| `9090` | `/metrics` | Disable by setting the `METRICS_PORT=0` env var on the controller container (for example, `extraEnv` in Helm); the `controller.config.controller.metricsPort` Helm value is display-only — the chart strips it before serializing |
+| `8080` | `/healthz`, `/debug/vars`, `/debug/events`, `/debug/pprof/` | `controller.ports.healthz` configures the process, pod, Service, probes, and policy together. `/healthz` is required by the probes; shield `/debug/*` with NetworkPolicy rather than disabling the listener |
+| `9090` | `/metrics` | `controller.ports.metrics` configures the process, pod, Service, and monitors together; set it to `0` to disable metrics |
 | `9443` | Validating webhook | Required when the webhook is enabled |
 
 Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, Container Network Interface (CNI) encryption) rather than transport-level authentication for that hop.
 
 The Dataplane API is authenticated with a basic-auth password stored in the `<release>-haptic-credentials` Secret (the release `fullname`, which collapses to `<release>-credentials` only when the release name already contains `haptic`). Password generation and the GitOps caveat are covered in the warning box above.
 
-**The chart already ships default-on `NetworkPolicy` resources** for the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods. Enabling the managed Varnish or Valkey tiers adds release-scoped default-on policies controlled by `controller.cache.varnish.networkPolicy.enabled` and `controller.rateLimit.store.networkPolicy.enabled`. Know what the defaults actually allow before relying on them:
+**The chart already ships default-on `NetworkPolicy` resources** for the controller (`controller.networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods. Enabling the managed Varnish or Valkey tiers adds release-scoped default-on policies controlled by `cache.varnish.networkPolicy.enabled` and `rateLimit.shared.managedStore.networkPolicy.enabled`. Know what the defaults actually allow before relying on them:
 
-- The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports, **plus a default `networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
+- The controller policy restricts ingress to the exposed ports (metrics ingress only opens when `controller.networkPolicy.ingress.monitoring.enabled: true` — it's off by default, so enable it for Prometheus). Egress covers DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports, **plus a default `controller.networkPolicy.egress.additionalRules` entry allowing every in-cluster pod** (so template helpers like `http.Fetch()` work) — set it to `[]` to lock egress down (see [Networking](./networking.md#production-hardening)).
 - The HAProxy policy defaults to `allowExternal: true`, which renders a permissive all-port ingress rule — deliberate, because Gateway listeners bind dynamic ports.
 - The Varnish policy admits only same-release HAProxy cache requests and permits egress only to DNS and the same HAProxy HTTP origin. The managed Valkey/Sentinel policy admits only same-release HAProxy/SPOA and store-internal traffic.
 
@@ -201,14 +201,14 @@ rules:
         resources: ["secrets"]
 ```
 
-Replace `<namespace>`/`<release>` with your Helm release. The SA name is the release `fullname` `<release>-haptic` (collapsing to `<release>` only when the release name already contains `haptic`) unless you overrode `serviceAccount.name` — get the exact value with `kubectl -n <namespace> get sa`. A rule keyed on the wrong SA name silently never matches, so the controller's Secret reads go unaudited.
+Replace `<namespace>`/`<release>` with your Helm release. The SA name is the release `fullname` `<release>-haptic` (collapsing to `<release>` only when the release name already contains `haptic`) unless you overrode `controller.serviceAccount.name` — get the exact value with `kubectl -n <namespace> get sa`. A rule keyed on the wrong SA name silently never matches, so the controller's Secret reads go unaudited.
 
 ## Checklist
 
 Before exposing a HAPTIC deployment to production traffic:
 
 - [ ] Random, rotated passwords in `credentialsSecretRef`.
-- [ ] NetworkPolicy that pins `/debug/*` ingress to trusted namespaces (the port also serves `/healthz`, so don't set `controller.debugPort: 0`).
+- [ ] NetworkPolicy that pins `/debug/*` ingress to trusted namespaces (the port also serves `/healthz`, so keep `controller.ports.healthz` enabled).
 - [ ] Watched-resource selectors scoped to the namespaces you intend to serve.
 - [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.
 - [ ] NetworkPolicy allowing only kube-apiserver + Dataplane-API egress.

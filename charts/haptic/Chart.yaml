@@ -92,7 +92,7 @@ annotations:
   # Recommendations
   artifacthub.io/recommendations: |
     - url: https://artifacthub.io/packages/helm/cert-manager/cert-manager
-      description: Required for webhook TLS certificate management when webhook.certManager.enabled=true
+      description: Required for webhook TLS certificate management when controller.webhook.certManager.enabled=true
 
   # Minimum HAProxy version requirement
   haproxy.org/minimum-version: "3.0"

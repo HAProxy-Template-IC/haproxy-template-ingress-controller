@@ -269,11 +269,11 @@ install_helm_chart() {
     # the suffix from incoming tags (e.g., ci-123-haproxy3.2 -> ci-123)
     if [[ -n "$IMAGE" ]]; then
         info "Using custom image: $IMAGE"
-        helm_args+=("--set" "image.repository=${IMAGE%:*}")
+        helm_args+=("--set" "controller.image.repository=${IMAGE%:*}")
         if [[ "$IMAGE" == *:* ]]; then
             local full_tag="${IMAGE##*:}"
             local base_tag="${full_tag%-haproxy*}"
-            helm_args+=("--set" "image.tag=${base_tag}")
+            helm_args+=("--set" "controller.image.tag=${base_tag}")
             # Extract haproxy version from tag if present
             if [[ "$full_tag" == *-haproxy* ]]; then
                 local hp_version="${full_tag##*-haproxy}"

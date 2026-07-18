@@ -7,7 +7,16 @@ validationTests:
       requests to varnish_cache, and the sharded consistent-hash backend is
       emitted with bounded-load balancing.
     extraContext:
-      hapticCacheEnabled: "true"
+      cache:
+        varnish:
+          enabled: true
+          # Per-test extraContext deep-merges into the global context; pin the
+          # topology this test asserts (PDB + anti-affinity need replicas > 1)
+          # instead of relying on the deployment's values.
+          replicas: 2
+          podDisruptionBudget:
+            enabled: true
+            maxUnavailable: 1
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -136,7 +145,7 @@ validationTests:
         pattern: "set resp.http.X-Cache = \"HIT\""
 
   test-haptic-cache-shared-rate-limit-loopback:
-    _helm_skip_test: '{{ if not (and .Values.controller.cache.varnish.enabled .Values.controller.rateLimit.shared.enabled) }}true{{ end }}'
+    _helm_skip_test: '{{ if not (and .Values.cache.varnish.enabled .Values.rateLimit.shared.enabled) }}true{{ end }}'
     description: >-
       Cache-miss loopbacks clear the already-consumed shared limit after rule
       parsing and before SPOE dispatch, so one external request consumes one
@@ -177,13 +186,17 @@ validationTests:
       targeting the workload (CPU utilization, generous scale-down window) and
       omits the static replica count so the HPA owns it.
     extraContext:
-      hapticCacheEnabled: "true"
-      hapticCacheAutoscalingEnabled: "true"
-      hapticCacheMinReplicas: "3"
-      hapticCacheMaxReplicas: "9"
-      hapticCacheTargetCPU: "65"
-      hapticCacheScaleDownWindow: "900"
-      hapticCachePDBEnabled: "false"
+      cache:
+        varnish:
+          enabled: true
+          autoscaling:
+            enabled: true
+            minReplicas: 3
+            maxReplicas: 9
+            targetCPUUtilizationPercentage: 65
+            scaleDownStabilizationSeconds: 900
+          podDisruptionBudget:
+            enabled: false
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1

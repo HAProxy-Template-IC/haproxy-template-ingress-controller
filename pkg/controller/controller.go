@@ -303,14 +303,16 @@ func Run(
 
 	// Create the metrics server once, before the loop.
 	// The registry will be swapped via SetRegistry() on each iteration.
-	metricsPort := 9090
-	if envPort := os.Getenv("METRICS_PORT"); envPort != "" {
-		if port, err := strconv.Atoi(envPort); err == nil {
-			metricsPort = port
-		}
+	metricsPort, err := listenerPortFromEnv("METRICS_PORT", 9090, true)
+	if err != nil {
+		return err
 	}
 	if metricsPort > 0 {
 		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())
+	}
+	webhookPort, err := listenerPortFromEnv("WEBHOOK_PORT", 9443, false)
+	if err != nil {
+		return err
 	}
 
 	// Main reinitialization loop
@@ -321,7 +323,7 @@ func Run(
 			return nil
 		default:
 			// Run one iteration
-			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, infra, logger)
+			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, logger)
 			if err != nil {
 				// Check if error is context cancellation (graceful shutdown)
 				if ctx.Err() != nil {
@@ -338,6 +340,25 @@ func Run(
 			// If err == nil, config change occurred and we reinitialize immediately
 		}
 	}
+}
+
+func listenerPortFromEnv(envName string, defaultPort int, allowDisabled bool) (int, error) {
+	raw := os.Getenv(envName)
+	if raw == "" {
+		return defaultPort, nil
+	}
+	port, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parsing %s=%q as a TCP port: %w", envName, raw, err)
+	}
+	minimum := 1
+	if allowDisabled {
+		minimum = 0
+	}
+	if port < minimum || port > 65535 {
+		return 0, fmt.Errorf("%s must be between %d and 65535", envName, minimum)
+	}
+	return port, nil
 }
 
 // componentSetup contains all resources created during component initialization.

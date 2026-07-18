@@ -123,7 +123,7 @@ migrationCoverage:
         note: "verifyhost <host>, set independently of SNI; ValidateConfigValue-guarded."
       haproxy-haptic.org/cache-enable:
         status: supported
-        note: "\"true\" routes the Ingress's requests through the shared, consistent-hash-sharded Varnish cache tier (loopback origin); requires controller.cache.varnish.enabled."
+        note: "\"true\" routes the Ingress's requests through the shared, consistent-hash-sharded Varnish cache tier (loopback origin); requires cache.varnish.enabled."
       haproxy-haptic.org/cache-exclude-content-types:
         status: supported
         note: "Comma-separated response media types never cached even if otherwise eligible (matched in Varnish vcl_backend_response via std.strstr after stripping the charset suffix)."
@@ -318,7 +318,10 @@ migrationCoverage:
         note: "Content-Type for the mock-response body (default application/json)."
       haproxy-haptic.org/waf-rules:
         status: supported
-        note: "Adds per-application WAF rules (ModSecurity SecLang `SecRule` directives) for the Ingress. Requires the Coraza plugin."
+        note: "Appends per-Ingress SecLang after a selected reusable policy; creates a private Coraza application and is admitted only when extraContext.waf.ingressPermissions.allowCustomRules=true while Coraza governance is active. Without a policy it remains the legacy per-application rule path."
+      haproxy-haptic.org/waf-rules-before:
+        status: supported
+        note: "Prepends advanced per-Ingress SecLang before the selected reusable policy; requires waf-policy and explicit administrator authorization through ingressPermissions.allowCustomRules."
       haproxy-haptic.org/oauth:
         status: supported
         note: "oauth2-proxy only; desugars onto external-auth, deriving the oauth2-proxy backend from the Ingress's own oauth-uri-prefix path; skipped when auth-url is set."
@@ -372,7 +375,7 @@ migrationCoverage:
         note: "Per-source concurrent-connection cap via conn_cur counter; ignored when rps or rpm is set (separate counter type, comment records it)."
       haproxy-haptic.org/rate-limit-algorithm:
         status: supported
-        note: "Shared SPOA limiter algorithm: token-bucket (lease mode) or gcra (exact synchronous store check). Requires rate-limit-requests and controller.rateLimit.shared.enabled."
+        note: "Shared SPOA limiter algorithm: token-bucket (lease mode) or gcra (exact synchronous store check). Requires rate-limit-requests and rateLimit.shared.enabled."
       haproxy-haptic.org/rate-limit-burst:
         status: supported
         note: "Shared SPOA limiter burst allowance; positive integer, defaults to rate-limit-requests."
@@ -384,7 +387,7 @@ migrationCoverage:
         note: "Overrides the rate window. For stick-tables, derives from rps/rpm/connections when unset and accepts HAProxy time suffixes; for shared SPOA limiting defaults to 1s and accepts ms/s/m/h/d. Malformed or zero shared periods fail the render."
       haproxy-haptic.org/rate-limit-requests:
         status: supported
-        note: "Enables the shared fleet-wide rate limiter for the Ingress: N requests per period via the bundled rate-limit SPOA plugin. Requires controller.rateLimit.shared.enabled; controller.rateLimit.store.enabled deploys HA Valkey with Sentinel and auto-injects store_url."
+        note: "Enables the shared fleet-wide rate limiter for the Ingress: N requests per period via the bundled rate-limit SPOA plugin. Requires rateLimit.shared.enabled; rateLimit.shared.managedStore.enabled deploys HA Valkey with Sentinel and auto-injects store_url."
       haproxy-haptic.org/rate-limit-rpm:
         status: supported
         note: "Per-source requests/minute cap (http_req_rate, 60s window); ignored when rate-limit-rps is also set (single stick-table, comment records it)."
@@ -417,16 +420,16 @@ migrationCoverage:
         note: "Header carrying the correlation id (default X-Request-ID); validated single token."
       haproxy-haptic.org/request-schema-configmap:
         status: supported
-        note: "Enables JSON request-body validation via the api-gateway SPOA plugin using a ConfigMap data key (`[ns/]name[:key]`, default key schema.json). Requires controller.apiGateway.validation.enabled; schemas compile at plugin init/validate."
+        note: "Enables JSON request-body validation via the api-gateway SPOA plugin using a ConfigMap data key (`[ns/]name[:key]`, default key schema.json). Requires extraContext.apiGateway.requestSchemaValidation.enabled; schemas compile at plugin init/validate."
       haproxy-haptic.org/request-schema-content-types:
         status: supported
         note: "Comma-separated media types accepted for request-schema validation (default application/json). The plugin compares Content-Type after stripping parameters and rejects mismatches with 415."
       haproxy-haptic.org/request-schema-fail-open:
         status: supported
-        note: "Per-route missing-verdict policy for request-schema validation. Defaults to controller.apiGateway.validation.failOpen; false fails closed on hub/plugin timeout or missing verdict."
+        note: "Per-route missing-verdict policy for request-schema validation. Defaults to extraContext.apiGateway.requestSchemaValidation.defaultFailOpen; false fails closed on hub/plugin timeout or missing verdict."
       haproxy-haptic.org/request-schema-max-body-size:
         status: supported
-        note: "Per-route request validation input cap in bytes (1..1048576). It must fit within controller.apiGateway.validation.bufferSize minus bufferHeadroomBytes. HAProxy returns 413 before the SPOE call when the validation body is larger; the plugin repeats the bound defensively. This does not replace haproxy-haptic.org/max-request-body-size, the general backend body-size limit."
+        note: "Per-route request validation input cap in bytes (1..1048576). It must fit within extraContext.requestBodyInspection.haproxyBuffer.sizeBytes minus reservedBytes. HAProxy returns 413 before the SPOE call when the validation body is larger; the plugin repeats the bound defensively. This does not replace haproxy-haptic.org/max-request-body-size, the general backend body-size limit."
       haproxy-haptic.org/request-schema-secret:
         status: supported
         note: "Enables JSON request-body validation via the api-gateway SPOA plugin using a Secret data key (`[ns/]name[:key]`, default key schema.json) whose value is already base64 encoded."
@@ -546,10 +549,13 @@ migrationCoverage:
         note: "Configures consistent hashing on the backend, emitting a `balance` directive plus `hash-type consistent`. Accepts a hash key: `uri`, `source`, `$http_<name>`, `$arg_<name>`, or `$cookie_<name>`; any other value is used verbatim as a HAProxy fetch expression via `balance hash <value>`."
       haproxy-haptic.org/waf:
         status: supported
-        note: "\"modsecurity\" opt-in enables WAF processing (txn.coraza_mode), keyed by ns/name; fails loud without the coraza plugin."
+        note: "Legacy \"modsecurity\" opt-in enables WAF processing, keyed by ns/name; fails loud without the coraza plugin and cannot be mixed with a reusable policy."
       haproxy-haptic.org/waf-mode:
         status: supported
-        note: "deny|detect (default deny); waf-mode without waf fails loud; invalid mode fails loud."
+        note: "deny|detect (default from the selected policy, otherwise deny); administrator-controlled by ingressPermissions.allowEnforcementOverride, and invalid or context-free values fail loud."
+      haproxy-haptic.org/waf-policy:
+        status: supported
+        note: "Selects one exact administrator-approved reusable Coraza policy from chart values or an explicitly trusted ConfigMap; Ingresses cannot define or redirect policy sources."
       haproxy-haptic.org/x-forwarded-prefix:
         status: supported
         note: "X-Forwarded-Prefix via reload-free reqhdr-xfwd-prefix.map"

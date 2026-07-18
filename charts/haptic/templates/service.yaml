@@ -1,4 +1,4 @@
-{{- $svc := .Values.service }}
+{{- $svc := .Values.controller.service }}
 {{- $ports := .Values.controller.ports }}
 apiVersion: v1
 kind: Service
@@ -7,6 +7,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
   {{- with $svc.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -41,10 +42,13 @@ spec:
   {{- end }}
   ports:
     {{- range $name := list "healthz" "metrics" }}
+    {{- if gt (int (index $ports $name)) 0 }}
     - port: {{ index $ports $name }}
       targetPort: {{ $name }}
       protocol: TCP
       name: {{ $name }}
     {{- end }}
+    {{- end }}
   selector:
     {{- include "haptic.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
