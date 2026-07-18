@@ -5,7 +5,11 @@
 # global context — map leaves win, list/scalar leaves replace — so a pinned
 # `configMapRefs: []` removes values-configured catalogs for that test while
 # sibling keys survive). The tests therefore run identically under any Helm
-# values. The only `_helm_skip_test` gates left are chart-render-time
+# values, with one structural caveat: map-valued registries (policies.inline)
+# can only be extended, never replaced — deployment-defined sibling keys join
+# the pinned ones. Assertions must not depend on the full key set (see the
+# invalid-policy test), and test policy names must be unlikely to collide
+# with deployment policy names. The only `_helm_skip_test` gates left are chart-render-time
 # infrastructure requirements that no per-test extraContext can satisfy:
 #   - the SPOA hub + coraza plugin must be in the bundle (the coraza maps and
 #     spoa-hub-config.toml only exist when the spoa-hub library is merged), and
@@ -273,6 +277,8 @@ validationTests:
           inline:
             approved-policy: {}
           configMapRefs: []
+          selfService:
+            enabled: false
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -286,7 +292,13 @@ validationTests:
                   paths:
                     - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
     assertions:
-      - { type: contains, target: rendering_error, pattern: "Unknown WAF policy 'typo-policy'.*available policies: approved-policy.*exact and case-sensitive" }
+      # Test extraContext DEEP-MERGES into the deployment's extraContext
+      # (deepMergeMaps in pkg/controller/testrunner), so a live cluster's own
+      # inline/configMapRef policies join the pinned `approved-policy` in the
+      # available-policies list — the assertion must tolerate neighbors it
+      # cannot pin away, or this baked test rejects every
+      # HAProxyTemplateConfig update on clusters that define policies.
+      - { type: contains, target: rendering_error, pattern: 'Unknown WAF policy ''typo-policy''.*available policies: (.*, )?approved-policy(, |\. ).*exact and case-sensitive' }
 
   test-haptic-waf-policy-invalid-reconcile-fails-closed:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
