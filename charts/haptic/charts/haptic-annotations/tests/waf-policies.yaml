@@ -1227,13 +1227,15 @@ validationTests:
 
   test-haptic-waf-selfservice-disabled-stays-unknown:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
-    description: with selfService disabled (default), a namespace waf-policies ConfigMap stays inert — its policy is not resolvable (exact message depends on whether the deployment carries a trusted catalog, which per-test extraContext cannot fully remove)
+    description: with selfService disabled — pinned per-test, so the test also holds on deployments that enable it — a namespace waf-policies ConfigMap stays inert and its policy is not resolvable (exact message depends on whether the deployment carries a trusted catalog, which per-test extraContext cannot fully remove)
     extraContext:
       renderMode: admission
       waf:
         policies:
           defaultPolicy: ""
           configMapRefs: []
+          selfService:
+            enabled: false
     fixtures:
       waf_selfservice_catalogs:
         - apiVersion: v1
