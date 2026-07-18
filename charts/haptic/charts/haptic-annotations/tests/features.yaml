@@ -3,6 +3,66 @@
 # raw config injection. All fixtures use ingressClassName: haptic.
 validationTests:
 
+  # Regression guards for the renderMode-aware rejection of a misconfigured
+  # routing annotation (WebhookRejectOrWarn). A bad https-redirect-code is
+  # denied at the admission webhook but only warned-and-skipped on a live
+  # reconcile, so one already-present bad Ingress can't brick the fleet.
+  test-haptic-invalid-redirect-code-admission-rejected:
+    description: Under the admission webhook, an invalid https-redirect-code value is rejected.
+    extraContext:
+      renderMode: admission
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-redir
+            annotations:
+              haproxy-haptic.org/https-redirect: "true"
+              haproxy-haptic.org/https-redirect-code: "999"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-redir.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid value '999' for annotation 'haproxy-haptic.org/https-redirect-code'"
+
+  test-haptic-invalid-redirect-code-reconcile-warns:
+    description: On a live reconcile, an invalid https-redirect-code warns (Event) and the render still succeeds instead of failing.
+    extraContext:
+      renderMode: reconcile
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-redir
+            annotations:
+              haproxy-haptic.org/https-redirect: "true"
+              haproxy-haptic.org/https-redirect-code: "999"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-redir.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: events
+        pattern: "Warning InvalidAnnotationValue networking.k8s.io/v1 Ingress default/bad-redir:"
+      - type: contains
+        target: events
+        pattern: "Invalid value '999' for annotation 'haproxy-haptic.org/https-redirect-code'"
+
   test-haptic-ssl-redirect:
     description: haproxy-haptic.org/https-redirect registers the host in the shared ssl-redirect map (reload-free) with the requested code
     fixtures:

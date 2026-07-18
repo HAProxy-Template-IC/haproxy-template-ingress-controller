@@ -191,6 +191,7 @@ templateSnippets:
     template: |
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {#-
         HAPTIC mirror-target — fire-and-forget request mirroring via the spoa-hub
         mirror plugin (the same machinery the Gateway RequestMirror filter uses).
@@ -240,7 +241,8 @@ templateSnippets:
             {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
           {%- if len(hosts) == 0 %}
-            {{- fail("Ingress '" + key + "' sets 'haproxy-haptic.org/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule.") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' sets 'haproxy-haptic.org/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule.") -}}
+            {%- continue %}
           {%- end %}
           {%- idx = idx + 1 %}
           {%- if idx > maxSlots %}
@@ -267,12 +269,14 @@ templateSnippets:
             {%- if scheme == "https" %}{%- authority = authority + ":443" %}{%- else %}{%- authority = authority + ":80" %}{%- end %}
           {%- end %}
           {%- if !regex_search(authority, "^[A-Za-z0-9._-]+:[0-9]{1,5}$") %}
-            {{- fail("Invalid value '" + mt + "' for annotation 'haproxy-haptic.org/mirror-target' on Ingress '" + key + "'. Expected scheme://host[:port][/path]; could not derive a host:port authority (got '" + authority + "').") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + mt + "' for annotation 'haproxy-haptic.org/mirror-target' on Ingress '" + key + "'. Expected scheme://host[:port][/path]; could not derive a host:port authority (got '" + authority + "').") -}}
+            {%- continue %}
           {%- end %}
           {#- Bound the port to 1-65535 (the charset regex alone accepts :0 and :99999). -#}
           {%- var portNum = toint(authority[index(authority, ":")+1:]) %}
           {%- if portNum < 1 || portNum > 65535 %}
-            {{- fail("Invalid port '" + tostring(portNum) + "' in 'haproxy-haptic.org/mirror-target' on Ingress '" + key + "'. Port must be 1-65535.") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid port '" + tostring(portNum) + "' in 'haproxy-haptic.org/mirror-target' on Ingress '" + key + "'. Port must be 1-65535.") -}}
+            {%- continue %}
           {%- end %}
           {%- var safeAuthority = ValidateConfigValue(authority, "haproxy-haptic.org/mirror-target", key, false) %}
           {%- var cond = HostMatchCondition(hosts) %}

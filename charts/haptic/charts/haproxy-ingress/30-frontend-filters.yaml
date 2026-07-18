@@ -194,6 +194,7 @@ templateSnippets:
         Single-vendor, so the per-code maps are built and referenced here (not via
         base.yaml). Changing the URL/code set is a map-only, reload-free update.
       -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var codeMap = map[string]map[string]string{} -%}
       {%- var codeHosts = map[string][]any{} -%}
       {%- var seen = map[string]bool{} -%}
@@ -201,14 +202,14 @@ templateSnippets:
         {%- var redirectURL = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect"] %}
         {%- if redirectURL != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-          {%- if regex_search(redirectURL, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-ingress.github.io/default-backend-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- if regex_search(redirectURL, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-ingress.github.io/default-backend-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
           {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/default-backend-redirect-code"] %}
           {%- if code == "" %}{%- code = "302" %}{%- end %}
           {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
           {%- var codeValid = false %}
           {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
           {%- if !codeValid %}
-            {{- fail("Invalid value '" + code + "' for annotation 'haproxy-ingress.github.io/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + code + "' for annotation 'haproxy-ingress.github.io/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}{%- continue %}
           {%- end %}
           {%- if codeMap[code] == nil %}{%- codeMap[code] = map[string]string{} %}{%- end %}
           {%- for _, rule := range ingress.Spec.Rules %}

@@ -38,6 +38,7 @@ templateSnippets:
         registered here, so no double redirect fires. Unlike the vendor libraries the
         native code is validated fail-loud rather than silently corrected.
       -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
           {%- if ingress.Metadata.Annotations["haproxy-haptic.org/https-redirect"] == "true" %}
@@ -47,7 +48,8 @@ templateSnippets:
               {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/https-redirect-code"] %}
               {%- if code == "" %}{%- code = "302" %}{%- end %}
               {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" %}
-                {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/https-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+                {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + code + "' for annotation 'haproxy-haptic.org/https-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+                {%- continue %}
               {%- end %}
               {%- for _, rule := range ingress.Spec.Rules %}
                 {%- if rule.Host != "" %}
@@ -79,6 +81,7 @@ templateSnippets:
         Rewrites the request to https on the explicit port, preserving the original
         request URI. Adapted from haproxytech/frontend-filters-055.
       -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var portByCode = map[string]map[string]string{} -%}
       {%- var codeHosts = map[string][]any{} -%}
       {%- var seen = map[string]bool{} -%}
@@ -87,13 +90,15 @@ templateSnippets:
         {%- if redirectPort != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
           {%- if toint(redirectPort) <= 0 %}
-            {{- fail("Invalid value '" + redirectPort + "' for annotation 'haproxy-haptic.org/https-redirect-port' on Ingress '" + key + "'. Must be a positive integer port.") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + redirectPort + "' for annotation 'haproxy-haptic.org/https-redirect-port' on Ingress '" + key + "'. Must be a positive integer port.") -}}
+            {%- continue %}
           {%- end %}
           {%- if ingress.Metadata.Annotations["haproxy-haptic.org/https-redirect"] == "true" %}
             {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/https-redirect-code"] %}
             {%- if code == "" %}{%- code = "302" %}{%- end %}
             {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" %}
-              {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/https-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + code + "' for annotation 'haproxy-haptic.org/https-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+              {%- continue %}
             {%- end %}
             {%- if portByCode[code] == nil %}{%- portByCode[code] = map[string]string{} %}{%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -139,16 +144,18 @@ templateSnippets:
         The two axes are independent; an Ingress may set either or both. URLs pass a
         control-char config-injection guard before interpolation.
       -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
           {%- var permUrl = ingress.Metadata.Annotations["haproxy-haptic.org/permanent-redirect"] %}
           {%- if permUrl != "" %}
-            {%- if regex_search(permUrl, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- if regex_search(permUrl, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-haptic.org/permanent-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {%- var pc = ingress.Metadata.Annotations["haproxy-haptic.org/permanent-redirect-code"] %}
             {%- if pc == "" %}{%- pc = "301" %}{%- end %}
             {%- if pc != "301" && pc != "302" && pc != "303" && pc != "307" && pc != "308" %}
-              {{- fail("Invalid value '" + pc + "' for annotation 'haproxy-haptic.org/permanent-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + pc + "' for annotation 'haproxy-haptic.org/permanent-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+              {%- continue %}
             {%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}
@@ -159,11 +166,12 @@ templateSnippets:
           {%- end %}
           {%- var tempUrl = ingress.Metadata.Annotations["haproxy-haptic.org/temporary-redirect"] %}
           {%- if tempUrl != "" %}
-            {%- if regex_search(tempUrl, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/temporary-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+            {%- if regex_search(tempUrl, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-haptic.org/temporary-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
             {%- var tc = ingress.Metadata.Annotations["haproxy-haptic.org/temporary-redirect-code"] %}
             {%- if tc == "" %}{%- tc = "302" %}{%- end %}
             {%- if tc != "301" && tc != "302" && tc != "303" && tc != "307" && tc != "308" %}
-              {{- fail("Invalid value '" + tc + "' for annotation 'haproxy-haptic.org/temporary-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+              {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + tc + "' for annotation 'haproxy-haptic.org/temporary-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+              {%- continue %}
             {%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}
@@ -239,12 +247,13 @@ templateSnippets:
 
         The path passes a control-char config-injection guard before registration.
       -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var appRoot = ingress.Metadata.Annotations["haproxy-haptic.org/root-redirect"] %}
         {%- if appRoot != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/root-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- if regex_search(appRoot, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-haptic.org/root-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}
               {%- var ar []any = coalesce(gf["appRootHosts"], []any{}) -%}
@@ -274,6 +283,7 @@ templateSnippets:
         scoped to this Ingress's host(s). Adapted from
         haproxy-ingress/frontend-filters-680.
       -#}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var codeMap = map[string]map[string]string{} -%}
       {%- var codeHosts = map[string][]any{} -%}
       {%- var seen = map[string]bool{} -%}
@@ -281,11 +291,12 @@ templateSnippets:
         {%- var redirectURL = ingress.Metadata.Annotations["haproxy-haptic.org/default-backend-redirect"] %}
         {%- if redirectURL != "" %}
           {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}
-          {%- if regex_search(redirectURL, "[[:cntrl:]]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/default-backend-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") }}{%- end %}
+          {%- if regex_search(redirectURL, "[[:cntrl:]]") %}{{- WebhookRejectOrWarn(ingress, "InvalidAnnotation", "Invalid value for annotation 'haproxy-haptic.org/default-backend-redirect' on Ingress '" + key + "': must not contain control characters — config-injection guard.") -}}{%- continue %}{%- end %}
           {%- var code = ingress.Metadata.Annotations["haproxy-haptic.org/default-backend-redirect-code"] %}
           {%- if code == "" %}{%- code = "302" %}{%- end %}
           {%- if code != "301" && code != "302" && code != "303" && code != "307" && code != "308" %}
-            {{- fail("Invalid value '" + code + "' for annotation 'haproxy-haptic.org/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + code + "' for annotation 'haproxy-haptic.org/default-backend-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
+            {%- continue %}
           {%- end %}
           {%- if codeMap[code] == nil %}{%- codeMap[code] = map[string]string{} %}{%- end %}
           {%- for _, rule := range ingress.Spec.Rules %}

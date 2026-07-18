@@ -39,6 +39,17 @@ HAPTIC handles the conflict in two ways, depending on when it's caught:
 
 Different features from different families are fine (WAF from one family, CORS from another), and so are genuinely different parameters of the same category — for example a connect timeout from one family and a server timeout from another. Only enabled families count: a vendor annotation whose library is disabled is inert and never collides.
 
+### How HAPTIC handles a misconfigured annotation
+
+The same two-stage handling applies to any invalid annotation value (a bad redirect code, a malformed rewrite, an out-of-range port), not just family conflicts. It also applies to every annotation library, not only this one.
+
+- **When you apply or edit the Ingress**, the admission webhook rejects the change and names the offending annotation, so a typo never reaches the cluster.
+- **For an Ingress that's already in the cluster** (applied before a check existed, or through a bypassed webhook), the behavior depends on the *kind* of feature:
+    - **Routing and presentation features** (redirects, CORS, cookie/header/location rewrites, canary, compression, traffic mirroring, host rewrites, fixed/mock responses) — the controller records a `Warning` Event on the Ingress, skips *that one feature for that one Ingress*, and keeps serving the rest of the fleet. One bad Ingress can't block config updates for everyone. Find these with `kubectl get events --field-selector reason=InvalidAnnotationValue` (or `reason=InvalidAnnotation` for malformed values), or `kubectl describe ingress <name>`.
+    - **Security features** (authentication, client-certificate/mTLS, WAF, rate limiting, request-body validation) — the render **still hard-fails**. HAPTIC never silently disables a security control, because a skipped auth or WAF check would let traffic through unprotected (fail-open). Fix the annotation to restore reconciliation.
+
+The reason strings on the Events are stable and machine-readable, so you can alert on them.
+
 ## Annotation reference
 
 Every annotation below works. Most are **✅ Supported**; a few are marked **⚠️ Caveat** — they work too, but with the behavioural limitation described alongside. The library declares no inert annotations; nothing is silently ignored.

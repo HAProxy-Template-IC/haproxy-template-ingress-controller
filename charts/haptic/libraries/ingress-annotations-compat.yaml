@@ -34,6 +34,43 @@ _helm_load:
 
 templateSnippets:
 
+  # renderMode-aware rejection primitive. Reject a misconfigured watched
+  # resource loudly under the admission webhook (so the API server denies a
+  # proposed bad change) but only warn — via a Kubernetes Event — during a live
+  # reconcile or the daemon load gate, so one already-present bad resource can't
+  # abort the whole config render and brick the fleet. Used everywhere a
+  # per-resource validation would otherwise `fail()` on state that may already
+  # exist in the cluster.
+  util-webhook-reject-or-warn:
+    template: |-
+      {#-
+        Macro: WebhookRejectOrWarn(resource, reason, message)
+
+        On the admission webhook (renderMode == "admission") this fail()s with
+        `message`, so the API server denies the proposed resource. On any other
+        render (live reconcile, load gate, playground) it records a Warning Event
+        (reason `reason`) against `resource` and returns nothing, so the render
+        proceeds.
+
+        CALLER CONTRACT — the warn path returns and the render CONTINUES, so the
+        caller MUST skip the offending resource's own output right after calling
+        this (`{% continue %}` in a per-resource loop, or stop emitting in a
+        macro). Otherwise it would emit config built from the rejected input —
+        which for an injection guard means emitting the very value it rejected.
+        In admission mode fail() aborts first, so the skip only ever runs on the
+        lenient paths.
+
+        `resource` is any watched-resource value (typed pointer, map, or
+        unstructured); its identity is read off it by recordEvent.
+      -#}
+      {%- macro WebhookRejectOrWarn(resource any, reason string, message string) -%}
+        {%- if renderMode == "admission" -%}
+          {{- fail(message) -}}
+        {%- else -%}
+          {{- recordEvent(resource, reason, message) -}}
+        {%- end -%}
+      {%- end macro -%}
+
   # SSL Passthrough — shared macro. Each protocol library calls into this
   # to feed its own ComputeIfAbsent cache slot; the build logic is shared,
   # the cache slot is per-library.
@@ -655,6 +692,32 @@ templateSnippets:
             "haproxytech":    {"timeout-server"},
             "nginx":          {"proxy-read-timeout"},
           }},
+          {"name": "queue timeout", "families": map[string][]string{
+            "haptic":         {"timeout-queue"},
+            "haproxyIngress": {"timeout-queue"},
+            "haproxytech":    {"timeout-queue"},
+          }},
+          {"name": "tunnel timeout", "families": map[string][]string{
+            "haptic":         {"timeout-tunnel"},
+            "haproxyIngress": {"timeout-tunnel"},
+            "haproxytech":    {"timeout-tunnel"},
+          }},
+          {"name": "http-request timeout", "families": map[string][]string{
+            "haptic":         {"timeout-http"},
+            "haproxyIngress": {"timeout-http"},
+            "haproxytech":    {"timeout-http"},
+          }},
+          {"name": "keep-alive timeout", "families": map[string][]string{
+            "haptic":         {"timeout-keep"},
+            "haproxyIngress": {"timeout-keep"},
+          }},
+          {"name": "health-check timeout", "families": map[string][]string{
+            "haptic":      {"timeout-check"},
+            "haproxytech": {"timeout-check"},
+          }},
+          // Single-family timeouts (haproxytech `timeout-client`, nginx
+          // `proxy-send-timeout`) have no cross-family counterpart, so no
+          // collision entry is needed until a second family exposes them.
         }
 
         var enabled = extraContext | dig("annotationLibraries") | fallback(map[string]any{})
@@ -864,6 +927,40 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "configures the server \\(read\\) timeout feature through annotations from multiple families"
+
+  test-annotation-family-conflict-queue-timeout-rejected:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: The queue timeout (not just connect/server) is registered per-parameter, so the same timeout from two families collides and is rejected under the webhook.
+    extraContext:
+      renderMode: admission
+      annotationLibraries:
+        haptic: true
+        nginx: false
+        haproxyIngress: false
+        haproxytech: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: same-queue-timeout
+            annotations:
+              haproxy-haptic.org/timeout-queue: "5s"
+              haproxy.org/timeout-queue: "10s"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: same-queue-timeout.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: app, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "configures the queue timeout feature through annotations from multiple families"
 
   test-annotation-family-conflict-disabled-family-inert:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'

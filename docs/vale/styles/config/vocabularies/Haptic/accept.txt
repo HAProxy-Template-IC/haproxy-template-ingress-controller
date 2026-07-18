@@ -224,6 +224,8 @@ MetalLB
 Metrics
 metrics
 minikube
+misconfiguration
+misconfigured
 mixin
 mkdocs
 MkDocs
