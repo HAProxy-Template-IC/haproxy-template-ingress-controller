@@ -26,6 +26,13 @@
 # Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.hapticAnnotations.enabled }}'
+  inject:
+    # Scope the self-service WAF catalog watch to the configured well-known
+    # ConfigMap name so the full-body store only ever holds those catalogs
+    # (one small ConfigMap per participating namespace), never every cluster
+    # ConfigMap.
+    - path: watchedResources.waf_selfservice_catalogs.fieldSelector
+      value: 'metadata.name={{ .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.configMapName | default "waf-policies" }}'
 
 # Library-declared extraContext defaults. These flow into the rendered config's
 # templatingSettings.extraContext as low-precedence defaults — an operator can
@@ -150,6 +157,14 @@ templatingSettings:
           maxExcludedTargets: "256"
         inline: {}
         configMapRefs: []
+        selfService:
+          enabled: false
+          configMapName: waf-policies
+          key: policies.yaml
+          allowSecLang: false
+          limits:
+            maxPoliciesPerNamespace: "4"
+            maxTotalPolicies: "64"
 
 watchedResources:
   secrets:
@@ -163,4 +178,14 @@ watchedResources:
     # ConfigMap bodies on-demand so enabling this library doesn't retain every
     # cluster ConfigMap body in controller memory.
     store: on-demand
+    indexBy: ["metadata.namespace", "metadata.name"]
+  # Self-service WAF policy catalogs: the per-namespace well-known ConfigMap
+  # (waf.policies.selfService). A dedicated full-body watch — scoped by the
+  # injected metadata.name fieldSelector to just those catalogs — because
+  # discovery must iterate every participating namespace, and the on-demand
+  # configmaps store above deliberately does not support full iteration
+  # (its List() returns only entries the render already touched).
+  waf_selfservice_catalogs:
+    apiVersion: v1
+    resources: configmaps
     indexBy: ["metadata.namespace", "metadata.name"]

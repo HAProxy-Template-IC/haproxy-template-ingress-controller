@@ -731,6 +731,37 @@ controller:
             #     name: haptic-waf-policies
             #     key: policies.yaml
             configMapRefs: []
+            # Namespaced self-service policy authoring. When enabled, every
+            # namespace may define WAF policies for ITS OWN Ingresses in a
+            # ConfigMap named `configMapName` (data key `key`) in that
+            # namespace — no per-namespace registration. Safe by construction:
+            #
+            #   * Namespace-scoped identity: a self-service policy is selectable
+            #     only by Ingresses in its own namespace and can never collide
+            #     with or shadow another namespace's or the trusted catalog's
+            #     names (an ambiguous name is rejected, never silently resolved).
+            #   * Scoped failure: a broken self-service catalog or policy records
+            #     Warning Events on the ConfigMap and fails ONLY that namespace's
+            #     selecting routes closed (503) — it never aborts the global
+            #     render, and the admission webhook still rejects a proposed
+            #     change that introduces the breakage.
+            #   * Bounded content: secLang is refused unless allowSecLang is
+            #     true; requestBody stays bounded by the requestBody.maxBytes
+            #     ceiling above; per-namespace and total policy counts are
+            #     capped. Note the caps bound size and count, not rule CPU —
+            #     enabling allowSecLang lets namespaces run arbitrary SecLang in
+            #     the shared Coraza process.
+            #
+            # defaultPolicy always resolves in the trusted catalog only, so a
+            # tenant policy can never become the cluster baseline.
+            selfService:
+              enabled: false
+              configMapName: waf-policies
+              key: policies.yaml
+              allowSecLang: false
+              limits:
+                maxPoliciesPerNamespace: 4
+                maxTotalPolicies: 64
     watchedResourcesIgnoreFields:
       - metadata.managedFields
       - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
@@ -1526,7 +1557,7 @@ spoaHub:
       # A non-empty inline/ConfigMap policy catalog activates policy support;
       # there is no second `enabled` switch that can leave a configured catalog
       # inert by accident.
-      enabled: '{{ or (eq .Values.controller.config.templatingSettings.extraContext.waf.dispatch.mode "default-on") (gt (len .Values.controller.config.templatingSettings.extraContext.waf.policies.inline) 0) (gt (len .Values.controller.config.templatingSettings.extraContext.waf.policies.configMapRefs) 0) (ne .Values.controller.config.templatingSettings.extraContext.waf.policies.defaultPolicy "") .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled }}'
+      enabled: '{{ or (eq .Values.controller.config.templatingSettings.extraContext.waf.dispatch.mode "default-on") (gt (len .Values.controller.config.templatingSettings.extraContext.waf.policies.inline) 0) (gt (len .Values.controller.config.templatingSettings.extraContext.waf.policies.configMapRefs) 0) (ne .Values.controller.config.templatingSettings.extraContext.waf.policies.defaultPolicy "") (eq (toString .Values.controller.config.templatingSettings.extraContext.waf.policies.selfService.enabled) "true") .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled }}'
       timeoutMs: 15
       messages: ["check-request"]
       dependsOn: []

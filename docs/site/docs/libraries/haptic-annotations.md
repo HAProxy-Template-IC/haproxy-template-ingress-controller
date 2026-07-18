@@ -269,7 +269,7 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | `haproxy-haptic.org/auth-tls-verify-client` | ⚠️ Caveat | Sets client-certificate verification: `on` requires it, `optional` and `optional_no_ca` both map to `verify optional` (HAProxy has no distinct `optional_no_ca` mode), and `off` disables it. |
 | `haproxy-haptic.org/auth-type` | ✅ Supported | Enables basic authentication; the only accepted value is `basic`. |
 | `haproxy-haptic.org/auth-url` | ✅ Supported | Sets the external authentication service URL; requires the SPOA hub's external-auth plugin. |
-| `haproxy-haptic.org/waf-policy` | ✅ Supported | Selects one exact reusable Coraza policy approved by the HAPTIC administrator. Definitions come only from `extraContext.waf.policies.inline` or explicitly trusted ConfigMaps; an Ingress can't define or redirect a source. Configuring any catalog source activates policy governance and Coraza automatically. |
+| `haproxy-haptic.org/waf-policy` | ✅ Supported | Selects one exact reusable Coraza policy. Definitions come from `extraContext.waf.policies.inline`, explicitly trusted ConfigMaps, or — with `policies.selfService` enabled — the Ingress's own namespace's well-known `waf-policies` ConfigMap; an Ingress can't define or redirect a source. Configuring any catalog source activates policy governance and Coraza automatically. |
 | `haproxy-haptic.org/waf-rules` | ✅ Supported | Advanced SecLang appended after the selected reusable policy. It creates a private Coraza application and, while Coraza governance is active, requires `extraContext.waf.ingressPermissions.allowCustomRules=true`. Without a policy it remains the compatibility rule path, still subject to `waf.customRules.limits`. |
 | `haproxy-haptic.org/waf-rules-before` | ✅ Supported | Advanced SecLang inserted before the selected reusable policy. Requires `waf-policy` and the same explicit `allowCustomRules` authorization. |
 | `haproxy-haptic.org/oauth` | ✅ Supported | Enables authentication through `oauth2-proxy` (the only supported provider), building on external auth; skipped when `auth-url` is set. |
@@ -287,7 +287,7 @@ Reusable policies separate three responsibilities cleanly:
 - A security team can maintain policy contents in a ConfigMap in a dedicated namespace.
 - An Ingress author normally adds only `haproxy-haptic.org/waf-policy: <name>`.
 
-There are no route-selectable built-in profiles and no policy-definition annotation. A name is resolved exactly and case-sensitively against `extraContext.waf.policies.inline` plus the exact `namespace`/`name`/`key` triples in `configMapRefs`. A same-named ConfigMap in an application namespace is ignored. Duplicate names, missing sources, unknown fields, invalid SecLang, and unknown selections fail admission/rendering rather than silently weakening protection.
+There are no route-selectable built-in profiles and no policy-definition annotation. A name is resolved exactly and case-sensitively against `extraContext.waf.policies.inline` plus the exact `namespace`/`name`/`key` triples in `configMapRefs`. A same-named ConfigMap in an application namespace is ignored — unless the administrator enables [self-service authoring](#self-service-namespaced-policies), which honors exactly one well-known ConfigMap per namespace, for that namespace's own Ingresses only. Duplicate names, missing sources, unknown fields, invalid SecLang, and unknown selections are rejected by the admission webhook; on a live render an unknown or broken selection fails that route closed with `503` and a Warning Event instead of aborting the whole render.
 
 `controller.config.templatingSettings.extraContext.waf.dispatch.mode` controls the global activation model. The default `opt-in` mode sends only annotated routes to Coraza. `default-on` inspects all routes and uses `dispatch.defaultEnforcement` where no selected policy or authorized route override supplies an enforcement mode. This stays in `extraContext` because request dispatch is template-library behaviour and must also be configurable in a raw `HAProxyTemplateConfig`. Coraza's chart-wide directives and low-level plugin parameters remain under `spoaHub.plugins.coraza`.
 
@@ -370,6 +370,48 @@ The safe defaults are `allowEnforcementOverride: false`, `allowWafDisable: false
 Protect every referenced ConfigMap with Kubernetes RBAC. Anyone who can update one is a WAF policy author. HAPTIC intentionally can't infer the human identity or RBAC path behind a ConfigMap update; the chart establishes the exact source boundary, while Kubernetes authorizes writers to that source.
 
 When route-local rules are deliberately authorized, their order is deterministic: chart-wide Coraza/CRS directives, `waf-rules-before`, policy SecLang and exclusions, `waf-rules`, then HAPTIC's non-overridable body-safety directives. Policies without route-local rules compile once and are shared. Native and nginx-compatible custom rules share `waf.customRules.limits.maxIngresses` and `maxBytesPerIngress`; these DoS bounds apply even when no reusable policy catalog is configured.
+
+#### Self-service namespaced policies
+
+`waf.policies.selfService` lets every namespace author WAF policies for its **own** Ingresses without any per-namespace registration — the admin enables the mode once, and each team owns one well-known ConfigMap (default name `waf-policies`, data key `policies.yaml`) in its namespace:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        waf:
+          policies:
+            selfService:
+              enabled: true
+```
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: team-a
+  name: waf-policies
+data:
+  policies.yaml: |
+    app-baseline:
+      requestBody:
+        mode: none
+      enforcement: detect
+      excludedTargetsByTag:
+        attack-sqli: ["ARGS:q"]
+```
+
+An Ingress in `team-a` then selects `haproxy-haptic.org/waf-policy: app-baseline` — the same annotation as trusted policies. Names resolve against the trusted catalog first, then the Ingress's own namespace; a policy defined in another namespace is invisible, and explicit cross-namespace addressing (`team-a/app-baseline`) is rejected.
+
+Self-service stays safe for the shared data plane by construction:
+
+- **Namespace-scoped identity.** A self-service policy can't collide with, shadow, or hijack another namespace's or the trusted catalog's names. A name that clashes with a trusted policy is never resolved silently in either direction: the clashing namespace's selectors fail closed while other namespaces still get the trusted policy.
+- **Scoped failure.** A broken catalog (invalid YAML) or invalid policy records Warning Events (`WafPolicyCatalogInvalid` / `WafPolicyInvalid`) on the ConfigMap, and only that namespace's *selecting* routes fail closed with `503` — the global render, and every other team, continue untouched. The admission webhook still rejects a change that would introduce the breakage, so the fail-closed path only covers breakage that pre-dates the webhook or raced past it.
+- **Bounded content.** `secLang` is refused unless the administrator sets `selfService.allowSecLang: true` — the structured fields (`enforcement`, `requestBody`, `excludedTargetsByTag`) cover false-positive tuning without arbitrary rule code in the shared Coraza process. `requestBody` stays bounded by the administrator's `policies.requestBody.maxBytes` ceiling, and `selfService.limits.maxPoliciesPerNamespace` / `maxTotalPolicies` cap catalog growth (cuts are deterministic: sorted namespaces, sorted names). Note the caps bound size and count, not rule CPU — that's why `allowSecLang` is a separate, off-by-default grant.
+- **The baseline stays admin-owned.** `defaultPolicy` resolves in the trusted catalog only, and under `default-on`/`deny` dispatch a self-service policy whose effective enforcement is `detect` is rejected — a tenant can't weaken the cluster baseline.
+
+Enabling self-service activates WAF governance (the `ingressPermissions` gates), the Coraza plugin, and a dedicated, name-scoped ConfigMap watch (only the well-known catalogs are retained in memory, not every cluster ConfigMap). Use `configMapRefs` instead when a central security team authors policies for other teams, and inline policies for admin-only catalogs; all three sources compose.
 
 ### API gateway
 

@@ -92,14 +92,33 @@
   {{- $wafPolicies = $wafSettings.policies }}
 {{- end }}
 {{- range $field := keys $wafPolicies }}
-  {{- if not (has $field (list "defaultPolicy" "requestBody" "limits" "inline" "configMapRefs")) }}
-    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies contains unknown field %q. Valid fields: defaultPolicy, requestBody, limits, inline, configMapRefs." $field) }}
+  {{- if not (has $field (list "defaultPolicy" "requestBody" "limits" "inline" "configMapRefs" "selfService")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies contains unknown field %q. Valid fields: defaultPolicy, requestBody, limits, inline, configMapRefs, selfService." $field) }}
   {{- end }}
 {{- end }}
+{{- $wafSelfService := dict }}
+{{- if hasKey $wafPolicies "selfService" }}
+  {{- if not (kindIs "map" $wafPolicies.selfService) }}
+    {{- fail "controller.config.templatingSettings.extraContext.waf.policies.selfService must be a map." }}
+  {{- end }}
+  {{- $wafSelfService = $wafPolicies.selfService }}
+{{- end }}
+{{- range $field := keys $wafSelfService }}
+  {{- if not (has $field (list "enabled" "configMapName" "key" "allowSecLang" "limits")) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.selfService contains unknown field %q. Valid fields: enabled, configMapName, key, allowSecLang, limits." $field) }}
+  {{- end }}
+{{- end }}
+{{- range $field := list "enabled" "allowSecLang" }}
+  {{- if and (hasKey $wafSelfService $field) (not (kindIs "bool" (index $wafSelfService $field))) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.selfService.%s must be a boolean." $field) }}
+  {{- end }}
+{{- end }}
+{{- $wafSelfServiceEnabled := and (hasKey $wafSelfService "enabled") (eq (toString $wafSelfService.enabled) "true") }}
 {{- $wafPoliciesConfigured := false }}
 {{- if and (hasKey $wafPolicies "inline") (kindIs "map" $wafPolicies.inline) (gt (len $wafPolicies.inline) 0) }}{{- $wafPoliciesConfigured = true }}{{- end }}
 {{- if and (hasKey $wafPolicies "configMapRefs") (kindIs "slice" $wafPolicies.configMapRefs) (gt (len $wafPolicies.configMapRefs) 0) }}{{- $wafPoliciesConfigured = true }}{{- end }}
 {{- if and (hasKey $wafPolicies "defaultPolicy") (kindIs "string" $wafPolicies.defaultPolicy) (ne $wafPolicies.defaultPolicy "") }}{{- $wafPoliciesConfigured = true }}{{- end }}
+{{- if $wafSelfServiceEnabled }}{{- $wafPoliciesConfigured = true }}{{- end }}
 {{- $wafIngressPermissions := dict }}
 {{- if hasKey $wafSettings "ingressPermissions" }}
   {{- if not (kindIs "map" $wafSettings.ingressPermissions) }}

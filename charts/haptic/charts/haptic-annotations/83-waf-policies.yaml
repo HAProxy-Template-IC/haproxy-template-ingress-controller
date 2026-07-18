@@ -6,6 +6,12 @@
 #
 # HAPTIC administrators and WAF policy authors own the policy catalog under
 # extraContext.waf.policies.inline and/or trusted cross-namespace ConfigMaps.
+# With policies.selfService enabled, each namespace may additionally author
+# policies for its OWN Ingresses in a well-known ConfigMap (default
+# `waf-policies`) in that namespace: names resolve trusted-catalog first, then
+# own-namespace; a broken self-service catalog/policy fails only that
+# namespace's selecting routes closed (503 + Warning Events) instead of the
+# global render; secLang requires selfService.allowSecLang.
 # There are deliberately no route-selectable built-in policies: body inspection,
 # enforcement, exclusions, and permitted Ingress overrides are security policy.
 #
@@ -88,6 +94,7 @@ templateSnippets:
           var allowedPolicySettings = map[string]bool{
             "defaultPolicy": true, "requestBody": true,
             "limits": true, "inline": true, "configMapRefs": true,
+            "selfService": true,
           }
           for _, field := range keys(policies) {
             if !allowedPolicySettings[field] {
@@ -147,6 +154,8 @@ templateSnippets:
           var allowEnforcementOverride = gov["allowEnforcementOverride"].(bool)
           var allowCustomRules = gov["allowCustomRules"].(bool)
           var allowRawHAProxyConfig = gov["allowRawHAProxyConfig"].(bool)
+          var selfServiceEnabled = gov["selfServiceEnabled"].(bool)
+          var dispatchDefaultEnforcement = dispatch | dig("defaultEnforcement") | fallback("deny") | tostring()
           var limitsAny = policies | dig("limits")
           if limitsAny == nil { limitsAny = map[string]any{} }
           var limits, limitsOK = limitsAny.(map[string]any)
@@ -170,7 +179,9 @@ templateSnippets:
           var policyMaxBody = map[string]string{}
           var policyEnforcement = map[string]string{}
           var policySource = map[string]string{}
-          if policyCatalogConfigured {
+          var selfServiceBrokenCatalog = map[string]string{}
+          var selfServiceBrokenPolicy = map[string]string{}
+          if policyCatalogConfigured || selfServiceEnabled {
             var allowedPolicyFields = map[string]bool{
               "description": true,
               "requestBody": true,
@@ -179,23 +190,29 @@ templateSnippets:
               "secLang": true,
             }
 
-            // Normalize chart-value and ConfigMap policies through one strict
-            // path. Sources are trusted by the HAPTIC admin, but malformed or
-            // unbounded input still fails before it can destabilize Coraza.
-            var registerPolicy = func(policyName string, rawPolicy any, source string) any {
+            // Normalize chart-value, trusted-ConfigMap, and self-service
+            // policies through one strict path. The closure returns an error
+            // string ("" on success) instead of failing so self-service
+            // callers can scope a bad policy to its own namespace; trusted
+            // call sites fail() on any returned error, preserving the
+            // hard-fail contract for admin-owned sources. Policies register
+            // under storeKey (equal to policyName for trusted sources,
+            // "<namespace>/<policyName>" for self-service) — the "/" keeps
+            // the two name spaces structurally collision-free.
+            var registerPolicy = func(storeKey string, policyName string, rawPolicy any, source string) string {
             if !regex_search(policyName, "^[a-z0-9][a-z0-9._-]{0,62}$") {
-              fail("WAF policy name '" + policyName + "' from " + source + " must contain 1-63 lowercase letters, digits, dots, underscores, or hyphens and start with a letter or digit.")
+              return "WAF policy name '" + policyName + "' from " + source + " must contain 1-63 lowercase letters, digits, dots, underscores, or hyphens and start with a letter or digit."
             }
-            if policySource[policyName] != "" {
-              fail("Duplicate WAF policy '" + policyName + "' from " + source + "; it is already defined by " + policySource[policyName] + ". Policy names must be unique across chart values and ConfigMaps.")
+            if policySource[storeKey] != "" {
+              return "Duplicate WAF policy '" + policyName + "' from " + source + "; it is already defined by " + policySource[storeKey] + ". Policy names must be unique across chart values and ConfigMaps."
             }
             var policy, policyOK = rawPolicy.(map[string]any)
             if !policyOK {
-              fail("WAF policy '" + policyName + "' from " + source + " must be a YAML map.")
+              return "WAF policy '" + policyName + "' from " + source + " must be a YAML map."
             }
             for _, field := range keys(policy) {
               if !allowedPolicyFields[field] {
-                fail("WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, excludedTargetsByTag, requestBody, secLang.")
+                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, excludedTargetsByTag, requestBody, secLang."
               }
             }
 
@@ -204,21 +221,21 @@ templateSnippets:
               var descriptionOK = false
               description, descriptionOK = policy["description"].(string)
               if !descriptionOK {
-                fail("WAF policy '" + policyName + "' from " + source + " field description must be a string.")
+                return "WAF policy '" + policyName + "' from " + source + " field description must be a string."
               }
             }
             if len(description) > 512 {
-              fail("WAF policy '" + policyName + "' from " + source + " has a description longer than 512 bytes.")
+              return "WAF policy '" + policyName + "' from " + source + " has a description longer than 512 bytes."
             }
 
             var requestBodyAny = policy | dig("requestBody") | fallback(map[string]any{})
             var requestBody, requestBodyOK = requestBodyAny.(map[string]any)
             if !requestBodyOK {
-              fail("WAF policy '" + policyName + "' from " + source + " field requestBody must be a map with mode and optional maxBytes fields.")
+              return "WAF policy '" + policyName + "' from " + source + " field requestBody must be a map with mode and optional maxBytes fields."
             }
             for _, field := range keys(requestBody) {
               if field != "mode" && field != "maxBytes" {
-                fail("WAF policy '" + policyName + "' from " + source + " requestBody contains unknown field '" + field + "'. Valid fields: mode, maxBytes.")
+                return "WAF policy '" + policyName + "' from " + source + " requestBody contains unknown field '" + field + "'. Valid fields: mode, maxBytes."
               }
             }
             var requestBodyMode = "none"
@@ -226,10 +243,10 @@ templateSnippets:
               requestBodyMode = requestBody["mode"] | tostring()
             }
             if requestBodyMode != "none" && requestBodyMode != "any" && requestBodyMode != "json" {
-              fail("WAF policy '" + policyName + "' from " + source + " has invalid requestBody.mode '" + requestBodyMode + "'. Valid values: none, any, json.")
+              return "WAF policy '" + policyName + "' from " + source + " has invalid requestBody.mode '" + requestBodyMode + "'. Valid values: none, any, json."
             }
             if requestBodyMode == "none" && requestBody["maxBytes"] != nil {
-              fail("WAF policy '" + policyName + "' from " + source + " sets requestBody.maxBytes while requestBody.mode is none. Set mode to any or json to inspect a bounded body, or remove maxBytes.")
+              return "WAF policy '" + policyName + "' from " + source + " sets requestBody.maxBytes while requestBody.mode is none. Set mode to any or json to inspect a bounded body, or remove maxBytes."
             }
             var bodyMode = "none"
             var contentMode = "any"
@@ -247,7 +264,7 @@ templateSnippets:
               enforcement = policy["enforcement"] | tostring()
             }
             if enforcement != "deny" && enforcement != "detect" {
-              fail("WAF policy '" + policyName + "' from " + source + " has invalid enforcement '" + enforcement + "'. Valid values: deny, detect.")
+              return "WAF policy '" + policyName + "' from " + source + " has invalid enforcement '" + enforcement + "'. Valid values: deny, detect."
             }
 
             var policyBodyBytes = defaultMaxBodyBytes
@@ -255,11 +272,11 @@ templateSnippets:
               policyBodyBytes = requestBody["maxBytes"] | tostring()
             }
             if !regex_search(policyBodyBytes, "^[0-9]+$") {
-              fail("WAF policy '" + policyName + "' from " + source + " field requestBody.maxBytes must be an integer.")
+              return "WAF policy '" + policyName + "' from " + source + " field requestBody.maxBytes must be an integer."
             }
             var policyBodyInt = toint(policyBodyBytes)
             if policyBodyInt < 1 || policyBodyInt > maxBodyBytesN {
-              fail("WAF policy '" + policyName + "' from " + source + " has requestBody.maxBytes '" + policyBodyBytes + "'; it must be between 1 and the configured policy maximum " + maxBodyBytes + ".")
+              return "WAF policy '" + policyName + "' from " + source + " has requestBody.maxBytes '" + policyBodyBytes + "'; it must be between 1 and the configured policy maximum " + maxBodyBytes + "."
             }
 
             var secLang = ""
@@ -267,14 +284,14 @@ templateSnippets:
               var secLangOK = false
               secLang, secLangOK = policy["secLang"].(string)
               if !secLangOK {
-                fail("WAF policy '" + policyName + "' from " + source + " field secLang must be a string.")
+                return "WAF policy '" + policyName + "' from " + source + " field secLang must be a string."
               }
             }
             if strings_contains(secLang, "\"\"\"") {
-              fail("WAF policy '" + policyName + "' from " + source + " contains a TOML triple-quote delimiter in secLang; remove that sequence.")
+              return "WAF policy '" + policyName + "' from " + source + " contains a TOML triple-quote delimiter in secLang; remove that sequence."
             }
             if len(secLang) > maxPolicySecLangBytes {
-              fail("WAF policy '" + policyName + "' from " + source + " secLang is " + tostring(len(secLang)) + " bytes; the configured limit is " + tostring(maxPolicySecLangBytes) + ".")
+              return "WAF policy '" + policyName + "' from " + source + " secLang is " + tostring(len(secLang)) + " bytes; the configured limit is " + tostring(maxPolicySecLangBytes) + "."
             }
 
             var generatedExclusions = ""
@@ -282,47 +299,54 @@ templateSnippets:
             var exclusionsAny = policy | dig("excludedTargetsByTag") | fallback(map[string]any{})
             var exclusions, exclusionsOK = exclusionsAny.(map[string]any)
             if !exclusionsOK {
-              fail("WAF policy '" + policyName + "' from " + source + " field excludedTargetsByTag must be a map of rule tags to exact Coraza variables.")
+              return "WAF policy '" + policyName + "' from " + source + " field excludedTargetsByTag must be a map of rule tags to exact Coraza variables."
             }
             for tag, rawTargets := range exclusions {
               if !regex_search(tag, "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$") {
-                fail("WAF policy '" + policyName + "' from " + source + " has invalid excludedTargetsByTag tag '" + tag + "'.")
+                return "WAF policy '" + policyName + "' from " + source + " has invalid excludedTargetsByTag tag '" + tag + "'."
               }
               var targets, targetsOK = rawTargets.([]any)
               if !targetsOK {
-                fail("WAF policy '" + policyName + "' from " + source + " excludedTargetsByTag entry '" + tag + "' must be a list of exact Coraza variables.")
+                return "WAF policy '" + policyName + "' from " + source + " excludedTargetsByTag entry '" + tag + "' must be a list of exact Coraza variables."
               }
               if len(targets) == 0 {
-                fail("WAF policy '" + policyName + "' from " + source + " has no targets for tag '" + tag + "'.")
+                return "WAF policy '" + policyName + "' from " + source + " has no targets for tag '" + tag + "'."
               }
               for _, rawTarget := range targets {
                 exclusionCount++
                 if exclusionCount > maxPolicyExcludedTargets {
-                  fail("WAF policy '" + policyName + "' from " + source + " exceeds the configured excluded-target limit " + tostring(maxPolicyExcludedTargets) + ".")
+                  return "WAF policy '" + policyName + "' from " + source + " exceeds the configured excluded-target limit " + tostring(maxPolicyExcludedTargets) + "."
                 }
                 var target = rawTarget | tostring()
                 if !regex_search(target, "^[A-Z][A-Z0-9_]*(:[A-Za-z0-9_.-]+)?$") {
-                  fail("WAF policy '" + policyName + "' from " + source + " target '" + target + "' must be an exact Coraza variable such as ARGS:q.")
+                  return "WAF policy '" + policyName + "' from " + source + " target '" + target + "' must be an exact Coraza variable such as ARGS:q."
                 }
                 generatedExclusions += "SecRuleUpdateTargetByTag \"" + tag + "\" \"!" + target + "\"\n"
               }
             }
 
-            policyConfiguration[policyName] = generatedExclusions + secLang + "\n"
-            policySafety[policyName] = bodySafety
-            policyBodyMode[policyName] = bodyMode
-            policyContentMode[policyName] = contentMode
-            policyMaxBody[policyName] = policyBodyBytes
-            policyEnforcement[policyName] = enforcement
-            policySource[policyName] = source
-            if len(policySource) > maxPolicies {
-              fail("WAF policy catalogs define more than the configured limit " + tostring(maxPolicies) + ".")
-            }
-            return true
+            policyConfiguration[storeKey] = generatedExclusions + secLang + "\n"
+            policySafety[storeKey] = bodySafety
+            policyBodyMode[storeKey] = bodyMode
+            policyContentMode[storeKey] = contentMode
+            policyMaxBody[storeKey] = policyBodyBytes
+            policyEnforcement[storeKey] = enforcement
+            policySource[storeKey] = source
+            return ""
           }
 
+          // Trusted sources keep the hard-fail contract: any validation error
+          // aborts the render. The maxCount budget applies to trusted policies
+          // only — self-service policies have their own separate budgets so a
+          // namespace can never exhaust the admin catalog's allowance.
+          var trustedPolicyCount = 0
           for policyName, rawPolicy := range inlinePolicies {
-            registerPolicy(policyName, rawPolicy, "extraContext.waf.policies.inline." + policyName)
+            var registerError = registerPolicy(policyName, policyName, rawPolicy, "extraContext.waf.policies.inline." + policyName)
+            if registerError != "" { fail(registerError) }
+            trustedPolicyCount++
+            if trustedPolicyCount > maxPolicies {
+              fail("WAF policy catalogs define more than the configured limit " + tostring(maxPolicies) + ".")
+            }
           }
 
           for _, rawSource := range policyConfigMapRefs {
@@ -374,7 +398,12 @@ templateSnippets:
               fail("WAF policy " + sourceID + " is invalid YAML: " + parseError.Error())
             }
             for policyName, rawPolicy := range parsedPolicies {
-              registerPolicy(policyName, rawPolicy, sourceID)
+              var registerError = registerPolicy(policyName, policyName, rawPolicy, sourceID)
+              if registerError != "" { fail(registerError) }
+              trustedPolicyCount++
+              if trustedPolicyCount > maxPolicies {
+                fail("WAF policy catalogs define more than the configured limit " + tostring(maxPolicies) + ".")
+              }
             }
           }
             if defaultPolicy != "" && policyConfiguration[defaultPolicy] == "" {
@@ -384,6 +413,100 @@ templateSnippets:
                 availableText = "available policies: " + join(available, ", ")
               }
               fail("extraContext.waf.policies.defaultPolicy references unknown policy '" + defaultPolicy + "'; " + availableText + ".")
+            }
+
+            // Namespaced self-service catalogs. Failures here are SCOPED, not
+            // global: a broken catalog or policy is recorded as a Warning Event
+            // on the offending ConfigMap and only that namespace's selecting
+            // routes fail closed with 503 (frontend-filters-113) — the global
+            // render proceeds and every other namespace is unaffected. Under
+            // the admission webhook the same breakage fail()s instead, so a
+            // proposed change cannot introduce it (the baseline escape hatch
+            // still admits changes unrelated to pre-existing breakage).
+            // defaultPolicy resolved above, BEFORE this block, so a tenant
+            // policy can never become the cluster baseline. Namespaces and
+            // policy names iterate sorted so budget cuts are deterministic.
+            if selfServiceEnabled {
+              var ssConfigMapName = gov["selfServiceConfigMapName"].(string)
+              var ssDataKey = gov["selfServiceKey"].(string)
+              var ssAllowSecLang = gov["selfServiceAllowSecLang"].(bool)
+              var ssMaxPerNamespace = gov["selfServiceMaxPoliciesPerNamespace"].(int)
+              var ssMaxTotal = gov["selfServiceMaxTotalPolicies"].(int)
+              // Discovery iterates the dedicated waf_selfservice_catalogs
+              // watch (full bodies, fieldSelector-scoped to the well-known
+              // name) — NOT the on-demand configmaps store, whose List()
+              // deliberately returns only entries the render already touched.
+              var ssNamespaces = []any{}
+              var ssByNamespace = map[string]*resources.waf_selfservice_catalogs.T{}
+              for _, catalogCM := range resources.waf_selfservice_catalogs.List() {
+                // The injected fieldSelector already scopes the watch; re-check
+                // the name as defense-in-depth (fixtures and offline validate
+                // runs bypass watch selectors).
+                if catalogCM.Metadata.Name != ssConfigMapName { continue }
+                if ssByNamespace[catalogCM.Metadata.Namespace] == nil {
+                  ssByNamespace[catalogCM.Metadata.Namespace] = catalogCM
+                  ssNamespaces = append(ssNamespaces, catalogCM.Metadata.Namespace)
+                }
+              }
+              var ssTotal = 0
+              for _, nsAny := range sort_strings(ssNamespaces) {
+                var ns = tostring(nsAny)
+                var cm = ssByNamespace[ns]
+                if cm == nil { continue }
+                var sourceID = "self-service WAF ConfigMap " + ns + "/" + ssConfigMapName + " key " + ssDataKey
+                var policyYAML = cm.Data[ssDataKey]
+                var catalogError = ""
+                var parsedPolicies = map[string]any{}
+                if strip(policyYAML) == "" {
+                  catalogError = sourceID + " is empty or missing."
+                } else {
+                  var parseError = unmarshalYAML(policyYAML, &parsedPolicies)
+                  if parseError != nil {
+                    catalogError = sourceID + " is invalid YAML: " + replace(parseError.Error(), "\n", " ")
+                  }
+                }
+                if catalogError != "" {
+                  if renderMode == "admission" { fail(catalogError) }
+                  selfServiceBrokenCatalog[ns] = catalogError
+                  recordEvent(cm, "WafPolicyCatalogInvalid", catalogError)
+                  continue
+                }
+                // Budgets count only successfully REGISTERED policies: a
+                // broken or colliding entry never consumes a slot, so it
+                // can't squeeze a namespace's valid policies out of its own
+                // budget (validation work stays bounded by the ConfigMap's
+                // size either way).
+                var nsCount = 0
+                for _, policyName := range keys(parsedPolicies) {
+                  var storeKey = ns + "/" + policyName
+                  var policyError = ""
+                  if policySource[policyName] != "" {
+                    policyError = "Self-service WAF policy '" + policyName + "' from " + sourceID + " collides with the trusted-catalog policy of the same name (defined by " + policySource[policyName] + "). Rename the namespace policy; ambiguous names are never resolved silently."
+                  } else if nsCount >= ssMaxPerNamespace {
+                    policyError = sourceID + " defines more than the per-namespace self-service limit " + tostring(ssMaxPerNamespace) + "; policy '" + policyName + "' is not loaded."
+                  } else if ssTotal >= ssMaxTotal {
+                    policyError = "The cluster-wide self-service WAF policy budget " + tostring(ssMaxTotal) + " is exhausted; policy '" + policyName + "' from " + sourceID + " is not loaded."
+                  }
+                  if policyError == "" && !ssAllowSecLang {
+                    var rawPolicyMap, rawPolicyMapOK = parsedPolicies[policyName].(map[string]any)
+                    if rawPolicyMapOK && rawPolicyMap["secLang"] != nil {
+                      policyError = "Self-service WAF policy '" + policyName + "' from " + sourceID + " uses secLang, which is disabled for self-service catalogs (extraContext.waf.policies.selfService.allowSecLang=false). Use enforcement, requestBody, and excludedTargetsByTag, or ask the HAPTIC administrator to move the policy into a trusted catalog."
+                    }
+                  }
+                  if policyError == "" {
+                    policyError = registerPolicy(storeKey, policyName, parsedPolicies[policyName], sourceID)
+                    if policyError == "" {
+                      nsCount++
+                      ssTotal++
+                    }
+                  }
+                  if policyError != "" {
+                    if renderMode == "admission" { fail(policyError) }
+                    selfServiceBrokenPolicy[storeKey] = policyError
+                    recordEvent(cm, "WafPolicyInvalid", policyError)
+                  }
+                }
+              }
             }
           }
 
@@ -402,6 +525,7 @@ templateSnippets:
           }
 
           var rules = []any{}
+          var brokenRoutes = []any{}
           // Vendor and native per-Ingress applications consume the same Coraza
           // application map and therefore share one admission bound.
           var ingressRuleApps = len(appsByName)
@@ -438,16 +562,63 @@ templateSnippets:
             var waf = strip(annotations["haproxy-haptic.org/waf"])
             var mode = strip(annotations["haproxy-haptic.org/waf-mode"])
             var requestedPolicy = strip(annotations["haproxy-haptic.org/waf-policy"])
-            var policy = requestedPolicy
+            var policy = ""
+            var selectedSelfService = false
+            var routeBrokenReason = ""
             var rulesBefore = annotations["haproxy-haptic.org/waf-rules-before"]
             var rulesAfter = annotations["haproxy-haptic.org/waf-rules"]
             if requestedPolicy != "" && !allowPolicySelection {
               fail("Ingress " + resourceID + " sets waf-policy, but the HAPTIC administrator disabled Ingress policy selection. Remove the annotation; default policy '" + defaultPolicy + "' applies automatically.")
             }
-            if policy == "" {
+            // Resolve the requested name: trusted catalog first (bare global
+            // names), then the Ingress's OWN namespace's self-service catalog
+            // ("<ns>/<name>" store keys — structurally distinct, so neither
+            // name space can shadow the other). Resolution failures are
+            // scoped: under the admission webhook they fail() (deny the
+            // proposed Ingress); on a live render they record a Warning Event
+            // and the route fails closed with 503 (frontend-filters-113)
+            // instead of serving without the WAF it asked for — and instead
+            // of aborting the whole render over one bad route.
+            var rejectRoute = func(message string) {
+              if renderMode == "admission" { fail(message) }
+              recordEvent(ingress, "WafPolicyUnavailable", message)
+              routeBrokenReason = message
+            }
+            if requestedPolicy != "" {
+              var ssStoreKey = ns + "/" + requestedPolicy
+              if strings_contains(requestedPolicy, "/") {
+                rejectRoute("Invalid value '" + requestedPolicy + "' for annotation 'haproxy-haptic.org/waf-policy' on Ingress '" + resourceID + "': policy names must not contain '/'. Self-service policies are selectable by bare name from their own namespace only.")
+              } else if selfServiceBrokenPolicy[ssStoreKey] != "" {
+                rejectRoute("Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "', which failed validation: " + selfServiceBrokenPolicy[ssStoreKey])
+              } else if policySource[requestedPolicy] != "" {
+                policy = requestedPolicy
+              } else if policySource[ssStoreKey] != "" {
+                policy = ssStoreKey
+                selectedSelfService = true
+              } else if selfServiceBrokenCatalog[ns] != "" {
+                rejectRoute("Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' but its namespace's self-service catalog is broken: " + selfServiceBrokenCatalog[ns])
+              } else if !policyCatalogConfigured && !selfServiceEnabled {
+                rejectRoute("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-policy' but no reusable WAF policy catalog is configured. Define controller.config.templatingSettings.extraContext.waf.policies.inline/configMapRefs, enable policies.selfService, or remove the annotation.")
+              } else {
+                var available = []any{}
+                for _, existingName := range keys(policySource) {
+                  if !strings_contains(existingName, "/") {
+                    available = append(available, existingName)
+                  } else if hasPrefix(existingName, ns + "/") {
+                    available = append(available, existingName[len(ns)+1:])
+                  }
+                }
+                var availableText = "no policies are configured"
+                if len(available) > 0 {
+                  availableText = "available policies: " + join(available | toStringSlice(), ", ")
+                }
+                rejectRoute("Unknown WAF policy '" + requestedPolicy + "' on Ingress " + resourceID + "; " + availableText + ". Policy names are exact and case-sensitive.")
+              }
+            }
+            if policy == "" && routeBrokenReason == "" {
               policy = defaultPolicy
             }
-            var active = waf != "" || policy != "" || rulesBefore != "" || rulesAfter != ""
+            var active = waf != "" || policy != "" || requestedPolicy != "" || rulesBefore != "" || rulesAfter != ""
 
             if mode != "" && !active {
               fail("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-mode' without 'waf', 'waf-policy', or WAF rules. Add a WAF policy or remove waf-mode.")
@@ -458,17 +629,11 @@ templateSnippets:
             if policy != "" && waf != "" {
               fail("Ingress " + resourceID + " uses legacy 'haproxy-haptic.org/waf' while named WAF policy '" + policy + "' applies. Remove the legacy annotation; the policy already enables Coraza.")
             }
-            if requestedPolicy != "" && !policyCatalogConfigured {
-              fail("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-policy' but no reusable WAF policy catalog is configured. Define controller.config.templatingSettings.extraContext.waf.policies.inline/configMapRefs, or remove the annotation.")
-            }
-            if policy != "" && policyConfiguration[policy] == "" {
-              var available = keys(policySource)
-              var availableText = "no policies are configured"
-              if len(available) > 0 {
-                availableText = "available policies: " + join(available, ", ")
-              }
-              fail("Unknown WAF policy '" + policy + "' on Ingress " + resourceID + "; " + availableText + ". Policy names are exact and case-sensitive.")
-            }
+            {#- Catalog-existence and unknown-policy handling live in the
+                scoped resolution block above (rejectRoute) — they deny at
+                admission but fail closed per-route on a live render, so a
+                policy deleted out from under an existing Ingress can no
+                longer abort the whole render. -#}
             {#- Mixing a native WAF annotation with a vendor WAF annotation on
                 one Ingress is rejected generically (for any family pair, with
                 or without a named policy) by the cross-family feature-collision
@@ -478,7 +643,7 @@ templateSnippets:
             if active && !corazaEnabled {
               fail("Ingress " + resourceID + " sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled. Enable spoaHub.plugins.coraza or remove the annotations.")
             }
-            if rulesBefore != "" && policy == "" {
+            if routeBrokenReason == "" && rulesBefore != "" && policy == "" {
               fail("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-rules-before' without a named waf-policy. Use the existing waf-rules annotation when no policy ordering boundary exists.")
             }
             if strings_contains(rulesBefore, "\"\"\"") || strings_contains(rulesAfter, "\"\"\"") {
@@ -504,8 +669,20 @@ templateSnippets:
             if mode != "deny" && mode != "detect" {
               fail("Invalid value '" + mode + "' for annotation 'haproxy-haptic.org/waf-mode' on Ingress '" + resourceID + "'. Valid values: 'deny', 'detect'.")
             }
+            // A tenant-authored policy must not weaken an administrator's
+            // default-on baseline: tenant content in detect mode would turn
+            // enforcement off for that route. Trusted-catalog policies may
+            // (the admin authored or explicitly trusted them).
+            if routeBrokenReason == "" && selectedSelfService && dispatchMode == "default-on" && dispatchDefaultEnforcement == "deny" && mode == "detect" {
+              rejectRoute("Ingress " + resourceID + " selects self-service WAF policy '" + requestedPolicy + "' with effective enforcement 'detect', which would weaken the default-on baseline enforcement 'deny'. Only trusted-catalog policies may weaken the baseline; use enforcement: deny or ask the HAPTIC administrator to adopt the policy into a trusted catalog.")
+            }
 
-            if active {
+            if active && routeBrokenReason != "" {
+              brokenRoutes = append(brokenRoutes, map[string]any{
+                "resourceID": resourceID,
+                "reason": routeBrokenReason,
+              })
+            } else if active {
               var bodyMode = "none"
               var contentMode = "any"
               var ruleMaxBodyBytes = maxBodyBytes
@@ -567,6 +744,7 @@ templateSnippets:
           }
           gf["sphCorazaApps"] = apps
           gf["corazaPolicyRoutes"] = rules
+          gf["corazaBrokenRoutes"] = brokenRoutes
           return true
         })
       %%}
@@ -598,4 +776,20 @@ templateSnippets:
       {%- for _, rule := range (gf["corazaPolicyRoutes"].([]any)) -%}
         {%- var r = rule.(map[string]any) -%}
       {{ "\n" }}{{ r["resourceID"].(string) }} {{ r["bodyMode"].(string) }} {{ r["contentMode"].(string) }} {{ r["maxBodyBytes"].(string) }}
+      {%- end -%}
+
+  # Fail-closed guard for routes whose selected WAF policy could not be
+  # applied (unknown, ambiguous, or failed-validation self-service policy on a
+  # live render). The admission webhook rejects proposed changes that would
+  # introduce these, so this rule only covers breakage that pre-dates the
+  # webhook or raced past it — such routes asked for a WAF and must fail
+  # closed with 503 rather than silently serve unprotected.
+  frontend-filters-113-haptic-waf-fail-closed:
+    template: |-
+      {{- render "util-waf-haptic-coraza-scan" -}}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- for _, entry := range (gf | dig("corazaBrokenRoutes") | fallback([]any{}) | toSlice()) -%}
+        {%- var e = entry.(map[string]any) -%}
+      # WARNING haproxy-haptic.org/waf-policy on Ingress {{ e["resourceID"].(string) }}: {{ replace(e["reason"].(string), "\n", " ") }} Failing closed (503) for this route until it is fixed.
+      http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ e["resourceID"].(string) }} }
       {%- end -%}
