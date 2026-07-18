@@ -360,6 +360,14 @@ validationTests:
       mode (default deny; detect when /waf-mode: detect) and
       waf-rules emits a per-app coraza block + coraza-app.map row.
     extraContext:
+      # Self-contained w.r.t. WAF governance: waf-rules (custom rules) and
+      # waf-mode (enforcement override) are gated once any WAF policy activates
+      # governance. Set the permissions here so the test passes whether or not
+      # the deployment defines a policy.
+      waf:
+        ingressPermissions:
+          allowCustomRules: true
+          allowEnforcementOverride: true
       spoaHub:
         enabled: true
         haproxy:
