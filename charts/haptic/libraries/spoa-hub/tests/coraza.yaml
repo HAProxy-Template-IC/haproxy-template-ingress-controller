@@ -352,6 +352,8 @@ validationTests:
     _helm_skip_test: '{{ include "haptic.nginxIngress.disabled" . }}'
     description: "An Ingress whose modsecurity-snippet contains a TOML triple-quote delimiter (\"\"\") is rejected at render time. The annotation value lands inside `directives = \"\"\"..."
     extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: injector }
       haproxyVersion: "3.2"
       spoaHub:
         enabled: true
@@ -808,6 +810,8 @@ validationTests:
     _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity set to a value other than \"true\" or \"false\" makes rendering fail loud. Only \"true\"/\"false\" are accepted."
     extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: bogus }
       haproxyVersion: "3.2"
     fixtures:
       ingresses:
@@ -837,6 +841,67 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: 'default/bogus'
+  test-coraza-dispatch-governance-violation-reconcile-fails-closed:
+    # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
+    # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by
+    # nginx-ingress's util-nginx-ingress-coraza-scan.
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
+    description: >-
+      On a live reconcile, an existing Ingress whose modsecurity-snippet is
+      rejected by governance (allowCustomRules=false) no longer aborts the
+      whole render: the route fails closed with 503 via the nginx-ingress
+      library's own frontend-filters-114 emission, a Warning Event lands on
+      the Ingress, and no Coraza application is registered for it. Regression
+      pin for the ingress-nginx-migration wedge (pre-existing snippet
+      annotations bricking every render on first install).
+    extraContext:
+      renderMode: reconcile
+      haproxyVersion: "3.2"
+      waf:
+        ingressPermissions:
+          allowCustomRules: false
+        # Governance activates only with a policy catalog, default-on
+        # dispatch, or self-service enabled — plain opt-in compat mode keeps
+        # upstream-permissive behavior.
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: legacy-snippet
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRuleRemoveById 900001
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: legacy-snippet.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port: { number: 80 }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str default/legacy-snippet \\}"
+      - type: contains
+        target: events
+        pattern: "Warning WafPermissionDenied networking.k8s.io/v1 Ingress default/legacy-snippet:.*allowCustomRules=false"
+      - type: not_contains
+        target: "file:spoa-hub-config.toml"
+        pattern: 'applications\."default/legacy-snippet"'
+
 
   test-coraza-dispatch-enable-modsecurity-host-less-accepted:
     # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
@@ -882,6 +947,8 @@ validationTests:
     _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
     description: "Default-on dispatch treats WAF coverage as an administrator-owned baseline: an Ingress cannot opt out unless extraContext.waf.ingressPermissions.allowWafDisable is explicitly true."
     extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: unauthorized-opt-out }
       haproxyVersion: "3.2"
       waf:
         dispatch:

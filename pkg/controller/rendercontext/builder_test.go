@@ -320,3 +320,45 @@ func TestMergeExtraContextInto(t *testing.T) {
 		assert.Equal(t, "value1", extraContext["key1"])
 	})
 }
+
+func TestBuilder_Build_AdmissionSubject(t *testing.T) {
+	pathResolver := &templating.PathResolver{}
+	logger := testutil.NewTestLogger()
+
+	t.Run("unset yields empty map", func(t *testing.T) {
+		builder := NewBuilder(&config.Config{}, pathResolver, logger)
+		ctx := builder.Build().Context
+
+		subject, ok := ctx["admissionSubject"].(map[string]any)
+		require.True(t, ok, "admissionSubject must always be a map")
+		assert.Empty(t, subject)
+	})
+
+	t.Run("set exposes store, namespace, name", func(t *testing.T) {
+		builder := NewBuilder(&config.Config{}, pathResolver, logger,
+			WithAdmissionSubject("ingresses", "team-a", "app"))
+		ctx := builder.Build().Context
+
+		subject := ctx["admissionSubject"].(map[string]any)
+		assert.Equal(t, "ingresses", subject["store"])
+		assert.Equal(t, "team-a", subject["namespace"])
+		assert.Equal(t, "app", subject["name"])
+	})
+
+	t.Run("extraContext cannot spoof the subject", func(t *testing.T) {
+		cfg := &config.Config{
+			TemplatingSettings: config.TemplatingSettings{
+				ExtraContext: map[string]any{
+					"admissionSubject": map[string]any{
+						"store": "ingresses", "namespace": "evil", "name": "spoof",
+					},
+				},
+			},
+		}
+		builder := NewBuilder(cfg, pathResolver, logger)
+		ctx := builder.Build().Context
+
+		subject := ctx["admissionSubject"].(map[string]any)
+		assert.Empty(t, subject, "user extraContext must not set the admission subject")
+	})
+}

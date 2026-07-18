@@ -328,7 +328,7 @@ type mockPipeline struct {
 	err    error
 }
 
-func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode) (*pipeline.PipelineResult, error) {
+func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -344,7 +344,7 @@ type flipFlopPipeline struct {
 	calls   int
 }
 
-func (m *flipFlopPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode) (*pipeline.PipelineResult, error) {
+func (m *flipFlopPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
 	m.calls++
 	if m.calls == 1 {
 		return m.success, nil

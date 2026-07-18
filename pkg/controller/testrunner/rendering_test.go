@@ -51,6 +51,36 @@ func TestMergeTestExtraContext(t *testing.T) {
 			test:       map[string]any{"a": map[string]any{"k": "v"}, "b": "scalar"},
 			wantMerged: map[string]any{"a": map[string]any{"k": "v"}, "b": "scalar"},
 		},
+		{
+			name: "__replace__ sentinel swaps the subtree wholesale",
+			global: map[string]any{
+				"waf": map[string]any{
+					"policies": map[string]any{
+						"inline": map[string]any{"deployment-policy": map[string]any{}},
+					},
+				},
+			},
+			test: map[string]any{
+				"waf": map[string]any{
+					"policies": map[string]any{
+						"inline": map[string]any{"__replace__": true, "approved-policy": map[string]any{}},
+					},
+				},
+			},
+			wantMerged: map[string]any{
+				"waf": map[string]any{
+					"policies": map[string]any{
+						"inline": map[string]any{"approved-policy": map[string]any{}},
+					},
+				},
+			},
+		},
+		{
+			name:       "__replace__ sentinel is stripped from nested maps too",
+			global:     map[string]any{"reg": map[string]any{"old": "x"}},
+			test:       map[string]any{"reg": map[string]any{"__replace__": true, "sub": map[string]any{"__replace__": true, "k": "v"}}},
+			wantMerged: map[string]any{"reg": map[string]any{"sub": map[string]any{"k": "v"}}},
+		},
 	}
 
 	for _, tt := range tests {

@@ -21,6 +21,8 @@ import (
 	"log/slog"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
@@ -201,7 +203,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 	// (RenderService detects it and extracts HTTP overlay if present)
 	ctx, cancel := context.WithTimeout(context.Background(), validation.DefaultValidationTimeout)
 	defer cancel()
-	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission)
+	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission, admissionSubjectOpts(req.Overlays)...)
 	if err != nil {
 		// Render failed
 		c.logger.Warn("Proposal validation failed: render error",
@@ -272,6 +274,45 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 //     pluggable validators after the standard render+validate phases need
 //     these to feed Manager.ValidateAll. Nil on any failure.
 //   - ValidationResult with valid/invalid status and error details.
+//
+// admissionSubjectOpts derives the render-context admission subject from the
+// proposed overlays: when the proposal is exactly one object in exactly one
+// store — the webhook single-resource admission shape — templates get
+// `admissionSubject` = {store, namespace, name} so route-scoped checks can
+// hard-fail only the resource under review. Bulk or HTTP-only proposals
+// return no option and render with an empty subject, which route-scoped
+// checks treat like a reconcile (warn + fail closed per route). Fully
+// resource-agnostic: only store name and object identity are read.
+func admissionSubjectOpts(overlays map[string]*stores.StoreOverlay) []rendercontext.Option {
+	var opts []rendercontext.Option
+	count := 0
+	for storeName, overlay := range overlays {
+		if overlay == nil {
+			continue
+		}
+		for _, obj := range overlay.Additions {
+			if accessor, err := meta.Accessor(obj); err == nil {
+				count++
+				opts = []rendercontext.Option{rendercontext.WithAdmissionSubject(storeName, accessor.GetNamespace(), accessor.GetName())}
+			}
+		}
+		for _, obj := range overlay.Modifications {
+			if accessor, err := meta.Accessor(obj); err == nil {
+				count++
+				opts = []rendercontext.Option{rendercontext.WithAdmissionSubject(storeName, accessor.GetNamespace(), accessor.GetName())}
+			}
+		}
+		for _, key := range overlay.Deletions {
+			count++
+			opts = []rendercontext.Option{rendercontext.WithAdmissionSubject(storeName, key.Namespace, key.Name)}
+		}
+	}
+	if count != 1 {
+		return nil
+	}
+	return opts
+}
+
 func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*stores.StoreOverlay) (*pipeline.PipelineResult, *validation.ValidationResult) {
 	startTime := time.Now()
 
@@ -291,7 +332,7 @@ func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*store
 		}
 	}
 
-	outcome := c.runWithBaselineCheck(ctx, overlayProvider)
+	outcome := c.runWithBaselineCheck(ctx, overlayProvider, admissionSubjectOpts(overlays)...)
 	if outcome.Admit {
 		return outcome.PipelineResult, &validation.ValidationResult{
 			Valid:      true,
@@ -337,8 +378,12 @@ type validationOutcome struct {
 // The baseline run reuses the validation service's content-checksum cache,
 // so in steady state (baseline healthy) the second pipeline execution is
 // only invoked on failure paths.
-func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *stores.OverlayStoreProvider) validationOutcome {
-	pipelineResult, proposedResult, proposedErr := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission)
+func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *stores.OverlayStoreProvider, proposedOpts ...rendercontext.Option) validationOutcome {
+	// The subject options apply to the PROPOSED run only: the baseline run
+	// renders live state to ask "does the cluster already fail without this
+	// change?", which is reconcile-shaped and must not hard-fail on the
+	// subject's pre-existing (live) version.
+	pipelineResult, proposedResult, proposedErr := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission, proposedOpts...)
 	if proposedErr == nil && proposedResult.Valid {
 		return validationOutcome{Admit: true, PipelineResult: pipelineResult}
 	}

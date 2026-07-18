@@ -812,11 +812,26 @@ feature:
   location rewrites, canary, compression, traffic mirroring, host rewrites,
   fixed/mock responses. Injection guards on these values are still fine to warn —
   the `continue` means the rejected value is never emitted.
+- **Fail closed per-route (WAF-library `rejectRoute` pattern)** — security
+  features that have their own per-route fail-closed machinery. The WAF
+  libraries don't skip-and-serve (that would be fail-open) and don't
+  `fail()` globally (one pre-existing violator would abort every render
+  and, because the webhook live-renders each admission, deny every config
+  and Ingress update — the wedge class). Instead a violating route is
+  denied with 503 (`frontend-filters-113`/`-114`) plus a Warning Event,
+  and hard-fails ONLY when the route's own resource is the admission
+  subject (`admissionSubject` global, controller-set). Use this shape for
+  any security guard whose enforcement can be scoped to the offending
+  route.
 - **Keep `fail()` (hard-fail every mode)** in these cases:
-    - **Security features** — auth, client/backend mTLS or TLS-verify, WAF, rate
-      limiting, request-body validation, `X-Forwarded-For` handling. Silently
-      skipping a security control is fail-**open**; hard-fail instead so the
-      misconfiguration is loud. (Root `CLAUDE.md` → "No useless fail-open".)
+    - **Security features without a per-route fail-closed path** — auth,
+      client/backend mTLS or TLS-verify, rate limiting, request-body
+      validation, `X-Forwarded-For` handling. Silently skipping a security
+      control is fail-**open**; hard-fail instead so the misconfiguration is
+      loud. (Root `CLAUDE.md` → "No useless fail-open".) When the library CAN
+      deny the offending route itself (the WAF `rejectRoute` pattern above),
+      prefer that — it is equally fail-closed without the global blast
+      radius.
     - **Skip isn't clean** — the guard sits in a value-returning macro, or in a
       `backend-directives-*` snippet rendered via `render_glob … inherit_context`
       (no enclosing `resources.ingresses.List()` loop, so `{% continue %}` can't

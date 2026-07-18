@@ -96,6 +96,7 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 	decl["http"] = (*HTTPFetcher)(nil)                      // HTTP store for fetching remote content
 	decl["runtimeEnvironment"] = (*RuntimeEnvironment)(nil) // Runtime environment info (GOMAXPROCS, etc.)
 	decl["renderMode"] = (*string)(nil)                     // "reconcile" (warn) | "admission" (fail); see rendercontext.RenderMode
+	decl["admissionSubject"] = (*map[string]any)(nil)       // {"store","namespace","name"} of the resource under admission review; empty map otherwise
 	// Note: Domain-specific types like currentConfig are registered via additionalDeclarations
 	// parameter in buildScriggoGlobals() to maintain clean architecture boundaries
 }

@@ -567,8 +567,24 @@ templateSnippets:
             var routeBrokenReason = ""
             var rulesBefore = annotations["haproxy-haptic.org/waf-rules-before"]
             var rulesAfter = annotations["haproxy-haptic.org/waf-rules"]
+            // A route-scoped violation hard-fails ONLY when this route's own
+            // resource is the one under admission review (admissionSubject is
+            // controller-set from the webhook overlay; empty on reconcile,
+            // config-proposal, and bulk renders). Violations on any other —
+            // already present — resource record a Warning Event and fail
+            // closed per-route (503 via frontend-filters-113), so one bad
+            // existing Ingress can never wedge an unrelated admission or a
+            // HAProxyTemplateConfig update. First reason wins; later checks
+            // for an already-broken route are skipped.
+            var underAdmission = renderMode == "admission" && tostring(admissionSubject | dig("store") | fallback("")) == "ingresses" && tostring(admissionSubject | dig("namespace") | fallback("")) == ns && tostring(admissionSubject | dig("name") | fallback("")) == name
+            var rejectRoute = func(reason string, message string) {
+              if underAdmission { fail(message) }
+              if routeBrokenReason != "" { return }
+              recordEvent(ingress, reason, message)
+              routeBrokenReason = message
+            }
             if requestedPolicy != "" && !allowPolicySelection {
-              fail("Ingress " + resourceID + " sets waf-policy, but the HAPTIC administrator disabled Ingress policy selection. Remove the annotation; default policy '" + defaultPolicy + "' applies automatically.")
+              rejectRoute("WafPermissionDenied", "Ingress " + resourceID + " sets waf-policy, but the HAPTIC administrator disabled Ingress policy selection. Remove the annotation; default policy '" + defaultPolicy + "' applies automatically.")
             }
             // Resolve the requested name: trusted catalog first (bare global
             // names), then the Ingress's OWN namespace's self-service catalog
@@ -579,26 +595,21 @@ templateSnippets:
             // and the route fails closed with 503 (frontend-filters-113)
             // instead of serving without the WAF it asked for — and instead
             // of aborting the whole render over one bad route.
-            var rejectRoute = func(message string) {
-              if renderMode == "admission" { fail(message) }
-              recordEvent(ingress, "WafPolicyUnavailable", message)
-              routeBrokenReason = message
-            }
             if requestedPolicy != "" {
               var ssStoreKey = ns + "/" + requestedPolicy
               if strings_contains(requestedPolicy, "/") {
-                rejectRoute("Invalid value '" + requestedPolicy + "' for annotation 'haproxy-haptic.org/waf-policy' on Ingress '" + resourceID + "': policy names must not contain '/'. Self-service policies are selectable by bare name from their own namespace only.")
+                rejectRoute("WafPolicyUnavailable", "Invalid value '" + requestedPolicy + "' for annotation 'haproxy-haptic.org/waf-policy' on Ingress '" + resourceID + "': policy names must not contain '/'. Self-service policies are selectable by bare name from their own namespace only.")
               } else if selfServiceBrokenPolicy[ssStoreKey] != "" {
-                rejectRoute("Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "', which failed validation: " + selfServiceBrokenPolicy[ssStoreKey])
+                rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "', which failed validation: " + selfServiceBrokenPolicy[ssStoreKey])
               } else if policySource[requestedPolicy] != "" {
                 policy = requestedPolicy
               } else if policySource[ssStoreKey] != "" {
                 policy = ssStoreKey
                 selectedSelfService = true
               } else if selfServiceBrokenCatalog[ns] != "" {
-                rejectRoute("Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' but its namespace's self-service catalog is broken: " + selfServiceBrokenCatalog[ns])
+                rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' but its namespace's self-service catalog is broken: " + selfServiceBrokenCatalog[ns])
               } else if !policyCatalogConfigured && !selfServiceEnabled {
-                rejectRoute("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-policy' but no reusable WAF policy catalog is configured. Define controller.config.templatingSettings.extraContext.waf.policies.inline/configMapRefs, enable policies.selfService, or remove the annotation.")
+                rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-policy' but no reusable WAF policy catalog is configured. Define controller.config.templatingSettings.extraContext.waf.policies.inline/configMapRefs, enable policies.selfService, or remove the annotation.")
               } else {
                 var available = []any{}
                 for _, existingName := range keys(policySource) {
@@ -612,7 +623,7 @@ templateSnippets:
                 if len(available) > 0 {
                   availableText = "available policies: " + join(available | toStringSlice(), ", ")
                 }
-                rejectRoute("Unknown WAF policy '" + requestedPolicy + "' on Ingress " + resourceID + "; " + availableText + ". Policy names are exact and case-sensitive.")
+                rejectRoute("WafPolicyUnavailable", "Unknown WAF policy '" + requestedPolicy + "' on Ingress " + resourceID + "; " + availableText + ". Policy names are exact and case-sensitive.")
               }
             }
             if policy == "" && routeBrokenReason == "" {
@@ -621,13 +632,13 @@ templateSnippets:
             var active = waf != "" || policy != "" || requestedPolicy != "" || rulesBefore != "" || rulesAfter != ""
 
             if mode != "" && !active {
-              fail("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-mode' without 'waf', 'waf-policy', or WAF rules. Add a WAF policy or remove waf-mode.")
+              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-mode' without 'waf', 'waf-policy', or WAF rules. Add a WAF policy or remove waf-mode.")
             }
             if waf != "" && waf != "modsecurity" {
-              fail("Invalid value '" + waf + "' for annotation 'haproxy-haptic.org/waf' on Ingress '" + resourceID + "'. Only 'modsecurity' is supported.")
+              rejectRoute("WafAnnotationInvalid", "Invalid value '" + waf + "' for annotation 'haproxy-haptic.org/waf' on Ingress '" + resourceID + "'. Only 'modsecurity' is supported.")
             }
             if policy != "" && waf != "" {
-              fail("Ingress " + resourceID + " uses legacy 'haproxy-haptic.org/waf' while named WAF policy '" + policy + "' applies. Remove the legacy annotation; the policy already enables Coraza.")
+              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " uses legacy 'haproxy-haptic.org/waf' while named WAF policy '" + policy + "' applies. Remove the legacy annotation; the policy already enables Coraza.")
             }
             {#- Catalog-existence and unknown-policy handling live in the
                 scoped resolution block above (rejectRoute) — they deny at
@@ -644,19 +655,19 @@ templateSnippets:
               fail("Ingress " + resourceID + " sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled. Enable spoaHub.plugins.coraza or remove the annotations.")
             }
             if routeBrokenReason == "" && rulesBefore != "" && policy == "" {
-              fail("Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-rules-before' without a named waf-policy. Use the existing waf-rules annotation when no policy ordering boundary exists.")
+              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-rules-before' without a named waf-policy. Use the existing waf-rules annotation when no policy ordering boundary exists.")
             }
             if strings_contains(rulesBefore, "\"\"\"") || strings_contains(rulesAfter, "\"\"\"") {
-              fail("Ingress " + resourceID + " WAF rules contain a TOML triple-quote delimiter (\"\"\"); remove that sequence from the SecLang directives.")
+              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " WAF rules contain a TOML triple-quote delimiter (\"\"\"); remove that sequence from the SecLang directives.")
             }
             if len(rulesBefore) + len(rulesAfter) > maxCustomRuleBytesPerIngress {
-              fail("Ingress " + resourceID + " defines " + tostring(len(rulesBefore) + len(rulesAfter)) + " bytes of WAF rules; the configured per-Ingress limit is " + tostring(maxCustomRuleBytesPerIngress) + ".")
+              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " defines " + tostring(len(rulesBefore) + len(rulesAfter)) + " bytes of WAF rules; the configured per-Ingress limit is " + tostring(maxCustomRuleBytesPerIngress) + ".")
             }
             if !allowCustomRules && (rulesBefore != "" || rulesAfter != "") {
-              fail("Ingress " + resourceID + " defines route-local WAF rules, but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
+              rejectRoute("WafPermissionDenied", "Ingress " + resourceID + " defines route-local WAF rules, but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
             }
             if !allowEnforcementOverride && mode != "" {
-              fail("Ingress " + resourceID + " sets waf-mode, but the HAPTIC administrator disabled Ingress enforcement overrides with extraContext.waf.ingressPermissions.allowEnforcementOverride=false.")
+              rejectRoute("WafPermissionDenied", "Ingress " + resourceID + " sets waf-mode, but the HAPTIC administrator disabled Ingress enforcement overrides with extraContext.waf.ingressPermissions.allowEnforcementOverride=false.")
             }
 
             if policy != "" {
@@ -667,17 +678,35 @@ templateSnippets:
               mode = "deny"
             }
             if mode != "deny" && mode != "detect" {
-              fail("Invalid value '" + mode + "' for annotation 'haproxy-haptic.org/waf-mode' on Ingress '" + resourceID + "'. Valid values: 'deny', 'detect'.")
+              rejectRoute("WafAnnotationInvalid", "Invalid value '" + mode + "' for annotation 'haproxy-haptic.org/waf-mode' on Ingress '" + resourceID + "'. Valid values: 'deny', 'detect'.")
             }
             // A tenant-authored policy must not weaken an administrator's
             // default-on baseline: tenant content in detect mode would turn
             // enforcement off for that route. Trusted-catalog policies may
             // (the admin authored or explicitly trusted them).
             if routeBrokenReason == "" && selectedSelfService && dispatchMode == "default-on" && dispatchDefaultEnforcement == "deny" && mode == "detect" {
-              rejectRoute("Ingress " + resourceID + " selects self-service WAF policy '" + requestedPolicy + "' with effective enforcement 'detect', which would weaken the default-on baseline enforcement 'deny'. Only trusted-catalog policies may weaken the baseline; use enforcement: deny or ask the HAPTIC administrator to adopt the policy into a trusted catalog.")
+              rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects self-service WAF policy '" + requestedPolicy + "' with effective enforcement 'detect', which would weaken the default-on baseline enforcement 'deny'. Only trusted-catalog policies may weaken the baseline; use enforcement: deny or ask the HAPTIC administrator to adopt the policy into a trusted catalog.")
             }
 
-            if active && routeBrokenReason != "" {
+            // Bound and ownership checks for route-local rules must run
+            // BEFORE the broken/build branch decision: a rejection here has
+            // to land the route in brokenRoutes without registering its app
+            // (a duplicate registration would overwrite the owning library's
+            // Coraza application).
+            if routeBrokenReason == "" && active && (rulesBefore != "" || rulesAfter != "") {
+              ingressRuleApps++
+              if ingressRuleApps > maxCustomRuleIngresses {
+                rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " exceeds the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
+              } else if appsByName[resourceID] != nil {
+                rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " defines HAPTIC WAF rules but another annotation library already owns Coraza application '" + resourceID + "'. Use only one WAF rule annotation family on an Ingress.")
+              }
+            }
+
+            // A broken route always fails closed — even when active is
+            // false (e.g. a dangling waf-mode annotation): serving it as if
+            // the annotation weren't there would silently ignore declared
+            // intent.
+            if routeBrokenReason != "" {
               brokenRoutes = append(brokenRoutes, map[string]any{
                 "resourceID": resourceID,
                 "reason": routeBrokenReason,
@@ -694,14 +723,7 @@ templateSnippets:
 
               var appName = ""
               if rulesBefore != "" || rulesAfter != "" {
-                ingressRuleApps++
-                if ingressRuleApps > maxCustomRuleIngresses {
-                  fail("HAPTIC WAF annotations create more than the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
-                }
                 appName = resourceID
-                if appsByName[appName] != nil {
-                  fail("Ingress " + resourceID + " defines HAPTIC WAF rules but another annotation library already owns Coraza application '" + appName + "'. Use only one WAF rule annotation family on an Ingress.")
-                }
                 var configuration = ""
                 var safety = noBodySafety
                 if policy != "" {

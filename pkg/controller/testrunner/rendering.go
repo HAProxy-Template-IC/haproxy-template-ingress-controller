@@ -238,15 +238,36 @@ func mergeTestExtraContext(renderCtx, testExtraContext map[string]any) {
 	renderCtx["extraContext"] = merged
 }
 
+// replaceSentinelKey, when present (with any truthy value) in a test
+// extraContext map, makes that map REPLACE the deployment's map wholesale
+// instead of deep-merging into it. The sentinel key itself is stripped from
+// the result. This is the escape hatch for map-valued registries (e.g.
+// extraContext.waf.policies.inline) where merge semantics would otherwise
+// let deployment-defined sibling keys join a test's pinned set — a baked
+// test that needs the EXACT key set pins it with:
+//
+//	inline:
+//	  __replace__: true
+//	  approved-policy: {}
+const replaceSentinelKey = "__replace__"
+
 // deepMergeMaps returns a new map with override folded into base: keys whose
 // values are maps on both sides merge recursively, any other value replaces
-// the base value. Neither input map is mutated.
+// the base value. A nested override map carrying the __replace__ sentinel
+// replaces the base map wholesale (sentinel stripped). Neither input map is
+// mutated.
 func deepMergeMaps(base, override map[string]any) map[string]any {
 	merged := make(map[string]any, len(base)+len(override))
 	maps.Copy(merged, base)
 	for key, value := range override {
 		baseMap, baseOk := merged[key].(map[string]any)
 		overrideMap, overrideOk := value.(map[string]any)
+		if overrideOk {
+			if _, replace := overrideMap[replaceSentinelKey]; replace {
+				merged[key] = stripReplaceSentinel(overrideMap)
+				continue
+			}
+		}
 		if baseOk && overrideOk {
 			merged[key] = deepMergeMaps(baseMap, overrideMap)
 			continue
@@ -254,6 +275,24 @@ func deepMergeMaps(base, override map[string]any) map[string]any {
 		merged[key] = value
 	}
 	return merged
+}
+
+// stripReplaceSentinel returns a copy of m without the __replace__ key,
+// recursing into nested maps so a replaced subtree can itself contain
+// further sentinels. The input map is not mutated.
+func stripReplaceSentinel(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for key, value := range m {
+		if key == replaceSentinelKey {
+			continue
+		}
+		if nested, ok := value.(map[string]any); ok {
+			out[key] = stripReplaceSentinel(nested)
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 // collectStatusPatches drains the StatusPatchCollector that the templates'
