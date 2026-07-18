@@ -469,22 +469,12 @@ templateSnippets:
               }
               fail("Unknown WAF policy '" + policy + "' on Ingress " + resourceID + "; " + availableText + ". Policy names are exact and case-sensitive.")
             }
-            if policy != "" {
-              var vendorWAFAnnotation = ""
-              for _, annotationName := range []string{
-                "haproxy-ingress.github.io/waf",
-                "haproxy-ingress.github.io/waf-mode",
-                "nginx.ingress.kubernetes.io/enable-modsecurity",
-                "nginx.ingress.kubernetes.io/modsecurity-snippet",
-              } {
-                if annotations[annotationName] != "" && vendorWAFAnnotation == "" {
-                  vendorWAFAnnotation = annotationName
-                }
-              }
-              if vendorWAFAnnotation != "" {
-                fail("Ingress " + resourceID + " is governed by HAPTIC WAF policy '" + policy + "' and also sets vendor WAF annotation '" + vendorWAFAnnotation + "'. Mixing annotation families is rejected so vendor annotations cannot replace or weaken the selected policy.")
-              }
-            }
+            {#- Mixing a native WAF annotation with a vendor WAF annotation on
+                one Ingress is rejected generically (for any family pair, with
+                or without a named policy) by the cross-family feature-collision
+                guard in the ingress-annotations-compat library, which renders
+                before these map files — so no policy-scoped check is needed
+                here. -#}
             if active && !corazaEnabled {
               fail("Ingress " + resourceID + " sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled. Enable spoaHub.plugins.coraza or remove the annotations.")
             }

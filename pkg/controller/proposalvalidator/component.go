@@ -26,6 +26,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
@@ -200,7 +201,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 	// (RenderService detects it and extracts HTTP overlay if present)
 	ctx, cancel := context.WithTimeout(context.Background(), validation.DefaultValidationTimeout)
 	defer cancel()
-	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider)
+	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission)
 	if err != nil {
 		// Render failed
 		c.logger.Warn("Proposal validation failed: render error",
@@ -337,7 +338,7 @@ type validationOutcome struct {
 // so in steady state (baseline healthy) the second pipeline execution is
 // only invoked on failure paths.
 func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *stores.OverlayStoreProvider) validationOutcome {
-	pipelineResult, proposedResult, proposedErr := c.pipeline.ExecuteWithResult(ctx, overlayProvider)
+	pipelineResult, proposedResult, proposedErr := c.pipeline.ExecuteWithResult(ctx, overlayProvider, rendercontext.RenderModeAdmission)
 	if proposedErr == nil && proposedResult.Valid {
 		return validationOutcome{Admit: true, PipelineResult: pipelineResult}
 	}
@@ -375,7 +376,12 @@ func (c *Component) runBaselineCheck(ctx context.Context) (*validation.Validatio
 	// behaves as a pass-through to the live stores.
 	emptyCtx := stores.NewValidationContext(nil)
 	baselineProvider := stores.NewOverlayStoreProvider(c.baseStore, emptyCtx)
-	_, result, err := c.pipeline.ExecuteWithResult(ctx, baselineProvider)
+	// Baseline runs in the same admission mode as the proposed render so a
+	// conflict-style check that fail()s is symmetric: a pre-existing conflict
+	// fails BOTH renders, which is exactly what tells runWithBaselineCheck the
+	// failure is not caused by the proposed resource (→ admit, don't block an
+	// unrelated change on a conflict that was already there).
+	_, result, err := c.pipeline.ExecuteWithResult(ctx, baselineProvider, rendercontext.RenderModeAdmission)
 	return result, err
 }
 

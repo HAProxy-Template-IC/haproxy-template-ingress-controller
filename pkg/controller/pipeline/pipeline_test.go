@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -143,7 +144,7 @@ backend http_back
 	pipeline := createTestPipeline(t, template)
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
 
-	result, err := pipeline.Execute(context.Background(), provider)
+	result, err := pipeline.Execute(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -171,7 +172,7 @@ defaults
 	pipeline := createTestPipeline(t, template)
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
 
-	result, err := pipeline.Execute(context.Background(), provider)
+	result, err := pipeline.Execute(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -199,7 +200,7 @@ backend http_back
 	pipeline := createTestPipeline(t, template)
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
 
-	result, valResult, err := pipeline.ExecuteWithResult(context.Background(), provider)
+	result, valResult, err := pipeline.ExecuteWithResult(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -234,7 +235,7 @@ backend http_back
 	pipeline := createTestPipeline(t, template)
 	provider := &mockStoreProvider{storeMap: map[string]stores.Store{}}
 
-	result, valResult, err := pipeline.ExecuteWithResult(context.Background(), provider)
+	result, valResult, err := pipeline.ExecuteWithResult(context.Background(), provider, rendercontext.RenderModeReconcile)
 
 	require.NoError(t, err) // No render error
 	require.NotNil(t, result)

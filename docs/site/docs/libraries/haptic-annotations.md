@@ -17,7 +17,7 @@ This library is enabled by default. See `haproxy-haptic.org/*` annotations rende
 </div>
 
 !!! tip "Coming from another ingress controller?"
-    Keep your existing annotations working by enabling the matching vendor library instead — see [Migrating to HAPTIC](../migrating.md). You can also run both: vendor annotations and `haproxy-haptic.org/*` annotations coexist on the same Ingress.
+    Keep your existing annotations working by enabling the matching vendor library instead — see [Migrating to HAPTIC](../migrating.md). Vendor and `haproxy-haptic.org/*` annotations coexist on the same Ingress as long as each feature is configured through a single family — see [Don't mix families for one feature](#dont-mix-annotation-families-for-one-feature).
 
 ## Configuration
 
@@ -28,7 +28,16 @@ controller:
       enabled: true  # Enabled by default
 ```
 
-Snippet names use the `800`-band priority, so where the same Ingress carries both a `haproxy-haptic.org/*` annotation and a vendor annotation for the same capability, the vendor value (100–799 band) is applied first and the native value layers after it.
+### Don't mix annotation families for one feature
+
+You may combine `haproxy-haptic.org/*` and vendor annotations on the same Ingress, but each feature must come from a single family. Configuring one feature through two families — for example `haproxy-haptic.org/waf` and `haproxy-ingress.github.io/waf`, or `haproxy-haptic.org/cors-enable` and `nginx.ingress.kubernetes.io/enable-cors` — is a conflict, even when the two values agree, because the result would otherwise depend on which library renders last.
+
+HAPTIC handles the conflict in two ways, depending on when it's caught:
+
+- **When you apply or edit the Ingress**, the admission webhook rejects the change with a message naming the feature, the families, and the colliding annotations. This stops new conflicts from ever reaching the cluster.
+- **For an Ingress that already carries a conflict** (applied before the check existed, or through a bypassed webhook), the controller keeps serving traffic and records a `Warning` Event with reason `AnnotationFamilyConflict` on the Ingress instead of failing — one bad Ingress must not block config updates for the whole fleet. Find it with `kubectl describe ingress <name>` or `kubectl get events --field-selector reason=AnnotationFamilyConflict`, then remove the duplicate annotation.
+
+Different features from different families are fine (WAF from one family, CORS from another), and so are genuinely different parameters of the same category — for example a connect timeout from one family and a server timeout from another. Only enabled families count: a vendor annotation whose library is disabled is inert and never collides.
 
 ## Annotation reference
 

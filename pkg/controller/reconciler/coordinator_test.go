@@ -25,6 +25,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
@@ -327,7 +328,7 @@ type mockPipeline struct {
 	err    error
 }
 
-func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider) (*pipeline.PipelineResult, error) {
+func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode) (*pipeline.PipelineResult, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -343,7 +344,7 @@ type flipFlopPipeline struct {
 	calls   int
 }
 
-func (m *flipFlopPipeline) Execute(_ context.Context, _ stores.StoreProvider) (*pipeline.PipelineResult, error) {
+func (m *flipFlopPipeline) Execute(_ context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode) (*pipeline.PipelineResult, error) {
 	m.calls++
 	if m.calls == 1 {
 		return m.success, nil

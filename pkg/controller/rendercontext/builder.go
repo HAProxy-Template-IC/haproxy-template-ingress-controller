@@ -30,6 +30,7 @@
 package rendercontext
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -62,7 +63,25 @@ type Builder struct {
 	currentConfig      *parserconfig.StructuredConfig
 	typedResourceTypes map[string]reflect.Type
 	capabilities       dataplane.Capabilities
+	renderMode         RenderMode
 }
+
+// RenderMode tells conflict-style template checks whether this render is an
+// admission dry-run — a proposed change being validated, where the check should
+// fail loud so the webhook denies it — or a normal reconcile render of existing
+// live state, where the check should warn (via recordEvent) and let the render
+// proceed so one already-present bad resource can't block the whole fleet's
+// config. It is exposed to templates as the `renderMode` string global.
+type RenderMode string
+
+const (
+	// RenderModeReconcile is the live reconcile render: lenient (warn, never
+	// abort). It is the safe default when unset.
+	RenderModeReconcile RenderMode = "reconcile"
+	// RenderModeAdmission is a webhook / proposed-change validation render:
+	// strict (fail, so admission denies the change).
+	RenderModeAdmission RenderMode = "admission"
+)
 
 // Option configures a Builder.
 type Option func(*Builder)
@@ -112,6 +131,16 @@ func WithCurrentConfig(cfg *parserconfig.StructuredConfig) Option {
 func WithCapabilities(caps dataplane.Capabilities) Option {
 	return func(b *Builder) {
 		b.capabilities = caps
+	}
+}
+
+// WithRenderMode sets the RenderMode exposed to templates under "renderMode".
+// When unset, Build() defaults to RenderModeReconcile — the lenient mode — so a
+// caller that forgets to set it degrades to warn-and-proceed rather than failing
+// a live render.
+func WithRenderMode(mode RenderMode) Option {
+	return func(b *Builder) {
+		b.renderMode = mode
 	}
 }
 
@@ -256,6 +285,7 @@ func (b *Builder) Build() *BuildResult {
 		"pathResolver":              b.pathResolver,
 		"dataplane":                 b.config.Dataplane,
 		"capabilities":              CapabilitiesToMap(&b.capabilities),
+		"renderMode":                string(cmp.Or(b.renderMode, RenderModeReconcile)),
 		"shared":                    templating.NewSharedContext(),
 		"runtimeEnvironment": &templating.RuntimeEnvironment{
 			GOMAXPROCS: runtime.GOMAXPROCS(0),
@@ -284,6 +314,11 @@ func (b *Builder) Build() *BuildResult {
 
 	// Merge extraContext variables into top-level context
 	MergeExtraContextInto(templateContext, b.config)
+
+	// renderMode is controller-set, never user-set: re-assert it AFTER the
+	// extraContext merge so a user's extraContext.renderMode can't overwrite the
+	// top-level global and silently flip a webhook render from fail to warn.
+	templateContext["renderMode"] = string(cmp.Or(b.renderMode, RenderModeReconcile))
 
 	if b.config.TemplatingSettings.ExtraContext != nil {
 		b.logger.Debug("Added extra context variables to template context",

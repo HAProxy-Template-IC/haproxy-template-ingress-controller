@@ -35,16 +35,22 @@ func getEventCollector(env native.Env) *EventCollector {
 }
 
 // scriggoRecordEvent registers a Kubernetes Warning Event during template
-// rendering. Like statusPatch, it is resource-agnostic: apiVersion/kind/
-// namespace/name identify the involved object, so it emits against any watched
-// resource or CRD without a typed client (RULE #1). Duplicate (resource, reason,
-// message) tuples collapse to one event.
+// rendering. It is resource-agnostic: the involved object's
+// namespace/name/apiVersion/kind are read off the passed resource via the same
+// dig navigation typed access uses, so it emits against any watched resource or
+// CRD without a typed client (RULE #1). Duplicate (resource, reason, message)
+// tuples collapse to one event.
+//
+// The resource argument is any watched-resource value — a typed
+// `*resources.<name>.T`, a `map[string]any`, or an *unstructured.Unstructured;
+// callers pass the object they already have (e.g. an item from
+// resources.ingresses.List()) rather than restating its identity.
 //
 // Usage in Scriggo templates:
 //
-//	{% recordEvent("default", "my-ingress", "networking.k8s.io/v1", "Ingress",
-//	    "RouteConflict", "host \"x\" path \"/\" is already served by another Ingress") %}
-func scriggoRecordEvent(env native.Env, namespace, name, apiVersion, kind, reason, message string) string {
+//	{% recordEvent(ingress, "RouteConflict",
+//	    "host \"x\" path \"/\" is already served by another Ingress") %}
+func scriggoRecordEvent(env native.Env, resource any, reason, message string) string {
 	// recordEvent is a best-effort observability signal, so — unlike
 	// statusPatch, whose status output is load-bearing — it never aborts the
 	// render. A missing collector (engine wired without event support) or an
@@ -55,6 +61,10 @@ func scriggoRecordEvent(env native.Env, namespace, name, apiVersion, kind, reaso
 	if collector == nil {
 		return ""
 	}
+	namespace := scriggoDigString(resource, "", "metadata", "namespace")
+	name := scriggoDigString(resource, "", "metadata", "name")
+	apiVersion := scriggoDigString(resource, "", "apiVersion")
+	kind := scriggoDigString(resource, "", "kind")
 	_ = collector.Register(namespace, name, apiVersion, kind, EventTypeWarning, reason, message)
 	return "" // Side-effect only, no output
 }

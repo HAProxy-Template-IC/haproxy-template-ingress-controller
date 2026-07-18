@@ -20,6 +20,7 @@ All templates have access to the following top-level variables:
 | `fileRegistry` | object | Lets templates dynamically register auxiliary files at render time via `fileRegistry.Register("file"/"cert"/"map"/"crt-list", filename, content)`; returns the resolved path. Used by the SSL, haproxytech, and haproxy-ingress libraries to materialise CA bundles, client certs, and SSL crt-lists from Secrets. |
 | `http` | object | HTTP fetcher for `http.Fetch("https://example.com/...")` — see [Watching Resources — HTTP Resources](./watching-resources.md#http-resources) for the auto-registration and refresh mechanism |
 | `extraContext` | map | The full `templatingSettings.extraContext` map. Read a key with `extraContext.key` or `extraContext["key"]` — see [Custom Template Variables](./templating.md#custom-template-variables). |
+| `renderMode` | string | Why this render is running: `"admission"` for a webhook dry-run of a *proposed* change, or `"reconcile"` for the live config of already-present state (also the value the daemon load gate and `controller validate` use). Branch on it so a validation check can `fail()` a proposed change under the webhook but only warn (via [`recordEvent()`](#recordevent)) during a live reconcile — a `fail()` on live state aborts the whole config render. The controller always sets it; a user's `extraContext.renderMode` can't override it. |
 
 Note: the controller doesn't inject a `haproxyVersion` variable on its own. The Helm chart populates `templatingSettings.extraContext.haproxyVersion` from its `haproxyVersion` value, so chart-deployed templates read it as `{{ extraContext.haproxyVersion }}`. If you bypass the chart, set the value yourself in `templatingSettings.extraContext.haproxyVersion`. For feature checks prefer `capabilities.*` flags, which the controller derives from the local HAProxy probe.
 
@@ -173,22 +174,18 @@ For resources with nested condition arrays (for example, Gateway API Route `pare
 
 ### `recordEvent()`
 
-Records a Kubernetes `Warning` Event against a resource. The controller emits it via an EventRecorder on the leader, so it shows up under `kubectl describe <kind> <name>` and `kubectl get events`. Like `statusPatch()`, it's resource-agnostic — the involved object is identified purely by the `apiVersion`/`kind`/`namespace`/`name` you pass, so it works for any watched resource or custom resource.
+Records a Kubernetes `Warning` Event against a resource. The controller emits it via an EventRecorder on the leader, so it shows up under `kubectl describe <kind> <name>` and `kubectl get events`. Like `statusPatch()`, it's resource-agnostic — you pass the resource object itself, and its `namespace`/`name`/`apiVersion`/`kind` are read off it, so it works for any watched resource or custom resource.
 
 **Parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `namespace` | `string` | Involved resource namespace (empty for cluster-scoped) |
-| `name` | `string` | Involved resource name |
-| `apiVersion` | `string` | Involved resource API version (for example, `networking.k8s.io/v1`) |
-| `kind` | `string` | Involved resource kind (for example, `Ingress`) |
+| `resource` | resource object | The watched resource to record the Event against — a typed resource, a `map`, or an unstructured object (for example, an item from `resources.ingresses.List()`) |
 | `reason` | `string` | Short, machine-readable `PascalCase` reason (for example, `RouteConflict`) |
 | `message` | `string` | Human-readable description |
 
 ```go
-{% recordEvent(ingress.Metadata.Namespace, ingress.Metadata.Name,
-    "networking.k8s.io/v1", "Ingress",
+{% recordEvent(ingress,
     "RouteConflict", "host \"" + rule.Host + "\" path \"" + path.Path + "\" is already served by another Ingress") %}
 ```
 

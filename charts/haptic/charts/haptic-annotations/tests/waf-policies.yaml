@@ -327,14 +327,28 @@ validationTests:
       - { type: contains, target: rendering_error, pattern: "excludedTargetsByTag entry 'attack-sqli' must be a list" }
 
   test-haptic-waf-policy-vendor-mixing-rejected:
-    # The mixing rejection is raised by the native haproxy-haptic.org scan
-    # itself (it inspects vendor WAF annotations on policy-governed Ingresses
-    # directly), so no vendor library is required. allowCustomRules is pinned
-    # true so a loaded nginx-ingress library accepts the snippet and the ONLY
-    # failure is the mixing rejection.
+    # Mixing a native HAPTIC WAF annotation with a vendor (nginx) WAF annotation
+    # on one Ingress is rejected by the cross-family feature-collision guard in
+    # the ingress-annotations-compat library (features-950), which renders
+    # before the coraza map files. allowCustomRules is pinned true so a loaded
+    # nginx-ingress library accepts the snippet and the ONLY failure is the
+    # cross-family rejection.
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
-    description: a vendor WAF annotation cannot replace the application selected by a HAPTIC policy
+    description: under the admission webhook, a vendor WAF annotation cannot be mixed with a HAPTIC WAF policy on one Ingress
     extraContext:
+      # renderMode admission = the webhook dry-run, where a cross-family conflict
+      # fail()s so the API server denies the Ingress. (During a live reconcile it
+      # would warn via a Kubernetes Event instead — see the reconcile-mode tests
+      # in ingress-annotations-compat.yaml.)
+      renderMode: admission
+      # Pin nginx as an enabled family so the cross-family guard evaluates the
+      # nginx annotation regardless of the deployment's library set (the e2e
+      # profile, for instance, leaves nginx-ingress off).
+      annotationLibraries:
+        haptic: true
+        nginx: true
+        haproxyIngress: false
+        haproxytech: false
       waf:
         ingressPermissions:
           allowPolicySelection: true
@@ -362,7 +376,9 @@ validationTests:
                   paths:
                     - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
     assertions:
-      - { type: contains, target: rendering_error, pattern: "Mixing annotation families is rejected.*cannot replace or weaken" }
+      - { type: contains, target: rendering_error, pattern: "configures the WAF feature through annotations from multiple families" }
+      - { type: contains, target: rendering_error, pattern: "haproxy-haptic.org/waf-policy" }
+      - { type: contains, target: rendering_error, pattern: "nginx.ingress.kubernetes.io/modsecurity-snippet" }
 
   test-haptic-waf-vendor-rule-size-limit:
     # The byte-bound rejection is raised by nginx-ingress's

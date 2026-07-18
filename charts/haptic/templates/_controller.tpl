@@ -88,7 +88,7 @@ the process listens somewhere else.
 {{- range $legacy := list "debug" "statusPatchesDisabled" "password_hash_validation_regex" "password_hash_validation_error_message" "hstsEnabled" "hstsMaxAge" "hstsIncludeSubdomains" "hstsPreload" -}}
   {{- if hasKey $extraContext $legacy -}}{{- fail (printf "controller.config.templatingSettings.extraContext.%s uses a removed flat value; use the structured diagnostics, statusPatches, annotationCompatibility, or tls tree documented in the chart values reference." $legacy) -}}{{- end -}}
 {{- end -}}
-{{- range $reserved := list "cache" "rateLimit" "spoaHub" "controllerName" "gatewayClassResource" "haproxyVersion" "controllerNamespace" -}}
+{{- range $reserved := list "cache" "rateLimit" "spoaHub" "controllerName" "gatewayClassResource" "haproxyVersion" "controllerNamespace" "annotationLibraries" -}}
   {{- if hasKey $extraContext $reserved -}}{{- fail (printf "controller.config.templatingSettings.extraContext.%s is chart-managed; configure its component-owned Helm value instead of overriding the generated runtime context." $reserved) -}}{{- end -}}
 {{- end -}}
 {{- $routing := dict -}}
