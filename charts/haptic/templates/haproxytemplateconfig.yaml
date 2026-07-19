@@ -467,13 +467,14 @@ spec:
       {{- $limits = $waf.limits }}
     {{- end }}
     {{- range $field := keys $limits }}
-      {{- if not (has $field (list "maxCount" "maxSecLangBytes" "maxExcludedTargets")) }}
-        {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.limits contains unknown field %q. Valid fields: maxCount, maxSecLangBytes, maxExcludedTargets." $field) }}
+      {{- if not (has $field (list "maxCount" "maxSecLangBytes" "maxExcludedTargets" "maxRuleExclusions")) }}
+        {{- fail (printf "controller.config.templatingSettings.extraContext.waf.policies.limits contains unknown field %q. Valid fields: maxCount, maxSecLangBytes, maxExcludedTargets, maxRuleExclusions." $field) }}
       {{- end }}
     {{- end }}
     {{- $maxPoliciesRaw := dig "maxCount" 16 $limits | toString }}
     {{- $maxPolicySecLangBytesRaw := dig "maxSecLangBytes" 65536 $limits | toString }}
     {{- $maxPolicyExcludedTargetsRaw := dig "maxExcludedTargets" 256 $limits | toString }}
+    {{- $maxPolicyRuleExclusionsRaw := dig "maxRuleExclusions" 64 $limits | toString }}
     {{- if not (regexMatch "^[0-9]+$" $maxPoliciesRaw) }}
       {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxCount must be an integer between 1 and 1024." }}
     {{- end }}
@@ -482,6 +483,9 @@ spec:
     {{- end }}
     {{- if not (regexMatch "^[0-9]+$" $maxPolicyExcludedTargetsRaw) }}
       {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxExcludedTargets must be an integer between 1 and 4096." }}
+    {{- end }}
+    {{- if not (regexMatch "^[0-9]+$" $maxPolicyRuleExclusionsRaw) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxRuleExclusions must be an integer between 1 and 1024." }}
     {{- end }}
     {{- $maxPolicies := int $maxPoliciesRaw }}
     {{- $maxPolicySecLangBytes := int $maxPolicySecLangBytesRaw }}
@@ -495,6 +499,10 @@ spec:
     {{- if or (le $maxPolicyExcludedTargets 0) (gt $maxPolicyExcludedTargets 4096) }}
       {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxExcludedTargets must be between 1 and 4096." }}
     {{- end }}
+    {{- $maxPolicyRuleExclusions := int $maxPolicyRuleExclusionsRaw }}
+    {{- if or (le $maxPolicyRuleExclusions 0) (gt $maxPolicyRuleExclusions 1024) }}
+      {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxRuleExclusions must be between 1 and 1024." }}
+    {{- end }}
     {{- $policies := dict }}
     {{- /* Keep in sync with registerPolicy's allowedPolicyFields in
            charts/haptic-annotations/83-waf-policies.yaml — the Scriggo scan
@@ -503,7 +511,7 @@ spec:
            admission. The values-surface smoke render in
            scripts/test-templates.sh exercises every field listed here, so
            adding a field in one place and not the other fails CI. */}}
-    {{- $allowedPolicyFields := list "description" "requestBody" "enforcement" "excludedTargetsByTag" "secLang" "allowedMethods" "paranoiaLevel" "anomalyThreshold" }}
+    {{- $allowedPolicyFields := list "description" "requestBody" "enforcement" "excludedTargetsByTag" "secLang" "allowedMethods" "paranoiaLevel" "anomalyThreshold" "ruleExclusions" }}
     {{- $inlinePolicies := dict }}
     {{- if hasKey $waf "inline" }}{{- $inlinePolicies = $waf.inline }}{{- end }}
     {{- if not (kindIs "map" $inlinePolicies) }}
@@ -558,6 +566,28 @@ spec:
           {{- end }}
           {{- if not (regexMatch "^[1-9][0-9]{0,4}$" (toString $tvalue)) }}
             {{- fail (printf "waf.policies.inline.%s.anomalyThreshold.%s must be a positive integer." $name $tfield) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- /* Shape-check ruleExclusions here so a bad values file fails at
+             `helm template` time; the Scriggo registerPolicy scan is the
+             authoritative validator (denylist ranges, target regex, path
+             operators). Keep the field set in sync with it. */}}
+      {{- if hasKey $policy "ruleExclusions" }}
+        {{- if not (kindIs "slice" $policy.ruleExclusions) }}
+          {{- fail (printf "waf.policies.inline.%s.ruleExclusions must be a list of exclusion entries." $name) }}
+        {{- end }}
+        {{- range $entry := $policy.ruleExclusions }}
+          {{- if not (kindIs "map" $entry) }}
+            {{- fail (printf "waf.policies.inline.%s.ruleExclusions entries must be maps." $name) }}
+          {{- end }}
+          {{- range $efield := keys $entry }}
+            {{- if not (has $efield (list "rules" "excludeTarget" "onPathPrefix" "onPathContains" "onPathExact" "onPathSuffix")) }}
+              {{- fail (printf "waf.policies.inline.%s.ruleExclusions entry contains unknown field %q. Valid fields: rules, excludeTarget, onPathPrefix, onPathContains, onPathExact, onPathSuffix." $name $efield) }}
+            {{- end }}
+          {{- end }}
+          {{- if not (kindIs "slice" (index $entry "rules")) }}
+            {{- fail (printf "waf.policies.inline.%s.ruleExclusions entry must set 'rules' to a list of CRS rule IDs." $name) }}
           {{- end }}
         {{- end }}
       {{- end }}

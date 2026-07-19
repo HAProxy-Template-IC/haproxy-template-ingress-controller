@@ -727,6 +727,21 @@ controller:
             #     paranoiaLevel: 2          # 1 (default) .. 4
             #     anomalyThreshold:
             #       inbound: 10
+            #     # Structured, self-service-safe rule exclusions. The tenant
+            #     # supplies only numeric CRS rule IDs, an exact target
+            #     # variable, and a literal path — the chart owns the SecRule
+            #     # and its literal operator, so no tenant regex ever runs on
+            #     # the request path. CRS setup/anomaly-scoring/correlation
+            #     # rules are reserved (can't disable enforcement itself).
+            #     ruleExclusions:
+            #       # disable a rule only on matching paths (the git-host case):
+            #       - rules: [930130]
+            #         onPathContains: ".git/"      # or onPathPrefix/onPathExact/onPathSuffix
+            #       # drop one parameter from a rule (optionally path-scoped):
+            #       - rules: [941320]
+            #         excludeTarget: "ARGS:wp_post"
+            #       # disable a rule everywhere in this app (no path):
+            #       - rules: [913100]
             #     secLang: |
             #       SecRuleRemoveById 941320
             inline: {}

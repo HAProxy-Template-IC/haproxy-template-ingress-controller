@@ -165,6 +165,7 @@ templateSnippets:
           var maxPolicies = boundedInteger(limits["maxCount"], 16, "extraContext.waf.policies.limits.maxCount", 1, 1024)
           var maxPolicySecLangBytes = boundedInteger(limits["maxSecLangBytes"], 65536, "extraContext.waf.policies.limits.maxSecLangBytes", 1, 1048576)
           var maxPolicyExcludedTargets = boundedInteger(limits["maxExcludedTargets"], 256, "extraContext.waf.policies.limits.maxExcludedTargets", 1, 4096)
+          var maxPolicyRuleExclusions = boundedInteger(limits["maxRuleExclusions"], 64, "extraContext.waf.policies.limits.maxRuleExclusions", 1, 1024)
           var maxCustomRuleIngresses = gov["maxCustomRuleIngresses"].(int)
           var maxCustomRuleBytesPerIngress = gov["maxCustomRuleBytesPerIngress"].(int)
 
@@ -194,6 +195,7 @@ templateSnippets:
               "allowedMethods": true,
               "paranoiaLevel": true,
               "anomalyThreshold": true,
+              "ruleExclusions": true,
             }
 
             // Normalize chart-value, trusted-ConfigMap, and self-service
@@ -218,7 +220,7 @@ templateSnippets:
             }
             for _, field := range keys(policy) {
               if !allowedPolicyFields[field] {
-                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, excludedTargetsByTag, requestBody, secLang, allowedMethods, paranoiaLevel, anomalyThreshold."
+                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, excludedTargetsByTag, requestBody, secLang, allowedMethods, paranoiaLevel, anomalyThreshold, ruleExclusions."
               }
             }
 
@@ -393,6 +395,129 @@ templateSnippets:
                 The check is route-scoped instead, at the point a route
                 actually applies the policy — see the setup-anchor rejectRoute
                 below. -#}
+            {#- Structured, self-service-safe rule exclusions. Each entry is
+                (rules[] + optional excludeTarget + optional path scope) — the
+                tenant supplies only numeric CRS rule IDs, an exact target
+                variable, and a literal path string; the chart owns the
+                SecRule wrapper and its literal operator, so no tenant regex
+                is ever evaluated on the request path (the ReDoS surface every
+                raw-SecLang WAF exposes). Two lowerings:
+                  * no path  -> config-time SecRuleRemoveById /
+                    SecRuleUpdateTargetById, appended AFTER the CRS include
+                    (the rules must exist to be removed) via generatedExclusions.
+                  * with path -> runtime ctl:ruleRemove[Target]ById wrapped in
+                    a chart-generated SecRule, spliced BEFORE the CRS include
+                    (a ctl must run before the rule it targets) via
+                    setupDirectives.
+                Rule IDs are denylisted against the CRS scoring/setup/
+                correlation machinery so a tenant can silence attack rules
+                that false-positive but can NOT disable the anomaly-scoring
+                rule that makes the block decision (i.e. can't turn off their
+                own enforcement through the back door). -#}
+            var ruleExclusionsAny = policy | dig("ruleExclusions")
+            if ruleExclusionsAny != nil {
+              var ruleExclusions, ruleExclusionsOK = ruleExclusionsAny.([]any)
+              if !ruleExclusionsOK {
+                return "WAF policy '" + policyName + "' from " + source + " field ruleExclusions must be a list of exclusion entries."
+              }
+              var isDeniedRuleId = func(id int) bool {
+                return (id >= 900000 && id <= 901999) || (id >= 949000 && id <= 949999) || (id >= 959000 && id <= 959999) || (id >= 980000 && id <= 980999) || (id >= 990000 && id <= 999999)
+              }
+              var pathOps = map[string]string{
+                "onPathPrefix": "@beginsWith",
+                "onPathContains": "@contains",
+                "onPathExact": "@streq",
+                "onPathSuffix": "@endsWith",
+              }
+              var exclusionRuleCount = 0
+              {#- Per-policy sequence for generated path-scoped SecRule IDs;
+                  policy apps compile independently so a policy-local counter
+                  is collision-free. -#}
+              var exclusionRuleSeq = 0
+              for _, rawEntry := range ruleExclusions {
+                var entry, entryOK = rawEntry.(map[string]any)
+                if !entryOK {
+                  return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entries must be maps."
+                }
+                for _, field := range keys(entry) {
+                  if field != "rules" && field != "excludeTarget" && field != "onPathPrefix" && field != "onPathContains" && field != "onPathExact" && field != "onPathSuffix" {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry contains unknown field '" + field + "'. Valid fields: rules, excludeTarget, onPathPrefix, onPathContains, onPathExact, onPathSuffix."
+                  }
+                }
+                var rulesRaw, rulesRawOK = (entry | dig("rules")).([]any)
+                if !rulesRawOK || len(rulesRaw) == 0 {
+                  return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry must set 'rules' to a non-empty list of CRS rule IDs."
+                }
+                var ruleIds = []any{}
+                for _, rawId := range rulesRaw {
+                  var idText = rawId | tostring()
+                  if !regex_search(idText, "^[0-9]{6}$") {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions rule ID '" + idText + "' must be a 6-digit CRS rule ID."
+                  }
+                  var id = toint(idText)
+                  if id < 900000 || id > 999999 {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions rule ID '" + idText + "' is outside the CRS rule range 900000-999999."
+                  }
+                  if isDeniedRuleId(id) {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions may not target rule '" + idText + "': the CRS setup, anomaly-scoring, and correlation rules (900000-901999, 949xxx, 959xxx, 980xxx, 990xxx+) are reserved so an exclusion can't disable enforcement itself."
+                  }
+                  ruleIds = append(ruleIds, idText)
+                }
+                exclusionRuleCount += len(ruleIds)
+                if exclusionRuleCount > maxPolicyRuleExclusions {
+                  return "WAF policy '" + policyName + "' from " + source + " exceeds the configured rule-exclusion limit " + tostring(maxPolicyRuleExclusions) + "."
+                }
+                var target = ""
+                if entry["excludeTarget"] != nil {
+                  target = entry["excludeTarget"] | tostring()
+                  if !regex_search(target, "^[A-Z][A-Z0-9_]*(:[A-Za-z0-9_.-]+)?$") {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions excludeTarget '" + target + "' must be an exact Coraza variable such as ARGS:q (regex collection keys are not allowed)."
+                  }
+                }
+                var pathOp = ""
+                var pathValue = ""
+                for pathField, op := range pathOps {
+                  if entry[pathField] != nil {
+                    if pathOp != "" {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry sets more than one of onPathPrefix/onPathContains/onPathExact/onPathSuffix; use at most one."
+                    }
+                    pathOp = op
+                    pathValue = entry[pathField] | tostring()
+                    if !regex_search(pathValue, "^[A-Za-z0-9/_.:%~=&?*+@,-]{1,256}$") {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions " + pathField + " '" + pathValue + "' must be a literal URL path (letters, digits, and /_.:%~=&?*+@,- , max 256 chars)."
+                    }
+                  }
+                }
+                if pathOp == "" {
+                  {#- No path: config-time directives, after the CRS include. -#}
+                  for _, idAny := range ruleIds {
+                    var idText = idAny | tostring()
+                    if target == "" {
+                      generatedExclusions += "SecRuleRemoveById " + idText + "\n"
+                    } else {
+                      generatedExclusions += "SecRuleUpdateTargetById " + idText + " \"!" + target + "\"\n"
+                    }
+                  }
+                } else {
+                  {#- Path-scoped: one chart-owned SecRule (literal operator)
+                      whose ctl removes the rule/target for this transaction,
+                      spliced before the CRS include. IDs come from a policy-
+                      local 12xxxxx band that never collides with CRS
+                      (900000-999999) or HAPTIC's setup SecActions. -#}
+                  var ctlActions = ""
+                  for _, idAny := range ruleIds {
+                    var idText = idAny | tostring()
+                    if target == "" {
+                      ctlActions += ",ctl:ruleRemoveById=" + idText
+                    } else {
+                      ctlActions += ",ctl:ruleRemoveTargetById=" + idText + ";" + target
+                    }
+                  }
+                  setupDirectives += "SecRule REQUEST_URI \"" + pathOp + " " + pathValue + "\" \"id:" + tostring(1200000 + exclusionRuleSeq) + ",phase:1,pass,t:none,nolog" + ctlActions + "\"\n"
+                  exclusionRuleSeq++
+                }
+              }
+            }
             policySetupDirectives[storeKey] = setupDirectives
             policyConfiguration[storeKey] = generatedExclusions + secLang + "\n"
             policySafety[storeKey] = bodySafety
@@ -767,7 +892,7 @@ templateSnippets:
                 corazaEnabled is implied: an active route with coraza off is
                 already rejected by the coraza-not-enabled guard above. -#}
             if routeBrokenReason == "" && policy != "" && policySetupDirectives[policy] != "" && !strings_contains(corazaBaseDirectives, "Include @owasp_crs") {
-              rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' which sets allowedMethods/paranoiaLevel/anomalyThreshold, but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives or remove the setup-position fields from the policy.")
+              rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' which sets allowedMethods/paranoiaLevel/anomalyThreshold or path-scoped ruleExclusions, but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives or remove the setup-position fields from the policy.")
             }
 
             // Bound and ownership checks for route-local rules must run
