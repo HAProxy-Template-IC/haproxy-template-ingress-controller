@@ -496,7 +496,14 @@ spec:
       {{- fail "controller.config.templatingSettings.extraContext.waf.policies.limits.maxExcludedTargets must be between 1 and 4096." }}
     {{- end }}
     {{- $policies := dict }}
-    {{- $allowedPolicyFields := list "description" "requestBody" "enforcement" "excludedTargetsByTag" "secLang" }}
+    {{- /* Keep in sync with registerPolicy's allowedPolicyFields in
+           charts/haptic-annotations/83-waf-policies.yaml — the Scriggo scan
+           is the authoritative validator; this pre-check only exists so a
+           bad values file fails at `helm template` time instead of at CR
+           admission. The values-surface smoke render in
+           scripts/test-templates.sh exercises every field listed here, so
+           adding a field in one place and not the other fails CI. */}}
+    {{- $allowedPolicyFields := list "description" "requestBody" "enforcement" "excludedTargetsByTag" "secLang" "allowedMethods" "paranoiaLevel" "anomalyThreshold" }}
     {{- $inlinePolicies := dict }}
     {{- if hasKey $waf "inline" }}{{- $inlinePolicies = $waf.inline }}{{- end }}
     {{- if not (kindIs "map" $inlinePolicies) }}
@@ -522,6 +529,37 @@ spec:
       {{- end }}
       {{- if and (hasKey $policy "secLang") (not (kindIs "string" $policy.secLang)) }}
         {{- fail (printf "waf.policies.inline.%s.secLang must be a string." $name) }}
+      {{- end }}
+      {{- if hasKey $policy "allowedMethods" }}
+        {{- if not (kindIs "slice" $policy.allowedMethods) }}
+          {{- fail (printf "waf.policies.inline.%s.allowedMethods must be a non-empty list of HTTP methods." $name) }}
+        {{- end }}
+        {{- if eq (len $policy.allowedMethods) 0 }}
+          {{- fail (printf "waf.policies.inline.%s.allowedMethods must be a non-empty list of HTTP methods." $name) }}
+        {{- end }}
+        {{- range $method := $policy.allowedMethods }}
+          {{- if not (regexMatch "^[A-Z][A-Z-]{1,15}$" (toString $method)) }}
+            {{- fail (printf "waf.policies.inline.%s has invalid allowedMethods entry %q. Methods must be uppercase HTTP method tokens such as GET or PATCH." $name (toString $method)) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- if hasKey $policy "paranoiaLevel" }}
+        {{- if not (regexMatch "^[1-4]$" (toString $policy.paranoiaLevel)) }}
+          {{- fail (printf "waf.policies.inline.%s.paranoiaLevel must be an integer between 1 and 4." $name) }}
+        {{- end }}
+      {{- end }}
+      {{- if hasKey $policy "anomalyThreshold" }}
+        {{- if not (kindIs "map" $policy.anomalyThreshold) }}
+          {{- fail (printf "waf.policies.inline.%s.anomalyThreshold must be a map with inbound and/or outbound integer fields." $name) }}
+        {{- end }}
+        {{- range $tfield, $tvalue := $policy.anomalyThreshold }}
+          {{- if not (has $tfield (list "inbound" "outbound")) }}
+            {{- fail (printf "waf.policies.inline.%s.anomalyThreshold contains unknown field %q. Valid fields: inbound, outbound." $name $tfield) }}
+          {{- end }}
+          {{- if not (regexMatch "^[1-9][0-9]{0,4}$" (toString $tvalue)) }}
+            {{- fail (printf "waf.policies.inline.%s.anomalyThreshold.%s must be a positive integer." $name $tfield) }}
+          {{- end }}
+        {{- end }}
       {{- end }}
       {{- $requestBody := dict }}
       {{- if hasKey $policy "requestBody" }}

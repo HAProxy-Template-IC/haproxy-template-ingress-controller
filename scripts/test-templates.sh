@@ -425,7 +425,35 @@ if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
     fi
 fi
 
+# Assert that one Helm values combination renders successfully. The
+# values-surface counterpart of run_helm_failure_guard: exercises fields the
+# Helm-level pre-validation must accept, so the haproxytemplateconfig.yaml
+# allowlist can't silently drift behind the Scriggo-side registerPolicy
+# allowlist (that drift shipped once: allowedMethods rejected at helm
+# template time while every chart test passed).
+run_helm_success_guard() {
+    local label=$1
+    shift 1
+    local guard_err
+    guard_err=$(mktemp /tmp/haptic-helm-guard-XXXXXX.log)
+    echo -e "${YELLOW}${label}...${NC}" >&2
+    if ! helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG "$@" > /dev/null 2> "$guard_err"; then
+        echo -e "${RED}Error: ${label} failed to render:${NC}" >&2
+        cat "$guard_err" >&2
+        rm -f "$guard_err"
+        exit 1
+    fi
+    rm -f "$guard_err"
+}
+
 if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
+    run_helm_success_guard \
+        "WAF policy Helm guard: accept the full inline-policy field surface" \
+        --set-json 'controller.config.templatingSettings.extraContext.waf.policies.inline={"full-surface":{"description":"every valid field","enforcement":"deny","allowedMethods":["GET","HEAD","POST","OPTIONS","PUT","PATCH","DELETE"],"paranoiaLevel":2,"anomalyThreshold":{"inbound":10,"outbound":8},"excludedTargetsByTag":{"attack-sqli":["ARGS:q"]},"secLang":"SecRuleRemoveById 999999","requestBody":{"mode":"json","maxBytes":2048}}}'
+    run_helm_failure_guard \
+        "WAF policy Helm guard: reject unknown inline policy fields" \
+        'waf.policies.inline.bad contains unknown field "allowedMethodz"' \
+        --set-json 'controller.config.templatingSettings.extraContext.waf.policies.inline={"bad":{"allowedMethodz":["GET"]}}'
     run_helm_failure_guard \
         "WAF policy Helm guard: reject unknown ConfigMap reference fields" \
         'waf.policies.configMapRefs[0] contains unknown field "namespce". Valid fields: namespace, name, key.' \
