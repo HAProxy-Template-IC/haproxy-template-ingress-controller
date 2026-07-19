@@ -330,6 +330,15 @@ data:
         mode: json
         maxBytes: 4096
       enforcement: deny
+    git-host:
+      description: Git smart-HTTP server — allowlist git's content type, don't disable the rule
+      requestBody:
+        mode: none
+      enforcement: deny
+      crsSettings:
+        allowedRequestContentTypes:
+          - application/x-git-upload-pack-request
+          - application/x-git-receive-pack-request
 ```
 
 ```yaml
@@ -338,7 +347,9 @@ metadata:
     haproxy-haptic.org/waf-policy: public-web
 ```
 
-Each policy supports `description`, `enforcement`, nested `requestBody.mode`/`maxBytes`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `ruleExclusions`, and `secLang`. `ruleExclusions` is the low-maintenance path for common false positives: each entry disables specific Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) rules by numeric ID — optionally scoped to a URL path by `onPathPrefix`, `onPathSuffix`, `onPathExact`, or `onPathContains` — or removes an exact variable such as `ARGS:q` from a rule or CRS tag, all without requiring application teams to write SecLang. `secLang` remains available to trusted policy authors for cases the structured fields can't express.
+Each policy supports `description`, `enforcement`, nested `requestBody.mode`/`maxBytes`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `crsSettings`, `ruleExclusions`, and `secLang`.
+
+`crsSettings` fine-tunes a rule's *inputs* instead of disabling the rule — the preferred first response to a false positive. It's a curated allowlist of Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) tuning variables: `allowedRequestContentTypes` and `allowedHttpVersions` *extend* the CRS defaults (they add an allowance, never drop the defaults or set a wildcard), while `maxFileSize`, `maxNumArgs`, and `totalArgLength` set a bounded scalar. The git example above is the model: adding the git `application/x-git-upload-pack-request` content type to the allowlist keeps CRS rule 920420 active for every other content type, where `ruleExclusions: [920420]` would switch content-type inspection off entirely. Reach for `ruleExclusions` only when a rule is categorically wrong for the application (for example CRS 930130 on a code host); it disables CRS rules by numeric ID — optionally scoped to a URL path by `onPathPrefix`, `onPathSuffix`, `onPathExact`, or `onPathContains` — or removes an exact variable such as `ARGS:q` from a rule or CRS tag. All of these work without application teams writing SecLang; `secLang` remains available to trusted policy authors for cases the structured fields can't express.
 
 `requestBody.mode: none` inspects metadata without buffering or limiting uploads. `any` inspects a complete bounded body; `json` additionally requires a JSON media type. Body routes require an unambiguous `Content-Length`; oversized or incomplete bodies are rejected before Coraza. A policy that omits `requestBody.maxBytes` uses `policies.requestBody.defaultMaxBytes`; it may never exceed `policies.requestBody.maxBytes`. Keeping those two settings separate lets an administrator approve one larger policy without silently enlarging every policy that relied on the default. The effective per-policy cap is set both in HAProxy and in that Coraza application, so neither layer silently inspects a different amount. Template body behavior lives under `extraContext.waf.policies.requestBody`; SPOA timeout/concurrency live only under `spoaHub.plugins.coraza`; the process-global HAProxy buffer lives under `extraContext.requestBodyInspection.haproxyBuffer`.
 
@@ -406,7 +417,7 @@ Self-service stays safe for the shared data plane by construction:
 
 - **Namespace-scoped identity.** A self-service policy can't collide with, shadow, or hijack another namespace's or the trusted catalog's names. A name that clashes with a trusted policy is never resolved silently in either direction: the clashing namespace's selectors fail closed while other namespaces still get the trusted policy.
 - **Scoped failure.** A broken catalog (invalid YAML) or invalid policy records Warning Events (`WafPolicyCatalogInvalid` / `WafPolicyInvalid`) on the ConfigMap, and only that namespace's *selecting* routes fail closed with `503` — the global render, and every other team, continue untouched. The admission webhook still rejects a change that would introduce the breakage, so the fail-closed path only covers breakage that pre-dates the webhook or raced past it.
-- **Bounded content.** `secLang` is refused unless the administrator sets `selfService.allowSecLang: true` — the structured fields (`enforcement`, `requestBody`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `ruleExclusions`) cover false-positive tuning without arbitrary rule code in the shared Coraza process. `requestBody` stays bounded by the administrator's `policies.requestBody.maxBytes` ceiling, and `selfService.limits.maxPoliciesPerNamespace` / `maxTotalPolicies` cap catalog growth (cuts are deterministic: sorted namespaces, sorted names). Note the caps bound size and count, not rule CPU — that's why `allowSecLang` is a separate, off-by-default grant.
+- **Bounded content.** `secLang` is refused unless the administrator sets `selfService.allowSecLang: true` — the structured fields (`enforcement`, `requestBody`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `crsSettings`, `ruleExclusions`) cover false-positive tuning without arbitrary rule code in the shared Coraza process. `requestBody` stays bounded by the administrator's `policies.requestBody.maxBytes` ceiling, and `selfService.limits.maxPoliciesPerNamespace` / `maxTotalPolicies` cap catalog growth (cuts are deterministic: sorted namespaces, sorted names). Note the caps bound size and count, not rule CPU — that's why `allowSecLang` is a separate, off-by-default grant.
 - **The baseline stays admin-owned.** `defaultPolicy` resolves in the trusted catalog only, and under `default-on`/`deny` dispatch a self-service policy whose effective enforcement is `detect` is rejected — a tenant can't weaken the cluster baseline.
 
 Enabling self-service activates WAF governance (the `ingressPermissions` gates), the Coraza plugin, and a dedicated, name-scoped ConfigMap watch (only the well-known catalogs are retained in memory, not every cluster ConfigMap). Use `configMapRefs` instead when a central security team authors policies for other teams, and inline policies for admin-only catalogs; all three sources compose.

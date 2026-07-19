@@ -502,6 +502,177 @@ validationTests:
         target: "file:spoa-hub-config.toml"
         pattern: '(?s)applications\."policy:tuned-api"\].*?tx\.inbound_anomaly_score_threshold=10.*?Include @owasp_crs'
 
+  test-haptic-waf-policy-crs-settings-tuning:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      crsSettings fine-tunes a rule's INPUTS instead of disabling it: the git
+      content-type case allowlists application/x-git-upload-pack-request (rather
+      than excluding CRS 920420). appendList entries extend the crs-setup
+      default via %{tx.<var>}; boundedInt entries replace a scalar. All lower to
+      one setup-position SecAction spliced BEFORE the CRS include.
+    extraContext:
+      spoaHub:
+        enabled: true
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: [check-request]
+            timeoutMs: 15
+            params: ""
+            dependsOn: []
+            directives: |
+              Include @coraza.conf-recommended
+              Include @crs-setup.conf.example
+              Include @owasp_crs/*.conf
+              SecRuleEngine On
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            git-host:
+              enforcement: deny
+              requestBody: { mode: none }
+              crsSettings:
+                allowedRequestContentTypes: [application/x-git-upload-pack-request, application/x-git-receive-pack-request]
+                allowedHttpVersions: [HTTP/2.0]
+                maxFileSize: 1048576
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: git, annotations: { haproxy-haptic.org/waf-policy: git-host } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: git.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: git, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      # appendList extends the crs-setup default (leading %{tx...}) rather than
+      # replacing it, so the CRS defaults are preserved; both git types append.
+      - type: contains
+        target: "file:spoa-hub-config.toml"
+        pattern: '(?s)applications\."policy:git-host"\].*?tx\.allowed_request_content_type=%\{tx\.allowed_request_content_type\}application/x-git-upload-pack-request\|application/x-git-receive-pack-request\|.*?Include @owasp_crs'
+      - type: contains
+        target: "file:spoa-hub-config.toml"
+        pattern: '(?s)applications\."policy:git-host"\].*?tx\.allowed_http_versions=%\{tx\.allowed_http_versions\} HTTP/2\.0.*?Include @owasp_crs'
+      - type: contains
+        target: "file:spoa-hub-config.toml"
+        pattern: '(?s)applications\."policy:git-host"\].*?tx\.max_file_size=1048576.*?Include @owasp_crs'
+
+  test-haptic-waf-policy-crs-settings-unknown-field-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: crsSettings is a curated allowlist — an unknown variable name fails closed
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          inline:
+            bad-crs:
+              crsSettings:
+                notATunable: 5
+          configMapRefs: []
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "crsSettings contains unknown field 'notATunable'"
+
+  test-haptic-waf-policy-crs-settings-invalid-value-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: crsSettings appendList tokens are charset-validated (blocks delimiter/quote injection into the setvar)
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          inline:
+            bad-crs:
+              crsSettings:
+                allowedRequestContentTypes: ["not a type"]
+          configMapRefs: []
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "crsSettings.allowedRequestContentTypes entry 'not a type' is invalid"
+
+  test-haptic-waf-policy-crs-settings-bounded-value-in-error:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: an out-of-range boundedInt names the offending value, not just the expected range
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          inline:
+            bad-crs:
+              crsSettings:
+                maxFileSize: 999999999
+          configMapRefs: []
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "crsSettings.maxFileSize value '999999999' must be a byte count between 1 and 536870912"
+
+  test-haptic-waf-policy-crs-settings-dedup:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: a token listed twice in an appendList is appended once, not duplicated in the allowlist
+    extraContext:
+      spoaHub:
+        enabled: true
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: [check-request]
+            timeoutMs: 15
+            params: ""
+            dependsOn: []
+            directives: |
+              Include @coraza.conf-recommended
+              Include @crs-setup.conf.example
+              Include @owasp_crs/*.conf
+              SecRuleEngine On
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            dup:
+              enforcement: deny
+              requestBody: { mode: none }
+              crsSettings:
+                allowedRequestContentTypes: [application/json, application/json]
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: dup, annotations: { haproxy-haptic.org/waf-policy: dup } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: dup.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: dup, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "file:spoa-hub-config.toml"
+        pattern: 'tx\.allowed_request_content_type=%\{tx\.allowed_request_content_type\}application/json\|'
+      - type: not_contains
+        target: "file:spoa-hub-config.toml"
+        pattern: 'application/json\|application/json\|'
+
   test-haptic-waf-policy-rule-exclusions-lower-correctly:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
     description: >-
