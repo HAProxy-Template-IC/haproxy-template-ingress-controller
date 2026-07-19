@@ -449,7 +449,7 @@ run_helm_success_guard() {
 if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
     run_helm_success_guard \
         "WAF policy Helm guard: accept the full inline-policy field surface" \
-        --set-json 'controller.config.templatingSettings.extraContext.waf.policies.inline={"full-surface":{"description":"every valid field","enforcement":"deny","allowedMethods":["GET","HEAD","POST","OPTIONS","PUT","PATCH","DELETE"],"paranoiaLevel":2,"anomalyThreshold":{"inbound":10,"outbound":8},"excludedTargetsByTag":{"attack-sqli":["ARGS:q"]},"secLang":"SecRuleRemoveById 999999","requestBody":{"mode":"json","maxBytes":2048}}}'
+        --set-json 'controller.config.templatingSettings.extraContext.waf.policies.inline={"full-surface":{"description":"every valid field","enforcement":"deny","allowedMethods":["GET","HEAD","POST","OPTIONS","PUT","PATCH","DELETE"],"paranoiaLevel":2,"anomalyThreshold":{"inbound":10,"outbound":8},"excludedTargetsByTag":{"attack-sqli":["ARGS:q"]},"ruleExclusions":[{"rules":[930130],"onPathContains":".git/"},{"rules":[941320],"excludeTarget":"ARGS:wp_post"}],"secLang":"SecRuleRemoveById 999999","requestBody":{"mode":"json","maxBytes":2048}}}'
     run_helm_failure_guard \
         "WAF policy Helm guard: reject unknown inline policy fields" \
         'waf.policies.inline.bad contains unknown field "allowedMethodz"' \
