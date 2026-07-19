@@ -15,16 +15,21 @@
 # There are deliberately no route-selectable built-in policies: body inspection,
 # enforcement, exclusions, and permitted Ingress overrides are security policy.
 #
-# Advanced route-local SecLang is retained when the HAPTIC administrator allows
-# it globally. The effective per-Ingress application order is:
+# An Ingress selects one policy with `haproxy-haptic.org/waf-policy: <name>` and
+# may override its enforcement per route with `haproxy-haptic.org/waf-mode`
+# (deny|detect, gated by ingressPermissions.allowEnforcementOverride) — the
+# standard detect-then-enforce rollout on a shared policy. Arbitrary route-local
+# SecLang is NOT an Ingress annotation: rule authoring lives in an
+# administrator-owned trusted policy's `secLang`; tenants tune via the
+# structured policy fields (enforcement, requestBody, allowedMethods,
+# paranoiaLevel, anomalyThreshold, ruleExclusions). The effective directive
+# order in a policy's Coraza application is:
 #
-#   chart-wide Coraza/CRS directives
-#   -> waf-rules-before
-#   -> named-policy directives/exclusions
-#   -> waf-rules (append; existing annotation)
-#   -> HAPTIC body-safety directives
-#
-# The final safety directives are not overridable by Ingress annotations.
+#   setup-position fields (allowedMethods/paranoia/thresholds, path-scoped
+#     ruleExclusions) spliced BEFORE the CRS include
+#   -> chart-wide Coraza/CRS directives (incl. the CRS include)
+#   -> policy exclusions (rule/target removals) + policy secLang
+#   -> HAPTIC body-safety directives (not overridable)
 templateSnippets:
   # Central scan/validation pass. Its name sorts after the nginx-ingress vendor
   # scan in spoa-hub's util-*-coraza-scan glob, so it preserves vendor apps and
@@ -154,7 +159,6 @@ templateSnippets:
           var governanceEnabled = gov["governanceEnabled"].(bool)
           var allowPolicySelection = gov["allowPolicySelection"].(bool)
           var allowEnforcementOverride = gov["allowEnforcementOverride"].(bool)
-          var allowCustomRules = gov["allowCustomRules"].(bool)
           var allowRawHAProxyConfig = gov["allowRawHAProxyConfig"].(bool)
           var selfServiceEnabled = gov["selfServiceEnabled"].(bool)
           var dispatchDefaultEnforcement = dispatch | dig("defaultEnforcement") | fallback("deny") | tostring()
@@ -164,10 +168,7 @@ templateSnippets:
           if !limitsOK { fail("extraContext.waf.policies.limits must be a map.") }
           var maxPolicies = boundedInteger(limits["maxCount"], 16, "extraContext.waf.policies.limits.maxCount", 1, 1024)
           var maxPolicySecLangBytes = boundedInteger(limits["maxSecLangBytes"], 65536, "extraContext.waf.policies.limits.maxSecLangBytes", 1, 1048576)
-          var maxPolicyExcludedTargets = boundedInteger(limits["maxExcludedTargets"], 256, "extraContext.waf.policies.limits.maxExcludedTargets", 1, 4096)
-          var maxPolicyRuleExclusions = boundedInteger(limits["maxRuleExclusions"], 64, "extraContext.waf.policies.limits.maxRuleExclusions", 1, 1024)
-          var maxCustomRuleIngresses = gov["maxCustomRuleIngresses"].(int)
-          var maxCustomRuleBytesPerIngress = gov["maxCustomRuleBytesPerIngress"].(int)
+          var maxPolicyRuleExclusions = boundedInteger(limits["maxRuleExclusions"], 256, "extraContext.waf.policies.limits.maxRuleExclusions", 1, 4096)
 
           // Body-safety directives are always emitted last. Route-local or
           // policy SecLang cannot request bytes HAProxy did not send or enable
@@ -190,7 +191,6 @@ templateSnippets:
               "description": true,
               "requestBody": true,
               "enforcement": true,
-              "excludedTargetsByTag": true,
               "secLang": true,
               "allowedMethods": true,
               "paranoiaLevel": true,
@@ -220,7 +220,7 @@ templateSnippets:
             }
             for _, field := range keys(policy) {
               if !allowedPolicyFields[field] {
-                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, excludedTargetsByTag, requestBody, secLang, allowedMethods, paranoiaLevel, anomalyThreshold, ruleExclusions."
+                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, requestBody, secLang, allowedMethods, paranoiaLevel, anomalyThreshold, ruleExclusions."
               }
             }
 
@@ -303,35 +303,6 @@ templateSnippets:
             }
 
             var generatedExclusions = ""
-            var exclusionCount = 0
-            var exclusionsAny = policy | dig("excludedTargetsByTag") | fallback(map[string]any{})
-            var exclusions, exclusionsOK = exclusionsAny.(map[string]any)
-            if !exclusionsOK {
-              return "WAF policy '" + policyName + "' from " + source + " field excludedTargetsByTag must be a map of rule tags to exact Coraza variables."
-            }
-            for tag, rawTargets := range exclusions {
-              if !regex_search(tag, "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$") {
-                return "WAF policy '" + policyName + "' from " + source + " has invalid excludedTargetsByTag tag '" + tag + "'."
-              }
-              var targets, targetsOK = rawTargets.([]any)
-              if !targetsOK {
-                return "WAF policy '" + policyName + "' from " + source + " excludedTargetsByTag entry '" + tag + "' must be a list of exact Coraza variables."
-              }
-              if len(targets) == 0 {
-                return "WAF policy '" + policyName + "' from " + source + " has no targets for tag '" + tag + "'."
-              }
-              for _, rawTarget := range targets {
-                exclusionCount++
-                if exclusionCount > maxPolicyExcludedTargets {
-                  return "WAF policy '" + policyName + "' from " + source + " exceeds the configured excluded-target limit " + tostring(maxPolicyExcludedTargets) + "."
-                }
-                var target = rawTarget | tostring()
-                if !regex_search(target, "^[A-Z][A-Z0-9_]*(:[A-Za-z0-9_.-]+)?$") {
-                  return "WAF policy '" + policyName + "' from " + source + " target '" + target + "' must be an exact Coraza variable such as ARGS:q."
-                }
-                generatedExclusions += "SecRuleUpdateTargetByTag \"" + tag + "\" \"!" + target + "\"\n"
-              }
-            }
 
             // Structured CRS tuning fields. These lower to SETUP-position
             // SecActions (spliced before `Include @owasp_crs/*.conf` in the
@@ -440,30 +411,54 @@ templateSnippets:
                   return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entries must be maps."
                 }
                 for _, field := range keys(entry) {
-                  if field != "rules" && field != "excludeTarget" && field != "onPathPrefix" && field != "onPathContains" && field != "onPathExact" && field != "onPathSuffix" {
-                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry contains unknown field '" + field + "'. Valid fields: rules, excludeTarget, onPathPrefix, onPathContains, onPathExact, onPathSuffix."
+                  if field != "rules" && field != "tags" && field != "excludeTarget" && field != "onPathPrefix" && field != "onPathContains" && field != "onPathExact" && field != "onPathSuffix" {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry contains unknown field '" + field + "'. Valid fields: rules, tags, excludeTarget, onPathPrefix, onPathContains, onPathExact, onPathSuffix."
                   }
                 }
-                var rulesRaw, rulesRawOK = (entry | dig("rules")).([]any)
-                if !rulesRawOK || len(rulesRaw) == 0 {
-                  return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry must set 'rules' to a non-empty list of CRS rule IDs."
-                }
+                {#- An entry selects rules by ID (rules) and/or by CRS tag
+                    (tags). Rule IDs may be removed outright or target-excluded;
+                    tags may ONLY target-exclude (so a tenant can't silence a
+                    whole attack class by tag), hence tags requires
+                    excludeTarget. -#}
                 var ruleIds = []any{}
-                for _, rawId := range rulesRaw {
-                  var idText = rawId | tostring()
-                  if !regex_search(idText, "^[0-9]{6}$") {
-                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions rule ID '" + idText + "' must be a 6-digit CRS rule ID."
+                if entry["rules"] != nil {
+                  var rulesRaw, rulesRawOK = entry["rules"].([]any)
+                  if !rulesRawOK || len(rulesRaw) == 0 {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions 'rules' must be a non-empty list of CRS rule IDs."
                   }
-                  var id = toint(idText)
-                  if id < 900000 || id > 999999 {
-                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions rule ID '" + idText + "' is outside the CRS rule range 900000-999999."
+                  for _, rawId := range rulesRaw {
+                    var idText = rawId | tostring()
+                    if !regex_search(idText, "^[0-9]{6}$") {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions rule ID '" + idText + "' must be a 6-digit CRS rule ID."
+                    }
+                    var id = toint(idText)
+                    if id < 900000 || id > 999999 {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions rule ID '" + idText + "' is outside the CRS rule range 900000-999999."
+                    }
+                    if isDeniedRuleId(id) {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions may not target rule '" + idText + "': the CRS setup, anomaly-scoring, and correlation rules (900000-901999, 949xxx, 959xxx, 980xxx, 990xxx+) are reserved so an exclusion can't disable enforcement itself."
+                    }
+                    ruleIds = append(ruleIds, idText)
                   }
-                  if isDeniedRuleId(id) {
-                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions may not target rule '" + idText + "': the CRS setup, anomaly-scoring, and correlation rules (900000-901999, 949xxx, 959xxx, 980xxx, 990xxx+) are reserved so an exclusion can't disable enforcement itself."
-                  }
-                  ruleIds = append(ruleIds, idText)
                 }
-                exclusionRuleCount += len(ruleIds)
+                var tagNames = []any{}
+                if entry["tags"] != nil {
+                  var tagsRaw, tagsRawOK = entry["tags"].([]any)
+                  if !tagsRawOK || len(tagsRaw) == 0 {
+                    return "WAF policy '" + policyName + "' from " + source + " ruleExclusions 'tags' must be a non-empty list of CRS rule tags."
+                  }
+                  for _, rawTag := range tagsRaw {
+                    var tagText = rawTag | tostring()
+                    if !regex_search(tagText, "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$") {
+                      return "WAF policy '" + policyName + "' from " + source + " ruleExclusions tag '" + tagText + "' is invalid; use a CRS tag such as attack-sqli."
+                    }
+                    tagNames = append(tagNames, tagText)
+                  }
+                }
+                if len(ruleIds) == 0 && len(tagNames) == 0 {
+                  return "WAF policy '" + policyName + "' from " + source + " ruleExclusions entry must set 'rules' and/or 'tags'."
+                }
+                exclusionRuleCount += len(ruleIds) + len(tagNames)
                 if exclusionRuleCount > maxPolicyRuleExclusions {
                   return "WAF policy '" + policyName + "' from " + source + " exceeds the configured rule-exclusion limit " + tostring(maxPolicyRuleExclusions) + "."
                 }
@@ -473,6 +468,9 @@ templateSnippets:
                   if !regex_search(target, "^[A-Z][A-Z0-9_]*(:[A-Za-z0-9_.-]+)?$") {
                     return "WAF policy '" + policyName + "' from " + source + " ruleExclusions excludeTarget '" + target + "' must be an exact Coraza variable such as ARGS:q (regex collection keys are not allowed)."
                   }
+                }
+                if len(tagNames) > 0 && target == "" {
+                  return "WAF policy '" + policyName + "' from " + source + " ruleExclusions 'tags' requires 'excludeTarget': a tag can only exclude a variable from its rules, not remove a whole attack class. List specific rule IDs to disable a rule."
                 }
                 var pathOp = ""
                 var pathValue = ""
@@ -498,6 +496,9 @@ templateSnippets:
                       generatedExclusions += "SecRuleUpdateTargetById " + idText + " \"!" + target + "\"\n"
                     }
                   }
+                  for _, tagAny := range tagNames {
+                    generatedExclusions += "SecRuleUpdateTargetByTag \"" + tostring(tagAny) + "\" \"!" + target + "\"\n"
+                  }
                 } else {
                   {#- Path-scoped: one chart-owned SecRule (literal operator)
                       whose ctl removes the rule/target for this transaction,
@@ -512,6 +513,9 @@ templateSnippets:
                     } else {
                       ctlActions += ",ctl:ruleRemoveTargetById=" + idText + ";" + target
                     }
+                  }
+                  for _, tagAny := range tagNames {
+                    ctlActions += ",ctl:ruleRemoveTargetByTag=" + tostring(tagAny) + ";" + target
                   }
                   setupDirectives += "SecRule REQUEST_URI \"" + pathOp + " " + pathValue + "\" \"id:" + tostring(1200000 + exclusionRuleSeq) + ",phase:1,pass,t:none,nolog" + ctlActions + "\"\n"
                   exclusionRuleSeq++
@@ -684,7 +688,7 @@ templateSnippets:
                   if policyError == "" && !ssAllowSecLang {
                     var rawPolicyMap, rawPolicyMapOK = parsedPolicies[policyName].(map[string]any)
                     if rawPolicyMapOK && rawPolicyMap["secLang"] != nil {
-                      policyError = "Self-service WAF policy '" + policyName + "' from " + sourceID + " uses secLang, which is disabled for self-service catalogs (extraContext.waf.policies.selfService.allowSecLang=false). Use enforcement, requestBody, and excludedTargetsByTag, or ask the HAPTIC administrator to move the policy into a trusted catalog."
+                      policyError = "Self-service WAF policy '" + policyName + "' from " + sourceID + " uses secLang, which is disabled for self-service catalogs (extraContext.waf.policies.selfService.allowSecLang=false). Use the structured fields (enforcement, requestBody, allowedMethods, paranoiaLevel, anomalyThreshold, ruleExclusions), or ask the HAPTIC administrator to move the policy into a trusted catalog."
                     }
                   }
                   if policyError == "" {
@@ -722,10 +726,6 @@ templateSnippets:
           var brokenRoutes = []any{}
           // Vendor and native per-Ingress applications consume the same Coraza
           // application map and therefore share one admission bound.
-          var ingressRuleApps = len(appsByName)
-          if ingressRuleApps > maxCustomRuleIngresses {
-            fail("Ingress-authored WAF rules create more than the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
-          }
           for _, ingress := range resources.ingresses.List() {
             var ns = ingress.Metadata.Namespace
             var name = ingress.Metadata.Name
@@ -753,14 +753,11 @@ templateSnippets:
                 fail("Ingress " + resourceID + " sets raw HAProxy annotation '" + rawConfigAnnotation + "', but WAF governance disables all Ingress-authored raw configuration with extraContext.waf.ingressPermissions.allowRawHAProxyConfig=false. Raw frontend/defaults/global directives can bypass WAF enforcement for other routes; enable this only when every Ingress writer is a trusted HAProxy configuration administrator.")
               }
             }
-            var waf = strip(annotations["haproxy-haptic.org/waf"])
             var mode = strip(annotations["haproxy-haptic.org/waf-mode"])
             var requestedPolicy = strip(annotations["haproxy-haptic.org/waf-policy"])
             var policy = ""
             var selectedSelfService = false
             var routeBrokenReason = ""
-            var rulesBefore = annotations["haproxy-haptic.org/waf-rules-before"]
-            var rulesAfter = annotations["haproxy-haptic.org/waf-rules"]
             // A route-scoped violation hard-fails ONLY when this route's own
             // resource is the one under admission review (admissionSubject is
             // controller-set from the webhook overlay; empty on reconcile,
@@ -823,16 +820,10 @@ templateSnippets:
             if policy == "" && routeBrokenReason == "" {
               policy = defaultPolicy
             }
-            var active = waf != "" || policy != "" || requestedPolicy != "" || rulesBefore != "" || rulesAfter != ""
+            var active = policy != "" || requestedPolicy != ""
 
             if mode != "" && !active {
-              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-mode' without 'waf', 'waf-policy', or WAF rules. Add a WAF policy or remove waf-mode.")
-            }
-            if waf != "" && waf != "modsecurity" {
-              rejectRoute("WafAnnotationInvalid", "Invalid value '" + waf + "' for annotation 'haproxy-haptic.org/waf' on Ingress '" + resourceID + "'. Only 'modsecurity' is supported.")
-            }
-            if policy != "" && waf != "" {
-              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " uses legacy 'haproxy-haptic.org/waf' while named WAF policy '" + policy + "' applies. Remove the legacy annotation; the policy already enables Coraza.")
+              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-mode' without 'haproxy-haptic.org/waf-policy'. Select a WAF policy or remove waf-mode.")
             }
             {#- Catalog-existence and unknown-policy handling live in the
                 scoped resolution block above (rejectRoute) — they deny at
@@ -840,25 +831,12 @@ templateSnippets:
                 policy deleted out from under an existing Ingress can no
                 longer abort the whole render. -#}
             {#- Mixing a native WAF annotation with a vendor WAF annotation on
-                one Ingress is rejected generically (for any family pair, with
-                or without a named policy) by the cross-family feature-collision
-                guard in the ingress-annotations-compat library, which renders
-                before these map files — so no policy-scoped check is needed
-                here. -#}
+                one Ingress is rejected generically (for any family pair) by
+                the cross-family feature-collision guard in the
+                ingress-annotations-compat library, which renders before these
+                map files — so no policy-scoped check is needed here. -#}
             if active && !corazaEnabled {
               fail("Ingress " + resourceID + " sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled. Enable spoaHub.plugins.coraza or remove the annotations.")
-            }
-            if routeBrokenReason == "" && rulesBefore != "" && policy == "" {
-              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " sets 'haproxy-haptic.org/waf-rules-before' without a named waf-policy. Use the existing waf-rules annotation when no policy ordering boundary exists.")
-            }
-            if strings_contains(rulesBefore, "\"\"\"") || strings_contains(rulesAfter, "\"\"\"") {
-              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " WAF rules contain a TOML triple-quote delimiter (\"\"\"); remove that sequence from the SecLang directives.")
-            }
-            if len(rulesBefore) + len(rulesAfter) > maxCustomRuleBytesPerIngress {
-              rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " defines " + tostring(len(rulesBefore) + len(rulesAfter)) + " bytes of WAF rules; the configured per-Ingress limit is " + tostring(maxCustomRuleBytesPerIngress) + ".")
-            }
-            if !allowCustomRules && (rulesBefore != "" || rulesAfter != "") {
-              rejectRoute("WafPermissionDenied", "Ingress " + resourceID + " defines route-local WAF rules, but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
             }
             if !allowEnforcementOverride && mode != "" {
               rejectRoute("WafPermissionDenied", "Ingress " + resourceID + " sets waf-mode, but the HAPTIC administrator disabled Ingress enforcement overrides with extraContext.waf.ingressPermissions.allowEnforcementOverride=false.")
@@ -895,20 +873,6 @@ templateSnippets:
               rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' which sets allowedMethods/paranoiaLevel/anomalyThreshold or path-scoped ruleExclusions, but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives or remove the setup-position fields from the policy.")
             }
 
-            // Bound and ownership checks for route-local rules must run
-            // BEFORE the broken/build branch decision: a rejection here has
-            // to land the route in brokenRoutes without registering its app
-            // (a duplicate registration would overwrite the owning library's
-            // Coraza application).
-            if routeBrokenReason == "" && active && (rulesBefore != "" || rulesAfter != "") {
-              ingressRuleApps++
-              if ingressRuleApps > maxCustomRuleIngresses {
-                rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " exceeds the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
-              } else if appsByName[resourceID] != nil {
-                rejectRoute("WafAnnotationInvalid", "Ingress " + resourceID + " defines HAPTIC WAF rules but another annotation library already owns Coraza application '" + resourceID + "'. Use only one WAF rule annotation family on an Ingress.")
-              }
-            }
-
             // A broken route always fails closed — even when active is
             // false (e.g. a dangling waf-mode annotation): serving it as if
             // the annotation weren't there would silently ignore declared
@@ -929,22 +893,7 @@ templateSnippets:
               }
 
               var appName = ""
-              if rulesBefore != "" || rulesAfter != "" {
-                appName = resourceID
-                var configuration = ""
-                var safety = noBodySafety
-                if policy != "" {
-                  configuration = policyConfiguration[policy]
-                  safety = policySafety[policy]
-                }
-                appsByName[appName] = map[string]any{
-                  "appName": appName,
-                  "source": "haproxy-haptic.org WAF rules from Ingress " + resourceID,
-                  "snippet": rulesBefore + "\n" + configuration + rulesAfter + "\n" + safety,
-                  "requestBodyMaxBytes": ruleMaxBodyBytes,
-                  "setupDirectives": policySetupDirectives[policy],
-                }
-              } else if policy != "" {
+              if policy != "" {
                 appName = "policy:" + policy
                 if appsByName[appName] == nil {
                   appsByName[appName] = map[string]any{

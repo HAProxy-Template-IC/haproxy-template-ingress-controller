@@ -30,7 +30,7 @@ controller:
 
 ### Don't mix annotation families for one feature
 
-You may combine `haproxy-haptic.org/*` and vendor annotations on the same Ingress, but each feature must come from a single family. Configuring one feature through two families — for example `haproxy-haptic.org/waf` and `haproxy-ingress.github.io/waf`, or `haproxy-haptic.org/cors-enable` and `nginx.ingress.kubernetes.io/enable-cors` — is a conflict, even when the two values agree, because the result would otherwise depend on which library renders last.
+You may combine `haproxy-haptic.org/*` and vendor annotations on the same Ingress, but each feature must come from a single family. Configuring one feature through two families — for example `haproxy-haptic.org/waf-policy` and `haproxy-ingress.github.io/waf`, or `haproxy-haptic.org/cors-enable` and `nginx.ingress.kubernetes.io/enable-cors` — is a conflict, even when the two values agree, because the result would otherwise depend on which library renders last.
 
 HAPTIC handles the conflict in two ways, depending on when it's caught:
 
@@ -270,14 +270,11 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | `haproxy-haptic.org/auth-type` | ✅ Supported | Enables basic authentication; the only accepted value is `basic`. |
 | `haproxy-haptic.org/auth-url` | ✅ Supported | Sets the external authentication service URL; requires the SPOA hub's external-auth plugin. |
 | `haproxy-haptic.org/waf-policy` | ✅ Supported | Selects one exact reusable Coraza policy. Definitions come from `extraContext.waf.policies.inline`, explicitly trusted ConfigMaps, or — with `policies.selfService` enabled — the Ingress's own namespace's well-known `waf-policies` ConfigMap; an Ingress can't define or redirect a source. Configuring any catalog source activates policy governance and Coraza automatically. |
-| `haproxy-haptic.org/waf-rules` | ✅ Supported | Advanced SecLang appended after the selected reusable policy. It creates a private Coraza application and, while Coraza governance is active, requires `extraContext.waf.ingressPermissions.allowCustomRules=true`. Without a policy it remains the compatibility rule path, still subject to `waf.customRules.limits`. |
-| `haproxy-haptic.org/waf-rules-before` | ✅ Supported | Advanced SecLang inserted before the selected reusable policy. Requires `waf-policy` and the same explicit `allowCustomRules` authorization. |
 | `haproxy-haptic.org/oauth` | ✅ Supported | Enables authentication through `oauth2-proxy` (the only supported provider), building on external auth; skipped when `auth-url` is set. |
 | `haproxy-haptic.org/oauth-headers` | ✅ Supported | Lists headers forwarded from the `oauth2-proxy` response on success (default `X-Auth-Request-Email`). |
 | `haproxy-haptic.org/oauth-uri-prefix` | ✅ Supported | Sets the `oauth2-proxy` callback path prefix (default `/oauth2`). |
 | `haproxy-haptic.org/satisfy` | ✅ Supported | The value `any` grants access when either the source-IP allowlist or basic authentication passes, instead of requiring both. |
-| `haproxy-haptic.org/waf` | ✅ Supported | The value `modsecurity` enables the Coraza WAF for the Ingress; requires the Coraza plugin. |
-| `haproxy-haptic.org/waf-mode` | ✅ Supported | Sets `deny` or `detect`, overriding the selected policy only when `waf.ingressPermissions.allowEnforcementOverride` permits it. Without a policy, the legacy `waf` or rules annotation must be present. |
+| `haproxy-haptic.org/waf-mode` | ✅ Supported | Sets `deny` or `detect`, overriding the selected policy's enforcement only when `waf.ingressPermissions.allowEnforcementOverride` permits it. Requires a selected `waf-policy`. |
 
 #### Reusable WAF policies
 
@@ -325,9 +322,9 @@ data:
       requestBody:
         mode: none
       enforcement: deny
-      excludedTargetsByTag:
-        attack-sqli: ["ARGS:q"]
-        attack-xss: ["ARGS:q"]
+      ruleExclusions:
+        - tags: [attack-sqli, attack-xss]
+          excludeTarget: "ARGS:q"
     json-api:
       requestBody:
         mode: json
@@ -341,7 +338,7 @@ metadata:
     haproxy-haptic.org/waf-policy: public-web
 ```
 
-Each policy supports `description`, `enforcement`, nested `requestBody.mode`/`maxBytes`, `excludedTargetsByTag`, and `secLang`. `excludedTargetsByTag` is the low-maintenance path for common false positives: it removes exact variables such as `ARGS:q` from an Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) tag without requiring application teams to write SecLang. `secLang` remains available to trusted policy authors for cases the structured fields can't express.
+Each policy supports `description`, `enforcement`, nested `requestBody.mode`/`maxBytes`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `ruleExclusions`, and `secLang`. `ruleExclusions` is the low-maintenance path for common false positives: each entry disables specific Open Worldwide Application Security Project (OWASP) Core Rule Set (CRS) rules by numeric ID — optionally scoped to a URL path by `onPathPrefix`, `onPathSuffix`, `onPathExact`, or `onPathContains` — or removes an exact variable such as `ARGS:q` from a rule or CRS tag, all without requiring application teams to write SecLang. `secLang` remains available to trusted policy authors for cases the structured fields can't express.
 
 `requestBody.mode: none` inspects metadata without buffering or limiting uploads. `any` inspects a complete bounded body; `json` additionally requires a JSON media type. Body routes require an unambiguous `Content-Length`; oversized or incomplete bodies are rejected before Coraza. A policy that omits `requestBody.maxBytes` uses `policies.requestBody.defaultMaxBytes`; it may never exceed `policies.requestBody.maxBytes`. Keeping those two settings separate lets an administrator approve one larger policy without silently enlarging every policy that relied on the default. The effective per-policy cap is set both in HAProxy and in that Coraza application, so neither layer silently inspects a different amount. Template body behavior lives under `extraContext.waf.policies.requestBody`; SPOA timeout/concurrency live only under `spoaHub.plugins.coraza`; the process-global HAProxy buffer lives under `extraContext.requestBodyInspection.haproxyBuffer`.
 
@@ -369,7 +366,7 @@ The safe defaults are `allowEnforcementOverride: false`, `allowWafDisable: false
 
 Protect every referenced ConfigMap with Kubernetes RBAC. Anyone who can update one is a WAF policy author. HAPTIC intentionally can't infer the human identity or RBAC path behind a ConfigMap update; the chart establishes the exact source boundary, while Kubernetes authorizes writers to that source.
 
-When route-local rules are deliberately authorized, their order is deterministic: chart-wide Coraza/CRS directives, `waf-rules-before`, policy SecLang and exclusions, `waf-rules`, then HAPTIC's non-overridable body-safety directives. Policies without route-local rules compile once and are shared. Native and nginx-compatible custom rules share `waf.customRules.limits.maxIngresses` and `maxBytesPerIngress`; these DoS bounds apply even when no reusable policy catalog is configured.
+A policy's directives compile in a deterministic order: chart-wide Coraza/CRS directives, the policy's setup-position tuning (paranoia level, allowed methods, path-scoped rule exclusions) before the CRS include, its config-time rule exclusions after, then HAPTIC's non-overridable body-safety directives. Policies compile once and are shared across every route that selects them. The nginx-compatible custom-rule path (`nginx.ingress.kubernetes.io/modsecurity-snippet`, documented on the nginx-ingress page) creates a private per-Ingress Coraza application and shares `waf.customRules.limits.maxIngresses` and `maxBytesPerIngress`; these DoS bounds apply even when no reusable policy catalog is configured.
 
 #### Self-service namespaced policies
 
@@ -398,8 +395,9 @@ data:
       requestBody:
         mode: none
       enforcement: detect
-      excludedTargetsByTag:
-        attack-sqli: ["ARGS:q"]
+      ruleExclusions:
+        - tags: [attack-sqli]
+          excludeTarget: "ARGS:q"
 ```
 
 An Ingress in `team-a` then selects `haproxy-haptic.org/waf-policy: app-baseline` — the same annotation as trusted policies. Names resolve against the trusted catalog first, then the Ingress's own namespace; a policy defined in another namespace is invisible, and explicit cross-namespace addressing (`team-a/app-baseline`) is rejected.
@@ -408,7 +406,7 @@ Self-service stays safe for the shared data plane by construction:
 
 - **Namespace-scoped identity.** A self-service policy can't collide with, shadow, or hijack another namespace's or the trusted catalog's names. A name that clashes with a trusted policy is never resolved silently in either direction: the clashing namespace's selectors fail closed while other namespaces still get the trusted policy.
 - **Scoped failure.** A broken catalog (invalid YAML) or invalid policy records Warning Events (`WafPolicyCatalogInvalid` / `WafPolicyInvalid`) on the ConfigMap, and only that namespace's *selecting* routes fail closed with `503` — the global render, and every other team, continue untouched. The admission webhook still rejects a change that would introduce the breakage, so the fail-closed path only covers breakage that pre-dates the webhook or raced past it.
-- **Bounded content.** `secLang` is refused unless the administrator sets `selfService.allowSecLang: true` — the structured fields (`enforcement`, `requestBody`, `excludedTargetsByTag`) cover false-positive tuning without arbitrary rule code in the shared Coraza process. `requestBody` stays bounded by the administrator's `policies.requestBody.maxBytes` ceiling, and `selfService.limits.maxPoliciesPerNamespace` / `maxTotalPolicies` cap catalog growth (cuts are deterministic: sorted namespaces, sorted names). Note the caps bound size and count, not rule CPU — that's why `allowSecLang` is a separate, off-by-default grant.
+- **Bounded content.** `secLang` is refused unless the administrator sets `selfService.allowSecLang: true` — the structured fields (`enforcement`, `requestBody`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `ruleExclusions`) cover false-positive tuning without arbitrary rule code in the shared Coraza process. `requestBody` stays bounded by the administrator's `policies.requestBody.maxBytes` ceiling, and `selfService.limits.maxPoliciesPerNamespace` / `maxTotalPolicies` cap catalog growth (cuts are deterministic: sorted namespaces, sorted names). Note the caps bound size and count, not rule CPU — that's why `allowSecLang` is a separate, off-by-default grant.
 - **The baseline stays admin-owned.** `defaultPolicy` resolves in the trusted catalog only, and under `default-on`/`deny` dispatch a self-service policy whose effective enforcement is `detect` is rejected — a tenant can't weaken the cluster baseline.
 
 Enabling self-service activates WAF governance (the `ingressPermissions` gates), the Coraza plugin, and a dedicated, name-scoped ConfigMap watch (only the well-known catalogs are retained in memory, not every cluster ConfigMap). Use `configMapRefs` instead when a central security team authors policies for other teams, and inline policies for admin-only catalogs; all three sources compose.

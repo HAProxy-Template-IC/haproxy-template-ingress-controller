@@ -154,7 +154,7 @@ templatingSettings:
         limits:
           maxCount: "16"
           maxSecLangBytes: "65536"
-          maxExcludedTargets: "256"
+          maxRuleExclusions: "256"
         inline: {}
         configMapRefs: []
         selfService:

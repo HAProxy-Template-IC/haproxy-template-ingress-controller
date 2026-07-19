@@ -351,102 +351,13 @@ validationTests:
         pattern: "default/oauthapp HEAD"
 
   # ============================================================================
-  # WAF (Coraza via SPOA hub) — waf / waf-mode + waf-rules
+  # WAF (Coraza via SPOA hub) — waf-policy / waf-mode
   # ============================================================================
-  test-haptic-waf:
-    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: >-
-      waf: modsecurity populates haproxy-ingress-waf.map with the enforcement
-      mode (default deny; detect when /waf-mode: detect) and
-      waf-rules emits a per-app coraza block + coraza-app.map row.
-    extraContext:
-      # Self-contained w.r.t. WAF governance: waf-rules (custom rules) and
-      # waf-mode (enforcement override) are gated once any WAF policy activates
-      # governance. Set the permissions here so the test passes whether or not
-      # the deployment defines a policy.
-      waf:
-        ingressPermissions:
-          allowCustomRules: true
-          allowEnforcementOverride: true
-      spoaHub:
-        enabled: true
-        haproxy:
-          socketPath: /run/spoa/hub.sock
-          modeSpop: true
-          messages: ["check-request"]
-          timeoutHello: 2s
-          timeoutIdle: 5m
-          timeoutProcessing: 500ms
-          poolMaxConn: 100
-          poolPurgeDelay: 30s
-        plugins:
-          - name: coraza
-            library: libcoraza_plugin.so
-            messages: ["check-request"]
-            timeoutMs: 15
-            dependsOn: []
-            directives: |
-              SecRuleEngine On
-            params: ""
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: waf-deny
-            annotations:
-              haproxy-haptic.org/waf: modsecurity
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: waf-deny.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: waf-shadow
-            annotations:
-              haproxy-haptic.org/waf: modsecurity
-              haproxy-haptic.org/waf-mode: detect
-              haproxy-haptic.org/waf-rules: |
-                SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: waf-shadow.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service: { name: echo, port: { number: 80 } }
-    assertions:
-      - type: haproxy_valid
-      - type: contains
-        target: map:haproxy-ingress-waf.map
-        pattern: "default/waf-deny deny"
-      - type: contains
-        target: map:haproxy-ingress-waf.map
-        pattern: "default/waf-shadow detect"
-      - type: contains
-        target: map:coraza-app.map
-        pattern: "default/waf-shadow default/waf-shadow"
-      - type: contains
-        target: file:spoa-hub-config.toml
-        pattern: 'plugins.params.applications."default/waf-shadow"'
-
   test-haptic-waf-without-coraza-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: >-
-      haproxy-haptic.org/waf set while the spoaHub coraza plugin is NOT enabled
-      fails the render with an explicit diagnostic.
+      haproxy-haptic.org/waf-policy set while the spoaHub coraza plugin is NOT
+      enabled fails the render with an explicit diagnostic.
     extraContext:
       spoaHub:
         enabled: true
@@ -460,6 +371,14 @@ validationTests:
           poolMaxConn: 100
           poolPurgeDelay: 30s
         plugins: []
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -468,7 +387,7 @@ validationTests:
             namespace: default
             name: orphan-waf
             annotations:
-              haproxy-haptic.org/waf: modsecurity
+              haproxy-haptic.org/waf-policy: baseline
           spec:
             ingressClassName: haptic
             rules:

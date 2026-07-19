@@ -619,7 +619,7 @@ templateSnippets:
 
   # Cross-family feature-collision guard. Rejects an Ingress that configures
   # the SAME feature through annotations from two different families (e.g.
-  # `haproxy-haptic.org/waf` AND `haproxy-ingress.github.io/waf`), even when the
+  # `haproxy-haptic.org/waf-policy` AND `haproxy-ingress.github.io/waf`), even when the
   # values don't conflict — the effective result would otherwise be
   # order-dependent (which family's map row / snippet wins). Distinct features
   # across families are fine (WAF from one family + CORS from another; two
@@ -655,7 +655,7 @@ templateSnippets:
         // that every key sits under the feature it truly configures.
         var registry = []map[string]any{
           {"name": "WAF", "families": map[string][]string{
-            "haptic":         {"waf", "waf-mode", "waf-policy", "waf-rules", "waf-rules-before"},
+            "haptic":         {"waf-mode", "waf-policy"},
             "haproxyIngress": {"waf", "waf-mode"},
             "nginx":          {"enable-modsecurity", "modsecurity-snippet"},
           }},

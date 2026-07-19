@@ -543,9 +543,9 @@ data:
       requestBody:
         mode: none
       enforcement: deny
-      excludedTargetsByTag:
-        attack-sqli: ["ARGS:q"]
-        attack-xss: ["ARGS:q"]
+      ruleExclusions:
+        - tags: [attack-sqli, attack-xss]
+          excludeTarget: "ARGS:q"
     form-body-inspection:
       description: Form request policy with bounded complete body inspection
       requestBody:
