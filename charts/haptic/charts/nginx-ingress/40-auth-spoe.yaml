@@ -478,14 +478,11 @@ templateSnippets:
             if snippet != "" {
               if !hapticAllowCustomRules {
                 rejectIngress("WafPermissionDenied", "Ingress " + key + " sets 'nginx.ingress.kubernetes.io/modsecurity-snippet', but the HAPTIC administrator disabled Ingress-authored custom WAF rules with extraContext.waf.ingressPermissions.allowCustomRules=false.")
-              }
-              if strings_contains(snippet, "\"\"\"") {
+              } else if strings_contains(snippet, "\"\"\"") {
                 rejectIngress("WafAnnotationInvalid", "Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
-              }
-              if len(snippet) > maxCustomRuleBytesPerIngress {
+              } else if len(snippet) > maxCustomRuleBytesPerIngress {
                 rejectIngress("WafAnnotationInvalid", "Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' is " + tostring(len(snippet)) + " bytes; the configured per-Ingress custom-rule limit is " + tostring(maxCustomRuleBytesPerIngress) + ".")
-              }
-              if byKey[key] == nil && len(byKey) >= maxCustomRuleIngresses {
+              } else if byKey[key] == nil && len(byKey) >= maxCustomRuleIngresses {
                 rejectIngress("WafAnnotationInvalid", "Ingress " + key + " exceeds the configured custom-rule Ingress limit " + tostring(maxCustomRuleIngresses) + ". Move shared rules into a named HAPTIC policy or raise extraContext.waf.customRules.limits.maxIngresses deliberately.")
               }
               if rejectedKeys[key] {

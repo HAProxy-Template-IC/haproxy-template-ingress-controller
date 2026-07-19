@@ -251,13 +251,29 @@ templateSnippets:
               {%- end %}
             {%- end %}
 
+      {#- Setup-position directives (structured policy fields like
+          tx.allowed_methods) must precede `Include @owasp_crs/*.conf` —
+          CRS reads these tx vars when its rules run, so anything after
+          the include is too late. Splice at the first occurrence of the
+          anchor; the policy registration validated the anchor exists
+          whenever setupDirectives is non-empty. Generic passthrough of an
+          app-map field — no resource knowledge here (RULE #1). -#}
+            {%- var appBase = corazaDirectives | trimSpace() %}
+            {%- var setupDirectives = a | dig_string("", "setupDirectives") %}
+            {%- if setupDirectives != "" %}
+              {%- var parts = split(appBase, "Include @owasp_crs") %}
+              {%- if len(parts) > 1 %}
+                {%- appBase = parts[0] + trimSpace(setupDirectives) + "\nInclude @owasp_crs" + join(parts[1:], "Include @owasp_crs") %}
+              {%- end %}
+            {%- end %}
+
       [plugins.params.applications."{{ appName }}"]
             {%- if requestBodyMaxBytes != "" %}
       request_body_limit = {{ requestBodyMaxBytes }}
       request_body_in_memory_limit = {{ requestBodyMaxBytes }}
             {%- end %}
       directives = """
-      {{ corazaDirectives | trimSpace() }}
+      {{ appBase }}
 
       # {{ source }}
       {{ a["snippet"].(string) | trimSpace() }}

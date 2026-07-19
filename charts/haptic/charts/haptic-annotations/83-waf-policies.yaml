@@ -39,9 +39,11 @@ templateSnippets:
 
           var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice()
           var corazaEnabled = false
+          var corazaBaseDirectives = ""
           for _, p := range plugins {
             if p.(map[string]any)["name"].(string) == "coraza" {
               corazaEnabled = true
+              corazaBaseDirectives = p | dig_string("", "directives")
             }
           }
           var wafAny = extraContext | dig("waf")
@@ -175,6 +177,7 @@ templateSnippets:
           var policyConfiguration = map[string]string{}
           var policySafety = map[string]string{}
           var policyBodyMode = map[string]string{}
+          var policySetupDirectives = map[string]string{}
           var policyContentMode = map[string]string{}
           var policyMaxBody = map[string]string{}
           var policyEnforcement = map[string]string{}
@@ -188,6 +191,9 @@ templateSnippets:
               "enforcement": true,
               "excludedTargetsByTag": true,
               "secLang": true,
+              "allowedMethods": true,
+              "paranoiaLevel": true,
+              "anomalyThreshold": true,
             }
 
             // Normalize chart-value, trusted-ConfigMap, and self-service
@@ -212,7 +218,7 @@ templateSnippets:
             }
             for _, field := range keys(policy) {
               if !allowedPolicyFields[field] {
-                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, excludedTargetsByTag, requestBody, secLang."
+                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, excludedTargetsByTag, requestBody, secLang, allowedMethods, paranoiaLevel, anomalyThreshold."
               }
             }
 
@@ -325,6 +331,64 @@ templateSnippets:
               }
             }
 
+            // Structured CRS tuning fields. These lower to SETUP-position
+            // SecActions (spliced before `Include @owasp_crs/*.conf` in the
+            // app's directives by the spoa-hub TOML emission) because CRS
+            // reads tx.allowed_methods / paranoia / thresholds when its own
+            // rules execute — a setvar appended AFTER the include (where
+            // policy secLang lands) runs too late to take effect. Being
+            // structured, they are safe for self-service catalogs, which
+            // refuse raw secLang.
+            var setupDirectives = ""
+            var allowedMethodsAny = policy | dig("allowedMethods")
+            if allowedMethodsAny != nil {
+              var methods, methodsOK = allowedMethodsAny.([]any)
+              if !methodsOK || len(methods) == 0 {
+                return "WAF policy '" + policyName + "' from " + source + " field allowedMethods must be a non-empty list of HTTP methods."
+              }
+              var methodList = ""
+              for _, rawMethod := range methods {
+                var method = rawMethod | tostring()
+                if !regex_search(method, "^[A-Z][A-Z-]{1,15}$") {
+                  return "WAF policy '" + policyName + "' from " + source + " has invalid allowedMethods entry '" + method + "'. Methods must be uppercase HTTP method tokens such as GET or PATCH."
+                }
+                if methodList != "" { methodList += " " }
+                methodList += method
+              }
+              setupDirectives += "SecAction \"id:900200,phase:1,pass,t:none,nolog,setvar:'tx.allowed_methods=" + methodList + "'\"\n"
+            }
+            if policy["paranoiaLevel"] != nil {
+              var paranoiaText = policy["paranoiaLevel"] | tostring()
+              if !regex_search(paranoiaText, "^[1-4]$") {
+                return "WAF policy '" + policyName + "' from " + source + " field paranoiaLevel must be an integer between 1 and 4."
+              }
+              setupDirectives += "SecAction \"id:900000,phase:1,pass,t:none,nolog,setvar:'tx.blocking_paranoia_level=" + paranoiaText + "'\"\n"
+            }
+            var thresholdAny = policy | dig("anomalyThreshold")
+            if thresholdAny != nil {
+              var threshold, thresholdOK = thresholdAny.(map[string]any)
+              if !thresholdOK {
+                return "WAF policy '" + policyName + "' from " + source + " field anomalyThreshold must be a map with inbound and/or outbound integer fields."
+              }
+              var thresholdVars = ""
+              for _, field := range keys(threshold) {
+                if field != "inbound" && field != "outbound" {
+                  return "WAF policy '" + policyName + "' from " + source + " anomalyThreshold contains unknown field '" + field + "'. Valid fields: inbound, outbound."
+                }
+                var value = threshold[field] | tostring()
+                if !regex_search(value, "^[1-9][0-9]{0,4}$") {
+                  return "WAF policy '" + policyName + "' from " + source + " anomalyThreshold." + field + " must be a positive integer."
+                }
+                if thresholdVars != "" { thresholdVars += "," }
+                thresholdVars += "setvar:'tx." + field + "_anomaly_score_threshold=" + value + "'"
+              }
+              setupDirectives += "SecAction \"id:900110,phase:1,pass,t:none,nolog," + thresholdVars + "\"\n"
+            }
+            if setupDirectives != "" && !strings_contains(corazaBaseDirectives, "Include @owasp_crs") {
+              return "WAF policy '" + policyName + "' from " + source + " uses setup-position fields (allowedMethods/paranoiaLevel/anomalyThreshold), but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives."
+            }
+
+            policySetupDirectives[storeKey] = setupDirectives
             policyConfiguration[storeKey] = generatedExclusions + secLang + "\n"
             policySafety[storeKey] = bodySafety
             policyBodyMode[storeKey] = bodyMode
@@ -735,6 +799,7 @@ templateSnippets:
                   "source": "haproxy-haptic.org WAF rules from Ingress " + resourceID,
                   "snippet": rulesBefore + "\n" + configuration + rulesAfter + "\n" + safety,
                   "requestBodyMaxBytes": ruleMaxBodyBytes,
+                  "setupDirectives": policySetupDirectives[policy],
                 }
               } else if policy != "" {
                 appName = "policy:" + policy
@@ -744,6 +809,7 @@ templateSnippets:
                     "source": policySource[policy],
                     "snippet": policyConfiguration[policy] + policySafety[policy],
                     "requestBodyMaxBytes": ruleMaxBodyBytes,
+                    "setupDirectives": policySetupDirectives[policy],
                   }
                 }
               }

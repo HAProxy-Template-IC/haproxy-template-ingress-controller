@@ -719,6 +719,14 @@ controller:
             #       maxBytes: 4096         # optional; <= policies.requestBody.maxBytes
             #     excludedTargetsByTag:
             #       attack-sqli: ["ARGS:q"]
+            #     # Structured CRS tuning — lowered to setup-position
+            #     # SecActions BEFORE the CRS rules include (a position raw
+            #     # secLang cannot reach), and allowed in self-service
+            #     # catalogs because no arbitrary rule code is involved.
+            #     allowedMethods: [GET, HEAD, POST, OPTIONS, PUT, PATCH, DELETE]
+            #     paranoiaLevel: 2          # 1 (default) .. 4
+            #     anomalyThreshold:
+            #       inbound: 10
             #     secLang: |
             #       SecRuleRemoveById 941320
             inline: {}

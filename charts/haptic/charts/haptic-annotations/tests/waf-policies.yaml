@@ -30,6 +30,12 @@ validationTests:
           defaultPolicy: ""
           requestBody:
             defaultMaxBytes: 4096
+          # Replace (not merge) the deployment's inline catalog: dev-values
+          # defines an inline 'streaming-search' that would otherwise
+          # collide with this test's trusted-ConfigMap policy of the same
+          # name (duplicate-name hard fail at the load gate).
+          inline:
+            __replace__: true
           configMapRefs:
             - namespace: security
               name: haptic-waf-policies
@@ -496,6 +502,219 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str default/pre-existing-violator \\}"
       - { type: not_contains, target: "map:coraza-app.map", pattern: "default/pre-existing-violator" }
+
+  test-haptic-waf-policy-structured-crs-tuning:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      Structured CRS tuning fields (allowedMethods, paranoiaLevel,
+      anomalyThreshold) lower to SETUP-position SecActions spliced BEFORE
+      the CRS rules include in the app directives — the position raw policy
+      secLang structurally cannot reach (it lands after the include, where
+      CRS has already read the tx variables).
+    extraContext:
+      # Pin the coraza plugin (list leaf → replaces the deployment's plugin
+      # set wholesale) so the splice-anchor and base directives are exactly
+      # known — a deployment may run a CRS-less custom ruleset (the e2e
+      # profile does), which would otherwise hard-fail these policies at
+      # the load gate.
+      spoaHub:
+        enabled: true
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: [check-request]
+            timeoutMs: 15
+            params: ""
+            dependsOn: []
+            directives: |
+              Include @coraza.conf-recommended
+              Include @crs-setup.conf.example
+              Include @owasp_crs/*.conf
+              SecRuleEngine On
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            tuned-api:
+              enforcement: deny
+              allowedMethods: [GET, HEAD, POST, OPTIONS, PUT, PATCH, DELETE]
+              paranoiaLevel: 2
+              anomalyThreshold:
+                inbound: 10
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: api, annotations: { haproxy-haptic.org/waf-policy: tuned-api } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: api, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "file:spoa-hub-config.toml"
+        pattern: '(?s)applications\."policy:tuned-api"\].*?tx\.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE.*?Include @owasp_crs'
+      - type: contains
+        target: "file:spoa-hub-config.toml"
+        pattern: '(?s)applications\."policy:tuned-api"\].*?tx\.blocking_paranoia_level=2.*?Include @owasp_crs'
+      - type: contains
+        target: "file:spoa-hub-config.toml"
+        pattern: '(?s)applications\."policy:tuned-api"\].*?tx\.inbound_anomaly_score_threshold=10.*?Include @owasp_crs'
+
+  test-haptic-waf-policy-structured-fields-selfservice:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      Self-service catalogs may use the structured CRS tuning fields —
+      they are validated and lowered by the chart, unlike raw secLang,
+      which self-service refuses. This is what lets a namespace team widen
+      the method allowlist for its own REST API without any admin grant.
+    extraContext:
+      # Pin the coraza plugin (list leaf → replaces the deployment's plugin
+      # set wholesale) so the splice-anchor and base directives are exactly
+      # known — a deployment may run a CRS-less custom ruleset (the e2e
+      # profile does), which would otherwise hard-fail these policies at
+      # the load gate.
+      spoaHub:
+        enabled: true
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: [check-request]
+            timeoutMs: 15
+            params: ""
+            dependsOn: []
+            directives: |
+              Include @coraza.conf-recommended
+              Include @crs-setup.conf.example
+              Include @owasp_crs/*.conf
+              SecRuleEngine On
+      waf:
+        policies:
+          defaultPolicy: ""
+          configMapRefs: []
+          selfService:
+            enabled: true
+    fixtures:
+      waf_selfservice_catalogs:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata: { namespace: team-a, name: waf-policies }
+          data:
+            policies.yaml: |
+              rest-api:
+                enforcement: deny
+                allowedMethods: [GET, POST, PUT, DELETE]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: team-a, name: app, annotations: { haproxy-haptic.org/waf-policy: rest-api } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: app.team-a.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: "map:coraza-app.map", pattern: "team-a/app policy:team-a/rest-api" }
+      - type: contains
+        target: "file:spoa-hub-config.toml"
+        pattern: '(?s)applications\."policy:team-a/rest-api"\].*?tx\.allowed_methods=GET POST PUT DELETE.*?Include @owasp_crs'
+
+  test-haptic-waf-policy-structured-fields-invalid-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: invalid structured-field values are rejected with exact messages
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          inline:
+            bad-methods:
+              allowedMethods: ["get"]
+          configMapRefs: []
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "invalid allowedMethods entry 'get'"
+
+  test-haptic-waf-policy-paranoia-out-of-range-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: paranoiaLevel outside 1-4 is rejected
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          inline:
+            bad-paranoia:
+              paranoiaLevel: 5
+          configMapRefs: []
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "paranoiaLevel must be an integer between 1 and 4"
+
+  test-haptic-waf-policy-threshold-unknown-field-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: anomalyThreshold rejects unknown sub-fields and non-positive values
+    extraContext:
+      renderMode: admission
+      waf:
+        policies:
+          defaultPolicy: ""
+          inline:
+            bad-threshold:
+              anomalyThreshold:
+                sideways: 3
+          configMapRefs: []
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "anomalyThreshold contains unknown field 'sideways'"
+
+  test-haptic-waf-policy-setup-fields-need-crs-include:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      Setup-position fields hard-fail registration when the coraza
+      directives have no 'Include @owasp_crs' anchor to splice before —
+      silently accepting them would emit setvars CRS never reads.
+    extraContext:
+      renderMode: admission
+      spoaHub:
+        enabled: true
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: [check-request]
+            timeoutMs: 15
+            params: ""
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+      waf:
+        policies:
+          defaultPolicy: ""
+          inline:
+            tuned:
+              allowedMethods: [GET, POST]
+          configMapRefs: []
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "no 'Include @owasp_crs' line to insert them before"
 
   test-haptic-waf-policy-body-limit-without-inspection-rejected:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
