@@ -82,6 +82,8 @@ topology. Plugin execution remains under `spoaHub.plugins.*`.
 |-----------|------|---------|-------------|
 | `cache.haproxy.hashBalanceFactor` | int | `150` | HAProxy bounded-load consistent hashing: cap any one Varnish shard's share to this factor of the mean (`0` disables) |
 | `cache.varnish.enabled` | bool | `false` | Deploy the shared Varnish cache tier and emit the cache routing/backend. When on, Ingresses carrying `haproxy-haptic.org/cache-*` annotations are routed through a consistent-hash-sharded Varnish workload so the cache is shared across the HAProxy fleet |
+| `cache.varnish.loopbackPort` | int | `8090` | Dedicated internal HAProxy port Varnish fetches cache misses from (the "sandwich" backend leg), so the WAF/rate-limit/auth/routing chain runs once on the client request and never on the miss. Reached only by Varnish (via `originServiceName`, gated by the HAProxy NetworkPolicy); never published on the LoadBalancer |
+| `cache.varnish.originServiceName` | string | `haptic-cache-origin` | Name of the internal ClusterIP Service (in the release namespace) that fronts the dedicated backend-fetch port on the HAProxy pods |
 | `cache.varnish.workload` | string | `statefulset` | Varnish workload kind: `statefulset` (ordered rollout keeps `1/N` of the cache warm on restart) or `deployment` (ephemeral accelerator) |
 | `cache.varnish.replicas` | int | `2` | Number of Varnish cache shards |
 | `cache.varnish.image` | string | `varnish:7.7` | Varnish container image — stock upstream, since the loopback topology needs no custom build. Pin to a digest in production |

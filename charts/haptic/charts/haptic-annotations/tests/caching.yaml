@@ -48,17 +48,38 @@ validationTests:
       - type: contains
         target: "map:haptic-cache-ttl.map"
         pattern: "default/cache-ingress 300"
-      # The loop-break source map is registered (its runtime content — the live
-      # Varnish pod IPs — is verified end-to-end by TestHapticVarnishCache; the
-      # daemon renders bundled validationTests with no live endpoints, so we can't
-      # assert map content here without failing the on-load validation).
+      # No source-IP loop-break map: the cache-miss loopback no longer enters the
+      # client frontends (Varnish fetches the dedicated backend-fetch port), so
+      # the fragile Varnish-pod-IP map is gone entirely.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "haptic-varnish-src"
+      # Client-facing cache routing is unguarded by source now.
       - type: contains
         target: haproxy.cfg
-        pattern: "map\\([^)]*haptic-varnish-src\\.map\\)"
-      # Loop-break is by source (Varnish pod IPs), NOT a client-forgeable header.
+        pattern: "use_backend varnish_cache if \\{ var\\(txn.resource_id\\),map\\([^)]*haptic-cache-enable\\.map\\) -m found \\}\\n"
+      # Dedicated backend-fetch frontend: internal-only bind, routes by the
+      # validated X-Haptic-Backend header, refuses infrastructure backends.
       - type: contains
         target: haproxy.cfg
-        pattern: "use_backend varnish_cache if \\{ var\\(txn.resource_id\\),map\\([^)]*haptic-cache-enable\\.map\\) -m found \\} !\\{ src,map\\([^)]*haptic-varnish-src\\.map\\) -m found \\}"
+        pattern: "frontend haptic_cache_origin"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "bind \\*:8090"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl origin_backend_internal var\\(txn.origin_backend\\) -m str varnish_cache spoa-hub default_backend"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 421 if origin_backend_internal"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend %\\[var\\(txn.origin_backend\\)\\] if \\{ var\\(txn.origin_backend\\) -m found \\}"
+      # The varnish_cache backend stamps the resolved backend for the loopback,
+      # stripping any client copy first.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request del-header X-Haptic-Backend\\n\\s*http-request set-header X-Haptic-Backend %\\[var\\(txn.backend_name\\)\\] if \\{ var\\(txn.backend_name\\) -m found \\}"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request del-header X-Haptic-Cache-Fetch"
@@ -81,6 +102,21 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "hash-balance-factor 150"
+      # Dedicated internal origin Service for the backend-fetch port (ClusterIP,
+      # never a LoadBalancer; targets the HAProxy fleet on the loopback port).
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "name: haptic-cache-origin"
+      - type: contains
+        target: "k8s:varnish-cache"
+        pattern: "(?s)name: haptic-cache-origin.*?type: ClusterIP.*?port: 8090"
+      # Regression guard: a document separator must never fuse with the next
+      # document's apiVersion (a stripping `{#- -#}` comment between `---` and
+      # `apiVersion` would produce `---apiVersion:` — invalid multi-doc YAML the
+      # live SSA apply rejects even though text assertions still pass).
+      - type: not_contains
+        target: "k8s:varnish-cache"
+        pattern: "(?m)^---[A-Za-z]"
       - type: contains
         target: "k8s:varnish-cache"
         pattern: "kind: StatefulSet"
@@ -147,9 +183,10 @@ validationTests:
   test-haptic-cache-shared-rate-limit-loopback:
     _helm_skip_test: '{{ if not (and .Values.cache.varnish.enabled .Values.rateLimit.shared.enabled) }}true{{ end }}'
     description: >-
-      Cache-miss loopbacks clear the already-consumed shared limit after rule
-      parsing and before SPOE dispatch, so one external request consumes one
-      budget and Varnish pod IPs cannot self-throttle a cold cache.
+      One external request consumes one shared-limit budget even on a cache miss:
+      the miss loopback fetches the dedicated backend-fetch frontend, which runs
+      no rate-limit dispatch, so there is no second charge and no per-loopback
+      unset hack. The client leg still dispatches the shared limiter normally.
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -172,13 +209,18 @@ validationTests:
                       backend: { service: { name: echo, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-      - type: match_order
+      # The client leg still dispatches the shared limiter.
+      - type: contains
         target: haproxy.cfg
-        description: Varnish loopbacks must clear the parsed limit before shared limiter dispatch
-        patterns:
-          - "http-request set-var\\(txn\\.rl_limit\\)"
-          - "http-request unset-var\\(txn\\.rl_limit\\) if \\{ src,map\\([^)]*haptic-varnish-src\\.map\\) -m found \\}"
-          - "http-request send-spoe-group spoa-hub check-ratelimit-group"
+        pattern: "http-request send-spoe-group spoa-hub check-ratelimit-group"
+      # The old per-loopback unset hack is gone — no source-map rl_limit clear.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "unset-var\\(txn\\.rl_limit\\)"
+      # The loopback is separated onto the dedicated backend-fetch frontend.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "frontend haptic_cache_origin"
 
   test-haptic-cache-autoscaling:
     description: >-

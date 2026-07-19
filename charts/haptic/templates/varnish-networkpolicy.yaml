@@ -45,13 +45,13 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
-    # Cache misses may reach only this release's HAProxy HTTP frontend. The
-    # destination port is the pod/container port after Service translation.
+    # Cache-miss origin fetches may reach only this release's HAProxy pods, and
+    # only on the dedicated backend-fetch port (not the public HTTP/HTTPS ports).
     - to:
         - podSelector:
             matchLabels:
               {{- include "haptic.haproxy.selectorLabels" . | nindent 14 }}
       ports:
-        - port: {{ .Values.haproxy.ports.http }}
+        - port: {{ .Values.cache.varnish.loopbackPort | default 8090 }}
           protocol: TCP
 {{- end }}

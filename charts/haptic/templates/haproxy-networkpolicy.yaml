@@ -65,11 +65,13 @@ spec:
     {{- end }}
 
     {{- if .Values.cache.varnish.enabled }}
-    # Varnish cache misses loop back through the release's HAProxy HTTP
-    # frontend. This explicit rule keeps that path working in restrictive mode;
-    # the Varnish policy independently limits egress to the same destination.
+    # Varnish fetches cache misses from HAProxy's DEDICATED backend-fetch port
+    # (the client-facing filter chain is absent there), so this is the boundary
+    # that keeps that port a trusted, Varnish-only internal origin. Only the
+    # release's Varnish pods may reach it; the Varnish policy independently
+    # limits egress to the same destination.
     - ports:
-        - port: {{ $ports.http }}
+        - port: {{ .Values.cache.varnish.loopbackPort | default 8090 }}
           protocol: TCP
       from:
         - podSelector:

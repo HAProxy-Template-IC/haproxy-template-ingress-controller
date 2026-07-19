@@ -1268,6 +1268,14 @@ cache:
   varnish:
     # Deploy the Varnish tier and emit the cache routing/backend. Off by default.
     enabled: false
+    # Varnish fetches cache misses from a DEDICATED internal HAProxy frontend on
+    # this port (the "sandwich" backend leg), never the client-facing frontend —
+    # so WAF/rate-limit/auth/routing run exactly once, on the client request.
+    # Reached only by Varnish via the haptic-cache-origin ClusterIP Service and
+    # gated by the haproxy NetworkPolicy; never published on the LoadBalancer.
+    loopbackPort: 8090
+    # Name of that internal ClusterIP Service (in the release namespace).
+    originServiceName: haptic-cache-origin
     # statefulset (default; an ordered rollout keeps 1/N of the cache warm on
     # restart) or deployment (ephemeral accelerator).
     workload: statefulset
