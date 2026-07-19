@@ -38,7 +38,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 | --------------- | --------------------------------------- |
 | Hub               | `v0.8.0`                     |
 | `api-gateway`    | `v0.1.0`      |
-| `coraza`          | `v0.6.0`           |
+| `coraza`          | `v0.7.0`           |
 | `external-auth`   | `v0.5.0`    |
 | `fingerprinting`  | `v0.3.0`   |
 | `maxmind`         | `v0.4.0`          |
@@ -80,6 +80,82 @@ HAProxy pods when the bundled `spoa-hub` image changes.
 - **sso-auth** — handles OIDC and SAML2 single sign-on flows with encrypted session cookies.
 
 When several plugins are enabled, cheap source-IP shared rate limiting runs first (`025`) so rejected floods don't consume WAF CPU. Coraza follows (`050`), then external auth (`100`), then JSON request validation (`200`). Authenticated-consumer rate limits run in the selected backend after native authentication establishes the consumer identity.
+
+## Tune a WAF policy from detect to deny
+
+A new WAF policy starts in `enforcement: detect`: the full ruleset runs and records what it *would* block, but nothing is denied. The workflow below uses the OWASP Core Rule Set (CRS) blocking-evaluation rules as the would-block signal and shows how to confirm a clean baseline from data and then flip the policy to `deny`.
+
+### Read the per-rule hit metrics
+
+The hub serves Prometheus metrics on `spoaHub.hub.metricsAddr` (default `127.0.0.1:9095` inside the HAProxy pod). The coraza plugin (v0.7.0+) exports:
+
+| Metric | Labels | Meaning |
+| ------ | ------ | ------- |
+| `plugin_coraza_rule_hits_total` | `phase`, `rule_id`, `severity`, `app` | Every rule that matched, on every evaluation — including traffic that was allowed. This is the detect-mode signal. |
+| `plugin_coraza_denials_total` | `phase`, `rule_id`, `app` | Requests denied, labeled with the single interrupting rule. Stays flat in detect mode. |
+| `plugin_coraza_evaluations_total` | `phase`, `action`, `app` | All evaluations by outcome. |
+
+The `app` label is the Coraza application: `policy:<name>` for a trusted-catalog policy, `policy:<namespace>/<name>` for a self-service policy, and `<namespace>/<name>` for route-local rules. Rules that declare no severity (the ruleset's administrative and reporting rules) carry `severity="none"`.
+
+The metrics address binds to the pod loopback, so scrape it with a PodMonitor targeting the HAProxy pods, or check it directly. The command execs into the `haproxy` container deliberately: all containers in the pod share one network namespace, so `127.0.0.1:9095` is reachable from any of them — and the `haproxy` container ships `curl`, while the `spoa-hub` image carries no HTTP client at all:
+
+```console
+kubectl exec -n <namespace> <haproxy-pod> -c haproxy -- \
+  sh -c 'command -v curl >/dev/null && curl -s 127.0.0.1:9095/metrics || wget -qO- 127.0.0.1:9095/metrics' \
+  | grep plugin_coraza_rule_hits_total
+```
+
+### Identify would-block rules
+
+In detect mode, a request is "would block" when its accumulated anomaly score crosses the ruleset's threshold — visible as hits on the blocking-evaluation rules `949110`/`949111`. Over a representative traffic window (a week that includes your batch jobs and deploys is a good default):
+
+```promql
+# How often would this policy have blocked?
+sum by (app) (increase(plugin_coraza_rule_hits_total{rule_id=~"94911[01]"}[7d]))
+
+# Which rules fired at all, worst first?
+sort_desc(sum by (rule_id, severity) (
+  increase(plugin_coraza_rule_hits_total{app="policy:my-policy", severity!="none"}[7d])
+))
+```
+
+Zero `949110`/`949111` hits over a representative window is your clean baseline: flip `enforcement: detect` to `deny` and you're done. Nonzero hits need classification first.
+
+### Classify hits with the audit log
+
+Rule-hit counters tell you *which* rules fire; the Coraza audit log tells you *on what*. Enable it through the trusted policy's `secLang` (self-service catalogs can't — ask the administrator to adopt the policy or enable the log in the shared directives):
+
+```yaml
+my-policy:
+  enforcement: detect
+  secLang: |
+    SecAuditEngine RelevantOnly
+    SecAuditLogParts ABFHKZ
+    SecAuditLog /dev/stdout
+    SecAuditLogFormat JSON
+```
+
+Audit records land on the spoa-hub container's stdout as JSON — one record per request that matched a rule — where your cluster log pipeline picks them up:
+
+```console
+kubectl logs -n <namespace> <haproxy-pod> -c spoa-hub | grep '"transaction"'
+```
+
+Each record names the matched rules, the matched values, and the request details, which is what you need to decide: a true positive stays; a false positive becomes a scoped exclusion on the policy, no SecLang needed:
+
+```yaml
+my-policy:
+  enforcement: detect
+  excludedTargetsByTag:
+    attack-sqli: ["ARGS:q"]     # search box tripping SQLi patterns
+    attack-xss: ["ARGS:comment"]
+```
+
+If a whole class of hits comes from a method the app legitimately uses (`PUT`, `PATCH`, `DELETE` on an HTTP API), widen the policy's `allowedMethods` instead of excluding rule targets one by one.
+
+### Flip to deny
+
+After the exclusions have been in place for another observation window with zero would-block hits, set `enforcement: deny`. Keep the audit log on for the first days: `plugin_coraza_denials_total` now shows real blocks, and every denial has a matching audit record to justify it.
 
 ## Managed shared rate-limit store
 
