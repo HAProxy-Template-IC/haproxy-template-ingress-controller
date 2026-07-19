@@ -687,11 +687,60 @@ validationTests:
   test-haptic-waf-policy-setup-fields-need-crs-include:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
     description: >-
-      Setup-position fields hard-fail registration when the coraza
-      directives have no 'Include @owasp_crs' anchor to splice before —
-      silently accepting them would emit setvars CRS never reads.
+      A ROUTE that selects a setup-fields policy fails its admission when the
+      coraza directives have no 'Include @owasp_crs' anchor to splice the
+      SecActions before — silently accepting them would emit setvars CRS
+      never reads. Checked per-route at application time (not at policy
+      registration), so a catalog policy no route selects never trips it.
     extraContext:
       renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: tuned-route }
+      spoaHub:
+        enabled: true
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: [check-request]
+            timeoutMs: 15
+            params: ""
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            tuned:
+              allowedMethods: [GET, POST]
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: tuned-route, annotations: { haproxy-haptic.org/waf-policy: tuned } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: tuned.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "no 'Include @owasp_crs' line to insert them before"
+
+  test-haptic-waf-policy-setup-fields-unused-with-crsless-coraza-renders:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      A setup-fields policy defined in the catalog but selected by NO route
+      must not fail the render even when coraza runs a CRS-less ruleset —
+      the anchor requirement is route-scoped. Regression pin for the
+      load-gate crash where a deployment-wide allowedMethods policy merged
+      into baked tests whose coraza directives lack the CRS include.
+    extraContext:
       spoaHub:
         enabled: true
         plugins:
@@ -710,11 +759,20 @@ validationTests:
             tuned:
               allowedMethods: [GET, POST]
           configMapRefs: []
-    fixtures: {}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: plain, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: app, port: { number: 80 } } } }
     assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "no 'Include @owasp_crs' line to insert them before"
+      - type: haproxy_valid
 
   test-haptic-waf-policy-body-limit-without-inspection-rejected:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'

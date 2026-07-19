@@ -483,3 +483,47 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "default/orphan-waf sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled"
+
+  test-haptic-waf-setup-fields-policy-with-coraza-disabled-renders:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: >-
+      A policy carrying setup-position fields (allowedMethods) must not fail
+      config registration when coraza is disabled — the anchor requirement
+      only applies when coraza is on. Regression pin for the load-gate crash
+      where a deployment-wide allowedMethods policy merged into any baked
+      test running without coraza and hard-failed the whole render.
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: []
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+        plugins: []
+      waf:
+        policies:
+          defaultPolicy: ""
+          inline:
+            api-methods:
+              enforcement: deny
+              allowedMethods: [GET, POST, PUT, DELETE]
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: plain, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: plain.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: any, port: { number: 80 } } } }
+    assertions:
+      - type: haproxy_valid
