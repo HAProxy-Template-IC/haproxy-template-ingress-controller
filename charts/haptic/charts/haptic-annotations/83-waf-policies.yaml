@@ -22,7 +22,8 @@
 # SecLang is NOT an Ingress annotation: rule authoring lives in an
 # administrator-owned trusted policy's `secLang`; tenants tune via the
 # structured policy fields (enforcement, requestBody, allowedMethods,
-# paranoiaLevel, anomalyThreshold, ruleExclusions). The effective directive
+# paranoiaLevel, anomalyThreshold, crsSettings, ruleExclusions) — fine-tuning a
+# rule's inputs, not disabling the rule. The effective directive
 # order in a policy's Coraza application is:
 #
 #   setup-position fields (allowedMethods/paranoia/thresholds, path-scoped
@@ -195,6 +196,7 @@ templateSnippets:
               "allowedMethods": true,
               "paranoiaLevel": true,
               "anomalyThreshold": true,
+              "crsSettings": true,
               "ruleExclusions": true,
             }
 
@@ -220,7 +222,7 @@ templateSnippets:
             }
             for _, field := range keys(policy) {
               if !allowedPolicyFields[field] {
-                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, requestBody, secLang, allowedMethods, paranoiaLevel, anomalyThreshold, ruleExclusions."
+                return "WAF policy '" + policyName + "' from " + source + " contains unknown field '" + field + "'. Valid fields: description, enforcement, requestBody, secLang, allowedMethods, paranoiaLevel, anomalyThreshold, crsSettings, ruleExclusions."
               }
             }
 
@@ -356,6 +358,82 @@ templateSnippets:
                 thresholdVars += "setvar:'tx." + field + "_anomaly_score_threshold=" + value + "'"
               }
               setupDirectives += "SecAction \"id:900110,phase:1,pass,t:none,nolog," + thresholdVars + "\"\n"
+            }
+            {#- Curated CRS variable tuning. A tenant fine-tunes a rule's INPUTS
+                (allowlist a content-type, raise an upload limit) instead of
+                disabling the rule — the git-content-type case is
+                allowedRequestContentTypes, NOT disabling 920420. Each registry
+                entry stores the FULL target variable (tx.* today), so a tenant
+                never types a collection prefix and can never reach the writable
+                GLOBAL/IP/SESSION state collections; a future non-tx tunable is
+                just another entry. appendList entries EXTEND the crs-setup
+                default (add an allowance, never drop the defaults or set a
+                wildcard); boundedInt entries replace a scalar within [min,max].
+                Both lower to one setup-position SecAction spliced before the CRS
+                include — so no tenant secLang is needed, and the append reads
+                the crs-setup default that always precedes the CRS rules (a
+                deployment that Includes @owasp_crs must Include crs-setup first
+                or CRS itself is broken). -#}
+            var crsSettingsAny = policy | dig("crsSettings")
+            if crsSettingsAny != nil {
+              var crsSettings, crsSettingsOK = crsSettingsAny.(map[string]any)
+              if !crsSettingsOK {
+                return "WAF policy '" + policyName + "' from " + source + " field crsSettings must be a map of CRS tuning names to values."
+              }
+              var crsRegistry = map[string]any{
+                "allowedRequestContentTypes": map[string]any{"kind": "appendList", "target": "allowed_request_content_type", "prefix": "", "suffix": "|", "charset": "^[A-Za-z0-9][A-Za-z0-9.+/_-]*$", "hint": "a media type such as application/x-git-upload-pack-request"},
+                "allowedHttpVersions":        map[string]any{"kind": "appendList", "target": "allowed_http_versions", "prefix": " ", "suffix": "", "charset": "^HTTP/[0-9.]{1,8}$", "hint": "an HTTP version token such as HTTP/2.0"},
+                "maxFileSize":                map[string]any{"kind": "boundedInt", "target": "max_file_size", "minimum": 1, "maximum": 536870912, "hint": "a byte count between 1 and 536870912"},
+                "maxNumArgs":                 map[string]any{"kind": "boundedInt", "target": "max_num_args", "minimum": 1, "maximum": 100000, "hint": "a count between 1 and 100000"},
+                "totalArgLength":             map[string]any{"kind": "boundedInt", "target": "total_arg_length", "minimum": 1, "maximum": 10485760, "hint": "a byte count between 1 and 10485760"},
+              }
+              var crsClauses = []any{}
+              {#- keys() is sorted, so the emitted setvar order is deterministic. -#}
+              for _, field := range keys(crsSettings) {
+                var specAny = crsRegistry[field]
+                if specAny == nil {
+                  return "WAF policy '" + policyName + "' from " + source + " crsSettings contains unknown field '" + field + "'. Valid fields: " + join(keys(crsRegistry), ", ") + "."
+                }
+                var spec = specAny.(map[string]any)
+                var target = spec["target"].(string)
+                if spec["kind"].(string) == "appendList" {
+                  var items, itemsOK = crsSettings[field].([]any)
+                  if !itemsOK || len(items) == 0 {
+                    return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " must be a non-empty list (each entry " + spec["hint"].(string) + ")."
+                  }
+                  var charset = spec["charset"].(string)
+                  var appended = "%{tx." + target + "}"
+                  var seenToken = map[string]bool{}
+                  for _, rawItem := range items {
+                    var token = rawItem | tostring()
+                    if !regex_search(token, charset) {
+                      return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " entry '" + token + "' is invalid; expected " + spec["hint"].(string) + "."
+                    }
+                    {#- Dedupe: a token listed twice would append twice, growing the
+                        allowlist with a redundant duplicate entry. -#}
+                    if seenToken[token] { continue }
+                    seenToken[token] = true
+                    appended += spec["prefix"].(string) + token + spec["suffix"].(string)
+                  }
+                  crsClauses = append(crsClauses, "setvar:'tx."+target+"="+appended+"'")
+                } else {
+                  var text = crsSettings[field] | tostring()
+                  if !regex_search(text, "^[0-9]+$") {
+                    return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " value '" + text + "' must be " + spec["hint"].(string) + "."
+                  }
+                  var value = toint(text)
+                  if value < spec["minimum"].(int) || value > spec["maximum"].(int) {
+                    return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " value '" + text + "' must be " + spec["hint"].(string) + "."
+                  }
+                  crsClauses = append(crsClauses, "setvar:'tx."+target+"="+text+"'")
+                }
+              }
+              if len(crsClauses) > 0 {
+                {#- One setup SecAction carries every tuned var; id in the
+                    chart's above-CRS band (>999999) so it can't collide with a
+                    CRS rule or the 1200000+ path-scoped exclusion IDs. -#}
+                setupDirectives += "SecAction \"id:1210000,phase:1,pass,t:none,nolog," + join(crsClauses|toStringSlice(), ",") + "\"\n"
+              }
             }
             {#- The CRS-anchor requirement is NOT enforced here at
                 registration: a policy defined in the catalog but selected by
@@ -688,7 +766,7 @@ templateSnippets:
                   if policyError == "" && !ssAllowSecLang {
                     var rawPolicyMap, rawPolicyMapOK = parsedPolicies[policyName].(map[string]any)
                     if rawPolicyMapOK && rawPolicyMap["secLang"] != nil {
-                      policyError = "Self-service WAF policy '" + policyName + "' from " + sourceID + " uses secLang, which is disabled for self-service catalogs (extraContext.waf.policies.selfService.allowSecLang=false). Use the structured fields (enforcement, requestBody, allowedMethods, paranoiaLevel, anomalyThreshold, ruleExclusions), or ask the HAPTIC administrator to move the policy into a trusted catalog."
+                      policyError = "Self-service WAF policy '" + policyName + "' from " + sourceID + " uses secLang, which is disabled for self-service catalogs (extraContext.waf.policies.selfService.allowSecLang=false). Use the structured fields (enforcement, requestBody, allowedMethods, paranoiaLevel, anomalyThreshold, crsSettings, ruleExclusions), or ask the HAPTIC administrator to move the policy into a trusted catalog."
                     }
                   }
                   if policyError == "" {
@@ -870,7 +948,7 @@ templateSnippets:
                 corazaEnabled is implied: an active route with coraza off is
                 already rejected by the coraza-not-enabled guard above. -#}
             if routeBrokenReason == "" && policy != "" && policySetupDirectives[policy] != "" && !strings_contains(corazaBaseDirectives, "Include @owasp_crs") {
-              rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' which sets allowedMethods/paranoiaLevel/anomalyThreshold or path-scoped ruleExclusions, but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives or remove the setup-position fields from the policy.")
+              rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' which sets allowedMethods/paranoiaLevel/anomalyThreshold/crsSettings or path-scoped ruleExclusions, but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives or remove the setup-position fields from the policy.")
             }
 
             // A broken route always fails closed — even when active is
