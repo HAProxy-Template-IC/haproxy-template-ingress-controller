@@ -384,10 +384,15 @@ templateSnippets:
               }
               setupDirectives += "SecAction \"id:900110,phase:1,pass,t:none,nolog," + thresholdVars + "\"\n"
             }
-            if setupDirectives != "" && !strings_contains(corazaBaseDirectives, "Include @owasp_crs") {
-              return "WAF policy '" + policyName + "' from " + source + " uses setup-position fields (allowedMethods/paranoiaLevel/anomalyThreshold), but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives."
-            }
-
+            {#- The CRS-anchor requirement is NOT enforced here at
+                registration: a policy defined in the catalog but selected by
+                no route must not fail the whole render just because the
+                ambient coraza directives lack the anchor (that happens
+                whenever a deployment-wide allowedMethods policy merges into a
+                baked validationTest whose coraza is disabled or CRS-less).
+                The check is route-scoped instead, at the point a route
+                actually applies the policy — see the setup-anchor rejectRoute
+                below. -#}
             policySetupDirectives[storeKey] = setupDirectives
             policyConfiguration[storeKey] = generatedExclusions + secLang + "\n"
             policySafety[storeKey] = bodySafety
@@ -750,6 +755,19 @@ templateSnippets:
             // (the admin authored or explicitly trusted them).
             if routeBrokenReason == "" && selectedSelfService && dispatchMode == "default-on" && dispatchDefaultEnforcement == "deny" && mode == "detect" {
               rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects self-service WAF policy '" + requestedPolicy + "' with effective enforcement 'detect', which would weaken the default-on baseline enforcement 'deny'. Only trusted-catalog policies may weaken the baseline; use enforcement: deny or ask the HAPTIC administrator to adopt the policy into a trusted catalog.")
+            }
+
+            {#- A route selecting a policy with setup-position fields
+                (allowedMethods/paranoiaLevel/anomalyThreshold) needs the CRS
+                include in the coraza directives to splice the SecActions
+                before — without it the tuning silently wouldn't apply. Checked
+                per-route (not at registration) so a catalog policy that no
+                route selects never trips it, and route-scoped so one such
+                route fails closed rather than aborting the whole render.
+                corazaEnabled is implied: an active route with coraza off is
+                already rejected by the coraza-not-enabled guard above. -#}
+            if routeBrokenReason == "" && policy != "" && policySetupDirectives[policy] != "" && !strings_contains(corazaBaseDirectives, "Include @owasp_crs") {
+              rejectRoute("WafPolicyUnavailable", "Ingress " + resourceID + " selects WAF policy '" + requestedPolicy + "' which sets allowedMethods/paranoiaLevel/anomalyThreshold, but spoaHub.plugins.coraza.directives has no 'Include @owasp_crs' line to insert them before. Keep the CRS include in the coraza directives or remove the setup-position fields from the policy.")
             }
 
             // Bound and ownership checks for route-local rules must run
