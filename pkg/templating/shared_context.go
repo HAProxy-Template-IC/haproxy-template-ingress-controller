@@ -28,6 +28,18 @@ func NewSharedContext() *SharedContext {
 	}
 }
 
+// computePanic carries a panic raised inside a ComputeIfAbsent compute function
+// back out through singleflight WITHOUT singleflight's *panicError wrapper. That
+// wrapper's Error() appends a debug.Stack() dump, which turns a clean template
+// fail()/env.Stop() halt into a page of Go stack trace in the rendered error.
+// Returning the panic as an ordinary error keeps singleflight from wrapping it;
+// ComputeIfAbsent then re-raises the ORIGINAL panic value unchanged, so the
+// abort still propagates to every caller (the computing goroutine and any
+// singleflight-deduplicated waiters) with its original message.
+type computePanic struct{ value any }
+
+func (c *computePanic) Error() string { return "compute panic" }
+
 // Get returns the value for key, or nil if not found.
 // This is a read-only operation - use ComputeIfAbsent for initialization.
 func (s *SharedContext) Get(key string) any {
@@ -74,28 +86,44 @@ func (s *SharedContext) ComputeIfAbsent(key string, compute func() any) (any, bo
 	var weComputed bool
 
 	// Slow path: use singleflight to compute exactly once
-	r, _, _ := s.group.Do(key, func() (any, error) {
+	r, err, _ := s.group.Do(key, func() (val any, err error) {
 		// Double-check under lock before computing
 		s.mu.Lock()
-		if val, ok := s.data[key]; ok {
+		if v, ok := s.data[key]; ok {
 			s.mu.Unlock()
-			return val, nil // Found in double-check, weComputed stays false
+			return v, nil // Found in double-check, weComputed stays false
 		}
 		s.mu.Unlock()
 
 		// Mark that THIS goroutine is computing
 		weComputed = true
 
+		// Catch a compute() panic (typically a template fail()/env.Stop()
+		// halt) and hand it back as an ordinary error. Without this,
+		// singleflight recovers the panic into a *panicError that appends a
+		// debug.Stack() dump, and that stack ends up in the rendered error
+		// message. The original value is re-raised below, so the abort is
+		// unchanged for every caller — only the spurious stack is gone.
+		defer func() {
+			if p := recover(); p != nil {
+				err = &computePanic{value: p}
+			}
+		}()
+
 		// Compute WITHOUT holding lock - allows nested ComputeIfAbsent calls
-		val := compute()
+		v := compute()
 
 		// Store result under lock
 		s.mu.Lock()
-		s.data[key] = val
+		s.data[key] = v
 		s.mu.Unlock()
 
-		return val, nil
+		return v, nil
 	})
+
+	if cp, ok := err.(*computePanic); ok {
+		panic(cp.value)
+	}
 
 	return r, weComputed
 }
