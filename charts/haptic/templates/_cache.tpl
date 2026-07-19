@@ -21,11 +21,19 @@ invalid availability/autoscaling combinations until a later enable.
 {{- if not (kindIs "map" $varnish) -}}{{- fail "cache.varnish must be a map." -}}{{- end -}}
 {{- range $field := keys $varnish -}}
   {{- if eq $field "hashBalanceFactor" -}}{{- fail "cache.varnish.hashBalanceFactor has moved to cache.haproxy.hashBalanceFactor because HAProxy, not Varnish, consumes it." -}}{{- end -}}
-  {{- if not (has $field (list "enabled" "workload" "replicas" "image" "imagePullPolicy" "malloc" "resources" "podDisruptionBudget" "networkPolicy" "autoscaling")) -}}
+  {{- if not (has $field (list "enabled" "loopbackPort" "originServiceName" "workload" "replicas" "image" "imagePullPolicy" "malloc" "resources" "podDisruptionBudget" "networkPolicy" "autoscaling")) -}}
     {{- fail (printf "cache.varnish contains unknown field %q." $field) -}}
   {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $varnish.enabled) -}}{{- fail "cache.varnish.enabled must be a boolean." -}}{{- end -}}
+{{- if hasKey $varnish "loopbackPort" -}}
+  {{- if or (not (regexMatch "^[0-9]+$" (toString $varnish.loopbackPort))) (lt (int $varnish.loopbackPort) 1) (gt (int $varnish.loopbackPort) 65535) -}}
+    {{- fail "cache.varnish.loopbackPort must be a port between 1 and 65535." -}}
+  {{- end -}}
+{{- end -}}
+{{- if and (hasKey $varnish "originServiceName") (or (not (kindIs "string" $varnish.originServiceName)) (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $varnish.originServiceName))) -}}
+  {{- fail "cache.varnish.originServiceName must be a valid Kubernetes Service name." -}}
+{{- end -}}
 {{- if or (not (kindIs "string" $varnish.workload)) (not (has $varnish.workload (list "statefulset" "deployment"))) -}}
   {{- fail "cache.varnish.workload must be one of: statefulset, deployment." -}}
 {{- end -}}

@@ -245,20 +245,26 @@ spec:
          and the standalone annotation library on one structured contract. */ -}}
   {{- $cacheContext := deepCopy .Values.cache }}
   {{- $varnish := $cacheContext.varnish }}
-  {{- $originServicePort := int (.Values.haproxy.service.http.port | default 0) }}
   {{- if $varnish.enabled }}
     {{- if not .Values.haproxy.enabled }}
-      {{- fail "cache.varnish.enabled=true requires the chart-managed HAProxy workload and Service (haproxy.enabled=true) for cache-miss loopback requests." }}
+      {{- fail "cache.varnish.enabled=true requires the chart-managed HAProxy workload (haproxy.enabled=true): Varnish fetches cache misses from a dedicated backend-fetch frontend on the HAProxy pods." }}
     {{- end }}
-    {{- if le $originServicePort 0 }}
-      {{- fail "cache.varnish.enabled=true requires haproxy.service.http.port to be a positive Service port for cache-miss loopback requests." }}
+    {{- $lp := int ($varnish.loopbackPort | default 8090) }}
+    {{- if le $lp 0 }}
+      {{- fail "cache.varnish.loopbackPort must be a positive port for the dedicated Varnish backend-fetch frontend." }}
+    {{- end }}
+    {{- /* The dedicated backend-fetch frontend binds this port on the HAProxy
+           pods, so it must not collide with any other statically-configured
+           HAProxy/controller listener — otherwise HAProxy fails to bind at
+           runtime with a confusing error instead of a clear Helm failure. */ -}}
+    {{- $reserved := list (int .Values.haproxy.ports.http) (int .Values.haproxy.ports.https) (int .Values.haproxy.ports.stats) (int .Values.haproxy.ports.dataplane) (int .Values.controller.ports.healthz) (int .Values.controller.ports.metrics) }}
+    {{- if has $lp $reserved }}
+      {{- fail (printf "cache.varnish.loopbackPort %d collides with an existing HAProxy/controller port (http/https/stats/dataplane/healthz/metrics); choose a free port for the dedicated Varnish backend-fetch frontend." $lp) }}
     {{- end }}
   {{- end }}
   {{- $_ := set $varnish "serviceName" (include "haptic.varnish.cacheName" .) }}
   {{- $_ := set $varnish "namespace" .Release.Namespace }}
   {{- $_ := set $varnish "servicePort" 6081 }}
-  {{- $_ := set $varnish "originHost" (include "haptic.haproxyFullname" .) }}
-  {{- $_ := set $varnish "originPort" $originServicePort }}
   {{- $_ := set $extraContext "cache" $cacheContext }}
 
   {{- /* Shared rate limiting follows the same structured ownership contract. */ -}}

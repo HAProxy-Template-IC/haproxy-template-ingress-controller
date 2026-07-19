@@ -108,7 +108,7 @@ tests:
           value: kube-dns
       - equal:
           path: spec.egress[1].ports[0].port
-          value: 80
+          value: 8090
       - equal:
           path: spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/name"]
           value: haptic
@@ -161,7 +161,7 @@ tests:
           path: spec.ingress
           content:
             ports:
-              - port: 80
+              - port: 8090
                 protocol: TCP
             from:
               - podSelector:
@@ -169,16 +169,17 @@ tests:
                     app.kubernetes.io/name: haptic-varnish-cache
                     app.kubernetes.io/instance: RELEASE-NAME-haptic-varnish-cache
 
-  - it: should use the HAProxy Service port for Varnish origin requests
+  - it: should expose the dedicated backend-fetch port + origin Service to extraContext
     template: haproxytemplateconfig.yaml
     set:
       cache.varnish.enabled: true
-      haproxy.service.http.port: 18080
-      haproxy.ports.http: 8080
     asserts:
       - equal:
-          path: spec.templatingSettings.extraContext.cache.varnish.originPort
-          value: 18080
+          path: spec.templatingSettings.extraContext.cache.varnish.loopbackPort
+          value: 8090
+      - equal:
+          path: spec.templatingSettings.extraContext.cache.varnish.originServiceName
+          value: haptic-cache-origin
 
   - it: should reject a cache tier without the chart-managed HAProxy origin
     template: haproxytemplateconfig.yaml
@@ -187,16 +188,25 @@ tests:
       haproxy.enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: cache.varnish.enabled=true requires the chart-managed HAProxy workload and Service (haproxy.enabled=true) for cache-miss loopback requests.
+          errorMessage: "cache.varnish.enabled=true requires the chart-managed HAProxy workload (haproxy.enabled=true): Varnish fetches cache misses from a dedicated backend-fetch frontend on the HAProxy pods."
 
-  - it: should reject a cache tier without an HAProxy HTTP Service port
+  - it: should reject an invalid dedicated backend-fetch port
     template: haproxytemplateconfig.yaml
     set:
       cache.varnish.enabled: true
-      haproxy.service.http.port: 0
+      cache.varnish.loopbackPort: 0
     asserts:
       - failedTemplate:
-          errorMessage: cache.varnish.enabled=true requires haproxy.service.http.port to be a positive Service port for cache-miss loopback requests.
+          errorMessage: cache.varnish.loopbackPort must be a port between 1 and 65535.
+
+  - it: should reject a loopback port that collides with a static HAProxy port
+    template: haproxytemplateconfig.yaml
+    set:
+      cache.varnish.enabled: true
+      cache.varnish.loopbackPort: 8404
+    asserts:
+      - failedTemplate:
+          errorMessage: "cache.varnish.loopbackPort 8404 collides with an existing HAProxy/controller port (http/https/stats/dataplane/healthz/metrics); choose a free port for the dedicated Varnish backend-fetch frontend."
 
   - it: should surface the default Varnish disruption budget in extraContext
     template: haproxytemplateconfig.yaml

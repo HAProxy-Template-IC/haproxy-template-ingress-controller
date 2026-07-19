@@ -2,18 +2,22 @@
 #
 # Routes cache-eligible requests through a chart-deployed, consistent-hash-
 # sharded Varnish tier so the cache is shared across the whole HAProxy fleet.
-# Topology (loopback origin — see the API-gateway design doc):
+# Topology — the canonical HAProxy+Varnish "sandwich" (separate client-facing and
+# backend-fetch frontends):
 #
-#   client → HAProxy → varnish_cache (sharded) → HAProxy → app   (miss)
-#   client → HAProxy → varnish_cache ──────────────────→ client  (hit)
+#   client → HAProxy (client frontend: WAF/RL/auth/routing) → varnish_cache → client   (hit)
+#   client → HAProxy (client frontend) → varnish_cache → HAProxy (dedicated backend-  (miss)
+#            fetch frontend, internal-only) → app
 #
-# Varnish's single static backend is the HAProxy Service; on a miss it fetches
-# back through HAProxy. HAProxy tells that internal loopback fetch from a real
-# client request by SOURCE — the Varnish pods' own IPs (haptic-varnish-src.map),
-# which a client can't forge — and routes the loopback straight to the app so it
-# can't loop. Per-route behaviour is DATA — maps and injected X-Haptic-Cache-*
-# request headers the static VCL reads. All cache-control headers are del-header'd
-# off the client first (a client must not be able to poison the key or skip rules).
+# On a miss Varnish fetches the origin from a DEDICATED internal HAProxy port
+# (frontends-500-haptic-cache-origin), not the client-facing frontend — so the
+# client-leg filter chain runs exactly once and never re-runs on the miss. That
+# frontend routes by the HAProxy-computed X-Haptic-Backend header (set + strip-of-
+# client-copy in the varnish_cache backend), reaching the same backend the client
+# leg selected without re-deriving routing from an already-rewritten request.
+# Per-route behaviour is DATA — maps and injected X-Haptic-Cache-* request headers
+# the static VCL reads. All cache-control headers are del-header'd off the client
+# first (a client must not be able to poison the key or skip rules).
 #
 # Everything is gated on extraContext.hapticCacheEnabled (set by the chart from
 # cache.varnish.enabled); when off, nothing is emitted.
@@ -71,24 +75,6 @@ templateSnippets:
             {%- end %}
           {%- end %}
         {%- end %}
-        {#- Loop-break source guard: the Varnish pods' own IPs. HAProxy uses this
-            map to tell the internal Varnish loopback fetch (route straight to the
-            app) from a client request (route to Varnish) by source, instead of a
-            client-forgeable header. Reload-free: the controller syncs map updates
-            as Varnish endpoints change. Empty until the tier has Ready pods.
-            Assumes the loopback preserves the Varnish pod source IP (true for
-            normal ClusterIP routing; a cluster running kube-proxy with
-            --masquerade-all would SNAT it and is unsupported for the cache tier). -#}
-        {%- var srcLines = []any{} %}
-        {%- for _, slice := range resources.endpoints.Fetch(vNs, vSvc) %}
-          {%- for _, ep := range slice.Endpoints %}
-            {%- for _, addr := range ep.Addresses %}
-              {%- srcLines = append(srcLines, tostring(addr) + " 1") %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-        {%- var _, e5 = fileRegistry.Register("map", "haptic-varnish-src.map", (srcLines | toStringSlice() | join("\n")) + "\n") %}
-        {%- if e5 != nil %}{{ fail("failed to register haptic-varnish-src.map: " + tostring(e5)) }}{%- end %}
         {%- var _, e1 = fileRegistry.Register("map", "haptic-cache-enable.map", (enLines | toStringSlice() | join("\n")) + "\n") %}
         {%- if e1 != nil %}{{ fail("failed to register haptic-cache-enable.map: " + tostring(e1)) }}{%- end %}
         {%- var _, e2 = fileRegistry.Register("map", "haptic-cache-ttl.map", (ttlLines | toStringSlice() | join("\n")) + "\n") %}
@@ -100,27 +86,11 @@ templateSnippets:
       {%- end %}
 
   # ==========================================================================
-  # Varnish cache misses loop back through HAProxy to reach the original app.
-  # The external request has already consumed its shared-rate-limit budget, so
-  # remove the parsed limit before the priority-025 dispatch for source-verified
-  # Varnish traffic. This prevents every miss from being counted twice and
-  # prevents all clients' misses from self-throttling on one Varnish pod IP.
-  # ==========================================================================
-  frontend-spoe-filters-024-haptic-cache-rate-limit-loopback:
-    template: |
-      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
-      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
-      {%- var messages = toStringSlice(messagesAny) %}
-      {%- if enabled == "true" && (messages contains "check-ratelimit") %}
-        {%- var srcMap, _ = pathResolver.GetPath("haptic-varnish-src.map", "map") %}
-      http-request unset-var(txn.rl_limit) if { src,map({{ srcMap }}) -m found }
-      {%- end %}
-
-  # ==========================================================================
   # Frontend routing: excluded paths go straight to the app; everything else on
-  # a cache-enabled route (that isn't a Varnish loopback) goes to varnish_cache.
-  # Runs in every frontend after txn.resource_id is set, before the default
-  # use_backend, so these take precedence (first-match wins).
+  # a cache-enabled route goes to varnish_cache. Runs in every client frontend
+  # after txn.resource_id is set, before the default use_backend, so these take
+  # precedence (first-match wins). The cache-miss loopback never reaches these
+  # frontends — Varnish fetches the dedicated backend-fetch port instead.
   # ==========================================================================
   frontend-filters-865-haptic-cache-route:
     template: |
@@ -129,10 +99,8 @@ templateSnippets:
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
       {%- if enabled == "true" %}
         {%- var enMap, _ = pathResolver.GetPath("haptic-cache-enable.map", "map") %}
-        {%- var srcMap, _ = pathResolver.GetPath("haptic-varnish-src.map", "map") %}
       # haptic/cache routing
-      # Defense-in-depth: routing is gated on source (below), not this header, but
-      # strip any client-supplied copy so it can never influence anything.
+      # Defense-in-depth: strip any client-supplied cache-control fetch header.
       http-request del-header X-Haptic-Cache-Fetch
         {%- for _, ingress := range resources.ingresses.List() %}
           {%- if ingress.Metadata.Annotations["haproxy-haptic.org/cache-enable"] == "true" %}
@@ -153,10 +121,10 @@ templateSnippets:
             {%- end %}
           {%- end %}
         {%- end %}
-      # Route to Varnish unless this is the Varnish loopback fetch itself — matched
-      # by the Varnish pods' source IPs (unforgeable), so it reaches the app and
-      # can't loop. A client can't skip the cache by spoofing a header.
-      use_backend varnish_cache if { var(txn.resource_id),map({{ enMap }}) -m found } !{ src,map({{ srcMap }}) -m found }
+      # Route cache-eligible client requests to Varnish. The cache-miss loopback
+      # never reaches this frontend (Varnish fetches the dedicated backend-fetch
+      # port instead), so no source/loop guard is needed here.
+      use_backend varnish_cache if { var(txn.resource_id),map({{ enMap }}) -m found }
       {%- end %}
 
   # ==========================================================================
@@ -192,6 +160,12 @@ templateSnippets:
           http-request del-header X-Haptic-Cache-Skip-CT
           http-request del-header X-Haptic-Cache-Max-Size
           http-request del-header X-Haptic-Cache-TTL
+          # Stamp the HAProxy-resolved backend so the dedicated backend-fetch
+          # frontend routes the cache-miss loopback to the SAME backend this
+          # client-leg selected — without re-deriving routing from an
+          # already-rewritten request. del-header first so a client can't forge it.
+          http-request del-header X-Haptic-Backend
+          http-request set-header X-Haptic-Backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
           http-request set-header X-Haptic-Cache-TTL %[var(txn.resource_id),map({{ ttlMap }})] if { var(txn.resource_id),map({{ ttlMap }}) -m found }
           http-request set-header X-Haptic-Cache-Skip-CT %[var(txn.resource_id),map({{ skipMap }})] if { var(txn.resource_id),map({{ skipMap }}) -m found }
           http-request set-header X-Haptic-Cache-Max-Size %[var(txn.resource_id),map({{ sizeMap }})] if { var(txn.resource_id),map({{ sizeMap }}) -m found }
@@ -218,6 +192,47 @@ templateSnippets:
       {{ BackendServers(vSvc, 0, vPort, map[string]any{"flags": []any{}}, "", "varnish_cache", vNs) | indent(4, true) }}
       {%- end %}
 
+  # ==========================================================================
+  # Dedicated Varnish backend-fetch frontend — the "sandwich" backend leg. On a
+  # cache miss Varnish fetches the origin from THIS internal-only port instead of
+  # looping back through the client-facing frontend, so the WAF / rate-limit /
+  # auth / routing chain runs exactly once (on the client leg) and never re-runs
+  # on the miss. This is the canonical HAProxy+Varnish topology (separate
+  # client-facing and backend-fetch frontends), replacing the source-IP loop-break
+  # (which churned with Varnish pod IPs, raced pod restarts, and broke under SNAT).
+  #
+  # Vetted by construction: only Varnish reaches this port (NetworkPolicy; it is
+  # never published on the LoadBalancer). It routes by the HAProxy-computed
+  # X-Haptic-Backend header — set in the varnish_cache backend and stripped of any
+  # client copy there — because the request Varnish forwards was already
+  # Host/path/prefix-rewritten on the client leg, so RE-DERIVING routing here
+  # would mis-route rewritten routes and re-roll weighted (MULTIBACKEND) routes.
+  # The header is captured, then stripped before the app. Infrastructure backend
+  # names are refused so a stray or forged value can't loop back to Varnish
+  # (varnish_cache), hit the SPOP agent (spoa-hub), or reach the tcp loopbacks.
+  # ==========================================================================
+  frontends-500-haptic-cache-origin:
+    template: |
+      {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
+      {%- if enabled == "true" %}
+        {%- var loopbackPort = extraContext | dig("cache", "varnish", "loopbackPort") | fallback("8090") | tostring() %}
+      {{ "\n" }}frontend haptic_cache_origin
+          mode http
+          option forwardfor if-none
+          bind *:{{ loopbackPort }}
+          {#- Capture the routing decision, then strip the header so the app never
+              sees it (and a client copy that slipped through can't reach it). -#}
+          http-request set-var(txn.origin_backend) req.hdr(X-Haptic-Backend)
+          http-request del-header X-Haptic-Backend
+          {#- Refuse the infrastructure backends: varnish_cache would re-loop to
+              Varnish, spoa-hub is a SPOP agent, and the tcp loopbacks/default are
+              not app targets. Any legitimate value is a real app backend. -#}
+          acl origin_backend_internal var(txn.origin_backend) -m str varnish_cache spoa-hub default_backend http-h1-loopback http-h2c-loopback
+          http-request deny deny_status 421 if origin_backend_internal
+          use_backend %[var(txn.origin_backend)] if { var(txn.origin_backend) -m found }
+          default_backend default_backend
+      {%- end %}
+
 # ============================================================================
 # The Varnish tier itself: a chart-deployed StatefulSet (or Deployment) +
 # headless Service + static loopback VCL, applied via Server-Side Apply and
@@ -238,8 +253,19 @@ k8sResources:
       {%- var replicas = extraContext | dig("cache", "varnish", "replicas") | fallback("2") | tostring() %}
       {%- var malloc = extraContext | dig("cache", "varnish", "malloc") | fallback("256m") | tostring() %}
       {%- var workload = extraContext | dig("cache", "varnish", "workload") | fallback("statefulset") | tostring() %}
-      {%- var originHost = extraContext | dig("cache", "varnish", "originHost") | fallback("haptic") | tostring() %}
-      {%- var originPort = extraContext | dig("cache", "varnish", "originPort") | fallback("80") | tostring() %}
+      {#- Varnish fetches cache misses from HAProxy's DEDICATED backend-fetch port
+          (frontends-500-haptic-cache-origin) via an internal-only Service, never
+          the client-facing frontend — so the WAF/RL/auth/routing chain runs once
+          on the client leg. The origin Service + port are chart-owned (below), so
+          this needs no operator originHost/originPort tuning. -#}
+      {%- var loopbackPort = extraContext | dig("cache", "varnish", "loopbackPort") | fallback("8090") | tostring() %}
+      {%- var originSvcName = extraContext | dig("cache", "varnish", "originServiceName") | fallback("haptic-cache-origin") | tostring() %}
+      {%- var ctrlNs = extraContext | dig("controllerNamespace") | fallback(vNs) | tostring() %}
+      {#- FQDN so Varnish resolves the origin Service even if the Varnish tier and
+          the HAProxy fleet land in different namespaces. -#}
+      {%- var originHost = originSvcName + "." + ctrlNs + ".svc.cluster.local" %}
+      {%- var originPort = loopbackPort %}
+      {%- var haproxySelector = extraContext | dig("haproxyPodSelector") | fallback(map[string]any{}) %}
       {%- var autoscaling = extraContext | dig("cache", "varnish", "autoscaling", "enabled") | fallback("false") | tostring() %}
       {%- var cpuReq = extraContext | dig("cache", "varnish", "resources", "requests", "cpu") | fallback("100m") | tostring() %}
       {%- var memReq = extraContext | dig("cache", "varnish", "resources", "requests", "memory") | fallback("384Mi") | tostring() %}
@@ -279,6 +305,32 @@ k8sResources:
           - name: http
             port: {{ vPort }}
             targetPort: 6081
+      ---
+      # Dedicated internal Service for the Varnish backend-fetch (loopback)
+      # origin. Gives Varnish a stable name for HAProxy's dedicated backend-fetch
+      # frontend, targeting the HAProxy fleet on the loopback port. ClusterIP,
+      # never a LoadBalancer (it must not be externally reachable); the haproxy
+      # NetworkPolicy restricts this port to Varnish. (A YAML `#` comment, not a
+      # Scriggo `{#- -#}` one — the stripping form would fuse `---` and
+      # `apiVersion` into one line and break the multi-document parse.)
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ originSvcName }}
+        namespace: {{ ctrlNs }}
+        labels:
+          app.kubernetes.io/name: haptic-cache-origin
+          app.kubernetes.io/managed-by: haptic
+      spec:
+        type: ClusterIP
+        selector:
+        {%- for k, v := range haproxySelector %}
+          {{ k }}: {{ tostring(v) }}
+        {%- end %}
+        ports:
+          - name: cache-origin
+            port: {{ loopbackPort }}
+            targetPort: {{ loopbackPort }}
       ---
       {%- if workload == "deployment" %}
       apiVersion: apps/v1

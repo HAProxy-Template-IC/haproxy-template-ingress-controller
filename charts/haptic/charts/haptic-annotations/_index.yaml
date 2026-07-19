@@ -60,8 +60,8 @@ templatingSettings:
         serviceName: haptic-varnish-cache
         namespace: default
         servicePort: 6081
-        originHost: haptic
-        originPort: 80
+        loopbackPort: 8090
+        originServiceName: haptic-cache-origin
         workload: statefulset
         replicas: 2
         image: varnish:7.7
