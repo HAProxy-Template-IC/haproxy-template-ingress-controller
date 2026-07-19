@@ -174,10 +174,11 @@ validationTests:
       - type: haproxy_valid
       - type: match_order
         target: haproxy.cfg
-        description: Varnish loopbacks must clear the parsed limit before shared limiter dispatch
+        description: loopback is marked from the Varnish source, clears the parsed limit via that marker, before shared limiter dispatch
         patterns:
           - "http-request set-var\\(txn\\.rl_limit\\)"
-          - "http-request unset-var\\(txn\\.rl_limit\\) if \\{ src,map\\([^)]*haptic-varnish-src\\.map\\) -m found \\}"
+          - "http-request set-var\\(txn\\.cache_loopback\\) bool\\(true\\) if \\{ src,map\\([^)]*haptic-varnish-src\\.map\\) -m found \\}"
+          - "http-request unset-var\\(txn\\.rl_limit\\) if \\{ var\\(txn\\.cache_loopback\\) -m bool \\}"
           - "http-request send-spoe-group spoa-hub check-ratelimit-group"
 
   test-haptic-cache-autoscaling:

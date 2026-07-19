@@ -101,19 +101,30 @@ templateSnippets:
 
   # ==========================================================================
   # Varnish cache misses loop back through HAProxy to reach the original app.
-  # The external request has already consumed its shared-rate-limit budget, so
-  # remove the parsed limit before the priority-025 dispatch for source-verified
-  # Varnish traffic. This prevents every miss from being counted twice and
-  # prevents all clients' misses from self-throttling on one Varnish pod IP.
+  # This snippet owns loopback detection (the Varnish-source map) and marks such
+  # refetches with txn.cache_loopback so every client-facing feature can skip
+  # them — the external request was already rate-limited and WAF-inspected before
+  # it reached Varnish. Runs at priority 024, before the rate-limit dispatch
+  # (025) and the Coraza pass (050) that honor the marker.
   # ==========================================================================
-  frontend-spoe-filters-024-haptic-cache-rate-limit-loopback:
+  frontend-spoe-filters-024-haptic-cache-loopback:
     template: |
       {%- var enabled = extraContext | dig("cache", "varnish", "enabled") | fallback("false") | tostring() %}
-      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
-      {%- var messages = toStringSlice(messagesAny) %}
-      {%- if enabled == "true" && (messages contains "check-ratelimit") %}
+      {%- if enabled == "true" %}
         {%- var srcMap, _ = pathResolver.GetPath("haptic-varnish-src.map", "map") %}
-      http-request unset-var(txn.rl_limit) if { src,map({{ srcMap }}) -m found }
+      {#- Mark the internal Varnish refetch. The loopback re-enters via :80
+          http-tcp -> http_frontend, which preserves the Varnish pod source IP
+          through send-proxy-v2, so a src match identifies it. -#}
+      http-request set-var(txn.cache_loopback) bool(true) if { src,map({{ srcMap }}) -m found }
+        {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
+        {%- var messages = toStringSlice(messagesAny) %}
+        {%- if messages contains "check-ratelimit" %}
+      {#- The miss already consumed the external request's budget; drop the
+          parsed limit before the priority-025 dispatch so it isn't counted
+          twice (and so all clients' misses don't self-throttle on one Varnish
+          pod IP). -#}
+      http-request unset-var(txn.rl_limit) if { var(txn.cache_loopback) -m bool }
+        {%- end %}
       {%- end %}
 
   # ==========================================================================

@@ -171,6 +171,14 @@ templateSnippets:
       {%- else %}
       http-request set-var(txn.coraza_active) bool(true) if { var(txn.coraza_app) -m found } || { var(txn.coraza_mode) -m found }
       {%- end %}
+      {#- Skip Coraza on a Varnish cache-miss loopback. The caching library marks
+          such internal refetches with txn.cache_loopback (it owns the
+          Varnish-source detection); re-running Coraza on a refetch only doubles
+          WAF CPU/latency (measured ~2.3x on cache+WAF routes) with no added
+          protection — the client-facing pass already inspected the request
+          before it reached Varnish. The var is unset (a harmless no-op) when the
+          cache tier is off, so this needs no knowledge of cache internals. -#}
+      http-request set-var(txn.coraza_active) bool(false) if { var(txn.cache_loopback) -m bool }
       http-request set-var(txn.coraza_body_mode) str(buffered) if { var(txn.coraza_active) -m bool } { var(txn.coraza_body_policy) -m str buffered } { method POST PUT PATCH DELETE }
       http-request set-var(txn.coraza_detect_only) bool(true) if { var(txn.coraza_active) -m bool } { var(txn.coraza_mode) -m str detect }
       {#- Buffered profiles inspect a bounded complete body. A chunked/streaming
