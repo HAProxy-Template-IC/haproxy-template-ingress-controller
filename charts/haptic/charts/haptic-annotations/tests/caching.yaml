@@ -242,3 +242,65 @@ validationTests:
       - type: not_contains
         target: "k8s:varnish-cache"
         pattern: "kind: PodDisruptionBudget"
+
+  test-haptic-cache-ttl-unit-suffix-rejected:
+    description: >-
+      cache-ttl with a unit suffix (e.g. "60s") is rejected at admission instead
+      of being written verbatim into haptic-cache-ttl.map, where the Varnish VCL
+      would compute std.duration("60s"+"s")=0s and silently never cache. Regression
+      pin for the toint() footgun (Atoi parses "60s" to 0, passing a `< 0` guard).
+    extraContext:
+      renderMode: admission
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-ttl
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-ttl: "60s"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-ttl.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "Invalid value '60s' for annotation 'haproxy-haptic.org/cache-ttl'.*Must be a non-negative integer .seconds. with no unit suffix" }
+
+  test-haptic-cache-max-object-size-unit-suffix-rejected:
+    description: >-
+      cache-max-object-size with a unit suffix ("1mb") is rejected at admission —
+      the digits-only guard, not a reliance on toint()<=0, is what enforces it.
+    extraContext:
+      renderMode: admission
+      cache:
+        varnish:
+          enabled: true
+          replicas: 2
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-maxsize
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+              haproxy-haptic.org/cache-max-object-size: "1mb"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-maxsize.example.com
+                http:
+                  paths:
+                    - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "Invalid value '1mb' for annotation 'haproxy-haptic.org/cache-max-object-size'.*Must be a positive integer .bytes. with no unit suffix" }

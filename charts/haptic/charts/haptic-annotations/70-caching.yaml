@@ -41,7 +41,13 @@ templateSnippets:
             {%- enLines = append(enLines, rid + " 1") %}
             {%- var ttl = ingress.Metadata.Annotations["haproxy-haptic.org/cache-ttl"] %}
             {%- if ttl != "" %}
-              {%- if toint(ttl) < 0 %}{{ fail("Invalid value '" + ttl + "' for annotation 'haproxy-haptic.org/cache-ttl' on Ingress '" + rid + "'. Must be a non-negative integer (seconds).") }}{%- end %}
+              {#- Validate the raw string, not toint(ttl): toint uses strconv.Atoi
+                  (all-or-nothing), so a unit-suffixed value like "60s" parses to 0,
+                  passes a `toint(ttl) < 0` guard, and is written verbatim into
+                  haptic-cache-ttl.map — where the Varnish VCL computes
+                  std.duration(ttl + "s") = "60ss" = 0s and silently never caches.
+                  Require digits only so a bad unit is rejected at admission. -#}
+              {%- if !regex_search(ttl, "^[0-9]+$") %}{{ fail("Invalid value '" + ttl + "' for annotation 'haproxy-haptic.org/cache-ttl' on Ingress '" + rid + "'. Must be a non-negative integer (seconds) with no unit suffix, e.g. \"60\" not \"60s\".") }}{%- end %}
               {%- ttlLines = append(ttlLines, rid + " " + ttl) %}
             {%- end %}
             {%- var skip = ingress.Metadata.Annotations["haproxy-haptic.org/cache-exclude-content-types"] %}
@@ -58,7 +64,9 @@ templateSnippets:
             {%- end %}
             {%- var maxsz = ingress.Metadata.Annotations["haproxy-haptic.org/cache-max-object-size"] %}
             {%- if maxsz != "" %}
-              {%- if toint(maxsz) <= 0 %}{{ fail("Invalid value '" + maxsz + "' for annotation 'haproxy-haptic.org/cache-max-object-size' on Ingress '" + rid + "'. Must be a positive integer (bytes).") }}{%- end %}
+              {#- Same footgun as cache-ttl: validate the raw digits-only string
+                  rather than leaning on toint()<=0 to reject unit suffixes. -#}
+              {%- if !regex_search(maxsz, "^[0-9]+$") || toint(maxsz) <= 0 %}{{ fail("Invalid value '" + maxsz + "' for annotation 'haproxy-haptic.org/cache-max-object-size' on Ingress '" + rid + "'. Must be a positive integer (bytes) with no unit suffix, e.g. \"1048576\" not \"1mb\".") }}{%- end %}
               {%- sizeLines = append(sizeLines, rid + " " + maxsz) %}
             {%- end %}
           {%- end %}
