@@ -1,6 +1,8 @@
 package templating
 
 import (
+	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -8,6 +10,56 @@ import (
 
 	"github.com/stretchr/testify/assert"
 )
+
+// TestSharedContext_ComputeIfAbsent_PanicUnwrapped verifies that a panic raised
+// inside compute() (e.g. a template fail()/env.Stop()) is re-raised with its
+// ORIGINAL value, not wrapped in singleflight's *panicError whose Error()
+// appends a debug.Stack() dump.
+func TestSharedContext_ComputeIfAbsent_PanicUnwrapped(t *testing.T) {
+	ctx := NewSharedContext()
+	sentinel := errors.New("stop: validation halt")
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		ctx.ComputeIfAbsent("k", func() any { panic(sentinel) })
+	}()
+
+	assert.Equal(t, sentinel, recovered, "must re-raise the original panic value, not singleflight's *panicError")
+	if err, ok := recovered.(error); ok {
+		assert.NotContains(t, err.Error(), "goroutine", "no Go stack trace should leak into the error message")
+		assert.NotContains(t, err.Error(), "debug.Stack", "no Go stack trace should leak into the error message")
+	}
+}
+
+// TestSharedContext_ComputeIfAbsent_PanicReachesAllCallers verifies the abort
+// still propagates to every concurrent caller of the same key (compute always
+// panics with the sentinel, so whether a goroutine computes or waits behind
+// singleflight it must recover that sentinel).
+func TestSharedContext_ComputeIfAbsent_PanicReachesAllCallers(t *testing.T) {
+	ctx := NewSharedContext()
+	sentinel := errors.New("boom")
+
+	const n = 16
+	var wg sync.WaitGroup
+	recovered := make([]any, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			defer func() { recovered[idx] = recover() }()
+			ctx.ComputeIfAbsent("same-key", func() any { panic(sentinel) })
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < n; i++ {
+		assert.Equal(t, sentinel, recovered[i], "caller %d must abort with the original panic value", i)
+		if err, ok := recovered[i].(error); ok {
+			assert.False(t, strings.Contains(err.Error(), "goroutine"), "caller %d error must not contain a stack trace", i)
+		}
+	}
+}
 
 func TestSharedContext_ComputeIfAbsent_Basic(t *testing.T) {
 	ctx := NewSharedContext()
