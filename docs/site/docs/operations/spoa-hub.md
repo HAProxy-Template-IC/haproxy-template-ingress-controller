@@ -143,28 +143,23 @@ kubectl logs -n <namespace> <haproxy-pod> -c spoa-hub | grep '"transaction"'
 
 Each record names the matched rules, the matched values, and the request details, which is what you need to decide: a true positive stays; a false positive becomes a scoped exclusion on the policy, no SecLang needed.
 
-You have three structured, self-service-safe ways to tune a false positive, in rough order of surgical-ness:
+You have two structured, self-service-safe ways to tune a false positive: `ruleExclusions` for exclusions and `allowedMethods` for method-driven hits.
 
-Drop a request field from a whole attack category, when a known field trips a category (a search box tripping SQL-injection):
-
-```yaml
-my-policy:
-  enforcement: detect
-  excludedTargetsByTag:
-    attack-sqli: ["ARGS:q"]
-    attack-xss: ["ARGS:comment"]
-```
-
-Exclude or disable specific CRS rules — optionally scoped to matching paths — when a named rule false-positives on legitimate traffic. This is `ruleExclusions`: you supply only rule IDs, an exact target variable, and a literal path; the chart writes the CRS directive. The canonical case is a git host, where CRS rule 930130 (restricted-file access) fires on every `.git/` git-over-HTTP URL:
+`ruleExclusions` covers the full range from a whole attack category down to a single rule on a single path. You supply only rule IDs or CRS tags, an exact target variable, and a literal path; the chart writes the CRS directive:
 
 ```yaml
 my-policy:
   enforcement: detect
   ruleExclusions:
-    # disable one rule only on matching paths:
+    # drop a request field from a whole attack category (a search box
+    # tripping SQL-injection and XSS):
+    - tags: [attack-sqli, attack-xss]
+      excludeTarget: "ARGS:q"
+    # disable one rule only on matching paths (a git host, where CRS rule
+    # 930130 fires on every .git/ git-over-HTTP URL):
     - rules: [930130]
       onPathContains: ".git/"        # or onPathPrefix / onPathExact / onPathSuffix
-    # drop one parameter from a rule (optionally path-scoped):
+    # drop one parameter from a single rule (optionally path-scoped):
     - rules: [941320]
       excludeTarget: "ARGS:wp_post"
     # disable a rule everywhere in this app:
@@ -173,7 +168,7 @@ my-policy:
 
 `ruleExclusions` works in a self-service catalog without any administrator grant. The chart reserves the CRS setup, anomaly scoring, and correlation rules (900000-901999, 949xxx, 959xxx, 980xxx, 990xxx+) so an exclusion can silence an attack rule that false-positives but can't disable the scoring rule that makes the block decision — you can't turn off your own enforcement through an exclusion. Regex collection keys (`ARGS:/regex/`) are rejected; only exact variable names are allowed.
 
-Widen the method allowlist, when a whole class of hits comes from a method the app legitimately uses (`PUT`, `PATCH`, `DELETE` on an HTTP API) — set the policy's `allowedMethods` instead of excluding rule targets one by one.
+Widen the method allowlist when a whole class of hits comes from a method the app legitimately uses (`PUT`, `PATCH`, `DELETE` on an HTTP API) — set the policy's `allowedMethods` instead of excluding rule targets one by one.
 
 ### Flip to deny
 

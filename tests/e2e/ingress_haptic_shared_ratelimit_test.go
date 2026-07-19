@@ -117,8 +117,7 @@ func TestHapticSharedRateLimit(t *testing.T) {
 						"haproxy-haptic.org/rate-limit-requests": fmt.Sprintf("%d", leaseLimit),
 						"haproxy-haptic.org/rate-limit-period":   "60s",
 						"haproxy-haptic.org/rate-limit-burst":    fmt.Sprintf("%d", leaseLimit),
-						"haproxy-haptic.org/waf":                 "modsecurity",
-						"haproxy-haptic.org/waf-mode":            "deny",
+						"haproxy-haptic.org/waf-policy":          "streaming-search",
 					},
 				},
 				IngressSpec{

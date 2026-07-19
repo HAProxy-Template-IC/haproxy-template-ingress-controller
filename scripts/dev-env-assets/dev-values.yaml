@@ -110,9 +110,9 @@ controller:
                 description: Metadata inspection with a narrow search exception and no request-body buffering
                 requestBody:
                   mode: none
-                excludedTargetsByTag:
-                  attack-sqli: ["ARGS:q"]
-                  attack-xss: ["ARGS:q"]
+                ruleExclusions:
+                  - tags: [attack-sqli, attack-xss]
+                    excludeTarget: "ARGS:q"
               form-body-inspection:
                 requestBody:
                   mode: any

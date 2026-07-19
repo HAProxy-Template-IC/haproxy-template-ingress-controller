@@ -5,13 +5,20 @@ validationTests:
   test-haptic-rate-limit-shared-ip:
     _helm_skip_test: '{{ if not .Values.rateLimit.shared.enabled }}true{{ end }}'
     description: shared rate-limit-requests (ip key, token-bucket) → packed map + SPOE dispatch
-    # The fixture Ingress also sets waf/waf-mode; waf-mode is an enforcement
-    # override gated once any WAF policy activates governance. Set it here so the
-    # test is self-contained whether or not the deployment defines a policy.
+    # The fixture Ingress also selects a WAF policy so Coraza is active for the
+    # ordering assertion below; waf-mode is an enforcement override gated once
+    # WAF governance is active. A policy catalog is configured here so the test
+    # is self-contained whether or not the deployment defines one.
     extraContext:
       waf:
         ingressPermissions:
+          allowPolicySelection: true
           allowEnforcementOverride: true
+        policies:
+          defaultPolicy: ""
+          inline:
+            baseline: {}
+          configMapRefs: []
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -22,7 +29,7 @@ validationTests:
             annotations:
               haproxy-haptic.org/rate-limit-requests: "100"
               haproxy-haptic.org/rate-limit-period: "1m"
-              haproxy-haptic.org/waf: modsecurity
+              haproxy-haptic.org/waf-policy: baseline
               haproxy-haptic.org/waf-mode: deny
           spec:
             ingressClassName: haptic

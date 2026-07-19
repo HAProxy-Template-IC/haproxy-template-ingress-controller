@@ -707,7 +707,7 @@ controller:
             limits:
               maxCount: 16
               maxSecLangBytes: 65536
-              maxExcludedTargets: 256
+              maxRuleExclusions: 256
             # Inline policies use the same schema as ConfigMap policies:
             #
             # inline:
@@ -717,8 +717,6 @@ controller:
             #     requestBody:
             #       mode: none            # none (default), any, or json
             #       maxBytes: 4096         # optional; <= policies.requestBody.maxBytes
-            #     excludedTargetsByTag:
-            #       attack-sqli: ["ARGS:q"]
             #     # Structured CRS tuning — lowered to setup-position
             #     # SecActions BEFORE the CRS rules include (a position raw
             #     # secLang cannot reach), and allowed in self-service

@@ -316,12 +316,6 @@ migrationCoverage:
       haproxy-haptic.org/mock-response-content-type:
         status: supported
         note: "Content-Type for the mock-response body (default application/json)."
-      haproxy-haptic.org/waf-rules:
-        status: supported
-        note: "Appends per-Ingress SecLang after a selected reusable policy; creates a private Coraza application and is admitted only when extraContext.waf.ingressPermissions.allowCustomRules=true while Coraza governance is active. Without a policy it remains the legacy per-application rule path."
-      haproxy-haptic.org/waf-rules-before:
-        status: supported
-        note: "Prepends advanced per-Ingress SecLang before the selected reusable policy; requires waf-policy and explicit administrator authorization through ingressPermissions.allowCustomRules."
       haproxy-haptic.org/oauth:
         status: supported
         note: "oauth2-proxy only; desugars onto external-auth, deriving the oauth2-proxy backend from the Ingress's own oauth-uri-prefix path; skipped when auth-url is set."
@@ -547,9 +541,6 @@ migrationCoverage:
       haproxy-haptic.org/consistent-hash-by:
         status: supported
         note: "Configures consistent hashing on the backend, emitting a `balance` directive plus `hash-type consistent`. Accepts a hash key: `uri`, `source`, `$http_<name>`, `$arg_<name>`, or `$cookie_<name>`; any other value is used verbatim as a HAProxy fetch expression via `balance hash <value>`."
-      haproxy-haptic.org/waf:
-        status: supported
-        note: "Legacy \"modsecurity\" opt-in enables WAF processing, keyed by ns/name; fails loud without the coraza plugin and cannot be mixed with a reusable policy."
       haproxy-haptic.org/waf-mode:
         status: supported
         note: "deny|detect (default from the selected policy, otherwise deny); administrator-controlled by ingressPermissions.allowEnforcementOverride, and invalid or context-free values fail loud."
