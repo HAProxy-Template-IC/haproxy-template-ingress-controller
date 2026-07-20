@@ -288,6 +288,25 @@ HAProxy then serves the ECDSA or RSA certificate per client. A single-algorithm 
 !!! note "How HAProxy selects the certificate"
     HAProxy can also auto-select from a directory of certificates by reading each certificate's Subject Alternative Name (SAN). HAPTIC instead builds an explicit certificate list from your Ingress `spec.tls` entries: the hostnames you route are the source of truth — they can differ from a certificate's SAN, such as a wildcard certificate serving an exact host — and the list carries per-certificate OCSP-stapling and client-certificate options a bare directory can't. The RSA/ECDSA auto-selection is identical either way; it's a HAProxy handshake behavior, not a property of how the certificates are loaded.
 
+## TLS session resumption
+
+TLS session resumption lets a returning client skip the full handshake and reconnect with an abbreviated one — one fewer round trip and no repeated asymmetric crypto. HAProxy does this with *session tickets*: it encrypts the session state into a ticket the client presents on its next connection.
+
+A ticket only helps if the pod that receives it can decrypt it. HAPTIC runs an active-active HAProxy fleet, and a client's reconnect can land on any pod, so if each pod used its own random ticket key, resumption would fail whenever a client hit a different pod than the one that issued its ticket. HAPTIC instead gives every pod the same session-ticket encryption key (STEK), so a ticket issued by one pod resumes on any other. This covers both TLS 1.2 (RFC 5077 tickets) and TLS 1.3 (RFC 8446 pre-shared keys).
+
+Session resumption is off by default. Enable it in the chart:
+
+```yaml
+tlsSessionTickets:
+  enabled: true
+```
+
+### Key rotation
+
+A long-lived ticket key weakens forward secrecy: an attacker who later obtains it can decrypt every past session it protected. HAPTIC rotates the key daily and keeps a sliding window of three keys — the newest encrypts new tickets, the older two still decrypt tickets they issued, so tickets stay resumable for about two days after issue. Rotation is automatic and needs no external component: the controller renders the key file, reads back its own previous output on the next render to tell whether a day has passed, and slides the window forward with one hitless HAProxy reload. Keys are full-entropy random values generated in the cluster — nothing derives them from a static secret.
+
+You don't manage, rotate, or back up the keys; the toggle is the only configuration.
+
 ## Webhook certificates
 
 The admission webhook requires TLS certificates. By default the chart generates a self-signed certificate itself — no cert-manager required (`controller.webhook.certManager.enabled` is `false`):

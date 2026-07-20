@@ -388,7 +388,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	rendered, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.ExtraContext)
+	rendered, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles, test.ExtraContext)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -416,7 +416,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 6. Build template context for JSONPath assertions
-	templateContext := r.buildRenderingContext(fixtureStores, validationPaths, httpStore, currentConfig)
+	templateContext := r.buildRenderingContext(fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles)
 
 	// 7. Create render dependencies for deterministic assertion (if needed)
 	renderDeps := &RenderDependencies{
@@ -425,6 +425,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		ValidationPaths: validationPaths,
 		HTTPStore:       httpStore,
 		CurrentConfig:   currentConfig,
+		CurrentFiles:    test.CurrentFiles,
 		ExtraContext:    test.ExtraContext,
 	}
 

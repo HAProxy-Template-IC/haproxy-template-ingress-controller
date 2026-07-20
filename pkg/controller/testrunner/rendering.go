@@ -117,9 +117,9 @@ type RenderOutput struct {
 // Returns rendered haproxy.cfg, auxiliary files, k8sResources (template name → YAML),
 // status patches (key `<ns>/<name>:<phase>` → JSON-marshalled status content), and
 // include-stats (when profiling) bundled in a RenderOutput, plus the render error.
-func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]any) (RenderOutput, error) {
+func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string, testExtraContext map[string]any) (RenderOutput, error) {
 	// Build rendering context with fixture stores
-	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig)
+	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig, currentFiles)
 
 	mergeTestExtraContext(renderCtx, testExtraContext)
 
@@ -214,7 +214,7 @@ func (r *Runner) RenderFixtures(fixtures map[string][]any) (RenderOutput, error)
 
 	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(httpFixtures, r.logger), r.logger)
 
-	return r.renderWithStores(r.engineTemplate, fixtureStores, r.validationPaths, httpStore, nil, nil)
+	return r.renderWithStores(r.engineTemplate, fixtureStores, r.validationPaths, httpStore, nil, nil, nil)
 }
 
 // mergeTestExtraContext folds a per-test extraContext map into the rendering
@@ -352,7 +352,7 @@ func collectEvents(renderCtx map[string]any) string {
 //   - Creates PathResolver from ValidationPaths (not from config.Dataplane)
 //   - Separates haproxy-pods store from resource stores
 //   - Accepts optional currentConfig for slot-aware server assignment testing
-func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig) map[string]any {
+func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, currentFiles map[string]string) map[string]any {
 	// Create PathResolver from ValidationPaths
 	pathResolver := rendercontext.PathResolverFromValidationPaths(validationPaths)
 
@@ -376,6 +376,7 @@ func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validat
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpStore),
 		rendercontext.WithCurrentConfig(currentConfig),
+		rendercontext.WithCurrentAuxFiles(currentFiles),
 		rendercontext.WithTypedResources(r.typedResourceTypes),
 		rendercontext.WithCapabilities(r.capabilities),
 	)

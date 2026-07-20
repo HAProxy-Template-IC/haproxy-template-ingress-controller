@@ -36,6 +36,7 @@ type RenderDependencies struct {
 	ValidationPaths *dataplane.ValidationPaths
 	HTTPStore       *FixtureHTTPStoreWrapper
 	CurrentConfig   *parserconfig.StructuredConfig
+	CurrentFiles    map[string]string
 	ExtraContext    map[string]any
 }
 
@@ -71,6 +72,7 @@ func (r *Runner) assertDeterministic(
 		deps.ValidationPaths,
 		deps.HTTPStore,
 		deps.CurrentConfig,
+		deps.CurrentFiles,
 		deps.ExtraContext,
 	)
 	if err != nil {

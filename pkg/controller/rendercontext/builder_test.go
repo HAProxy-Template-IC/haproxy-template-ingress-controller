@@ -237,6 +237,28 @@ func TestBuilder_Build_WithExtraContext(t *testing.T) {
 	assert.Contains(t, ctx, "version")
 }
 
+func TestBuilder_Build_WithCurrentAuxFiles(t *testing.T) {
+	cfg := &config.Config{}
+	pathResolver := &templating.PathResolver{}
+	logger := testutil.NewTestLogger()
+
+	// With files: exposed under "currentFiles" as a *map[string]string
+	// (Scriggo pointer decl) that derefs to the provided map.
+	files := map[string]string{"tls-ticket-keys": "line1\nline2\nline3"}
+	ctx := NewBuilder(cfg, pathResolver, logger, WithCurrentAuxFiles(files)).Build().Context
+	got, ok := ctx["currentFiles"].(*map[string]string)
+	require.True(t, ok, "currentFiles must be *map[string]string, got %T", ctx["currentFiles"])
+	assert.Equal(t, files, *got)
+
+	// Without the option: still non-nil (empty) so templates index it
+	// without a nil guard.
+	ctxEmpty := NewBuilder(cfg, pathResolver, logger).Build().Context
+	gotEmpty, ok := ctxEmpty["currentFiles"].(*map[string]string)
+	require.True(t, ok)
+	assert.NotNil(t, *gotEmpty)
+	assert.Empty(t, *gotEmpty)
+}
+
 func TestSortSnippetNames(t *testing.T) {
 	tests := []struct {
 		name     string

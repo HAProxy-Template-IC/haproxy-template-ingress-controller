@@ -226,7 +226,11 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	wiring, err := setupReconciliation(setup, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, storeProvider, logger)
+	// Expose the last render's general aux files to templates as `currentFiles`,
+	// letting a template read its own prior output (e.g. self-rotating TLS
+	// session-ticket keys). StateCache holds them from TemplateRenderedEvent.
+	currentAuxFiles := currentAuxFilesProvider(stateCache)
+	wiring, err := setupReconciliation(setup, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, logger)
 	if err != nil {
 		return err
 	}

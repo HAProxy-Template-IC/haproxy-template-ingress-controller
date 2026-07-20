@@ -1088,6 +1088,13 @@ func (in *ValidationTest) DeepCopyInto(out *ValidationTest) {
 		*out = make([]HTTPResourceFixture, len(*in))
 		copy(*out, *in)
 	}
+	if in.CurrentFiles != nil {
+		in, out := &in.CurrentFiles, &out.CurrentFiles
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	in.ExtraContext.DeepCopyInto(&out.ExtraContext)
 	if in.Requires != nil {
 		in, out := &in.Requires, &out.Requires

@@ -313,6 +313,7 @@ repoint
 resourceapplier
 RFC
 Robusta
+STEK
 Rollout
 rollout
 routable

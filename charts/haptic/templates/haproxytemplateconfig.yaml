@@ -215,6 +215,16 @@ spec:
           "namespace" ($defaultSSL.namespace | default .Release.Namespace)) }}
   {{- end }}
 
+  {{- /* TLS session tickets (self-rotating shared STEK). Presence of
+         extraContext.tls.sessionTickets turns on the ssl library's ticket-key
+         file emission and the bind `tls-ticket-keys` option. */ -}}
+  {{- if .Values.tlsSessionTickets.enabled }}
+    {{- $tls := $extraContext.tls | default dict }}
+    {{- if not (kindIs "map" $tls) }}{{- fail "controller.config.templatingSettings.extraContext.tls must be a map." }}{{- end }}
+    {{- $_ := set $extraContext "tls" $tls }}
+    {{- $_ := set $tls "sessionTickets" (dict "enabled" true) }}
+  {{- end }}
+
   {{- /* Gateway API controllerName for status patches */ -}}
   {{- if $controller.templateLibraries.gateway.enabled }}
     {{- $_ := set $extraContext "controllerName" .Values.gatewayClass.controllerName }}

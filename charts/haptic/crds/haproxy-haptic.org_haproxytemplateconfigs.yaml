@@ -806,6 +806,15 @@ spec:
                                 server srv1 10.0.0.1:8080
                                 server srv2 10.0.0.2:8080
                       type: string
+                    currentFiles:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        CurrentFiles are the currently-deployed general auxiliary files
+                        (filename → content), exposed to templates under `currentFiles`. Used to
+                        test templates that read their own prior output — e.g. self-rotating TLS
+                        session-ticket keys inspecting the current key file's embedded date marker.
+                      type: object
                     description:
                       description: Description explains what this test validates.
                       type: string

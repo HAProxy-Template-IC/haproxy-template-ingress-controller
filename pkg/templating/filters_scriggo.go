@@ -15,9 +15,34 @@
 package templating
 
 import (
+	"crypto/rand"
+
 	"gitlab.com/haproxy-haptic/scriggo/builtin"
 	"gitlab.com/haproxy-haptic/scriggo/native"
 )
+
+// scriggoRandBytes returns n cryptographically-secure random bytes as a string
+// (raw bytes; pipe through base64/hex to encode). Backed by crypto/rand.
+//
+// NON-DETERMINISTIC by design: every call returns fresh bytes, so a template
+// that calls it produces a different render each time. Callers MUST guard usage
+// so steady-state renders stay byte-identical — e.g. the TLS session-ticket-key
+// template only calls this when a rotation is actually due (the current file's
+// embedded date marker is older than today), and otherwise re-emits the current
+// file unchanged. Unguarded use breaks HAPTIC's diff-based reload decisions.
+func scriggoRandBytes(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand.Read does not fail on supported platforms; return empty
+		// so template validation (e.g. haproxy_valid on a wrong-length key)
+		// surfaces the problem rather than emitting weak key material.
+		return ""
+	}
+	return string(buf)
+}
 
 // buildScriggoGlobals creates the global declarations for Scriggo templates.
 // In Scriggo, filters become regular functions that templates can call.
@@ -215,6 +240,7 @@ func registerScriggoBuiltinCore(decl native.Declarations) {
 	decl["hmacSHA256"] = builtin.HmacSHA256
 	decl["sha1"] = builtin.Sha1
 	decl["sha256"] = builtin.Sha256
+	decl["randBytes"] = scriggoRandBytes
 
 	// encoding
 	decl["base64"] = builtin.Base64

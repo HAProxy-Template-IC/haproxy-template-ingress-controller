@@ -100,6 +100,7 @@ func createReconciliationComponents(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
+	currentAuxFiles func() map[string]string,
 	storeProvider stores.StoreProvider,
 	logger *slog.Logger,
 ) (*reconciliationWiring, error) {
@@ -149,14 +150,15 @@ func createReconciliationComponents(
 	// snapshot into the *[]*<generated-struct> shape Scriggo's typed globals
 	// are declared against.
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
-		Engine:             engine,
-		Config:             cfg,
-		Logger:             logger,
-		Capabilities:       capabilities,
-		HAProxyPodStore:    haproxyPodStore,
-		HTTPStoreComponent: httpStoreComponent,
-		CurrentConfigStore: currentConfigStore,
-		TypedResourceTypes: wiring.TypedResourceTypes,
+		Engine:                  engine,
+		Config:                  cfg,
+		Logger:                  logger,
+		Capabilities:            capabilities,
+		HAProxyPodStore:         haproxyPodStore,
+		HTTPStoreComponent:      httpStoreComponent,
+		CurrentConfigStore:      currentConfigStore,
+		CurrentAuxFilesProvider: currentAuxFiles,
+		TypedResourceTypes:      wiring.TypedResourceTypes,
 	})
 
 	// Two ValidationService instances, two pipelines. The split lets the

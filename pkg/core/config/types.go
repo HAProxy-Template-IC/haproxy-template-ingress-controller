@@ -179,6 +179,12 @@ type ValidationTest struct {
 	// The content is parsed using the HAProxy config parser before being passed to templates.
 	CurrentConfig string `yaml:"currentConfig,omitempty"`
 
+	// CurrentFiles are the currently-deployed general auxiliary files
+	// (filename → content) exposed to templates under `currentFiles`. Used to
+	// test templates that read their own prior output — e.g. self-rotating TLS
+	// session-ticket keys inspecting the current key file's date marker.
+	CurrentFiles map[string]string `yaml:"currentFiles,omitempty" json:"currentFiles,omitempty"`
+
 	// ExtraContext provides custom variables that override the global extraContext for this test.
 	// This allows testing template behavior with different extraContext values.
 	ExtraContext map[string]any `yaml:"extraContext,omitempty" json:"extraContext,omitempty"`

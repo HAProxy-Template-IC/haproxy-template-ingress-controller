@@ -55,6 +55,12 @@ func BuildAdditionalDeclarations(cfg *config.Config, result *typebootstrap.Resul
 	}
 	decls := map[string]any{
 		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+		// Current general aux files (filename → content) — lets a template read
+		// its own prior output, e.g. self-rotating TLS session-ticket keys.
+		// Declared as a pointer (Scriggo requires pointers for variable
+		// declarations, like currentConfig); the engine derefs it, so templates
+		// index it directly as a map. Always injected non-nil (empty map).
+		"currentFiles": (*map[string]string)(nil),
 	}
 	// Surface every watched resource as a field on the `resources`
 	// declared struct, even ones typebootstrap had no schema for
