@@ -643,6 +643,17 @@ publish-chart-snapshot:
   needs:
     - compute-ci-image-tag
     - job: build-ci
+    # The published chart's app-version pins the spoa-hub sidecar to
+    # spoa-hub:main-<sha> (see haptic.spoaHub.image), so the chart snapshot must
+    # NOT ship unless that hub image was built and pushed. Without this needs,
+    # a prep-spoa-plugins failure (e.g. a plugin package not yet published in
+    # its registry — a Renovate-bump/publish race) skips build-spoa-image-main
+    # but still publishes the chart, which then references a non-existent hub
+    # image and stalls every consumer's upgrade on ImagePullBackOff. Gating here
+    # makes the snapshot atomic with its hub image: both publish, or neither.
+    # build-spoa-image-main shares this job's exact rules (main push, not
+    # schedule/tag), so the dependency is always satisfiable.
+    - job: build-spoa-image-main
   rules:
     # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
     # publishing, image pushes, pages deploys, or release tagging from cron.
