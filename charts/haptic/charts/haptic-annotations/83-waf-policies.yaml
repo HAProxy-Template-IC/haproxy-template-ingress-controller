@@ -366,14 +366,21 @@ templateSnippets:
                 entry stores the FULL target variable (tx.* today), so a tenant
                 never types a collection prefix and can never reach the writable
                 GLOBAL/IP/SESSION state collections; a future non-tx tunable is
-                just another entry. appendList entries EXTEND the crs-setup
-                default (add an allowance, never drop the defaults or set a
-                wildcard); boundedInt entries replace a scalar within [min,max].
-                Both lower to one setup-position SecAction spliced before the CRS
-                include — so no tenant secLang is needed, and the append reads
-                the crs-setup default that always precedes the CRS rules (a
-                deployment that Includes @owasp_crs must Include crs-setup first
-                or CRS itself is broken). -#}
+                just another entry.
+
+                mergeList entries OWN the CRS default list. The crs-setup
+                SecAction that would set the variable (e.g. 900220 for content
+                types) is COMMENTED OUT in crs-setup by default, so the variable
+                is unset at render time — a runtime `%{...}` append would build an
+                incomplete list the rule then rejects (this was a real bug: git
+                clones 403'd because 920420 wraps the type as |type| and checks
+                @within, and the appended value lacked the leading pipe and the
+                defaults). The chart therefore emits the FULL value as a REPLACE:
+                its baked CRS default plus the tenant's additions, each token
+                formatted exactly as the rule matches it (|type|-wrapped,
+                space-joined for content types). Same shape as allowedMethods,
+                spliced before the CRS include where the rule reads it. boundedInt
+                entries replace a scalar within [min,max]. No tenant secLang. -#}
             var crsSettingsAny = policy | dig("crsSettings")
             if crsSettingsAny != nil {
               var crsSettings, crsSettingsOK = crsSettingsAny.(map[string]any)
@@ -381,8 +388,10 @@ templateSnippets:
                 return "WAF policy '" + policyName + "' from " + source + " field crsSettings must be a map of CRS tuning names to values."
               }
               var crsRegistry = map[string]any{
-                "allowedRequestContentTypes": map[string]any{"kind": "appendList", "target": "allowed_request_content_type", "prefix": "", "suffix": "|", "charset": "^[A-Za-z0-9][A-Za-z0-9.+/_-]*$", "hint": "a media type such as application/x-git-upload-pack-request"},
-                "allowedHttpVersions":        map[string]any{"kind": "appendList", "target": "allowed_http_versions", "prefix": " ", "suffix": "", "charset": "^HTTP/[0-9.]{1,8}$", "hint": "an HTTP version token such as HTTP/2.0"},
+                {#- crsDefault mirrors the CRS 900220 recommended content-type
+                    list (commented out in crs-setup, so the chart owns it).
+                    Revisit on a CRS major bump if that recommended set changes. -#}
+                "allowedRequestContentTypes": map[string]any{"kind": "mergeList", "target": "allowed_request_content_type", "crsDefault": "|application/x-www-form-urlencoded| |multipart/form-data| |text/xml| |application/xml| |application/soap+xml| |application/json|", "wrap": "|", "sep": " ", "charset": "^[A-Za-z0-9][A-Za-z0-9.+/_-]*$", "hint": "a media type such as application/x-git-upload-pack-request"},
                 "maxFileSize":                map[string]any{"kind": "boundedInt", "target": "max_file_size", "minimum": 1, "maximum": 536870912, "hint": "a byte count between 1 and 536870912"},
                 "maxNumArgs":                 map[string]any{"kind": "boundedInt", "target": "max_num_args", "minimum": 1, "maximum": 100000, "hint": "a count between 1 and 100000"},
                 "totalArgLength":             map[string]any{"kind": "boundedInt", "target": "total_arg_length", "minimum": 1, "maximum": 10485760, "hint": "a byte count between 1 and 10485760"},
@@ -396,26 +405,29 @@ templateSnippets:
                 }
                 var spec = specAny.(map[string]any)
                 var target = spec["target"].(string)
-                if spec["kind"].(string) == "appendList" {
+                if spec["kind"].(string) == "mergeList" {
                   var items, itemsOK = crsSettings[field].([]any)
                   if !itemsOK || len(items) == 0 {
                     return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " must be a non-empty list (each entry " + spec["hint"].(string) + ")."
                   }
                   var charset = spec["charset"].(string)
-                  var appended = "%{tx." + target + "}"
-                  var seenToken = map[string]bool{}
+                  var wrap = spec["wrap"].(string)
+                  var sep = spec["sep"].(string)
+                  {#- Start from the chart-owned CRS default, then append each
+                      tenant token wrapped as the rule matches it.
+                      strings_contains dedupes against both the default and any
+                      earlier addition. Emitted as a REPLACE (full value). -#}
+                  var merged = spec["crsDefault"].(string)
                   for _, rawItem := range items {
                     var token = rawItem | tostring()
                     if !regex_search(token, charset) {
                       return "WAF policy '" + policyName + "' from " + source + " crsSettings." + field + " entry '" + token + "' is invalid; expected " + spec["hint"].(string) + "."
                     }
-                    {#- Dedupe: a token listed twice would append twice, growing the
-                        allowlist with a redundant duplicate entry. -#}
-                    if seenToken[token] { continue }
-                    seenToken[token] = true
-                    appended += spec["prefix"].(string) + token + spec["suffix"].(string)
+                    var wrapped = wrap + token + wrap
+                    if strings_contains(merged, wrapped) { continue }
+                    merged += sep + wrapped
                   }
-                  crsClauses = append(crsClauses, "setvar:'tx."+target+"="+appended+"'")
+                  crsClauses = append(crsClauses, "setvar:'tx."+target+"="+merged+"'")
                 } else {
                   var text = crsSettings[field] | tostring()
                   if !regex_search(text, "^[0-9]+$") {

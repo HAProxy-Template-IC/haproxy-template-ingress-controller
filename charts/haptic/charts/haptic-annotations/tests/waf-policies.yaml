@@ -507,9 +507,12 @@ validationTests:
     description: >-
       crsSettings fine-tunes a rule's INPUTS instead of disabling it: the git
       content-type case allowlists application/x-git-upload-pack-request (rather
-      than excluding CRS 920420). appendList entries extend the crs-setup
-      default via %{tx.<var>}; boundedInt entries replace a scalar. All lower to
-      one setup-position SecAction spliced BEFORE the CRS include.
+      than excluding CRS 920420). mergeList emits the chart-owned CRS default
+      list PLUS the additions as a full REPLACE (each type |type|-wrapped, the
+      way 920420 matches — a runtime %{tx.<var>} append was the earlier bug,
+      because the crs-setup default is commented out and unset). boundedInt
+      entries replace a scalar. All lower to one setup-position SecAction
+      spliced BEFORE the CRS include.
     extraContext:
       spoaHub:
         enabled: true
@@ -536,7 +539,6 @@ validationTests:
               requestBody: { mode: none }
               crsSettings:
                 allowedRequestContentTypes: [application/x-git-upload-pack-request, application/x-git-receive-pack-request]
-                allowedHttpVersions: [HTTP/2.0]
                 maxFileSize: 1048576
           configMapRefs: []
     fixtures:
@@ -553,14 +555,18 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: git, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
-      # appendList extends the crs-setup default (leading %{tx...}) rather than
-      # replacing it, so the CRS defaults are preserved; both git types append.
+      # mergeList REPLACES the variable with the chart-owned CRS default list PLUS
+      # the git types, each |type|-wrapped (how 920420 matches |content-type|
+      # @within), spliced before the CRS include. The default types are present,
+      # then both git types wrapped.
       - type: contains
         target: "file:spoa-hub-config.toml"
-        pattern: '(?s)applications\."policy:git-host"\].*?tx\.allowed_request_content_type=%\{tx\.allowed_request_content_type\}application/x-git-upload-pack-request\|application/x-git-receive-pack-request\|.*?Include @owasp_crs'
-      - type: contains
+        pattern: '(?s)applications\."policy:git-host"\].*?tx\.allowed_request_content_type=\|application/x-www-form-urlencoded\|.*?\|application/json\| \|application/x-git-upload-pack-request\| \|application/x-git-receive-pack-request\|.*?Include @owasp_crs'
+      # Regression guard: it must NOT be a runtime %{tx...} append (the bug that
+      # 403'd git clones because the crs-setup default is unset).
+      - type: not_contains
         target: "file:spoa-hub-config.toml"
-        pattern: '(?s)applications\."policy:git-host"\].*?tx\.allowed_http_versions=%\{tx\.allowed_http_versions\} HTTP/2\.0.*?Include @owasp_crs'
+        pattern: 'allowed_request_content_type=%\{tx'
       - type: contains
         target: "file:spoa-hub-config.toml"
         pattern: '(?s)applications\."policy:git-host"\].*?tx\.max_file_size=1048576.*?Include @owasp_crs'
@@ -624,7 +630,7 @@ validationTests:
 
   test-haptic-waf-policy-crs-settings-dedup:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
-    description: a token listed twice in an appendList is appended once, not duplicated in the allowlist
+    description: mergeList dedupes — a type already in the CRS default, and a type listed twice, each appear once in the emitted allowlist
     extraContext:
       spoaHub:
         enabled: true
@@ -650,7 +656,7 @@ validationTests:
               enforcement: deny
               requestBody: { mode: none }
               crsSettings:
-                allowedRequestContentTypes: [application/json, application/json]
+                allowedRequestContentTypes: [application/json, application/x-git-upload-pack-request, application/x-git-upload-pack-request]
           configMapRefs: []
     fixtures:
       ingresses:
@@ -666,12 +672,18 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: dup, port: { number: 80 } } } }
     assertions:
       - type: haproxy_valid
+      # the git type (not in the CRS default) is added once...
       - type: contains
         target: "file:spoa-hub-config.toml"
-        pattern: 'tx\.allowed_request_content_type=%\{tx\.allowed_request_content_type\}application/json\|'
+        pattern: '\|application/x-git-upload-pack-request\|'
+      # ...not doubled, even though it was listed twice (dedup among additions)...
       - type: not_contains
         target: "file:spoa-hub-config.toml"
-        pattern: 'application/json\|application/json\|'
+        pattern: '\|application/x-git-upload-pack-request\| \|application/x-git-upload-pack-request\|'
+      # ...and application/json (already in the CRS default) is not re-added.
+      - type: not_contains
+        target: "file:spoa-hub-config.toml"
+        pattern: '\|application/json\| \|application/json\|'
 
   test-haptic-waf-policy-rule-exclusions-lower-correctly:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
