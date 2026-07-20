@@ -38,6 +38,13 @@ templatingSettings:
         includeSubdomains: false
         preload: false
 
+      # Fleet-wide TLS session resumption. Off by default; when on, every
+      # HAProxy pod shares one self-rotating session-ticket key (STEK) so a
+      # ticket issued by any pod resumes on any other (TLS 1.2 and 1.3). The
+      # library emits the shared key file and the bind `tls-ticket-keys` option.
+      sessionTickets:
+        enabled: false
+
       # TLS cipher / protocol policy applied to EVERY SSL bind via
       # global ssl-default-bind-* (see global-settings-410-ssl-ciphers).
       # These sub-keys sit beside `hsts` under the single `tls` block; override
@@ -71,7 +78,7 @@ templateSnippets:
   # Uses crt-list for certificate management with per-certificate OCSP configuration
   util-ssl-bind-options:
     template: >-
-      {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1{% if (extraContext | dig("tls", "sessionTickets")) != nil %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
+      {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1{% if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
 
   # Parameterised counterpart of `util-ssl-bind-options` — emits the
   # same `ssl crt-list <path> alpn h2,http/1.1` suffix but reads the
@@ -84,7 +91,7 @@ templateSnippets:
   util-ssl-bind-options-for-crtlist:
     template: |
       {%- macro SSLBindOptionsForCrtlist(crtlistFilename string) string -%}
-        {{- " " -}}ssl crt-list {{ pathResolver.GetPath(crtlistFilename, "crt-list") }} alpn h2,http/1.1{% if (extraContext | dig("tls", "sessionTickets")) != nil %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
+        {{- " " -}}ssl crt-list {{ pathResolver.GetPath(crtlistFilename, "crt-list") }} alpn h2,http/1.1{% if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
       {%- end -%}
 
   # One 80-byte TLS session-ticket key (STEK), base64. The first 8 bytes hold a
@@ -332,9 +339,9 @@ templateSnippets:
       {#-
         Self-rotating TLS session-ticket keys (STEK).
 
-        When session tickets are enabled (extraContext.tls.sessionTickets, set by
-        the chart toggle tlsSessionTickets.enabled), emit a `tls-ticket-keys`
-        general file with THREE 80-byte keys (base64, one per line). The
+        When session tickets are enabled (extraContext.tls.sessionTickets.enabled),
+        emit a `tls-ticket-keys` general file with THREE 80-byte keys (base64, one
+        per line). The
         controller pushes the identical file to every HAProxy pod, so a ticket
         sealed by one pod resumes on any other — for BOTH TLS 1.2 and 1.3.
 
@@ -357,7 +364,7 @@ templateSnippets:
 
         Extension Point: features-* (priority 110, after ssl init 050).
       -#}
-      {%- if (extraContext | dig("tls", "sessionTickets")) != nil -%}
+      {%- if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) -%}
         {#- Today's YYYYMMDD marker. extraContext.tls.sessionTicketsToday pins it
             for deterministic validation tests; production uses the wall clock. -#}
         {%- var today = tostring(extraContext | dig("tls", "sessionTicketsToday") | fallback(now().UTC().Format("20060102"))) -%}

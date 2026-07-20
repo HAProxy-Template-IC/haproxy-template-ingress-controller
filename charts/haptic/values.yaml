@@ -618,6 +618,14 @@ controller:
             maxAge: "31536000"
             includeSubdomains: false
             preload: false
+          # Fleet-wide TLS session resumption. Off by default. When on, the SSL
+          # library emits a self-rotating session-ticket key (STEK) file shared by
+          # every HAProxy pod, so a returning client resumes on any pod (TLS 1.2
+          # and 1.3). The key rotates daily via a 3-key window (one hitless
+          # reload), crypto-random, no secret to manage. See
+          # docs/site/docs/ssl-certificates.md#tls-session-resumption.
+          sessionTickets:
+            enabled: false
         # Shared HAProxy buffering contract for request-body inspectors.
         # tune.bufsize is process-global, so JSON Schema validation and Coraza
         # deliberately share one capacity instead of exposing conflicting knobs.
@@ -1463,23 +1471,6 @@ defaultSSLCertificate:
   #   -----BEGIN PRIVATE KEY-----
   #   MIIEvQIBADANBgkqhkiG9w... (your private key)
   #   -----END PRIVATE KEY-----
-
-# TLS session tickets — session resumption across the HAProxy fleet.
-#
-# HAProxy resumes TLS sessions per process, so in an active-active fleet a
-# ticket sealed by one pod can't be resumed by another (each pod holds a random
-# per-process key): a returning client that lands on a different pod pays a full
-# handshake. Enable this to emit ONE shared, self-rotating session-ticket-key
-# file that the controller pushes to every HAProxy pod, so resumption works
-# across pods — for BOTH TLS 1.2 and TLS 1.3.
-#
-# The keys are truly random (crypto/rand) and rotate themselves daily with no
-# secret to manage and no extra workload: each key carries a date marker in its
-# public name bytes, the controller reads the current file back on each render,
-# and slides a 3-key window forward once a day (one hitless reload). See
-# docs/site/docs/ssl-certificates.md.
-tlsSessionTickets:
-  enabled: false
 
 # SPOA hub sidecar
 # Bundles the haproxy-spoa-hub binary plus seven plugin shared libraries

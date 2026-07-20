@@ -127,7 +127,7 @@ the process listens somewhere else.
 {{- if not (kindIs "map" $tls) -}}{{- fail "controller.config.templatingSettings.extraContext.tls must be a map." -}}{{- end -}}
 {{- range $field := keys $tls -}}
   {{- if eq $field "defaultCertificate" -}}{{- fail "controller.config.templatingSettings.extraContext.tls.defaultCertificate is chart-managed; use the top-level defaultSSLCertificate values." -}}{{- end -}}
-  {{- if ne $field "hsts" -}}{{- fail (printf "controller.config.templatingSettings.extraContext.tls contains unknown field %q. Valid field: hsts." $field) -}}{{- end -}}
+  {{- if not (has $field (list "hsts" "sessionTickets")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.tls contains unknown field %q. Valid fields: hsts, sessionTickets." $field) -}}{{- end -}}
 {{- end -}}
 {{- $hsts := $tls.hsts | default dict -}}
 {{- if not (kindIs "map" $hsts) -}}{{- fail "controller.config.templatingSettings.extraContext.tls.hsts must be a map." -}}{{- end -}}
@@ -135,6 +135,10 @@ the process listens somewhere else.
 {{- if not (kindIs "bool" $hsts.enabled) -}}{{- fail "controller.config.templatingSettings.extraContext.tls.hsts.enabled must be a boolean." -}}{{- end -}}
 {{- if or (not (kindIs "string" $hsts.maxAge)) (not (regexMatch "^[0-9]+$" $hsts.maxAge)) -}}{{- fail "controller.config.templatingSettings.extraContext.tls.hsts.maxAge must be a non-negative integer encoded as a string." -}}{{- end -}}
 {{- range $field := list "includeSubdomains" "preload" -}}{{- if not (kindIs "bool" (index $hsts $field)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.tls.hsts.%s must be a boolean." $field) -}}{{- end -}}{{- end -}}
+{{- $sessionTickets := $tls.sessionTickets | default dict -}}
+{{- if not (kindIs "map" $sessionTickets) -}}{{- fail "controller.config.templatingSettings.extraContext.tls.sessionTickets must be a map." -}}{{- end -}}
+{{- range $field := keys $sessionTickets -}}{{- if ne $field "enabled" -}}{{- fail (printf "controller.config.templatingSettings.extraContext.tls.sessionTickets contains unknown field %q. Valid field: enabled." $field) -}}{{- end -}}{{- end -}}
+{{- if not (kindIs "bool" $sessionTickets.enabled) -}}{{- fail "controller.config.templatingSettings.extraContext.tls.sessionTickets.enabled must be a boolean." -}}{{- end -}}
 
 {{- $portEnvOwner := dict "DEBUG_PORT" "healthz" "METRICS_PORT" "metrics" "WEBHOOK_PORT" "webhook" -}}
 {{- range $entry := $controller.extraEnv | default list -}}
