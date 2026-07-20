@@ -344,11 +344,12 @@ func setupReconciliation(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
+	currentAuxFiles func() map[string]string,
 	storeProvider stores.StoreProvider,
 	logger *slog.Logger,
 ) (*reconciliationWiring, error) {
 	// Create all components
-	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, storeProvider, logger)
+	wiring, err := createReconciliationComponents(setup, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, logger)
 	if err != nil {
 		return nil, err
 	}

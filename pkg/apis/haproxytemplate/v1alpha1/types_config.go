@@ -750,6 +750,13 @@ type ValidationTest struct {
 	// +optional
 	CurrentConfig string `json:"currentConfig,omitempty"`
 
+	// CurrentFiles are the currently-deployed general auxiliary files
+	// (filename → content), exposed to templates under `currentFiles`. Used to
+	// test templates that read their own prior output — e.g. self-rotating TLS
+	// session-ticket keys inspecting the current key file's embedded date marker.
+	// +optional
+	CurrentFiles map[string]string `json:"currentFiles,omitempty"`
+
 	// ExtraContext provides custom variables that override the global extraContext for this test.
 	//
 	// This allows testing template behavior with different extraContext values without

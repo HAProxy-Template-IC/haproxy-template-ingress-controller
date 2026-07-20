@@ -86,6 +86,26 @@ func (sc *StateCache) GetAuxiliaryFiles() (*dataplane.AuxiliaryFiles, time.Time,
 	return sc.lastAuxFiles, sc.lastAuxFilesTime, nil
 }
 
+// currentAuxFilesProvider returns a callback that flattens the last render's
+// general aux files (filename → content) from the StateCache. The renderer
+// exposes the result to templates as `currentFiles`, letting a template read
+// its own prior output — the mechanism behind self-rotating TLS session-ticket
+// keys. Keyed by GeneralFile.Filename, which for a registered "file" is the
+// same base name the template used to register it.
+func currentAuxFilesProvider(sc *StateCache) func() map[string]string {
+	return func() map[string]string {
+		af, _, _ := sc.GetAuxiliaryFiles()
+		if af == nil {
+			return nil
+		}
+		m := make(map[string]string, len(af.GeneralFiles))
+		for _, gf := range af.GeneralFiles {
+			m[gf.Filename] = gf.Content
+		}
+		return m
+	}
+}
+
 // GetResourceCounts implements debug.StateProvider.
 func (sc *StateCache) GetResourceCounts() (map[string]int, error) {
 	if sc.resourceWatcher == nil {

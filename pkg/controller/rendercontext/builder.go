@@ -61,6 +61,7 @@ type Builder struct {
 	haproxyPodStore    stores.Store
 	httpFetcher        templating.HTTPFetcher
 	currentConfig      *parserconfig.StructuredConfig
+	currentAuxFiles    map[string]string
 	typedResourceTypes map[string]reflect.Type
 	capabilities       dataplane.Capabilities
 	renderMode         RenderMode
@@ -128,6 +129,19 @@ func WithHTTPFetcher(fetcher templating.HTTPFetcher) Option {
 func WithCurrentConfig(cfg *parserconfig.StructuredConfig) Option {
 	return func(b *Builder) {
 		b.currentConfig = cfg
+	}
+}
+
+// WithCurrentAuxFiles sets the currently-deployed general auxiliary files
+// (filename → content) for templates, exposed under the "currentFiles" key.
+// This lets a template read its own previously-rendered output as an input —
+// the mechanism behind self-rotating TLS session-ticket keys, where the
+// template inspects the current key file's embedded date marker to decide
+// whether a rotation is due. Empty/nil on first deployment (templates guard
+// with `len(currentFiles) == 0` or a nil-safe lookup).
+func WithCurrentAuxFiles(files map[string]string) Option {
+	return func(b *Builder) {
+		b.currentAuxFiles = files
 	}
 }
 
@@ -330,6 +344,18 @@ func (b *Builder) Build() *BuildResult {
 	if b.currentConfig != nil {
 		templateContext["currentConfig"] = b.currentConfig
 	}
+
+	// Current general aux files (filename → content), for templates that read
+	// their own prior output (e.g. self-rotating TLS session-ticket keys).
+	// Injected as a *map[string]string (Scriggo variable declarations are
+	// pointers, like currentConfig; the engine derefs it so templates index the
+	// map directly). Always non-nil — an empty map on first deployment — so
+	// templates can index it without a nil guard.
+	auxFiles := b.currentAuxFiles
+	if auxFiles == nil {
+		auxFiles = map[string]string{}
+	}
+	templateContext["currentFiles"] = &auxFiles
 
 	// Add HTTP fetcher if provided
 	if b.httpFetcher != nil {

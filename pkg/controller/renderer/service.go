@@ -97,9 +97,10 @@ type RenderService struct {
 	capabilities dataplane.Capabilities
 
 	// Optional dependencies for building render context
-	haproxyPodStore    stores.Store
-	httpStoreComponent *httpstore.Component
-	currentConfigStore *currentconfigstore.Store
+	haproxyPodStore         stores.Store
+	httpStoreComponent      *httpstore.Component
+	currentConfigStore      *currentconfigstore.Store
+	currentAuxFilesProvider func() map[string]string
 
 	// typedResourceTypes maps watched-resource user-names to the
 	// generated Go type produced by pkg/k8s/typegen at iteration
@@ -137,6 +138,12 @@ type RenderServiceConfig struct {
 
 	// CurrentConfigStore is the store for current deployed config (optional).
 	CurrentConfigStore *currentconfigstore.Store
+
+	// CurrentAuxFilesProvider returns the currently-deployed general aux files
+	// (filename → content), exposed to templates as `currentFiles`. Optional;
+	// nil (e.g. webhook dry-run) yields an empty map. Lets a template read its
+	// own prior output — the basis for self-rotating TLS session-ticket keys.
+	CurrentAuxFilesProvider func() map[string]string
 
 	// TypedResourceTypes carries the generated Go types produced
 	// by pkg/controller/typebootstrap at iteration start. The
@@ -189,16 +196,17 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 	}
 
 	return &RenderService{
-		engine:             cfg.Engine,
-		config:             cfg.Config,
-		pathResolver:       pathResolver,
-		logger:             cfg.Logger,
-		renderTimeout:      cfg.Config.TemplatingSettings.GetRenderTimeout(),
-		capabilities:       cfg.Capabilities,
-		haproxyPodStore:    cfg.HAProxyPodStore,
-		httpStoreComponent: cfg.HTTPStoreComponent,
-		currentConfigStore: cfg.CurrentConfigStore,
-		typedResourceTypes: cfg.TypedResourceTypes,
+		engine:                  cfg.Engine,
+		config:                  cfg.Config,
+		pathResolver:            pathResolver,
+		logger:                  cfg.Logger,
+		renderTimeout:           cfg.Config.TemplatingSettings.GetRenderTimeout(),
+		capabilities:            cfg.Capabilities,
+		haproxyPodStore:         cfg.HAProxyPodStore,
+		httpStoreComponent:      cfg.HTTPStoreComponent,
+		currentConfigStore:      cfg.CurrentConfigStore,
+		currentAuxFilesProvider: cfg.CurrentAuxFilesProvider,
+		typedResourceTypes:      cfg.TypedResourceTypes,
 	}
 }
 
@@ -335,6 +343,13 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	// nil pointer initializers).
 	if s.currentConfigStore != nil {
 		opts = append(opts, rendercontext.WithCurrentConfig(s.currentConfigStore.Get()))
+	}
+
+	// Add currently-deployed general aux files (for templates that read their
+	// own prior output, e.g. self-rotating TLS session-ticket keys). nil
+	// provider (webhook dry-run) → WithCurrentAuxFiles unset → empty map.
+	if s.currentAuxFilesProvider != nil {
+		opts = append(opts, rendercontext.WithCurrentAuxFiles(s.currentAuxFilesProvider()))
 	}
 
 	// Wire the HTTP fetcher. Validation mode is detected automatically from the

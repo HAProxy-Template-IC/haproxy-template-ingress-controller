@@ -292,6 +292,7 @@ func convertValidationTests(crdTests map[string]v1alpha1.ValidationTest) (map[st
 			Fixtures:          convertFixtures(crdTest.Fixtures),
 			HTTPFixtures:      convertHTTPFixtures(crdTest.HTTPResources),
 			CurrentConfig:     crdTest.CurrentConfig,
+			CurrentFiles:      crdTest.CurrentFiles,
 			MinHAProxyVersion: crdTest.MinHAProxyVersion,
 			Requires:          crdTest.Requires,
 			RequiresFields:    crdTest.RequiresFields,
