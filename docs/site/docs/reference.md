@@ -187,7 +187,7 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 | `defaultSSLCertificate.create` | bool | `false` | Create Secret from inline cert/key (testing only). Requires `defaultSSLCertificate.certManager.enabled=false` so exactly one actor owns the Secret |
 | `defaultSSLCertificate.cert` | string | `""` | PEM certificate (when create=true) |
 | `defaultSSLCertificate.key` | string | `""` | PEM private key (when create=true) |
-| `tlsSessionTickets.enabled` | bool | `false` | Enable fleet-wide TLS session resumption. Every HAProxy pod shares one session-ticket encryption key (STEK) so a ticket issued by any pod resumes on any other (TLS 1.2 and 1.3); the key self-rotates daily through a 3-key sliding window with one hitless reload. See [TLS session resumption](ssl-certificates.md#tls-session-resumption) |
+| `controller.config.templatingSettings.extraContext.tls.sessionTickets.enabled` | bool | `false` | Enable fleet-wide TLS session resumption. Every HAProxy pod shares one session-ticket encryption key (STEK) so a ticket issued by any pod resumes on any other (TLS 1.2 and 1.3); the key self-rotates daily through a 3-key sliding window with one hitless reload. See [TLS session resumption](ssl-certificates.md#tls-session-resumption) |
 
 ## Controller Config
 

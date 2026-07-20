@@ -294,11 +294,16 @@ TLS session resumption lets a returning client skip the full handshake and recon
 
 A ticket only helps if the pod that receives it can decrypt it. HAPTIC runs an active-active HAProxy fleet, and a client's reconnect can land on any pod, so if each pod used its own random ticket key, resumption would fail whenever a client hit a different pod than the one that issued its ticket. HAPTIC instead gives every pod the same session-ticket encryption key (STEK), so a ticket issued by one pod resumes on any other. This covers both TLS 1.2 (RFC 5077 tickets) and TLS 1.3 (RFC 8446 pre-shared keys).
 
-Session resumption is off by default. Enable it in the chart:
+Session resumption is off by default. Enable it under the same `extraContext.tls` block as the cipher policy and HSTS:
 
 ```yaml
-tlsSessionTickets:
-  enabled: true
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        tls:
+          sessionTickets:
+            enabled: true
 ```
 
 ### Key rotation
