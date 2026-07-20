@@ -6,9 +6,13 @@
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.ssl.enabled }}'
 
-# Test certificate fixtures (YAML anchors for reuse across validation tests)
+# Test certificate fixtures (YAML anchors for reuse across validation tests).
+# The default pair is ECDSA (EC PRIVATE KEY); the *_rsa pair is a 2048-bit RSA
+# cert/key, used by the dual-cert test to prove RSA+ECDSA on the same SNI.
 _test_tls_crt: &test_tls_crt LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
 _test_tls_key: &test_tls_key LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+_test_tls_crt_rsa: &test_tls_crt_rsa LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDVENDQWZHZ0F3SUJBZ0lVQ3ZIL204UHQ3QTA4c0xDMFFieTlSeW1jcndBd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQjRYRFRJMk1EY3lNREUwTlRBd05Gb1hEVE0yTURjeApOekUwTlRBd05Gb3dGREVTTUJBR0ExVUVBd3dKYkc5allXeG9iM04wTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGCkFBT0NBUThBTUlJQkNnS0NBUUVBeVpyZExKbmFnZkNOZDljRmRvMi85Wm9VVkdVam9sNHBuTzdPU1lTUTcxVEcKMDBVd3lLL21VT3V4TnVIZnJmNTVPU1kzTWI4cmlUM1BBRTUwSm1HaXFEOWNyTFFjTlE0RSt4TnRoUGc2a1dXUQpwUThRSktmT1JCLzN2b0hKa1RqR1k4WlRVaHd5UU9OSk9XeVdmK3ZsZFdEMGNCLytCUzQ3a0U3Q3lnTjNyNENoCjZHU0kxRXZBM0Y5S3hURTBRb3VXemNBU2ZoQjlLczlsMGt2c2lHaGo1YlZEVEtSUWo5Z2NORzdMcnlVMHJTN3QKVTdvVXhvc0xCRXFKNUdrNnVzOHN4NWJFc3oxem5KSnhyM3FGblBhSldNdU8wbEJPakk4US9GcXlOOU8vTTJQcAo3NHVSSDdhV1RxaUl4WjJDWkZKaDFEdUhhK2ozMFJRVWNMbEVrbGdrMndJREFRQUJvMU13VVRBZEJnTlZIUTRFCkZnUVVVa1RXeUtZSWZycVNJemhjTURVQ3JLS1M4MEV3SHdZRFZSMGpCQmd3Rm9BVVVrVFd5S1lJZnJxU0l6aGMKTURVQ3JLS1M4MEV3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBRTQzOAp2RE1yUE9zK2tXRFpMcStiUVA3WkNJTTFYam94Y1R4U0JqeDJoR3AzbmtpYWhsMXVPdlV5ZG5ySWw1V0s5cExGCmRtdHF4YWE5b3RNRjlqMFlSMVR5N1UzRk5DUDdReVFQUit5VHF5d2Z5d1hiNVV5clhQbDRxN01LRm5rbHNCVXAKakVIc0pPM1lyQnlDQmhjQ1JHUTY0a3Y1VmN0ajUzbkQrUklRaTBaTVQvdkNiQVk2REZjWFUyMWNwWCtVaU81NwpydkJoT1NHOVNJbkYzMGd1ZEJLQkN6T2g2NExNWWlnaHBZVVhpa29rM3BuNEhjSnBqR1lPcGFqZisxZnVHVEV6CnB2SlhpTEtXakVlUnVRM0h5K296ZU15Ti85U3VKMnVGY0hFWDNlLzlQVndKbWg3YmVDdTJxUG9LNklWL0NNck4KYjNIYzdTYStMRnQ1UUFIbm9RPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+_test_tls_key_rsa: &test_tls_key_rsa LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktrd2dnU2xBZ0VBQW9JQkFRREptdDBzbWRxQjhJMTMKMXdWMmpiLzFtaFJVWlNPaVhpbWM3czVKaEpEdlZNYlRSVERJcitaUTY3RTI0ZCt0L25rNUpqY3h2eXVKUGM4QQpUblFtWWFLb1AxeXN0QncxRGdUN0UyMkUrRHFSWlpDbER4QWtwODVFSC9lK2djbVJPTVpqeGxOU0hESkE0MGs1CmJKWi82K1YxWVBSd0gvNEZManVRVHNMS0EzZXZnS0hvWklqVVM4RGNYMHJGTVRSQ2k1Yk53QkorRUgwcXoyWFMKUyt5SWFHUGx0VU5NcEZDUDJCdzBic3V2SlRTdEx1MVR1aFRHaXdzRVNvbmthVHE2enl6SGxzU3pQWE9ja25Hdgplb1djOW9sWXk0N1NVRTZNanhEOFdySTMwNzh6WStudmk1RWZ0cFpPcUlqRm5ZSmtVbUhVTzRkcjZQZlJGQlJ3CnVVU1NXQ1RiQWdNQkFBRUNnZ0VBSUtFVzhQUUp3SVFkY1dyMHNHWnF6aVpjNmZmZ2w1UGo2a2xnUzlmUDJWeUEKUFl0eVJOanJUdWVHckJwTXFJMktNeXl6UERMenFlZStEQSttanR1NGhzQ1NrRVVxVjQvb1VIYXBnQjdvNDhWcgpicnVNWWxKaWVQWXZrNzdQejlnL2k4QjZsY3lJZWFZUG9PS3BUUlR4ODFoNDEzam1GUktSZzE2citpUXJoOVRnCi9ZUVhIUUs1OUJDSjZza3h1TklQWHdvRGRxT0FYVHNIR1ZkRXJUSWt5Wk1WNmNrdGdKUlprU1dnVm5YamRPZzAKM2xDZ0JwWHNCcUVhbFcvVGNwM1JVbXYweEY2anA0cmNvaTNzSmJ6RER3RW55TU1FMnRaWm5mSTl1ZDBsS2VQTQpHYU1VUGt0RUh2dVVuMmZCWkxMWEFlSWJmeTZrTy9DTStybXVTbGNIc1FLQmdRRDZSRHVydURLUkJib3hidjYwCmZoaEpFZnh5L0tVY1FNQ1BUVkpDMWl6M0ZBaVpsWCtONHdvMENGNVl6VWQ2RjZmTGJXSGltSjJHTk5LaEN6TjcKdE9IMFFVUVVaVytHc0xpcXB0V3NCbVh4NkQzajJwOWltTzZTTDg4NDBrYXpkaTlYbUVVeit1RmxwdWZrdGh0MQpSZUdvTVl3V2JnQUU5bXEvYS9sUkhEcUtLUUtCZ1FET09UMVcwZldqQ2pXazJuUlR2cW5Mdld1UkFrREJqcXhpCklhekszdUxmeCtjaFd4RDhwelZrOENnUXN2RTFNZUh2Q09UWXV1Q2oyOTdqZEF6ZFFPNHAzblVUbG1TRy9xbmQKZ0tFNHlPbWhhYjM5d0tzRWtxWEZHTnoyUHBta3h6OFlRVzJvbExYYVVZQk9kRDBIclhWd1JaSFh1a0dXSXpkcQp0Wkl3eitQZll3S0JnUURsQ05iM0kxNmJtL3MzVEZZclJvN2hLR1c1c2Y5RTZQbVE2L2xSazRLWktDdHFxd2VPCkNXOElDWFNXbmw5QW5DK0NtM3NPamc3emlKb09xaHFXcHdaMnE5Z3JObDJualVtalc0V0dwbUJieitmOEE5TUQKditQdHczVklraUFFRXkvbVlVTkwrOWlWVi9jM04zWFBrSUdnbEorWTAxaVBNaGlsVUtKZG1aRDFhUUtCZ1FDSQoxVWdTL0h0dE5CQUdFNEZPTTl0OE9YSlBKRnlOVWJxbDNreEZ6QUJqbGNPUnlWZ0xISE44UnpGK2F3MUxTNDdyClNVNTNWQUJNR1U3YVF4MXFEWFE1eWNhTE9hWDRRSys3TG1kTFExeHA0cnpTeTIxdU9sUE41TUp3alhicTg5MjAKblcxQ2gzSG1xMTlrTHhKenJxK1cwRUtHRHFzSUVOUHJkUkRNWEpTSm13S0JnUURwelpzSitWS0d2cTJtenM2TQpUbHpQMXBTemdpV0NyMjE5eDBqK0hmTm9sRkZtaEtETW1KVHp6RXNwck9GaFFOdXBEREJhUEFBWHNJSTRUc1hpClVHelkzWDdaQldFd0I2UWxxdTVGYW9SK0xTelpSSDhQbS9IdkdJd2ZCVEtpMEFMWElONDdlYmNleWpWNVQrNEcKV2tFUnBwdGJlN2QyOXZGNFNCNW4zQzBkR0E9PQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==
 
 # Watch secrets for SSL certificate loading
 watchedResources:
@@ -34,6 +38,34 @@ templatingSettings:
         includeSubdomains: false
         preload: false
 
+      # TLS cipher / protocol policy applied to EVERY SSL bind via
+      # global ssl-default-bind-* (see global-settings-410-ssl-ciphers).
+      # These sub-keys sit beside `hsts` under the single `tls` block; override
+      # any of them through controller.config.templatingSettings.extraContext.tls.*
+      # (Helm deep-merges, so overriding one key keeps the sibling defaults).
+      #
+      # Inclusive-by-default and CERT-AGNOSTIC: `ciphers` is a single forward-
+      # secret superset spanning ECDSA (ECDHE-ECDSA-*), RSA (ECDHE-RSA-*), and
+      # DHE (DHE-RSA-*). HAProxy offers only the suites it has a matching
+      # certificate for, so the SAME list serves an RSA-only, ECDSA-only, or
+      # dual (RSA+ECDSA) deployment with no per-cert-type config.
+      #
+      # To reach pre-2014 appliances that only do static-RSA key exchange,
+      # append RSA-kx suites to `ciphers` (e.g. AES128-GCM-SHA256:AES256-SHA)
+      # and lower `minVersion` — those clients lose forward secrecy, modern
+      # clients keep it via server cipher ordering. Set a value to "" to omit
+      # the directive and fall back to HAProxy's built-in default.
+      # TLS 1.2 ciphers (ssl-default-bind-ciphers) — all forward-secret.
+      # This default string is mirrored in the cipher-policy examples in
+      # docs/site/docs/ssl-certificates.md (the test-ssl-global-cipher-policy-*
+      # assertions also pin its head/tail) — change all copies together.
+      ciphers: "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA"
+      # TLS 1.3 cipher suites (ssl-default-bind-ciphersuites).
+      ciphersuites: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
+      # Minimum protocol version (ssl-default-bind-options ssl-min-ver).
+      # TLSv1.2 is the safe floor; lower to TLSv1.0 only for legacy clients.
+      minVersion: "TLSv1.2"
+
 templateSnippets:
   # SSL bind options utility - used by both HTTPS frontend and SSL passthrough
   # Uses crt-list for certificate management with per-certificate OCSP configuration
@@ -54,6 +86,55 @@ templateSnippets:
       {%- macro SSLBindOptionsForCrtlist(crtlistFilename string) string -%}
         {{- " " -}}ssl crt-list {{ pathResolver.GetPath(crtlistFilename, "crt-list") }} alpn h2,http/1.1
       {%- end -%}
+
+  # Global TLS cipher / protocol policy. Rendered into the `global` section
+  # (base.yaml's global-settings render_glob picks up global-settings-* from
+  # every loaded library) so it lands right after global-settings-400-ssl.
+  global-settings-410-ssl-ciphers:
+    template: |
+      {#-
+        Global TLS cipher / protocol policy — applies to EVERY SSL bind via
+        ssl-default-bind-*. Rendered from extraContext.tls (defaults declared
+        in this library's templatingSettings.extraContext; Helm deep-merges an
+        operator's partial override with those defaults).
+
+        Cert-agnostic by construction: `tls.ciphers` is a forward-secret
+        superset spanning ECDSA (ECDHE-ECDSA-*), RSA (ECDHE-RSA-*), and DHE
+        (DHE-RSA-*). HAProxy only offers the suites it holds a matching
+        certificate for, so one list serves an RSA-only, ECDSA-only, or dual
+        (RSA+ECDSA) deployment identically. Per-listener Gateway TLS options
+        (gateway/92-listener-tls-options) still override per bind.
+
+        Any empty value omits its directive (falls back to HAProxy's built-in
+        default). See docs: libraries/ssl for dual-cert / cert-manager setup.
+      -#}
+      {%- var ciphers = tostring(extraContext | dig("tls", "ciphers") | fallback("")) -%}
+      {%- var ciphersuites = tostring(extraContext | dig("tls", "ciphersuites") | fallback("")) -%}
+      {%- var minVer = tostring(extraContext | dig("tls", "minVersion") | fallback("")) -%}
+      {#- Config-injection guard: these strings render verbatim into the global
+          section, so each must stay within the cipher/version charset
+          (letters, digits, and : _ + . -), which blocks newlines/control
+          chars. Report the offending KEY rather than echoing the raw value —
+          a value that failed the charset check may carry the very characters
+          we're guarding against, and the error surfaces in logs/Events. -#}
+      {%- if ciphers != "" && regex_search(ciphers, "[^A-Za-z0-9:._+-]") -%}
+        {{ fail("Invalid extraContext.tls.ciphers: only cipher characters (A-Z a-z 0-9 : _ + . -) are allowed — config-injection guard.") }}
+      {%- end -%}
+      {%- if ciphersuites != "" && regex_search(ciphersuites, "[^A-Za-z0-9:._+-]") -%}
+        {{ fail("Invalid extraContext.tls.ciphersuites: only cipher characters (A-Z a-z 0-9 : _ + . -) are allowed — config-injection guard.") }}
+      {%- end -%}
+      {%- if minVer != "" && regex_search(minVer, "[^A-Za-z0-9:._+-]") -%}
+        {{ fail("Invalid extraContext.tls.minVersion: only version characters (A-Z a-z 0-9 : _ + . -) are allowed — config-injection guard.") }}
+      {%- end -%}
+      {%- if ciphers != "" %}
+      ssl-default-bind-ciphers {{ ciphers }}
+      {%- end %}
+      {%- if ciphersuites != "" %}
+      ssl-default-bind-ciphersuites {{ ciphersuites }}
+      {%- end %}
+      {%- if minVer != "" %}
+      ssl-default-bind-options ssl-min-ver {{ minVer }}
+      {%- end %}
 
   util-crtlist-line:
     template: |
@@ -1220,3 +1301,117 @@ validationTests:
             tls.key: *test_tls_key
     assertions:
       - type: haproxy_valid
+
+  test-ssl-global-cipher-policy-default:
+    description: Global TLS policy renders ssl-default-bind-ciphers / -ciphersuites and ssl-min-ver from the extraContext.tls defaults (a forward-secret superset spanning ECDSA, RSA, and DHE families)
+    fixtures: {}  # Uses _global default cert; global section renders unconditionally
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'ssl-default-bind-ciphers ECDHE-ECDSA-CHACHA20-POLY1305:.*ECDHE-RSA-AES128-GCM-SHA256.*DHE-RSA-AES256-SHA'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'ssl-default-bind-options ssl-min-ver TLSv1\.2'
+
+  test-ssl-global-cipher-policy-override:
+    description: extraContext.tls overrides render (custom ciphers, lowered minVersion) and an empty value omits its directive (falls back to HAProxy's built-in default). In real charts a values.yaml override of one sub-key is Helm deep-merged with the library defaults (config template, not exercised by this harness)
+    extraContext:
+      tls:
+        ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+        ciphersuites: ""
+        minVersion: "TLSv1.0"
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      # custom cipher list override renders
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256'
+      # lowered protocol floor renders
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'ssl-default-bind-options ssl-min-ver TLSv1\.0'
+      # empty ciphersuites omits the directive entirely (HAProxy default)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'ssl-default-bind-ciphersuites'
+
+  test-ssl-global-cipher-policy-injection-guard:
+    description: A cipher value containing characters outside the cipher/version charset (here a newline) is rejected by the config-injection guard
+    extraContext:
+      tls:
+        ciphers: "ECDHE-RSA-AES128-GCM-SHA256\n  evil-injected-directive"
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "config-injection guard"
+
+  test-ssl-dual-cert-rsa-ecdsa:
+    description: An Ingress may reference two TLS Secrets (one ECDSA, one RSA) for the same host; both certs are emitted to the crt-list under the same SNI so HAProxy serves RSA or ECDSA per client capability
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: dual-ecdsa
+            namespace: default
+          data:
+            tls.crt: *test_tls_crt
+            tls.key: *test_tls_key
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: dual-rsa
+            namespace: default
+          data:
+            tls.crt: *test_tls_crt_rsa
+            tls.key: *test_tls_key_rsa
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: dual-svc
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: dual-cert-ingress
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["dual.example.com"]
+                secretName: dual-ecdsa
+              - hosts: ["dual.example.com"]
+                secretName: dual-rsa
+            rules:
+              - host: dual.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: dual-svc
+                          port:
+                            number: 80
+    assertions:
+      # HAProxy accepts two certs of different key types on the same SNI
+      - type: haproxy_valid
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default_dual-ecdsa\.pem \[ocsp-update on\] dual\.example\.com'
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default_dual-rsa\.pem \[ocsp-update on\] dual\.example\.com'
