@@ -998,22 +998,13 @@ spec:
       {{- $_ := set $config $key . }}
     {{- end }}
   {{- end }}
-  {{- /* Keep the bundled default-ssl-cert validationTests fixture (ssl.yaml's
-         _global) in the same namespace default.pem looks it up in
-         (extraContext.default_ssl_cert_namespace, set above to the release
-         namespace). Library YAML can't be Helm-templated, so rewrite it here —
-         now that the libraries (and thus _global) are merged into $config.
-         Without this the suite fails in any release namespace other than the
-         library placeholder, which crash-loops the controller because the load
-         gate runs validationTests fatally. */ -}}
-  {{- if $defaultSSL.enabled }}
-    {{- $nsValue := ($defaultSSL.namespace | default .Release.Namespace) }}
-    {{- range $sec := (dig "validationTests" "_global" "fixtures" "secrets" (list) $config) }}
-      {{- if eq (dig "metadata" "name" "" $sec) $defaultSSL.secretName }}
-        {{- $_ := set (index $sec "metadata") "namespace" $nsValue }}
-      {{- end }}
-    {{- end }}
-  {{- end }}
+  {{- /* No default-ssl-cert fixture rewrite needed: ssl.yaml's _global test
+         pins a synthetic default certificate (extraContext.tls.defaultCertificate
+         = default-ssl-cert @ haptic) that every test renders against, decoupled
+         from the operator's real defaultSSLCertificate.secretName / namespace.
+         The testrunner folds _global.extraContext over the production extraContext
+         (see pkg/controller/testrunner runSingleTest), so a custom secretName no
+         longer leaks into the synthetic suite. */ -}}
   {{- /* validationTests render against fixture stores, so a configured WAF
          policy ConfigMap reference (extraContext.waf.policies.configMapRefs)
          would fail every test's render with "was not found" — and the fatal

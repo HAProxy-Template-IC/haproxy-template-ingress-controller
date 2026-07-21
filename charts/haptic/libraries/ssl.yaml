@@ -1132,16 +1132,31 @@ sslCertificates:
 validationTests:
   _global:
     description: Global SSL test fixtures
+    # Isolated default-certificate baseline for the WHOLE suite. validationTests
+    # render against synthetic fixture stores, so they must not depend on the
+    # operator's real defaultSSLCertificate.secretName / .ecdsaSecretName — those
+    # names only exist live in the cluster, never in a fixture. The deployment's
+    # production extraContext (real names) is the lowest merge layer; this
+    # _global pin overrides it with the synthetic default-ssl-cert (matching the
+    # fixture below), and any per-test extraContext overrides this in turn. So a
+    # test that doesn't touch the default cert always resolves default-ssl-cert
+    # @ haptic, whatever the operator configured — no release-namespace or
+    # secret-name coupling, and no Helm-side fixture rewrite. ecdsaName is empty
+    # here (single default line); the dual-default path is covered by
+    # test-ssl-dual-default-cert, which pins its own ecdsaName + ECDSA fixture.
+    extraContext:
+      tls:
+        defaultCertificate:
+          name: default-ssl-cert
+          namespace: haptic
+          ecdsaName: ""
     fixtures:
       secrets:
         # Default SSL certificate, required by every test that renders a full
-        # config (the default.pem template loads it). Its namespace MUST match
-        # default.pem's lookup — extraContext.default_ssl_cert_namespace, which
-        # the chart sets to the release namespace. Library YAML isn't Helm-tpl'd,
-        # so templates/haproxytemplateconfig.yaml rewrites this namespace to that
-        # same value (keeping the fixture and the lookup in lock-step regardless
-        # of release namespace). The "haptic" placeholder is default.pem's own
-        # fallback, used when the default certificate is disabled (no rewrite).
+        # config (the default.pem template loads it). Name + namespace match the
+        # _global extraContext pin above (default-ssl-cert @ haptic); the release
+        # namespace and the operator's real secret name are irrelevant to the
+        # test — that decoupling is the whole point of the pin.
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls

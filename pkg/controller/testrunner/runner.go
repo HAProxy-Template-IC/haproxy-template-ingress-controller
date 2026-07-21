@@ -132,9 +132,10 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 	runnableTests := make(map[string]config.ValidationTest, len(testsToRun))
 	for name := range testsToRun {
 		test := testsToRun[name]
-		// "_global" carries shared fixtures merged into every test (see the
-		// _global lookup in runSingleTest); it is never executed as a standalone
-		// test. The benchmark path excludes it the same way (cmd/controller/benchmark.go).
+		// "_global" carries shared fixtures AND a shared extraContext baseline
+		// merged into every test (see the _global lookup in runSingleTest); it
+		// is never executed as a standalone test. The benchmark path excludes it
+		// the same way (cmd/controller/benchmark.go).
 		if name == "_global" {
 			continue
 		}
@@ -342,6 +343,15 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	// 1. Merge global fixtures with test-specific fixtures
 	fixtures := test.Fixtures
 	httpFixtures := test.HTTPFixtures
+	// _global also contributes a shared extraContext baseline: the isolated,
+	// synthetic values every test renders against (e.g. a default SSL cert
+	// decoupled from the operator's real defaultSSLCertificate.*). Per-test
+	// extraContext overrides this baseline, and mergeTestExtraContext later
+	// folds the result over the deployment's production extraContext — so what
+	// a synthetic test resolves is the _global pin, never the operator's real
+	// secret names. Without this, a custom default-cert name leaks into every
+	// test and fails the fixture-store lookup (crash-looping the load gate).
+	effectiveExtraContext := foldGlobalExtraContext(r.config, test.ExtraContext)
 
 	// Check for global fixtures in validationTests._global
 	if globalTest, hasGlobal := r.config.ValidationTests["_global"]; hasGlobal {
@@ -388,7 +398,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	rendered, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles, test.ExtraContext)
+	rendered, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.CurrentFiles, effectiveExtraContext)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -426,7 +436,11 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		HTTPStore:       httpStore,
 		CurrentConfig:   currentConfig,
 		CurrentFiles:    test.CurrentFiles,
-		ExtraContext:    test.ExtraContext,
+		// effectiveExtraContext (not test.ExtraContext): the deterministic
+		// assertion re-renders through this, and must use the same _global-merged
+		// baseline as the first render — otherwise the second render loses the
+		// _global default-cert pin and diverges (or fails) against production.
+		ExtraContext: effectiveExtraContext,
 	}
 
 	// 8. Run all assertions (whether rendering succeeded or failed)

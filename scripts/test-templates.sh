@@ -165,7 +165,15 @@ HAPROXY_VERSION_ARG=""
 if [[ -n "${HAPROXY_VERSION:-}" ]]; then
     HAPROXY_VERSION_ARG="--set haproxyVersion=${HAPROXY_VERSION}"
 fi
-echo -e "${YELLOW}Rendering Helm chart...${NC}" >&2
+# Render with a CUSTOM defaultSSLCertificate name (RSA + ECDSA companion) that
+# does NOT match the chart default ("default-ssl-cert"). validationTests must be
+# isolated from the operator's real default-cert names: ssl.yaml's _global test
+# pins a synthetic default cert every test renders against, so the whole suite
+# has to pass whatever secretName/ecdsaSecretName the deployment sets. Before the
+# isolation fix, a custom name leaked into every test and crash-looped the load
+# gate (the failure that broke the homelab); running the suite under custom names
+# here is that regression, in CI.
+echo -e "${YELLOW}Rendering Helm chart (custom default-cert name, isolation regression)...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
     $HAPROXY_VERSION_ARG \
@@ -175,6 +183,8 @@ if ! helm template "$CHART_DIR" \
     --set controller.templateLibraries.haproxytech.enabled=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
+    --set defaultSSLCertificate.secretName=regression-custom-rsa-cert \
+    --set defaultSSLCertificate.ecdsaSecretName=regression-custom-ecdsa-cert \
     | yq 'select(.kind == "HAProxyTemplateConfig")' \
     > "$TEMP_CONFIG"; then
     echo -e "${RED}Error: Failed to render Helm chart${NC}" >&2
