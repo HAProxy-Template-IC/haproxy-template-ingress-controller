@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -38,13 +39,18 @@ import (
 const (
 	testNamespace = "default"
 	testName      = "test-htc"
+	// testGeneration is the metadata.generation carried by the fixture config, so
+	// status.observedGeneration and the Validated condition's observedGeneration
+	// are assertable.
+	testGeneration int64 = 3
 )
 
 func newHTC() *v1alpha1.HAProxyTemplateConfig {
 	return &v1alpha1.HAProxyTemplateConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: testNamespace,
-			Name:      testName,
+			Namespace:  testNamespace,
+			Name:       testName,
+			Generation: testGeneration,
 		},
 	}
 }
@@ -128,11 +134,63 @@ func TestStatusUpdater_HandleConfigValidated_Success(t *testing.T) {
 	assert.Nil(t, status.ValidationErrors)
 	assert.NotNil(t, status.LastValidated)
 
+	// observedGeneration records the generation the controller processed, and the
+	// Validated condition reports it True with the same generation.
+	assert.Equal(t, testGeneration, status.ObservedGeneration)
+	cond := meta.FindStatusCondition(status.Conditions, conditionValidated)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionTrue, cond.Status)
+	assert.Equal(t, reasonValidationSucceeded, cond.Reason)
+	assert.Equal(t, testGeneration, cond.ObservedGeneration)
+
 	// Cached config reference should be populated for subsequent HAProxy validation events.
 	u.mu.RLock()
 	assert.Equal(t, testNamespace, u.configNamespace)
 	assert.Equal(t, testName, u.configName)
+	assert.Equal(t, testGeneration, u.configGeneration)
 	u.mu.RUnlock()
+}
+
+func TestStatusUpdater_HandleConfigInvalid(t *testing.T) {
+	htc := newHTC()
+	u, crd := newStatusUpdaterFixture(t, htc)
+
+	u.handleConfigInvalid(context.Background(), events.NewConfigInvalidEvent("v1", htc, map[string][]string{
+		"template": {"boom", "kaboom"},
+	}))
+
+	status := getStatus(t, crd)
+	assert.Equal(t, "Invalid", status.ValidationStatus)
+	assert.Equal(t, testGeneration, status.ObservedGeneration)
+	assert.ElementsMatch(t, []string{"boom", "kaboom"}, status.ValidationErrors)
+
+	cond := meta.FindStatusCondition(status.Conditions, conditionValidated)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, reasonConfigInvalid, cond.Reason)
+	assert.Equal(t, testGeneration, cond.ObservedGeneration)
+	// The condition message surfaces the first error so `kubectl describe` is useful.
+	assert.Contains(t, cond.Message, "boom")
+}
+
+// TestStatusUpdater_ObservedGenerationTracksValidatedGeneration pins the drift
+// semantics: observedGeneration reflects the generation that was actually
+// validated, not the (possibly newer) live spec — so a reader can tell the
+// controller is behind without any controller-version field on the spec.
+func TestStatusUpdater_ObservedGenerationTracksValidatedGeneration(t *testing.T) {
+	stored := newHTC()
+	stored.Generation = 5 // live spec has moved on
+	u, crd := newStatusUpdaterFixture(t, stored)
+
+	validated := newHTC()
+	validated.Generation = 4 // but we validated the previous generation
+	u.handleConfigValidated(context.Background(), events.NewConfigValidatedEvent(nil, validated, "v1", ""))
+
+	status := getStatus(t, crd)
+	assert.Equal(t, int64(4), status.ObservedGeneration)
+	cond := meta.FindStatusCondition(status.Conditions, conditionValidated)
+	require.NotNil(t, cond)
+	assert.Equal(t, int64(4), cond.ObservedGeneration)
 }
 
 func TestStatusUpdater_HandleConfigValidated_SkipsInitialVersion(t *testing.T) {

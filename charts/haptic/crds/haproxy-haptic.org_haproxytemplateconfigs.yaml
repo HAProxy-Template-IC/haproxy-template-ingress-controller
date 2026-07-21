@@ -21,6 +21,10 @@ spec:
     - jsonPath: .status.validationStatus
       name: Status
       type: string
+    - description: Spec generation the controller last processed
+      jsonPath: .status.observedGeneration
+      name: Observed
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

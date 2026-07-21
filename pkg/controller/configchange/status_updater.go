@@ -29,6 +29,7 @@ import (
 	clientsetscheme "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/scheme"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -52,6 +53,17 @@ const (
 	// Event reasons (CamelCase per Kubernetes convention).
 	eventReasonValidationFailed = "ValidationFailed"
 	eventReasonValidated        = "Validated"
+
+	// conditionValidated is the status condition type reporting whether the
+	// controller accepted (validated) the observed config generation. Its
+	// ObservedGeneration field, together with status.observedGeneration, is the
+	// Kubernetes-native way to answer "has the controller processed generation N
+	// of my config?" without coupling the spec to a controller version.
+	conditionValidated = "Validated"
+	// Condition reasons (CamelCase per Kubernetes convention).
+	reasonValidationSucceeded     = "ValidationSucceeded"
+	reasonConfigInvalid           = "ConfigInvalid"
+	reasonHAProxyValidationFailed = "HAProxyValidationFailed"
 )
 
 // StatusUpdater updates HAProxyTemplateConfig status based on validation results.
@@ -90,6 +102,11 @@ type StatusUpdater struct {
 	mu              sync.RWMutex
 	configNamespace string
 	configName      string
+	// configGeneration is the metadata.generation of the last config seen via a
+	// ConfigValidated/ConfigInvalid event, so a subsequent HAProxy
+	// ValidationFailedEvent (which carries no CRD reference) can still record the
+	// observedGeneration it pertains to.
+	configGeneration int64
 	// lastEmittedStatus is the validation status of the most recent emitted
 	// Event, so a Normal "Validated" Event fires only on recovery
 	// (Invalid -> Valid), not on every routine successful validation.
@@ -182,15 +199,19 @@ func (u *StatusUpdater) handleConfigValidated(ctx context.Context, event *events
 		return
 	}
 
-	u.cacheConfigRef(htc.Namespace, htc.Name)
+	u.cacheConfigRef(htc.Namespace, htc.Name, htc.Generation)
 
+	observedGeneration := htc.Generation
 	u.applyStatus(ctx, htc.Namespace, htc.Name,
 		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
 			now := metav1.NewTime(time.Now())
+			status.ObservedGeneration = observedGeneration
 			status.LastValidated = &now
 			status.ValidationStatus = statusValid
 			status.ValidationMessage = "Configuration validated successfully"
 			status.ValidationErrors = nil // Clear any previous errors
+			setValidatedCondition(status, metav1.ConditionTrue, reasonValidationSucceeded,
+				"Configuration validated successfully", observedGeneration)
 		},
 		"Updated HAProxyTemplateConfig status to Valid",
 		"version", event.Version)
@@ -206,7 +227,7 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 		return
 	}
 
-	u.cacheConfigRef(htc.Namespace, htc.Name)
+	u.cacheConfigRef(htc.Namespace, htc.Name, htc.Generation)
 
 	// Flatten validation errors from all validators
 	var allErrors []string
@@ -214,13 +235,17 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 		allErrors = append(allErrors, errors...)
 	}
 
+	observedGeneration := htc.Generation
 	u.applyStatus(ctx, htc.Namespace, htc.Name,
 		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
 			now := metav1.NewTime(time.Now())
+			status.ObservedGeneration = observedGeneration
 			status.LastValidated = &now
 			status.ValidationStatus = statusInvalid
 			status.ValidationMessage = fmt.Sprintf("%d validation error(s)", len(allErrors))
 			status.ValidationErrors = allErrors
+			setValidatedCondition(status, metav1.ConditionFalse, reasonConfigInvalid,
+				validationEventMessage(status), observedGeneration)
 		},
 		"Updated HAProxyTemplateConfig status to Invalid",
 		"version", event.Version,
@@ -235,6 +260,7 @@ func (u *StatusUpdater) handleHAProxyValidationFailed(ctx context.Context, event
 	u.mu.RLock()
 	configNamespace := u.configNamespace
 	configName := u.configName
+	observedGeneration := u.configGeneration
 	u.mu.RUnlock()
 
 	if configName == "" || configNamespace == "" {
@@ -245,23 +271,46 @@ func (u *StatusUpdater) handleHAProxyValidationFailed(ctx context.Context, event
 	u.applyStatus(ctx, configNamespace, configName,
 		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
 			now := metav1.NewTime(time.Now())
+			status.ObservedGeneration = observedGeneration
 			status.LastValidated = &now
 			status.ValidationStatus = statusInvalid
 			status.ValidationMessage = "HAProxy configuration validation failed"
 			status.ValidationErrors = event.Errors
+			setValidatedCondition(status, metav1.ConditionFalse, reasonHAProxyValidationFailed,
+				"HAProxy configuration validation failed", observedGeneration)
 		},
 		"Updated HAProxyTemplateConfig status to Invalid (HAProxy validation)",
 		"error_count", len(event.Errors))
 }
 
-// cacheConfigRef remembers the namespace/name of the HAProxyTemplateConfig so
-// HAProxy validation events (which don't carry a CRD reference) can still find
-// the right resource to update.
-func (u *StatusUpdater) cacheConfigRef(namespace, name string) {
+// cacheConfigRef remembers the namespace/name and generation of the
+// HAProxyTemplateConfig so HAProxy validation events (which don't carry a CRD
+// reference) can still find the right resource to update and record the
+// generation they pertain to.
+func (u *StatusUpdater) cacheConfigRef(namespace, name string, generation int64) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.configNamespace = namespace
 	u.configName = name
+	u.configGeneration = generation
+}
+
+// setValidatedCondition upserts the standard "Validated" status condition,
+// stamping the generation the controller acted on. meta.SetStatusCondition
+// manages lastTransitionTime (bumped only when Status flips) and dedups by type.
+func setValidatedCondition(
+	status *v1alpha1.HAProxyTemplateConfigStatus,
+	condStatus metav1.ConditionStatus,
+	reason, message string,
+	observedGeneration int64,
+) {
+	meta.SetStatusCondition(&status.Conditions, metav1.Condition{
+		Type:               conditionValidated,
+		Status:             condStatus,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: observedGeneration,
+	})
 }
 
 // applyStatus fetches the named HAProxyTemplateConfig, applies mutate to its
