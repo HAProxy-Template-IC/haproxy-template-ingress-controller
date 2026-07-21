@@ -107,6 +107,20 @@ Use this for a library-global tunable that mirrors an upstream controller's glob
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
+### Operator-facing values default to `extraContext` (RULE)
+
+**A new operator-facing `values.yaml` knob lives under `controller.config.templatingSettings.extraContext.*` by default. Placing one at the values root (or any other top-level key) requires an explicit justification, stated in the value's `values.yaml` comment.**
+
+If a knob's only job is to change what the templates render — a cipher list, an HSTS toggle, a session-ticket switch, a routing mode — it belongs under `extraContext`, grouped with its siblings (e.g. `extraContext.tls.*`). That is where the render engine reads it and where every other render knob already lives; splitting one out to the root fragments the TLS/render surface and forces a translation shim in `templates/haproxytemplateconfig.yaml`. The canonical mistake-and-fix is `tlsSessionTickets.enabled` → `extraContext.tls.sessionTickets.enabled` (MR !1377): it was a pure render toggle wrongly hoisted to the root, needing a shim, until it was moved back under `extraContext.tls`.
+
+**The one accepted justification for a root-level knob is that it does more than feed the render context — the chart creates Kubernetes resources from it.** Then the root-level value is the resource-lifecycle surface, and you project only its render-facing sub-fields into `extraContext`:
+
+- `defaultSSLCertificate` (root) — the chart renders a cert-manager `Certificate` / self-signed `Issuer` / `Secret` from it; only its render-facing projection `extraContext.tls.defaultCertificate` (`name`/`namespace`/`ecdsaName`) reaches the config. `templates/haproxytemplateconfig.yaml` does that projection.
+- `cache` / `rateLimit` / `spoaHub` — deploy workloads (Varnish, Valkey, the SPOA sidecar).
+- `ingressClass` / `haproxy` — chart-owned resources (IngressClass, the HAProxy Service/pods).
+
+Test before hoisting a value to the root: *does anything other than a template read it?* If the answer is "no, a snippet reads it and that's all", it is misplaced — put it under `extraContext`.
+
 ### Split-library directories
 
 A library that has grown past comfortable one-file size may live as a directory of fragments instead of a single YAML file. The convention (see ADR-0008):
