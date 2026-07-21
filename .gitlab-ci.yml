@@ -5,10 +5,6 @@ stages:
   - integration
   - deploy
 
-# Triggers the documented zero-jobs-MR workaround. This MR (!1183) is
-# docs-only (landing-page CSS/HTML polish); its diff matches only `docs/**`,
-# which doesn't fire `.rules-docs` reliably — same shape as the !980/!995
-# gap. Touching .gitlab-ci.yml gives the pipeline runnable jobs.
 
 # Prevent duplicate pipelines for MR and branch pushes
 workflow:
@@ -66,27 +62,28 @@ variables:
 
 # Reusable rules for path-based filtering.
 #
-# KNOWN GAP: docs-only MRs (e.g. `charts/haptic/CHANGELOG.md` or
-# `docs/**/*.md` only, with no other file types touched) produce MR
-# pipelines with zero runnable jobs — GitLab marks them `failed` and
-# the project's `ci_must_pass` gate blocks the merge. Workaround
-# until this is properly diagnosed: include a `.gitlab-ci.yml`
-# touch (e.g. a comment edit) in any otherwise-docs-only MR so the
-# diff matches the `.gitlab-ci.yml` entry below. Four `if:`-based
-# attempts to fix this in CI rules (MRs !957, !959, !960, !961) all
-# failed empirically — `if:`-only job rules don't reliably fire on
-# this project's MR pipelines even when their condition is true.
-# Likely a project-level setting we can't see from outside.
+# The broad doc/config globs below (`**/*.md`, `**/*.yaml`, …) exist so the
+# CHEAP jobs that legitimately care about docs/config — `lint`
+# (markdownlint/yamllint/vale), `chart-test`, and the `build-snapshot`
+# superset needed by e2e — still run on a docs-only change. They deliberately
+# do NOT gate the heavyweight Go jobs (unit/audit/integration/coverage): those
+# use `.rules-go` so a `**/*.md` edit no longer drags in the 5× 2xlarge
+# integration matrix.
 #
-# Workaround applied to !1162 (docs-only): this comment puts .gitlab-ci.yml
-# in the MR diff so the merge_request pipeline has runnable jobs.
+# NOTE: the old "docs-only MRs produce zero jobs → touch .gitlab-ci.yml"
+# workaround is obsolete and must not be reintroduced. `lint` runs
+# unconditionally on every MR (`when: on_success`, no `changes:` filter) and
+# `build-python-docs` runs on every non-tag pipeline, so an MR pipeline is
+# never empty regardless of what changed — verified: !1379 (single-file
+# `charts/CLAUDE.md`) produced 26 jobs without any `.gitlab-ci.yml` touch.
+# Touching `.gitlab-ci.yml` in a docs MR only wastes minutes: it matches the
+# entry below AND `.rules-go`, pulling in the entire heavy suite for nothing.
 .rules-code:
   rules:
     - changes:
         - "**/*.go"
         # **/ so nested module bumps (e.g. tools/linters/*/go.mod from
-        # renovate) match too — a bare `go.mod` only matches repo-root and
-        # produces a zero-jobs MR pipeline otherwise.
+        # renovate) match too — a bare `go.mod` only matches repo-root.
         - "**/go.mod"
         - "**/go.sum"
         - .tool-versions
@@ -95,13 +92,37 @@ variables:
         - scripts/**/*
         - .gitlab-ci.yml
         - .golangci.yml
-        # Config files (ensures lint job runs for config-only changes)
+        # Config/doc files — kept so `lint`/`chart-test` run for docs+config
+        # changes. Heavy Go jobs use `.rules-go` instead (no doc globs).
         - "**/*.yaml"
         - "**/*.yml"
         - "**/*.json"
         - "**/*.md"
         - .markdownlint-cli2.jsonc
         - .vale.ini
+
+# Code-affecting subset of .rules-code. Jobs whose result cannot change
+# unless Go/build inputs change (unit tests, govulncheck, integration
+# tests, coverage merge) use this instead of .rules-code, so a docs-only
+# or config-only change (`**/*.md`, `charts/**` docs, `docs/**`) no longer
+# drags in the heavyweight 2xlarge integration matrix. `lint` still runs
+# unconditionally on every MR (see its `when: on_success` rule), so
+# dropping the doc globs here can never produce a zero-jobs MR pipeline.
+# testdata/** is included so golden-file / fixture-only changes still
+# exercise the tests that read them.
+.rules-go:
+  rules:
+    - changes:
+        - "**/*.go"
+        - "**/go.mod"
+        - "**/go.sum"
+        - "**/testdata/**"
+        - .tool-versions
+        - Makefile
+        - Dockerfile
+        - scripts/**/*
+        - .gitlab-ci.yml
+        - .golangci.yml
 
 .rules-helm:
   rules:
@@ -346,7 +367,9 @@ audit:
       when: never
     - if: $CI_COMMIT_TAG
       when: never
-    - !reference [.rules-code, rules]
+    # govulncheck only depends on Go sources + dependency graph — a
+    # docs/config change can't introduce a vulnerability.
+    - !reference [.rules-go, rules]
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -391,7 +414,8 @@ test:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - !reference [.rules-code, rules]
+    # Unit tests only depend on Go sources + testdata fixtures.
+    - !reference [.rules-go, rules]
   tags:
     - saas-linux-large-amd64
   interruptible: true
@@ -1201,7 +1225,10 @@ smoke-spoa-arm64:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
       when: never
-    - !reference [.rules-code, rules]
+    # Integration tests exercise the Go binary against a kind cluster —
+    # a docs-only / config-only change can't affect them. (Was .rules-code,
+    # which fired the full 5× 2xlarge matrix on any `**/*.md` edit.)
+    - !reference [.rules-go, rules]
   timeout: 30 minutes
   interruptible: true
   needs:
@@ -1230,7 +1257,34 @@ test-integration:
     - saas-linux-2xlarge-amd64
   extends:
     - .test-integration-base
-    - .haproxy-version-matrix
+  # MRs run only the 3.0/3.4 bracket (oldest + newest supported HAProxy) for
+  # fast feedback; the interior versions run post-merge on main and nightly
+  # (test-integration-extra-versions). Releases are cut from main, so the full
+  # 5-version integration gate still runs before any release.
+  parallel:
+    matrix:
+      - HAPROXY_VERSION: ["3.0", "3.4"]
+
+# Interior HAProxy versions (3.1–3.3) for integration — main + nightly only.
+# Inherits .test-integration-base but overrides its rules to drop the
+# .rules-go MR trigger, so these never run on an MR pipeline.
+test-integration-extra-versions:
+  tags:
+    - saas-linux-2xlarge-amd64
+  extends:
+    - .test-integration-base
+  parallel:
+    matrix:
+      - HAPROXY_VERSION: ["3.1", "3.2", "3.3"]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    # Nightly wins on any branch (kept in lockstep with the sibling
+    # test-e2e-extra-versions / full-conformance jobs). The default-branch
+    # rule mirrors .test-integration-base (integration runs on every main
+    # push); MRs match neither and so never run the interior versions.
+    - if: $SCHEDULE_KIND == "nightly"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # Combined unit + integration coverage report (merges all HAProxy version coverage files)
 coverage-combined:
@@ -1240,7 +1294,9 @@ coverage-combined:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - !reference [.rules-code, rules]
+    # Follows `test` + `test-integration` (both .rules-go) in lockstep —
+    # it merges their coverage artifacts, so it must run exactly when they do.
+    - !reference [.rules-go, rules]
   tags:
     - saas-linux-medium-amd64
   interruptible: true
@@ -1252,16 +1308,17 @@ coverage-combined:
     - job: "test-integration: [3.0]"
       artifacts: true
       optional: true
-    - job: "test-integration: [3.1]"
-      artifacts: true
-      optional: true
-    - job: "test-integration: [3.2]"
-      artifacts: true
-      optional: true
-    - job: "test-integration: [3.3]"
-      artifacts: true
-      optional: true
     - job: "test-integration: [3.4]"
+      artifacts: true
+      optional: true
+    # Interior versions live in a separate job (main + nightly only).
+    - job: "test-integration-extra-versions: [3.1]"
+      artifacts: true
+      optional: true
+    - job: "test-integration-extra-versions: [3.2]"
+      artifacts: true
+      optional: true
+    - job: "test-integration-extra-versions: [3.3]"
       artifacts: true
       optional: true
   script:
@@ -1306,7 +1363,18 @@ test-acceptance:
     # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
-    - !reference [.rules-code, rules]
+    # Acceptance helm-installs the WHOLE chart, so it must run on Go changes
+    # AND on any chart change — but not on non-chart docs (`docs/**`, root
+    # `*.md`). Deliberately `charts/haptic/**/*` (all chart files), NOT the
+    # narrow `.rules-spoa-chart` used by test-e2e-base: that lists only
+    # SPOE-wiring files, so it would MISS chart changes acceptance renders
+    # (e.g. `charts/haptic/charts/haproxytech/**`, new templates, crds) and
+    # silently under-test them. The residual — chart CLAUDE.md/CHANGELOG also
+    # matching — is accepted; it's one xlarge job vs. the old `**/*.md`-wide
+    # trigger that fired the whole heavy suite.
+    - !reference [.rules-go, rules]
+    - changes:
+        - charts/haptic/**/*
   timeout: 30 minutes
   interruptible: true
   needs:
@@ -1591,7 +1659,37 @@ test-acceptance:
 test-e2e:
   extends:
     - .test-e2e-base
-    - .haproxy-version-matrix
+  # MRs run only the 3.0/3.4 bracket; interior versions run on main + nightly
+  # (test-e2e-extra-versions). See test-integration for the full rationale.
+  parallel:
+    matrix:
+      - HAPROXY_VERSION: ["3.0", "3.4"]
+
+# Interior HAProxy versions (3.1–3.3) for e2e — main + nightly only. Inherits
+# .test-e2e-base but overrides rules to exclude MR/feature-branch pipelines
+# (the `!= default branch → never` guard), while still matching the base's
+# main-branch (merge-result) and nightly triggers.
+test-e2e-extra-versions:
+  extends:
+    - .test-e2e-base
+  parallel:
+    matrix:
+      - HAPROXY_VERSION: ["3.1", "3.2", "3.3"]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    # Nightly wins on any branch; then exclude MR/feature-branch pipelines;
+    # then match the base's main-branch (merge-result) triggers.
+    - if: $SCHEDULE_KIND == "nightly"
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+      when: never
+    - changes:
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - scripts/**/*
+        - .gitlab-ci.yml
+    - !reference [.rules-spoa-chart, rules]
 
 # Per-vendor e2e shards. The default test-e2e job installs with all three vendor
 # annotation libraries DISABLED (e2e-values.yaml) — enabling all three at once
@@ -1718,9 +1816,16 @@ test-gateway-conformance:
     - job: build-snapshot
     - job: build-spoa-image-snapshot
   rules:
-    # Runs post-merge on the default branch too — see .test-e2e-base for
-    # the merge-result / heartbeat rationale.
+    # Full 4-shard suite runs on the default branch (merge-result / heartbeat,
+    # see .test-e2e-base) and nightly — NOT on MRs. MRs get a deterministic
+    # 1-of-4 smoke instead (test-gateway-conformance-smoke) to cut xlarge
+    # minutes; the full suite still gates every merge to main before release.
     - if: $CI_COMMIT_TAG
+      when: never
+    # Nightly wins on any branch; then exclude MR/feature pipelines; then
+    # match the main-branch (merge-result) triggers.
+    - if: $SCHEDULE_KIND == "nightly"
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
       when: never
     - changes:
         - "**/*.go"
@@ -1971,6 +2076,45 @@ test-gateway-conformance:
       - debug-logs/
     when: on_failure
     expire_in: 1 week
+
+# Deterministic 1-of-4 gateway-conformance smoke for MRs. The full 4-shard
+# suite runs on main + nightly (test-gateway-conformance); MRs run just shard
+# 1/4 of the same CRC32 partition — enough to catch chart-render /
+# cluster-bring-up regressions plus a representative quarter of the upstream
+# suite at ~¼ the xlarge cost. Reuses the full job's setup/teardown verbatim
+# via !reference; only `script` differs (hardcoded shard `1 4`, no `parallel:`).
+test-gateway-conformance-smoke:
+  stage: integration
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
+  extends:
+    - .docker-dind
+  timeout: 25 minutes
+  interruptible: true
+  variables: !reference [test-gateway-conformance, variables]
+  needs: !reference [test-gateway-conformance, needs]
+  before_script: !reference [test-gateway-conformance, before_script]
+  script:
+    - HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN="^$" make test-e2e
+    - |
+      SHARD_PATTERN="$(scripts/shard-conformance-tests.sh 1 4)"
+      echo "Conformance smoke shard 1/4: ${SHARD_PATTERN}"
+      TEST_RUN_PATTERN="${SHARD_PATTERN}" make test-gateway-conformance
+  after_script: !reference [test-gateway-conformance, after_script]
+  artifacts: !reference [test-gateway-conformance, artifacts]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $SCHEDULE_KIND == "nightly"
+      when: never
+    - changes:
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - scripts/**/*
+        - .gitlab-ci.yml
+    - !reference [.rules-spoa-chart, rules]
 
 # On-demand job that produces a submittable Gateway API ConformanceReport.
 #
@@ -2322,9 +2466,14 @@ test-ingress-conformance:
     - job: build-spoa-image-snapshot
     - job: build-ingress-conformance-image
   rules:
-    # Runs post-merge on the default branch too — see .test-e2e-base for
-    # the merge-result / heartbeat rationale.
+    # Full 4-shard suite runs on the default branch (merge-result / heartbeat,
+    # see .test-e2e-base) and nightly — NOT on MRs. MRs get a deterministic
+    # 1-of-4 smoke instead (test-ingress-conformance-smoke).
     - if: $CI_COMMIT_TAG
+      when: never
+    # Nightly wins on any branch; then exclude MR/feature pipelines.
+    - if: $SCHEDULE_KIND == "nightly"
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
       when: never
     - changes:
         # Keep in lockstep with build-ingress-conformance-image's
@@ -2512,6 +2661,46 @@ test-ingress-conformance:
       - debug-logs/
     when: on_failure
     expire_in: 1 week
+
+# Deterministic 1-of-4 ingress-conformance smoke for MRs — same design as
+# test-gateway-conformance-smoke. Runs shard 1/4 of the same partition; the
+# full 4-shard suite runs on main + nightly (test-ingress-conformance).
+test-ingress-conformance-smoke:
+  stage: integration
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
+  extends:
+    - .docker-dind
+  timeout: 20 minutes
+  interruptible: true
+  variables: !reference [test-ingress-conformance, variables]
+  needs: !reference [test-ingress-conformance, needs]
+  before_script: !reference [test-ingress-conformance, before_script]
+  script:
+    - HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN="^$" make test-e2e
+    - |
+      echo "Ingress-conformance smoke shard 1/4"
+      SHARD_ID=1 SHARD_COUNT=4 \
+        CONFORMANCE_IMAGE_PREBUILT=1 \
+        make test-ingress-conformance
+  after_script: !reference [test-ingress-conformance, after_script]
+  artifacts: !reference [test-ingress-conformance, artifacts]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $SCHEDULE_KIND == "nightly"
+      when: never
+    - changes:
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - scripts/**/*
+        - .gitlab-ci.yml
+        - Makefile
+        - Dockerfile.ingress-conformance-test
+        - tests/conformance/patches/**
+    - !reference [.rules-spoa-chart, rules]
 
 # Helm chart default values test with cert-manager
 # Verifies that the chart works out-of-the-box with default values when
