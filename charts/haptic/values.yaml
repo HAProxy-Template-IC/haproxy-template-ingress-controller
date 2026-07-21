@@ -1428,6 +1428,15 @@ defaultSSLCertificate:
   # Namespace of the TLS Secret
   # Defaults to Release.Namespace if empty
   namespace: ""
+  # Optional ECDSA companion for the default certificate. Set to the name of a
+  # second TLS Secret holding an ECDSA (P-256) cert for the same name(s) — e.g. a
+  # wildcard `*.example.com`. HAProxy then serves ECDSA to modern clients and the
+  # primary `secretName` cert (typically RSA) to the rest on the default
+  # (no-SNI / unmatched-SNI) path. The secret must live in the same `namespace`
+  # as the primary. Empty = single default cert (unchanged). Does not apply when
+  # a Gateway no-hostname listener owns the default slot (use its certificateRefs
+  # for dual there). See docs/site/docs/ssl-certificates.md.
+  ecdsaSecretName: ""
   #
   # cert-manager configuration (enabled by default)
   # Requires cert-manager to be installed in the cluster

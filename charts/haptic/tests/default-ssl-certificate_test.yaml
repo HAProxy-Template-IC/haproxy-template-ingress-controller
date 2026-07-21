@@ -18,6 +18,42 @@ tests:
           path: spec.templatingSettings.extraContext.tls.defaultCertificate.namespace
           value: security
 
+  - it: should project the ECDSA companion default certificate into the template context
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.secretName: edge-default-tls
+      defaultSSLCertificate.ecdsaSecretName: edge-default-ecdsa-tls
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.tls.defaultCertificate.ecdsaName
+          value: edge-default-ecdsa-tls
+
+  - it: should default the ECDSA companion to empty when unset
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.secretName: edge-default-tls
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.tls.defaultCertificate.ecdsaName
+          value: ""
+
+  - it: should reject a malformed ECDSA companion secret name
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.ecdsaSecretName: "Invalid_Name!"
+    asserts:
+      - failedTemplate:
+          errorMessage: "defaultSSLCertificate.ecdsaSecretName must be empty or a valid Kubernetes DNS subdomain no longer than 253 characters."
+
+  - it: should reject an ECDSA companion equal to the primary secret name
+    template: haproxytemplateconfig.yaml
+    set:
+      defaultSSLCertificate.secretName: edge-default-tls
+      defaultSSLCertificate.ecdsaSecretName: edge-default-tls
+    asserts:
+      - failedTemplate:
+          errorMessage: "defaultSSLCertificate.ecdsaSecretName must differ from defaultSSLCertificate.secretName; equal names share a namespace and resolve to the same Secret (a redundant no-op dual)."
+
   - it: should reject the former controller-owned default certificate path
     template: haproxytemplateconfig.yaml
     set:

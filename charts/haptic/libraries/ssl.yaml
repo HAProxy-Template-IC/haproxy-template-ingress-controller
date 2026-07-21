@@ -525,7 +525,43 @@ templateSnippets:
           listener hostname, default frontend validation) was answering
           handshakes without client-cert verification. -#}
       {%- var defaultCfg = clientCertVerifyHosts["*"] -%}
-      {%- var crtlistLines = []any{CrtListLine(defaultCertFilename, defaultCfg, "")} -%}
+      {#- Optional ECDSA companion for the default cert. When
+          defaultSSLCertificate.ecdsaSecretName is set (surfaced as
+          extraContext.tls.defaultCertificate.ecdsaName) and no Gateway listener
+          has claimed the default slot, register that secret and emit a SECOND
+          default crt-list line. HAProxy then serves ECDSA to modern clients and
+          the primary (RSA) cert to the rest on the no-SNI / unmatched-SNI path.
+          CRITICAL: both default lines must use the "*" SNI filter, NOT the
+          historical empty suffix — with two empty-SNI default lines HAProxy
+          keeps only the first as the implicit default and the RSA fallback
+          silently breaks for no-SNI clients (verified against HAProxy 3.4).
+          The ECDSA line is emitted first so modern clients get it by
+          precedence. Only applies to the chart default cert, not a Gateway
+          no-hostname listener default (those carry dual via certificateRefs). -#}
+      {%- var ecdsaDefaultName = tostring(extraContext | dig("tls", "defaultCertificate", "ecdsaName") | fallback("")) -%}
+      {%- var ecdsaDefaultFilename = "" -%}
+      {%- if ecdsaDefaultName != "" && len(gatewayDefaultCandidates) == 0 -%}
+        {%- var ecdsaDefaultNs = tostring(extraContext | dig("tls", "defaultCertificate", "namespace") | fallback("haptic")) -%}
+        {%- var ecdsaSecret = resources.secrets.GetSingle(ecdsaDefaultNs, ecdsaDefaultName) -%}
+        {%- if ecdsaSecret == nil -%}
+        {{ fail("Default ECDSA TLS Secret not found: " + ecdsaDefaultNs + "/" + ecdsaDefaultName + ". Ensure the Secret exists and is watched.") }}
+        {%- end -%}
+        {%- var eCrtB64, eHasCrt = ecdsaSecret.Data["tls.crt"] -%}
+        {%- var eKeyB64, eHasKey = ecdsaSecret.Data["tls.key"] -%}
+        {%- if !eHasCrt || !eHasKey -%}
+        {{ fail("Invalid default ECDSA TLS Secret " + ecdsaDefaultNs + "/" + ecdsaDefaultName + ": missing tls.crt or tls.key fields.") }}
+        {%- end -%}
+        {%- var ecdsaPem = (eCrtB64 | b64decode()) + "\n" + (eKeyB64 | b64decode()) -%}
+        {%- var ecdsaPath, ecdsaRegErr = fileRegistry.Register("cert", ecdsaDefaultNs + "_" + ecdsaDefaultName + ".pem", ecdsaPem) -%}
+        {%- if ecdsaRegErr != nil -%}{{ fail("failed to register default ECDSA certificate: " + tostring(ecdsaRegErr)) }}{%- end -%}
+        {%- ecdsaDefaultFilename = basename(ecdsaPath) -%}
+      {%- end -%}
+      {%- var crtlistLines []any = []any{} -%}
+      {%- if ecdsaDefaultFilename != "" -%}
+        {%- crtlistLines = []any{CrtListLine(ecdsaDefaultFilename, defaultCfg, "*"), CrtListLine(defaultCertFilename, defaultCfg, "*")} -%}
+      {%- else -%}
+        {%- crtlistLines = []any{CrtListLine(defaultCertFilename, defaultCfg, "")} -%}
+      {%- end -%}
 
       {# Generate entries for each registered TLS certificate.
          Per-host client-cert verification (driven by the ingress
@@ -1499,6 +1535,90 @@ validationTests:
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'default_dual-rsa\.pem \[ocsp-update on\] dual\.example\.com'
+
+  test-ssl-dual-default-cert:
+    description: >-
+      defaultSSLCertificate with an ECDSA companion (ecdsaSecretName) emits TWO
+      default crt-list lines using the "*" SNI filter — the ECDSA companion first
+      (precedence), the primary cert second — so HAProxy serves ECDSA to modern
+      clients and the primary cert to the rest on the no-SNI / unmatched-SNI
+      path. The "*" filter (not the single-cert empty suffix) is what makes the
+      fallback work.
+    extraContext:
+      tls:
+        defaultCertificate:
+          namespace: default
+          name: default-rsa-cert
+          ecdsaName: default-ecdsa-cert
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: default-rsa-cert
+            namespace: default
+          data:
+            tls.crt: *test_tls_crt_rsa
+            tls.key: *test_tls_key_rsa
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: default-ecdsa-cert
+            namespace: default
+          data:
+            tls.crt: *test_tls_crt
+            tls.key: *test_tls_key
+    assertions:
+      # HAProxy accepts two "*" default certs of different key types
+      - type: haproxy_valid
+      # ECDSA companion default line, "*" filter
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default_default-ecdsa-cert\.pem \[ocsp-update on\] \*'
+      # primary default line switches to the "*" filter too
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default\.pem \[ocsp-update on\] \*'
+      # ECDSA precedes the primary (modern clients get ECDSA by order)
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default_default-ecdsa-cert\.pem \[ocsp-update on\] \*\ndefault\.pem \[ocsp-update on\] \*'
+
+  test-ssl-single-default-cert-no-companion:
+    description: >-
+      Without ecdsaSecretName the default cert stays a SINGLE crt-list line with
+      the empty-SNI suffix (not "*"). Proves the dual-default path is opt-in and
+      that a single default works with any key type (RSA cert used here; the
+      default.pem template is algorithm-agnostic) — so RSA-only and ECDSA-only
+      defaults are unchanged.
+    extraContext:
+      tls:
+        defaultCertificate:
+          namespace: default
+          name: default-rsa-cert
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: default-rsa-cert
+            namespace: default
+          data:
+            tls.crt: *test_tls_crt_rsa
+            tls.key: *test_tls_key_rsa
+    assertions:
+      - type: haproxy_valid
+      # the single default line is present
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default\.pem \[ocsp-update on\]'
+      # and it is NOT the dual "*" form (opt-in only)
+      - type: not_contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default\.pem \[ocsp-update on\] \*'
 
   test-ssl-session-tickets-seed:
     description: Session tickets enabled with no current file → three fresh STEK keys seeded (stamped today) and every HTTPS bind carries tls-ticket-keys; haproxy -c accepts them

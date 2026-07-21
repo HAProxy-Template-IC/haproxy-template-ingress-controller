@@ -8,9 +8,16 @@ Disabled/staged settings are validated so enabling them later is predictable.
 {{- $default := .Values.defaultSSLCertificate -}}
 {{- if not (kindIs "map" $default) -}}{{- fail "defaultSSLCertificate must be a map." -}}{{- end -}}
 {{- range $field := keys $default -}}
-  {{- if not (has $field (list "enabled" "secretName" "namespace" "certManager" "create" "cert" "key")) -}}{{- fail (printf "defaultSSLCertificate contains unknown field %q." $field) -}}{{- end -}}
+  {{- if not (has $field (list "enabled" "secretName" "namespace" "certManager" "create" "cert" "key" "ecdsaSecretName")) -}}{{- fail (printf "defaultSSLCertificate contains unknown field %q." $field) -}}{{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $default.enabled) -}}{{- fail "defaultSSLCertificate.enabled must be a boolean." -}}{{- end -}}
+{{- if and (hasKey $default "ecdsaSecretName") (not (kindIs "string" $default.ecdsaSecretName)) -}}{{- fail "defaultSSLCertificate.ecdsaSecretName must be a string." -}}{{- end -}}
+{{- if and (kindIs "string" $default.ecdsaSecretName) (ne $default.ecdsaSecretName "") (or (gt (len $default.ecdsaSecretName) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $default.ecdsaSecretName))) -}}
+  {{- fail "defaultSSLCertificate.ecdsaSecretName must be empty or a valid Kubernetes DNS subdomain no longer than 253 characters." -}}
+{{- end -}}
+{{- if and (kindIs "string" $default.ecdsaSecretName) (ne $default.ecdsaSecretName "") (eq $default.ecdsaSecretName $default.secretName) -}}
+  {{- fail "defaultSSLCertificate.ecdsaSecretName must differ from defaultSSLCertificate.secretName; equal names share a namespace and resolve to the same Secret (a redundant no-op dual)." -}}
+{{- end -}}
 {{- if not (kindIs "bool" $default.create) -}}{{- fail "defaultSSLCertificate.create must be a boolean." -}}{{- end -}}
 {{- if or (not (kindIs "string" $default.secretName)) (gt (len $default.secretName) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $default.secretName)) -}}
   {{- fail "defaultSSLCertificate.secretName must be a valid non-empty Kubernetes DNS subdomain no longer than 253 characters." -}}

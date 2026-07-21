@@ -177,6 +177,7 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 | `defaultSSLCertificate.enabled` | bool | `true` | Enable default SSL certificate requirement. When the cert-manager API is absent and no inline cert is set, the chart generates a self-signed Secret (never touching an existing one) so the install converges out of the box |
 | `defaultSSLCertificate.secretName` | string | `default-ssl-cert` | TLS Secret name containing certificate |
 | `defaultSSLCertificate.namespace` | string | `""` | Secret namespace (defaults to `Release.Namespace`) |
+| `defaultSSLCertificate.ecdsaSecretName` | string | `""` | Optional ECDSA companion Secret for the default cert. When set, HAProxy serves ECDSA to modern clients and `secretName` (RSA) to the rest on the no-SNI / unmatched-SNI path. Must be in the same namespace. Empty = single default cert. See [Dual RSA and ECDSA certificates](ssl-certificates.md#default-certificate) |
 | `defaultSSLCertificate.certManager.enabled` | bool | `true` | Use cert-manager for certificate provisioning |
 | `defaultSSLCertificate.certManager.createIssuer` | bool | `true` | Create self-signed Issuer (dev/test only) |
 | `defaultSSLCertificate.certManager.dnsNames` | list | `["localdev.me", "*.localdev.me"]` | DNS names for the certificate |

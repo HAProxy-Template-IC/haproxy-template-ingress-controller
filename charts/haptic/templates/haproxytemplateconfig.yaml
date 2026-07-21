@@ -212,7 +212,8 @@ spec:
     {{- $_ := set $extraContext "tls" $tls }}
     {{- $_ := set $tls "defaultCertificate" (dict
           "name" $defaultSSL.secretName
-          "namespace" ($defaultSSL.namespace | default .Release.Namespace)) }}
+          "namespace" ($defaultSSL.namespace | default .Release.Namespace)
+          "ecdsaName" ($defaultSSL.ecdsaSecretName | default "")) }}
   {{- end }}
 
   {{- /* Gateway API controllerName for status patches */ -}}
