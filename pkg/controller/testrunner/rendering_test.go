@@ -4,7 +4,40 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
+
+// TestApplyTestExtraContext pins the helper the benchmark path (cmd/controller)
+// uses to render each test with the same isolated baseline as the load gate:
+// production < _global < per-test, applied to an already-built render context.
+func TestApplyTestExtraContext(t *testing.T) {
+	cfgWithGlobal := &config.Config{
+		ValidationTests: map[string]config.ValidationTest{
+			"_global": {ExtraContext: map[string]any{"marker": "global"}},
+		},
+	}
+	cfgNoGlobal := &config.Config{ValidationTests: map[string]config.ValidationTest{}}
+
+	tests := []struct {
+		name      string
+		cfg       *config.Config
+		testExtra map[string]any
+		want      string
+	}{
+		{"no _global and no per-test keeps production", cfgNoGlobal, nil, "production"},
+		{"_global baseline overrides production", cfgWithGlobal, nil, "global"},
+		{"per-test overrides the _global baseline", cfgWithGlobal, map[string]any{"marker": "pertest"}, "pertest"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			renderCtx := map[string]any{"extraContext": map[string]any{"marker": "production"}}
+			ApplyTestExtraContext(renderCtx, tt.cfg, tt.testExtra)
+			got := renderCtx["extraContext"].(map[string]any)["marker"]
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
 
 func TestMergeTestExtraContext(t *testing.T) {
 	tests := []struct {

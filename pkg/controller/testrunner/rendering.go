@@ -202,9 +202,14 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 // invoke this sequentially; use separate runners for parallel renders).
 func (r *Runner) RenderFixtures(fixtures map[string][]any) (RenderOutput, error) {
 	httpFixtures := []config.HTTPResourceFixture(nil)
+	var globalExtraContext map[string]any
 	if globalTest, hasGlobal := r.config.ValidationTests["_global"]; hasGlobal {
 		fixtures = MergeFixtures(globalTest.Fixtures, fixtures)
 		httpFixtures = globalTest.HTTPFixtures
+		// Same isolated baseline as a validation-test render (see runSingleTest):
+		// the migrate-check probe renders against synthetic _global values, not
+		// the operator's real default-cert names.
+		globalExtraContext = globalTest.ExtraContext
 	}
 
 	fixtureStores, err := r.CreateStoresFromFixtures(fixtures)
@@ -214,7 +219,7 @@ func (r *Runner) RenderFixtures(fixtures map[string][]any) (RenderOutput, error)
 
 	httpStore := NewFixtureHTTPStoreWrapper(CreateHTTPStoreFromFixtures(httpFixtures, r.logger), r.logger)
 
-	return r.renderWithStores(r.engineTemplate, fixtureStores, r.validationPaths, httpStore, nil, nil, nil)
+	return r.renderWithStores(r.engineTemplate, fixtureStores, r.validationPaths, httpStore, nil, nil, globalExtraContext)
 }
 
 // mergeTestExtraContext folds a per-test extraContext map into the rendering
@@ -236,6 +241,28 @@ func mergeTestExtraContext(renderCtx, testExtraContext map[string]any) {
 		renderCtx[key] = merged[key]
 	}
 	renderCtx["extraContext"] = merged
+}
+
+// foldGlobalExtraContext folds a per-test extraContext onto the _global
+// validationTest's shared extraContext baseline (baseline first, per-test wins),
+// or returns testExtra unchanged when _global declares none. This is the single
+// source of the production < _global < per-test precedence every validationTest
+// render site relies on.
+func foldGlobalExtraContext(cfg *config.Config, testExtra map[string]any) map[string]any {
+	if globalTest, ok := cfg.ValidationTests["_global"]; ok && len(globalTest.ExtraContext) > 0 {
+		return deepMergeMaps(globalTest.ExtraContext, testExtra)
+	}
+	return testExtra
+}
+
+// ApplyTestExtraContext folds the _global baseline and a per-test extraContext
+// (pass the test's ExtraContext) into an already-built render context (whose
+// "extraContext" key holds the deployment's production extraContext), matching
+// runSingleTest's production < _global < per-test precedence. Render sites that
+// build their own context outside the Runner — the benchmark path in
+// cmd/controller — call this so they render each test exactly as the load gate does.
+func ApplyTestExtraContext(renderCtx map[string]any, cfg *config.Config, testExtra map[string]any) {
+	mergeTestExtraContext(renderCtx, foldGlobalExtraContext(cfg, testExtra))
 }
 
 // replaceSentinelKey, when present (with any truthy value) in a test

@@ -358,6 +358,65 @@ func TestRunner_RunTests(t *testing.T) {
 	}
 }
 
+// TestRunner_GlobalExtraContextIsolation pins the _global validationTest's
+// extraContext as a shared, isolated baseline folded into every test: it
+// overrides the deployment's PRODUCTION extraContext, and a per-test
+// extraContext overrides it in turn (production < _global < per-test). This is
+// what decouples the synthetic suite from the operator's real values (e.g.
+// defaultSSLCertificate names) — without it, a custom default-cert name leaked
+// into every test and crash-looped the load gate.
+func TestRunner_GlobalExtraContextIsolation(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	spec := &v1alpha1.HAProxyTemplateConfigSpec{
+		TemplatingSettings: v1alpha1.TemplatingSettings{
+			Engine: "scriggo",
+			// The deployment's real extraContext — the value a synthetic test
+			// must NOT see when it doesn't override it itself.
+			ExtraContext: mustMarshalRawExtension(map[string]any{"marker": "production-real"}),
+		},
+		HAProxyConfig: v1alpha1.HAProxyConfig{
+			Template: "global\n  # marker=" + `{{ extraContext | dig("marker") | fallback("none") | tostring() }}` + "\n",
+		},
+		ValidationTests: map[string]v1alpha1.ValidationTest{
+			"_global": {
+				Description:  "shared isolated baseline (never runs standalone)",
+				ExtraContext: mustMarshalRawExtension(map[string]any{"marker": "global-baseline"}),
+			},
+			"test-inherits-global": {
+				Description: "no per-test extraContext resolves the _global baseline, not production",
+				Assertions: []v1alpha1.ValidationAssertion{
+					{Type: "contains", Target: "haproxy.cfg", Pattern: "marker=global-baseline"},
+					{Type: "not_contains", Target: "haproxy.cfg", Pattern: "marker=production-real"},
+				},
+			},
+			"test-overrides-global": {
+				Description:  "per-test extraContext wins over the _global baseline",
+				ExtraContext: mustMarshalRawExtension(map[string]any{"marker": "per-test"}),
+				Assertions: []v1alpha1.ValidationAssertion{
+					{Type: "contains", Target: "haproxy.cfg", Pattern: "marker=per-test"},
+				},
+			},
+		},
+	}
+
+	engine, err := templating.New(map[string]string{"haproxy.cfg": spec.HAProxyConfig.Template}, nil)
+	require.NoError(t, err)
+
+	cfg, err := conversion.ConvertSpec(spec)
+	require.NoError(t, err)
+
+	runner := New(cfg, engine, &dataplane.ValidationPaths{}, &Options{Logger: logger})
+
+	results, err := runner.RunTests(context.Background(), "")
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, results.TotalTests, "_global is excluded; only the two real tests run")
+	assert.Equal(t, 2, results.PassedTests, "both isolation tests pass")
+	assert.Equal(t, 0, results.FailedTests)
+	assert.True(t, results.AllPassed())
+}
+
 func TestRunner_RunTests_WithFixtures(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 

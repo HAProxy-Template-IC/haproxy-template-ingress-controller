@@ -18,22 +18,31 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-// compileTemplatesForBenchmark compiles templates with optional profiling.
-func compileTemplatesForBenchmark(cfg *config.Config) (templating.Engine, error) {
-	// Benchmark doesn't need currentConfig type registration
-	return helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, nil, helpers.EngineOptions{
+// compileTemplatesForBenchmark compiles templates with optional profiling. It
+// folds the typebootstrap result into the engine's declarations (the same
+// BuildAdditionalDeclarations path validate/production use) so typed-resource
+// access (`gateways`, typed `resources.<name>.List()`) compiles; typedResult is
+// empty when no --schema-dir was supplied, in which case a typed-access template
+// fails at compile time with a clear pointer back to --schema-dir, exactly as
+// validate does.
+func compileTemplatesForBenchmark(cfg *config.Config, typedResult *typebootstrap.Result) (templating.Engine, error) {
+	// Benchmark doesn't need currentConfig type registration.
+	additionalDeclarations := helpers.BuildAdditionalDeclarations(cfg, typedResult)
+	return helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{
 		EnableProfiling: benchmarkProfileIncludes,
 	})
 }
@@ -135,6 +144,7 @@ func buildBenchmarkContext(
 	storeMap map[string]stores.Store,
 	validationPaths *dataplane.ValidationPaths,
 	httpStore *testrunner.FixtureHTTPStoreWrapper,
+	typedResourceTypes map[string]reflect.Type,
 	logger *slog.Logger,
 ) map[string]any {
 	// Create PathResolver from ValidationPaths
@@ -143,7 +153,10 @@ func buildBenchmarkContext(
 	// Separate haproxy-pods from resource stores (goes in controller namespace)
 	resourceStores, haproxyPodStore := rendercontext.SeparateHAProxyPodStore(storeMap)
 
-	// Build context using centralized builder
+	// Build context using centralized builder. typedResourceTypes wires the same
+	// typed store wrappers (`resources.<name>.List()` returning typed pointers)
+	// the engine compiled against, so typed-access templates render identically
+	// to production; it's empty when no --schema-dir was supplied.
 	builder := rendercontext.NewBuilder(
 		cfg,
 		pathResolver,
@@ -151,6 +164,7 @@ func buildBenchmarkContext(
 		rendercontext.WithStores(resourceStores),
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpStore),
+		rendercontext.WithTypedResources(typedResourceTypes),
 	)
 
 	return builder.Build().Context
