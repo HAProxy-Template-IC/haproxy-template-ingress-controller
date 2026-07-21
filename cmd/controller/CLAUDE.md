@@ -33,6 +33,7 @@ cmd/controller/
 ├── benchmark_output.go        # benchmark output formatting
 ├── migratecheck.go            # `migrate-check` subcommand orchestration
 ├── migratecheck_sources.go    # migrate-check input sources (live cluster + manifest dir)
+├── applycrds.go               # `apply-crds` subcommand (server-side apply of bundled CRDs)
 ├── chartrender.go             # in-process Helm chart render (embedded-chart config source)
 ├── config.go                  # `config view` subcommand + CRD loading helpers shared by run/validate/benchmark
 ├── shared.go                  # Shared flag definitions and bootstrap helpers
@@ -67,6 +68,20 @@ Three input pairs, each with a live default and an offline override:
 - **Ingresses**: live cluster across all namespaces (`-n` narrows); `--resources <dir>` reads manifests offline.
 
 Hard failures come from the **real** render pipeline (`testrunner.Runner.RenderFixtures`), never a Go re-implementation — a template `fail()` on an Ingress is a blocker. Classification (`pkg/controller/migratecheck`) is a pure component: it groups Ingresses by each source's `detect` rules and buckets each annotation as supported/different/dropped/fails/unknown. Exit codes: `0` clean, `1` differences/unknowns, `2` blockers (or the check itself failed — surfaced via `exitCodeError` in main.go). Offline integration test: `migratecheck_test.go` against `testdata/migratecheck/`.
+
+### `apply-crds` — Server-Side Apply Bundled CRDs (applycrds.go)
+
+Reads the CRDs from the image-embedded chart (`resolveChartDir` → `<chart>/crds`,
+shared with `migrate-check`/`chartrender.go`) and server-side applies each to the
+cluster with field manager `haptic-crd-installer`. Closes the "Helm never upgrades
+`crds/`" gap for additive schema changes. Flags: `--chart`, `--kubeconfig`.
+
+It strips `.status` and `metadata.creationTimestamp` before applying — the API
+server owns CRD `status` (`storedVersions`), so applying an empty status would
+clobber the stored-version bookkeeping. The hardcoded `customresourcedefinitions`
+GVR is the operational-identity exception (HAPTIC's own API surface), not a RULE #1
+violation. The chart wires this as a `pre-install`/`pre-upgrade` hook Job
+(`templates/crd-upgrade-hook.yaml`, gated by `crds.upgradeJob.enabled`).
 
 ### `config` — Inspect Live HAProxy Config (config.go)
 

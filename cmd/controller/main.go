@@ -70,6 +70,7 @@ func init() {
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(benchmarkCmd)
 	rootCmd.AddCommand(migrateCheckCmd)
+	rootCmd.AddCommand(applyCRDsCmd)
 }
 
 func main() {

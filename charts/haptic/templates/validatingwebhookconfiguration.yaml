@@ -25,12 +25,17 @@
 {{- $resourceTimeoutSeconds := include "haptic.webhook.resourceTimeoutSeconds" . | int }}
 {{- $configTimeoutSeconds := include "haptic.webhook.configTimeoutSeconds" . | int }}
 {{- $webhookSvcName := include "haptic.webhook.serviceName" . }}
+{{- /* The config is cluster-scoped, so its name is namespace-qualified to avoid
+       collisions across same-release-name multi-namespace installs. The webhook
+       Service ($webhookSvcName) and per-rule webhook names stay as-is — the
+       Service is namespaced, and the rule names only need in-config uniqueness. */ -}}
+{{- $webhookConfigName := printf "%s-webhook" (include "haptic.clusterScopedFullname" .) | trunc 63 | trimSuffix "-" }}
 {{- $ns := .Release.Namespace }}
 {{- if or $webhookRules $htcCfg.enabled }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: {{ $webhookSvcName }}
+  name: {{ $webhookConfigName }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
   {{- if $cm.enabled }}

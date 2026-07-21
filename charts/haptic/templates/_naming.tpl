@@ -30,6 +30,21 @@ If release name contains chart name it will be used as a full name.
 {{- end }}
 
 {{/*
+Cluster-scoped fullname: haptic.fullname suffixed with the release namespace.
+
+Cluster-scoped objects (ClusterRole, ClusterRoleBinding, the
+ValidatingWebhookConfiguration, the CRD-upgrade hook's RBAC) share one
+cluster-wide namespace, so naming them by release fullname alone collides when
+the same release name is installed into two namespaces. Suffixing the namespace
+disambiguates them. Namespaced objects (ServiceAccount, Role, Services) and
+cluster singletons that are a user-facing API (IngressClass, the CRDs) must NOT
+use this — their names are either non-colliding or externally referenced.
+*/}}
+{{- define "haptic.clusterScopedFullname" -}}
+{{- printf "%s-%s" (include "haptic.fullname" .) .Release.Namespace | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Create the controller Deployment name with a "-controller" suffix.
 Used as metadata.name for the controller Deployment, as the
 HPA's scaleTargetRef, and in NOTES.txt's kubectl port-forward example.

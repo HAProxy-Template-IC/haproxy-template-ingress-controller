@@ -1,5 +1,6 @@
 {{- if .Values.controller.rbac.create }}
-{{- $fullname := include "haptic.fullname" . }}
+{{- /* Cluster-scoped: namespace-qualified so same-release-name multi-namespace installs don't collide. */ -}}
+{{- $fullname := include "haptic.clusterScopedFullname" . }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:

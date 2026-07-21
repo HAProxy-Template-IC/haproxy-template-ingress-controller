@@ -526,7 +526,11 @@ verify_certificates() {
     fi
 
     info "Checking ValidatingWebhookConfiguration caBundle is wired..."
-    local vwc="${RELEASE_NAME}-webhook"
+    # The ValidatingWebhookConfiguration is cluster-scoped, so the chart
+    # namespace-qualifies its name (<fullname>-<namespace>-webhook). With the
+    # default release name (== fullname), that is ${RELEASE_NAME}-${NAMESPACE}-webhook.
+    # The webhook Service keeps the un-qualified ${RELEASE_NAME}-webhook name.
+    local vwc="${RELEASE_NAME}-${NAMESPACE}-webhook"
     local ca_bundle
     ca_bundle=$(kubectl get validatingwebhookconfiguration "$vwc" \
         -o jsonpath='{.webhooks[0].clientConfig.caBundle}' 2>/dev/null || echo "")

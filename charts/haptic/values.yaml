@@ -51,6 +51,39 @@ haproxyEnterprisePatchVersions:
 
 nameOverride: ""
 fullnameOverride: ""
+
+# CustomResourceDefinition lifecycle.
+#
+# Root-level (not under extraContext) because it governs Kubernetes resources
+# the chart creates — a pre-install/pre-upgrade Job plus its scoped RBAC — not
+# the render context.
+#
+# Helm installs the CRDs in crds/ exactly once and never upgrades them on a
+# subsequent `helm upgrade` (a documented Helm limitation). Without this hook,
+# additive CRD schema changes (new fields, printer columns, validation) shipped
+# in a chart upgrade would be silently pruned by the API server. The hook runs
+# `haptic-controller apply-crds`, which server-side applies the bundled CRDs.
+crds:
+  upgradeJob:
+    # Run the pre-install/pre-upgrade Job that server-side applies the bundled
+    # CRDs. Disable if you manage CRDs out-of-band (GitOps, a separate CRD
+    # chart) or lack cluster-scoped CRD write permission at upgrade time.
+    enabled: true
+    # Delete-succeeded/before-creation is Helm's default for hooks here; the
+    # Job and its RBAC are removed once the apply succeeds and recreated on the
+    # next run. A failed Job is kept for inspection.
+    backoffLimit: 2
+    activeDeadlineSeconds: 300
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    # Extra annotations/labels for the Job (merged with chart defaults).
+    annotations: {}
+    labels: {}
+
 # Controller configuration
 controller:
   # Controller workload. Component-owned settings live in this tree so generic
