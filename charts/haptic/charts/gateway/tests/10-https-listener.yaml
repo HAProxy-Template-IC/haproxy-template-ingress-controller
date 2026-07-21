@@ -1050,3 +1050,53 @@ validationTests:
       - type: contains
         target: "status:gateway-conformance-infra/gateway-tls-backend-client-certificate:rendered"
         pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'
+
+  test-gateway-https-listener-dual-cert:
+    requires: [gatewayclasses, gateways]
+    description: "A Gateway HTTPS listener with TWO certificateRefs (ECDSA + RSA) emits both certs to the crt-list under the listener hostname, so HAProxy serves ECDSA or RSA per client capability (dual-cert via Gateway API)."
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haproxy
+          spec:
+            controllerName: "haproxy.org/haptic"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: dual-cert-gw
+            namespace: default
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: https
+                protocol: HTTPS
+                port: 443
+                hostname: dual.example.com
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: shared-tls
+                    - kind: Secret
+                      name: dual-rsa-gw
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/tls
+          metadata:
+            name: dual-rsa-gw
+            namespace: default
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDVENDQWZHZ0F3SUJBZ0lVQ3ZIL204UHQ3QTA4c0xDMFFieTlSeW1jcndBd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQjRYRFRJMk1EY3lNREUwTlRBd05Gb1hEVE0yTURjeApOekUwTlRBd05Gb3dGREVTTUJBR0ExVUVBd3dKYkc5allXeG9iM04wTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGCkFBT0NBUThBTUlJQkNnS0NBUUVBeVpyZExKbmFnZkNOZDljRmRvMi85Wm9VVkdVam9sNHBuTzdPU1lTUTcxVEcKMDBVd3lLL21VT3V4TnVIZnJmNTVPU1kzTWI4cmlUM1BBRTUwSm1HaXFEOWNyTFFjTlE0RSt4TnRoUGc2a1dXUQpwUThRSktmT1JCLzN2b0hKa1RqR1k4WlRVaHd5UU9OSk9XeVdmK3ZsZFdEMGNCLytCUzQ3a0U3Q3lnTjNyNENoCjZHU0kxRXZBM0Y5S3hURTBRb3VXemNBU2ZoQjlLczlsMGt2c2lHaGo1YlZEVEtSUWo5Z2NORzdMcnlVMHJTN3QKVTdvVXhvc0xCRXFKNUdrNnVzOHN4NWJFc3oxem5KSnhyM3FGblBhSldNdU8wbEJPakk4US9GcXlOOU8vTTJQcAo3NHVSSDdhV1RxaUl4WjJDWkZKaDFEdUhhK2ozMFJRVWNMbEVrbGdrMndJREFRQUJvMU13VVRBZEJnTlZIUTRFCkZnUVVVa1RXeUtZSWZycVNJemhjTURVQ3JLS1M4MEV3SHdZRFZSMGpCQmd3Rm9BVVVrVFd5S1lJZnJxU0l6aGMKTURVQ3JLS1M4MEV3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBRTQzOAp2RE1yUE9zK2tXRFpMcStiUVA3WkNJTTFYam94Y1R4U0JqeDJoR3AzbmtpYWhsMXVPdlV5ZG5ySWw1V0s5cExGCmRtdHF4YWE5b3RNRjlqMFlSMVR5N1UzRk5DUDdReVFQUit5VHF5d2Z5d1hiNVV5clhQbDRxN01LRm5rbHNCVXAKakVIc0pPM1lyQnlDQmhjQ1JHUTY0a3Y1VmN0ajUzbkQrUklRaTBaTVQvdkNiQVk2REZjWFUyMWNwWCtVaU81NwpydkJoT1NHOVNJbkYzMGd1ZEJLQkN6T2g2NExNWWlnaHBZVVhpa29rM3BuNEhjSnBqR1lPcGFqZisxZnVHVEV6CnB2SlhpTEtXakVlUnVRM0h5K296ZU15Ti85U3VKMnVGY0hFWDNlLzlQVndKbWg3YmVDdTJxUG9LNklWL0NNck4KYjNIYzdTYStMRnQ1UUFIbm9RPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktrd2dnU2xBZ0VBQW9JQkFRREptdDBzbWRxQjhJMTMKMXdWMmpiLzFtaFJVWlNPaVhpbWM3czVKaEpEdlZNYlRSVERJcitaUTY3RTI0ZCt0L25rNUpqY3h2eXVKUGM4QQpUblFtWWFLb1AxeXN0QncxRGdUN0UyMkUrRHFSWlpDbER4QWtwODVFSC9lK2djbVJPTVpqeGxOU0hESkE0MGs1CmJKWi82K1YxWVBSd0gvNEZManVRVHNMS0EzZXZnS0hvWklqVVM4RGNYMHJGTVRSQ2k1Yk53QkorRUgwcXoyWFMKUyt5SWFHUGx0VU5NcEZDUDJCdzBic3V2SlRTdEx1MVR1aFRHaXdzRVNvbmthVHE2enl6SGxzU3pQWE9ja25Hdgplb1djOW9sWXk0N1NVRTZNanhEOFdySTMwNzh6WStudmk1RWZ0cFpPcUlqRm5ZSmtVbUhVTzRkcjZQZlJGQlJ3CnVVU1NXQ1RiQWdNQkFBRUNnZ0VBSUtFVzhQUUp3SVFkY1dyMHNHWnF6aVpjNmZmZ2w1UGo2a2xnUzlmUDJWeUEKUFl0eVJOanJUdWVHckJwTXFJMktNeXl6UERMenFlZStEQSttanR1NGhzQ1NrRVVxVjQvb1VIYXBnQjdvNDhWcgpicnVNWWxKaWVQWXZrNzdQejlnL2k4QjZsY3lJZWFZUG9PS3BUUlR4ODFoNDEzam1GUktSZzE2citpUXJoOVRnCi9ZUVhIUUs1OUJDSjZza3h1TklQWHdvRGRxT0FYVHNIR1ZkRXJUSWt5Wk1WNmNrdGdKUlprU1dnVm5YamRPZzAKM2xDZ0JwWHNCcUVhbFcvVGNwM1JVbXYweEY2anA0cmNvaTNzSmJ6RER3RW55TU1FMnRaWm5mSTl1ZDBsS2VQTQpHYU1VUGt0RUh2dVVuMmZCWkxMWEFlSWJmeTZrTy9DTStybXVTbGNIc1FLQmdRRDZSRHVydURLUkJib3hidjYwCmZoaEpFZnh5L0tVY1FNQ1BUVkpDMWl6M0ZBaVpsWCtONHdvMENGNVl6VWQ2RjZmTGJXSGltSjJHTk5LaEN6TjcKdE9IMFFVUVVaVytHc0xpcXB0V3NCbVh4NkQzajJwOWltTzZTTDg4NDBrYXpkaTlYbUVVeit1RmxwdWZrdGh0MQpSZUdvTVl3V2JnQUU5bXEvYS9sUkhEcUtLUUtCZ1FET09UMVcwZldqQ2pXazJuUlR2cW5Mdld1UkFrREJqcXhpCklhekszdUxmeCtjaFd4RDhwelZrOENnUXN2RTFNZUh2Q09UWXV1Q2oyOTdqZEF6ZFFPNHAzblVUbG1TRy9xbmQKZ0tFNHlPbWhhYjM5d0tzRWtxWEZHTnoyUHBta3h6OFlRVzJvbExYYVVZQk9kRDBIclhWd1JaSFh1a0dXSXpkcQp0Wkl3eitQZll3S0JnUURsQ05iM0kxNmJtL3MzVEZZclJvN2hLR1c1c2Y5RTZQbVE2L2xSazRLWktDdHFxd2VPCkNXOElDWFNXbmw5QW5DK0NtM3NPamc3emlKb09xaHFXcHdaMnE5Z3JObDJualVtalc0V0dwbUJieitmOEE5TUQKditQdHczVklraUFFRXkvbVlVTkwrOWlWVi9jM04zWFBrSUdnbEorWTAxaVBNaGlsVUtKZG1aRDFhUUtCZ1FDSQoxVWdTL0h0dE5CQUdFNEZPTTl0OE9YSlBKRnlOVWJxbDNreEZ6QUJqbGNPUnlWZ0xISE44UnpGK2F3MUxTNDdyClNVNTNWQUJNR1U3YVF4MXFEWFE1eWNhTE9hWDRRSys3TG1kTFExeHA0cnpTeTIxdU9sUE41TUp3alhicTg5MjAKblcxQ2gzSG1xMTlrTHhKenJxK1cwRUtHRHFzSUVOUHJkUkRNWEpTSm13S0JnUURwelpzSitWS0d2cTJtenM2TQpUbHpQMXBTemdpV0NyMjE5eDBqK0hmTm9sRkZtaEtETW1KVHp6RXNwck9GaFFOdXBEREJhUEFBWHNJSTRUc1hpClVHelkzWDdaQldFd0I2UWxxdTVGYW9SK0xTelpSSDhQbS9IdkdJd2ZCVEtpMEFMWElONDdlYmNleWpWNVQrNEcKV2tFUnBwdGJlN2QyOXZGNFNCNW4zQzBkR0E9PQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default_shared-tls\.pem \[ocsp-update on\] dual\.example\.com'
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'default_dual-rsa-gw\.pem \[ocsp-update on\] dual\.example\.com'

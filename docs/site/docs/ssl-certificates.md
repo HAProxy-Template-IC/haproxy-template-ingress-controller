@@ -217,9 +217,9 @@ HAProxy serves clients in cipher-list order, so modern clients still negotiate a
 
 You can serve both an ECDSA and an RSA certificate for the same host. HAProxy presents the ECDSA certificate to clients that support it — a smaller, faster handshake — and falls back to the RSA certificate for older clients. It selects per connection from the client's capabilities, so you don't choose which to serve; you provide both.
 
-Provide two `kubernetes.io/tls` Secrets for the host — one ECDSA, one RSA — and reference both from the Ingress with two `spec.tls` entries for the same host. HAPTIC writes every certificate a host references into HAProxy's certificate list under that host's SNI.
+The setup is always two steps: issue **two** `kubernetes.io/tls` Secrets for the host (one ECDSA, one RSA), then reference **both** from whatever fronts the host — an Ingress, a Gateway listener, or the chart's default certificate. HAPTIC writes every referenced certificate into HAProxy's certificate list under the host's SNI.
 
-### With cert-manager
+### Issue the two certificates (cert-manager)
 
 Create two Certificate resources for the same DNS names, one per key algorithm:
 
@@ -255,7 +255,11 @@ spec:
     kind: ClusterIssuer
 ```
 
-Reference both Secrets from the Ingress:
+Any issuer works — ECDSA and RSA are just the `privateKey.algorithm`. For a **wildcard** certificate, use a DNS-01 issuer — the HTTP-01 challenge type can't validate wildcards.
+
+### Ingress
+
+Reference both Secrets from the Ingress with two `spec.tls` entries for the same host:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -283,7 +287,54 @@ spec:
                   number: 80
 ```
 
-HAProxy then serves the ECDSA or RSA certificate per client. A single-algorithm setup needs only one Certificate and one `spec.tls` entry — the cipher policy [works with whatever you provide](#it-works-with-whatever-certificate-you-provide).
+A single-algorithm setup needs only one Certificate and one `spec.tls` entry — the cipher policy [works with whatever you provide](#it-works-with-whatever-certificate-you-provide).
+
+### Gateway API
+
+A Gateway HTTPS listener takes a **list** of certificate references, so serve dual by giving it both Secrets:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: app
+  namespace: my-app
+spec:
+  gatewayClassName: haproxy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: app.example.com
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: app-tls-ecdsa
+          - kind: Secret
+            name: app-tls-rsa
+```
+
+HAPTIC emits both certificates into that listener's certificate list under its hostname, exactly as it does for an Ingress.
+
+### Default certificate
+
+The default certificate is what HAProxy serves when a connection sends no SNI, or an SNI that matches no configured host. It's set once for the whole controller through `defaultSSLCertificate`, and it can be dual as well — useful when a **wildcard** default (for example `*.example.com`) fronts many teams' hosts and you want the faster ECDSA handshake there without each team managing its own certificate.
+
+Point `defaultSSLCertificate.secretName` at the primary (RSA) Secret and set `defaultSSLCertificate.ecdsaSecretName` to the ECDSA companion:
+
+```yaml
+defaultSSLCertificate:
+  secretName: wildcard-rsa-tls         # primary, e.g. RSA *.example.com
+  ecdsaSecretName: wildcard-ecdsa-tls  # ECDSA companion for the same names
+```
+
+Both Secrets must live in the same namespace (`defaultSSLCertificate.namespace`, which defaults to the release namespace). HAPTIC then emits two default certificate-list lines and HAProxy serves ECDSA to modern clients and the primary certificate to the rest on the default path.
+
+For a **single-algorithm** default, leave `ecdsaSecretName` empty (the default) and put whichever certificate you want in `secretName` — an RSA cert for RSA-only, or an ECDSA cert for ECDSA-only. `secretName` is the default certificate regardless of key type; `ecdsaSecretName` only adds the second, ECDSA-preferred certificate when you want both.
+
+!!! note "Gateway-owned default"
+    If a Gateway HTTPS listener with no `hostname` claims the default slot, that listener owns the default certificate — give *it* two `certificateRefs` for a dual default there. `ecdsaSecretName` applies to the chart's `defaultSSLCertificate`, not to a Gateway-owned default.
 
 !!! note "How HAProxy selects the certificate"
     HAProxy can also auto-select from a directory of certificates by reading each certificate's Subject Alternative Name (SAN). HAPTIC instead builds an explicit certificate list from your Ingress `spec.tls` entries: the hostnames you route are the source of truth — they can differ from a certificate's SAN, such as a wildcard certificate serving an exact host — and the list carries per-certificate OCSP-stapling and client-certificate options a bare directory can't. The RSA/ECDSA auto-selection is identical either way; it's a HAProxy handshake behavior, not a property of how the certificates are loaded.

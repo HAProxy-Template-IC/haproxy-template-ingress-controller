@@ -26,6 +26,7 @@ test-gateway-crtlist-per-listener-shapes
 test-gateway-frontend-client-cert-default-line-verify
 test-gateway-frontend-client-cert-insecure-fallback-default-line
 test-gateway-http-listener-isolation
+test-gateway-https-listener-dual-cert
 test-gateway-https-listener-mtls-unresolved-ca-no-bind
 test-gateway-https-listener-mtls-unresolved-ca-status-conditions
 test-gateway-https-listener-with-invalid-cert-no-bind
