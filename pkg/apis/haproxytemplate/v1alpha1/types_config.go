@@ -25,6 +25,7 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=htplcfg;haptpl,scope=Namespaced
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.validationStatus`
+// +kubebuilder:printcolumn:name="Observed",type=integer,JSONPath=`.status.observedGeneration`,description="Spec generation the controller last processed"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // HAProxyTemplateConfig defines the configuration for the HAProxy Template Ingress Controller.
