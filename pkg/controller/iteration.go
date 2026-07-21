@@ -184,7 +184,10 @@ func runIteration(
 	// (/healthz 503) and the liveness probe restarts the pod, so the bad config
 	// surfaces as CrashLoopBackOff and a rolling upgrade stalls on the old, good
 	// pods. No validationTests in the config → zero-cost pass.
-	if err := validateInitialConfigValidationTests(ctx, cfg, typeBootstrapper, logger); err != nil {
+	// On failure this records WHY on the CRD status (so an operator sees the
+	// rejection via `kubectl get/describe` rather than only in this crash-looping
+	// pod's logs) and then returns the error — the gate stays fail-closed.
+	if err := validateInitialConfigValidationTests(ctx, cfg, crd, k8sClient, typeBootstrapper, logger); err != nil {
 		return fmt.Errorf("initial HAProxyTemplateConfig %q failed validationTests on load: %w", crdName, err)
 	}
 

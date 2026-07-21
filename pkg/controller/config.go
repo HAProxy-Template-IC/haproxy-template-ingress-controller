@@ -29,9 +29,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
 
@@ -151,9 +153,15 @@ const initialValidationTestsRunTimeout = 120 * time.Second
 // surfaces as CrashLoopBackOff and a rolling upgrade stalls on the old, good
 // pods instead of rolling out the break. A config with no validationTests
 // passes at zero cost.
+// validateInitialConfigValidationTests runs the fatal startup load gate. On
+// failure it best-effort records WHY on the CRD status (so an operator sees the
+// rejection via kubectl instead of only in a crash-looping pod's logs) and then
+// returns the error — the caller stays fail-closed and crash-loops.
 func validateInitialConfigValidationTests(
 	ctx context.Context,
 	cfg *coreconfig.Config,
+	crd *v1alpha1.HAProxyTemplateConfig,
+	k8sClient *client.Client,
 	bootstrap validator.TypeBootstrapper,
 	logger *slog.Logger,
 ) error {
@@ -161,13 +169,33 @@ func validateInitialConfigValidationTests(
 	if err != nil {
 		return fmt.Errorf("running validationTests: %w", err)
 	}
-	if result.Incomplete {
-		return errors.New("validationTests did not complete within the suite timeout")
+	var failures []string
+	switch {
+	case result.Incomplete:
+		failures = []string{"validationTests did not complete within the suite timeout"}
+		err = errors.New(failures[0])
+	case !result.Passed:
+		failures = result.Failures
+		err = fmt.Errorf("validationTests failed: %s", strings.Join(result.Failures, "; "))
+	default:
+		return nil
 	}
-	if !result.Passed {
-		return fmt.Errorf("validationTests failed: %s", strings.Join(result.Failures, "; "))
+	reportLoadGateFailure(ctx, k8sClient, crd, failures, logger)
+	return err
+}
+
+// reportLoadGateFailure best-effort records the startup load-gate rejection on
+// the HAProxyTemplateConfig status (via configchange.ReportConfigLoadFailure). It
+// builds a throwaway CRD client because the event-driven status path isn't wired
+// at load-gate time, and never returns an error — a status write must not mask or
+// delay the fail-closed crash-loop.
+func reportLoadGateFailure(ctx context.Context, k8sClient *client.Client, crd *v1alpha1.HAProxyTemplateConfig, failures []string, logger *slog.Logger) {
+	crdClient, err := versioned.NewForConfig(k8sClient.RestConfig())
+	if err != nil {
+		logger.Warn("Cannot build CRD client to report load-gate failure on status", "error", err)
+		return
 	}
-	return nil
+	configchange.ReportConfigLoadFailure(ctx, crdClient, crd, failures, logger)
 }
 
 // waitForInitialConfig polls for the HAProxyTemplateConfig until it exists.

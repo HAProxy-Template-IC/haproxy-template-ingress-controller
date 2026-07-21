@@ -151,6 +151,39 @@ func TestStatusUpdater_HandleConfigValidated_Success(t *testing.T) {
 	u.mu.RUnlock()
 }
 
+// TestReportConfigLoadFailure covers the synchronous startup path: when the
+// fatal load gate rejects the config, the iteration writes an Invalid status
+// (observedGeneration + Validated=False/LoadGateFailed + the failing tests)
+// before crash-looping, so operators can see WHY via kubectl.
+func TestReportConfigLoadFailure(t *testing.T) {
+	htc := newHTC()
+	crdClient := crdclientfake.NewSimpleClientset(htc)
+	_, logger := testutil.NewTestBusAndLogger()
+
+	failures := []string{"test-ssl-x failed: boom", "test-ssl-y failed: kaboom"}
+	ReportConfigLoadFailure(context.Background(), crdClient, htc, failures, logger)
+
+	status := getStatus(t, crdClient)
+	assert.Equal(t, "Invalid", status.ValidationStatus)
+	assert.Equal(t, testGeneration, status.ObservedGeneration)
+	assert.ElementsMatch(t, failures, status.ValidationErrors)
+	assert.Contains(t, status.ValidationMessage, "startup load gate")
+
+	cond := meta.FindStatusCondition(status.Conditions, conditionValidated)
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, reasonLoadGateFailed, cond.Reason)
+	assert.Equal(t, testGeneration, cond.ObservedGeneration)
+	assert.Contains(t, cond.Message, "boom") // first failure surfaces in the condition
+}
+
+func TestReportConfigLoadFailure_GetError(t *testing.T) {
+	// CRD not seeded — Get() returns NotFound; must not panic, just log + return.
+	crdClient := crdclientfake.NewSimpleClientset()
+	_, logger := testutil.NewTestBusAndLogger()
+	ReportConfigLoadFailure(context.Background(), crdClient, newHTC(), []string{"boom"}, logger)
+}
+
 func TestStatusUpdater_HandleConfigInvalid(t *testing.T) {
 	htc := newHTC()
 	u, crd := newStatusUpdaterFixture(t, htc)
