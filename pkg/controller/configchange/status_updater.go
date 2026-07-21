@@ -64,6 +64,11 @@ const (
 	reasonValidationSucceeded     = "ValidationSucceeded"
 	reasonConfigInvalid           = "ConfigInvalid"
 	reasonHAProxyValidationFailed = "HAProxyValidationFailed"
+	// reasonLoadGateFailed marks a config rejected by the fatal startup load gate
+	// (distinct from a live ConfigInvalid): the controller crash-loops fail-closed
+	// until the config is fixed, so an operator seeing this reason knows the pod
+	// is CrashLoopBackOff, not merely that a live reload was rejected.
+	reasonLoadGateFailed = "LoadGateFailed"
 )
 
 // StatusUpdater updates HAProxyTemplateConfig status based on validation results.
@@ -311,6 +316,53 @@ func setValidatedCondition(
 		Message:            message,
 		ObservedGeneration: observedGeneration,
 	})
+}
+
+// ReportConfigLoadFailure best-effort writes an Invalid status
+// (observedGeneration, Validated=False with reason LoadGateFailed, and the
+// failing tests) onto the HAProxyTemplateConfig when the fatal startup load gate
+// rejects it — BEFORE the controller returns the error and crash-loops. The load
+// gate stays fail-closed (the caller still fails the iteration → CrashLoopBackOff
+// → a rolling upgrade stalls on the old good pods); this only makes the reason
+// visible via `kubectl get/describe haproxytemplateconfig` instead of buried in a
+// crash-looping pod's logs. Called synchronously from the iteration because the
+// event-driven StatusUpdater has not started yet at load-gate time. Every error
+// is logged and swallowed — reporting must never mask the load failure.
+func ReportConfigLoadFailure(
+	ctx context.Context,
+	crdClient versioned.Interface,
+	crd *v1alpha1.HAProxyTemplateConfig,
+	failures []string,
+	logger *slog.Logger,
+) {
+	current, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyTemplateConfigs(crd.Namespace).
+		Get(ctx, crd.Name, metav1.GetOptions{})
+	if err != nil {
+		logger.Warn("Failed to get HAProxyTemplateConfig to report load-gate failure",
+			"namespace", crd.Namespace, "name", crd.Name, "error", err)
+		return
+	}
+
+	now := metav1.NewTime(time.Now())
+	current.Status.ObservedGeneration = crd.Generation
+	current.Status.LastValidated = &now
+	current.Status.ValidationStatus = statusInvalid
+	current.Status.ValidationErrors = failures
+	current.Status.ValidationMessage = fmt.Sprintf("Rejected at startup load gate: %d validationTest failure(s)", len(failures))
+	setValidatedCondition(&current.Status, metav1.ConditionFalse, reasonLoadGateFailed,
+		validationEventMessage(&current.Status), crd.Generation)
+
+	if _, err := crdClient.HaproxyTemplateICV1alpha1().
+		HAProxyTemplateConfigs(crd.Namespace).
+		UpdateStatus(ctx, current, metav1.UpdateOptions{}); err != nil {
+		logger.Warn("Failed to write load-gate failure to HAProxyTemplateConfig status",
+			"namespace", crd.Namespace, "name", crd.Name, "error", err)
+		return
+	}
+
+	logger.Info("Reported startup load-gate failure on HAProxyTemplateConfig status; controller stays fail-closed (crash-loop) until the config is fixed",
+		"namespace", crd.Namespace, "name", crd.Name, "failure_count", len(failures))
 }
 
 // applyStatus fetches the named HAProxyTemplateConfig, applies mutate to its
