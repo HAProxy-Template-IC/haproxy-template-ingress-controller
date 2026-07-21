@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: crd upgrade hook
+templates:
+  - crd-upgrade-hook.yaml
+tests:
+  - it: renders four documents by default (SA, ClusterRole, Binding, Job)
+    asserts:
+      - hasDocuments:
+          count: 4
+
+  - it: renders nothing when disabled
+    set:
+      crds.upgradeJob.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: the Job runs apply-crds with the controller image
+    documentIndex: 3
+    asserts:
+      - isKind:
+          of: Job
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value: ["apply-crds"]
+      - equal:
+          path: spec.template.spec.containers[0].command
+          value: ["/usr/local/bin/haptic-controller"]
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: "haptic:.*-haproxy3\\.4$"
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+
+  - it: all documents carry pre-install/pre-upgrade hook annotations
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: pre-install,pre-upgrade
+      - equal:
+          path: metadata.annotations["helm.sh/hook-delete-policy"]
+          value: before-hook-creation,hook-succeeded
+
+  - it: RBAC runs before the Job (lower hook-weight)
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "-5"
+
+  - it: the ClusterRole grants CRD write but never delete
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: rules[0].apiGroups
+          value: ["apiextensions.k8s.io"]
+      - equal:
+          path: rules[0].resources
+          value: ["customresourcedefinitions"]
+      - equal:
+          path: rules[0].verbs
+          value: ["get", "list", "create", "patch"]
+      - notContains:
+          path: rules[0].verbs
+          content: delete
+
+  - it: the Job uses the hook ServiceAccount, not the controller's
+    documentIndex: 3
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: RELEASE-NAME-haptic-NAMESPACE-crd-upgrade
+
+  - it: Job resources are overridable
+    set:
+      crds.upgradeJob.resources.limits.memory: 256Mi
+    documentIndex: 3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 256Mi

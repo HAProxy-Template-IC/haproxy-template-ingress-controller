@@ -31,6 +31,21 @@ final ownership from the start: `cache.varnish` owns the Varnish workload,
 feature, and `rateLimit.shared.managedStore` owns the optional bundled Valkey
 topology. Plugin execution remains under `spoaHub.plugins.*`.
 
+## CRD lifecycle
+
+Helm installs the CRDs in `crds/` once and never upgrades them on a subsequent
+`helm upgrade`. This hook Job runs `haptic-controller apply-crds` (server-side
+apply) so additive CRD schema changes reach the cluster on install and upgrade.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `crds.upgradeJob.enabled` | bool | `true` | Run the `pre-install`/`pre-upgrade` hook Job (and its scoped RBAC) that server-side applies the bundled CRDs. Disable if you manage CRDs out-of-band or lack cluster-scoped CRD write permission at upgrade time |
+| `crds.upgradeJob.backoffLimit` | int | `2` | Job retry limit (the apply is idempotent, so retries are safe) |
+| `crds.upgradeJob.activeDeadlineSeconds` | int | `300` | Job wall-clock deadline |
+| `crds.upgradeJob.resources` | object | cpu `50m` / memory `64Mi`–`128Mi` | Resource requests and limits for the apply Job pod |
+| `crds.upgradeJob.annotations` | map | `{}` | Extra annotations for the Job (merged with chart defaults) |
+| `crds.upgradeJob.labels` | map | `{}` | Extra labels for the Job (merged with chart defaults) |
+
 ## Deployment & Image
 
 | Parameter | Type | Default | Description |

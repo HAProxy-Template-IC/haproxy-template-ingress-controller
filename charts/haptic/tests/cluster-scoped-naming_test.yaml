@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: cluster-scoped resource naming
+# Cluster-scoped objects are namespace-qualified so the same release name can be
+# installed into two namespaces without colliding on shared cluster-wide names.
+# Namespaced objects (the webhook Service) and cluster singletons (IngressClass,
+# CRDs) intentionally stay un-qualified.
+release:
+  name: rel
+  namespace: team-a
+templates:
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - validatingwebhookconfiguration.yaml
+  - crd-upgrade-hook.yaml
+tests:
+  - it: ClusterRole name includes the namespace
+    template: clusterrole.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rel-haptic-team-a
+
+  - it: ClusterRoleBinding name and roleRef both include the namespace
+    template: clusterrolebinding.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rel-haptic-team-a
+      - equal:
+          path: roleRef.name
+          value: rel-haptic-team-a
+
+  - it: ValidatingWebhookConfiguration name includes the namespace
+    template: validatingwebhookconfiguration.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rel-haptic-team-a-webhook
+
+  - it: the webhook Service reference stays un-qualified (it is namespaced)
+    template: validatingwebhookconfiguration.yaml
+    asserts:
+      - equal:
+          path: webhooks[0].clientConfig.service.name
+          value: rel-haptic-webhook
+
+  - it: hook ClusterRole name includes the namespace
+    template: crd-upgrade-hook.yaml
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: metadata.name
+          value: rel-haptic-team-a-crd-upgrade
