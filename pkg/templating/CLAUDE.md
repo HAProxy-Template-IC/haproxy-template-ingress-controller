@@ -111,6 +111,7 @@ pkg/templating/
 ├── filters_string.go           # toLower / replace / split / trim / hasPrefix / hasSuffix / strip / b64decode / debug / indent
 ├── filters_type.go             # tostring / toint / tofloat / toSlice
 ├── filters_status.go           # Generic resource status-patch helpers (statusPatch, condition, transitionTime functions)
+├── filters_jsonpath.go         # Generic resource-agnostic helpers: dynamic resource access + concrete-JSONPath get/set (resource / jsonpathGet / jsonpathSet)
 ├── filters_version.go          # semver_gte and friends
 ├── filters_guid.go             # GUID generation helpers (make_guid)
 ├── postprocessor.go            # Post-processor pipeline runner

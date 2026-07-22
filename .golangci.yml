@@ -264,7 +264,7 @@ linters:
       - path: pkg/k8s/watcher/projection.go
         linters:
           - goconst
-      - path: pkg/templating/filters(_status|_string)?\.go
+      - path: pkg/templating/filters(_status|_string|_jsonpath)?\.go
         linters:
           - goconst
 

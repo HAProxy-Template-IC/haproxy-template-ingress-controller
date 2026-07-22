@@ -225,6 +225,9 @@ func registerStatusAndEventFunctions(decl native.Declarations) {
 	decl[FuncTransitionTime] = scriggoTransitionTime
 	decl[FilterToJSON] = scriggoToJSON
 	decl[FuncRecordEvent] = scriggoRecordEvent
+	decl[FuncResource] = scriggoResource
+	decl[FuncJSONPathGet] = scriggoJSONPathGet
+	decl[FuncJSONPathSet] = scriggoJSONPathSet
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.

@@ -1507,6 +1507,9 @@ Scriggo supports both function call syntax and pipe syntax:
 | `ceil(n)` | Ceiling of a float | `ceil(1.2)` → `2` |
 | `to_str_map(v)` | Normalise any string-keyed map (`map[string]string` from typegen, `map[string]any` from the untyped store path) into `map[string]string` — use on labels / matchLabels / annotations | `route.Metadata.Labels \| to_str_map()` |
 | `shard_slice(items, idx, n)` | Type-preserving slice shard for parallel rendering (AdaptiveFunc; return element type matches input) | `shard_slice([]*resources.gateways.T, i, n)` |
+| `resource(name)` | Per-render items of a watched resource named **dynamically** (`[]any` of boxed `*T`), sharing the same memoized objects as `resources.<name>.List()` so a `jsonpathSet` write is observed downstream. Governance layer only | `resource("ingresses")` |
+| `jsonpathGet(item, path)` | Read a **concrete** JSONPath out of any watched-resource item (dotted keys, `['bracket']` keys, `[n]` indices). Returns nil if absent | `jsonpathGet(ing, "metadata.annotations['x']")` |
+| `jsonpathSet(item, path, value)` | Write a concrete JSONPath into a resource item **in place** (annotations via a reflect fast path, other fields via a JSON round-trip); returns bool. Filtered/wildcard paths are rejected (validate-only) | `jsonpathSet(ing, "metadata.annotations['x']", "100")` |
 | `sort_by(slice, criteria)` | Sort by JSONPath | See sorting section |
 | `sort_ints(slice)` | Sort `[]any` of ints numerically (non-ints coerced via `toint`, sort to front) — use for ports/IDs where `sort_strings` would misorder (`"10"` before `"2"`) | `sort_ints(ports)` |
 | `glob_match(names, pattern)` | Filter by glob | `glob_match(templates, "backend-*")` |

@@ -37,6 +37,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
@@ -632,6 +633,47 @@ func buildPerResourceStoreValue(
 	ptr := reflect.New(innerType)
 	elem := ptr.Elem()
 
+	// Per-render memo of wrapped typed pointers, keyed by the underlying
+	// snapshot item's identity, so List/Fetch/GetSingle return the SAME *T
+	// for the same item within this render. That makes typed resources stable
+	// and mutable within a render — a template write to a field (governance
+	// injection) is observed by every later read — while the store snapshot
+	// stays immutable across renders (fresh memo per render; WrapInto's copy
+	// decouples *T from the snapshot map). It is also a net perf win: without
+	// it, every List()/Fetch() call re-ran WrapInto (json round-trip) on every
+	// item. Mutex-guarded because aux-file targets render in parallel
+	// (renderer.renderAuxiliaryFiles) and shard_slice spawns goroutines that
+	// may call List() concurrently.
+	var memoMu sync.Mutex
+	memo := make(map[uintptr]reflect.Value)
+	wrapItem := func(item any) (reflect.Value, error) {
+		rv := reflect.ValueOf(item)
+		// Only map/pointer items have a stable identity to key on; the store
+		// snapshot exposes each resource as a map[string]any.
+		if rv.Kind() != reflect.Map && rv.Kind() != reflect.Ptr {
+			return wrapItemToPointer(item, elemType)
+		}
+		key := rv.Pointer()
+		memoMu.Lock()
+		if v, ok := memo[key]; ok {
+			memoMu.Unlock()
+			return v, nil
+		}
+		memoMu.Unlock()
+		wrapped, err := wrapItemToPointer(item, elemType)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		memoMu.Lock()
+		if v, ok := memo[key]; ok { // lost a race with a concurrent wrap; keep the first
+			memoMu.Unlock()
+			return v, nil
+		}
+		memo[key] = wrapped
+		memoMu.Unlock()
+		return wrapped, nil
+	}
+
 	listField := elem.FieldByName("List")
 	fetchField := elem.FieldByName("Fetch")
 	getSingleField := elem.FieldByName("GetSingle")
@@ -652,7 +694,7 @@ func buildPerResourceStoreValue(
 		}
 		items := wrapper.List()
 		return []reflect.Value{
-			adaptSliceForResource(items, listReturnType, elemType, resourceName, "List", logger),
+			adaptSliceForResource(items, listReturnType, elemType, resourceName, "List", logger, wrapItem),
 		}
 	}))
 
@@ -664,7 +706,7 @@ func buildPerResourceStoreValue(
 		keys := args[0].Interface().([]any)
 		items := wrapper.Fetch(keys...)
 		return []reflect.Value{
-			adaptSliceForResource(items, fetchReturnType, elemType, resourceName, "Fetch", logger),
+			adaptSliceForResource(items, fetchReturnType, elemType, resourceName, "Fetch", logger, wrapItem),
 		}
 	}))
 
@@ -675,7 +717,7 @@ func buildPerResourceStoreValue(
 		keys := args[0].Interface().([]any)
 		item := wrapper.GetSingle(keys...)
 		return []reflect.Value{
-			adaptSingleForResource(item, getSingleReturnType, elemType, resourceName, logger),
+			adaptSingleForResource(item, getSingleReturnType, elemType, resourceName, logger, wrapItem),
 		}
 	}))
 
@@ -693,6 +735,7 @@ func adaptSliceForResource(
 	elemType reflect.Type,
 	resourceName, op string,
 	logger *slog.Logger,
+	wrapItem func(any) (reflect.Value, error),
 ) reflect.Value {
 	if elemType == nil {
 		// Untyped fallback: return type is []any. Direct copy.
@@ -705,13 +748,14 @@ func adaptSliceForResource(
 		}
 		return out
 	}
-	// Typed: each item becomes *T via WrapInto. If WrapInto fails
-	// for a single item we log and skip that entry rather than
-	// abort the whole call — partial data is better than no
-	// data for a single bad shape.
+	// Typed: each item becomes *T via the per-render memoized wrapItem (same
+	// *T for the same snapshot item across List/Fetch/GetSingle calls). If
+	// wrapping fails for a single item we log and skip that entry rather than
+	// abort the whole call — partial data is better than no data for a single
+	// bad shape.
 	out := reflect.MakeSlice(returnType, 0, len(items))
 	for _, item := range items {
-		ptr, err := wrapItemToPointer(item, elemType)
+		ptr, err := wrapItem(item)
 		if err != nil {
 			logger.Warn("Typed resource: WrapInto failed; skipping item",
 				"resource", resourceName, "op", op, "error", err)
@@ -731,6 +775,7 @@ func adaptSingleForResource(
 	elemType reflect.Type,
 	resourceName string,
 	logger *slog.Logger,
+	wrapItem func(any) (reflect.Value, error),
 ) reflect.Value {
 	if item == nil {
 		return reflect.Zero(returnType)
@@ -742,7 +787,9 @@ func adaptSingleForResource(
 		out.Set(reflect.ValueOf(item))
 		return out
 	}
-	ptr, err := wrapItemToPointer(item, elemType)
+	// Memoized wrap so GetSingle returns the SAME *T as List/Fetch for the
+	// same snapshot item within this render.
+	ptr, err := wrapItem(item)
 	if err != nil {
 		logger.Warn("Typed resource: WrapInto failed; returning nil",
 			"resource", resourceName, "op", "GetSingle", "error", err)

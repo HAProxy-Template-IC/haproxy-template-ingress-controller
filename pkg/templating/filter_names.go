@@ -270,4 +270,20 @@ const (
 	// Auto-truncates with a hash suffix if the result exceeds 127 characters.
 	// Syntax: make_guid(parts...) returns string.
 	FuncMakeGUID = "make_guid"
+
+	// Generic governance helpers (resource-agnostic; used by the chart's
+	// governance layer to inject/validate any watched resource by JSONPath).
+
+	// FuncResource returns the per-render items of a watched resource named
+	// dynamically, sharing the same objects as resources.<name>.List(), so a
+	// jsonpathSet write is observed downstream. Syntax: resource(name) []any.
+	FuncResource = "resource"
+
+	// FuncJSONPathGet reads a concrete JSONPath out of a resource item.
+	// Syntax: jsonpathGet(item, path) any.
+	FuncJSONPathGet = "jsonpathGet"
+
+	// FuncJSONPathSet writes a concrete JSONPath into a resource item in place.
+	// Syntax: jsonpathSet(item, path, value) bool.
+	FuncJSONPathSet = "jsonpathSet"
 )

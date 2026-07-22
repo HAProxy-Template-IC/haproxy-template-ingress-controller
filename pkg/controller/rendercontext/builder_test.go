@@ -16,6 +16,7 @@ package rendercontext
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -383,4 +384,70 @@ func TestBuilder_Build_AdmissionSubject(t *testing.T) {
 		subject := ctx["admissionSubject"].(map[string]any)
 		assert.Empty(t, subject, "user extraContext must not set the admission subject")
 	})
+}
+
+// TestBuildResourcesValue_MemoizedTypedPointers pins the invariant the
+// generic governance layer relies on: within one render, List/Fetch/GetSingle
+// return the SAME *T for the same snapshot item (so a template write to a field
+// — a governance injection — is observed by every later read), while a fresh
+// render re-wraps from the immutable store snapshot (so the write is gone).
+func TestBuildResourcesValue_MemoizedTypedPointers(t *testing.T) {
+	logger := testutil.NewTestLogger()
+
+	metaType := reflect.StructOf([]reflect.StructField{
+		{Name: "Name", Type: reflect.TypeOf(""), Tag: `json:"name"`},
+		{Name: "Namespace", Type: reflect.TypeOf(""), Tag: `json:"namespace"`},
+		{Name: "Annotations", Type: reflect.TypeOf(map[string]string(nil)), Tag: `json:"annotations,omitempty"`},
+	})
+	elemType := reflect.StructOf([]reflect.StructField{
+		{Name: "Metadata", Type: metaType, Tag: `json:"metadata"`},
+	})
+
+	item := map[string]any{"metadata": map[string]any{"name": "app", "namespace": "ns"}}
+	indexBy := func(string) []string { return []string{"metadata.namespace", "metadata.name"} }
+
+	// newRender builds a fresh resources struct (fresh memo) over the same
+	// immutable store item, returning the per-resource inner store struct.
+	newRender := func() reflect.Value {
+		storeMap := map[string]stores.Store{"ingresses": &storetest.MockStore{Items: []any{item}}}
+		typedTypes := map[string]reflect.Type{"ingresses": elemType}
+		res := BuildResourcesValue(storeMap, typedTypes, []string{"ingresses"}, indexBy, nil, nil, logger)
+		return reflect.ValueOf(res).Elem().Field(0).Elem()
+	}
+	list := func(inner reflect.Value) reflect.Value { return inner.FieldByName("List").Call(nil)[0] }
+	name := func(ptr reflect.Value) string {
+		return ptr.Elem().FieldByName("Metadata").FieldByName("Name").String()
+	}
+
+	inner := newRender()
+
+	// Within one render, List() returns the same *T each call.
+	l1, l2 := list(inner), list(inner)
+	require.Equal(t, 1, l1.Len())
+	require.Equal(t, l1.Index(0).Pointer(), l2.Index(0).Pointer(),
+		"List() must return the same *T for the same snapshot item within a render")
+
+	// GetSingle shares the memo — the map snippets read via GetSingle must see
+	// a write the governance snippet made while iterating List().
+	single := inner.FieldByName("GetSingle").CallSlice(
+		[]reflect.Value{reflect.ValueOf([]any{"ns", "app"})})[0]
+	require.Equal(t, l1.Index(0).Pointer(), single.Pointer(),
+		"GetSingle must return the same *T as List() within a render")
+
+	// A write to the memoized *T persists across later reads in the same render.
+	l1.Index(0).Elem().FieldByName("Metadata").FieldByName("Name").SetString("mutated")
+	assert.Equal(t, "mutated", name(list(inner).Index(0)),
+		"a write to a memoized *T is observed by a later List() in the same render")
+
+	// A fresh render re-wraps from the untouched snapshot: the write is gone.
+	assert.Equal(t, "app", name(list(newRender()).Index(0)),
+		"cross-render isolation: a new render sees the original store value")
+
+	// Concurrent List() calls exercise the memo mutex (run with -race).
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = list(inner) }()
+	}
+	wg.Wait()
 }
