@@ -169,6 +169,7 @@ func createDryRunValidator(
 	wiring *reconciliationWiring,
 	pluggableValidator *pluggablevalidator.Manager,
 	k8sClient *client.Client,
+	runningConfigVersion string,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
 	rules := webhook.ExtractWebhookRules(cfg)
@@ -264,6 +265,15 @@ func createDryRunValidator(
 			effective, _, err := resolveEffectiveConfig(ctx, c, k8sClient, logger)
 			return effective, err
 		},
+		// The chart app version of the controller's currently-running config
+		// (its app.kubernetes.io/version label). When a prospective config's
+		// same label differs (a rolling upgrade applying a config from a newer
+		// chart version while this older pod still serves admission), a template
+		// compile/render failure is deferred to the target controller's load
+		// gate instead of hard-denying and blocking the whole upgrade. Comparing
+		// like-with-like (both chart-stamped labels) keeps steady state matching
+		// regardless of the build/ldflag version scheme.
+		RunningConfigVersion: runningConfigVersion,
 	})
 
 	// DryRunValidator is only needed when at least one watched resource

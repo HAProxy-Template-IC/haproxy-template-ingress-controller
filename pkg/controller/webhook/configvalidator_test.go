@@ -219,6 +219,109 @@ func TestConfigValidator_RejectsWrongAPIVersion(t *testing.T) {
 	assert.Contains(t, reason, "parsing HAProxyTemplateConfig")
 }
 
+// TestConfigValidator_deferTemplateFailureOnSkew pins the version-skew decision:
+// admit-with-warning ONLY when both versions are present and differ, using plain
+// inequality so it works for snapshot builds. Deny (no defer) otherwise.
+func TestConfigValidator_deferTemplateFailureOnSkew(t *testing.T) {
+	tests := []struct {
+		name                 string
+		runningConfigVersion string
+		crVersion            string
+		wantDeferred         bool
+	}{
+		{"skew: differing release versions defer", "0.2.0", "0.3.0", true},
+		{"steady state: matching versions deny", "0.2.0", "0.2.0", false},
+		{"no running config version denies", "", "0.3.0", false},
+		{"no config label (hand-authored CR) denies", "0.2.0", "", false},
+		{"snapshot skew: differing shas defer", "0.0.0-main.gaaaaaaa", "0.0.0-main.gbbbbbbb", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := &ConfigValidator{logger: testutil.NewTestLogger(), runningConfigVersion: tt.runningConfigVersion}
+			warnings, deferred := v.deferTemplateFailureOnSkew(tt.crVersion, "boom", "haptic", "cfg")
+			assert.Equal(t, tt.wantDeferred, deferred)
+			if tt.wantDeferred {
+				if assert.Len(t, warnings, 1) {
+					assert.Contains(t, warnings[0], tt.crVersion)
+					assert.Contains(t, warnings[0], tt.runningConfigVersion)
+				}
+			} else {
+				assert.Nil(t, warnings)
+			}
+		})
+	}
+}
+
+// TestConfigValidator_SkewDefersTemplateFailure proves the wiring at BOTH
+// deferral sites — engine compile (undefined function) and render (fail() at
+// render time): a template failure is admitted-with-warning during a rolling
+// upgrade (version-skewed CR) but still denied in steady state, so early typo
+// detection is preserved while an upgrade adding a new builtin isn't blocked.
+func TestConfigValidator_SkewDefersTemplateFailure(t *testing.T) {
+	newValidator := func(version string) *ConfigValidator {
+		return NewConfigValidator(&ConfigValidatorConfig{
+			Logger:               testutil.NewTestLogger(),
+			StrictValidator:      validation.NewValidationService(&validation.ValidationServiceConfig{Logger: testutil.NewTestLogger()}),
+			StoreProvider:        stubProvider{},
+			RunningConfigVersion: version,
+		})
+	}
+	crWithTemplate := func(template, versionLabel string) *unstructured.Unstructured {
+		obj := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "haproxy-haptic.org/v1alpha1",
+			"kind":       "HAProxyTemplateConfig",
+			"metadata": map[string]any{
+				"namespace": "haptic",
+				"name":      "haptic-config",
+			},
+			"spec": map[string]any{
+				"haproxyConfig": map[string]any{"template": template},
+			},
+		}}
+		if versionLabel != "" {
+			obj.SetLabels(map[string]string{AppVersionLabel: versionLabel})
+		}
+		return obj
+	}
+
+	// Compile failure: an undefined function fails Scriggo compilation at engine
+	// construction — the same error class as the real `undefined: randBytes`
+	// rolling-upgrade incident. Render failure: fail() compiles but aborts the
+	// render, exercising the second (PhaseRender) deferral site.
+	templates := map[string]string{
+		"compile": "frontend x\n  bind *:80\n{{ definitelyUndefinedFn() }}\n",
+		"render":  "frontend x\n  bind *:80\n{{ fail(\"render-time boom\") }}\n",
+	}
+
+	for kind, template := range templates {
+		t.Run(kind+": version skew admits the failure with a warning", func(t *testing.T) {
+			v := newValidator("0.2.0")
+			allowed, reason, warnings := v.ValidateDirect(context.Background(),
+				HAProxyTemplateConfigGVK, "haptic", "haptic-config", crWithTemplate(template, "0.3.0"), "CREATE")
+			assert.True(t, allowed, "a %s failure during version skew must be admitted (deferred to load gate)", kind)
+			assert.Empty(t, reason)
+			if assert.Len(t, warnings, 1) {
+				assert.Contains(t, warnings[0], "rolling upgrade")
+			}
+		})
+
+		t.Run(kind+": matching version still denies the failure", func(t *testing.T) {
+			v := newValidator("0.2.0")
+			allowed, reason, _ := v.ValidateDirect(context.Background(),
+				HAProxyTemplateConfigGVK, "haptic", "haptic-config", crWithTemplate(template, "0.2.0"), "CREATE")
+			assert.False(t, allowed, "in steady state a %s failure must still deny (early detection preserved)", kind)
+			assert.NotEmpty(t, reason)
+		})
+
+		t.Run(kind+": no version label denies (hand-authored CR)", func(t *testing.T) {
+			v := newValidator("0.2.0")
+			allowed, _, _ := v.ValidateDirect(context.Background(),
+				HAProxyTemplateConfigGVK, "haptic", "haptic-config", crWithTemplate(template, ""), "CREATE")
+			assert.False(t, allowed)
+		})
+	}
+}
+
 func TestConfigValidator_Constructor_PanicsOnMissingDeps(t *testing.T) {
 	t.Run("panics on missing StrictValidator", func(t *testing.T) {
 		defer func() {

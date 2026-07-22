@@ -267,7 +267,12 @@ func runIteration(
 	// The DryRunValidator is nil when no watched-resource rules exist; the
 	// ConfigValidator is always present so HAProxyTemplateConfig admissions land
 	// on a real handler instead of the pure server's fail-open path.
-	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, k8sClient, logger)
+	// crd.GetLabels()[webhook.AppVersionLabel] is the running config's chart
+	// app-version label: it lets the config webhook detect a rolling-upgrade skew
+	// (prospective config from a different chart version than the one this pod
+	// runs) and defer template compile/render failures to the target controller's
+	// load gate rather than hard-denying. Inlined to keep runIteration ≤50 statements.
+	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, k8sClient, crd.GetLabels()[webhook.AppVersionLabel], logger)
 	if err != nil {
 		return fmt.Errorf("creating webhook validators: %w", err)
 	}

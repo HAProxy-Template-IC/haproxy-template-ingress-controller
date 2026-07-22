@@ -133,6 +133,27 @@ HAProxyTemplateConfig timeout is admitted with a warning because its
 `failurePolicy: Ignore` is specifically intended to preserve operator recovery;
 the daemon load gate remains authoritative.
 
+### Version-gated deferral (rolling-upgrade skew)
+
+`ConfigValidator` also admits-with-warning on a template **compile** or
+**render** failure when it detects a version skew: the prospective config's
+`app.kubernetes.io/version` label differs from the SAME label on the
+controller's currently-running config (`ConfigValidatorConfig.RunningConfigVersion`,
+threaded from the loaded CR's labels in `iteration.go`). This is the
+rolling-`helm upgrade` window where a new config uses an engine feature (e.g. a
+new template builtin) that an old pod still serving admission can't compile — a
+hard deny that `failurePolicy: Ignore` doesn't cover. The target controller's
+fail-closed load gate re-validates, so deferring only moves an
+engine-version-dependent verdict to the version that can judge it. Comparing the
+two chart-stamped labels (rather than the controller's build version, which is
+set by a different mechanism — ldflag `main.version` — and would mismatch the
+chart label on snapshot builds) keeps steady state matching; skew is plain label
+inequality, so it works for snapshot chart versions too. **Only** template compile/render errors defer — `haproxy -c` and
+`validationTests` failures always deny, because they're engine-version-independent
+and admitting them would let a genuinely-broken config crash-loop the new
+controller, defeating the load gate. In steady state (matching versions) every
+failure denies as before, preserving early typo detection.
+
 Within the HAProxyTemplateConfig deadline, `ConfigValidator` gives embedded
 `validationTests` the same suite-size-scaled run budget as the daemon load gate,
 capped by the time remaining after schema bootstrap and strict prospective
