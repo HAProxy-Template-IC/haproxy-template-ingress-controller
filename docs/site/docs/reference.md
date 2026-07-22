@@ -187,6 +187,10 @@ declare a list of generic, JSONPath-driven `rules`; each rule targets a watched
 resource by name and, per matching resource, either **injects** a default when a
 value is absent or **validates** the value when present.
 
+For a step-by-step rollout — audit, fix, then enforce — see the
+[Governance guardrails how-to](operations/governance.md). This section is the
+field reference.
+
 With `enforcement: reject`, a new or edited violating resource is denied at the
 admission webhook, scoped to that resource's own admission (so one violator never
 blocks an unrelated apply), while an already-present violator records a

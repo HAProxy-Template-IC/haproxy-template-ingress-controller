@@ -110,6 +110,7 @@ nav:
     - High Availability: operations/high-availability.md
     - Monitoring: operations/monitoring.md
     - Security: operations/security.md
+    - Governance guardrails: operations/governance.md
     - Networking: operations/networking.md
     - Performance: operations/performance.md
     - Debugging: operations/debugging.md
