@@ -165,14 +165,21 @@ HAPROXY_VERSION_ARG=""
 if [[ -n "${HAPROXY_VERSION:-}" ]]; then
     HAPROXY_VERSION_ARG="--set haproxyVersion=${HAPROXY_VERSION}"
 fi
-# Render with a CUSTOM defaultSSLCertificate name (RSA + ECDSA companion) that
-# does NOT match the chart default ("default-ssl-cert"). validationTests must be
-# isolated from the operator's real default-cert names: ssl.yaml's _global test
-# pins a synthetic default cert every test renders against, so the whole suite
-# has to pass whatever secretName/ecdsaSecretName the deployment sets. Before the
-# isolation fix, a custom name leaked into every test and crash-looped the load
-# gate (the failure that broke the homelab); running the suite under custom names
-# here is that regression, in CI.
+# Render with operator customisations that MUST be isolated from the bundled
+# synthetic validationTests, so the full-suite run below doubles as the
+# isolation regression for two same-class bugs that each crash-looped the load
+# gate on a real deployment:
+#   1. A CUSTOM defaultSSLCertificate name (RSA + ECDSA companion) that does NOT
+#      match the chart default ("default-ssl-cert"). ssl.yaml's _global test pins
+#      a synthetic default cert every test renders against, so the suite passes
+#      whatever secretName/ecdsaSecretName the deployment sets.
+#   2. Governance ENABLED with a global rule. The daemon runs validationTests on
+#      config load, and a global rule ("every Ingress must set a waf-policy")
+#      emits GovernanceViolation events on unrelated tests' fixtures — the
+#      event-asserting tests then fail and reject the operator's config at the
+#      load gate. ingress-annotations-compat.yaml's _global test pins governance
+#      OFF so it can't leak; the governance-specific tests re-enable it per-test.
+# Both leaked into every test before their _global pins and broke the homelab.
 echo -e "${YELLOW}Rendering Helm chart (custom default-cert name, isolation regression)...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
@@ -185,6 +192,11 @@ if ! helm template "$CHART_DIR" \
     --set controller.templateLibraries.nginxIngress.enabled=true \
     --set defaultSSLCertificate.secretName=regression-custom-rsa-cert \
     --set defaultSSLCertificate.ecdsaSecretName=regression-custom-ecdsa-cert \
+    --set 'controller.config.templatingSettings.extraContext.governance.enabled=true' \
+    --set 'controller.config.templatingSettings.extraContext.governance.rules[0].resource=ingresses' \
+    --set-string "controller.config.templatingSettings.extraContext.governance.rules[0].path=metadata.annotations['haproxy-haptic.org/waf-policy']" \
+    --set 'controller.config.templatingSettings.extraContext.governance.rules[0].required=true' \
+    --set 'controller.config.templatingSettings.extraContext.governance.rules[0].enforcement=audit' \
     | yq 'select(.kind == "HAProxyTemplateConfig")' \
     > "$TEMP_CONFIG"; then
     echo -e "${RED}Error: Failed to render Helm chart${NC}" >&2

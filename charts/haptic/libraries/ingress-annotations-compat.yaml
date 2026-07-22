@@ -1091,6 +1091,23 @@ templateSnippets:
 # exercised in isolation. Uses plugin-free features (CORS, timeouts,
 # backend-protocol) so no test depends on a SPOA plugin being present.
 validationTests:
+  # Pin governance OFF in the shared _global baseline so an operator who enables
+  # governance in production does NOT leak it into the bundled synthetic tests.
+  # Without this, a global rule (e.g. "every Ingress must set a waf-policy")
+  # emits GovernanceViolation events on the fixtures of unrelated tests — those
+  # asserting on events (test-ingress-host-path-conflict-oldest-wins) then fail,
+  # and because the daemon runs validationTests on config load, the operator's
+  # config is rejected at the load gate. The _global extraContext folds OVER the
+  # production extraContext (production ← _global ← per-test), so this disables
+  # governance for every test; the governance-specific tests below re-enable it
+  # via their own per-test extraContext. Deep-merges with the ssl.yaml / base.yaml
+  # _global stanzas (distinct keys). See validationtests-isolated-from-real-config.
+  _global:
+    extraContext:
+      governance:
+        enabled: false
+        rules: []
+
   # --- Org-wide policy guardrails (features-960-governance, generic engine) ---
   # Each rule INJECTS a default when a value is absent or VALIDATES it when
   # present. Enforcement is admissionSubject-scoped: a reject rule fail()s ONLY
