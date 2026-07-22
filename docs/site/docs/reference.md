@@ -179,6 +179,26 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 | `spoaHub.plugins.coraza.timeoutMs` | int | `15` | Outer SPOE timeout for WAF evaluation. This is a failure bound, not expected latency |
 | `spoaHub.plugins.coraza.maxConcurrency` | int | `2` | Maximum concurrent Coraza evaluations per pod. Excess work is rejected immediately because `maxQueue` defaults to zero |
 
+## Policy guardrails (governance)
+
+Org-wide baselines that namespace teams can't omit. Configured entirely under
+`extraContext` (it creates no Kubernetes resources) and disabled by default.
+Each requirement is a `{ require, enforcement }` object. With `enforcement:
+reject`, a new or edited violating Ingress is denied at the admission webhook,
+while an already-present violator records a `GovernanceViolation` Warning Event
+and keeps serving; `enforcement: audit` only ever warns (a roll-out mode).
+Enforcement is scoped to the offending Ingress, so one violator never blocks an
+unrelated apply.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.config.templatingSettings.extraContext.governance.enabled` | bool | `false` | Master switch for the guardrails |
+| `controller.config.templatingSettings.extraContext.governance.exemptNamespaces` | list | `[]` | Namespaces skipped entirely (infra/system) |
+| `controller.config.templatingSettings.extraContext.governance.requirements.tls` | object | `{require: false, enforcement: reject}` | Require every Ingress to terminate TLS (`spec.tls` or chart-wide default HTTPS) |
+| `controller.config.templatingSettings.extraContext.governance.requirements.waf` | object | `{require: false, enforcement: reject}` | Require a WAF policy (a `waf-policy` annotation or a configured default policy) |
+| `controller.config.templatingSettings.extraContext.governance.requirements.auth` | object | `{require: false, enforcement: reject}` | Require authentication (API-key / JWT / HMAC / external-auth / mTLS) |
+| `controller.config.templatingSettings.extraContext.governance.requirements.rateLimit` | object | `{require: false, enforcement: reject}` | Require rate limiting |
+
 ## Routing behavior
 
 | Parameter | Type | Default | Description |
