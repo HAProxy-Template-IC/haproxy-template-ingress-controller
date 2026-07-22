@@ -41,6 +41,10 @@ The test for the exception: *could an operator plausibly swap this resource out 
 
 ## Coding Standards
 
+### Naming
+
+- **Name generic code for what it does, not who first uses it.** A file, function, type, or package that is generic — usable by more than one caller — must be named after its capability, never after its first consumer or use case. Naming `filters_governance.go` for the generic `resource()` / `jsonpathGet()` / `jsonpathSet()` helpers because governance happened to be the first caller is wrong; the capability name (`filters_jsonpath.go`) is correct. The same holds for functions (`buildGovernanceContext` for an otherwise-generic context builder), types, and packages. Test: if the name only makes sense once you know the first consumer, rename it. A consumer-specific name is right only for genuinely consumer-specific code.
+
 ### Go Idioms
 
 - Follow standard Go conventions (effective Go, Go proverbs)

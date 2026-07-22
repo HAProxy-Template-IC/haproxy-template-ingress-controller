@@ -182,22 +182,60 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 ## Policy guardrails (governance)
 
 Org-wide baselines that namespace teams can't omit. Configured entirely under
-`extraContext` (it creates no Kubernetes resources) and disabled by default.
-Each requirement is a `{ require, enforcement }` object. With `enforcement:
-reject`, a new or edited violating Ingress is denied at the admission webhook,
-while an already-present violator records a `GovernanceViolation` Warning Event
-and keeps serving; `enforcement: audit` only ever warns (a roll-out mode).
-Enforcement is scoped to the offending Ingress, so one violator never blocks an
-unrelated apply.
+`extraContext` (it creates no Kubernetes resources) and disabled by default. You
+declare a list of generic, JSONPath-driven `rules`; each rule targets a watched
+resource by name and, per matching resource, either **injects** a default when a
+value is absent or **validates** the value when present.
+
+With `enforcement: reject`, a new or edited violating resource is denied at the
+admission webhook, scoped to that resource's own admission (so one violator never
+blocks an unrelated apply), while an already-present violator records a
+`GovernanceViolation` Warning Event and keeps serving. `enforcement: audit` only
+ever warns (a roll-out mode).
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.config.templatingSettings.extraContext.governance.enabled` | bool | `false` | Master switch for the guardrails |
-| `controller.config.templatingSettings.extraContext.governance.exemptNamespaces` | list | `[]` | Namespaces skipped entirely (infra/system) |
-| `controller.config.templatingSettings.extraContext.governance.requirements.tls` | object | `{require: false, enforcement: reject}` | Require every Ingress to terminate TLS (`spec.tls` or chart-wide default HTTPS) |
-| `controller.config.templatingSettings.extraContext.governance.requirements.waf` | object | `{require: false, enforcement: reject}` | Require a WAF policy (a `waf-policy` annotation or a configured default policy) |
-| `controller.config.templatingSettings.extraContext.governance.requirements.auth` | object | `{require: false, enforcement: reject}` | Require authentication (API-key / JWT / HMAC / external-auth / mTLS) |
-| `controller.config.templatingSettings.extraContext.governance.requirements.rateLimit` | object | `{require: false, enforcement: reject}` | Require rate limiting |
+| `…extraContext.governance.enabled` | bool | `false` | Master switch for the guardrails |
+| `…extraContext.governance.exemptNamespaces` | list | `[]` | Namespaces skipped entirely (infra/system) |
+| `…extraContext.governance.rules` | list | `[]` | Admin-declared rules (see the fields below) |
+
+Each entry of `rules` is an object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `resource` | string | **Required.** Watched-resource name the rule targets (`ingresses`, `httproutes`, a custom CRD, …) |
+| `path` | string | Concrete JSONPath into the resource: dotted keys, `['bracket']` keys (for dots/slashes), `[n]` indices. For example, `metadata.annotations['haproxy-haptic.org/rate-limit-rps']` |
+| `default` | string | Inject this value when `path` is absent. Only a **concrete** `path` may carry a default (filtered/wildcard paths are validate-only) |
+| `required` | bool | The value at `path` must be present and non-empty |
+| `min` / `max` | int | Numeric bounds for the value at `path` |
+| `onViolation` | string | `reject` (default) or `clamp` — on a `min`/`max` violation, rewrite the value to the nearest bound instead of rejecting |
+| `allowed` | list | Allowed values (enum) for `path` |
+| `pattern` | string | Regex the value at `path` must match |
+| `anyOf` | list | At least one of the listed JSONPath expressions must be present |
+| `satisfiedBy` | string | `tls` — satisfied by `spec.tls` on the resource **or** the chart-wide default HTTPS |
+| `enforcement` | string | `reject` (default) or `audit` |
+| `message` | string | Custom violation message (optional) |
+
+```yaml
+governance:
+  enabled: true
+  exemptNamespaces: [kube-system]
+  rules:
+    # Inject a default per-source rate limit; clamp anything above the ceiling.
+    - resource: ingresses
+      path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+      default: "100"
+      max: 10000
+      onViolation: clamp
+    # Require a WAF policy annotation on every HTTPRoute (cross-resource).
+    - resource: httproutes
+      path: metadata.annotations['haproxy-haptic.org/waf-policy']
+      required: true
+      enforcement: audit
+    # Require TLS (spec.tls or the chart-wide default HTTPS satisfies it).
+    - resource: ingresses
+      satisfiedBy: tls
+```
 
 ## Routing behavior
 

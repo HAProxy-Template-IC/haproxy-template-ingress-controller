@@ -34,11 +34,47 @@ _helm_load:
 
 # Library-declared extraContext defaults (merged at LOWEST precedence — an
 # operator override via controller.config.templatingSettings.extraContext.governance.*
-# wins). Org-wide policy guardrails: cluster admins declare baselines that
-# namespace teams cannot omit. Disabled by default. Enforcement is chart-side
-# render logic over watched Ingresses (no Kubernetes resources are created), so
-# this correctly lives under extraContext rather than a root-level values block.
-# See features-960-governance-baseline for the enforcement.
+# wins). Org-wide policy guardrails: cluster admins declare generic,
+# JSONPath-driven rules that namespace teams cannot omit. Disabled by default.
+# Enforcement is chart-side render logic over watched resources (no Kubernetes
+# resources are created), so this correctly lives under extraContext rather than
+# a root-level values block. See features-960-governance for the enforcement.
+#
+# Each rule targets a watched resource by name and either INJECTS a default when
+# a value is absent or VALIDATES the value when present:
+#
+#   governance:
+#     enabled: true
+#     exemptNamespaces: [kube-system]
+#     rules:
+#       # inject a default rate-limit, clamp anything above the ceiling
+#       - resource: ingresses
+#         path: metadata.annotations['haproxy-haptic.org/rate-limit-requests']
+#         default: "1000"
+#         min: 1
+#         max: 10000
+#         onViolation: clamp        # reject | clamp (default reject)
+#         enforcement: reject       # reject | audit  (default reject)
+#       # require a WAF policy annotation on every HTTPRoute (cross-resource)
+#       - resource: httproutes
+#         path: metadata.annotations['haproxy-haptic.org/waf-policy']
+#         required: true
+#         enforcement: audit
+#       # require TLS (spec.tls OR a chart default cert / default HTTPS satisfies it)
+#       - resource: ingresses
+#         satisfiedBy: tls
+#       # require at least one auth mechanism
+#       - resource: ingresses
+#         anyOf:
+#           - metadata.annotations['haproxy-haptic.org/api-key-secret']
+#           - metadata.annotations['haproxy-haptic.org/jwt-secret']
+#           - metadata.annotations['haproxy-haptic.org/auth-url']
+#
+# Rule fields: resource (required), path, default, required, min, max, allowed
+# (enum list), pattern (regex), anyOf (list of paths — one must be present),
+# satisfiedBy: tls, onViolation (reject|clamp), enforcement (reject|audit),
+# message (custom text). A `default` may only target a concrete path (dotted
+# keys, ['bracket'] keys, [n] indices) — filtered/wildcard paths are validate-only.
 templatingSettings:
   extraContext:
     governance:
@@ -46,16 +82,8 @@ templatingSettings:
       enabled: false
       # Namespaces skipped entirely (infra/system namespaces).
       exemptNamespaces: []
-      # Each requirement: { require: bool, enforcement: "reject" | "audit" }.
-      # require=true makes the feature mandatory on every non-exempt Ingress.
-      # enforcement=reject blocks a NEW/edited violating Ingress at admission and
-      # records a Warning for already-present violators (never breaks serving
-      # traffic); enforcement=audit only ever records a Warning (roll-out mode).
-      requirements:
-        tls: { require: false, enforcement: reject }
-        waf: { require: false, enforcement: reject }
-        auth: { require: false, enforcement: reject }
-        rateLimit: { require: false, enforcement: reject }
+      # Admin-declared rules (empty by default; see the header for the shape).
+      rules: []
 
 templateSnippets:
 
@@ -856,105 +884,202 @@ templateSnippets:
         }
       %%}
 
-  # Org-wide policy guardrails. Runs once per render (features-* side effect).
-  # When extraContext.governance.enabled is true, every Ingress outside
-  # governance.exemptNamespaces is checked against the admin-declared
-  # requirements (tls / waf / auth / rateLimit). See the extraContext.governance
-  # defaults at the top of this library for the shape.
+  # Org-wide policy guardrails — generic, JSONPath-rule-driven. Runs once per
+  # render (features-* side effect). When extraContext.governance.enabled is
+  # true, each admin-declared rule is applied to every item of its target
+  # watched resource (outside governance.exemptNamespaces):
+  #   - absent value + rule.default set -> INJECT the default (jsonpathSet)
+  #   - present value                   -> VALIDATE (required / min / max /
+  #                                        allowed / pattern / anyOf / satisfiedBy)
+  # See the extraContext.governance defaults at the top of this library for the
+  # rule shape.
   #
-  # RULE #1: Ingress-specific enforcement in an Ingress-specific library;
-  # base.yaml never sees governance.
-  features-960-governance-baseline:
+  # Generic across ANY watched resource (Ingress, HTTPRoute, user CRDs) via the
+  # resource() / jsonpathGet / jsonpathSet engine helpers — no per-annotation or
+  # per-resource hand-coding. This snippet lives in the Ingress-annotations
+  # library only because that is where the governance config bag is declared; it
+  # reads no Ingress-specific fields itself (satisfiedBy: tls checks a generic
+  # spec.tls path plus the chart's TLS defaults).
+  features-960-governance:
     template: |-
       {#-
         Enforcement is admissionSubject-scoped so a pre-existing violator never
         wedges an unrelated admission:
-          - reject + the offending Ingress IS the admission subject -> fail()
-            (the API server denies the new/edited Ingress).
+          - reject + the offending resource IS the admission subject -> fail()
+            (the API server denies the new/edited resource).
           - otherwise (audit mode, a live reconcile, or another resource's
             admission) -> a GovernanceViolation Warning Event; the route keeps
             serving. Governance blocks NEW violations and surfaces existing ones;
-            it never breaks already-serving traffic.
+            it never breaks already-serving traffic. An injected default flows
+            into the same render (memoized resource wrapping), so downstream
+            snippets emit config for the injected value.
       -#}
       {%%
         var gov = extraContext | dig("governance") | fallback(map[string]any{})
         if tostring(gov | dig("enabled") | fallback("false")) == "true" {
-          var reqs = gov | dig("requirements") | fallback(map[string]any{})
-          var enforcementOf = func(key string) string {
-            return tostring(reqs | dig(key, "enforcement") | fallback("reject"))
-          }
-          // Validate enforcement values loudly. This is global config validation
-          // (not per-resource), so fail() is correct — a typo silently dropping
-          // enforcement would be worse than a loud load-gate/admission error.
-          for _, key := range []string{"tls", "waf", "auth", "rateLimit"} {
-            var e = enforcementOf(key)
-            if e != "reject" && e != "audit" {
-              fail("governance.requirements." + key + ".enforcement must be \"reject\" or \"audit\", got \"" + e + "\"")
-            }
-          }
-          var required = func(key string) bool {
-            return tostring(reqs | dig(key, "require") | fallback("false")) == "true"
-          }
           var exempt = map[string]bool{}
           for _, n := range toSlice(gov | dig("exemptNamespaces") | fallback([]any{})) {
             exempt[tostring(n)] = true
           }
-          // Feature presence by annotation suffix (after the last "/"), covering
-          // the native and vendor families. These are the ENABLING keys only (a
-          // policy / secret / limit that actually turns the feature on) — NOT the
-          // modifier keys (rate-limit-allowlist/period/burst/algorithm, waf-mode,
-          // auth-signin/method/realm) that the features-950 conflict registry also
-          // lists: a modifier alone does not enable the feature, so this set is
-          // deliberately narrower than that registry (which detects any *touch*).
-          var authKeys = map[string]bool{"api-key-secret": true, "jwt-secret": true, "hmac-secret": true, "auth-url": true, "auth-secret": true, "auth-tls-secret": true, "oauth": true}
-          var wafKeys = map[string]bool{"waf-policy": true, "waf": true, "enable-modsecurity": true, "modsecurity-snippet": true}
-          var rlKeys = map[string]bool{"rate-limit-requests": true, "rate-limit-rps": true, "rate-limit-rpm": true, "rate-limit-connections": true, "limit-rps": true, "limit-rpm": true, "limit-connections": true}
-          // A matched annotation must also carry a real value — an empty or
-          // disabled value ("", "false", "0", "off", ...) does not satisfy the
-          // requirement (e.g. haproxy-haptic.org/waf-policy: "" or rate-limit-requests: "0").
-          var disabledValue = map[string]bool{"": true, "false": true, "0": true, "off": true, "no": true, "none": true, "disabled": true}
-          var hasFeature = func(anns map[string]string, keys map[string]bool) bool {
-            for k, v := range anns {
-              var parts = split(k, "/")
-              if keys[parts[len(parts)-1]] && !disabledValue[toLower(strip(v))] {
-                return true
-              }
-            }
-            return false
-          }
-          // TLS is a spec field; the chart-wide default-HTTPS also satisfies it
-          // (every Ingress terminates TLS when it's on). A configured default WAF
-          // policy applies to every route, satisfying requireWAF.
+          // Chart-wide TLS escape hatch for satisfiedBy: tls — when default-HTTPS
+          // is on, every route terminates TLS (on the default certificate that
+          // backs it), so the rule is satisfied without per-resource spec.tls.
           var defaultHTTPS = tostring(extraContext | dig("ingressDefaultHTTPS") | fallback("false")) == "true"
-          var wafDefault = tostring(extraContext | dig("waf", "policies", "defaultPolicy") | fallback("")) != ""
 
-          for _, ingress := range resources.ingresses.List() {
-            var ns = ingress.Metadata.Namespace
-            var name = ingress.Metadata.Name
-            if exempt[ns] {
-              continue
+          var rulesAny = toSlice(gov | dig("rules") | fallback([]any{}))
+
+          // --- Validate every rule up-front. This is global config validation
+          // (not per-resource), so fail() is correct — a typo would otherwise
+          // silently drop enforcement. ---
+          var isConcretePath = func(p string) bool {
+            return p != "" && !regex_search(p, "[*?@]")
+          }
+          for i, ruleAny := range rulesAny {
+            var rule, ok = ruleAny.(map[string]any)
+            if !ok { fail("governance.rules[" + tostring(i) + "] must be a map.") }
+            if tostring(fallback(rule["resource"], "")) == "" {
+              fail("governance.rules[" + tostring(i) + "].resource is required.")
             }
-            var anns = ingress.Metadata.Annotations | to_str_map()
-            var underAdmission = renderMode == "admission" && tostring(admissionSubject | dig("store") | fallback("")) == "ingresses" && tostring(admissionSubject | dig("namespace") | fallback("")) == ns && tostring(admissionSubject | dig("name") | fallback("")) == name
-            var violate = func(key string, detail string) {
-              var msg = "Ingress " + ns + "/" + name + " violates org policy (governance requirement \"" + key + "\"): " + detail
-              if enforcementOf(key) == "reject" && underAdmission {
-                fail(msg)
-              } else {
-                recordEvent(ingress, "GovernanceViolation", msg)
+            var enf = tostring(fallback(rule["enforcement"], "reject"))
+            if enf != "reject" && enf != "audit" {
+              fail("governance.rules[" + tostring(i) + "].enforcement must be \"reject\" or \"audit\", got \"" + enf + "\".")
+            }
+            var onV = tostring(fallback(rule["onViolation"], "reject"))
+            if onV != "reject" && onV != "clamp" {
+              fail("governance.rules[" + tostring(i) + "].onViolation must be \"reject\" or \"clamp\", got \"" + onV + "\".")
+            }
+            if rule["min"] != nil && rule["max"] != nil && toint(tostring(rule["min"])) > toint(tostring(rule["max"])) {
+              fail("governance.rules[" + tostring(i) + "].min must be <= max.")
+            }
+            if rule["default"] != nil {
+              var path = tostring(fallback(rule["path"], ""))
+              if !isConcretePath(path) {
+                fail("governance.rules[" + tostring(i) + "].default requires a concrete path (filtered/wildcard paths are validate-only).")
               }
             }
-            if required("tls") && len(ingress.Spec.Tls) == 0 && !defaultHTTPS {
-              violate("tls", "must terminate TLS (add spec.tls, or enable the chart-wide default HTTPS)")
-            }
-            if required("waf") && !wafDefault && !hasFeature(anns, wafKeys) {
-              violate("waf", "must select a WAF policy (e.g. haproxy-haptic.org/waf-policy) or an admin default WAF policy must be set")
-            }
-            if required("auth") && !hasFeature(anns, authKeys) {
-              violate("auth", "must configure authentication (API-key / JWT / HMAC / external-auth / mTLS)")
-            }
-            if required("rateLimit") && !hasFeature(anns, rlKeys) {
-              violate("rateLimit", "must configure rate limiting (e.g. haproxy-haptic.org/rate-limit-requests)")
+          }
+
+          // --- Group rules by target resource so metadata is read once/item. ---
+          var byResource = map[string][]any{}
+          for _, ruleAny := range rulesAny {
+            var rule = ruleAny.(map[string]any)
+            var res = tostring(rule["resource"])
+            byResource[res] = append(byResource[res], ruleAny)
+          }
+
+          var present = func(v any) bool { return v != nil && strip(tostring(v)) != "" }
+
+          for res, rrules := range byResource {
+            for _, item := range resource(res) {
+              var ns = tostring(jsonpathGet(item, "metadata.namespace"))
+              var name = tostring(jsonpathGet(item, "metadata.name"))
+              if exempt[ns] { continue }
+              var subjStore = tostring(admissionSubject | dig("store") | fallback(""))
+              var subjNs = tostring(admissionSubject | dig("namespace") | fallback(""))
+              var subjName = tostring(admissionSubject | dig("name") | fallback(""))
+              var underAdmission = renderMode == "admission" && subjStore == res && subjNs == ns && subjName == name
+              // violate() is admissionSubject-scoped: fail() only for a reject
+              // rule on the offending resource's own admission; otherwise warn.
+              var violate = func(enf string, custom string, detail string) {
+                var m = custom
+                if m == "" { m = detail }
+                m = res + " " + ns + "/" + name + " violates org policy: " + m
+                if enf == "reject" && underAdmission {
+                  fail(m)
+                } else {
+                  recordEvent(item, "GovernanceViolation", m)
+                }
+              }
+              for _, ruleAny := range rrules {
+                var rule = ruleAny.(map[string]any)
+                var enf = tostring(fallback(rule["enforcement"], "reject"))
+                var custom = tostring(fallback(rule["message"], ""))
+                var path = tostring(fallback(rule["path"], ""))
+
+                // satisfiedBy: tls — generic spec.tls path OR chart default HTTPS.
+                if tostring(fallback(rule["satisfiedBy"], "")) == "tls" {
+                  var tlsv = jsonpathGet(item, "spec.tls")
+                  var hasTLS = tlsv != nil && len(toSlice(tlsv)) > 0
+                  if !hasTLS && !defaultHTTPS {
+                    violate(enf, custom, "must terminate TLS (add spec.tls, or enable the chart-wide default HTTPS)")
+                  }
+                  continue
+                }
+
+                // anyOf — at least one of the listed paths must be present.
+                var anyOf = toSlice(rule["anyOf"])
+                if len(anyOf) > 0 {
+                  var anyPresent = false
+                  for _, p := range anyOf {
+                    if present(jsonpathGet(item, tostring(p))) { anyPresent = true; break }
+                  }
+                  if !anyPresent {
+                    violate(enf, custom, "must set at least one of the required fields")
+                  }
+                  continue
+                }
+
+                if path == "" { continue }
+
+                // INJECT: absent value + a configured default -> write it in place
+                // so downstream snippets in this render observe it.
+                var v = jsonpathGet(item, path)
+                if !present(v) && rule["default"] != nil {
+                  jsonpathSet(item, path, rule["default"])
+                  v = rule["default"]
+                }
+
+                // VALIDATE.
+                if tostring(fallback(rule["required"], "false")) == "true" && !present(v) {
+                  violate(enf, custom, "must set " + path)
+                  continue
+                }
+                if !present(v) { continue }
+                var vs = strip(tostring(v))
+
+                // numeric bounds (with optional clamp)
+                if rule["min"] != nil || rule["max"] != nil {
+                  if !regex_search(vs, "^[0-9]+$") {
+                    violate(enf, custom, path + "=" + vs + " must be a non-negative integer")
+                    continue
+                  }
+                  var n = toint(vs)
+                  var below = rule["min"] != nil && n < toint(tostring(rule["min"]))
+                  var above = rule["max"] != nil && n > toint(tostring(rule["max"]))
+                  if below || above {
+                    if tostring(fallback(rule["onViolation"], "reject")) == "clamp" {
+                      var c = n
+                      if below { c = toint(tostring(rule["min"])) }
+                      if above { c = toint(tostring(rule["max"])) }
+                      jsonpathSet(item, path, tostring(c))
+                      recordEvent(item, "GovernanceClamped", res + " " + ns + "/" + name + ": " + path + "=" + vs + " clamped to " + tostring(c))
+                    } else {
+                      violate(enf, custom, path + "=" + vs + " must be within the configured bounds")
+                    }
+                    continue
+                  }
+                }
+
+                // allowed enum
+                var allowed = toSlice(rule["allowed"])
+                if len(allowed) > 0 {
+                  var inSet = false
+                  for _, a := range allowed {
+                    if tostring(a) == vs { inSet = true; break }
+                  }
+                  if !inSet {
+                    violate(enf, custom, path + "=" + vs + " is not one of the allowed values")
+                    continue
+                  }
+                }
+
+                // regex pattern
+                var pattern = tostring(fallback(rule["pattern"], ""))
+                if pattern != "" && !regex_search(vs, pattern) {
+                  violate(enf, custom, path + "=" + vs + " does not match required pattern " + pattern)
+                  continue
+                }
+              }
             }
           }
         }
@@ -966,269 +1091,239 @@ templateSnippets:
 # exercised in isolation. Uses plugin-free features (CORS, timeouts,
 # backend-protocol) so no test depends on a SPOA plugin being present.
 validationTests:
-  # --- Org-wide policy guardrails (features-960-governance-baseline) ---
-  # A guardrail violation fail()s ONLY the offending Ingress's own admission
-  # (renderMode admission + admissionSubject matches); everything else warns.
-  test-governance-tls-required-rejected:
-    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: An Ingress with no spec.tls (default-HTTPS off) is rejected at its own admission when governance requires TLS.
+  # --- Org-wide policy guardrails (features-960-governance, generic engine) ---
+  # Each rule INJECTS a default when a value is absent or VALIDATES it when
+  # present. Enforcement is admissionSubject-scoped: a reject rule fail()s ONLY
+  # the offending resource's own admission; everything else warns and keeps
+  # serving.
+
+  # END-TO-END INJECTION PROOF: governance injects a default rate-limit-rps on an
+  # Ingress that omits it; the real rate-limiting consumer (24-rate-limiting)
+  # then emits its config for the injected value — proving a governance write is
+  # observed by a downstream snippet within the same render (memoized wrapping).
+  test-governance-inject-reaches-consumer:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: An injected default rate-limit annotation reaches the rate-limiting consumer.
     extraContext:
-      renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: no-tls }
-      ingressDefaultHTTPS: false
+      renderMode: reconcile
       governance:
         enabled: true
-        requirements:
-          tls: { require: true, enforcement: reject }
+        rules:
+          - resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+            default: "100"
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata: { namespace: default, name: no-tls, annotations: {} }
+          metadata: { namespace: default, name: inject-rps, annotations: {} }
           spec:
             ingressClassName: haptic
             rules:
-              - host: no-tls.example.com
+              - host: inject-rps.example.com
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
-      - { type: contains, target: rendering_error, pattern: "must terminate TLS" }
+      - type: haproxy_valid
+      # The injected rps=100 reaches the consumer, which emits its stick-table
+      # (default period 1s / size 100k) and tracker in the ingress's backend.
+      - { type: contains, target: haproxy.cfg, pattern: 'backend default_inject-rps_svc_echo_80' }
+      - { type: contains, target: haproxy.cfg, pattern: 'stick-table type ip size 100k expire 1s store http_req_rate' }
+      - { type: contains, target: haproxy.cfg, pattern: 'http-request track-sc0 src' }
 
-  test-governance-tls-satisfied-by-tls-block:
-    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: An Ingress WITH spec.tls satisfies requireTLS and is admitted.
+  # A configured default that itself satisfies the rule's bounds injects cleanly.
+  test-governance-inject-then-validate-pass:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: An injected default within min/max validates without a violation.
     extraContext:
-      renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: has-tls }
-      ingressDefaultHTTPS: false
+      renderMode: reconcile
       governance:
         enabled: true
-        requirements:
-          tls: { require: true, enforcement: reject }
+        rules:
+          - resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+            default: "40"
+            min: 1
+            max: 100
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata: { namespace: default, name: has-tls, annotations: {} }
+          metadata: { namespace: default, name: inject-ok, annotations: {} }
           spec:
             ingressClassName: haptic
-            tls: [{ hosts: [has-tls.example.com], secretName: has-tls-cert }]
             rules:
-              - host: has-tls.example.com
+              - host: inject-ok.example.com
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
-      - { type: haproxy_valid }
+      - type: haproxy_valid
+      - { type: contains, target: haproxy.cfg, pattern: 'backend default_inject-ok_svc_echo_80' }
+      - { type: contains, target: haproxy.cfg, pattern: 'stick-table type ip size 100k expire 1s store http_req_rate' }
 
-  test-governance-tls-satisfied-by-default-https:
-    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: With chart-wide default HTTPS on, an Ingress without spec.tls still satisfies requireTLS.
+  # CLAMP: an out-of-bounds present value is rewritten to the cap, and the
+  # consumer emits the clamped value — never the original.
+  test-governance-clamp-rewrites:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: An over-limit value is clamped and the consumer emits the cap, not the original.
     extraContext:
-      renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: default-https }
-      ingressDefaultHTTPS: true
+      renderMode: reconcile
       governance:
         enabled: true
-        requirements:
-          tls: { require: true, enforcement: reject }
+        rules:
+          - resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+            max: 50
+            onViolation: clamp
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata: { namespace: default, name: default-https, annotations: {} }
+          metadata:
+            namespace: default
+            name: clamp-rps
+            annotations: { haproxy-haptic.org/rate-limit-rps: "8888" }
           spec:
             ingressClassName: haptic
             rules:
-              - host: default-https.example.com
+              - host: clamp-rps.example.com
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
-      - { type: haproxy_valid }
+      - type: haproxy_valid
+      # The clamped value (50) is what the consumer emits; the original never appears.
+      - { type: contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 50' }
+      - { type: not_contains, target: haproxy.cfg, pattern: '8888' }
 
-  test-governance-waf-required-rejected:
+  # REJECT on a bound violation aborts only the offending resource's admission.
+  test-governance-min-max-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: An Ingress with no WAF policy annotation is rejected when governance requires WAF and no default policy is set.
+    description: A value above max is rejected at the offending resource's own admission.
     extraContext:
       renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: no-waf }
-      waf: { policies: { defaultPolicy: "" } }
+      admissionSubject: { store: ingresses, namespace: default, name: over-limit }
       governance:
         enabled: true
-        requirements:
-          waf: { require: true, enforcement: reject }
+        rules:
+          - resource: ingresses
+            path: metadata.labels['ratelimit']
+            min: 1
+            max: 100
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata: { namespace: default, name: no-waf, annotations: {} }
+          metadata:
+            namespace: default
+            name: over-limit
+            labels: { ratelimit: "9999" }
           spec:
             ingressClassName: haptic
             rules:
-              - host: no-waf.example.com
+              - host: over-limit.example.com
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
-      - { type: contains, target: rendering_error, pattern: "must select a WAF policy" }
+      - { type: contains, target: rendering_error, pattern: 'must be within the configured bounds' }
 
-  test-governance-empty-value-not-compliant:
+  # REQUIRED absent value is rejected at the offending resource's own admission.
+  test-governance-required-absent-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: A present-but-empty annotation value (waf-policy "") does not satisfy a requirement — only a real value counts.
+    description: A required-but-absent value is rejected at the offending resource's own admission.
     extraContext:
       renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: empty-waf }
-      waf: { policies: { defaultPolicy: "" } }
+      admissionSubject: { store: ingresses, namespace: default, name: no-tier }
       governance:
         enabled: true
-        requirements:
-          waf: { require: true, enforcement: reject }
+        rules:
+          - resource: ingresses
+            path: metadata.labels['tier']
+            required: true
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata: { namespace: default, name: empty-waf, annotations: { haproxy-haptic.org/waf-policy: "" } }
+          metadata: { namespace: default, name: no-tier, labels: {} }
           spec:
             ingressClassName: haptic
             rules:
-              - host: empty-waf.example.com
+              - host: no-tier.example.com
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
-      - { type: contains, target: rendering_error, pattern: "must select a WAF policy" }
+      - { type: contains, target: rendering_error, pattern: "must set metadata.labels" }
 
-  test-governance-auth-required-rejected:
+  # AUDIT enforcement only warns — a violating resource is admitted even under
+  # the webhook.
+  test-governance-audit-warns-not-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: An Ingress with no authentication annotation is rejected when governance requires auth.
+    description: An audit rule only warns; a violating resource is admitted under the webhook.
     extraContext:
       renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: no-auth }
+      admissionSubject: { store: ingresses, namespace: default, name: audit-tier }
       governance:
         enabled: true
-        requirements:
-          auth: { require: true, enforcement: reject }
+        rules:
+          - resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+            enforcement: audit
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata: { namespace: default, name: no-auth, annotations: {} }
+          metadata: { namespace: default, name: audit-tier, labels: {} }
           spec:
             ingressClassName: haptic
             rules:
-              - host: no-auth.example.com
-                http:
-                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
-    assertions:
-      - { type: contains, target: rendering_error, pattern: "must configure authentication" }
-
-  test-governance-ratelimit-required-rejected:
-    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: An Ingress with no rate-limit annotation is rejected when governance requires rate limiting.
-    extraContext:
-      renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: no-rl }
-      governance:
-        enabled: true
-        requirements:
-          rateLimit: { require: true, enforcement: reject }
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata: { namespace: default, name: no-rl, annotations: {} }
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: no-rl.example.com
-                http:
-                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
-    assertions:
-      - { type: contains, target: rendering_error, pattern: "must configure rate limiting" }
-
-  test-governance-audit-mode-not-rejected:
-    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: An audit-mode requirement only warns — a violating Ingress is admitted even under the webhook.
-    extraContext:
-      renderMode: admission
-      admissionSubject: { store: ingresses, namespace: default, name: audit-waf }
-      waf: { policies: { defaultPolicy: "" } }
-      governance:
-        enabled: true
-        requirements:
-          waf: { require: true, enforcement: audit }
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata: { namespace: default, name: audit-waf, annotations: {} }
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: audit-waf.example.com
+              - host: audit-tier.example.com
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
       - { type: haproxy_valid }
 
-  test-governance-exempt-namespace-not-rejected:
+  # EXEMPT namespace: a violating resource in an exempt namespace is never checked.
+  test-governance-exempt-namespace:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: An Ingress in an exempt namespace is never checked, even a violating one under admission.
+    description: A resource in an exempt namespace is never checked, even under admission.
     extraContext:
       renderMode: admission
-      admissionSubject: { store: ingresses, namespace: infra, name: exempt-waf }
-      waf: { policies: { defaultPolicy: "" } }
+      admissionSubject: { store: ingresses, namespace: infra, name: exempt-tier }
       governance:
         enabled: true
         exemptNamespaces: [infra]
-        requirements:
-          waf: { require: true, enforcement: reject }
+        rules:
+          - resource: ingresses
+            path: metadata.labels['tier']
+            required: true
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
-          metadata: { namespace: infra, name: exempt-waf, annotations: {} }
+          metadata: { namespace: infra, name: exempt-tier, labels: {} }
           spec:
             ingressClassName: haptic
             rules:
-              - host: exempt-waf.example.com
+              - host: exempt-tier.example.com
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
       - { type: haproxy_valid }
 
-  test-governance-reconcile-warns-not-rejected:
-    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: On a live reconcile (not admission), a violating already-present Ingress warns but keeps serving — the render is not aborted.
-    extraContext:
-      renderMode: reconcile
-      waf: { policies: { defaultPolicy: "" } }
-      governance:
-        enabled: true
-        requirements:
-          waf: { require: true, enforcement: reject }
-    fixtures:
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata: { namespace: default, name: existing-no-waf, annotations: {} }
-          spec:
-            ingressClassName: haptic
-            rules:
-              - host: existing-no-waf.example.com
-                http:
-                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
-    assertions:
-      - { type: haproxy_valid }
-
+  # ADMISSION-SCOPING: during one resource's admission, a DIFFERENT pre-existing
+  # violator only warns — it never wedges the unrelated admission.
   test-governance-non-subject-violator-not-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
-    description: During one Ingress's admission, a DIFFERENT pre-existing violator only warns — it never wedges the unrelated admission.
+    description: A pre-existing violator warns during another resource's admission — no wedge.
     extraContext:
       renderMode: admission
       admissionSubject: { store: ingresses, namespace: default, name: compliant-subject }
       ingressDefaultHTTPS: false
       governance:
         enabled: true
-        requirements:
-          tls: { require: true, enforcement: reject }
+        rules:
+          - resource: ingresses
+            satisfiedBy: tls
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1253,14 +1348,209 @@ validationTests:
     assertions:
       - { type: haproxy_valid }
 
+  # anyOf: at least one of the listed paths must be present.
+  test-governance-anyof-reject:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: A resource missing every anyOf path is rejected at its own admission.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: no-auth }
+      governance:
+        enabled: true
+        rules:
+          - resource: ingresses
+            anyOf:
+              - metadata.labels['team-a']
+              - metadata.labels['team-b']
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: no-auth, labels: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: no-auth.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'at least one of the required fields' }
+
+  test-governance-anyof-satisfied:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: A resource with one anyOf path present passes.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: has-team }
+      governance:
+        enabled: true
+        rules:
+          - resource: ingresses
+            anyOf:
+              - metadata.labels['team-a']
+              - metadata.labels['team-b']
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: has-team, labels: { team-a: "yes" } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: has-team.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: haproxy_valid }
+
+  # satisfiedBy: tls — spec.tls absent AND no chart TLS default -> reject.
+  test-governance-satisfiedby-tls-reject:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: A no-TLS Ingress is rejected when TLS is required and no chart default terminates TLS.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: no-tls }
+      ingressDefaultHTTPS: false
+      governance:
+        enabled: true
+        rules:
+          - resource: ingresses
+            satisfiedBy: tls
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: no-tls, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: no-tls.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'must terminate TLS' }
+
+  # satisfiedBy: tls — the chart-wide default HTTPS (the chart's default) satisfies
+  # the TLS requirement even without spec.tls on the Ingress.
+  test-governance-satisfiedby-tls-default-https:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: Chart-wide default HTTPS satisfies the TLS requirement without spec.tls.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: no-tls-but-default }
+      ingressDefaultHTTPS: true
+      governance:
+        enabled: true
+        rules:
+          - resource: ingresses
+            satisfiedBy: tls
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: no-tls-but-default, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: no-tls-but-default.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: haproxy_valid }
+
+  # allowed enum — a value outside the set is rejected.
+  test-governance-allowed-enum-reject:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: A value not in the allowed enum is rejected at its own admission.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: bad-tier }
+      governance:
+        enabled: true
+        rules:
+          - resource: ingresses
+            path: metadata.labels['tier']
+            allowed: [gold, silver]
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: bad-tier, labels: { tier: bronze } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-tier.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'is not one of the allowed values' }
+
+  # regex pattern — a value that fails the pattern is rejected.
+  test-governance-pattern-reject:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: A value that fails the required regex pattern is rejected at its own admission.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: bad-pattern }
+      governance:
+        enabled: true
+        rules:
+          - resource: ingresses
+            path: metadata.labels['code']
+            pattern: '^[0-9]{3}$'
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: bad-pattern, labels: { code: "5" } }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: bad-pattern.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'does not match required pattern' }
+
+  # CROSS-RESOURCE: a rule targeting httproutes proves the engine is generic
+  # across watched resources, not Ingress-only.
+  test-governance-httproutes-cross-resource:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.gateway.enabled) }}true{{ end }}'
+    requires: [httproutes]
+    description: A required-annotation rule on httproutes rejects a non-compliant HTTPRoute at its own admission.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: httproutes, namespace: default, name: gov-route }
+      governance:
+        enabled: true
+        rules:
+          - resource: httproutes
+            path: metadata.annotations['haproxy-haptic.org/waf-policy']
+            required: true
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: { namespace: default, name: gov-route, annotations: {} }
+          spec:
+            parentRefs: [{ name: nonexistent-gw }]
+            rules:
+              - backendRefs: [{ name: echo, port: 80 }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: "must set metadata.annotations" }
+
+  # --- Config validation (global errors) ---
   test-governance-invalid-enforcement-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: An invalid enforcement value is a loud global config error.
     extraContext:
       governance:
         enabled: true
-        requirements:
-          waf: { require: true, enforcement: block }
+        rules:
+          - resource: ingresses
+            path: metadata.labels['tier']
+            required: true
+            enforcement: block
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1274,6 +1564,30 @@ validationTests:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
       - { type: contains, target: rendering_error, pattern: 'enforcement must be' }
+
+  test-governance-default-on-wildcard-rejected:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: A default on a filtered/wildcard path is a loud global config error (validate-only).
+    extraContext:
+      governance:
+        enabled: true
+        rules:
+          - resource: ingresses
+            path: spec.rules[*].host
+            default: "example.com"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: any, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: any.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'concrete path' }
 
   test-annotation-family-conflict-cors-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'

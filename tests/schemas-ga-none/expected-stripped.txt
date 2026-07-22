@@ -57,6 +57,7 @@ test-gateway-status-listeners-typed-shape
 test-gateway-status-patches
 test-gateway-status-per-gateway-address
 test-gateway-typed-access-smoke
+test-governance-httproutes-cross-resource
 test-grpcroute-duplicate-backend-different-ports
 test-grpcroute-h2c-on-port-80
 test-grpcroute-headers
