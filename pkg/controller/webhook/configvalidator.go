@@ -60,6 +60,15 @@ type SchemaBootstrapper func(ctx context.Context, cfg *coreconfig.Config) (*type
 // uses to dispatch admission requests for the controller's own CRD.
 const HAProxyTemplateConfigGVK = "haproxy-haptic.org/v1alpha1.HAProxyTemplateConfig"
 
+// AppVersionLabel is the standard label the chart stamps on the
+// HAProxyTemplateConfig CR (via haptic.labels → .Chart.AppVersion). The webhook
+// compares the label on the PROSPECTIVE config against the same label on the
+// controller's currently-RUNNING config to detect a rolling-upgrade version-skew
+// window (see ConfigValidatorConfig.RunningConfigVersion). Both sides are drawn
+// from the identical chart-templating value, so they match in steady state and
+// diverge only when a genuinely different chart version is applied.
+const AppVersionLabel = "app.kubernetes.io/version"
+
 // validationTestsAdmissionBudget gives the embedded suite the same
 // suite-size-scaled budget as the daemon load gate, capped by whatever remains
 // of the user-configurable HAProxyTemplateConfig admission deadline after
@@ -90,15 +99,16 @@ func validationTestsAdmissionBudget(ctx context.Context, testCount int) time.Dur
 // accepting any /raw push, and the controller surfaces the resulting failure
 // via HAProxyCfg.status.
 type ConfigValidator struct {
-	logger             *slog.Logger
-	strictValidator    *validation.ValidationService
-	storeProvider      stores.StoreProvider
-	capabilities       dataplane.Capabilities
-	httpStoreComponent *ctrlhttpstore.Component
-	declarations       map[string]any
-	typedResourceTypes map[string]reflect.Type
-	bootstrap          SchemaBootstrapper
-	effectiveResolver  func(ctx context.Context, cfg *coreconfig.Config) (*coreconfig.Config, error)
+	logger               *slog.Logger
+	strictValidator      *validation.ValidationService
+	storeProvider        stores.StoreProvider
+	capabilities         dataplane.Capabilities
+	httpStoreComponent   *ctrlhttpstore.Component
+	declarations         map[string]any
+	typedResourceTypes   map[string]reflect.Type
+	bootstrap            SchemaBootstrapper
+	effectiveResolver    func(ctx context.Context, cfg *coreconfig.Config) (*coreconfig.Config, error)
+	runningConfigVersion string
 }
 
 // ConfigValidatorConfig wires the ConfigValidator's dependencies. All fields
@@ -162,6 +172,27 @@ type ConfigValidatorConfig struct {
 	// wires the iteration's resolver; nil (unit tests) validates the raw
 	// config as-is.
 	EffectiveResolver func(ctx context.Context, cfg *coreconfig.Config) (*coreconfig.Config, error)
+
+	// RunningConfigVersion is the AppVersionLabel value on the controller's
+	// currently-loaded HAProxyTemplateConfig CR — i.e. the chart app version of
+	// the running deployment. The webhook compares it against the SAME label on
+	// the prospective config to detect a rolling-upgrade version skew: when they
+	// differ, a config from a different chart version is being applied while
+	// THIS (older) controller still serves admission, so its engine's verdict on
+	// a config authored for a different engine version is unreliable. In that
+	// window a template COMPILE or RENDER failure is admitted with a warning and
+	// deferred to the target controller's authoritative, fail-closed load gate —
+	// while haproxy -c and validationTests failures still deny (those are
+	// engine-version-independent, so deferring them would admit a genuinely-broken
+	// config that crash-loops the new controller).
+	//
+	// Both sides are the same chart-stamped label, so they match in steady state
+	// regardless of build/ldflag versioning (this is deliberately NOT the
+	// controller's build version, which is set by a different mechanism and would
+	// mis-match the chart label on snapshot builds). Empty on either side — a
+	// hand-authored CR with no label, or a controller whose running config
+	// predates the label — disables skew detection: every failure denies as usual.
+	RunningConfigVersion string
 }
 
 // NewConfigValidator constructs a ConfigValidator. Panics if any required
@@ -179,16 +210,50 @@ func NewConfigValidator(cfg *ConfigValidatorConfig) *ConfigValidator {
 		logger = slog.Default()
 	}
 	return &ConfigValidator{
-		logger:             logger.With("component", "configvalidator"),
-		strictValidator:    cfg.StrictValidator,
-		storeProvider:      cfg.StoreProvider,
-		capabilities:       cfg.Capabilities,
-		httpStoreComponent: cfg.HTTPStoreComponent,
-		declarations:       cfg.Declarations,
-		typedResourceTypes: cfg.TypedResourceTypes,
-		bootstrap:          cfg.Bootstrap,
-		effectiveResolver:  cfg.EffectiveResolver,
+		logger:               logger.With("component", "configvalidator"),
+		strictValidator:      cfg.StrictValidator,
+		storeProvider:        cfg.StoreProvider,
+		capabilities:         cfg.Capabilities,
+		httpStoreComponent:   cfg.HTTPStoreComponent,
+		declarations:         cfg.Declarations,
+		typedResourceTypes:   cfg.TypedResourceTypes,
+		bootstrap:            cfg.Bootstrap,
+		effectiveResolver:    cfg.EffectiveResolver,
+		runningConfigVersion: cfg.RunningConfigVersion,
 	}
+}
+
+// deferTemplateFailureOnSkew decides whether a template compile/render failure
+// should be admitted with a warning instead of denied because the admitting
+// controller is version-skewed from the config it is judging.
+//
+// Skew is plain inequality of the prospective config's AppVersionLabel and the
+// SAME label on the controller's currently-running config (RunningConfigVersion).
+// During a rolling `helm upgrade`, the NEW config (new engine features, e.g. a
+// new template builtin) is applied while an OLD controller pod may still serve
+// admission — its engine hard-denies with a compile error the NEW controller
+// would accept, blocking the whole upgrade (failurePolicy: Ignore does not cover
+// an explicit deny). Comparing the two chart-stamped labels (rather than the
+// controller's build version, which is set by a different mechanism and would
+// mis-match the label on snapshot builds) means steady state always matches, and
+// the check works for snapshot chart versions too. The target controller's
+// fail-closed load gate re-validates authoritatively, so deferring here only
+// moves an engine-version-dependent template verdict to the version that can
+// judge it.
+//
+// Returns (warnings, true) to admit-with-warning; (nil, false) to deny as usual
+// (steady state, or either side missing the label).
+func (v *ConfigValidator) deferTemplateFailureOnSkew(crVersion, reason, namespace, name string) ([]string, bool) {
+	if v.runningConfigVersion == "" || crVersion == "" || crVersion == v.runningConfigVersion {
+		return nil, false
+	}
+	v.logger.Info("Template validation failed under a version-skewed controller; admitting HAProxyTemplateConfig with a warning (target load gate enforces)",
+		"namespace", namespace, "name", name,
+		"running_config_version", v.runningConfigVersion, "prospective_config_version", crVersion,
+		"reason", reason)
+	return []string{fmt.Sprintf(
+		"template validation deferred to the target controller's load gate: this config is version %q but the controller is still running version %q during a rolling upgrade",
+		crVersion, v.runningConfigVersion)}, true
 }
 
 // ValidateDirect performs synchronous validation of a prospective
@@ -214,6 +279,10 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 	if !ok {
 		return false, fmt.Sprintf("expected *unstructured.Unstructured, got %T", object), nil
 	}
+
+	// Version-skew signal for deferTemplateFailureOnSkew: the prospective
+	// config's stamped version vs the running config's (both AppVersionLabel).
+	crVersion := u.GetLabels()[AppVersionLabel]
 
 	cfg, _, err := conversion.ParseCRD(u)
 	if err != nil {
@@ -252,7 +321,11 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 	// path operators see for any other render failure).
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, declarations, helpers.EngineOptions{})
 	if err != nil {
-		return false, dataplane.SimplifyRenderingError(fmt.Errorf("compiling templates: %w", err)), nil
+		reason := dataplane.SimplifyRenderingError(fmt.Errorf("compiling templates: %w", err))
+		if warnings, deferred := v.deferTemplateFailureOnSkew(crVersion, reason, namespace, name); deferred {
+			return true, "", warnings
+		}
+		return false, reason, nil
 	}
 
 	// Ephemeral RenderService. HAProxyPodStore and CurrentConfigStore are
@@ -287,7 +360,11 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 	if execErr != nil {
 		var perr *pipeline.PipelineError
 		if errors.As(execErr, &perr) && perr.Phase == pipeline.PhaseRender {
-			return false, dataplane.SimplifyRenderingError(perr.Cause), nil
+			reason := dataplane.SimplifyRenderingError(perr.Cause)
+			if warnings, deferred := v.deferTemplateFailureOnSkew(crVersion, reason, namespace, name); deferred {
+				return true, "", warnings
+			}
+			return false, reason, nil
 		}
 		return false, execErr.Error(), nil
 	}
