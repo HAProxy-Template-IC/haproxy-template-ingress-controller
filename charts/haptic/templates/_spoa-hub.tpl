@@ -227,7 +227,7 @@ objects such as resources/securityContext; the apiserver owns those schemas.
   {{- $normalizedName := regexReplaceAll "-" $name "_" -}}
   {{- if hasKey $normalizedNames $normalizedName -}}{{- fail (printf "spoaHub plugin names %q and %q both normalize to %q; choose distinct names." (index $normalizedNames $normalizedName) $name $normalizedName) -}}{{- end -}}
   {{- $_ := set $normalizedNames $normalizedName $name -}}
-  {{- $allowedFields := list "enabled" "timeoutMs" "messages" "dependsOn" "maxConcurrency" "maxQueue" "queueTimeoutMs" "params" -}}
+  {{- $allowedFields := list "enabled" "timeoutMs" "messages" "dependsOn" "maxConcurrency" "maxQueue" "queueTimeoutMs" "adaptiveConcurrency" "params" -}}
   {{- if eq $name "coraza" -}}{{- $allowedFields = append $allowedFields "directives" -}}{{- end -}}
   {{- if eq $name "rate-limit" -}}{{- $allowedFields = append $allowedFields "storeOperationTimeoutMs" -}}{{- end -}}
   {{- range $field := keys $plugin -}}
@@ -439,6 +439,12 @@ max_queue = {{ include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "ro
 {{- end }}
 {{- if hasKey $plugin "queueTimeoutMs" }}
 queue_timeout_ms = {{ include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $ "name" $name "field" "queueTimeoutMs" "min" 1) }}
+{{- end }}
+{{- if hasKey $plugin "adaptiveConcurrency" }}
+{{- if not (kindIs "bool" $plugin.adaptiveConcurrency) -}}{{- fail (printf "spoaHub.plugins.%s.adaptiveConcurrency must be a boolean." $name) -}}{{- end -}}
+{{- if $plugin.adaptiveConcurrency }}
+adaptive_concurrency = true
+{{- end }}
 {{- end }}
 {{- $normalizedDependencies := list }}
 {{- range ($plugin.dependsOn | default list) }}

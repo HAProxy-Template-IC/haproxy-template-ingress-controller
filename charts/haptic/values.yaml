@@ -1602,7 +1602,8 @@ spoaHub:
 
   # Plugins. Each entry has chart-managed lifecycle keys (enabled, timeoutMs,
   # messages, dependsOn), optional admission controls (maxConcurrency,
-  # maxQueue, queueTimeoutMs), plus a free-form `params:` TOML string spliced
+  # maxQueue, queueTimeoutMs, adaptiveConcurrency), plus a free-form `params:`
+  # TOML string spliced
   # verbatim under `[plugins.params]`. `enabled` is `tpl`-evaluated so
   # libraries that need a plugin can auto-enable it; explicit `--set ...
   # .enabled=<bool>` always wins. Inside `params:` use dotted keys or the
@@ -1648,6 +1649,11 @@ spoaHub:
       # (ADR-0002 in haproxy-spoa-hub covers the adaptive alternative.)
       maxConcurrency: 16
       maxQueue: 0
+      # When true, the hub runs a latency-feedback controller (ADR-0002) that
+      # resizes the admission semaphore at runtime to track coraza's service
+      # time; `maxConcurrency` above then becomes the controller's ceiling
+      # rather than a fixed limit. Off by default (fixed `maxConcurrency`).
+      adaptiveConcurrency: false
       # Coraza WAF rule directives. The chart appends these to the
       # rendered TOML's `directives = """..."""` field, then appends
       # any per-Ingress `nginx.ingress.kubernetes.io/modsecurity-snippet`

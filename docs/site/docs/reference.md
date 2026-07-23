@@ -178,6 +178,7 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 | `controller.config.templatingSettings.extraContext.waf.policies.limits.maxRuleExclusions` | int | `256` | Maximum structured Core Rule Set (CRS) rule-exclusion entries in one reusable policy |
 | `spoaHub.plugins.coraza.timeoutMs` | int | `15` | Outer SPOE timeout for WAF evaluation. This is a failure bound, not expected latency |
 | `spoaHub.plugins.coraza.maxConcurrency` | int | `2` | Maximum concurrent Coraza evaluations per pod. Excess work is rejected immediately because `maxQueue` defaults to zero |
+| `spoaHub.plugins.coraza.adaptiveConcurrency` | bool | `false` | When true, the hub resizes the admission semaphore at runtime from Coraza's measured service time (ADR-0002); `maxConcurrency` then becomes the controller's ceiling instead of a fixed limit. Requires a hub image with adaptive support |
 
 ## Policy guardrails (governance)
 
@@ -693,6 +694,7 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.plugins.<name>.maxConcurrency` | int/null | plugin default | Maximum plugin calls executing concurrently. Use this as the single owner of plugin CPU admission |
 | `spoaHub.plugins.<name>.maxQueue` | int/null | plugin default | Maximum calls waiting for a concurrency slot. Coraza defaults to `0`, rejecting excess work instead of inflating latency under attack |
 | `spoaHub.plugins.<name>.queueTimeoutMs` | int/null | plugin default | Maximum queue wait when `maxQueue` is non-zero |
+| `spoaHub.plugins.<name>.adaptiveConcurrency` | bool | `false` | Opt into the latency-feedback concurrency controller (ADR-0002): the hub resizes the plugin's admission semaphore at runtime and `maxConcurrency` becomes the ceiling. Requires a hub image with adaptive support |
 | `spoaHub.plugins.<name>.messages` | list | per-plugin | SPOE messages this plugin handles |
 | `spoaHub.plugins.<name>.dependsOn` | list | `[]` | Other plugin names this plugin must run after |
 | `spoaHub.plugins.<name>.params` | string | per-plugin | Free-form TOML blob spliced verbatim under `[plugins.params]` — use dotted keys (`x.y = "..."`) or fully qualified headers (`[plugins.params.x]`) for nested values; bare `[x]` headers close the params scope and break the config |
