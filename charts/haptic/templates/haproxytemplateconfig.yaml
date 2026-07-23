@@ -853,6 +853,16 @@ spec:
         {{- if hasKey $plugin "queueTimeoutMs" }}
           {{- $_ := set $entry "queueTimeoutMs" (int (include "haptic.spoaHub.pluginInteger" (dict "plugin" $plugin "root" $ "name" $name "field" "queueTimeoutMs" "min" 1))) }}
         {{- end }}
+        {{- /* Only surface adaptiveConcurrency when true: false is the hub
+               default, so omitting it keeps the rendered config byte-identical
+               for the common case and never emits a field an older hub (before
+               adaptive support) would have to tolerate. */}}
+        {{- if hasKey $plugin "adaptiveConcurrency" }}
+          {{- if not (kindIs "bool" $plugin.adaptiveConcurrency) -}}{{- fail (printf "spoaHub.plugins.%s.adaptiveConcurrency must be a boolean." $name) -}}{{- end -}}
+          {{- if $plugin.adaptiveConcurrency }}
+            {{- $_ := set $entry "adaptiveConcurrency" true }}
+          {{- end }}
+        {{- end }}
         {{- /* Coraza-specific: surface the directives field separately so
                the runtime render snippet can append per-Ingress
                `nginx.ingress.kubernetes.io/modsecurity-snippet` values

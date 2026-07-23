@@ -103,6 +103,7 @@ templateSnippets:
         {%- var pMaxConcurrency = p | dig("maxConcurrency") -%}
         {%- var pMaxQueue = p | dig("maxQueue") -%}
         {%- var pQueueTimeoutMs = p | dig("queueTimeoutMs") -%}
+        {%- var pAdaptiveConcurrency = p | dig("adaptiveConcurrency") -%}
         {#- Mirror plugin's messages list. Floored at a static minimum
             (mirrorMinMessageSlots, default 4) and extended dynamically
             beyond that based on the cluster-wide max number of mirror
@@ -201,6 +202,9 @@ templateSnippets:
         {%- end %}
         {%- if pQueueTimeoutMs != nil %}
       queue_timeout_ms = {{ pQueueTimeoutMs }}
+        {%- end %}
+        {%- if pAdaptiveConcurrency != nil %}
+      adaptive_concurrency = {{ pAdaptiveConcurrency }}
         {%- end %}
         {%- if len(pDependsOn) > 0 %}
       depends_on = [
