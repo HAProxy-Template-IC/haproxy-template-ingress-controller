@@ -1621,10 +1621,13 @@ spoaHub:
       timeoutMs: 25
       messages: ["validate-request"]
       dependsOn: []
-      # JSON schema validation. Bound work exactly as for Coraza (a cap of 2
-      # with no queue fails closed under bursts); 16 gives burst headroom while
-      # still rejecting excess without a latency-inflating queue.
-      maxConcurrency: 16
+      # Admission concurrency (ADR-0002). Bound work exactly as for Coraza:
+      # adaptive by default so the right concurrency is found from live latency
+      # with no manual tuning, and maxConcurrency is the ceiling — derived from
+      # the sidecar's memory so it self-scales across small and large
+      # deployments. Set adaptiveConcurrency: false for a fixed cap.
+      adaptiveConcurrency: true
+      maxConcurrency: '{{ include "haptic.spoaHub.adaptiveCeiling" . }}'
       maxQueue: 0
       # The chart injects default_fail_open and max_body_bytes from the
       # requestSchemaValidation feature tree so replacing this free-form blob
@@ -1642,18 +1645,21 @@ spoaHub:
       timeoutMs: 15
       messages: ["check-request"]
       dependsOn: []
-      # Bound concurrent WAF checks per HAProxy pod. Each check holds its slot
-      # ~0.9ms but uses only ~0.1ms of CPU, so a cap of 2 with no queue fails
-      # CLOSED under load bursts (measured: 25-44% 503s, p99 to ~600ms) while the
-      # CPU sits idle. 16 gives burst headroom yet still bounds hostile traffic.
-      # (ADR-0002 in haproxy-spoa-hub covers the adaptive alternative.)
-      maxConcurrency: 16
+      # Concurrent WAF checks per HAProxy pod. A coraza check holds its slot
+      # ~0.9ms but uses only ~0.1ms of CPU, so the right concurrency is many
+      # times the core count and varies by request mix — no single number is
+      # correct across machines. So it's ADAPTIVE by default (ADR-0002): the hub
+      # resizes the admission semaphore at runtime from live latency, finding the
+      # concurrency that keeps CPU busy without over-subscribing — no manual
+      # tuning, on small and large deployments alike. `maxConcurrency` is then
+      # the controller's CEILING (a runaway backstop), derived from the sidecar's
+      # MEMORY (concurrency = blocking OS threads, so memory is the binding
+      # resource, not cores) so it self-scales: give the sidecar more memory and
+      # the ceiling rises. Set adaptiveConcurrency: false for a fixed cap, or set
+      # maxConcurrency to a literal to override the derived ceiling.
+      adaptiveConcurrency: true
+      maxConcurrency: '{{ include "haptic.spoaHub.adaptiveCeiling" . }}'
       maxQueue: 0
-      # When true, the hub runs a latency-feedback controller (ADR-0002) that
-      # resizes the admission semaphore at runtime to track coraza's service
-      # time; `maxConcurrency` above then becomes the controller's ceiling
-      # rather than a fixed limit. Off by default (fixed `maxConcurrency`).
-      adaptiveConcurrency: false
       # Coraza WAF rule directives. The chart appends these to the
       # rendered TOML's `directives = """..."""` field, then appends
       # any per-Ingress `nginx.ingress.kubernetes.io/modsecurity-snippet`

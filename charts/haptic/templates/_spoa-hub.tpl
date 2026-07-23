@@ -609,6 +609,29 @@ rateLimit.shared.managedStore.enabled=true, so the bootstrap ConfigMap and the
 runtime-rendered hub config stay byte-for-byte consistent about the store
 endpoints.
 */}}
+{{/*
+Adaptive-concurrency ceiling for a spoa-hub plugin, derived from the sidecar's
+MEMORY rather than CPU or a hand-set number — so it self-scales across small and
+large deployments with no manual tuning. Concurrency in the hub is realised as
+blocking OS threads (one per in-flight plugin call), so the binding resource is
+memory, not cores; deriving from cores would be both the wrong dimension and
+unreliable in a container (see haproxy-spoa-hub ADR-0002). The controller then
+finds the live operating point under this ceiling from request latency, so the
+ceiling is a backstop, not the operating point.
+
+Formula: reserve ~128MB for the coraza ruleset + Go runtime, budget ~8MB per
+concurrent call (thread stack + per-transaction buffers), clamp to [8, 256].
+Reads the sidecar memory limit (the hard OOM boundary), falling back to the
+request. Argument: the root context (`.`).
+*/}}
+{{- define "haptic.spoaHub.adaptiveCeiling" -}}
+{{- $res := .Values.spoaHub.resources | default dict -}}
+{{- $mem := dig "limits" "memory" (dig "requests" "memory" "" $res) $res -}}
+{{- $memMB := include "haptic.memoryToMB" $mem | int -}}
+{{- $ceiling := div (sub $memMB 128) 8 -}}
+{{- max 8 (min 256 $ceiling) -}}
+{{- end -}}
+
 {{- define "haptic.spoaHub.effectivePluginParams" -}}
 {{- $root := .root -}}
 {{- $name := .name -}}
