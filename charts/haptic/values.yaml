@@ -1620,9 +1620,10 @@ spoaHub:
       timeoutMs: 25
       messages: ["validate-request"]
       dependsOn: []
-      # JSON parsing and schema evaluation are CPU-bound. Bound work exactly as
-      # for Coraza and reject excess calls without a latency-inflating queue.
-      maxConcurrency: 2
+      # JSON schema validation. Bound work exactly as for Coraza (a cap of 2
+      # with no queue fails closed under bursts); 16 gives burst headroom while
+      # still rejecting excess without a latency-inflating queue.
+      maxConcurrency: 16
       maxQueue: 0
       # The chart injects default_fail_open and max_body_bytes from the
       # requestSchemaValidation feature tree so replacing this free-form blob
@@ -1640,9 +1641,12 @@ spoaHub:
       timeoutMs: 15
       messages: ["check-request"]
       dependsOn: []
-      # Coraza is CPU-bound. Bound execution per HAProxy pod and reject excess
-      # work without queueing so hostile traffic cannot inflate tail latency.
-      maxConcurrency: 2
+      # Bound concurrent WAF checks per HAProxy pod. Each check holds its slot
+      # ~0.9ms but uses only ~0.1ms of CPU, so a cap of 2 with no queue fails
+      # CLOSED under load bursts (measured: 25-44% 503s, p99 to ~600ms) while the
+      # CPU sits idle. 16 gives burst headroom yet still bounds hostile traffic.
+      # (ADR-0002 in haproxy-spoa-hub covers the adaptive alternative.)
+      maxConcurrency: 16
       maxQueue: 0
       # Coraza WAF rule directives. The chart appends these to the
       # rendered TOML's `directives = """..."""` field, then appends
