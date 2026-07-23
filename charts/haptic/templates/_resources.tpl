@@ -25,9 +25,19 @@ Input: CPU quantity string.
 {{/*
 Calculate nbthread for HAProxy global section.
 If haproxy.nbthread is explicitly set, use that value (rendered via tpl for templatability).
-Otherwise, auto-calculate from haproxy.resources.requests.cpu using ceiling arithmetic.
-Supports: millicores (e.g., "250m") and whole cores (e.g., "2").
-Returns empty string if no CPU requests configured and no override, or if override is 0.
+Otherwise, derive from the CPU *limit* (the CPU the pod may actually use),
+using ceiling arithmetic: "2500m" -> 3, "2" -> 2. When no CPU limit is set,
+return empty so the caller omits the directive entirely and HAProxy
+auto-detects usable cores from its CPU affinity mask (= all node cores for a
+burstable pod). This works in both worlds without deriving from requests:
+  - Cloud: a CPU limit caps threads to the quota (no CFS throttling); an
+    autoscaler-sized burstable pod auto-detects its request-sized node.
+  - Static on-prem: no limit -> HAProxy uses every node core, without
+    inflating CPU requests (which would just fence off CPU from other pods).
+Deriving from the limit (never the request) matches Istio, Go 1.25's
+container-aware GOMAXPROCS, and uber-go/automaxprocs.
+Returns empty string if no CPU limit is configured and no override, or if
+override is 0.
 */}}
 {{- define "haptic.haproxy.nbthread" -}}
 {{- if and .Values.haproxy (hasKey .Values.haproxy "nbthread") -}}
@@ -36,7 +46,7 @@ Returns empty string if no CPU requests configured and no override, or if overri
     {{- $override -}}
   {{- end -}}
 {{- else -}}
-  {{- with dig "requests" "cpu" "" .Values.haproxy.resources -}}
+  {{- with dig "limits" "cpu" "" .Values.haproxy.resources -}}
     {{- max 1 (include "haptic.cpuToCores" . | int) -}}
   {{- end -}}
 {{- end -}}

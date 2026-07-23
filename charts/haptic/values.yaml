@@ -1068,11 +1068,15 @@ haproxy:
     # /dev/shm emptyDir size cap (medium: Memory). Auto-calculated from
     # maxObjects (~4KB/object +10%). Counts against pod memory limit.
     # shmSizeLimit: "256Mi"
-  # HAProxy nbthread. Auto-derived from CPU requests when unset.
-  # Set 0 to omit the directive; positive int to override. Supports tpl.
+  # HAProxy nbthread. When unset: derived from the CPU limit below if one is
+  # set (ceil to whole cores); otherwise omitted so HAProxy auto-detects all
+  # node cores from its CPU affinity. This uses every core on static on-prem
+  # nodes without inflating CPU requests, and respects the quota in the cloud.
+  # Set 0 to force-omit the directive; a positive int overrides. Supports tpl.
   # nbthread: 4
   # Guaranteed-QoS memory (requests=limits) for eviction protection. No
-  # CPU limit to avoid throttling. HAProxy uses ~32KB per connection.
+  # CPU limit — HAProxy then uses all node cores (nbthread auto-detects);
+  # set limits.cpu to cap both the quota and nbthread. ~32KB per connection.
   resources:
     requests:
       cpu: 250m

@@ -636,7 +636,7 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `haproxy.nbthread` | int/string | absent | HAProxy `nbthread` directive value. Default (key absent): auto-calculated as `ceil(cpu_request)` clamped to ≥1. Set `0` to skip the directive (HAProxy uses its built-in default). Templatable — `"{{ mul 2 (...) }}"` is allowed |
+| `haproxy.nbthread` | int/string | absent | HAProxy `nbthread` directive value. Default (key absent): if `haproxy.resources.limits.cpu` is set, `ceil(cpu_limit)` clamped to ≥1; otherwise the directive is omitted and HAProxy auto-detects all node cores from its CPU affinity. Set `0` to force-omit the directive. Templatable — `"{{ mul 2 (...) }}"` is allowed |
 | `haproxy.shmStats.enabled` | bool | `false` | Persist HAProxy stats counters across reloads via `shm-stats-file` (HAProxy 3.3+ only) |
 | `haproxy.shmStats.path` | string | `/dev/shm/haproxy-stats` | Path to the shared-memory stats file |
 | `haproxy.shmStats.maxObjects` | int | `50000` | Maximum object count in the shm-stats file. Each frontend, backend, listen, and server counts as one object — pick a value with headroom; HAProxy can't resize the file on reload |
@@ -712,7 +712,7 @@ Available plugin names (`<name>`): `api-gateway`, `coraza`, `external-auth`, `fi
 | `haproxy.resources.requests.memory` | string | `1Gi` | Memory request (Guaranteed QoS — limits.memory matches) |
 | `haproxy.resources.limits.memory` | string | `1Gi` | Memory limit |
 
-No CPU limit is set by default to avoid throttling; HAProxy's `nbthread` auto-calculates from the CPU request.
+No CPU limit is set by default to avoid throttling. With no limit, HAProxy's `nbthread` auto-detects all node cores from its CPU affinity — so HAProxy uses every core on a static node without inflating CPU requests. Set `haproxy.resources.limits.cpu` to cap both the CPU quota and `nbthread` to `ceil(limit)`.
 
 ## HAProxy NetworkPolicy
 
