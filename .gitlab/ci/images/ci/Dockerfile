@@ -51,7 +51,7 @@ ARG SYFT_VERSION=1.49.0
 # renovate: datasource=github-releases depName=helm/helm versioning=semver allowedVersions=<4
 ARG HELM_VERSION=3.20.1
 # renovate: datasource=github-releases depName=kubernetes/kubernetes
-ARG KUBECTL_VERSION=1.36.2
+ARG KUBECTL_VERSION=1.36.3
 # renovate: datasource=github-releases depName=mikefarah/yq
 ARG YQ_VERSION=4.53.3
 # renovate: datasource=github-releases depName=boumenot/gocover-cobertura
