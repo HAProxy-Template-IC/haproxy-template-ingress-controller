@@ -144,7 +144,7 @@ apply) so additive CRD schema changes reach the cluster on install and upgrade.
 | `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes` | int | `8192` | Default validation input cap when an Ingress omits `request-schema-max-body-size`. The effective cap must fit in the shared HAProxy body capacity |
 | `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.defaultFailOpen` | bool | `false` | Default when an Ingress omits `request-schema-fail-open`; unknown schema ids or missing plugin verdicts fail closed by default |
 | `spoaHub.plugins.api-gateway.timeoutMs` | int | `25` | Outer SPOE processing timeout for JSON validation; increase only for measured CPU or scheduling pressure |
-| `spoaHub.plugins.api-gateway.maxConcurrency` | int | `16` | Maximum concurrent JSON parse/schema evaluations per pod. Excess work is rejected immediately because `maxQueue` defaults to zero |
+| `spoaHub.plugins.api-gateway.maxConcurrency` | int/tpl | derived from sidecar memory (16 at the default 256Mi) | Ceiling for concurrent JSON parse/schema evaluations. With `adaptiveConcurrency` on (default) this is the controller's upper bound, not a fixed limit; derived from `spoaHub.resources` memory so it self-scales. Set a literal to override |
 
 ## Coraza WAF
 
@@ -177,8 +177,8 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 | `controller.config.templatingSettings.extraContext.waf.policies.limits.maxSecLangBytes` | int | `65536` | Maximum advanced SecLang bytes in one reusable policy |
 | `controller.config.templatingSettings.extraContext.waf.policies.limits.maxRuleExclusions` | int | `256` | Maximum structured Core Rule Set (CRS) rule-exclusion entries in one reusable policy |
 | `spoaHub.plugins.coraza.timeoutMs` | int | `15` | Outer SPOE timeout for WAF evaluation. This is a failure bound, not expected latency |
-| `spoaHub.plugins.coraza.maxConcurrency` | int | `16` | Maximum concurrent Coraza evaluations per pod. Excess work is rejected immediately because `maxQueue` defaults to zero |
-| `spoaHub.plugins.coraza.adaptiveConcurrency` | bool | `false` | When true, the hub resizes the admission semaphore at runtime from Coraza's measured service time (ADR-0002); `maxConcurrency` then becomes the controller's ceiling instead of a fixed limit. Requires a hub image with adaptive support |
+| `spoaHub.plugins.coraza.maxConcurrency` | int/tpl | derived from sidecar memory (16 at the default 256Mi) | Ceiling for concurrent Coraza evaluations. With `adaptiveConcurrency` on (default) this is the controller's upper bound, not a fixed limit; derived from `spoaHub.resources` memory so it self-scales (give the sidecar more memory → higher ceiling). Set a literal to override |
+| `spoaHub.plugins.coraza.adaptiveConcurrency` | bool | `true` | The hub resizes the admission semaphore at runtime from Coraza's measured service time (ADR-0002), finding the right concurrency from live latency with no manual tuning; `maxConcurrency` is then the controller's ceiling. Set `false` for a fixed cap. Full adaptivity needs a hub image with adaptive support; an older hub ignores the flag and runs `maxConcurrency` as a fixed cap |
 
 ## Policy guardrails (governance)
 
@@ -694,7 +694,7 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.plugins.<name>.maxConcurrency` | int/null | plugin default | Maximum plugin calls executing concurrently. Use this as the single owner of plugin CPU admission |
 | `spoaHub.plugins.<name>.maxQueue` | int/null | plugin default | Maximum calls waiting for a concurrency slot. Coraza defaults to `0`, rejecting excess work instead of inflating latency under attack |
 | `spoaHub.plugins.<name>.queueTimeoutMs` | int/null | plugin default | Maximum queue wait when `maxQueue` is non-zero |
-| `spoaHub.plugins.<name>.adaptiveConcurrency` | bool | `false` | Opt into the latency-feedback concurrency controller (ADR-0002): the hub resizes the plugin's admission semaphore at runtime and `maxConcurrency` becomes the ceiling. Requires a hub image with adaptive support |
+| `spoaHub.plugins.<name>.adaptiveConcurrency` | bool | plugin default (on for coraza/api-gateway) | The latency-feedback concurrency controller (ADR-0002): the hub resizes the plugin's admission semaphore at runtime and `maxConcurrency` becomes the ceiling. Requires a hub image with adaptive support; an older hub ignores it |
 | `spoaHub.plugins.<name>.messages` | list | per-plugin | SPOE messages this plugin handles |
 | `spoaHub.plugins.<name>.dependsOn` | list | `[]` | Other plugin names this plugin must run after |
 | `spoaHub.plugins.<name>.params` | string | per-plugin | Free-form TOML blob spliced verbatim under `[plugins.params]` — use dotted keys (`x.y = "..."`) or fully qualified headers (`[plugins.params.x]`) for nested values; bare `[x]` headers close the params scope and break the config |
