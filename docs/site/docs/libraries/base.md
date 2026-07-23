@@ -497,7 +497,8 @@ global
     log stdout len 4096 local0 info
     # global-settings-200-process
     daemon
-    nbthread 1          # auto-calculated: ceil(HAProxy CPU request), 250m by default
+    # nbthread is omitted by default (no CPU limit) so HAProxy auto-detects all
+    # node cores; when haproxy.resources.limits.cpu is set it renders ceil(limit)
     # global-settings-250-shm-stats (when haproxy.shmStats.enabled=true and HAProxy >= 3.3)
     shm-stats-file /dev/shm/haproxy-stats
     shm-stats-file-max-objects 50000  # configurable via haproxy.shmStats.maxObjects

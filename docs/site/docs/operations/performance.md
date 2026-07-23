@@ -327,23 +327,26 @@ Example:
 
 ### Thread configuration
 
-Match `nbthread` to available CPU cores:
+The chart sizes `nbthread` for you — you rarely set it by hand:
+
+- **No CPU limit (default).** The `nbthread` directive is omitted and HAProxy
+  auto-detects all node cores from its CPU affinity. On a static on-prem node
+  this uses every core without inflating CPU requests (which only fence off CPU
+  from other pods rather than granting more cores).
+- **CPU limit set.** The chart renders `nbthread = ceil(limits.cpu)`, matching
+  the CPU quota so threads aren't throttled. In the cloud, where the node is
+  sized to fit the pod, set a limit to pin threads to that size.
 
 ```yaml
-# HAProxy pod resources
+# Cap HAProxy to 4 threads (and 4 cores of CPU quota):
 haproxy:
   resources:
-    requests:
-      cpu: 2
     limits:
-      cpu: 4
+      cpu: 4        # chart renders `nbthread 4`
 ```
 
-```haproxy
-# HAProxy config
-global
-    nbthread 4  # Match CPU limit
-```
+Set `haproxy.nbthread` explicitly only to override both branches (a positive
+int pins the value; `0` force-omits the directive).
 
 ### Buffer sizing
 

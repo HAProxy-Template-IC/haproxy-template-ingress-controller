@@ -372,9 +372,23 @@ verify_config_admission_warning_free() {
         die "Expected exactly one default HAProxyTemplateConfig, found ${#configs[@]}" 10
     fi
 
-    local output rc=0
-    output=$(kubectl get haproxytemplateconfig "${configs[0]}" -n "$NAMESPACE" -o json \
-        | kubectl replace --dry-run=server -f - 2>&1) || rc=$?
+    # A server-side dry-run replace routes the config through the webhook.
+    # Re-get inside a retry: the controller writes status
+    # (observedGeneration/Validated) between our get and replace, bumping
+    # resourceVersion, so a stale replace 409s with "object has been modified".
+    # Retry only that optimistic-concurrency conflict — any other error is a
+    # genuine admission failure and must fail immediately.
+    local output rc=0 attempt
+    for attempt in 1 2 3 4 5; do
+        rc=0
+        output=$(kubectl get haproxytemplateconfig "${configs[0]}" -n "$NAMESPACE" -o json \
+            | kubectl replace --dry-run=server -f - 2>&1) || rc=$?
+        if [[ $rc -ne 0 ]] && grep -q 'please apply your changes to the latest version' <<< "$output"; then
+            sleep 1
+            continue
+        fi
+        break
+    done
     if [[ $rc -ne 0 ]]; then
         error "HAProxyTemplateConfig server-side dry-run failed (exit $rc):"
         printf '%s\n' "$output" >&2
