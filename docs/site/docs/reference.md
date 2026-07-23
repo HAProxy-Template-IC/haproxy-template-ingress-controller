@@ -144,7 +144,7 @@ apply) so additive CRD schema changes reach the cluster on install and upgrade.
 | `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.requestBody.defaultMaxBytes` | int | `8192` | Default validation input cap when an Ingress omits `request-schema-max-body-size`. The effective cap must fit in the shared HAProxy body capacity |
 | `controller.config.templatingSettings.extraContext.apiGateway.requestSchemaValidation.defaultFailOpen` | bool | `false` | Default when an Ingress omits `request-schema-fail-open`; unknown schema ids or missing plugin verdicts fail closed by default |
 | `spoaHub.plugins.api-gateway.timeoutMs` | int | `25` | Outer SPOE processing timeout for JSON validation; increase only for measured CPU or scheduling pressure |
-| `spoaHub.plugins.api-gateway.maxConcurrency` | int | `2` | Maximum concurrent JSON parse/schema evaluations per pod. Excess work is rejected immediately because `maxQueue` defaults to zero |
+| `spoaHub.plugins.api-gateway.maxConcurrency` | int | `16` | Maximum concurrent JSON parse/schema evaluations per pod. Excess work is rejected immediately because `maxQueue` defaults to zero |
 
 ## Coraza WAF
 
@@ -177,7 +177,7 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 | `controller.config.templatingSettings.extraContext.waf.policies.limits.maxSecLangBytes` | int | `65536` | Maximum advanced SecLang bytes in one reusable policy |
 | `controller.config.templatingSettings.extraContext.waf.policies.limits.maxRuleExclusions` | int | `256` | Maximum structured Core Rule Set (CRS) rule-exclusion entries in one reusable policy |
 | `spoaHub.plugins.coraza.timeoutMs` | int | `15` | Outer SPOE timeout for WAF evaluation. This is a failure bound, not expected latency |
-| `spoaHub.plugins.coraza.maxConcurrency` | int | `2` | Maximum concurrent Coraza evaluations per pod. Excess work is rejected immediately because `maxQueue` defaults to zero |
+| `spoaHub.plugins.coraza.maxConcurrency` | int | `16` | Maximum concurrent Coraza evaluations per pod. Excess work is rejected immediately because `maxQueue` defaults to zero |
 | `spoaHub.plugins.coraza.adaptiveConcurrency` | bool | `false` | When true, the hub resizes the admission semaphore at runtime from Coraza's measured service time (ADR-0002); `maxConcurrency` then becomes the controller's ceiling instead of a fixed limit. Requires a hub image with adaptive support |
 
 ## Policy guardrails (governance)
