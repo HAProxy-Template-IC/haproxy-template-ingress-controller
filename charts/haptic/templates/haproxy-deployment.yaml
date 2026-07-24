@@ -380,6 +380,8 @@ spec:
         - name: spoa-hub
           image: {{ include "haptic.spoaHub.image" . }}
           imagePullPolicy: {{ $spoaHub.image.pullPolicy }}
+          env:
+            {{- include "haptic.spoaHub.goRuntimeEnv" (dict "root" $ "resources" $spoaHub.resources) | nindent 12 }}
           args:
             # Hub config lives in HAProxy's general-storage dir so the
             # dataplane API can write to it. Mounted into this container

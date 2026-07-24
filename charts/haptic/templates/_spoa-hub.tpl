@@ -162,8 +162,8 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- $hub := $spoa.hub | default dict -}}
 {{- if not (kindIs "map" $hub) -}}{{- fail "spoaHub.hub must be a map." -}}{{- end -}}
 {{- range $field := keys $hub -}}
-  {{- if not (has $field (list "logLevel" "workerThreads" "maxConnections" "blockingThreadKeepAliveSecs" "maxBlockingThreads" "reloadDrainTimeoutMs" "metricsAddr")) -}}
-    {{- fail (printf "spoaHub.hub contains unknown field %q. Valid fields: logLevel, workerThreads, maxConnections, blockingThreadKeepAliveSecs, maxBlockingThreads, reloadDrainTimeoutMs, metricsAddr." $field) -}}
+  {{- if not (has $field (list "logLevel" "workerThreads" "maxConnections" "blockingThreadKeepAliveSecs" "maxBlockingThreads" "reloadDrainTimeoutMs" "metricsAddr" "goGCPercent")) -}}
+    {{- fail (printf "spoaHub.hub contains unknown field %q. Valid fields: logLevel, workerThreads, maxConnections, blockingThreadKeepAliveSecs, maxBlockingThreads, reloadDrainTimeoutMs, metricsAddr, goGCPercent." $field) -}}
   {{- end -}}
 {{- end -}}
 {{- if not (kindIs "string" $hub.logLevel) -}}{{- fail "spoaHub.hub.logLevel must be a string." -}}{{- end -}}
@@ -172,6 +172,7 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- end -}}
 {{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "maxConnections" "min" 1) -}}
 {{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "blockingThreadKeepAliveSecs" "min" 1) -}}
+{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "goGCPercent" "min" 1) -}}
 {{- if ne $hub.workerThreads nil -}}{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "workerThreads" "min" 1) -}}{{- end -}}
 {{- if ne $hub.maxBlockingThreads nil -}}{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "maxBlockingThreads" "min" 1) -}}{{- end -}}
 {{- if ne $hub.reloadDrainTimeoutMs nil -}}{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "reloadDrainTimeoutMs" "min" 0) -}}{{- end -}}
@@ -630,6 +631,30 @@ request. Argument: the root context (`.`).
 {{- $memMB := include "haptic.memoryToMB" $mem | int -}}
 {{- $ceiling := div (sub $memMB 128) 8 -}}
 {{- max 8 (min 256 $ceiling) -}}
+{{- end -}}
+
+{{/*
+Go-runtime environment for a hub sidecar. The coraza plugin embeds a Go runtime,
+and under sustained request load Go's default GOGC=100 triggers GC often; each
+cycle steals CPU from the request path (GC assist) and drains the plugin's
+transaction sync.Pool, so raising GOGC trims the p99 tail (measured ~15-20% at
+moderate load on a memory-headroom-rich sidecar). GOMEMLIMIT is a soft cap at
+90% of the container memory limit so the higher GOGC can never breach it. Set
+spoaHub.hub.goGCPercent to tune (100 restores Go's default); GOMEMLIMIT is
+derived automatically and omitted when no memory limit is set.
+Args: dict "root" $ "resources" <container resources map>
+*/}}
+{{- define "haptic.spoaHub.goRuntimeEnv" -}}
+- name: GOGC
+  value: {{ .root.Values.spoaHub.hub.goGCPercent | toString | quote }}
+{{- $memLimit := dig "limits" "memory" "" (.resources | default dict) -}}
+{{- if $memLimit -}}
+{{- $memMB := int (include "haptic.memoryToMB" $memLimit) -}}
+{{- if gt $memMB 0 }}
+- name: GOMEMLIMIT
+  value: {{ printf "%dMiB" (div (mul $memMB 90) 100) | quote }}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "haptic.spoaHub.effectivePluginParams" -}}

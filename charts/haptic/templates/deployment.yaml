@@ -164,6 +164,8 @@ spec:
         - name: validators
           image: {{ include "haptic.spoaHub.image" . }}
           imagePullPolicy: {{ .Values.spoaHub.image.pullPolicy }}
+          env:
+            {{- include "haptic.spoaHub.goRuntimeEnv" (dict "root" $ "resources" $validators.resources) | nindent 12 }}
           args:
             - --config
             - /etc/haproxy-spoa-hub/config.toml

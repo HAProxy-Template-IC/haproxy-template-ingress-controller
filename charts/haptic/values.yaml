@@ -1569,6 +1569,14 @@ spoaHub:
     # (loses per-plugin counters); set to "0.0.0.0:9095" to expose
     # cluster-wide (carries per-Ingress/route cardinality — careful).
     metricsAddr: "127.0.0.1:9095"
+    # Go garbage-collector target percentage (GOGC) for the sidecar's embedded
+    # Go runtime (the coraza plugin). The default 100 collects often under load,
+    # stealing CPU from the request path and draining the plugin's transaction
+    # pool; 300 trims GC frequency for a lower p99 tail while staying well within
+    # the sidecar's memory. GOMEMLIMIT is derived automatically as a soft cap at
+    # 90% of the memory limit so a higher value can't breach it. Set to 100 to
+    # restore Go's default.
+    goGCPercent: 300
 
   # HAProxy-side wiring. The chart surfaces these into
   # templatingSettings.extraContext.spoaHub (see
