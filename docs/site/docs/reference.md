@@ -673,6 +673,12 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.resources.requests.cpu` | string | `50m` | SPOA hub CPU request |
 | `spoaHub.resources.requests.memory` | string | `128Mi` | SPOA hub memory request |
 | `spoaHub.resources.limits.memory` | string | `256Mi` | SPOA hub memory limit |
+| `spoaHub.monitoring.podMonitor.enabled` | bool | `false` | Create a PodMonitor for the HAProxy pod that scrapes the hub data-path metrics (`spoa_*`, `plugin_coraza_*`) and HAProxy's exporter (`:8404`). Requires `spoaHub.hub.metricsAddr` to be a non-loopback bind (such as `0.0.0.0:9095`); rendering fails otherwise |
+| `spoaHub.monitoring.podMonitor.interval` | duration | `30s` | PodMonitor scrape interval |
+| `spoaHub.monitoring.podMonitor.scrapeTimeout` | duration | `10s` | PodMonitor scrape timeout |
+| `spoaHub.monitoring.podMonitor.labels` | map | `{}` | PodMonitor labels (used by Prometheus to select which PodMonitors to use) |
+| `spoaHub.monitoring.podMonitor.relabelings` | list | `[]` | PodMonitor relabelings applied before scraping |
+| `spoaHub.monitoring.podMonitor.metricRelabelings` | list | `[]` | PodMonitor metric relabelings applied to scraped metrics |
 | `spoaHub.hub.logLevel` | string | `info` | Hub log level (`info`/`debug`/`warn`/`error`) |
 | `spoaHub.hub.workerThreads` | int/null | `null` | Tokio worker thread count; `null` defaults to CPU count |
 | `spoaHub.hub.maxConnections` | int | `1000` | Maximum concurrent connections per listener |

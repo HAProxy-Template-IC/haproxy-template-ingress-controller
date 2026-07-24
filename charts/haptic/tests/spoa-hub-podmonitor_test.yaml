@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: spoa hub podmonitor
+templates:
+  - spoa-hub-podmonitor.yaml
+set:
+  # Render the sidecar path so the PodMonitor's spoaHub-enabled gate is open;
+  # per-case overrides drive the podMonitor toggle and metricsAddr.
+  spoaHub.enabled: true
+tests:
+  - it: should not render when the podMonitor is disabled (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not render when spoaHub is disabled even if the podMonitor is enabled
+    set:
+      spoaHub.enabled: false
+      spoaHub.monitoring.podMonitor.enabled: true
+      spoaHub.hub.metricsAddr: "0.0.0.0:9095"
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should fail rendering when enabled with the default loopback metricsAddr
+    set:
+      spoaHub.monitoring.podMonitor.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: 'spoaHub.monitoring.podMonitor.enabled=true requires spoaHub.hub.metricsAddr to be a non-loopback bind Prometheus can reach from outside the pod (the default 127.0.0.1:9095 is loopback-only). Set spoaHub.hub.metricsAddr to "0.0.0.0:9095" (or a pod-routable address), or disable spoaHub.monitoring.podMonitor.'
+
+  - it: should fail rendering on an expanded IPv6 loopback metricsAddr
+    set:
+      spoaHub.monitoring.podMonitor.enabled: true
+      spoaHub.hub.metricsAddr: "[0:0:0:0:0:0:0:1]:9095"
+    asserts:
+      - failedTemplate:
+          errorMessage: 'spoaHub.monitoring.podMonitor.enabled=true requires spoaHub.hub.metricsAddr to be a non-loopback bind Prometheus can reach from outside the pod (the default 127.0.0.1:9095 is loopback-only). Set spoaHub.hub.metricsAddr to "0.0.0.0:9095" (or a pod-routable address), or disable spoaHub.monitoring.podMonitor.'
+
+  - it: should render one PodMonitor with hub and HAProxy endpoints on a non-loopback bind
+    set:
+      spoaHub.monitoring.podMonitor.enabled: true
+      spoaHub.hub.metricsAddr: "0.0.0.0:9095"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodMonitor
+      - isAPIVersion:
+          of: monitoring.coreos.com/v1
+      - equal:
+          path: spec.selector.matchLabels['app.kubernetes.io/component']
+          value: loadbalancer
+      - equal:
+          path: spec.podMetricsEndpoints[0].targetPort
+          value: 9095
+      - equal:
+          path: spec.podMetricsEndpoints[1].port
+          value: stats
+
+  - it: should render on a bind-all IPv6 address without flagging it as loopback
+    set:
+      spoaHub.monitoring.podMonitor.enabled: true
+      spoaHub.hub.metricsAddr: "[::]:9095"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodMonitor
