@@ -151,7 +151,7 @@ objects such as resources/securityContext; the apiserver owns those schemas.
   {{- fail "spoaHub must be a map." -}}
 {{- end -}}
 {{- range $field := keys $spoa -}}
-  {{- if not (has $field (list "enabled" "image" "resources" "hub" "haproxy" "plugins" "securityContext" "extraVolumeMounts")) -}}
+  {{- if not (has $field (list "enabled" "image" "resources" "hub" "haproxy" "plugins" "securityContext" "extraVolumeMounts" "monitoring")) -}}
     {{- fail (printf "spoaHub contains unknown field %q." $field) -}}
   {{- end -}}
 {{- end -}}

@@ -1545,6 +1545,27 @@ spoaHub:
     limits:
       memory: 256Mi
 
+  # Prometheus scraping for the SPOA hub sidecar. The hub exposes its data-path
+  # metrics (spoa_*, plugin_coraza_*) on hub.metricsAddr, and HAProxy exposes its
+  # backend timers (haproxy_backend_*) on the same pod's :8404. The bundled
+  # controller ServiceMonitor/PodMonitor do NOT cover this pod.
+  monitoring:
+    # PodMonitor (prometheus-operator) selecting the HAProxy pod. It scrapes the
+    # hub metrics endpoint plus HAProxy's Prometheus exporter (:8404). The hub
+    # binds metrics on loopback by default (hub.metricsAddr), which a PodMonitor
+    # scraping the pod IP cannot reach; enabling this therefore REQUIRES setting
+    # hub.metricsAddr to a non-loopback bind such as "0.0.0.0:9095". The chart
+    # fails rendering with that guidance rather than emit an unreachable target.
+    # The HAProxy pod's own NetworkPolicy must also allow ingress from Prometheus
+    # to :8404 and the hub metrics port.
+    podMonitor:
+      enabled: false
+      interval: 30s
+      scrapeTimeout: 10s
+      labels: {}
+      relabelings: []
+      metricRelabelings: []
+
   # Hub-side runtime knobs (rendered into /etc/haproxy-spoa-hub/config.toml).
   hub:
     # info | debug | warn | error
