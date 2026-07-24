@@ -51,8 +51,8 @@ tests:
           path: spec.selector.matchLabels['app.kubernetes.io/component']
           value: loadbalancer
       - equal:
-          path: spec.podMetricsEndpoints[0].targetPort
-          value: 9095
+          path: spec.podMetricsEndpoints[0].port
+          value: metrics
       - equal:
           path: spec.podMetricsEndpoints[1].port
           value: stats

@@ -657,6 +657,20 @@ Args: dict "root" $ "resources" <container resources map>
 {{- end -}}
 {{- end -}}
 
+{{/*
+Numeric port the hub binds its Prometheus /metrics endpoint on, parsed from
+spoaHub.hub.metricsAddr. Empty when metricsAddr is empty (metrics disabled).
+Used to declare the sidecar's named `metrics` containerPort so a PodMonitor can
+reference it by name — prometheus-operator only creates targets for declared
+container ports, so a bare targetPort on an undeclared port is never scraped.
+*/}}
+{{- define "haptic.spoaHub.metricsPort" -}}
+{{- $addr := .Values.spoaHub.hub.metricsAddr | default "" -}}
+{{- if ne (trim $addr) "" -}}
+{{- regexFind "[0-9]+$" $addr -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "haptic.spoaHub.effectivePluginParams" -}}
 {{- $root := .root -}}
 {{- $name := .name -}}

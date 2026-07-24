@@ -382,6 +382,16 @@ spec:
           imagePullPolicy: {{ $spoaHub.image.pullPolicy }}
           env:
             {{- include "haptic.spoaHub.goRuntimeEnv" (dict "root" $ "resources" $spoaHub.resources) | nindent 12 }}
+          {{- $metricsPort := include "haptic.spoaHub.metricsPort" $ }}
+          {{- if $metricsPort }}
+          ports:
+            # Named so a PodMonitor can reference it by name; prometheus-operator
+            # only builds targets from declared container ports (a bare
+            # targetPort on an undeclared port is silently never scraped).
+            - name: metrics
+              containerPort: {{ $metricsPort }}
+              protocol: TCP
+          {{- end }}
           args:
             # Hub config lives in HAProxy's general-storage dir so the
             # dataplane API can write to it. Mounted into this container

@@ -85,6 +85,29 @@ tests:
             containerPort: 8404
             protocol: TCP
 
+  - it: should declare a named metrics port on the spoa-hub sidecar
+    set:
+      spoaHub.enabled: true
+      spoaHub.hub.metricsAddr: "0.0.0.0:9095"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[2].name
+          value: spoa-hub
+      - contains:
+          path: spec.template.spec.containers[2].ports
+          content:
+            name: metrics
+            containerPort: 9095
+            protocol: TCP
+
+  - it: should omit the sidecar metrics port when metricsAddr is empty
+    set:
+      spoaHub.enabled: true
+      spoaHub.hub.metricsAddr: ""
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[2].ports
+
   - it: should set replica count from values
     set:
       haproxy.replicaCount: 3
