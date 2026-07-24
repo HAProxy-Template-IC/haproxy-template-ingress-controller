@@ -36,7 +36,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 
 | Component       | Pinned version                          |
 | --------------- | --------------------------------------- |
-| Hub               | `v0.9.0`                     |
+| Hub               | `v0.10.0`                     |
 | `api-gateway`    | `v0.1.0`      |
 | `coraza`          | `v0.7.0`           |
 | `external-auth`   | `v0.5.0`    |
