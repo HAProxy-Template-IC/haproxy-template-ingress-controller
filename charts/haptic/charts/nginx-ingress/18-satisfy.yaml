@@ -109,6 +109,7 @@ templateSnippets:
           {%- var aclName = "ni_satisfy_ip_" + ns + "_" + name %}
       # nginx-ingress/satisfy-any ({{ key }})
       acl {{ aclName }} src {{ ValidateCidrList(whitelist, "nginx.ingress.kubernetes.io/whitelist-source-range", key) }}
+      http-request set-var(txn.denied_by) str(basic_auth) if !{{ aclName }} !{ http_auth({{ userlistName }}) }
       http-request auth realm "{{ authRealm }}" if !{{ aclName }} !{ http_auth({{ userlistName }}) }
         {%- end %}
       {%- end -%}

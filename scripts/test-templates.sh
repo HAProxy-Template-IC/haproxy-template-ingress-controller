@@ -52,6 +52,18 @@ run_helm_failure_guard() {
     rm -f "$guard_err"
 }
 
+# True when the caller selected a single test with `--test NAME`. Matching the
+# exact argument rather than a substring of "$*": a value belonging to another
+# flag (a path, a label) that merely contains the text `--test` must not suppress
+# the whole-suite extras below.
+single_test_requested() {
+    local arg
+    for arg in "$@"; do
+        [[ "$arg" == "--test" ]] && return 0
+    done
+    return 1
+}
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -227,6 +239,7 @@ sys.exit(0)
     exit 1
 fi
 
+
 # Verify the config file is not empty
 if [[ ! -s "$TEMP_CONFIG" ]]; then
     echo -e "${RED}Error: Rendered HAProxyTemplateConfig is empty${NC}" >&2
@@ -259,12 +272,78 @@ echo -e "${YELLOW}Running validation tests...${NC}" >&2
 FULL_RC=0
 "$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@" || FULL_RC=$?
 
+if ! single_test_requested "$@"; then
+    # Access-log coverage invariant: every frontend the chart renders must carry a
+    # log-format, or that frontend silently falls back to `option httplog` from
+    # `defaults` and emits text lines into an otherwise-JSON stream.
+    #
+    # This lives here rather than in a validationTest on purpose. A count of
+    # frontends depends on which frontend-adding features a deployment enables (the
+    # Varnish cache tier adds haptic_cache_origin, Gateway listeners add per-port
+    # frontends), and validationTests also run as the controller's FATAL load gate
+    # against the operator's own values — so a count baked into the shipped CR would
+    # crash-loop a controller for enabling an unrelated feature. Here it is a
+    # repo-side check against a render we control, which is exactly what catches a
+    # new frontend added without wiring the log-format into it.
+    echo -e "${YELLOW}Checking access-log coverage (every frontend has a log-format)...${NC}" >&2
+    COVERAGE_CONFIG=$(mktemp /tmp/haptic-access-log-coverage-XXXXXX.yaml)
+    helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \
+        --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+        --set controller.templateLibraries.gateway.enabled=true \
+        --set controller.templateLibraries.gateway.experimentalChannel=true \
+        --set controller.templateLibraries.hapticAnnotations.enabled=true \
+        --set cache.varnish.enabled=true \
+        2>/dev/null | yq 'select(.kind == "HAProxyTemplateConfig")' > "$COVERAGE_CONFIG"
+    # Two fixtures, because no single one renders every frontend: the TCPRoute test
+    # produces the library-owned gateway-tcp-port-* (and, with the cache tier on,
+    # haptic_cache_origin), while the access-log fixture's TLS Ingress produces
+    # base's status / http-tcp / http_frontend / http_frontend_h2c / https.
+    for COVERAGE_TEST in test-tcproute-basic-l4-forward test-access-log-every-frontend-has-a-format; do
+        COVERAGE_DUMP=$(mktemp /tmp/haptic-access-log-dump-XXXXXX.txt)
+        if ! "$CONTROLLER_BIN" validate --file "$COVERAGE_CONFIG" "${SCHEMA_DIR_ARGS[@]}" \
+                --test "$COVERAGE_TEST" --dump-rendered > "$COVERAGE_DUMP" 2>&1; then
+            echo -e "${RED}Error: access-log coverage render failed for ${COVERAGE_TEST}:${NC}" >&2
+            tail -30 "$COVERAGE_DUMP" >&2
+            rm -f "$COVERAGE_CONFIG" "$COVERAGE_DUMP"
+            exit 1
+        fi
+        if ! python3 -c '
+import re, sys
+dump = open(sys.argv[1]).read()
+# Split into per-section blocks: a frontend body is indented, so its block runs
+# to the next column-0 section header.
+blocks = re.split(r"(?m)^(?=(?:frontend|backend|listen|defaults|global|peers|userlist|resolvers) )", dump)
+fes = [b for b in blocks if b.startswith("frontend ")]
+if not fes:
+    print("no frontends in the rendered config - this check would pass vacuously", file=sys.stderr)
+    sys.exit(1)
+missing = [b.split("\n", 1)[0].strip() for b in fes if "log-format " not in b]
+if missing:
+    print("frontends without a log-format: " + ", ".join(missing), file=sys.stderr)
+    sys.exit(1)
+print("checked %d frontends" % len(fes), file=sys.stderr)
+' "$COVERAGE_DUMP"; then
+            echo -e "${RED}Error: a rendered frontend has no log-format (render: ${COVERAGE_TEST}).${NC}" >&2
+            echo "  Wire {{ render \"util-log-format-http\" }} (HTTP mode) or" >&2
+            echo "  {{ render \"util-log-format-tcp\" }} (TCP mode) into it; otherwise it" >&2
+            echo "  inherits 'option httplog' from defaults and emits text lines into the" >&2
+            echo "  JSON access-log stream. See base.yaml's \"Access log\" block." >&2
+            rm -f "$COVERAGE_CONFIG" "$COVERAGE_DUMP"
+            exit 1
+        fi
+        rm -f "$COVERAGE_DUMP"
+    done
+    rm -f "$COVERAGE_CONFIG"
+    echo -e "${GREEN}Access-log coverage OK${NC}" >&2
+fi
+
+
 # Optional shared-rate-limit profile. The normal render above must keep the
 # feature off so validationTests can assert that using
 # haproxy-haptic.org/rate-limit-requests without the opt-in fails loudly.
 # These tests need the opt-in because they assert the active map + SPOE
 # dispatch path.
-if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     RATE_LIMIT_CONFIG=$(mktemp /tmp/haptic-rate-limit-config-XXXXXX.yaml)
     trap 'rm -f "$TEMP_CONFIG" "$RATE_LIMIT_CONFIG"' EXIT
     echo -e "${YELLOW}Rendering shared rate-limit profile...${NC}" >&2
@@ -305,7 +384,7 @@ fi
 # feature off so validationTests can assert that request-schema annotations fail
 # loudly without the opt-in. These tests assert the enabled map + SPOE dispatch
 # path and render-time guardrails.
-if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     REQUEST_VALIDATION_CONFIG=$(mktemp /tmp/haptic-request-validation-config-XXXXXX.yaml)
     trap 'rm -f "$TEMP_CONFIG" "${RATE_LIMIT_CONFIG:-}" "$REQUEST_VALIDATION_CONFIG"' EXIT
     echo -e "${YELLOW}Rendering request-validation profile...${NC}" >&2
@@ -468,7 +547,26 @@ run_helm_success_guard() {
     rm -f "$guard_err"
 }
 
-if [[ $FULL_RC -eq 0 && "$*" != *"--test"* ]]; then
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    run_helm_success_guard \
+        "Access-log Helm guard: accept the full accessLog values surface" \
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog={"maxLineBytes":32768,"fields":{"tenant":"req.hdr(X-Tenant)","region":"str(prod-eu)"}}'
+    run_helm_failure_guard \
+        "Access-log Helm guard: reject unknown accessLog fields" \
+        'extraContext.accessLog contains unknown field "fieldz". Valid fields: fields, maxLineBytes.' \
+        --set-string 'controller.config.templatingSettings.extraContext.accessLog.fieldz=x'
+    run_helm_failure_guard \
+        "Access-log Helm guard: reject an invalid JSON field name" \
+        "accessLog.fields contains invalid field name \"bad-name\"" \
+        --set-string 'controller.config.templatingSettings.extraContext.accessLog.fields.bad-name=src'
+    run_helm_failure_guard \
+        "Access-log Helm guard: reject a field expression that could continue the directive" \
+        "must not contain whitespace" \
+        --set-string 'controller.config.templatingSettings.extraContext.accessLog.fields.evil=str(a) if TRUE'
+    run_helm_failure_guard \
+        "Access-log Helm guard: reject an out-of-range log line length" \
+        "accessLog.maxLineBytes must be an integer between 1024 and 65535." \
+        --set controller.config.templatingSettings.extraContext.accessLog.maxLineBytes=512
     run_helm_success_guard \
         "WAF policy Helm guard: accept the full inline-policy field surface" \
         --set-json 'controller.config.templatingSettings.extraContext.waf.policies.inline={"full-surface":{"description":"every valid field","enforcement":"deny","allowedMethods":["GET","HEAD","POST","OPTIONS","PUT","PATCH","DELETE"],"paranoiaLevel":2,"anomalyThreshold":{"inbound":10,"outbound":8},"ruleExclusions":[{"rules":[930130],"onPathContains":".git/"},{"rules":[941320],"excludeTarget":"ARGS:wp_post"},{"tags":["attack-sqli"],"excludeTarget":"ARGS:q"}],"secLang":"SecRuleRemoveById 999999","requestBody":{"mode":"json","maxBytes":2048}}}'
@@ -577,7 +675,7 @@ fi
 #       (tests/schemas-ga-<rel>/expected-stripped.txt). A newly-stripped
 #       test OR a stale allowlist entry both fail the run.
 # ---------------------------------------------------------------------------
-if [[ $FULL_RC -eq 0 && "$*" != *"--test"* && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]]; then
+if [[ $FULL_RC -eq 0 && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]] && ! single_test_requested "$@"; then
     STD_CONFIG=$(mktemp /tmp/haptic-std-config-XXXXXX.yaml)
     trap 'rm -f "$TEMP_CONFIG" "${RATE_LIMIT_CONFIG:-}" "${REQUEST_VALIDATION_CONFIG:-}" "$STD_CONFIG"' EXIT
     helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \

@@ -135,6 +135,7 @@ templateSnippets:
       {#- zero and handing every client a fresh budget. Local-only: stays per-pod. -#}
       stick-table type ip size {{ size }} expire {{ window }} store {{ store }}{% if store == "http_req_rate" %}({{ window }}){% end %} peers localinstance
       http-request track-sc0 src
+      http-request set-var(txn.denied_by) str(rate_limit_local) if { {{ checkFetch }}(0) gt {{ thresholdOut }} }{{ guard }}
       http-request deny deny_status {{ status }} if { {{ checkFetch }}(0) gt {{ thresholdOut }} }{{ guard }}
         {%- end %}
       {%- end -%}

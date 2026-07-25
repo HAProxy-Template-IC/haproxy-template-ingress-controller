@@ -106,6 +106,24 @@ func TestIngressRateLimit(t *testing.T) {
 			}
 			return ctx
 		}).
+		Assess("the 429 names the rate limiter in the access log's denied_by field", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			// The stick-table limiter has no verdict variable of its own, and
+			// its status code is operator-configurable, so a 429 in the log is
+			// otherwise indistinguishable from one the backend returned or one
+			// the shared (SPOA) limiter produced. txn.denied_by is what makes
+			// the block attributable — this asserts the marker actually fires
+			// on the wire, with the deny's own condition.
+			rec := findAccessLogRecordWhere(ctx, t,
+				fmt.Sprintf("a 429 for host %s", host),
+				func(rec map[string]any) bool {
+					status, ok := rec["status"].(float64)
+					return ok && status == 429 && rec["host"] == host
+				})
+			if got := recordString(t, rec, "denied_by"); got != "rate_limit_local" {
+				t.Errorf("denied_by = %q on a rate-limited request, want %q", got, "rate_limit_local")
+			}
+			return ctx
+		}).
 		Feature()
 	testEnv.Test(t, feature)
 }

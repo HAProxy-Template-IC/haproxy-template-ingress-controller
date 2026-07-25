@@ -129,10 +129,12 @@ templateSnippets:
       # haptic/api-key ({{ key }})
           {%- if secret == nil %}
       # WARNING haproxy-haptic.org/api-key-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      http-request set-var(txn.denied_by) str(api_key_unavailable)
       http-request deny deny_status 503
           {%- else %}
             {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
       http-request set-var(txn.haptic_apikey) {{ fetch }}
+      http-request set-var(txn.denied_by) str(api_key) unless { var(txn.haptic_apikey),map({{ mapPath }}) -m found }
       http-request deny deny_status 401 unless { var(txn.haptic_apikey),map({{ mapPath }}) -m found }
       http-request set-var(txn.haptic_consumer) var(txn.haptic_apikey),map({{ mapPath }}) unless { var(txn.haptic_consumer) -m found }
           {%- var consumerHdr = ingress.Metadata.Annotations["haproxy-haptic.org/api-key-consumer-header"] %}

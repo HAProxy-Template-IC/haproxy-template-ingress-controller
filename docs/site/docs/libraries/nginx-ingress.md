@@ -1476,6 +1476,15 @@ This library watches the following additional resources:
 
 The machine-readable source of truth for this page is the library's migration coverage declaration in the chart (`charts/haptic/charts/nginx-ingress/90-migration-coverage.yaml`). It classifies every `nginx.ingress.kubernetes.io/*` annotation the library reads, and CI checks that each annotation it classifies as carried over has a reference entry above. The [migration guide](../migrating.md#from-ingress-nginx) renders the same data as a per-annotation support table.
 
+## Access-log fields
+
+The library contributes `mtls_verify` and `mtls_cn` to the
+[structured access log](../haproxy-deployment.md#access-logging) when any Ingress
+sets `auth-tls-secret` or `auth-tls-pass-certificate-to-upstream`. Its
+rate-limit and WAF fail-closed gates also name themselves in the `denied_by`
+field (`rate_limit_local`, `rate_limit_connections`, `basic_auth`,
+`waf_policy_unavailable`).
+
 ## See also
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work

@@ -156,6 +156,7 @@ templateSnippets:
             {%- end %}
             {%- if len(methods) > 0 && len(hosts) > 0 %}
       # haptic/allowed-methods ({{ key }})
+      http-request set-var(txn.denied_by) str(method_not_allowed) if {{ HostMatchCondition(hosts) }} !{ method {{ methods | toStringSlice() | join(" ") }} }
       http-request deny deny_status 405 if {{ HostMatchCondition(hosts) }} !{ method {{ methods | toStringSlice() | join(" ") }} }
             {%- end %}
           {%- end %}
@@ -205,6 +206,7 @@ templateSnippets:
             {%- end %}
             {%- if len(types) > 0 && len(hosts) > 0 %}
       # haptic/require-content-type ({{ key }})
+      http-request set-var(txn.denied_by) str(content_type) if {{ HostMatchCondition(hosts) }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
       http-request return status 415 if {{ HostMatchCondition(hosts) }} { method POST PUT PATCH } !{ req.hdr(Content-Type) -m beg {{ types | toStringSlice() | join(" ") }} }
             {%- end %}
           {%- end %}
@@ -251,6 +253,7 @@ templateSnippets:
       # haptic/require-headers ({{ key }})
               {%- var cond = HostMatchCondition(hosts) %}
               {%- for _, hn := range hdrs %}
+      http-request set-var(txn.denied_by) str(required_header) if {{ cond }} !{ req.hdr({{ tostring(hn) }}) -m found }
       http-request deny deny_status 400 if {{ cond }} !{ req.hdr({{ tostring(hn) }}) -m found }
               {%- end %}
             {%- end %}
@@ -320,6 +323,7 @@ templateSnippets:
       # haptic/hmac ({{ key }})
           {%- if secret == nil %}
       # WARNING haproxy-haptic.org/hmac-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      http-request set-var(txn.denied_by) str(hmac_unavailable)
       http-request deny deny_status 503
           {%- else %}
             {#- HAProxy's hmac converter wants the key base64-encoded — which is
@@ -337,6 +341,7 @@ templateSnippets:
       option http-buffer-request
             {%- end %}
       http-request set-var(txn.haptic_hmac) {{ fetch }},hmac({{ alg }},"{{ secretVal }}"),hex,lower
+      http-request set-var(txn.denied_by) str(hmac) unless { req.hdr({{ hdrV }}),strcmp(txn.haptic_hmac) -m int 0 }
       http-request deny deny_status 401 unless { req.hdr({{ hdrV }}),strcmp(txn.haptic_hmac) -m int 0 }
           {%- end %}
         {%- end %}
@@ -454,9 +459,11 @@ templateSnippets:
       # haptic/consumer-groups ({{ key }})
             {%- if secret == nil %}
       # WARNING haproxy-haptic.org/consumer-groups-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until it is present.
+      http-request set-var(txn.denied_by) str(consumer_groups_unavailable)
       http-request deny deny_status 503
             {%- else %}
               {%- var mapPath, _ = pathResolver.GetPath(mapName, "map") %}
+      http-request set-var(txn.denied_by) str(consumer_groups) unless { var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ groups | toStringSlice() | join(" ") }} }
       http-request deny deny_status 403 unless { var(txn.haptic_consumer),map({{ mapPath }}) -m str {{ groups | toStringSlice() | join(" ") }} }
             {%- end %}
           {%- end %}

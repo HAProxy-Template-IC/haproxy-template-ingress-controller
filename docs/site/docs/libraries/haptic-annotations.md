@@ -470,3 +470,19 @@ JSON request-body validation is opt-in via `controller.config.templatingSettings
 | `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. |
 
 <!-- 182 annotations documented -->
+
+## Access-log fields
+
+The library contributes these fields to the [structured access log](../haproxy-deployment.md#access-logging),
+each only when the corresponding annotation or feature is in use:
+
+| Field | Contributed when | Meaning |
+|-------|------------------|---------|
+| `consumer` | any resource sets `jwt-secret` or `api-key-secret` | Authenticated consumer identity — the key a per-consumer rate limit buckets on |
+| `cache`, `app_backend` | the Varnish tier is enabled | Varnish's `HIT`/`MISS` verdict, and the application backend the route resolved to (the core `backend` field reads `varnish_cache` for cached routes) |
+| `client_ip_peer` | any resource sets `src-ip-header` | The real TCP peer, which is how you spot a client claiming an address it doesn't own once `set-src` has rewritten `client_ip` |
+| `captured_headers` | any resource sets `request-capture` | The captured request headers |
+| `mtls_verify`, `mtls_cn` | any resource sets `auth-tls-secret` or `auth-tls-cert-header` | The certificate verification result (0 on success, otherwise an X509 error code) and the client's CN |
+
+The presented API key, the computed HMAC signature and the full client
+certificate are deliberately never logged.

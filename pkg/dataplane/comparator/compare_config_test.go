@@ -2256,3 +2256,75 @@ func TestFrontendsEqualWithoutNestedCollections(t *testing.T) {
 		assert.True(t, frontendsEqualWithoutNestedCollections(f1, f2))
 	})
 }
+
+// TestCompareFrontends_JSONLogFormatRoundTrip pins the round-trip of a
+// frontend-level `log-format` through the config parser and the comparator.
+//
+// The chart emits one JSON log-format per frontend (HAProxy's `%{+json}o`
+// encoding). If the parser or the extracted model dropped that directive, the
+// desired config would differ from what HAProxy reports on every reconcile and
+// the controller would push a frontend Update forever — a permanent diff and a
+// reload loop, not a visible error. The quoted value also carries characters the
+// tokenizer treats specially outside quotes (spaces, `%`), so this asserts the
+// directive survives verbatim, and that a real change to it is still detected.
+func TestCompareFrontends_JSONLogFormatRoundTrip(t *testing.T) {
+	configWith := func(logFormat string) string {
+		return `
+global
+    log stdout len 16384 format raw local0 info
+
+defaults
+    mode http
+    timeout connect 100ms
+    timeout client 50000ms
+    timeout server 50000ms
+
+frontend http_frontend
+    bind *:80
+    log-format "` + logFormat + `"
+    default_backend test_backend
+
+backend test_backend
+    server srv1 127.0.0.1:8080
+`
+	}
+
+	const jsonFormat = `%{+json}o %(ts)[accept_date(ms),ms_utime(%Y-%m-%dT%H:%M:%S.%3NZ)] ` +
+		`%(status:sint)ST %(method)HM %(path)HPO %(resource)[var(txn.resource_id)] ` +
+		`%(denied_by)[var(txn.denied_by)]`
+
+	comp := New()
+
+	t.Run("identical configs produce no operations", func(t *testing.T) {
+		current, desired := parseTestConfigs(t, configWith(jsonFormat), configWith(jsonFormat))
+
+		var parsed *models.Frontend
+		for _, fe := range desired.Frontends {
+			if fe.Name == "http_frontend" {
+				parsed = fe
+			}
+		}
+		require.NotNil(t, parsed, "the frontend must be extracted from the config text")
+		// The parser keeps the surrounding double quotes as part of the value,
+		// which is what makes the round-trip exact: HAProxy reports the same
+		// quoted string back, so current and desired match byte-for-byte.
+		require.Equal(t, `"`+jsonFormat+`"`, parsed.LogFormat,
+			"the parser must preserve the quoted log-format verbatim")
+
+		diff, err := comp.Compare(current, desired)
+		require.NoError(t, err)
+		assert.Empty(t, diff.Operations,
+			"a config HAProxy already runs must not be re-pushed; a permanent diff here is a reload loop")
+	})
+
+	t.Run("a changed log-format is detected", func(t *testing.T) {
+		current, desired := parseTestConfigs(t,
+			configWith(jsonFormat),
+			configWith(jsonFormat+` %(tenant)[var(txn.log_tenant)]`))
+
+		diff, err := comp.Compare(current, desired)
+		require.NoError(t, err)
+		require.NotEmpty(t, diff.Operations, "adding a log field must reach HAProxy")
+		assert.Contains(t, diff.Summary.FrontendsModified, "http_frontend")
+	})
+}

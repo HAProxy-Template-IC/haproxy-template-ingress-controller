@@ -135,6 +135,7 @@ templateSnippets:
       # haptic/jwt ({{ key }})
           {%- if info["found"] != true %}
       # WARNING haproxy-haptic.org/jwt-secret: Secret '{{ secretNs }}/{{ secretName }}' not found at render time; failing closed (503) for this route until the key is present.
+      http-request set-var(txn.denied_by) str(jwt_key_unavailable)
       http-request deny deny_status 503
           {%- else %}
             {%- var pemPath, _ = pathResolver.GetPath(tostring(info["filename"]), "file") %}
@@ -151,22 +152,27 @@ templateSnippets:
               {%- end %}
             {%- end %}
       http-request set-var(txn.haptic_jwt_alg) http_auth_bearer,jwt_header_query('$.alg')
+      http-request set-var(txn.denied_by) str(jwt_algorithm) unless { var(txn.haptic_jwt_alg) -m str {{ alg }} }
       http-request deny deny_status 401 unless { var(txn.haptic_jwt_alg) -m str {{ alg }} }
+      http-request set-var(txn.denied_by) str(jwt_signature) unless { http_auth_bearer,jwt_verify({{ alg }},"{{ pemPath }}") -m int 1 }
       http-request deny deny_status 401 unless { http_auth_bearer,jwt_verify({{ alg }},"{{ pemPath }}") -m int 1 }
             {#- exp: enforce only when the claim is present (expired = exp - now < 0). -#}
       http-request set-var(txn.haptic_jwt_now) date()
       http-request set-var(txn.haptic_jwt_exp) http_auth_bearer,jwt_payload_query('$.exp','int')
+      http-request set-var(txn.denied_by) str(jwt_expired) if { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
       http-request deny deny_status 401 if { var(txn.haptic_jwt_exp) -m found } { var(txn.haptic_jwt_exp),sub(txn.haptic_jwt_now) -m int lt 0 }
             {%- var iss = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-issuer"] %}
             {%- if iss != "" %}
               {%- var issV = ValidateConfigValue(iss, "haproxy-haptic.org/jwt-issuer", key, false) %}
               {%- if regex_search(issV, "[\"{}\\\\]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/jwt-issuer' on Ingress '" + key + "': must not contain '\"', '{', '}' or '\\'.") }}{%- end %}
+      http-request set-var(txn.denied_by) str(jwt_issuer) unless { http_auth_bearer,jwt_payload_query('$.iss') -m str "{{ issV }}" }
       http-request deny deny_status 401 unless { http_auth_bearer,jwt_payload_query('$.iss') -m str "{{ issV }}" }
             {%- end %}
             {%- var aud = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-audience"] %}
             {%- if aud != "" %}
               {%- var audV = ValidateConfigValue(aud, "haproxy-haptic.org/jwt-audience", key, false) %}
               {%- if regex_search(audV, "[\"{}\\\\]") %}{{ fail("Invalid value for annotation 'haproxy-haptic.org/jwt-audience' on Ingress '" + key + "': must not contain '\"', '{', '}' or '\\'.") }}{%- end %}
+      http-request set-var(txn.denied_by) str(jwt_audience) unless { http_auth_bearer,jwt_payload_query('$.aud') -m str "{{ audV }}" }
       http-request deny deny_status 401 unless { http_auth_bearer,jwt_payload_query('$.aud') -m str "{{ audV }}" }
             {%- end %}
             {%- var reqClaims = ingress.Metadata.Annotations["haproxy-haptic.org/jwt-required-claims"] %}
@@ -177,6 +183,7 @@ templateSnippets:
                   {%- if !regex_search(cl, "^[A-Za-z0-9_-]+$") %}
                     {{- fail("Invalid claim name '" + cl + "' in annotation 'haproxy-haptic.org/jwt-required-claims' on Ingress '" + key + "'. Allowed characters: letters, digits, '_', '-'.") -}}
                   {%- end %}
+      http-request set-var(txn.denied_by) str(jwt_required_claim) unless { http_auth_bearer,jwt_payload_query('$.{{ cl }}') -m found }
       http-request deny deny_status 401 unless { http_auth_bearer,jwt_payload_query('$.{{ cl }}') -m found }
                 {%- end %}
               {%- end %}

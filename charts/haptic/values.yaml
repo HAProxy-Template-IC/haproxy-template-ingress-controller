@@ -621,6 +621,42 @@ controller:
             # Response headers exposing HAProxy's routing decision. Disabled by
             # default because they reveal backend and route internals to clients.
             enabled: false
+        # HAProxy access log. Every frontend emits one JSON object per
+        # request (or per connection, for the TCP-mode frontends), using
+        # HAProxy's native JSON log encoding. The log target is `format raw`, so
+        # lines carry no syslog prefix and a collector can parse them directly;
+        # each record carries its own `ts` field instead.
+        #
+        # HAProxy's own process and health-check messages share that stream and
+        # are NOT JSON, so a collector must tolerate non-JSON lines. The
+        # bootstrap config the HAProxy pod starts with (before the controller's
+        # first render, a few seconds) also emits the plain text format.
+        #
+        # Template libraries contribute feature fields through the log-fields-*
+        # extension point, each gated on that feature actually being configured:
+        # WAF verdicts, rate-limit outcome, cache HIT/MISS, TLS version, the
+        # authenticated consumer, and `denied_by`, which names the gate that
+        # blocked a request. See
+        # https://haproxy-haptic.org/docs/latest/haproxy-deployment/#access-logging
+        accessLog:
+          # Extra JSON fields: <field name> -> exactly one HAProxy sample
+          # expression. Each is captured into txn.log_<name> at request time,
+          # because a log-format cannot fetch request-scoped data itself, and is
+          # emitted as a JSON string. Field names must match
+          # ^[A-Za-z_][A-Za-z0-9_]{0,39}$, must not collide with a built-in
+          # field, and expressions must not contain whitespace, '#', '"' or a
+          # backslash.
+          #
+          #   fields:
+          #     tenant: req.hdr(X-Tenant)
+          #     query: query              # opt in: query strings often carry tokens
+          #     region: str(prod-eu)      # constant label
+          fields: {}
+          # `log ... len <bytes>`. HAProxy truncates a longer line mid-byte,
+          # which makes the record invalid JSON, so raise this if custom fields
+          # or captured request headers push records past it. Accepted range:
+          # 1024-65535; outside it the render fails rather than truncating.
+          maxLineBytes: 16384
         # Template-library routing behavior. This lives in extraContext so the
         # rendered HAProxyTemplateConfig carries the same setting that selected
         # the library variant at Helm render time.

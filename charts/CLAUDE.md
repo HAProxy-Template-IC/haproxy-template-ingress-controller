@@ -313,6 +313,7 @@ In addition to the snippet-based extension points below, libraries may declare f
 | `frontend-extra-*` | Early frontend directives after bind (options, captures, ACLs) | (user) |
 | `frontend-matchers-advanced-*` | Advanced route matching (method, headers) | gateway |
 | `frontend-filters-*` | Request/response filters (after routing) | gateway, haproxytech |
+| `log-fields-*` | Named JSON fields for the structured access log; emits log-format items only, no directives. Gate on the feature being configured; only log-time-available fetches are legal (no `path`/`req.hdr()`/`res.hdr()` — materialise into a `txn` var first); never branch on which frontend is rendering | base, ssl, gateway, haptic-annotations, haproxytech, haproxy-ingress, nginx-ingress, spoa-hub |
 | `backend-directives-*` | Backend configuration directives | haproxytech |
 | `map-host-*` | Host map entries | gateway, ingress |
 | `map-hostregex-*` | Regex host map entries (wildcard/regex hostnames) — distinct prefix from `map-host-*` so the exact-host glob doesn't subsume it | gateway, haproxy-ingress |

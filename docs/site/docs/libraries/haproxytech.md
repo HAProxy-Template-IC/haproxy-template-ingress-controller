@@ -2071,6 +2071,13 @@ The library supports **50** `haproxy.org/*` annotations, grouped by category bel
 - `timeout-client`, `timeout-http-request`, `timeout-http-keep-alive` — `timeout-http-request` and `timeout-http-keep-alive` are available under `haproxy-ingress.github.io/*` instead (see [haproxy-ingress library](haproxy-ingress.md)); `timeout-client` only takes effect in a global override (see [Base Library](base.md#injecting-custom-configuration))
 - `standalone-backend` — not needed; this controller already emits a dedicated backend per `<namespace>_<ingress-name>_svc_<service-name>_<port>` tuple
 
+## Access-log fields
+
+The library contributes `captured_headers` (HAProxy's `%hr`) to the
+[structured access log](../haproxy-deployment.md#access-logging) when any Ingress
+sets `haproxy.org/request-capture` — without it, the annotation configures
+captures that nothing reads.
+
 ## See also
 
 - [HAProxy Ingress Controller Documentation](https://www.haproxy.com/documentation/kubernetes-ingress/community/configuration-reference/ingress)

@@ -45,10 +45,32 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "unique-id-format %ci:%cp_%fi:%fp_%Ts_%rt:%pid"
+        pattern: 'unique-id-format %\[uuid\(7\)\]'
+        description: >-
+          The id is an opaque RFC 9562 UUIDv7 owned by base.yaml, not this
+          library. It is emitted for every install, not only when an Ingress opts
+          in, because the access log's req_id field reads it.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'unique-id-format.*%ci'
+        description: >-
+          Privacy regression guard — the id must never embed the client IP
+          (personal data) or the frontend address, because it is forwarded
+          upstream and echoed to clients.
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^  unique-id-format '
+        expected: "1"
+        description: >-
+          Exactly one unique-id-format in `defaults`; a second one from another
+          library would be a duplicate directive.
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Trace-Id %\\[unique-id\\] if"
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-header X-Request-ID %\\[unique-id\\] if .* !\\{ req.hdr\\(X-Request-ID\\) -m found \\}"
+        pattern: 'http-request set-header X-Request-ID %\[unique-id\] if .* !\{ req.hdr\(X-Request-ID\) -m reg \^\[A-Za-z0-9\._:-\]\{1,128\}\$ \}'
+        description: >-
+          accept-inbound preserves a client id only when it is a well-formed
+          identifier; anything else is replaced, so a client cannot choose an
+          arbitrary or oversized correlation id for the backend's logs.

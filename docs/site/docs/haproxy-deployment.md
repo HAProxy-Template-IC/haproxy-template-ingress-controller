@@ -162,29 +162,142 @@ HAProxy writes its access logs to the container's stdout, so `kubectl logs` show
 kubectl logs -n haptic -l app.kubernetes.io/component=loadbalancer -c haproxy
 ```
 
-The default template libraries emit `log stdout len 4096 local0 info` in the
-`global` section and `option httplog` in the `defaults` section, which produces
-HAProxy's standard HTTP log line per request. Generated TCP frontends override
-that inherited format with `option tcplog`; the status frontend keeps its log
-target but uses `option dontlog-normal`, avoiding both probe noise and the
-HAProxy warning caused by combining `no log` with an inherited log format. To
-use a custom HTTP format, add a `log-format` directive through a
-`defaults-settings-*` snippet — it runs after the built-in
-`defaults-settings-100-options` and overrides `option httplog`:
+Every frontend emits one JSON object per request (or per connection, for the
+TCP-mode frontends), using HAProxy's native JSON log encoding:
+
+```json
+{"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"SRV_1","method":"GET","host":"echo.example.com","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"t_request":0,"t_queue":0,"t_connect":1,"t_response":3,"t_total":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
+```
+
+The log target is `log stdout len 16384 format raw local0 info`. `format raw`
+means records carry no syslog prefix, so a collector parses lines directly; each
+record carries its own `ts` instead.
+
+Two kinds of line on that stream are **not** JSON, so configure your collector to
+tolerate them: HAProxy's own process and health-check messages, and the few lines
+the HAProxy pod emits from its bootstrap config before the controller's first
+render.
+
+### Core fields
+
+| Field | Meaning |
+|-------|---------|
+| `ts` | Request accept time, Coordinated Universal Time (UTC), with milliseconds |
+| `req_id` | Correlation id (see [Request IDs](#request-ids)) |
+| `trace_id` | Trace id from an inbound W3C `traceparent`; empty when the client sends none |
+| `client_ip` | Client address, after any `src-ip-header` rewrite |
+| `frontend`, `backend`, `server` | Which listener served it, where it went, which pod |
+| `method`, `host`, `path`, `http_version` | Request identity. `path` excludes the query string |
+| `status`, `bytes` | Response status and bytes sent to the client (JSON numbers) |
+| `t_request`, `t_queue`, `t_connect`, `t_response`, `t_total` | Timers in milliseconds: receiving the request, queueing, connecting, the backend's response, and the total active time |
+| `retries` | Connection retries, which `option redispatch` makes routine during a rolling update |
+| `term` | HAProxy's 4-character termination state — separates a client abort from a server abort, a timeout, and a response HAProxy generated itself |
+| `resource` | `<namespace>/<name>` of the Ingress, HTTPRoute or custom resource that owns the matched route — the join key back to Kubernetes |
+| `denied_by` | Which gate blocked the request; empty when the backend answered |
+
+Template libraries add fields for the features you configure, each only when
+that feature is in use: `waf_action`, `waf_rule_id` and `waf_score`;
+`rate_limit_allowed` and `rate_limit_remaining`; `cache` (`HIT`/`MISS`) and
+`app_backend`; `auth_status` and `consumer`; `schema_outcome`; `tls_version`,
+`tls_sni` and `tls_resumed`; `mtls_verify` and `mtls_cn`; `gw_route`;
+`captured_headers`; `client_ip_peer`.
+
+`denied_by` names the gate rather than leaving you to guess from a status code —
+six mechanisms can produce a 401, three a 403, and three a 429. Values include
+`rate_limit_local`, `rate_limit_shared`, `rate_limit_shared_unavailable`, `waf`,
+`jwt_signature`, `jwt_expired`, `api_key`, `hmac`, `basic_auth`,
+`consumer_groups`, `body_too_large`, `schema_invalid` and the `*_unavailable`
+fail-closed variants.
+
+### Add your own fields
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        accessLog:
+          fields:
+            tenant: req.hdr(X-Tenant)
+            region: str(prod-eu)
+```
+
+Each value is one HAProxy sample expression, captured into a transaction variable
+at request time and emitted as a JSON string. Use `str(<value>)` for a constant
+label. Field names must match `^[A-Za-z_][A-Za-z0-9_]{0,39}$` and must not
+collide with a built-in field; expressions must not contain whitespace, `#`, `"`
+or a backslash. A violation fails the render with a message naming the field.
+
+To log the query string, opt in with `query: query` — it's excluded by default
+because query strings are a common accidental carrier of tokens and session ids.
+
+Raise `accessLog.maxLineBytes` (default `16384`, accepted range 1024–65535) if
+custom fields or captured request headers push records past it: HAProxy truncates
+a longer line mid-byte, which makes the record unparseable. A value outside the
+range fails the render rather than silently truncating every record.
+
+### Request IDs
+
+`req_id` is an RFC 9562 **UUIDv7** (`unique-id-format %[uuid(7)]`): opaque, but
+time-ordered, which sorts and indexes better in a log store than a random UUIDv4.
+
+It deliberately carries no address. An identifier built from `%ci`/`%fi` — the
+shape HAProxy examples often show — puts the client IP (personal data under the
+GDPR, Article 4(1) and Recital 30) and the address of the load balancer itself
+into a value that's forwarded upstream, echoed back to clients, and copied into
+application logs and support tickets. Once the address is inside the id, dropping the `client_ip`
+field no longer redacts it.
+
+For UUIDv4 instead, override the directive through a `defaults-settings-*`
+snippet with a band above 150:
 
 ```yaml
 controller:
   config:
     templateSnippets:
-      defaults-settings-150-log-format:
+      defaults-settings-160-request-id:
         template: |
-          log-format "%ci:%cp [%tr] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r"
+          unique-id-format %[uuid()]
 ```
 
-To change the log destination or facility instead, override `global-settings-100-logging`.
+`trace_id` comes from an inbound `traceparent` header, validated against the
+[W3C Trace Context](https://www.w3.org/TR/trace-context/) grammar. HAPTIC never
+invents a `traceparent` when the client sends none: a root span that no exporter
+emits produces a broken trace in the backend. To forward the id upstream in a
+header, use the [`haproxy-haptic.org/request-id`](libraries/haptic-annotations.md)
+annotation.
+
+### Contribute a field from your own library
+
+`log-fields-*` is the extension point. A snippet emits named log-format items and
+nothing else:
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      log-fields-900-my-feature:
+        template: |
+          %(my_field)[var(txn.my_var)]
+```
+
+Only items available at log time are legal. HAProxy rejects `path`, `pathq`,
+`req.hdr()`, `res.hdr()` and `req.ssl_sni` inside a `log-format`, so materialise
+anything request- or response-scoped into a transaction variable first
+(`http-request set-var(txn.my_var) req.hdr(X-Thing)`). Type an item (`:sint`,
+`:bool`) only when its fetch always resolves — an unresolved typed item renders
+`""` into a numeric slot.
+
+### Change the destination or the whole format
+
+Override `global-settings-100-logging` to change the log destination or facility.
+To replace the line format wholesale, override `util-log-format-http` (HTTP-mode
+frontends) or `util-log-format-tcp` (TCP-mode frontends). Note that a
+`defaults`-section `log-format` can't reference HTTP-scoped fetches at all,
+which is why the format is emitted per frontend.
 
 !!! note "This isn't the Dataplane API log"
-    `haproxy.dataplane.aclFormat` configures the **Dataplane API sidecar's own** access log, not HAProxy's traffic logs. HAProxy request logging is controlled by the `log`, `option httplog`, and `log-format` directives above.
+    `haproxy.dataplane.aclFormat` configures the **Dataplane API sidecar's own** access log, not HAProxy's traffic logs. HAProxy request logging is controlled by the `log` and `log-format` directives above.
 
 ## HAProxy Pod requirements
 

@@ -1394,6 +1394,15 @@ This library watches the following additional resources:
 
 The machine-readable source of truth for this page is the library's migration coverage declaration in the chart (`charts/haptic/charts/haproxy-ingress/90-migration-coverage.yaml`). It classifies every `haproxy-ingress.github.io/*` annotation the library reads, and CI checks that each annotation it classifies as carried over has a reference entry above. The [migration guide](../migrating.md#from-haproxy-ingress) renders the same data as a per-annotation support table.
 
+## Access-log fields
+
+The library contributes `mtls_verify` and `mtls_cn` to the
+[structured access log](../haproxy-deployment.md#access-logging) when any Ingress
+sets `auth-tls-secret` or `auth-tls-cert-header`: the certificate verification
+result (0 on success, otherwise an X509 error code) and the client's CN. The
+other annotation libraries contribute identical fields, so several can be enabled
+at once.
+
 ## See also
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work

@@ -229,8 +229,7 @@ templateSnippets:
 
       frontend gateway-tls-port-{{ port }}
           guid fe:gateway-tls-port-{{ port }}
-          mode tcp
-          option tcplog
+          mode tcp{{ render "util-log-format-tcp" }}
             {%- if portMode == "Terminate" %}
           bind *:{{ port }}{{ render "util-ssl-bind-options" }}
             {%- else %}

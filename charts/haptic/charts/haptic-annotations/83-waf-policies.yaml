@@ -1061,5 +1061,6 @@ templateSnippets:
       {%- for _, entry := range (gf | dig("corazaBrokenRoutes") | fallback([]any{}) | toSlice()) -%}
         {%- var e = entry.(map[string]any) -%}
       # WARNING haproxy-haptic.org/waf-policy on Ingress {{ e["resourceID"].(string) }}: {{ replace(e["reason"].(string), "\n", " ") }} Failing closed (503) for this route until it is fixed.
+      http-request set-var(txn.denied_by) str(waf_policy_unavailable) if { var(txn.resource_id) -m str {{ e["resourceID"].(string) }} }
       http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ e["resourceID"].(string) }} }
       {%- end -%}

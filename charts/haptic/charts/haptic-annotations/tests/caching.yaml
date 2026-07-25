@@ -346,3 +346,53 @@ validationTests:
                     - { path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }
     assertions:
       - { type: contains, target: rendering_error, pattern: "Invalid value '1mb' for annotation 'haproxy-haptic.org/cache-max-object-size'.*Must be a positive integer .bytes. with no unit suffix" }
+
+  test-haptic-cache-access-log-fields:
+    description: >-
+      With the Varnish tier enabled, the cache leg captures Varnish's X-Cache
+      verdict into a transaction variable (a log-format cannot fetch response
+      headers) and contributes the cache/app_backend fields; the cache-origin
+      frontend carries the JSON log-format too, so the second log line a MISS
+      produces is in the same schema.
+    extraContext:
+      cache:
+        varnish:
+          enabled: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cache-log
+            annotations:
+              haproxy-haptic.org/cache-enable: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: cache-log.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-after-response set-var\(txn\.cache_status\) res\.hdr\(X-Cache\) if \{ res\.hdr\(X-Cache\) -m found \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(cache\)\[var\(txn\.cache_status\)\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(app_backend\)\[var\(txn\.backend_name\)\]'
+        description: >-
+          A cache-enabled route sets use_backend varnish_cache, so the core
+          `backend` field no longer identifies the application backend.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend haptic_cache_origin$.*?^  log-format "%\{\+json\}o '
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.denied_by\) str\(cache_origin_internal_backend\) if origin_backend_internal'

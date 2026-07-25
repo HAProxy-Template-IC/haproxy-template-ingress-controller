@@ -188,6 +188,14 @@ templateSnippets:
             {%- end %}
           {%- end %}
         {%- end %}
+          {#- Capture Varnish's hit/miss verdict for the access log. The VCL sets
+              X-Cache in vcl_deliver, and a log-format cannot fetch res.hdr() —
+              HAProxy rejects response-scoped fetches at log time — so it has to
+              be materialised into a transaction variable first.
+              http-after-response (not http-response) so it also covers responses
+              HAProxy generates itself, and backend scope so routes that don't go
+              through the cache evaluate nothing. -#}
+          http-after-response set-var(txn.cache_status) res.hdr(X-Cache) if { res.hdr(X-Cache) -m found }
           default-server check
       {{ BackendServers(vSvc, 0, vPort, map[string]any{"flags": []any{}}, "", "varnish_cache", vNs) | indent(4, true) }}
       {%- end %}
@@ -219,7 +227,7 @@ templateSnippets:
       {{ "\n" }}frontend haptic_cache_origin
           mode http
           option forwardfor if-none
-          bind *:{{ loopbackPort }}
+          bind *:{{ loopbackPort }}{{ render "util-log-format-http" }}
           {#- Capture the routing decision, then strip the header so the app never
               sees it (and a client copy that slipped through can't reach it). -#}
           http-request set-var(txn.origin_backend) req.hdr(X-Haptic-Backend)
@@ -228,6 +236,7 @@ templateSnippets:
               Varnish, spoa-hub is a SPOP agent, and the tcp loopbacks/default are
               not app targets. Any legitimate value is a real app backend. -#}
           acl origin_backend_internal var(txn.origin_backend) -m str varnish_cache spoa-hub default_backend http-h1-loopback http-h2c-loopback
+          http-request set-var(txn.denied_by) str(cache_origin_internal_backend) if origin_backend_internal
           http-request deny deny_status 421 if origin_backend_internal
           use_backend %[var(txn.origin_backend)] if { var(txn.origin_backend) -m found }
           default_backend default_backend

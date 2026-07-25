@@ -147,6 +147,7 @@ This table is the authoritative registry of every `render_glob` extension point 
 | Listener Port Translation | `frontend-routing-listener-port-*` | Routing prologue, after `txn.listener_port` is seeded from `dst_port` | Remap `txn.listener_port` when a library binds a pod port that differs from the user-facing listener port (for example, Gateway per-Gateway HTTPS binds) |
 | Frontend Matchers | `frontend-matchers-advanced-*` | Within frontend routing logic | Advanced request matching (method, headers, query params) |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend, after routing | Request/response filters (header modification, redirects) |
+| Access Log Fields | `log-fields-*` | Inside the per-frontend `log-format` line | Named JSON fields contributed to the [structured access log](../haproxy-deployment.md#access-logging) |
 | Custom Frontends | `frontends-*` | After HTTP frontend | Additional frontend definitions |
 | Custom Backends | `backends-*` | Before `default_backend` | Backend definitions from resource libraries |
 | Host Map | `map-host-*` | host.map file | Host-to-group mapping entries |
@@ -379,6 +380,75 @@ Pre-configured error response templates for common HTTP errors:
 | 503.http | Service Unavailable |
 | 504.http | Gateway Timeout |
 
+### Structured access log
+
+Every frontend emits one JSON object per request, assembled from HAProxy's native
+JSON log encoding. `base.yaml` owns the core field set — request identity,
+timers, the owning Kubernetes resource, and `denied_by` — and every library adds
+fields for the features it implements through the `log-fields-*` extension point,
+each gated on that feature actually being configured.
+
+Add your own fields without writing a snippet:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        accessLog:
+          fields:
+            tenant: req.hdr(X-Tenant)
+```
+
+Or contribute one from a library snippet:
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      log-fields-900-my-feature:
+        template: |
+          %(my_field)[var(txn.my_var)]
+```
+
+<div class="pg-embed" markdown data-scenario="ingress" data-tab="haproxy.cfg" data-controls="tabs" data-title="Challenge: add a field to the access log" data-difficulty="2" data-height="440">
+
+<p class="pg-task" markdown>In the **Templates** pane, add a `log-fields-900-scheme` snippet under `spec.templateSnippets` that contributes a `scheme` field, then find it inside the `log-format` line of each HTTP frontend in the `haproxy.cfg` tab.</p>
+
+<details class="pg-solution" markdown>
+<summary>Solution</summary>
+
+A `log-fields-*` snippet emits items, not directives. `ssl_fc` is connection-scoped, so it's available at log time and needs no transaction variable:
+
+```yaml
+log-fields-900-scheme:
+  template: |
+    %(scheme:bool)[ssl_fc]
+```
+
+Band 900 sorts after every bundled contribution, so the field lands at the end of
+the record. Typing it `:bool` is safe here because `ssl_fc` always resolves —
+`false` on a plaintext connection. Try `%(scheme)[req.hdr(X-Forwarded-Proto)]`
+instead and the render fails: HAProxy rejects request-header fetches inside a
+`log-format`, which is why request-scoped values go through
+`http-request set-var(txn.…)` first.
+
+</details>
+
+</div>
+
+A `log-fields-*` snippet emits named log-format items and nothing else. Only
+items available at log time are legal: HAProxy rejects `path`, `pathq`,
+`req.hdr()`, `res.hdr()` and `req.ssl_sni` inside a `log-format`, so materialise
+request- or response-scoped values into a transaction variable first. Because the
+assembled format string is shared by every frontend, a snippet must not branch on
+which frontend is rendering — that's what keeps one schema across the whole log
+stream.
+
+See [Access logging](../haproxy-deployment.md#access-logging) for the field
+reference, the `denied_by` values, request-id and trace-context behaviour, and
+how to replace the format wholesale.
+
 ### Debug headers
 
 When debug mode is enabled, the frontend adds response headers for routing introspection:
@@ -493,8 +563,9 @@ The base library generates this configuration structure. The `global` and `defau
 
 ```haproxy
 global
-    # global-settings-100-logging
-    log stdout len 4096 local0 info
+    # global-settings-100-logging — `format raw` so JSON records carry no
+    # syslog prefix; len from extraContext.accessLog.maxLineBytes
+    log stdout len 16384 format raw local0 info
     # global-settings-200-process
     daemon
     # nbthread is omitted by default (no CPU limit) so HAProxy auto-detects all
@@ -509,9 +580,13 @@ defaults
     # defaults-settings-100-options
     mode http
     log global
-    option httplog
+    option httplog          # unreachable fallback: every frontend sets its own
+                            # log-format, and this keeps HAProxy from warning if
+                            # one ever doesn't
     option dontlognull
     option log-health-checks
+    # defaults-settings-150-access-log-request-id
+    unique-id-format %[uuid(7)]
     # defaults-settings-200-balance
     balance roundrobin
     # defaults-settings-300-timeouts
@@ -528,11 +603,13 @@ frontend status
     mode http
     bind *:8404
     option dontlog-normal
+    log-format "%{+json}o ..."   # util-log-format-http (every HTTP frontend)
     # Health check endpoints
 
 frontend http-tcp
     mode tcp
-    option tcplog
+    option dontlog-normal        # the inner HTTP frontend logs the request
+    log-format "%{+json}o ..."   # util-log-format-tcp (every TCP frontend)
 
 frontend http_frontend
     mode http
