@@ -745,13 +745,13 @@ tests:
       - failedTemplate:
           errorMessage: 'spoaHub.plugins.mirror contains unknown field "minMessageSlots". Plugin runtime settings belong inside params.'
 
-  - it: should reject a negative HAProxy mirror message-slot floor
+  - it: should reject the removed spoaHub.haproxy.mirror field
     template: spoa-hub-configmap.yaml
     set:
-      spoaHub.haproxy.mirror.minMessageSlots: -1
+      spoaHub.haproxy.mirror.minMessageSlots: 4
     asserts:
       - failedTemplate:
-          errorMessage: "spoaHub.haproxy.mirror.minMessageSlots must be an integer between 0 and 1024."
+          errorMessage: 'spoaHub.haproxy contains unknown field "mirror". Valid fields: socketPath, modeSpop, timeoutHello, timeoutIdle, timeoutProcessing, timeoutProcessingMarginMs, poolMaxConn, poolPurgeDelay.'
 
   - it: should surface shared rate-limit extraContext and store params
     template: haproxytemplateconfig.yaml

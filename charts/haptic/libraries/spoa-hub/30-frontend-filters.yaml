@@ -297,3 +297,29 @@ templateSnippets:
       http-request return status 415 if { var(txn.req_schema_id) -m found } { method POST PUT PATCH } { var(txn.hub.api_gateway.outcome) -m str unsupported_media_type }
       http-request return status 422 if { var(txn.req_schema_id) -m found } { method POST PUT PATCH } { var(txn.hub.api_gateway.allowed) -m found } !{ var(txn.hub.api_gateway.allowed) -m bool }
       {%- end %}
+
+  # Fire the single mirror SPOE group once per request — the last frontend
+  # filter (priority 950), after every mirror source has appended its target
+  # entry to txn.gw_mirror_targets (gateway RequestMirror filters at 550, the
+  # mirror-target Ingress annotation libraries at 555/820). HAProxy SPOE only
+  # processes each group once per stream, but a single `mirror-group` carries
+  # ALL targets: the mirror message's arg_targets is the whole list, and the
+  # plugin fans out to each entry. So one static message + one group cover
+  # every mirror in the cluster — adding a target never changes spoe.conf or
+  # the hub TOML, only the frontend append above. The fire must come after all
+  # appends, since send-spoe-group captures arg_targets at its position.
+  #
+  # Resource-agnostic (reads one variable, fires one group). Gated on "mirror"
+  # being in the SPOE messages union — the same condition spoe-conf-content uses
+  # to declare `mirror-group`, so the reference always resolves (a test that
+  # overrides extraContext.spoaHub.haproxy.messages without "mirror" gets no fire
+  # and no dangling group). The `-m found` guard makes it a no-op for requests
+  # that matched no mirror source.
+  frontend-filters-950-spoa-hub-mirror-fire:
+    template: |
+      {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
+      {%- var messages = toStringSlice(messagesAny) %}
+      {%- if messages contains "mirror" %}
+      # spoa-hub/mirror: dispatch every appended target from one NOTIFY
+      http-request send-spoe-group spoa-hub mirror-group if { var(txn.gw_mirror_targets) -m found }
+      {%- end %}

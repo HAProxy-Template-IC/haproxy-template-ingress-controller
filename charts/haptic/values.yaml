@@ -1626,12 +1626,6 @@ spoaHub:
     timeoutProcessingMarginMs: 100
     poolMaxConn: 100
     poolPurgeDelay: 30s
-    mirror:
-      # Static floor for generated HAProxy/SPOE mirror message slots. The
-      # rendered count is max(max-mirrors-per-route, minMessageSlots). It also
-      # preserves handler registration across transient reloads where the
-      # observed route set shrinks. Set 0 to disable the floor deliberately.
-      minMessageSlots: 4
 
   # Plugins. Each entry has chart-managed lifecycle keys (enabled, timeoutMs,
   # messages, dependsOn), optional admission controls (maxConcurrency,
@@ -1798,38 +1792,31 @@ spoaHub:
       # HTTP roundtrip to the mirror backend is governed by the plugin's
       # own `timeout_ms` (under `params:` below) and never blocks HAProxy.
       timeoutMs: 50
-      # Placeholder message name. The chart computes the actual list
-      # of mirror message names dynamically at render time, based on
-      # the maximum number of RequestMirror filters on any HTTPRoute
-      # rule in the cluster (computed by the gateway library's
-      # 20-route-analysis.yaml). Each filter needs its own SPOE
-      # message+group pair because HAProxy SPOE processes each group
-      # at most once per stream — `mirror-<i>` for i in 1..maxN. No
-      # cap: a route with 12 mirror filters allocates 12 slots; the
-      # list never shrinks below spoaHub.haproxy.mirror.minMessageSlots
-      # (default 4), so with 0 mirrors it still covers
-      # mirror-1..mirror-4.
-      #
-      # Plugin-side these are all routed to the same mirror plugin
-      # (the plugin's process() only reads SPOE args, not the message
-      # name), so the list length is purely a chart-render concern.
+      # A single static `mirror` message that fans out to every target.
+      # The chart never grows this list: each mirror source (Gateway
+      # RequestMirror filters, mirror-target Ingress annotations) appends
+      # its target to a per-request list variable (txn.gw_mirror_targets),
+      # the message ships that whole list as arg_targets, and the plugin
+      # (haproxy-spoa-hub-plugin-mirror v0.6.0+) dispatches one request per
+      # entry. So adding or removing a mirror target changes only the
+      # HAProxy frontend — never spoe.conf or this plugin's TOML — and
+      # never triggers a hub config reload.
       messages: ["mirror"]
       dependsOn: []
       # Mirror plugin runtime knobs (1:1 with PluginConfig in
       # haproxy-spoa-hub-plugin-mirror/src/config.rs).
       params: |
         # timeout_ms: omitted on purpose. The plugin default (60_000ms in
-        # v0.5.0+) is the safety net for SPOE messages that don't carry
-        # `arg_timeout_ms`; the gateway library's
-        # `frontend-filters-550-gateway-mirror` snippet emits
-        # `arg_timeout_ms=var(txn.gw_mirror_timeout_ms_<i>)` per-dispatch
-        # derived from the chart-wide `timeout server`, so the relevant
-        # value is per-route, not plugin-wide. A tight plugin-wide
-        # `timeout_ms` here would only mask the per-dispatch value when
-        # the SPOE arg is absent for some other reason — counter-
-        # productive. Operators who want a tight uniform mirror timeout
-        # should set `controller.config.haproxy.timeouts.server` (which
-        # the per-dispatch derivation reads from), not this knob.
+        # v0.5.0+) is the safety net for a target entry that doesn't carry
+        # a per-target timeout; each frontend mirror source encodes the
+        # per-target timeout (derived from the chart-wide `timeout server`)
+        # into its arg_targets entry, so the relevant value is per-route,
+        # not plugin-wide. A tight plugin-wide `timeout_ms` here would only
+        # mask the per-target value when the entry field is absent for some
+        # other reason — counter-productive. Operators who want a tight
+        # uniform mirror timeout should set
+        # `controller.config.haproxy.timeouts.server` (which the per-target
+        # derivation reads from), not this knob.
         max_body_bytes = 1048576
         request_concurrency = 1024
         verify_tls = false

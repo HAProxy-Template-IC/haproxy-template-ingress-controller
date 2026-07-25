@@ -1224,36 +1224,21 @@ templateSnippets:
       option http-buffer-request
       {%- end %}
 
-  # Filter: RequestMirror — emit per-HTTPRoute mirror dispatch.
+  # Filter: RequestMirror — append each mirror target to the per-request
+  # mirror list.
   #
-  # For each HTTPRoute rule with one or more RequestMirror filters:
-  # for each filter (Gateway API allows multiple — SupportHTTPRoute-
-  # RequestMultipleMirrors), emit a (set-var, set-var, send-spoe-group)
-  # triple gated by the route's RouteIdCondition and the filter's
-  # percent / fraction sampling.
-  #
-  # Per-filter indexed variables and group names. HAProxy SPOE only
-  # processes each group once per stream — quoting the SPOE docs:
-  # "only one call to a group is allowed per stream". So a route
-  # carrying N RequestMirror filters needs N distinct (message,
-  # group) pairs to actually trigger N NOTIFY frames; emitting
-  # N `send-spoe-group spoa-hub mirror-group` lines all referencing
-  # the same group silently no-ops on calls 2..N. Each filter
-  # therefore uses a per-index suffix: `gw_mirror_target_<i>`,
-  # `gw_mirror_scheme_<i>`, and `mirror-<i>-group` for i in 1..N.
-  # The spoa-hub library sizes the plugin-side message list to
-  # max(cluster-wide max fanout, spoaHub.haproxy.mirror.minMessageSlots), so a
-  # matching `mirror-<i>` handler exists for every index emitted here
-  # (see libraries/spoa-hub/20-config-content.yaml for the sizing and
-  # floor rationale — the conformance suite tops out at 2 mirrors).
-  #
-  # The mirror plugin always reads its target from
-  # `var(txn.gw_mirror_target_<i>)` via the message body's
-  # `arg_target=var(...)` (see spoe-message-mirror-body in
-  # libraries/spoa-hub/, which derives <i> from the message name's
-  # `mirror-<i>` suffix). Each triple sets its indexed variable to the
-  # resolved backendRef, fires the SPOE NOTIFY via the indexed group,
-  # and the plugin dispatches a fire-and-forget HTTP request.
+  # For each HTTPRoute rule with one or more RequestMirror filters (Gateway
+  # API allows multiple — SupportHTTPRouteRequestMultipleMirrors), append
+  # one `scheme|host:port|timeout_ms|retries` entry to txn.gw_mirror_targets,
+  # gated by the route's RouteIdCondition and the filter's percent / fraction
+  # sampling. A single static `mirror` SPOE message + `mirror-group` carries
+  # the whole list: HAProxy SPOE processes each group at most once per stream,
+  # but the mirror message's `arg_targets` is the full list and the plugin
+  # (haproxy-spoa-hub-plugin-mirror v0.6.0+) fans out to every entry. So N
+  # filters on one rule just append N entries — no per-index message/group,
+  # and nothing in spoe.conf or the hub TOML changes when routes change.
+  # frontend-filters-950-spoa-hub-mirror-fire fires the group once, after
+  # every source has appended.
   #
   # Sampling: `rand(100) lt <percent>` is the canonical HAProxy idiom
   # for uniform percentage gating. The Gateway API spec allows both a
@@ -1293,15 +1278,6 @@ templateSnippets:
         {%- if !isHTTPRoute %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
         {%- var cond = RouteIdCondition(routeId) %}
-        {#- Per-route mirror counter: HAProxy SPOE processes each
-            group once per stream, so each mirror filter needs its
-            own indexed (message, group) pair. The counter resets per
-            route (different routes claim the request via the route-id
-            cond, so they never overlap on the same stream — they can
-            re-use indices 1..N independently). Index starts at 1 to
-            match the message names in spoaHub.plugins.mirror.messages
-            (mirror-1, mirror-2, ...). -#}
-        {%- var mirrorIdx = 0 %}
         {#- Extract rule.Filters via per-Kind type-switch on
             routeInfo["route"]. -#}
         {%- var filters = []any{} %}
@@ -1331,7 +1307,6 @@ templateSnippets:
           {%- if backendRef == nil %}{%- continue %}{%- end %}
           {%- var bName = backendRef | dig_string("", "name") %}
           {%- if bName == "" %}{%- continue %}{%- end %}
-          {%- mirrorIdx = mirrorIdx + 1 %}
           {%- var bNs = backendRef | dig("namespace") | fallback(routeInfo | dig("namespace")) | tostring() %}
           {%- var bPort = backendRef | dig("port") | fallback(80) %}
           {#- Target as Kubernetes Service DNS. kube-proxy / cluster
@@ -1378,48 +1353,36 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-          {#- CRITICAL: `rand(100)` is re-evaluated on every directive
-              that references it. If the three directives below each
-              had their own `{ rand(100) lt N }` clause, the effective
-              probability that all three fire together would be
-              (N/100)^3 — at percent=20 that's 0.8%, not 20% — AND
-              the three directives could fire independently of each
-              other, leaving txn.gw_mirror_target set but the
-              send-spoe-group never fired (or vice versa: a
-              send-spoe-group fires while the target var was stale
-              from a prior request). Evaluate the random sample ONCE
-              into a transaction variable and gate all three lines on
-              that stored value. The set-var(...gw_mirror_sample)
-              line is itself unconditional within the route, so each
-              request gets a single draw — uniform per request, not
-              per directive. -#}
+          {#- Percentage sampling. Only ONE directive gates on the sample
+              (the append below) — the mirror-group fire keys off
+              `txn.gw_mirror_targets` being non-empty, not the sample — so a
+              single inline `rand(100)` draw is enough (no stored sample var,
+              no per-filter index). When percent == 100 the ACL is skipped
+              entirely so the full-mirror config stays branch-free. -#}
           {%- var sampleCond = "" %}
           {%- if percent < 100 %}
-            {%- sampleCond = " { var(txn.gw_mirror_sample_" + tostring(mirrorIdx) + ") -m int lt " + tostring(percent) + " }" %}
+            {%- sampleCond = " { rand(100) -m int lt " + tostring(percent) + " }" %}
           {%- end %}
-          {%- if percent < 100 %}
-      http-request set-var(txn.gw_mirror_sample_{{ mirrorIdx }}) rand(100) if {{ cond }}
-          {%- end %}
-      {#- Per-dispatch timeout + retry budget. Sourced from the
-          chart-wide `timeout server` and a sensible retry default
-          (matches HAProxy's built-in `retries 3`) so a mirror
-          dispatch waits as long as a normal backend request would,
-          rather than being capped by a uniform plugin default. The
-          plugin (haproxy-spoa-hub-plugin-mirror v0.5.0+) reads
-          `arg_timeout_ms` / `arg_retries` from the SPOE frame; older
-          plugin versions ignore unknown args, so emitting these
-          unconditionally is safe across rolling upgrades. The
-          generous default closes the gateway-conformance
-          `HTTPRouteRequestMultipleMirrors` flake (kube-proxy
-          iptables / CoreDNS propagation cold-start race against
-          freshly-created in-cluster Services). -#}
+      {#- Append this filter's target to the per-request mirror list.
+          Entry format `scheme|host:port|timeout_ms|retries` (see
+          spoe-message-mirror-body); the single mirror-group carries the
+          whole list and the plugin fans out to each entry, so a rule with
+          several RequestMirror filters just appends several entries — no
+          per-index message/group, no spoe.conf change when routes change.
+          The group is fired once, after all appends, by
+          frontend-filters-950-spoa-hub-mirror-fire.
+
+          Timeout + retry budget come from the chart-wide `timeout server`
+          and a sensible retry default (matches HAProxy's built-in
+          `retries 3`) so a mirror dispatch waits as long as a normal
+          backend request would — the generous default closes the
+          gateway-conformance `HTTPRouteRequestMultipleMirrors` flake
+          (kube-proxy iptables / CoreDNS propagation cold-start race
+          against freshly-created in-cluster Services). -#}
           {%- var timeoutMs = toint(extraContext | dig("timeout_server") | fallback("50000")) %}
           {%- var retriesCount = toint(extraContext | dig("retries") | fallback("3")) %}
-      http-request set-var(txn.gw_mirror_target_{{ mirrorIdx }}) str({{ target }}) if {{ cond }}{{ sampleCond }}
-      http-request set-var(txn.gw_mirror_scheme_{{ mirrorIdx }}) str({{ bScheme }}) if {{ cond }}{{ sampleCond }}
-      http-request set-var(txn.gw_mirror_timeout_ms_{{ mirrorIdx }}) int({{ timeoutMs }}) if {{ cond }}{{ sampleCond }}
-      http-request set-var(txn.gw_mirror_retries_{{ mirrorIdx }}) int({{ retriesCount }}) if {{ cond }}{{ sampleCond }}
-      http-request send-spoe-group spoa-hub mirror-{{ mirrorIdx }}-group if {{ cond }}{{ sampleCond }}
+          {%- var entry = bScheme + "|" + target + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
+      http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}{{ sampleCond }}
         {%- end %}
       {%- end %}
       {%- end %}

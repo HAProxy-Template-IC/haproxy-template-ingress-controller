@@ -929,9 +929,6 @@ spec:
               "timeoutProcessing" $timeoutProcessing
               "poolMaxConn" (int $hub.poolMaxConn)
               "poolPurgeDelay" (toString $hub.poolPurgeDelay)
-              "mirror" (dict
-                  "minMessageSlots" (int $.Values.spoaHub.haproxy.mirror.minMessageSlots)
-              )
           )
           "hub" (dict
               "logLevel" $hubRuntime.logLevel

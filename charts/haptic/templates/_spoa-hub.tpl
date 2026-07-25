@@ -188,8 +188,8 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- $haproxy := $spoa.haproxy | default dict -}}
 {{- if not (kindIs "map" $haproxy) -}}{{- fail "spoaHub.haproxy must be a map." -}}{{- end -}}
 {{- range $field := keys $haproxy -}}
-  {{- if not (has $field (list "socketPath" "modeSpop" "timeoutHello" "timeoutIdle" "timeoutProcessing" "timeoutProcessingMarginMs" "poolMaxConn" "poolPurgeDelay" "mirror")) -}}
-    {{- fail (printf "spoaHub.haproxy contains unknown field %q. Valid fields: socketPath, modeSpop, timeoutHello, timeoutIdle, timeoutProcessing, timeoutProcessingMarginMs, poolMaxConn, poolPurgeDelay, mirror." $field) -}}
+  {{- if not (has $field (list "socketPath" "modeSpop" "timeoutHello" "timeoutIdle" "timeoutProcessing" "timeoutProcessingMarginMs" "poolMaxConn" "poolPurgeDelay")) -}}
+    {{- fail (printf "spoaHub.haproxy contains unknown field %q. Valid fields: socketPath, modeSpop, timeoutHello, timeoutIdle, timeoutProcessing, timeoutProcessingMarginMs, poolMaxConn, poolPurgeDelay." $field) -}}
   {{- end -}}
 {{- end -}}
 {{- if not (kindIs "string" $haproxy.socketPath) -}}{{- fail "spoaHub.haproxy.socketPath must be a string." -}}{{- end -}}
@@ -210,12 +210,6 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- if gt $poolMaxConn (int $hub.maxConnections) -}}
   {{- fail "spoaHub.haproxy.poolMaxConn must not exceed spoaHub.hub.maxConnections; the hub cannot accept the advertised HAProxy pool capacity." -}}
 {{- end -}}
-{{- $mirror := $haproxy.mirror | default dict -}}
-{{- if not (kindIs "map" $mirror) -}}{{- fail "spoaHub.haproxy.mirror must be a map." -}}{{- end -}}
-{{- range $field := keys $mirror -}}{{- if ne $field "minMessageSlots" -}}{{- fail (printf "spoaHub.haproxy.mirror contains unknown field %q. Valid field: minMessageSlots." $field) -}}{{- end -}}{{- end -}}
-{{- if not (regexMatch "^[0-9]+$" (toString $mirror.minMessageSlots)) -}}{{- fail "spoaHub.haproxy.mirror.minMessageSlots must be an integer between 0 and 1024." -}}{{- end -}}
-{{- $mirrorMinSlots := int $mirror.minMessageSlots -}}
-{{- if or (lt $mirrorMinSlots 0) (gt $mirrorMinSlots 1024) -}}{{- fail "spoaHub.haproxy.mirror.minMessageSlots must be between 0 and 1024." -}}{{- end -}}
 
 {{- $plugins := $spoa.plugins | default dict -}}
 {{- if not (kindIs "map" $plugins) -}}{{- fail "spoaHub.plugins must be a map." -}}{{- end -}}

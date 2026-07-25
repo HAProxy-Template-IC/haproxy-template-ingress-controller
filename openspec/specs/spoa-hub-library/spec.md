@@ -20,28 +20,29 @@ When spoa-hub is enabled (`extraContext.spoaHub.enabled`; the chart auto-loads t
 - **WHEN** the injected haproxyVersion is 3.0
 - **THEN** the spoa-hub backend SHALL use `mode tcp` instead of `mode spop`.
 
-### Requirement: Mirror Message-Slot Sizing With a Static Floor
+### Requirement: Mirror Uses a Single Static Message and Group
 
-The mirror plugin's message list SHALL be sized max(mirrorMaxFanout, minMessageSlots), where mirrorMaxFanout is the cluster-wide maximum number of mirror filters on any single route rule (written into globalFeatures by the producing routing library under a resource-neutral key) and minMessageSlots defaults to 4 (`extraContext.spoaHub.haproxy.mirror.minMessageSlots`; chart value `spoaHub.haproxy.mirror.minMessageSlots`). The static floor SHALL NOT be removed, for two reasons: (1) it is the slot-capacity contract for library consumers that do not feed the dynamic fanout — nginx-ingress's `mirror-target` allocates one slot per mirror-target Ingress up to the floor and fails the render beyond it, and its `send-spoe-group` references need the floor-declared groups to pass `haproxy -c`; (2) the hub rebuilds plugin handler state from scratch on every TOML reload, so a fanout shrink opens a window where the old HAProxy generation still fires `send-spoe-group` for messages the hub no longer registers. Since spoa-hub v0.7.3, reloads quiesce (in-flight NOTIFYs complete against the pre-swap plugin generation) and unhandled NOTIFYs are loud (WARN plus `spoa_messages_unhandled_total{message}`) rather than silently dropped — but they are still not served (SPOP has no message-level error frame), so mirrors fired into the shrink window are lost with a warning; the floor keeps slots [1, floor] permanently registered so small-fanout deployments never enter that window. (Historical note: before spoa-hub v0.7.3 the drop was silent, observed as ~50% mirror-rate conformance flakiness — race B, spoa-hub issue #47; the controller-side `skip_reload` on auxiliary-file updates fixed only the HAProxy reload-ordering race, race A.) The HAProxy-side SPOE message and group declarations SHALL be sized in lockstep with the plugin-side floor.
+The mirror plugin SHALL use exactly one SPOE message named `mirror` and one group named `mirror-group`, independent of how many mirror targets exist. The message SHALL carry a per-request list of targets via `arg_targets=var(txn.gw_mirror_targets)` plus the shared request-line/body args (`arg_method`, `arg_path`, `arg_query`, `arg_ver`, `arg_hdrs`, `arg_body`). Each frontend mirror source (a Gateway `RequestMirror` filter, an Ingress `mirror-target` annotation) SHALL append one `scheme|host:port|timeout_ms|retries` entry to `txn.gw_mirror_targets`, gated by that source's match (and sampling) condition, using `set-var(...) str(<entry>;),concat(,txn.gw_mirror_targets,)`. A single resource-agnostic snippet SHALL fire `send-spoe-group spoa-hub mirror-group` once per request, after all appends, guarded by `{ var(txn.gw_mirror_targets) -m found }`, and only when the mirror plugin is enabled. The mirror plugin (haproxy-spoa-hub-plugin-mirror v0.6.0+) SHALL split the list and dispatch one fire-and-forget request per entry. Because the SPOE message set does not depend on the mirror-target set, `spoe.conf` and the hub TOML SHALL NOT change when mirror targets are added or removed, and the hub SHALL NOT reload for a mirror-target change. There SHALL be no per-target message-slot count, no `minMessageSlots` floor, and no upper bound on the number of mirror targets.
 
-#### Scenario: Floor holds with no mirror routes
+#### Scenario: No mirror sources still declares the static message
 
-- **WHEN** no route in the cluster carries a mirror filter
-- **THEN** the mirror plugin's messages list and the SPOE groups SHALL still cover mirror-1 through mirror-4.
+- **WHEN** the mirror plugin is enabled and no route or Ingress declares a mirror
+- **THEN** `spoe.conf` SHALL declare the single `mirror` message and `mirror-group`, and no numbered `mirror-<i>` message or group SHALL appear.
 
-#### Scenario: Plugin and engine sizing stay in lockstep
+#### Scenario: Adding targets does not change the SPOE config
 
-- **WHEN** the effective slot count is N
-- **THEN** the TOML messages list and the spoe.conf message and group declarations SHALL both cover mirror-1 through mirror-N.
+- **WHEN** mirror-target Ingresses or `RequestMirror` filters are added or removed
+- **THEN** the `mirror` message, `mirror-group`, and the mirror plugin's TOML `messages` list SHALL be byte-identical, and only the HAProxy frontend `txn.gw_mirror_targets` appends SHALL change.
 
-### Requirement: Dynamic Extension Beyond the Floor
+#### Scenario: One rule with several mirror filters fans out from one group
 
-Fanout above the floor SHALL extend the slot set dynamically: a rule carrying N mirror filters with N greater than the floor yields mirror-1 through mirror-N. Each mirror filter needs its own (message, group) pair because HAProxy SPOE processes each group at most once per stream. Slots above the floor shrink dynamically; mirrors fired into a shrink window on those slots are lost loudly (hub v0.7.3+ logs WARN and increments `spoa_messages_unhandled_total` — acceptable because mirrors are best-effort by design). `minMessageSlots` SHALL be operator-tunable so workloads that regularly exceed the floor can raise it.
+- **WHEN** a single route rule carries several `RequestMirror` filters
+- **THEN** each filter SHALL append its own entry to `txn.gw_mirror_targets`, the single `mirror-group` SHALL be fired once, and the plugin SHALL dispatch one request per entry.
 
-#### Scenario: High-fanout rule extends the slots
+#### Scenario: Many mirror-target Ingresses do not fail the render
 
-- **WHEN** a route rule carries 12 mirror filters
-- **THEN** 12 mirror messages and 12 corresponding groups SHALL be emitted.
+- **WHEN** five or more host-gated mirror-target Ingresses are present
+- **THEN** each SHALL append its entry, the render SHALL succeed, and the SPOE config SHALL remain the single static message and group.
 
 ### Requirement: Per-Message Singleton Groups
 

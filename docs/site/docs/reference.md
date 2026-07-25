@@ -17,7 +17,6 @@ or generated HAProxy configuration to drift.
 | `controller.config.dataplane.port` | `haproxy.ports.dataplane` |
 | `controller.config.routing.regexMatchOrder` | `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` |
 | `controller.defaultSSLCertificate` | `defaultSSLCertificate` |
-| `spoaHub.mirrorStaticMinSlots` | `spoaHub.haproxy.mirror.minMessageSlots` |
 | `haproxy.enterprise.version` | `haproxyVersion` |
 | Root-level controller workload values (`replicaCount`, `image`, `deploymentAnnotations`, `webhook`, `monitoring`, `networkPolicy`, `autoscaling`, `podDisruptionBudget`, `service`, `serviceAccount`, `rbac`, `securityContext`, `resources`, probes, rollout, and extras) | The same key under `controller.*` (for example `controller.replicaCount`) |
 | `controller.config.templatingSettings.extraContext.debug` | `controller.config.templatingSettings.extraContext.diagnostics.routingHeaders.enabled` (now defaults to `false`) |
@@ -695,7 +694,6 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.haproxy.timeoutProcessingMarginMs` | int | `100` | Scheduling and serialization margin added between the largest enabled message budget and HAProxy's derived outer deadline |
 | `spoaHub.haproxy.poolMaxConn` | int | `100` | Connection pool maximum |
 | `spoaHub.haproxy.poolPurgeDelay` | duration | `30s` | Idle-connection purge delay |
-| `spoaHub.haproxy.mirror.minMessageSlots` | int | `4` | Static floor for the mirror plugin's SPOE message slot count; the rendered count is the larger of this floor and the biggest per-rule mirror-filter fan-out in the cluster. The floor is also the slot capacity for nginx-ingress `mirror-target` Ingresses (one slot each), and it keeps hub handler state registered across reloads when a transient render shrinks the slot set. Raise it for more than 4 mirrors per HTTPRoute rule or more than 4 mirror-target Ingresses |
 | `spoaHub.plugins.<name>.enabled` | bool/string | `'{{ false }}'` (templatable) | Per-plugin enable. Default value is a chart-evaluated `tpl` string so a plugin can auto-enable when the template libraries that rely on it are on; explicit `--set` bool always wins |
 | `spoaHub.plugins.<name>.timeoutMs` | int | per-plugin | Plugin processing timeout in milliseconds |
 | `spoaHub.plugins.<name>.maxConcurrency` | int/null | plugin default | Maximum plugin calls executing concurrently. Use this as the single owner of plugin CPU admission |
