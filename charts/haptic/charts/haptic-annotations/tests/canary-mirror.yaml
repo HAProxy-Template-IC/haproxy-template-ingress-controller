@@ -7,7 +7,7 @@
 # The mirror test relies on the spoa-hub mirror plugin being enabled (mirror-target
 # fails loud otherwise). The plugin auto-enables with the gateway library, which
 # the chart test harness always renders with (scripts/test-templates.sh), so the
-# mirror SPOE group (mirror-1-group) is present and the config validates.
+# single static mirror SPOE group (mirror-group) is present and the config validates.
 validationTests:
   test-haptic-canary-by-header:
     description: haproxy-haptic.org canary-by-header overlays a header-gated use_backend
@@ -427,7 +427,110 @@ validationTests:
         pattern: "option http-buffer-request"
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_target_1\\) str\\(mirror.internal:8443\\)"
+        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(https\\|mirror.internal:8443\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str mirror.example.com \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "send-spoe-group spoa-hub mirror-1-group if \\{ var\\(txn.host\\) -m str mirror.example.com \\}"
+        pattern: "send-spoe-group spoa-hub mirror-group if \\{ var\\(txn.gw_mirror_targets\\) -m found \\}"
+
+  # Five mirror-target Ingresses. Each appends its own entry to the per-request
+  # txn.gw_mirror_targets list; the SPOE config stays a single static `mirror`
+  # message + `mirror-group` no matter how many targets exist. Proves adding
+  # mirror targets never grows spoe.conf or the hub TOML (so it never reloads
+  # the hub), and never fails the render.
+  test-haptic-mirror-target-static-spoe-config:
+    description: "Five mirror-target Ingresses each append a target entry; the SPOE config remains one static mirror message + mirror-group (no per-Ingress slots, no fail)."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: mirror-service}
+          spec:
+            ports: [{port: 80}]
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mirror-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mirror-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.9"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mirror-a
+            annotations: {haproxy-haptic.org/mirror-target: "http://sink-a:9000"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: a.example.com
+                http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: mirror-service, port: {number: 80}}}}]}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mirror-b
+            annotations: {haproxy-haptic.org/mirror-target: "http://sink-b:9000"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: b.example.com
+                http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: mirror-service, port: {number: 80}}}}]}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mirror-c
+            annotations: {haproxy-haptic.org/mirror-target: "http://sink-c:9000"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: c.example.com
+                http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: mirror-service, port: {number: 80}}}}]}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mirror-d
+            annotations: {haproxy-haptic.org/mirror-target: "http://sink-d:9000"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: d.example.com
+                http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: mirror-service, port: {number: 80}}}}]}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mirror-e
+            annotations: {haproxy-haptic.org/mirror-target: "http://sink-e:9000"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: e.example.com
+                http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: mirror-service, port: {number: 80}}}}]}
+    assertions:
+      - type: haproxy_valid
+      # Five targets, still exactly one static message + group — no numbered slots.
+      - type: contains
+        target: file:spoe.conf
+        pattern: 'spoe-message mirror\n    args arg_targets=var\(txn\.gw_mirror_targets\)'
+      - type: not_contains
+        target: file:spoe.conf
+        pattern: 'spoe-message mirror-1'
+      - type: not_contains
+        target: file:spoe.conf
+        pattern: 'spoe-message mirror-5'
+      # Each of the five Ingresses appended its own entry, host-gated.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'str\(http\|sink-a:9000\|50000\|3;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\) -m str a\.example\.com \}'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'str\(http\|sink-e:9000\|50000\|3;\),concat\(,txn\.gw_mirror_targets,\) if \{ var\(txn\.host\) -m str e\.example\.com \}'

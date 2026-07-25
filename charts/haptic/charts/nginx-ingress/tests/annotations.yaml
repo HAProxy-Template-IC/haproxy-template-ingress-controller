@@ -1675,7 +1675,7 @@ validationTests:
 
   test-nginx-ingress-mirror-target:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
-    description: "mirror-target mirrors the Ingress's requests to the spoa-hub mirror plugin — host-gated gw_mirror_target_1 + send-spoe-group mirror-1-group, plus option http-buffer-request. Only the authority of the nginx URL template is used as arg_target."
+    description: "mirror-target mirrors the Ingress's requests to the spoa-hub mirror plugin — a host-gated append to txn.gw_mirror_targets + the single send-spoe-group mirror-group, plus option http-buffer-request. Only the authority of the nginx URL template is used as the target."
     fixtures:
       services:
         - apiVersion: v1
@@ -1704,20 +1704,17 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_target_1\\) str\\(mirror.example.com:443\\) if \\{ var\\(txn.host\\) -m str mirror-app.example.com \\}"
+        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(https\\|mirror.example.com:443\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str mirror-app.example.com \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_scheme_1\\) str\\(https\\)"
-      - type: contains
-        target: haproxy.cfg
-        pattern: "send-spoe-group spoa-hub mirror-1-group if \\{ var\\(txn.host\\) -m str mirror-app.example.com \\}"
+        pattern: "send-spoe-group spoa-hub mirror-group if \\{ var\\(txn.gw_mirror_targets\\) -m found \\}"
       - type: contains
         target: haproxy.cfg
         pattern: "option http-buffer-request"
 
-  test-nginx-ingress-mirror-target-same-host-distinct-index:
+  test-nginx-ingress-mirror-target-same-host-both-mirror:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
-    description: "two mirror-target Ingresses sharing a host get DISTINCT mirror indices (no shared-slot collision)."
+    description: "two mirror-target Ingresses sharing a host both append their own entry to txn.gw_mirror_targets, so a request to that host mirrors to BOTH targets from the single NOTIFY (no shared-slot collision — the list carries both, no per-Ingress index)."
     fixtures:
       services:
         - apiVersion: v1
@@ -1758,13 +1755,13 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_target_1\\) str\\(mirror-a.example.com:80\\)"
+        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(http\\|mirror-a.example.com:80\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str shared.example.com \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "set-var\\(txn.gw_mirror_target_2\\) str\\(mirror-b.example.com:80\\)"
-      - type: contains
+        pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(http\\|mirror-b.example.com:80\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str shared.example.com \\}"
+      - type: not_contains
         target: haproxy.cfg
-        pattern: "send-spoe-group spoa-hub mirror-2-group"
+        pattern: "mirror-2-group"
 
   test-nginx-ingress-mirror-target-hostless-rejected:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'

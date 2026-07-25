@@ -90,12 +90,12 @@ test-httproute-query-params
 test-httproute-redirect-preserves-request-scheme
 test-httproute-regex-dollar-escaping
 test-httproute-request-header-modifier
-test-httproute-request-mirror-dynamic-max
 test-httproute-request-mirror-fraction
 test-httproute-request-mirror-https-scheme
 test-httproute-request-mirror-multiple
 test-httproute-request-mirror-percent
 test-httproute-request-mirror-single
+test-httproute-request-mirror-static-spoe-config
 test-httproute-request-redirect
 test-httproute-request-redirect-default-port-omission
 test-httproute-response-header-modifier

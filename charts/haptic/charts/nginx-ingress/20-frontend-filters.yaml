@@ -324,9 +324,10 @@ templateSnippets:
   # nginx mirror-target needs the full request body buffered before the SPOE
   # mirror notification fires (else PUT/POST bodies arrive empty at the plugin)
   # — mirrors gateway/frontend-extra-200-gateway-mirror-buffer. Also the
-  # plugin-enabled guard: mirror-target with the spoa-hub mirror plugin disabled
-  # would emit `send-spoe-group spoa-hub mirror-1-group` for a non-existent SPOE
-  # group (a `haproxy -c` failure), so fail() with an actionable message.
+  # plugin-enabled guard: with the spoa-hub mirror plugin disabled there is no
+  # mirror-group to fire (frontend-filters-950-spoa-hub-mirror-fire is gated on
+  # the plugin), so a mirror-target annotation would silently do nothing —
+  # fail() with an actionable message.
   frontend-extra-205-nginx-ingress-mirror-buffer:
     template: |
       {%- var hasMirror = false %}
@@ -370,31 +371,21 @@ templateSnippets:
         change and are NOT supported.
 
         mirror-target is an nginx URL template (scheme://host[:port]$request_uri);
-        only the authority (host:port) is used as the plugin's arg_target — the
+        only the authority (host:port) is used as the plugin's target — the
         plugin re-attaches the live request path/query. Default port 80 (http) /
         443 (https).
 
-        INDEXING: each mirror-target Ingress gets its OWN mirror index (1, 2, …)
-        so two Ingresses that share a host (a common fan-out pattern) never
-        overwrite each other's target on a shared slot. The plugin floors its
-        slot count at mirrorMinMessageSlots (default 4), so indices up to that
-        floor always have a `mirror-<i>-group`; if there are MORE mirror-target
-        Ingresses than slots, the render fail()s and asks the operator to raise
-        spoaHub.haproxy.mirror.minMessageSlots. Mirroring is host-scoped: a host-less
-        Ingress is rejected, and when several Ingresses share a host each
-        mirrors all of that host's traffic to its own target.
+        Each mirror-target Ingress appends one `scheme|host:port|timeout_ms|retries`
+        entry to the per-request txn.gw_mirror_targets list, gated by its host.
+        Several Ingresses sharing a host each append their entry and the single
+        mirror NOTIFY fans out to all of them — no per-Ingress SPOE slot, so adding
+        a mirror-target changes only the frontend, never spoe.conf or the hub TOML.
+        The single mirror-group is fired once by frontend-filters-950-spoa-hub-mirror-fire.
+        Mirroring is host-scoped: a host-less Ingress is rejected.
 
-        Generated HAProxy Config (per mirror-target Ingress, with index <i>):
-          http-request set-var(txn.gw_mirror_target_<i>) str(<host:port>) if <host-match>
-          http-request set-var(txn.gw_mirror_scheme_<i>) str(http|https) if <host-match>
-          http-request set-var(txn.gw_mirror_timeout_ms_<i>) int(<ms>) if <host-match>
-          http-request set-var(txn.gw_mirror_retries_<i>) int(<n>) if <host-match>
-          http-request send-spoe-group spoa-hub mirror-<i>-group if <host-match>
+        Generated HAProxy Config (per mirror-target Ingress):
+          http-request set-var(txn.gw_mirror_targets) str(<scheme>|<host:port>|<ms>|<n>;),concat(,txn.gw_mirror_targets,) if <host-match>
       -#}
-      {%- var maxSlots = 4 %}
-      {%- var maxSlotsAny = extraContext | dig("spoaHub", "haproxy", "mirror", "minMessageSlots") %}
-      {%- if maxSlotsAny != nil %}{%- maxSlots = toint(maxSlotsAny) %}{%- end %}
-      {%- var idx = 0 %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var mt = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/mirror-target"] %}
         {%- if mt != "" %}
@@ -409,10 +400,6 @@ templateSnippets:
           {%- end %}
           {%- if len(hosts) == 0 %}
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' sets 'nginx.ingress.kubernetes.io/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule.") -}}{%- continue %}
-          {%- end %}
-          {%- idx = idx + 1 %}
-          {%- if idx > maxSlots %}
-            {{- fail("Ingress '" + key + "' is mirror-target Ingress #" + tostring(idx) + ", exceeding the " + tostring(maxSlots) + " available mirror slots. Raise spoaHub.haproxy.mirror.minMessageSlots to >= " + tostring(idx) + " or reduce the number of mirror-target Ingresses.") -}}
           {%- end %}
           {#- Parse scheme + authority. The value is scheme://host[:port] followed
               by an nginx path/variable (e.g. $request_uri) appended with no '/'
@@ -446,11 +433,8 @@ templateSnippets:
           {%- var cond = HostMatchCondition(hosts) %}
           {%- var timeoutMs = toint(extraContext | dig("timeout_server") | fallback("50000")) %}
           {%- var retriesCount = toint(extraContext | dig("retries") | fallback("3")) %}
+          {%- var entry = scheme + "|" + safeAuthority + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
       # nginx-ingress/mirror-target ({{ key }})
-      http-request set-var(txn.gw_mirror_target_{{ idx }}) str({{ safeAuthority }}) if {{ cond }}
-      http-request set-var(txn.gw_mirror_scheme_{{ idx }}) str({{ scheme }}) if {{ cond }}
-      http-request set-var(txn.gw_mirror_timeout_ms_{{ idx }}) int({{ timeoutMs }}) if {{ cond }}
-      http-request set-var(txn.gw_mirror_retries_{{ idx }}) int({{ retriesCount }}) if {{ cond }}
-      http-request send-spoe-group spoa-hub mirror-{{ idx }}-group if {{ cond }}
+      http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}
         {%- end %}
       {%- end %}

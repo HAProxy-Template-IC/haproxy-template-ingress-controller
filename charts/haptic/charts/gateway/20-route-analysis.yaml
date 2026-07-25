@@ -1386,24 +1386,6 @@ templateSnippets:
         {%- var hasRedirect = false %}
         {%- var hasUrlrewrite = false %}
         {%- var hasMirror = false %}
-        {#- The count of (message, group) pairs the SPOA-hub library
-            needs to allocate for the mirror plugin: equal to the
-            number of RequestMirror filters on whichever route has the
-            most. NOT a cap — the chart allocates exactly as many
-            slots as the workload demands. HAProxy SPOE processes each
-            group at most once per stream, so a route with N mirror
-            filters needs N distinct (message, group) pairs to fire
-            all N NOTIFY frames in one stream; the cluster-wide max
-            determines how many message names get declared in the
-            rendered spoe.conf + the hub plugin's TOML messages list.
-            Consumed by spoa-hub.yaml's spoa-hub-config-content (hub
-            TOML) and spoe-conf-content (HAProxy SPOE config), via
-            globalFeatures["mirrorMaxFanout"]. The key name is
-            resource-neutral so the spoa-hub library can read it without
-            embedding Gateway-API "Route" terminology in its consumer
-            code — a hypothetical CRD-based routing layer that uses
-            mirror filters would produce the same key. -#}
-        {%- var mirrorFanout = 0 %}
         {%%
           // Type-switch on routeInfo["route"] to read filters via the
           // typed rule struct. Filter type strings
@@ -1412,7 +1394,6 @@ templateSnippets:
           for _, route := range finalAllRoutes {
             var rm = route.(map[string]any)
             var ruleIdx = toint(rm["ruleIdx"])
-            var perRouteMirrors = 0
             switch r := rm["route"].(type) {
             case *resources.httproutes.T:
               if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
@@ -1428,7 +1409,6 @@ templateSnippets:
                     hasUrlrewrite = true
                   case "RequestMirror":
                     hasMirror = true
-                    perRouteMirrors = perRouteMirrors + 1
                   }
                 }
               }
@@ -1442,16 +1422,12 @@ templateSnippets:
                     hasResponseHeader = true
                   case "RequestMirror":
                     hasMirror = true
-                    perRouteMirrors = perRouteMirrors + 1
                   }
                   // GRPCRouteFilter has no RequestRedirect or
                   // URLRewrite cases per the spec — schema-enforced
                   // by typegen.
                 }
               }
-            }
-            if perRouteMirrors > mirrorFanout {
-              mirrorFanout = perRouteMirrors
             }
           }
         %%}
@@ -1466,22 +1442,4 @@ templateSnippets:
         {%- result["hasRedirect_filter"] = hasRedirect %}
         {%- result["hasUrlrewrite_filter"] = hasUrlrewrite %}
         {%- result["hasMirror_filter"] = hasMirror %}
-        {%- result["mirrorMaxFanout"] = mirrorFanout %}
-        {#- Cross-library: spoa-hub.yaml's spoe-conf-content +
-            spoa-hub-config-content snippets read this off
-            globalFeatures to size the mirror message list. Defensive
-            init via ComputeIfAbsent — util-gateway-analysis runs in
-            multiple render contexts (haproxyConfig template, map-
-            file templates, status patches), and not all of them
-            pre-init globalFeatures via ssl.yaml's features snippet
-            or base.yaml's k8sResources. Without this init the type
-            assertion below panics on a nil shared.Get result,
-            erroring the whole render → controller logs an error and
-            never publishes HTTPRoute status updates → conformance
-            tests time out waiting for "parents matching expectations". -#}
-        {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any {
-            return map[string]any{}
-        }) %}
-        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-        {%- gf["mirrorMaxFanout"] = mirrorFanout %}
       {%- end macro %}

@@ -104,83 +104,12 @@ templateSnippets:
         {%- var pMaxQueue = p | dig("maxQueue") -%}
         {%- var pQueueTimeoutMs = p | dig("queueTimeoutMs") -%}
         {%- var pAdaptiveConcurrency = p | dig("adaptiveConcurrency") -%}
-        {#- Mirror plugin's messages list. Floored at a static minimum
-            (mirrorMinMessageSlots, default 4) and extended dynamically
-            beyond that based on the cluster-wide max number of mirror
-            filters on any single rule (mirrorFanout, computed by the
-            gateway library's 20-route-analysis pass into
-            globalFeatures["mirrorMaxFanout"]). The key name stays
-            resource-neutral here — a future CRD-based routing layer
-            that produces mirror filters would write into the same key.
-
-            Why the static floor: two consumers depend on slots
-            [1, mirrorMinMessageSlots] existing unconditionally.
-
-            1. Capacity contract for libraries that don't feed the
-               dynamic fanout. nginx-ingress's mirror-target
-               annotation (frontend-filters-555-nginx-ingress-mirror)
-               allocates one slot per mirror-target Ingress up to
-               this floor and fail()s beyond it, telling the operator
-               to raise mirrorMinMessageSlots. Its send-spoe-group
-               references need the floor-declared groups in
-               spoe.conf, or `haproxy -c` fails on an unknown group.
-
-            2. Shrink-window mirror continuity (issue #47, spoa-hub
-               "race B"). The hub rebuilds plugin handler state from
-               scratch on every TOML reload, and the hub's TOML
-               reloads on file-watch while HAProxy switches configs
-               at the sync's explicit reload — so when the mirror
-               fanout shrinks, the old HAProxy generation keeps
-               firing `send-spoe-group mirror-N-group` for a window
-               after the hub already dropped mirror-N from its
-               message list. Since spoa-hub v0.7.3 this is loud, not
-               silent: reloads quiesce (in-flight NOTIFYs dispatched
-               before the registry swap complete against the
-               pre-swap plugin generation), and post-swap NOTIFYs
-               for unregistered messages log WARN + increment
-               spoa_messages_unhandled_total{message}. But they are
-               still not SERVED — SPOP has no message-level error
-               frame — so a fanout shrink mid-flight loses those
-               mirrors with a warning (mirrors are best-effort by
-               design). The floor keeps handlers for slots
-               [1, floor] permanently registered, so the common
-               small-fanout case never enters that window at all.
-
-            History: the chart's original mirror-1..mirror-4 static
-            default was removed in controller commit 77c760c2
-            (`skip_reload=true` on aux-file UPDATEs closed the
-            HAProxy reload-ordering race, race A) on the rationale
-            that the floor only masked race A; it was re-added when
-            race B surfaced as ~50% mirror-rate conformance
-            flakiness (hub reloads silently dropping in-flight
-            NOTIFYs). Race B's silent drop is fixed upstream in
-            spoa-hub v0.7.3 (`swap → quiesce → drain → shutdown`),
-            which demoted the floor from "the only thing holding
-            race B closed" to the two roles above.
-
-            Routes with > 4 mirrors per rule still extend dynamically
-            below — a 12-mirror route allocates 12 slots — and slots
-            above the floor shrink dynamically; mirrors fired into
-            the shrink window on those slots are lost loudly. Bump
-            mirrorMinMessageSlots if a workload regularly exceeds 4
-            mirrors per rule (or 4 mirror-target Ingresses) and
-            spoa_messages_unhandled_total moves. -#}
-        {%- if pName == "mirror" -%}
-          {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
-          {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
-          {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() -%}
-          {%- var mirrorMinMessageSlots = 4 -%}
-          {%- var mirrorMinMessageSlotsAny = extraContext | dig("spoaHub", "haproxy", "mirror", "minMessageSlots") -%}
-          {%- if mirrorMinMessageSlotsAny != nil -%}{%- mirrorMinMessageSlots = toint(mirrorMinMessageSlotsAny) -%}{%- end -%}
-          {%- var effectiveSlots = mirrorFanout -%}
-          {%- if mirrorMinMessageSlots > effectiveSlots -%}
-            {%- effectiveSlots = mirrorMinMessageSlots -%}
-          {%- end -%}
-          {%- pMessages = []any{} -%}
-          {%- for i := 1; i <= effectiveSlots; i++ -%}
-            {%- pMessages = append(pMessages, "mirror-" + tostring(i)) -%}
-          {%- end -%}
-        {%- end -%}
+        {#- Every plugin's messages list is static, straight from values.
+            The mirror plugin uses a single `mirror` message that fans out
+            to every target for the request (its arg_targets carries a
+            per-request list), so adding a mirror target never grows this
+            list and the hub's TOML stays byte-identical — no hub reload
+            when mirror targets change. -#}
         {%- var pDependsOn = p | dig("dependsOn") | fallback([]any{}) | toSlice() -%}
         {%- var pParams = p | dig_string("", "params") -%}
 
@@ -315,64 +244,15 @@ templateSnippets:
 
   spoe-conf-content:
     template: |
-      {#- Trigger gateway route analysis if the gateway library is
-          loaded — it populates globalFeatures["mirrorMaxFanout"]
-          which the mirror message expansion below reads. The key name
-          is resource-neutral: a hypothetical CRD-based routing layer
-          that produces mirror filters would write into the same key,
-          and spoa-hub.yaml reads it without embedding routing-resource
-          terminology. render_glob on an exact name renders the
-          matching snippet when it exists (gateway loaded) and returns
-          empty otherwise (gateway disabled, spoa-hub-only deployment).
-          The Scriggo-side compute is memoised via
-          shared.ComputeIfAbsent inside util-gateway-analysis so
-          repeated invocations across the same render are free. -#}
-      {{- render_glob "util-gateway-analysis" -}}
+      {#- The SPOE message set is static — one message per enabled plugin,
+          from the values-declared union (extraContext.spoaHub.haproxy.messages).
+          The mirror plugin uses a single `mirror` message that fans out to
+          every target for the request (arg_targets carries a per-request
+          list), so adding or removing a mirror target never changes this
+          file — see spoe-message-mirror-body and the frontend mirror
+          snippets that append to txn.gw_mirror_targets. -#}
       {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
-      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) %}
-      {#- Dynamic mirror messages: each rule with N mirror filters
-          needs N distinct (message, group) pairs because HAProxy SPOE
-          processes each group at most once per stream. The producing
-          library (currently gateway/20-route-analysis) writes the
-          cluster-wide max mirror-fanout (`mirrorFanout`) into
-          globalFeatures, and we expand it into `mirror-1`
-          ..`mirror-<effectiveSlots>` here, replacing the "mirror"
-          placeholder from values.yaml.
-
-          Floored at `mirrorMinMessageSlots` (default 4) — see the
-          parallel logic in `spoa-hub-config-content` above for the
-          full rationale: the floor is the slot-capacity contract for
-          consumers that don't feed the dynamic fanout (nginx-ingress
-          mirror-target), and it keeps hub-side handlers for slots
-          [1, floor] registered across transient fanout shrinks
-          (issue #47; since spoa-hub v0.7.3 an unregistered message
-          is a loud WARN + spoa_messages_unhandled_total instead of
-          a silent drop — but still not served). Keeping the
-          haproxy-side SPOE group declarations in sync with the
-          plugin-side floor means haproxy can safely fire
-          `send-spoe-group mirror-N-group` for N in
-          [1, mirrorMinMessageSlots] without depending on the
-          per-render route observation race. -#}
-      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() %}
-      {%- var mirrorMinMessageSlots = 4 %}
-      {%- var mirrorMinMessageSlotsAny = extraContext | dig("spoaHub", "haproxy", "mirror", "minMessageSlots") %}
-      {%- if mirrorMinMessageSlotsAny != nil %}{%- mirrorMinMessageSlots = toint(mirrorMinMessageSlotsAny) %}{%- end %}
-      {%- var effectiveSlots = mirrorFanout %}
-      {%- if mirrorMinMessageSlots > effectiveSlots %}
-        {%- effectiveSlots = mirrorMinMessageSlots %}
-      {%- end %}
-      {%- var expanded = []any{} %}
-      {%- for _, m := range messages %}
-        {%- if m != "mirror" %}
-          {%- expanded = append(expanded, m) %}
-        {%- end %}
-      {%- end %}
-      {%- for i := 1; i <= effectiveSlots; i++ %}
-        {%- expanded = append(expanded, "mirror-" + tostring(i)) %}
-      {%- end %}
-      {%- messages = toStringSlice(expanded) %}
       [spoa-hub]
 
       spoe-agent spoa-hub-agent
@@ -409,8 +289,8 @@ templateSnippets:
       {{ render "spoe-message-check-ratelimit-body" }}
       {%- else if msg == "validate-request" -%}
       {{ render "spoe-message-validate-request-body" }}
-      {%- else if hasPrefix(msg, "mirror-") -%}
-      {{ render "spoe-message-mirror-body" inherit_context }}
+      {%- else if msg == "mirror" -%}
+      {{ render "spoe-message-mirror-body" }}
       {%- else -%}
       spoe-message {{ msg }}
           args ip=src
@@ -593,68 +473,45 @@ templateSnippets:
       spoe-message validate-request
           args schema_id=var(txn.req_schema_id) body=req.body content_type=req.hdr(Content-Type) max_body_bytes=var(txn.req_schema_max_body) fail_open=var(txn.req_schema_fail_open)
 
-  # Canonical spoe-message mirror body. Rendered by name from
+  # Canonical spoe-message mirror body — a SINGLE static message that fans
+  # out to every mirror target for the request. Rendered by name from
   # spoe-conf-content's per-message dispatch when "mirror" is in the
-  # messages union (i.e. spoaHub.plugins.mirror is enabled). Args follow
-  # the haproxy-spoa-hub-plugin-mirror plugin's contract
-  # (haproxy-spoa-hub-plugin-mirror/src/request.rs):
+  # messages union (i.e. spoaHub.plugins.mirror is enabled). This block
+  # never changes when mirror targets are added or removed — the target
+  # set is per-request data (txn.gw_mirror_targets), not config — so the
+  # hub never reloads on a mirror-target change. Args follow the
+  # haproxy-spoa-hub-plugin-mirror plugin's contract (v0.6.0+,
+  # haproxy-spoa-hub-plugin-mirror/src/request.rs):
   #
-  #   - arg_target  : the mirror backend's <host:port>. Sourced from
-  #     `var(txn.gw_mirror_target)` — set per-request by the gateway
-  #     library's frontend-filter snippet when a route's RequestMirror
-  #     filter matches. Different routes set different targets; the
-  #     plugin reads the var-sourced value off each NOTIFY frame and
-  #     dispatches dynamically, so a single spoe-message block covers
-  #     every HTTPRoute mirror filter in the cluster.
-  #   - arg_scheme  : "http" or "https". Same per-request variable
-  #     pattern as arg_target. The chart currently only emits "http"
-  #     (BackendTLSPolicy-style TLS mirroring is a v0.2 plugin feature);
-  #     the variable plumbing is here so flipping in the future is a
-  #     chart-side change, not a plugin contract change.
-  #   - arg_method / arg_path / arg_query / arg_ver — request-line
-  #     fields, pulled directly from HAProxy's request fetches.
-  #   - arg_hdrs    : `req.hdrs_bin` — HAProxy's varint-prefixed wire
-  #     format for the full header block. The plugin's request.rs
-  #     parses this directly; using `req.hdrs` (text form) would
-  #     mismatch.
-  #   - arg_body    : raw request body, capped at the plugin's
+  #   - arg_targets : a `;`-delimited list of per-target entries, each
+  #     `scheme|host:port|timeout_ms|retries`. Sourced from
+  #     `var(txn.gw_mirror_targets)`, which every frontend mirror snippet
+  #     (gateway RequestMirror filters, the `mirror-target` Ingress
+  #     annotation libraries) appends its entry to, guarded by that
+  #     source's match/sample condition:
+  #       set-var(txn.gw_mirror_targets) str(<entry>;),concat(,txn.gw_mirror_targets,) if <cond>
+  #     The plugin splits on `;`, skips empty entries, and dispatches one
+  #     fire-and-forget request per target — so a single spoe-message +
+  #     spoe-group covers every mirror in the cluster, including a rule
+  #     with several RequestMirror filters (all their entries ride one
+  #     NOTIFY). Per-target `timeout_ms`/`retries` come from the primary
+  #     backend's `timeout server` / `retries`; an empty field falls back
+  #     to the plugin default, `timeout_ms=0` is treated as absent (guards
+  #     the 0ms-timeout footgun) and `retries=0` is an explicit no-retries.
+  #   - arg_method / arg_path / arg_query / arg_ver — request-line fields,
+  #     shared by every target and pulled directly from HAProxy's fetches.
+  #   - arg_hdrs : `req.hdrs_bin` — HAProxy's varint-prefixed wire format
+  #     for the full header block. The plugin's request.rs parses this
+  #     directly; using `req.hdrs` (text form) would mismatch.
+  #   - arg_body : raw request body, capped at the plugin's
   #     `max_body_bytes`. Requires `option http-buffer-request` on the
-  #     consuming frontend (the gateway library forces this on any
-  #     frontend with a RequestMirror filter); without it, PUT/POST
-  #     bodies arrive empty here and the mirror sees zero-byte requests.
-  #   - arg_timeout_ms / arg_retries (plugin v0.5.0+) — per-dispatch
-  #     overrides for the HTTP-roundtrip timeout and connection-error
-  #     retry budget. Sourced from `var(txn.gw_mirror_timeout_ms_<i>)`
-  #     and `var(txn.gw_mirror_retries_<i>)`, which the gateway
-  #     library's frontend-filter snippet computes from the primary
-  #     backend's chart-wide `timeout server` / `retries` (so a mirror
-  #     dispatch matches the operator's per-route expectations
-  #     instead of using a uniform plugin default). The plugin
-  #     treats arg_timeout_ms=0 as absent (falls back to plugin
-  #     default — guards against a misconfigured chart emitting a
-  #     literal 0ms-timeout footgun) and arg_retries=0 as an
-  #     explicit "no retries" override. Older plugin versions
-  #     (≤ v0.4.0) ignore unknown args, so emitting these on a stale
-  #     image is safe — it just doesn't take effect.
+  #     consuming frontend (each frontend mirror snippet forces it on when
+  #     it has a mirror source); without it, PUT/POST bodies arrive empty.
   #
-  # The mirror plugin never writes back into HAProxy variables; the
-  # ack is fire-and-forget. No `output_var` configuration needed.
-  # Body for indexed mirror messages (`mirror-1`, `mirror-2`, ...).
-  # Receives `msg` via inherit_context from spoe-conf-content's
-  # per-message dispatch loop. The trailing index is what makes each
-  # message + group unique per stream — HAProxy SPOE only processes
-  # each group once per stream ("only one call to a group is allowed
-  # per stream" per the docs), so HTTPRoutes carrying N mirror filters
-  # need N distinct (message, group) pairs to actually trigger N
-  # NOTIFY frames. The chart's frontend filter snippet (gateway library)
-  # emits per-filter `set-var(txn.gw_mirror_target_<i>) ...`,
-  # `send-spoe-group spoa-hub mirror-<i>-group ...` triples; the message
-  # body below reads from the corresponding indexed txn variable. The
-  # plugin's process() only inspects SPOE args, not the message name —
-  # so all `mirror-<i>` messages route to the same plugin and dispatch
-  # identically (just to different targets via the indexed var).
+  # The mirror plugin never writes back into HAProxy variables; the ack is
+  # fire-and-forget. The single `mirror-group` is fired once per request
+  # by frontend-filters-950-spoa-hub-mirror-fire, after all appends.
   spoe-message-mirror-body:
     template: |-
-      {%- var idx = replace(msg, "mirror-", "") -%}
-      spoe-message {{ msg }}
-          args arg_target=var(txn.gw_mirror_target_{{ idx }}) arg_scheme=var(txn.gw_mirror_scheme_{{ idx }}) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body arg_timeout_ms=var(txn.gw_mirror_timeout_ms_{{ idx }}) arg_retries=var(txn.gw_mirror_retries_{{ idx }})
+      spoe-message mirror
+          args arg_targets=var(txn.gw_mirror_targets) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body
