@@ -162,6 +162,23 @@ func NewEchoServerBackend(ctx context.Context, t *testing.T, client klient.Clien
 	return EchoServerBackend
 }
 
+// NewNamedEchoServerBackend is NewEchoServerBackend for a caller-chosen Service
+// name (port 80), so one test namespace can host more than one echo backend —
+// e.g. a primary route target plus a separate request-mirror target. Deploys
+// the Deployment + Service, waits for a ready endpoint, and returns the
+// BackendRef.
+func NewNamedEchoServerBackend(ctx context.Context, t *testing.T, client klient.Client, namespace, name string) BackendRef {
+	t.Helper()
+	ref := BackendRef{Service: name, Port: 80}
+	if err := applyNamedEchoServerBackend(ctx, client, namespace, ref); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if err := waitForServiceEndpointReady(ctx, client, namespace, ref.Service); err != nil {
+		t.Fatalf("echo-server %q endpoint not ready: %v", name, err)
+	}
+	return ref
+}
+
 // applyEchoServerBackend creates the echo-server Deployment + Service in the
 // given namespace WITHOUT waiting for endpoint readiness and WITHOUT failing
 // the test directly. Split out of NewEchoServerBackend so bulk seeders (the
@@ -169,7 +186,13 @@ func NewEchoServerBackend(ctx context.Context, t *testing.T, client klient.Clien
 // can fan the creates out first and wait for readiness across all namespaces
 // in a single condition instead of paying a sequential per-namespace wait.
 func applyEchoServerBackend(ctx context.Context, client klient.Client, namespace string) error {
-	ref := EchoServerBackend
+	return applyNamedEchoServerBackend(ctx, client, namespace, EchoServerBackend)
+}
+
+// applyNamedEchoServerBackend is applyEchoServerBackend parameterised by the
+// BackendRef, so callers can deploy additional echo backends under distinct
+// Service names in the same namespace.
+func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, namespace string, ref BackendRef) error {
 	labels := map[string]string{"app": ref.Service}
 	replicas := int32(1)
 
