@@ -17,6 +17,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"path"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
@@ -86,24 +87,61 @@ func (sc *StateCache) GetAuxiliaryFiles() (*dataplane.AuxiliaryFiles, time.Time,
 	return sc.lastAuxFiles, sc.lastAuxFilesTime, nil
 }
 
-// currentAuxFilesProvider returns a callback that flattens the last render's
-// general aux files (filename → content) from the StateCache. The renderer
-// exposes the result to templates as `currentFiles`, letting a template read
-// its own prior output — the mechanism behind self-rotating TLS session-ticket
-// keys. Keyed by GeneralFile.Filename, which for a registered "file" is the
-// same base name the template used to register it.
-func currentAuxFilesProvider(sc *StateCache) func() map[string]string {
+// currentAuxFilesProvider returns a callback that resolves the currently-deployed
+// auxiliary files (base filename → content) the renderer exposes to templates as
+// `currentFiles`, letting a template read its own prior output — the mechanism
+// behind self-rotating TLS session-ticket keys. The same variable is available in
+// every render (main config, map files, general files), so a self-referential
+// snippet can be included from any template type. Keyed by base filename, the
+// same name a template uses to register a map/file.
+//
+// Scope: the three CRD-backed aux kinds — map files, general files, and crt-list
+// files. SSL certificates and CA files are excluded on purpose: their deployed
+// content includes private keys and is published as Secrets, so surfacing it in
+// every template's context would expand the private-key exposure surface without
+// a real self-reference use case.
+//
+// It draws from two sources with a deliberate precedence:
+//
+//   - Once a render has recorded aux files this iteration, that in-process output
+//     wins. It is always the latest render's result, so a self-rotating template
+//     never re-rotates against a lagging published snapshot (no key churn).
+//   - Before the first render (controller restart, config reload, or a follower
+//     just promoted to leader) the StateCache is empty; the provider falls back
+//     to the watched snapshot of published aux-file CRDs. This is the aux-file
+//     analogue of currentConfig's read-back from HAProxyCfg — it lets a
+//     self-referential template rotate from its prior keys instead of
+//     bootstrapping fresh (which would reset all TLS ticket keys at once and
+//     break session resumption). GetAuxiliaryFiles reports a zero timestamp until
+//     a render records aux files, so that is the "cold" signal.
+func currentAuxFilesProvider(sc *StateCache, published *publishedAuxFiles) func() map[string]string {
 	return func() map[string]string {
-		af, _, _ := sc.GetAuxiliaryFiles()
-		if af == nil {
+		af, ts, _ := sc.GetAuxiliaryFiles()
+		if ts.IsZero() {
+			if published != nil {
+				return published.get()
+			}
 			return nil
 		}
-		m := make(map[string]string, len(af.GeneralFiles))
-		for _, gf := range af.GeneralFiles {
-			m[gf.Filename] = gf.Content
-		}
-		return m
+		return currentFilesFromAux(af)
 	}
+}
+
+// currentFilesFromAux flattens the render's CRD-backed aux files (map files,
+// general files, crt-list files) into base filename → content, matching the
+// keying and scope of the published-CRD fallback in publishedAuxFiles.
+func currentFilesFromAux(af *dataplane.AuxiliaryFiles) map[string]string {
+	m := make(map[string]string, len(af.MapFiles)+len(af.GeneralFiles)+len(af.CRTListFiles))
+	for _, f := range af.MapFiles {
+		m[path.Base(f.Path)] = f.Content
+	}
+	for _, f := range af.GeneralFiles {
+		m[path.Base(f.Path)] = f.Content
+	}
+	for _, f := range af.CRTListFiles {
+		m[path.Base(f.Path)] = f.Content
+	}
+	return m
 }
 
 // GetResourceCounts implements debug.StateProvider.

@@ -36,6 +36,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/commentator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configloader"
@@ -109,6 +110,12 @@ var (
 		Version:  "v1alpha1",
 		Resource: "haproxycfgs",
 	}
+	// haproxyMapFileGVR, haproxyGeneralFileGVR, and haproxyCRTListFileGVR are the
+	// GVRs for HAPTIC's own published auxiliary-file CRDs, read back to prime
+	// `currentFiles` on a cold iteration.
+	haproxyMapFileGVR     = v1alpha1.SchemeGroupVersion.WithResource("haproxymapfiles")
+	haproxyGeneralFileGVR = v1alpha1.SchemeGroupVersion.WithResource("haproxygeneralfiles")
+	haproxyCRTListFileGVR = v1alpha1.SchemeGroupVersion.WithResource("haproxycrtlistfiles")
 )
 
 // configState tracks initialization state for health checks.
