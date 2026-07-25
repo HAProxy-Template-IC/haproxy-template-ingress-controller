@@ -29,12 +29,18 @@ mkdir -p "$OUT/presets"
 echo "==> schema bundle -> $OUT/schemas.json"
 (cd "$REPO" && go run scripts/gen_playground_schema_bundle.go "$SCHEMA_DIR") > "$OUT/schemas.json"
 
-# render_config <preset-id> <api-versions:yes|no> <templateLibraries.* overrides…>
+# render_config <preset-id> <api-versions:yes|no> <overrides…>
+# Each override is `key=value`, prefixed with `controller.templateLibraries.`
+# unless it carries a `raw:` prefix (then it is passed to --set verbatim, for
+# non-templateLibraries values like spoaHub.*).
 render_config() {
   local id="$1" apiver="$2"; shift 2
   local sets=() av=()
   local kv
-  for kv in "$@"; do sets+=(--set "controller.templateLibraries.$kv"); done
+  for kv in "$@"; do
+    if [[ "$kv" == raw:* ]]; then sets+=(--set "${kv#raw:}")
+    else sets+=(--set "controller.templateLibraries.$kv"); fi
+  done
   [ "$apiver" = yes ] && av=(--api-versions=gateway.networking.k8s.io/v1/GatewayClass)
   echo "==> $id config -> $OUT/presets/$id.config.yaml"
   helm template "$CHART" --namespace default "${av[@]}" "${sets[@]}" \
@@ -47,7 +53,12 @@ render_config ingress         no  gateway.enabled=false haproxyIngress.enabled=f
 render_config haproxytech      no  gateway.enabled=false haproxyIngress.enabled=false nginxIngress.enabled=false
 render_config haproxy-ingress  no  gateway.enabled=false haproxytech.enabled=false    nginxIngress.enabled=false
 render_config nginx-ingress    no  gateway.enabled=false haproxytech.enabled=false    haproxyIngress.enabled=false nginxIngress.enabled=true
-render_config haptic-annotations no gateway.enabled=false haproxytech.enabled=false    haproxyIngress.enabled=false nginxIngress.enabled=false
+# HAPTIC-native's headline features are SPOE-powered (shared rate limiting, SPOE
+# auth, traffic mirroring), so the library imports macros that only exist when
+# the spoa-hub library is loaded. Enable spoa-hub (and the mirror plugin, which
+# otherwise only turns on with the Gateway library) so the preset renders the
+# native library as it is meant to run and its validationTests all pass.
+render_config haptic-annotations no gateway.enabled=false haproxytech.enabled=false    haproxyIngress.enabled=false nginxIngress.enabled=false raw:spoaHub.enabled=true raw:spoaHub.plugins.mirror.enabled=true
 render_config gateway          yes haproxyIngress.enabled=false nginxIngress.enabled=false haproxytech.enabled=false
 render_config all              yes nginxIngress.enabled=true haproxytech.enabled=true haproxyIngress.enabled=true
 
