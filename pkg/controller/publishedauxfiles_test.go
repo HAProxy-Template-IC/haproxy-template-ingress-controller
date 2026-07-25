@@ -72,25 +72,6 @@ func TestAuxFilesFromStore_EntriesField(t *testing.T) {
 	assert.Equal(t, "example.com be_x\n", got["host.map"])
 }
 
-// currentFilesFromAux must expose the three CRD-backed aux kinds (map, general,
-// crt-list) keyed by base filename, and must NOT expose SSL certificate content
-// (private keys stay out of the render context).
-func TestCurrentFilesFromAux_CRDBackedTypesExcludeSSL(t *testing.T) {
-	af := &dataplane.AuxiliaryFiles{
-		MapFiles:        []auxiliaryfiles.MapFile{{Path: "host.map", Content: "m"}},
-		GeneralFiles:    []auxiliaryfiles.GeneralFile{{Filename: "tls-ticket-keys", Path: "general/tls-ticket-keys", Content: "g"}},
-		CRTListFiles:    []auxiliaryfiles.CRTListFile{{Path: "ssl/https.crtlist", Content: "c"}},
-		SSLCertificates: []auxiliaryfiles.SSLCertificate{{Path: "ssl/cert.pem", Content: "-----BEGIN PRIVATE KEY-----"}},
-	}
-
-	got := currentFilesFromAux(af)
-	assert.Equal(t, "m", got["host.map"])
-	assert.Equal(t, "g", got["tls-ticket-keys"])
-	assert.Equal(t, "c", got["https.crtlist"])
-	assert.NotContains(t, got, "cert.pem", "SSL certificate content must not reach currentFiles")
-	assert.Len(t, got, 3)
-}
-
 // The provider returns the merged published snapshot before any render (cold
 // start / follower), then the live render output afterward.
 func TestCurrentAuxFilesProvider_PublishedFallbackThenRenderWins(t *testing.T) {

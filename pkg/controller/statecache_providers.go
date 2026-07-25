@@ -17,7 +17,6 @@ package controller
 import (
 	"errors"
 	"fmt"
-	"path"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
@@ -123,25 +122,8 @@ func currentAuxFilesProvider(sc *StateCache, published *publishedAuxFiles) func(
 			}
 			return nil
 		}
-		return currentFilesFromAux(af)
+		return af.CurrentFiles()
 	}
-}
-
-// currentFilesFromAux flattens the render's CRD-backed aux files (map files,
-// general files, crt-list files) into base filename → content, matching the
-// keying and scope of the published-CRD fallback in publishedAuxFiles.
-func currentFilesFromAux(af *dataplane.AuxiliaryFiles) map[string]string {
-	m := make(map[string]string, len(af.MapFiles)+len(af.GeneralFiles)+len(af.CRTListFiles))
-	for _, f := range af.MapFiles {
-		m[path.Base(f.Path)] = f.Content
-	}
-	for _, f := range af.GeneralFiles {
-		m[path.Base(f.Path)] = f.Content
-	}
-	for _, f := range af.CRTListFiles {
-		m[path.Base(f.Path)] = f.Content
-	}
-	return m
 }
 
 // GetResourceCounts implements debug.StateProvider.
