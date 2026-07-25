@@ -2,6 +2,7 @@ package dataplane
 
 import (
 	"cmp"
+	"path"
 	"slices"
 	"time"
 
@@ -59,6 +60,35 @@ type AuxiliaryFiles struct {
 
 	// CRTListFiles contains crt-list files for SSL certificate lists with per-certificate options
 	CRTListFiles []auxiliaryfiles.CRTListFile
+}
+
+// CurrentFiles projects the auxiliary files into the base-filename → content map
+// exposed to templates as `currentFiles` — the previously-deployed content a
+// template can read its own prior output from (the mechanism behind self-rotating
+// TLS session-ticket keys). It covers the CRD-backed kinds (map files, general
+// files, crt-lists), keyed by base filename to match how a template registers a
+// map/file. SSL certificates and CA files are excluded on purpose: their content
+// includes private keys and is published as Secrets, so they must not enter the
+// render context this way.
+//
+// This is the single definition of the `currentFiles` projection, shared by the
+// controller's in-render provider and the WASM playground's baseline wiring so
+// both behave identically.
+func (af *AuxiliaryFiles) CurrentFiles() map[string]string {
+	if af == nil {
+		return nil
+	}
+	m := make(map[string]string, len(af.MapFiles)+len(af.GeneralFiles)+len(af.CRTListFiles))
+	for _, f := range af.MapFiles {
+		m[path.Base(f.Path)] = f.Content
+	}
+	for _, f := range af.GeneralFiles {
+		m[path.Base(f.Path)] = f.Content
+	}
+	for _, f := range af.CRTListFiles {
+		m[path.Base(f.Path)] = f.Content
+	}
+	return m
 }
 
 // Sort sorts all auxiliary file slices in-place by their path/filename.

@@ -427,6 +427,23 @@ func loadConfig(configYAML, schemasJSON []byte, haproxyVersion string) error {
 		Logger:             logger,
 		Capabilities:       caps,
 		TypedResourceTypes: typed.Types,
+		// Feed the previously-rendered aux files back as `currentFiles`, so a
+		// self-referential template (self-rotating TLS session-ticket keys) reads
+		// its own prior output across successive renders — exactly as the
+		// controller does from its published aux CRDs. A pinned baseline wins over
+		// the last render, so pinning a set of files fixes future renders against
+		// them (the same pinned/prev baseline that drives the reload-impact
+		// verdict). Read at render time so it tracks pin/unpin without a recompile.
+		CurrentAuxFilesProvider: func() map[string]string {
+			b := pinnedBaseline
+			if b == nil {
+				b = prevBaseline
+			}
+			if b == nil {
+				return nil
+			}
+			return b.aux.CurrentFiles()
+		},
 	})
 
 	warm = &warmEngine{cfg: cfg, svc: svc, runner: runner, byKey: byKey, coverage: spec.MigrationCoverage, ver: ver, configYAML: configYAML}
