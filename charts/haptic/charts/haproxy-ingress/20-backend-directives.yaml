@@ -567,6 +567,7 @@ templateSnippets:
       {#- zero (matches haproxytech/nginx-ingress). Local-only: stays per-pod. -#}
       stick-table type ip size 100k expire {{ window }} store http_req_rate({{ window }}) peers localinstance
       http-request track-sc0 src
+      http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ rate }} }{{ guard }}
       http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ rate }} }{{ guard }}
         {%- end %}
       {%- end -%}

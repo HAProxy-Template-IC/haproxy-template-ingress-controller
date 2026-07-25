@@ -438,3 +438,24 @@ templateSnippets:
       http-request set-var(txn.gw_mirror_targets) str({{ entry }};),concat(,txn.gw_mirror_targets,) if {{ cond }}
         {%- end %}
       {%- end %}
+  log-fields-730-nginx-ingress-mtls:
+    template: |-
+      {#-
+        Client-certificate identity and verification result for the JSON access
+        log, gated on this library's mTLS annotations. Extension point:
+        log-fields-* — see base.yaml's "Access log" block.
+
+        Identical to the haptic-annotations and haproxy-ingress contributions;
+        base deduplicates identical items, so several annotation libraries can be
+        enabled at once.
+      -#}
+      {%- var enabled = false %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] != "" || ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}
+          {%- enabled = true %}
+        {%- end %}
+      {%- end %}
+      {%- if enabled %}
+      %(mtls_verify)[ssl_c_verify]
+      %(mtls_cn)[ssl_c_s_dn(CN)]
+      {%- end %}

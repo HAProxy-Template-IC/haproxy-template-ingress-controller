@@ -200,6 +200,45 @@ templateSnippets:
         {{- line -}}
       {%- end %}
 
+  log-fields-200-tls:
+    template: |-
+      {#-
+        TLS handshake facts for the JSON access log.
+
+        Extension point: log-fields-* (band 200, "security"). See base.yaml's
+        "Access log" block for the contribution contract.
+
+        Registered when this install terminates TLS anywhere — a per-INSTALL
+        gate, not per-frontend, and deliberately so: the assembled format string
+        is shared by every HTTP frontend, which is exactly what keeps the JSON
+        schema stable. On the plain-HTTP frontend the ssl_fc_* fetches render "".
+        An HTTP-only install contributes nothing and pays no bytes at all.
+
+        The fetches are connection-scoped, so they are available at log time.
+        Cipher is deliberately omitted: the global ssl-default-bind-ciphers
+        policy makes it near-constant fleet-wide, while the question operators
+        actually ask ("who is still on an old protocol?") is tls_version.
+      -#}
+      {%- var gfRaw = shared.Get("globalFeatures") -%}
+      {%- if gfRaw != nil && tostring(gfRaw.(map[string]any) | dig("needHTTPSFrontend")) == "true" %}
+      %(tls_version)[ssl_fc_protocol]
+      %(tls_sni)[ssl_fc_sni]
+      {%- end %}
+
+  log-fields-205-tls-resumption:
+    template: |-
+      {#-
+        TLS session resumption for the JSON access log.
+
+        Gated on the session-ticket feature: the resumption *rate* is the whole
+        point of enabling tls-ticket-keys, and no metric exposes it. Typed :bool
+        because ssl_fc_is_resumed always resolves (false on a fresh handshake and
+        on plain HTTP), so the JSON value is a real boolean rather than "".
+      -#}
+      {%- if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %}
+      %(tls_resumed:bool)[ssl_fc_is_resumed]
+      {%- end %}
+
   features-050-ssl-initialization:
     template: |
       {#-
@@ -748,8 +787,7 @@ templateSnippets:
 
       frontend ssl-tcp
           guid fe:ssl-tcp
-          mode tcp
-          option tcplog
+          mode tcp{{ render "util-log-format-tcp" }}
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}
 
           # Extract SNI for routing decisions (wait up to 5s for client hello)
@@ -1063,7 +1101,7 @@ templateSnippets:
       frontend https
           guid fe:https
           mode http
-          option forwardfor
+          option forwardfor{{ render "util-log-format-http" }}
       {%- if len(passthroughBackends) > 0 && bindHTTPSDefault %}
           bind unix@/etc/haproxy/ssl-frontend.sock mode 660{{ render "util-ssl-bind-options" }} accept-proxy
       {%- else if bindHTTPSDefault %}
@@ -1783,3 +1821,60 @@ validationTests:
         target: file:tls-ticket-keys
         pattern: 'MjAyNjA3Mj'
         expected: "1"
+
+  test-access-log-tls-fields:
+    description: >-
+      With TLS terminated anywhere, the TLS handshake fields join the shared JSON
+      log-format (they render "" on the plain-HTTP frontend, which is what keeps
+      one schema across frontends), and the session-ticket field appears only
+      when that feature is on.
+    extraContext:
+      tls:
+        sessionTickets:
+          enabled: true
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: access-log-tls }
+          spec:
+            ingressClassName: haptic
+            tls:
+              - hosts: [tls-log.example.com]
+                secretName: shared-tls
+            rules:
+              - host: tls-log.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(tls_version\)\[ssl_fc_protocol\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(tls_sni\)\[ssl_fc_sni\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(tls_resumed:bool\)\[ssl_fc_is_resumed\]'
+        description: >-
+          Typed :bool because ssl_fc_is_resumed always resolves; a typed item
+          whose fetch does not resolve would render "" into a boolean slot.
+
+  test-access-log-tls-resumption-field-gated:
+    description: >-
+      Without the session-ticket feature the resumption field is absent rather
+      than permanently empty — the gating rule every log-fields-* snippet follows.
+    extraContext:
+      tls:
+        sessionTickets:
+          enabled: false
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'tls_resumed'

@@ -138,7 +138,8 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 			"exec", pod, "-c", "haproxy", "--",
 			"sh", "-c", `printf 'show proc\n' | socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock`)
 		// HAProxy's captured request parse errors — THE load-bearing
-		// capture for a `<BADREQ>` 400 (`PR--` in the access log).
+		// capture for a `<BADREQ>` 400 (`"term":"PR--"` in the JSON access
+		// log).
 		// `show errors` retains the last erroring request per proxy with a
 		// full hex+ascii dump of the offending bytes AND the exact byte
 		// offset + character that violated the protocol. Captured HERE
@@ -180,8 +181,8 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	}
 
 	// ── Backend reachability evidence ──────────────────────────────────
-	// The HAProxy log shape "sC--/Tc=-1" says "TCP connect to backend
-	// failed" — but doesn't say WHY. Three competing explanations:
+	// An access-log record with `"term":"sC--"` and `"t_connect":-1` says
+	// "TCP connect to backend failed" — but doesn't say WHY. Three competing explanations:
 	//   (a) HAProxy SRV_1 had a stale/wrong address (haptic bug)
 	//   (b) Backend was correct but unreachable from THIS HAProxy pod
 	//       (pod-network/conntrack path issue specific to one source)

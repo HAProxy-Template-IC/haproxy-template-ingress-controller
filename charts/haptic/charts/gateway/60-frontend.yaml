@@ -105,7 +105,35 @@ templateSnippets:
           the marker — without it SNI=example.org → gw_sni_listener="" blocks the spec-mandated
           421 (e.g. SNI=example.org + Host=second-example.org). -#}
       # 421: SNI matched one listener but the Host belongs to a different one (misdirected request).
+      {#- txn.denied_by attributes the block in the access log. There is a second
+          421 source (the cache-origin frontend refusing an infrastructure
+          backend), so `frontend` alone doesn't disambiguate. Condition copied
+          byte-for-byte from the return below. -#}
+      http-request set-var(txn.denied_by) str(gw_sni_host_mismatch) if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
       http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
+  log-fields-500-gateway:
+    requires: [gateways]
+    template: |-
+      {#-
+        Gateway route identity for the JSON access log.
+
+        Extension point: log-fields-* (band 500, "core functionality" — the band
+        every other gateway contribution uses). See base.yaml's "Access log"
+        block for the contribution contract.
+
+        txn.gw_rule_id is set by frontend-matchers-advanced-500-gateway for every
+        winning route rule (shape <ns>_<name>_<ruleIdx>). base's `resource` field
+        already carries <ns>/<name>; this adds WHICH rule of a multi-rule route
+        matched, which is the question a Gateway operator asks when traffic lands
+        on an unexpected backend.
+
+        Registered only when at least one Gateway exists, so an Ingress-only
+        install never carries a permanently-empty key.
+      -#}
+      {%- if len(resources.gateways.List()) > 0 %}
+      %(gw_route)[var(txn.gw_rule_id)]
+      {%- end %}
+
   # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
   # Named with 010- prefix so alphabetical sort matches intended execution order
   frontend-matchers-advanced-010-route-id-setup:

@@ -68,6 +68,8 @@ The SSL library implements these extension points from base.yaml:
 | `frontends-*` | `frontends-500-https` | HTTPS frontend with TLS termination |
 | `frontends-*` | `frontends-500-ssl-tcp` | TCP frontend for SSL passthrough (conditional on registered passthrough backends) |
 | `backends-*` | `backends-500-ssl-loopback` | Loopback backend that forwards TLS-termination traffic (still encrypted) from the TCP frontend to the HTTPS frontend, which decrypts it |
+| `log-fields-*` | `log-fields-200-tls` | `tls_version` and `tls_sni` access-log fields, when this install terminates TLS anywhere |
+| `log-fields-*` | `log-fields-205-tls-resumption` | `tls_resumed` access-log field, when `extraContext.tls.sessionTickets.enabled` is set — the resumption rate is the reason that feature exists and no metric exposes it |
 
 Snippet names reflect their real numeric-prefix values in `libraries/ssl.yaml`; lower-numbered `features-050-*` snippets run before higher-numbered `features-150-*` ones, which is how SSL initializes shared state before resource libraries populate it and before the CRT-list is emitted.
 

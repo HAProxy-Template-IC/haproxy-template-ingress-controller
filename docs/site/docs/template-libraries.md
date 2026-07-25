@@ -129,6 +129,7 @@ These are the extension points custom snippets most commonly target. The authori
 | Frontend Extra | `frontend-extra-*` | After frontend bind, before routing | Early frontend directives (options, captures, ACLs) |
 | Frontend Matchers | `frontend-matchers-advanced-*` | Frontend routing | Method, header, query matching |
 | Frontend Filters | `frontend-filters-*` | HTTP frontend | Request/response processing |
+| Access Log Fields | `log-fields-*` | Per-frontend `log-format` | Named JSON fields for the structured access log |
 | Custom Frontends | `frontends-*` | After HTTP frontend | HTTPS, TCP frontends |
 | Custom Backends | `backends-*` | Before default backend | Backend definitions |
 | Backend Directives | `backend-directives-*` | Within Ingress backends | Per-backend configuration (defined by the ingress library, not base) |

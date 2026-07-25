@@ -4,33 +4,12 @@
 # upstream in a configurable header (default X-Request-ID), so a request can be
 # correlated across HAProxy logs and the backend. Host-scoped per Ingress.
 #
-# unique-id-format is a defaults-section directive (emitted once, gated on any
-# Ingress opting in); the per-Ingress set-header lives in frontend-filters-*.
+# This library only forwards the id upstream. `unique-id-format` itself belongs
+# to base.yaml (defaults-settings-150-access-log-request-id), which emits it
+# unconditionally so the access log's req_id field is always populated — two
+# unique-id-format lines in one `defaults` section would be a duplicate
+# directive, so this library must not emit its own.
 templateSnippets:
-
-  # ==========================================================================
-  # unique-id-format — emitted once in `defaults` if any Ingress opts in.
-  # Referencing %[unique-id] anywhere generates the id lazily per transaction;
-  # without a format set it would resolve empty, so this must be present.
-  # ==========================================================================
-  defaults-settings-810-haptic-request-id:
-    template: |
-      {#-
-        HAPTIC request-id — unique-id-format registration.
-
-        Emitted once (not per-Ingress) when at least one Ingress sets
-        haproxy-haptic.org/request-id: "true". The format is fixed and
-        header-safe (colon/underscore separated, no spaces); operators who need
-        a custom format use haproxy-haptic.org/config-defaults raw injection.
-      -#}
-      {%- var enabled = false %}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- if ingress.Metadata.Annotations["haproxy-haptic.org/request-id"] == "true" %}{%- enabled = true %}{%- end %}
-      {%- end %}
-      {%- if enabled %}
-      # haptic/request-id
-      unique-id-format %ci:%cp_%fi:%fp_%Ts_%rt:%pid
-      {%- end %}
 
   # ==========================================================================
   # Per-Ingress set-header (host-scoped). frontend-filters-* inherit no locals.
@@ -48,11 +27,25 @@ templateSnippets:
               (default: always generate a fresh id, ignoring client input — a
               client-set id can't be trusted for internal correlation).
 
+              A preserved value is only honoured when it is a well-formed
+              identifier (^[A-Za-z0-9._:-]{1,128}$); anything else is replaced
+              with a generated id. Without that bound a client chooses what lands
+              in the backend's own logs, including an arbitrarily long value or
+              one crafted to collide with another request's id. Envoy takes the
+              same position (a non-UUID x-request-id disables its id-derived
+              features).
+
         Generated HAProxy Config (host-scoped):
           accept-inbound=false (default):
             http-request set-header <H> %[unique-id] if <host-match>
           accept-inbound=true:
-            http-request set-header <H> %[unique-id] if <host-match> !{ req.hdr(<H>) -m found }
+            http-request set-header <H> %[unique-id] if <host-match> !{ req.hdr(<H>) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
+
+        Note: the access log's `req_id` field is always HAProxy's own id
+        (unique-id, an RFC 9562 UUIDv7 from base.yaml's
+        defaults-settings-150-access-log-request-id). With accept-inbound the
+        upstream therefore sees the client's id while the log line carries
+        HAPTIC's — join them on the backend side if you enable it.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
@@ -72,7 +65,7 @@ templateSnippets:
             {%- if len(hosts) > 0 %}
       # haptic/request-id ({{ key }})
               {%- if acceptInbound %}
-      http-request set-header {{ h }} %[unique-id] if {{ HostMatchCondition(hosts) }} !{ req.hdr({{ h }}) -m found }
+      http-request set-header {{ h }} %[unique-id] if {{ HostMatchCondition(hosts) }} !{ req.hdr({{ h }}) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
               {%- else %}
       http-request set-header {{ h }} %[unique-id] if {{ HostMatchCondition(hosts) }}
               {%- end %}

@@ -361,8 +361,7 @@ templateSnippets:
 
       frontend gateway-tcp-port-{{ port }}
           guid fe:gateway-tcp-port-{{ port }}
-          mode tcp
-          option tcplog
+          mode tcp{{ render "util-log-format-tcp" }}
           bind *:{{ port }}
           default_backend {{ beName }}
           {%- end %}
@@ -498,7 +497,7 @@ validationTests:
         pattern: '(?m)^\s+bind \*:9100$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^frontend gateway-tcp-port-9100$.*?^\s+mode tcp$.*?^\s+option tcplog$'
+        pattern: '(?ms)^frontend gateway-tcp-port-9100$.*?^\s+mode tcp$.*?^\s+log-format "%\{\+json\}o '
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+default_backend gtw_tcp_default_tcp-app_0$'

@@ -1258,6 +1258,13 @@ TLSRoute- and TCPRoute-specific limitations are listed in their sections above. 
 
 ---
 
+## Access-log fields
+
+The library contributes `gw_route` to the [structured access log](../haproxy-deployment.md#access-logging)
+when at least one Gateway exists. It carries `<namespace>_<name>_<ruleIndex>` of
+the HTTPRoute rule that won, which answers "which rule of this route matched?" —
+the core `resource` field already names the route itself.
+
 ## See also
 
 - [Gateway API Documentation](https://gateway-api.sigs.k8s.io/)

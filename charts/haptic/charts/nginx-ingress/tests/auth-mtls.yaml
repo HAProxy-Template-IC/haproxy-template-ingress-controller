@@ -693,3 +693,66 @@ validationTests:
       - type: contains
         target: map:auth-url.map
         pattern: '(?m)^default/beta https://auth\.example/beta$'
+
+  test-nginx-ingress-access-log-mtls-fields-deduplicated:
+    _helm_skip_test: '{{ if or (include "haptic.nginxIngress.disabled" .) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ else }}false{{ end }}'
+    description: >-
+      Three annotation libraries contribute the same mTLS access-log fields for
+      their own vocabularies. Identical items must be deduplicated into one JSON
+      key rather than emitted per library — a duplicate key is resolved
+      differently by every parser and silently corrupts a log pipeline. The two
+      Ingresses use different families deliberately: the same feature configured
+      twice on ONE Ingress is a cross-family collision and is rejected.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-native
+            annotations:
+              haproxy-haptic.org/auth-tls-cert-header: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mtls-native.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-nginx
+            annotations:
+              nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mtls-nginx.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(mtls_verify\)\[ssl_c_verify\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(mtls_cn\)\[ssl_c_s_dn\(CN\)\]'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'log-format "[^"]*%\(mtls_verify\)[^"]*%\(mtls_verify\)'
+        description: >-
+          The dedup contract, stated per record rather than as a total count: one
+          log-format line must never carry the same field twice. A count would
+          depend on how many frontends the deployment renders, and this test also
+          runs in the operator's load gate.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'log-format "[^"]*%\(mtls_cn\)[^"]*%\(mtls_cn\)'

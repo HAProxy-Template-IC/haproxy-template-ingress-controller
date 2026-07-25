@@ -712,6 +712,7 @@ templateSnippets:
           {%- var hiAuthSecret, _ = hiAuthSecretAny.(*resources.secrets.T) %}
           {%- if hiAuthSecret != nil %}
       # haproxy-ingress/backend-directives-auth ({{ key }})
+      http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
           {%- end %}
         {%- end %}

@@ -297,3 +297,26 @@ templateSnippets:
             {%- end %}
           {%- end %}
       {%- end -%}
+  log-fields-630-haproxy-ingress-mtls:
+    template: |-
+      {#-
+        Client-certificate identity and verification result for the JSON access
+        log, gated on this library's mTLS annotations. Extension point:
+        log-fields-* — see base.yaml's "Access log" block.
+
+        ssl_c_verify is 0 on success and an X509 error code otherwise, so it says
+        *why* a certificate was refused; mtls_cn is the identity presented. The
+        full DN, issuer, serial and DER certificate are deliberately not logged.
+        Identical to the haptic-annotations and nginx-ingress contributions; base
+        deduplicates.
+      -#}
+      {%- var enabled = false %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-secret"] != "" || ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] == "true" %}
+          {%- enabled = true %}
+        {%- end %}
+      {%- end %}
+      {%- if enabled %}
+      %(mtls_verify)[ssl_c_verify]
+      %(mtls_cn)[ssl_c_s_dn(CN)]
+      {%- end %}

@@ -607,6 +607,7 @@ templateSnippets:
       {#- per-pod, matching haproxytech/kubernetes-ingress. -#}
       stick-table type ip size {{ size }} expire {{ period }} store http_req_rate({{ period }}) peers localinstance
       http-request track-sc0 src
+      http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ rateReq }} }{{ guard }}
       http-request deny deny_status {{ status }} if { sc_http_req_rate(0) gt {{ rateReq }} }{{ guard }}
         {%- end %}
       {%- end -%}
@@ -767,6 +768,7 @@ templateSnippets:
             {%- var htAuthSecret, _ = htAuthSecretAny.(*resources.secrets.T) %}
             {%- if htAuthSecret != nil %}
       # haproxytech/backend-directives-haproxytech-ingress-auth
+      http-request set-var(txn.denied_by) str(basic_auth) unless { http_auth({{ userlistName }}) }
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
             {%- end %}
           {%- end -%}
@@ -910,6 +912,28 @@ templateSnippets:
 # ============================================================================
 # Validation Tests
 # ============================================================================
+
+  log-fields-530-haproxytech-captured-headers:
+    template: |-
+      {#-
+        Captured request headers (haproxy.org/request-capture) for the JSON
+        access log. Extension point: log-fields-* — see base.yaml's "Access log"
+        block for the contribution contract.
+
+        %hr is the positional capture list, and it is the only consumer of the
+        capture annotation: without it the annotation configures captures that
+        nothing reads. haptic-annotations contributes the identical item for the
+        native vocabulary; base deduplicates.
+      -#}
+      {%- var enabled = false %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- if ingress.Metadata.Annotations["haproxy.org/request-capture"] != "" %}
+          {%- enabled = true %}
+        {%- end %}
+      {%- end %}
+      {%- if enabled %}
+      %(captured_headers)hr
+      {%- end %}
 
 validationTests:
   test-haproxytech-set-host:

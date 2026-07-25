@@ -101,6 +101,221 @@ templateSnippets:
       {% end %}
 
   # ============================================================================
+  # Access log (structured JSON)
+  #
+  # Every frontend emits one JSON object per request/connection, built from
+  # HAProxy's native `%{+json}o` log encoding. Libraries contribute fields
+  # through the `log-fields-*` extension point; base owns the core field set,
+  # the assembly, and the per-frontend emission.
+  #
+  # Two hard HAProxy constraints shape this (both verified against 3.0 and 3.4):
+  #
+  #  1. A log-format may only reference items available AT LOG TIME. `path`,
+  #     `pathq`, `req.hdr()`, `res.hdr()` and `req.ssl_sni` are rejected at
+  #     config-parse time ("needs HTTP request headers / request buffer which is
+  #     not available here"), so anything request- or response-scoped must be
+  #     materialised into a txn variable first — that is what the txn.* routing
+  #     variables (util-routing-prefix/suffix) already do.
+  #  2. A `defaults`-section log-format cannot reference HTTP-scoped fetches at
+  #     all, so the format is emitted per frontend. `option httplog` stays in
+  #     `defaults` as the no-warning fallback for a frontend without one; a
+  #     frontend-level log-format alongside an inherited `option httplog` does
+  #     NOT warn (the two in the SAME section do).
+  # ============================================================================
+
+  util-log-format-http:
+    template: |-
+      {#-
+        util-log-format-http — the access-log directives for an HTTP-mode frontend.
+
+        Emits, in order:
+          1. the W3C Trace Context capture (see below),
+          2. one `http-request set-var(txn.log_<name>)` line per
+             extraContext.accessLog.fields entry,
+          3. one `log-format "%{+json}o <items>"` line.
+
+        Items come from `render_glob "log-fields-*"`. HAProxy's JSON encoder
+        emits ONLY named items and silently DROPS literal text between them, so a
+        malformed contribution would vanish from every log line with no error at
+        all. Every token is therefore validated here and a bad one fail()s the
+        render.
+
+        CALL CONVENTION: append `{{ render "util-log-format-http" }}` to the END of
+        an existing directive line in the frontend — never on a line of its own —
+        and place it BEFORE any `http-request return` / `deny` rule, or the
+        set-var lines never run for short-circuited requests.
+      -#}
+      {%- var fieldsRaw = extraContext | dig("accessLog", "fields") -%}
+      {%- var fields = map[string]any{} -%}
+      {%- if fieldsRaw != nil -%}
+        {%- var f, ok = fieldsRaw.(map[string]any) -%}
+        {%- if !ok -%}
+          {{- fail("controller.config.templatingSettings.extraContext.accessLog.fields must be a map of <JSON field name> to <HAProxy sample expression>.") -}}
+        {%- end -%}
+        {%- fields = f -%}
+      {%- end -%}
+      {%- var lines = []string{} -%}
+      {%- var items = []string{} -%}
+      {%- var seen = map[string]string{} -%}
+      {#- W3C Trace Context (https://www.w3.org/TR/trace-context/) is what
+          OpenTelemetry propagates, so an inbound trace-id is the join key
+          between this log line and a distributed trace. The ACL pins the full
+          traceparent grammar so a junk or oversized header contributes nothing
+          instead of eating the log-line budget. HAPTIC deliberately does not
+          synthesize a traceparent when the client sends none: a root span no
+          exporter ever emits produces broken traces downstream. -#}
+      {%- lines = append(lines, "http-request set-var(txn.trace_id) req.hdr(traceparent),field(2,-) if { req.hdr(traceparent) -m reg ^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$ }") -%}
+      {#- Library-contributed items. Inserting a separator before every item
+          means a snippet that forgot its leading newline cannot fuse its first
+          item onto the previous snippet's last one; collapsing all whitespace
+          afterwards is safe because log-format takes exactly one argument and,
+          under +json, whitespace between named items is inert. -#}
+      {%- var contributed = render_glob "log-fields-*" -%}
+      {%- var flat = strip(regexp("[[:space:]]+").ReplaceAll(replace(contributed, "%(", " %("), " ")) -%}
+      {%- if flat == "" -%}
+        {{- fail("The JSON access log has no fields: render_glob \"log-fields-*\" produced nothing. base.yaml's log-fields-100-core must always contribute; check that it was not overridden with an empty templateSnippets entry.") -}}
+      {%- end -%}
+      {%- var itemRe = regexp("^%\\(([A-Za-z_][A-Za-z0-9_]{0,39})(:(sint|str|bool))?\\)(\\[[^[:space:]]+\\]|[A-Za-z]+)$") -%}
+      {%- for _, tok := range split(flat, " ") -%}
+        {%- var m = itemRe.FindSubmatch(tok) -%}
+        {%- if len(m) == 0 -%}
+          {{- fail("Invalid access-log item '" + tok + "' contributed by a log-fields-* snippet. Every item must be %(<name>)<ALIAS> or %(<name>)[<fetch>], optionally typed as %(<name>:sint)/%(<name>:str)/%(<name>:bool), with no whitespace. HAProxy's JSON encoder silently drops anything that is not a named item, so it is rejected here instead of disappearing from the log.") -}}
+        {%- end -%}
+        {%- var prev, dup = seen[m[1]] -%}
+        {%- if dup -%}
+          {#- Several libraries legitimately contribute the same field (mTLS from
+              three annotation libraries, captured headers from two): an
+              identical item is deduplicated, a conflicting one is a bug. -#}
+          {%- if prev != tok -%}
+            {{- fail("Conflicting access-log field '" + m[1] + "': two log-fields-* snippets contribute it with different values ('" + prev + "' and '" + tok + "'). A duplicate JSON key silently corrupts log pipelines — rename one of the fields.") -}}
+          {%- end -%}
+          {%- continue -%}
+        {%- end -%}
+        {%- seen[m[1]] = tok -%}
+        {%- items = append(items, tok) -%}
+      {%- end -%}
+      {#- Operator fields. Values are captured at request time into txn.log_<name>
+          because a log-format cannot fetch request-scoped data itself, and are
+          always JSON strings: typing an expression that may not resolve renders
+          "" into a numeric slot, which breaks a typed log index. -#}
+      {%- var nameRe = regexp("^[A-Za-z_][A-Za-z0-9_]{0,39}$") -%}
+      {%- for _, name := range keys(fields) -%}
+        {%- if !nameRe.Match(name) -%}
+          {{- fail("Invalid accessLog.fields key '" + name + "'. A JSON field name must match ^[A-Za-z_][A-Za-z0-9_]{0,39}$.") -}}
+        {%- end -%}
+        {%- var _, clash = seen[name] -%}
+        {%- if clash -%}
+          {{- fail("accessLog.fields['" + name + "'] collides with the built-in access-log field of the same name. Duplicate JSON keys silently corrupt log pipelines; pick a different field name.") -}}
+        {%- end -%}
+        {%- var expr = tostring(fields[name]) -%}
+        {%- if expr == "" -%}
+          {{- fail("accessLog.fields['" + name + "'] is empty. It must hold exactly one HAProxy sample expression, e.g. req.hdr(X-Tenant) or str(prod-eu).") -}}
+        {%- end -%}
+        {#- Parentheses and brackets are deliberately NOT blocked: every real
+            sample expression needs them (req.hdr(X), field(2,-), str(prod-eu)),
+            and they cannot escape the JSON item — the item always references
+            txn.log_<name>, never the operator's text. An unbalanced one produces
+            a set-var line HAProxy rejects, which the render's own `haproxy -c`
+            validation fails on, so it is loud rather than silent. -#}
+        {%- if regex_search(expr, "[[:space:][:cntrl:]\"\\\\#]") -%}
+          {{- fail("Invalid accessLog.fields['" + name + "'] value '" + expr + "': an HAProxy sample expression here must not contain whitespace, '#', '\"' or a backslash (config-injection guard). For a constant label use str(<value>) with no spaces.") -}}
+        {%- end -%}
+        {%- seen[name] = "accessLog.fields" -%}
+        {%- lines = append(lines, "http-request set-var(txn.log_" + name + ") " + expr) -%}
+        {%- items = append(items, "%(" + name + ")[var(txn.log_" + name + ")]") -%}
+      {%- end -%}
+      {%- lines = append(lines, "log-format \"%{+json}o " + join(items, " ") + "\"") -%}
+      {{- "\n  " + join(lines, "\n  ") -}}
+
+  util-log-format-tcp:
+    template: |-
+      {#-
+        util-log-format-tcp — the access-log directive for a mode-tcp frontend.
+
+        Emits exactly one `log-format` line. A section may not also carry
+        `option tcplog`: the two together make haproxy -c warn ("'log-format'
+        overrides previous 'option tcplog'"), and scripts/test-helm-defaults.sh
+        treats warnings as fatal.
+
+        There is deliberately no log-fields-* extension point for TCP mode. The
+        HTTP field set cannot be reused (a TCP connection has no status, method
+        or path — the HTTP-only aliases render empty rather than erroring), and
+        no bundled library needs a custom TCP field. Add a `log-fields-tcp-*`
+        glob when a second consumer appears.
+
+        CALL CONVENTION: append `{{ render "util-log-format-tcp" }}` to the end of
+        the line that preceded `option tcplog`, and delete that line.
+      -#}
+      {%- var items = []string{
+            "%(ts)[accept_date(ms),ms_utime(%Y-%m-%dT%H:%M:%S.%3NZ)]",
+            "%(client_ip)ci",
+            "%(frontend)f",
+            "%(backend)b",
+            "%(server)s",
+            "%(bytes:sint)B",
+            "%(t_queue:sint)Tw",
+            "%(t_connect:sint)Tc",
+            "%(t_total:sint)Tt",
+            "%(retries:sint)rc",
+            "%(term)ts",
+          } -%}
+      {{- "\n  log-format \"%{+json}o " + join(items, " ") + "\"" -}}
+
+  log-fields-100-core:
+    template: |-
+      {#-
+        Core JSON access-log fields — resource-agnostic (RULE #1).
+
+        Extension point: log-fields-* (band 100, "basic config"; base sorts first
+        so the core keys are stable and cannot be shadowed by a later library).
+
+        Only items available at log time are used: aliases, and txn variables
+        that util-routing-prefix/suffix already set. `%HPO` is the path without
+        host or query string — the query string is deliberately absent, because
+        it is the most common accidental carrier of tokens and session ids; an
+        operator who wants it opts in with `accessLog.fields: {query: query}`.
+
+        Types are only applied to items that always resolve. A typed item whose
+        fetch does not resolve renders "" — a string in a numeric slot — so every
+        txn-variable field stays an untyped string.
+
+        `resource` is <namespace>/<name> of the routing resource that owns the
+        matched route, whatever kind produced it; it is what makes a log line
+        joinable back to a Kubernetes object. It is empty in frontends that do
+        not run the routing logic (status, the cache-origin leg); an unset
+        variable renders "" and never omits the key, so the JSON schema is
+        identical on every frontend.
+
+        Deliberately omitted: %cp (already inside req_id), %U, %Tt (inflated by
+        keep-alive idle next to t_total), the %ac/%fc/%bc/%sc concurrency
+        counters and %sq/%bq queue depths (Prometheus answers saturation better,
+        and queues stay 0 without an opt-in maxconn), %r (duplicates
+        method/path/http_version and carries the query), and %CC/%CS cookies.
+      -#}
+      %(ts)[accept_date(ms),ms_utime(%Y-%m-%dT%H:%M:%S.%3NZ)]
+      %(req_id)ID
+      %(trace_id)[var(txn.trace_id)]
+      %(client_ip)ci
+      %(frontend)f
+      %(backend)b
+      %(server)s
+      %(method)HM
+      %(host)[var(txn.host)]
+      %(path)HPO
+      %(http_version)HV
+      %(status:sint)ST
+      %(bytes:sint)B
+      %(t_request:sint)TR
+      %(t_queue:sint)Tw
+      %(t_connect:sint)Tc
+      %(t_response:sint)Tr
+      %(t_total:sint)Ta
+      %(retries:sint)rc
+      %(term)tsc
+      %(resource)[var(txn.resource_id)]
+      %(denied_by)[var(txn.denied_by)]
+
+  # ============================================================================
   # Frontend Routing Logic
   # ============================================================================
 
@@ -174,8 +389,16 @@ templateSnippets:
       http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.resource_name)      var(txn.route_key),field(2,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.resource_namespace) var(req.gw_rule_id),field(1,_)   if { var(req.gw_rule_id) -m found }
-      http-request set-var(txn.resource_name)      var(req.gw_rule_id),field(2,_)   if { var(req.gw_rule_id) -m found }
+      {#- The Gateway branch reads txn.gw_rule_id (set by
+          frontend-matchers-advanced-500-gateway for every winning route rule,
+          shape <ns>_<name>_<ruleIdx>). It was `req.gw_rule_id` until MR !1412 —
+          a scope nobody ever writes — so the condition was always false and
+          Gateway requests fell through to the BACKEND branch above, which split
+          the `gtw_<ns>_<name>_<svc>_<port>` backend name and produced
+          resource_id="gtw/<ns>". Every per-resource feature map (WAF, auth,
+          rate limit, cache, schema validation) is keyed on resource_id. -#}
+      http-request set-var(txn.resource_namespace) var(txn.gw_rule_id),field(1,_)   if { var(txn.gw_rule_id) -m found }
+      http-request set-var(txn.resource_name)      var(txn.gw_rule_id),field(2,_)   if { var(txn.gw_rule_id) -m found }
       http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
 
   frontend-routing-logic:
@@ -884,7 +1107,38 @@ templateSnippets:
 
   global-settings-100-logging:
     template: |
-      log stdout len 4096 local0 info
+      {#-
+        `format raw` strips the syslog header ("<134>Jul 25 21:01:17
+        haproxy[1]: ") that would otherwise precede every JSON record and break
+        a collector that parses lines directly. It also removes the syslog
+        timestamp, which is why log-fields-100-core carries its own `ts`.
+
+        Argument order is mandatory: `log <target> [len <n>] [format <f>]
+        <facility> [<level>]`. `format raw len 16384` is a fatal config error.
+
+        `len` truncates mid-byte, and a truncated JSON record is unparseable, so
+        the default is generous. Raise it with
+        extraContext.accessLog.maxLineBytes if custom fields or captured headers
+        push records past it.
+      -#}
+      {#- The bound is enforced here as well as in the chart's Helm validation,
+          because a hand-written HAProxyTemplateConfig reaches the engine without
+          passing through Helm at all. Too small truncates every record into
+          invalid JSON; a negative or absurd value is an HAProxy config error. -#}
+      {#- Check the raw value's shape BEFORE converting: toint() saturates an
+          absurd digit string to int64 min (-9223372036854775808), which the range
+          check below would reject — but reporting that number instead of what the
+          operator wrote is a poor diagnostic, and it leans on an overflow
+          artifact rather than an explicit rule. Five digits covers 65535. -#}
+      {%- var rawMax = tostring(extraContext | dig("accessLog", "maxLineBytes") | fallback(16384)) -%}
+      {%- if !regex_search(rawMax, "^[0-9]{1,5}$") -%}
+        {{- fail("controller.config.templatingSettings.extraContext.accessLog.maxLineBytes must be an integer between 1024 and 65535, got '" + rawMax + "'.") -}}
+      {%- end -%}
+      {%- var maxLen = toint(rawMax) -%}
+      {%- if maxLen < 1024 || maxLen > 65535 -%}
+        {{- fail("controller.config.templatingSettings.extraContext.accessLog.maxLineBytes must be an integer between 1024 and 65535, got " + tostring(maxLen) + ". Below 1024 every JSON access-log record would be truncated into invalid JSON.") -}}
+      {%- end -%}
+      log stdout len {{ maxLen }} format raw local0 info
 
   global-settings-200-process:
     template: |
@@ -965,6 +1219,28 @@ templateSnippets:
       # race during rolling updates. See https://haproxy-haptic.org/docs/latest/libraries/base/#connection-reliability-and-timeouts
       option redispatch
 
+  defaults-settings-150-access-log-request-id:
+    template: |
+      {#-
+        Request correlation id, always available as the access log's `req_id`
+        field and forwardable upstream by the request-id annotation.
+
+        RFC 9562 UUIDv7 (supported by `uuid()` since HAProxy 3.0, the chart's
+        floor): opaque with respect to the client, but time-ordered, which gives
+        better index locality in a log store than v4. It deliberately carries NO
+        client information — the historical `%ci:%cp_%fi:%fp_%Ts_%rt:%pid` format
+        embedded the client IP (personal data under GDPR Art. 4(1) / Recital 30)
+        and the frontend's own address into a value that is forwarded upstream,
+        echoed to clients, and copied into app logs and support tickets, where
+        neither the retention nor the purpose was ever scoped for it. Removing
+        the IP from the identifier is what makes dropping the `client_ip` field
+        an effective redaction.
+
+        Emitted at band 150 so a raw `config-defaults` injection (band 800) can
+        still override it — `uuid()` for UUIDv4 is the documented alternative.
+      -#}
+      unique-id-format %[uuid(7)]
+
   defaults-settings-200-balance:
     template: |
       balance roundrobin
@@ -1026,6 +1302,12 @@ templateSnippets:
          forces the map value to a signed integer; `sub(<var>)` then does the
          dynamic comparison the literal `req.body_size gt <N>` form can't express. #}
       {{ "\n" }}http-request set-var(txn.haptic_body_limit) var(txn.backend_name),map({{ bsMap }},0),add(0)
+      {#- txn.denied_by names the gate that blocked the request in the access log.
+          413 is also produced by the WAF and schema-validation body caps, so the
+          status code alone can't attribute it. The condition is a byte-for-byte
+          copy of the deny's; `deny` ends rule processing, so the first matching
+          gate's value is the one that survives. -#}
+      http-request set-var(txn.denied_by) str(body_too_large) if { var(txn.haptic_body_limit) -m int gt 0 } { req.body_size,sub(txn.haptic_body_limit) -m int gt 0 }
       http-request deny deny_status 413 if { var(txn.haptic_body_limit) -m int gt 0 } { req.body_size,sub(txn.haptic_body_limit) -m int gt 0 }
 
   frontend-filters-260-request-set-host:
@@ -1727,7 +2009,7 @@ haproxyConfig:
         bind *:8404
         # Keep health probes quiet without removing the inherited log target:
         # `no log` plus the inherited HTTP log format makes haproxy -c warn.
-        option dontlog-normal
+        option dontlog-normal{{ render "util-log-format-http" }}
         http-request return status 200 content-type text/plain string "OK" if { path /healthz }
         http-request return status 200 content-type text/plain string "READY" if { path /ready }
         {# Extension point for status frontend directives (e.g., Prometheus exporter) #}
@@ -1781,7 +2063,14 @@ haproxyConfig:
         mode tcp
         # Override the HTTP log format inherited from defaults. Without this,
         # HAProxy falls back implicitly and warns on every config check.
-        option tcplog
+        #
+        # dontlog-normal: this frontend is the internal h2c demultiplexer — every
+        # connection it accepts is handed to http_frontend or http_frontend_h2c,
+        # which logs the request itself. Logging the normal case here would
+        # duplicate every request with a second, near-information-free record.
+        # Abnormal terminations (h2c-preface stalls, client aborts before the
+        # loopback hop) still log, and they are the only lines anyone reads here.
+        option dontlog-normal{{ render "util-log-format-tcp" }}
         {%- if tostring(gf.(map[string]any) | dig("bindHTTPDefault")) == "true" %}
         bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
         {%- end %}
@@ -1823,7 +2112,7 @@ haproxyConfig:
         option forwardfor
         # accept-proxy reads the PROXY v2 header from http-h1-loopback's send-proxy-v2,
         # so `src` and logging see the original client.
-        bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy
+        bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy{{ render "util-log-format-http" }}
         {# Extension point for early frontend directives (options, captures, ACLs) #}
         {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
         {{- render_glob "frontend-extra-*" | indent(2, true) }}
@@ -1845,7 +2134,7 @@ haproxyConfig:
         # HAProxy can't auto-detect h2c on plaintext binds. The outer tcp
         # inspector has already classified the connection by preface, so
         # only h2c traffic reaches this socket.
-        bind unix@/etc/haproxy/http-h2c-frontend.sock mode 660 accept-proxy proto h2
+        bind unix@/etc/haproxy/http-h2c-frontend.sock mode 660 accept-proxy proto h2{{ render "util-log-format-http" }}
         {# Same render_glob extension points as the h1 sibling — every #}
         {# routing/filter snippet lands in both protocols' frontends so #}
         {# behaviour stays in lockstep regardless of which protocol the #}
@@ -2103,7 +2392,11 @@ validationTests:
         pattern: '(?ms)^frontend status$.*?^\s+no log$'
       - type: contains
         target: haproxy.cfg
-        pattern: '(?ms)^frontend http-tcp$.*?^\s+mode tcp$.*?^\s+option tcplog$'
+        pattern: '(?ms)^frontend http-tcp$.*?^\s+mode tcp$.*?^\s+option dontlog-normal$.*?^\s+log-format "%\{\+json\}o '
+        description: >-
+          The TCP demux frontend overrides the inherited HTTP format with the
+          TCP-safe JSON one and suppresses its normal lines (the inner HTTP
+          frontend logs the request).
       - type: contains
         target: haproxy.cfg
         pattern: '(?ms)^frontend http_frontend$.*?^\s+mode http$.*?^\s+option forwardfor$'
@@ -2275,3 +2568,288 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: "http-request return status 404"
+
+  # ==========================================================================
+  # Access log (structured JSON)
+  # ==========================================================================
+
+  test-access-log-core-fields:
+    description: >-
+      Every HTTP frontend emits the core JSON field set, the log target drops the
+      syslog prefix so records are parseable as-is, and no log-time-illegal
+      sample expression reaches a log-format.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: access-log-core }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: log.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: deterministic
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  log stdout len 16384 format raw local0 info$'
+        description: >-
+          `log <target> [len N] [format F] <facility>` — the argument order is
+          mandatory, and `format raw` is what removes the syslog header that
+          would otherwise precede every JSON record.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  log-format "%\{\+json\}o '
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(status:sint\)ST'
+        description: Typed so `status` is a JSON number rather than a string.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(ts\)\[accept_date\(ms\),ms_utime\(%Y-%m-%dT%H:%M:%S\.%3NZ\)\]'
+        description: >-
+          `format raw` drops the syslog timestamp, so the record carries its own.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(resource\)\[var\(txn\.resource_id\)\]'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'var\(req\.gw_rule_id\)'
+        description: >-
+          The owner-identity cascade reads txn.gw_rule_id. `req.gw_rule_id` is a
+          scope nothing ever writes, so that branch never fired and Gateway
+          requests fell through to the backend-name split, yielding
+          resource_id="gtw/<namespace>" — which every resource_id-keyed feature
+          map (WAF, auth, rate limit, cache, schema) is looked up with.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.resource_namespace\) var\(txn\.gw_rule_id\),field\(1,_\)'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(denied_by\)\[var\(txn\.denied_by\)\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.trace_id\) req\.hdr\(traceparent\),field\(2,-\) if \{ req\.hdr\(traceparent\) -m reg '
+        description: >-
+          A W3C traceparent is captured behind its grammar regex, so junk or
+          oversized headers contribute nothing.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'log-format "[^"]*%\[(path|pathq|req\.hdr\(|res\.hdr\(|req\.ssl_sni)'
+        description: >-
+          HAProxy rejects these at config-parse time inside a log-format ("needs
+          HTTP request headers / request buffer which is not available here").
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^  option tcplog$'
+        description: Replaced everywhere by the TCP-safe JSON variant.
+
+  test-access-log-every-frontend-has-a-format:
+    description: >-
+      Every frontend this fixture renders carries the JSON log-format, and no
+      frontend is left on the old text directives.
+
+      Assertions are anchored to frontend NAMES rather than counting frontends,
+      deliberately: validationTests also run as the controller's fatal load gate
+      against the operator's own values, so a count would depend on which
+      frontend-adding features that deployment happens to enable — enabling the
+      Varnish cache tier (which adds haptic_cache_origin) would then crash-loop a
+      controller over a test that has nothing to do with caching. The frontends
+      other libraries own are asserted in those libraries' own tests
+      (haptic-annotations' cache-origin, gateway's per-port TCP frontends), and
+      scripts/test-templates.sh carries the repo-side count invariant that catches
+      a NEW frontend rendered without a log-format.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: access-log-coverage }
+          spec:
+            ingressClassName: haptic
+            tls:
+              - hosts: [coverage.example.com]
+                secretName: shared-tls
+            rules:
+              - host: coverage.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend status$.*?^  log-format "%\{\+json\}o '
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend http-tcp$.*?^  log-format "%\{\+json\}o '
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend http_frontend$.*?^  log-format "%\{\+json\}o '
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend http_frontend_h2c$.*?^  log-format "%\{\+json\}o '
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend https$.*?^  log-format "%\{\+json\}o '
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^  option tcplog$'
+        description: The TCP-mode frontends use the TCP-safe JSON variant instead.
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^  option httplog$'
+        expected: "1"
+        description: >-
+          Only the `defaults` section keeps it, as the no-warning fallback for a
+          frontend that has no format of its own. A second occurrence would mean a
+          frontend is emitting text lines.
+
+  test-access-log-custom-fields:
+    description: >-
+      extraContext.accessLog.fields adds one named item per entry, captured into
+      txn.log_<name> at request time so request-scoped fetches work, and emitted
+      in sorted-key order so the rendered config does not churn between renders.
+    extraContext:
+      accessLog:
+        maxLineBytes: 8192
+        fields:
+          tenant: req.hdr(X-Tenant)
+          zulu: str(z)
+          alpha: query
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: deterministic
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  log stdout len 8192 format raw local0 info$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.log_tenant\) req\.hdr\(X-Tenant\)'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(tenant\)\[var\(txn\.log_tenant\)\]'
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - '%\(alpha\)\[var\(txn\.log_alpha\)\]'
+          - '%\(tenant\)\[var\(txn\.log_tenant\)\]'
+          - '%\(zulu\)\[var\(txn\.log_zulu\)\]'
+        description: keys() is sorted, so emission order is deterministic.
+
+  test-access-log-rejects-invalid-field-name:
+    description: A JSON field name outside the allowed charset is rejected at render time.
+    extraContext:
+      accessLog:
+        fields:
+          "bad name": str(x)
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid accessLog.fields key 'bad name'"
+
+  test-access-log-rejects-colliding-field-name:
+    description: >-
+      A custom field that shadows a built-in one is rejected — a duplicate JSON
+      key is resolved differently by every parser and silently corrupts a log
+      pipeline.
+    extraContext:
+      accessLog:
+        fields:
+          status: str(1)
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "accessLog.fields\\['status'\\] collides with the built-in access-log field"
+
+  test-access-log-rejects-unparseable-max-line-bytes:
+    description: >-
+      An absurd digit string is rejected on its shape, not by an int64 overflow
+      that happens to land below the lower bound — the operator sees what they
+      wrote, not -9223372036854775808.
+    extraContext:
+      accessLog:
+        maxLineBytes: 123456789012345678901234567890
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "maxLineBytes must be an integer between 1024 and 65535, got '1234567890"
+      - type: not_contains
+        target: rendering_error
+        pattern: "-9223372036854775808"
+        description: >-
+          The diagnostic must name what the operator wrote rather than the int64
+          saturation artifact toint() would produce. (The echoed digits differ
+          from the literal because a value this large parses as a float.)
+
+  test-access-log-rejects-out-of-range-max-line-bytes:
+    description: >-
+      The maxLineBytes bound is enforced in the render as well as in Helm, because
+      a hand-written HAProxyTemplateConfig never passes through Helm. Below 1024
+      every record would be truncated into invalid JSON.
+    extraContext:
+      accessLog:
+        maxLineBytes: 64
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "accessLog.maxLineBytes must be an integer between 1024 and 65535, got 64"
+
+  test-access-log-rejects-injection-in-field-value:
+    description: >-
+      Whitespace in a field expression would let the value continue the
+      set-var line with a condition of its own.
+    extraContext:
+      accessLog:
+        fields:
+          evil: "str(a) if TRUE"
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "must not contain whitespace"
+
+  test-access-log-denied-by-body-size:
+    description: >-
+      The body-size gate names itself in txn.denied_by, with the deny's own
+      condition, so a 413 in the log is attributable to it rather than to the
+      WAF or schema-validation body caps.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: access-log-body-limit
+            annotations:
+              haproxy-haptic.org/max-body-size: "1024"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: body.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'http-request set-var\(txn\.denied_by\) str\(body_too_large\) if \{ var\(txn\.haptic_body_limit\) -m int gt 0 \}'
+          - 'http-request deny deny_status 413 if \{ var\(txn\.haptic_body_limit\) -m int gt 0 \}'
+        description: >-
+          The marker must precede the deny: `deny` ends rule processing, so a
+          marker after it would never run.

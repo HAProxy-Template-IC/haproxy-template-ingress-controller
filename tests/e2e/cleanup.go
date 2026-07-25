@@ -209,7 +209,8 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 		// HAProxy retains the last erroring request and the last erroring
 		// response PER PROXY, including the full offending bytes and the byte
 		// offset where parsing failed. This is the ground truth for a
-		// `<BADREQ>` 400 (logged only as `PR-- "<BADREQ>"` in the access log):
+		// `<BADREQ>` 400 (which the access log reports only as
+		// `"term":"PR--"` with an empty request):
 		// it shows exactly which request HAProxy could not parse and where.
 		// Load-bearing for diagnosing 400s that surface under reload churn —
 		// HAProxy must serve correctly across reloads, not merely avoid 503s

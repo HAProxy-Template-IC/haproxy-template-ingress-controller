@@ -135,6 +135,7 @@ Gateway
 GatewayClass
 GC
 GCs
+GDPR
 GeoIP
 geoip
 GET
@@ -399,6 +400,8 @@ userlist
 Userlist
 Userlists
 userlists
+UUID
+UUIDv7
 Vale
 validator
 Validator

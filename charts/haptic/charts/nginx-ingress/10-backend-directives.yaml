@@ -564,16 +564,19 @@ templateSnippets:
       {#- across reloads so the limit isn't reset to zero on config churn. -#}
       stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
       http-request track-sc0 src
+      http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ limitRps }} }{{ exempt }}
       http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ limitRps }} }{{ exempt }}
           {%- else %}
       stick-table type ip size 100k expire 60s store http_req_rate(60s) peers localinstance
       http-request track-sc0 src
+      http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ limitRpm }} }{{ exempt }}
       http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ limitRpm }} }{{ exempt }}
           {%- end %}
         {%- else if limitConn != "" %}
       # nginx-ingress/rate-limiting ({{ key }})
       stick-table type ip size 100k expire 30s store conn_cur peers localinstance
       http-request track-sc0 src
+      http-request set-var(txn.denied_by) str(rate_limit_connections) if { sc_conn_cur(0) gt {{ limitConn }} }{{ exempt }}
       http-request deny deny_status 429 if { sc_conn_cur(0) gt {{ limitConn }} }{{ exempt }}
         {%- end %}
       {%- end -%}

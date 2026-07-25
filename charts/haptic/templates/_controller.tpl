@@ -106,6 +106,26 @@ the process listens somewhere else.
 {{- range $field := keys $routingHeaders -}}{{- if ne $field "enabled" -}}{{- fail (printf "controller.config.templatingSettings.extraContext.diagnostics.routingHeaders contains unknown field %q. Valid field: enabled." $field) -}}{{- end -}}{{- end -}}
 {{- if not (kindIs "bool" $routingHeaders.enabled) -}}{{- fail "controller.config.templatingSettings.extraContext.diagnostics.routingHeaders.enabled must be a boolean." -}}{{- end -}}
 
+{{- /* Access log. The same checks exist Scriggo-side in base.yaml's
+       util-log-format-http, because the HAProxyTemplateConfig CR is a
+       first-class API that bypasses Helm entirely. */ -}}
+{{- $accessLog := $extraContext.accessLog | default dict -}}
+{{- if not (kindIs "map" $accessLog) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog must be a map." -}}{{- end -}}
+{{- range $field := keys $accessLog -}}{{- if not (has $field (list "fields" "maxLineBytes")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog contains unknown field %q. Valid fields: fields, maxLineBytes." $field) -}}{{- end -}}{{- end -}}
+{{- $maxLineBytes := dig "maxLineBytes" 16384 $accessLog | toString -}}
+{{- /* Cap the digit count before `int`: Sprig's cast silently returns 0 on an
+       int64 overflow, so a 30-digit value would reach the range check as 0 and be
+       rejected only by accident. Five digits covers the 65535 upper bound. */ -}}
+{{- if not (regexMatch "^[0-9]{1,5}$" $maxLineBytes) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog.maxLineBytes must be an integer between 1024 and 65535." -}}{{- end -}}
+{{- if or (lt (int $maxLineBytes) 1024) (gt (int $maxLineBytes) 65535) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog.maxLineBytes must be an integer between 1024 and 65535." -}}{{- end -}}
+{{- $logFields := $accessLog.fields | default dict -}}
+{{- if not (kindIs "map" $logFields) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog.fields must be a map of <JSON field name> to <HAProxy sample expression>." -}}{{- end -}}
+{{- range $fieldName, $fieldExpr := $logFields -}}
+  {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]{0,39}$" $fieldName) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.fields contains invalid field name %q. A JSON field name must match ^[A-Za-z_][A-Za-z0-9_]{0,39}$." $fieldName) -}}{{- end -}}
+  {{- if or (not (kindIs "string" $fieldExpr)) (eq $fieldExpr "") -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.fields[%q] must be a non-empty string holding one HAProxy sample expression, e.g. req.hdr(X-Tenant) or str(prod-eu)." $fieldName) -}}{{- end -}}
+  {{- if regexMatch "[[:space:][:cntrl:]\"\\\\#]" $fieldExpr -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.fields[%q] value %q must not contain whitespace, '#', '\"' or a backslash (config-injection guard). For a constant label use str(<value>) with no spaces." $fieldName $fieldExpr) -}}{{- end -}}
+{{- end -}}
+
 {{- $statusPatches := $extraContext.statusPatches | default dict -}}
 {{- if not (kindIs "map" $statusPatches) -}}{{- fail "controller.config.templatingSettings.extraContext.statusPatches must be a map." -}}{{- end -}}
 {{- range $field := keys $statusPatches -}}{{- if ne $field "enabled" -}}{{- fail (printf "controller.config.templatingSettings.extraContext.statusPatches contains unknown field %q. Valid field: enabled." $field) -}}{{- end -}}{{- end -}}
