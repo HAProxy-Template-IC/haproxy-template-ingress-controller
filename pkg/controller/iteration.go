@@ -222,17 +222,19 @@ func runIteration(
 		return err
 	}
 
-	// 5. Initialize StateCache and start background components
-	stateCache := NewStateCache(setup.Bus, resourceWatcher, logger)
-	startBackgroundComponents(setup.IterCtx, stateCache, setup.MetricsComponent, logger)
+	// 5. Initialize the StateCache, its background loop, and the `currentFiles`
+	// provider — the last render's general aux files (or, on a cold start, the
+	// watched read-back of published HAProxyGeneralFile CRDs) exposed to templates
+	// so a template can read its own prior output (e.g. self-rotating TLS
+	// session-ticket keys) across restarts and reloads.
+	stateCache, currentAuxFiles, err := initRenderStateCache(setup, resourceWatcher, k8sClient, logger)
+	if err != nil {
+		return err
+	}
 
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	// Expose the last render's general aux files to templates as `currentFiles`,
-	// letting a template read its own prior output (e.g. self-rotating TLS
-	// session-ticket keys). StateCache holds them from TemplateRenderedEvent.
-	currentAuxFiles := currentAuxFilesProvider(stateCache)
 	wiring, err := setupReconciliation(setup, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, currentAuxFiles, storeProvider, logger)
 	if err != nil {
 		return err

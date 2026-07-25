@@ -26,6 +26,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
@@ -43,6 +44,30 @@ func buildStoreProvider(resourceWatcher *resourcewatcher.ResourceWatcherComponen
 		converted[resourceType] = &stores.TypesStoreAdapter{Inner: store}
 	}
 	return stores.NewRealStoreProvider(converted)
+}
+
+// initRenderStateCache creates the StateCache and its background loop, starts a
+// watched read-back of the published aux-file CRDs (map, general, crt-list), and
+// returns the `currentFiles` provider wired to both. The published-file watchers
+// are what let self-referential templates (self-rotating TLS session-ticket keys)
+// survive a controller restart, config reload, or leader promotion instead of
+// bootstrapping fresh output — the aux-file analogue of setupCurrentConfigStore,
+// which reads HAProxyCfg back for slot preservation.
+func initRenderStateCache(
+	setup *componentSetup,
+	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
+	k8sClient *client.Client,
+	logger *slog.Logger,
+) (*StateCache, func() map[string]string, error) {
+	stateCache := NewStateCache(setup.Bus, resourceWatcher, logger)
+	startBackgroundComponents(setup.IterCtx, stateCache, setup.MetricsComponent, logger)
+
+	publishedAux, err := setupPublishedAuxFilesStore(setup, k8sClient, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return stateCache, currentAuxFilesProvider(stateCache, publishedAux), nil
 }
 
 // startBackgroundComponents starts the StateCache and metrics component in background goroutines.
