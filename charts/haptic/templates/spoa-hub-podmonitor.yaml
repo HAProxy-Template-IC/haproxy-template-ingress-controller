@@ -1,6 +1,12 @@
 {{- $pm := .Values.spoaHub.monitoring.podMonitor }}
-{{- if and $pm.enabled (include "haptic.spoaHub.enabled" .) }}
-{{- $addr := .Values.spoaHub.hub.metricsAddr }}
+{{- /* Skipped entirely when the vector sidecar is enabled: vector re-exports both
+       of the endpoints below on one port and vector-podmonitor.yaml scrapes that,
+       so rendering this too would double every haproxy_* and spoa_* series.
+       Skipping also means the loopback guard below does not fire — with vector,
+       spoaHub.hub.metricsAddr SHOULD stay loopback-only, because vector scrapes it
+       from inside the pod rather than Prometheus scraping the pod IP. */}}
+{{- if and $pm.enabled (include "haptic.spoaHub.enabled" .) (not .Values.vector.enabled) }}
+{{- $addr := include "haptic.spoaHub.metricsAddrEffective" . }}
 {{- /* Loopback guard: a PodMonitor scrapes the pod IP, so a hub bound to
        loopback is unreachable and the scrape target would be dead. Catch IPv4
        127/8 and every IPv6 loopback spelling ([::1], [0:0:...:1], [::0001]):

@@ -177,11 +177,16 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- if ne $hub.maxBlockingThreads nil -}}{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "maxBlockingThreads" "min" 1) -}}{{- end -}}
 {{- if ne $hub.reloadDrainTimeoutMs nil -}}{{- $_ := include "haptic.spoaHub.hubInteger" (dict "root" $root "field" "reloadDrainTimeoutMs" "min" 0) -}}{{- end -}}
 {{- if not (kindIs "string" $hub.metricsAddr) -}}{{- fail "spoaHub.hub.metricsAddr must be a string." -}}{{- end -}}
-{{- if and (ne $hub.metricsAddr "") (not (regexMatch "^(([0-9]{1,3}\\.){3}[0-9]{1,3}|\\[[0-9A-Fa-f:]+\\]):[0-9]{1,5}$" $hub.metricsAddr)) -}}
-  {{- fail "spoaHub.hub.metricsAddr must be empty or a numeric IP address and port such as 127.0.0.1:9095 or [::1]:9095; hostnames are not supported by the hub." -}}
+{{- /* `auto` is the default sentinel: it resolves to a loopback bind when the
+       vector sidecar fronts the metrics and a pod-routable one when it doesn't.
+       Validate the RESOLVED value so an operator's explicit address still gets
+       the same numeric-IP check. */ -}}
+{{- $resolvedMetricsAddr := include "haptic.spoaHub.metricsAddrEffective" $root -}}
+{{- if and (ne $resolvedMetricsAddr "") (not (regexMatch "^(([0-9]{1,3}\\.){3}[0-9]{1,3}|\\[[0-9A-Fa-f:]+\\]):[0-9]{1,5}$" $resolvedMetricsAddr)) -}}
+  {{- fail "spoaHub.hub.metricsAddr must be empty, \"auto\", or a numeric IP address and port such as 127.0.0.1:9095 or [::1]:9095; hostnames are not supported by the hub." -}}
 {{- end -}}
-{{- if ne $hub.metricsAddr "" -}}
-  {{- $metricsPort := int (regexFind "[0-9]+$" $hub.metricsAddr) -}}
+{{- if ne $resolvedMetricsAddr "" -}}
+  {{- $metricsPort := int (regexFind "[0-9]+$" $resolvedMetricsAddr) -}}
   {{- if or (le $metricsPort 0) (gt $metricsPort 65535) -}}{{- fail "spoaHub.hub.metricsAddr port must be between 1 and 65535." -}}{{- end -}}
 {{- end -}}
 
@@ -388,7 +393,7 @@ max_blocking_threads = {{ include "haptic.spoaHub.hubInteger" (dict "root" . "fi
 {{- if ne $hub.reloadDrainTimeoutMs nil }}
 reload_drain_timeout_ms = {{ include "haptic.spoaHub.hubInteger" (dict "root" . "field" "reloadDrainTimeoutMs" "min" 0) }}
 {{- end }}
-{{- with $hub.metricsAddr }}
+{{- with include "haptic.spoaHub.metricsAddrEffective" . }}
 {{- /* Bootstrap-side metrics_addr — mirrors the runtime-rendered
        libraries/spoa-hub/ `metrics_addr` line so the /metrics
        endpoint is bound from process start, not just after the
@@ -659,9 +664,37 @@ reference it by name — prometheus-operator only creates targets for declared
 container ports, so a bare targetPort on an undeclared port is never scraped.
 */}}
 {{- define "haptic.spoaHub.metricsPort" -}}
-{{- $addr := .Values.spoaHub.hub.metricsAddr | default "" -}}
+{{- $addr := include "haptic.spoaHub.metricsAddrEffective" . -}}
 {{- if ne (trim $addr) "" -}}
 {{- regexFind "[0-9]+$" $addr -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Resolve spoaHub.hub.metricsAddr, expanding the `auto` default.
+
+`auto` binds the hub's /metrics where the thing that scrapes it can reach it:
+
+  vector enabled  -> 127.0.0.1:9095   vector scrapes over loopback from inside
+                                      the pod and re-exports on its own port, so
+                                      there is no reason to answer on the pod IP
+  vector disabled -> 0.0.0.0:9095     Prometheus scrapes the pod IP directly, and
+                                      a loopback bind would be a dead target
+
+An explicit operator value always wins, including `""` (metrics disabled). This
+is a sentinel rather than a plain default because `""` is already taken to mean
+"off", so it cannot double as "derive it for me".
+*/}}
+{{- define "haptic.spoaHub.metricsAddrEffective" -}}
+{{- $addr := .Values.spoaHub.hub.metricsAddr | default "" -}}
+{{- if eq (trim $addr) "auto" -}}
+{{- if .Values.vector.enabled -}}
+127.0.0.1:9095
+{{- else -}}
+0.0.0.0:9095
+{{- end -}}
+{{- else -}}
+{{- $addr -}}
 {{- end -}}
 {{- end -}}
 

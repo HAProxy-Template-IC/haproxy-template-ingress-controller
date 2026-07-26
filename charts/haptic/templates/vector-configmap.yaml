@@ -1,0 +1,52 @@
+{{/*
+Bootstrap config for the vector sidecar, copied into the shared general-storage
+volume by an init container before the sidecar starts. HAPTIC overwrites
+general/vector.yaml via the dataplane API within seconds of startup and vector's
+--watch-config reloads it.
+
+Two deliberate properties:
+
+  1. It ALREADY forwards the access log to stdout. The socket must exist from the
+     first moment HAProxy starts, or HAProxy's early log datagrams go nowhere —
+     a UNIX datagram sender gets no error, the records are simply lost. So there
+     is no log-loss window before the first push.
+
+  2. It deliberately OMITS the prometheus_exporter sink. That absence is the
+     readiness gate: the kubelet probes the metrics port, so the container stays
+     NotReady until HAPTIC's rendered config arrives and adds the exporter —
+     mirroring how HAProxy's own /ready only answers once the pushed config is
+     live. (An `api: {enabled: true}` /health probe was the obvious alternative
+     and does NOT work: verified against timberio/vector 0.57.0 that enabling the
+     api block via a hot reload never starts the API server.)
+*/}}
+{{- if .Values.vector.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "haptic.vector.configMapName" . }}
+  labels:
+    {{- include "haptic.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vector
+data:
+  vector.yaml: |
+    # Bootstrap config — replaced by HAPTIC via the dataplane API.
+    # Intentionally has no prometheus_exporter: its absence keeps the readiness
+    # probe failing until the rendered config is pushed.
+    data_dir: /var/lib/vector
+
+    sources:
+      haproxy_log:
+        type: socket
+        mode: unix_datagram
+        path: {{ .Values.vector.socketPath }}
+        socket_file_mode: 0o666
+        decoding:
+          codec: bytes
+
+    sinks:
+      stdout:
+        type: console
+        inputs: [haproxy_log]
+        encoding:
+          codec: text
+{{- end }}

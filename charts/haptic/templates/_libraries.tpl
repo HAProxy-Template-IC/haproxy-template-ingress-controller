@@ -189,7 +189,12 @@ Each entry in `$libraryFiles` is either:
     "subchart:haproxy-ingress"
     "subchart:nginx-ingress"
     "libraries/spoa-hub/"
+    "libraries/vector.yaml"
 }}
+{{- /* vector.yaml is last on purpose: it contributes only its own `files:` entry
+       (the vector config) and reads the settings the chart projects into
+       extraContext, so it depends on every earlier library's port/feature
+       decisions and nothing depends on it. */}}
 {{- range $file := $libraryFiles }}
   {{- $library := dict }}
   {{- $skip := false }}

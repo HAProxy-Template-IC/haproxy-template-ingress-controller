@@ -728,8 +728,17 @@ controller:
           # A ring server's address is resolved at config-parse time, so use a
           # loopback sidecar address or a literal IP unless you pass resolvers
           # through serverOptions.
-          targets:
-            - address: stdout
+          #
+          # LEFT UNSET on purpose. Omitting it means `[{address: stdout}]` — the
+          # snippet applies that default itself. Unset is what lets the chart tell
+          # "operator chose stdout" apart from "operator chose nothing": with
+          # vector.enabled=true the chart points this at the vector socket, and it
+          # only does so when this key is absent, so setting it here (to anything,
+          # including stdout) keeps your choice and leaves the sidecar with no log
+          # source. An explicitly EMPTY list is rejected rather than defaulted.
+          #
+          #   targets:
+          #     - address: stdout
         # Template-library routing behavior. This lives in extraContext so the
         # rendered HAProxyTemplateConfig carries the same setting that selected
         # the library variant at Helm render time.
@@ -1714,7 +1723,16 @@ spoaHub:
     # container scrapes via the shared pod netns. Set to "" to disable
     # (loses per-plugin counters); set to "0.0.0.0:9095" to expose
     # cluster-wide (carries per-Ingress/route cardinality — careful).
-    metricsAddr: "127.0.0.1:9095"
+    # "auto" binds /metrics where whatever scrapes it can actually reach it:
+    #   vector.enabled=true  -> 127.0.0.1:9095, because vector scrapes over
+    #                           loopback from inside the pod and re-exports on its
+    #                           own port; answering on the pod IP would expose the
+    #                           endpoint for nothing.
+    #   vector.enabled=false -> 0.0.0.0:9095, because Prometheus then scrapes the
+    #                           pod IP directly and a loopback bind is a dead target.
+    # Set an explicit "<ip>:<port>" to override, or "" to disable hub metrics
+    # entirely. A literal address always wins over the derivation.
+    metricsAddr: auto
     # Go garbage-collector target percentage (GOGC) for the sidecar's embedded
     # Go runtime (the coraza plugin). The default 100 collects often under load,
     # stealing CPU from the request path and draining the plugin's transaction
@@ -2044,6 +2062,80 @@ spoaHub:
   #   - name: maxmind-data
   #     mountPath: /data
   #     readOnly: true
+  extraVolumeMounts: []
+
+# Vector sidecar (https://vector.dev) on every HAProxy pod: it receives the
+# HAProxy access log over a mounted UNIX datagram socket, and re-exports
+# HAProxy's and the SPOA hub's Prometheus metrics alongside its own on ONE port,
+# so Prometheus scrapes a single target per pod instead of two.
+#
+# Root-level rather than under extraContext because the chart builds Kubernetes
+# resources from it (a sidecar container, a bootstrap ConfigMap, a PodMonitor);
+# only its render-facing bits are projected into extraContext.accessLog. See
+# "Operator-facing values default to extraContext (RULE)" in charts/CLAUDE.md.
+vector:
+  # Enabled by default. When false, nothing below is rendered: HAProxy logs
+  # straight to its own stdout and Prometheus scrapes HAProxy (and the hub, if
+  # enabled) directly, exactly as before this feature existed.
+  enabled: true
+
+  image:
+    repository: timberio/vector
+    pullPolicy: IfNotPresent
+    # Pinned, not floating: a silent vector upgrade would change the log
+    # pipeline under a running fleet. Renovate bumps this via the
+    # `vector image tag` customManager in renovate.json — keep the comment
+    # directly above the `tag:` line or the manager stops matching it.
+    # renovate: datasource=docker depName=timberio/vector
+    tag: "0.57.0-debian"
+
+  # Port the single merged /metrics endpoint listens on. 9598 is vector's own
+  # documented default for prometheus_exporter.
+  metricsPort: 9598
+
+  # UNIX datagram socket HAProxy writes access-log records to. Lives on its own
+  # emptyDir shared with the haproxy container. HAProxy's `log <path>` form is a
+  # datagram target (deliberately not `unix@` — HAProxy 3.4 rejects a UNIX ring
+  # server while 3.0 accepts it).
+  socketPath: /run/vector/haproxy.sock
+
+  # Scrape interval vector uses for the HAProxy and spoa-hub endpoints it
+  # re-exports. Keep at or below Prometheus's own interval, otherwise Prometheus
+  # samples a value vector has not refreshed yet.
+  scrapeIntervalSecs: 15
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+
+  # PodMonitor for the single merged endpoint. Off by default because it needs
+  # the prometheus-operator CRDs. Turning this on replaces the two separate
+  # endpoints the spoa-hub PodMonitor would otherwise declare (the hub's own
+  # metrics port and HAProxy's stats port) with one target per pod.
+  #
+  # A side benefit: vector scrapes the hub over loopback from inside the pod, so
+  # spoaHub.hub.metricsAddr can stay on its loopback default. The hub PodMonitor
+  # requires a pod-routable bind because Prometheus scrapes the pod IP directly.
+  podMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    relabelings: []
+    metricRelabelings: []
+
+  # Extra volume mounts added to the vector container only. Useful for
+  # mounting credentials for a downstream sink (S3, Loki, Kafka, …).
   extraVolumeMounts: []
 
 # Extra Kubernetes resources to deploy alongside the chart. List or

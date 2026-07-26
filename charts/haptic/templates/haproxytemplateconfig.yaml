@@ -241,6 +241,39 @@ spec:
   {{- /* HAProxy version (used by version-gated features such as shm-stats-file) */ -}}
   {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
 
+  {{- /* Vector sidecar: project only the render-facing settings (the root-level
+         vector.* value also builds a container, a ConfigMap and a PodMonitor, which
+         is what justifies it living at the root — see charts/CLAUDE.md). */ -}}
+  {{- include "haptic.vector.validateValues" . }}
+  {{- if .Values.vector.enabled }}
+    {{- $hubMetricsPort := include "haptic.spoaHub.metricsPort" . }}
+    {{- $hubScrape := 0 }}
+    {{- if and (include "haptic.spoaHub.enabled" .) (ne (trim $hubMetricsPort) "") }}
+      {{- $hubScrape = $hubMetricsPort | int }}
+    {{- end }}
+    {{- $_ := set $extraContext "vector" (dict
+          "socketPath" .Values.vector.socketPath
+          "metricsPort" (.Values.vector.metricsPort | int)
+          "scrapeIntervalSecs" (.Values.vector.scrapeIntervalSecs | int)
+          "haproxyStatsPort" (.Values.haproxy.ports.stats | int)
+          "spoaHubMetricsPort" $hubScrape
+          "dataDir" "/var/lib/vector") }}
+
+    {{- /* Point the access log at the socket — but only if the operator hasn't
+           chosen targets themselves. Overwriting an explicit `targets` would
+           silently redirect a stream they deliberately routed elsewhere. */ -}}
+    {{- $accessLog := $extraContext.accessLog | default dict }}
+    {{- if not (kindIs "map" $accessLog) }}
+      {{- fail "controller.config.templatingSettings.extraContext.accessLog must be a map." }}
+    {{- end }}
+    {{- if not (hasKey $accessLog "targets") }}
+      {{- $_ := set $accessLog "targets" (list (dict
+            "address" .Values.vector.socketPath
+            "format" "raw")) }}
+    {{- end }}
+    {{- $_ := set $extraContext "accessLog" $accessLog }}
+  {{- end }}
+
   {{- /* Shared cache: copy the public feature tree into extraContext and add
          only the release-derived service coordinates. This keeps chart values
          and the standalone annotation library on one structured contract. */ -}}
@@ -936,7 +969,7 @@ spec:
               "blockingThreadKeepAliveSecs" $hubBlockingThreadKeepAliveSecs
               "maxBlockingThreads" $hubMaxBlockingThreads
               "reloadDrainTimeoutMs" $hubReloadDrainTimeoutMs
-              "metricsAddr" $hubRuntime.metricsAddr
+              "metricsAddr" (include "haptic.spoaHub.metricsAddrEffective" $)
               "workerThreads" $hubWorkerThreads
           )
           "plugins" $pluginEntries

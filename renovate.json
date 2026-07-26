@@ -49,6 +49,20 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[a-z-]+) packageName=(?<packageName>\\S+) registryUrl=(?<registryUrl>\\S+) depName=(?<depName>\\S+)\\s*\\n(?:#[^\\n]*\\n)*[A-Z_]+_VERSION=\"(?<currentValue>[^\"]+)\""
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Vector sidecar image tag in charts/haptic/values.yaml. The tag carries a distro suffix (e.g. 0.57.0-debian), so the versioning scheme captures the semver part and keeps the suffix out of the comparison; without it Renovate treats the whole string as an unparseable version and never proposes a bump. The `# renovate:` comment must sit directly above the `tag:` line.",
+      "fileMatch": [
+        "^charts/haptic/values\\.yaml$"
+      ],
+      "matchStrings": [
+        "# renovate:\\s*datasource=docker\\s+depName=timberio/vector[^\\n]*\\n\\s*tag:\\s*\"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+-[a-z]+)\""
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "timberio/vector",
+      "packageNameTemplate": "timberio/vector",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<compatibility>[a-z]+)$"
     }
   ],
   "packageRules": [
@@ -108,7 +122,7 @@
       "groupName": "haproxy image"
     },
     {
-      "description": "Keep HAPROXY_VERSION ARGs on stable series only. Docker Hub's floating `X.Y` tag can point at a dev release before the first `X.Y.Z` patch ships (e.g. `3.4` → `3.4-dev2`), so derive the tracked version from patch tags. Covers both the `ARG HAPROXY_VERSION=` lines and the `FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}` lines that Renovate's built-in dockerfile manager extracts by resolving the ARG — both need the clamp, across all three files.",
+      "description": "Keep HAPROXY_VERSION ARGs on stable series only. Docker Hub's floating `X.Y` tag can point at a dev release before the first `X.Y.Z` patch ships (e.g. `3.4` \u2192 `3.4-dev2`), so derive the tracked version from patch tags. Covers both the `ARG HAPROXY_VERSION=` lines and the `FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}` lines that Renovate's built-in dockerfile manager extracts by resolving the ARG \u2014 both need the clamp, across all three files.",
       "matchFileNames": [
         "Dockerfile",
         "versions.env",

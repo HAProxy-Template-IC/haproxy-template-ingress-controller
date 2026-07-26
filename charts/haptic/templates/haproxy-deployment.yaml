@@ -6,6 +6,7 @@
 {{- $haproxyBin := include "haptic.haproxy.bin" . }}
 {{- $haproxyUid := include "haptic.haproxy.uid" . }}
 {{- $spoaHubEnabled := include "haptic.spoaHub.enabled" . }}
+{{- $vectorEnabled := include "haptic.vector.enabled" . }}
 {{- $dataplaneConfig := .Values.controller.config.dataplane }}
 {{- $podSpec := $haproxy.podSpec }}
 {{- $ports := $haproxy.ports }}
@@ -53,8 +54,35 @@ spec:
       {{- if $podSpec.shareProcessNamespace }}
       shareProcessNamespace: true
       {{- end }}
-      {{- if or $haproxy.initContainers $spoaHubEnabled }}
+      {{- if or $haproxy.initContainers $spoaHubEnabled $vectorEnabled }}
       initContainers:
+        {{- if $vectorEnabled }}
+        # Seed general/vector.yaml before the vector sidecar starts, for the same
+        # reason as the spoa-hub copy below: vector exits non-zero on a missing
+        # --config, so without this the sidecar CrashLoopBackOffs until HAPTIC's
+        # first push lands. HAPTIC then overwrites this file via the dataplane API
+        # and vector's --watch-config reloads it (verified: the watch fires on the
+        # write-then-atomic-rename pattern the dataplane uses).
+        - name: vector-bootstrap-copy
+          image: {{ $haproxyImage }}
+          imagePullPolicy: {{ $haproxy.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            runAsNonRoot: true
+            runAsUser: {{ $haproxyUid }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cp /etc/vector-bootstrap/vector.yaml /etc/haproxy/general/vector.yaml
+          volumeMounts:
+            - name: general-storage
+              mountPath: /etc/haproxy/general
+            - name: vector-bootstrap
+              mountPath: /etc/vector-bootstrap
+              readOnly: true
+        {{- end }}
         {{- if $spoaHubEnabled }}
         # Bootstrap copy for the spoa-hub config. Kubernetes guarantees
         # init containers run to completion before regular containers
@@ -172,6 +200,15 @@ spec:
             {{- if $haproxy.shmStats.enabled }}
             - name: devshm
               mountPath: /dev/shm
+            {{- end }}
+            {{- if $vectorEnabled }}
+            # Shared with the vector sidecar. HAProxy's `log <path>` target is a
+            # UNIX datagram sender, so it needs write access to the socket vector
+            # creates here. Note a datagram sender gets NO error when nothing is
+            # listening — records are silently dropped, which is why the vector
+            # bootstrap config binds the socket before HAProxy starts.
+            - name: vector-socket
+              mountPath: {{ include "haptic.vector.socketDir" . }}
             {{- end }}
             {{- if $spoaHubEnabled }}
             # Shared with the spoa-hub sidecar; HAProxy connects via a
@@ -451,6 +488,68 @@ spec:
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
         {{- end }}
+        {{- if $vectorEnabled }}
+        {{- $vector := .Values.vector }}
+        # Vector sidecar: receives the HAProxy access log over a UNIX datagram
+        # socket and re-exports HAProxy's + the hub's Prometheus metrics together
+        # with its own on a single port, so Prometheus scrapes one target per pod.
+        - name: vector
+          image: {{ include "haptic.vector.image" . }}
+          imagePullPolicy: {{ $vector.image.pullPolicy }}
+          args:
+            # --watch-config makes vector reload when HAPTIC pushes a new config
+            # through the dataplane API. Verified against 0.57.0 that the watch
+            # fires for the write-then-atomic-rename pattern the dataplane uses,
+            # so the default (inotify) watcher is sufficient — no --watch-config-method poll.
+            - --watch-config
+            - --config
+            - /etc/haproxy/general/vector.yaml
+          ports:
+            # Named so the PodMonitor can reference it: prometheus-operator only
+            # builds targets from declared container ports, so a bare targetPort
+            # on an undeclared port is silently never scraped.
+            - name: vector-metrics
+              containerPort: {{ $vector.metricsPort | int }}
+              protocol: TCP
+          # Ready only once HAPTIC's rendered config has been pushed AND reloaded:
+          # the exporter that serves this port exists only in the rendered config,
+          # never in the bootstrap ConfigMap. Same shape as HAProxy's /ready gate.
+          #
+          # Deliberately NO livenessProbe on this port — before the first push
+          # nothing listens, so a liveness probe would kill the container in a loop
+          # and it would never survive long enough to receive the config.
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: vector-metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            {{- toYaml $vector.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml $vector.resources | nindent 12 }}
+          volumeMounts:
+            # Whole-volume mount, NOT `subPath` — kubelet implements subPath as an
+            # isolated bind-mount that does not propagate inotify events, so
+            # --watch-config would never fire and vector would sit on the bootstrap
+            # config forever (never becoming Ready). Same trap as the spoa-hub's
+            # file-watch, documented at length in its volumeMounts above.
+            - name: general-storage
+              mountPath: /etc/haproxy/general
+              readOnly: true
+            - name: vector-socket
+              mountPath: {{ include "haptic.vector.socketDir" . }}
+            # data_dir. Vector requires it to be writable even when no sink uses
+            # disk buffering.
+            - name: vector-data
+              mountPath: /var/lib/vector
+            # readOnlyRootFilesystem:true, so give it a writable scratch dir.
+            - name: vector-tmp
+              mountPath: /tmp
+            {{- with $vector.extraVolumeMounts }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+        {{- end }}
 
         {{- with $haproxy.sidecars }}
         {{- tpl (toYaml .) $ | nindent 8 }}
@@ -517,6 +616,28 @@ spec:
             name: {{ include "haptic.spoaHub.configMapName" . }}
         - name: spoa-socket
           emptyDir: {}
+        {{- end }}
+        {{- if $vectorEnabled }}
+        # Bootstrap config, copied into general-storage by the init container so
+        # vector finds a valid --config on first start.
+        - name: vector-bootstrap
+          configMap:
+            name: {{ include "haptic.vector.configMapName" . }}
+        # Holds the log socket. Its own volume rather than a subdirectory of
+        # haproxy-runtime so the haproxy container gets write access to the socket
+        # without vector gaining access to SSL private keys or backend maps.
+        - name: vector-socket
+          emptyDir: {}
+        # data_dir. Memory-backed: nothing here needs to survive a restart, and a
+        # disk-backed emptyDir lands on the node's ephemeral storage.
+        - name: vector-data
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: vector-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
         {{- end }}
         {{- with $haproxy.extraVolumes }}
         {{- tpl (toYaml .) $ | nindent 8 }}

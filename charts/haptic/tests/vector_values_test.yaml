@@ -1,0 +1,61 @@
+suite: vector value guards
+# Renders ONLY haproxytemplateconfig.yaml, which is where
+# haptic.vector.validateValues is invoked. Kept separate from vector_test.yaml so
+# a render error in the deployment can never be mistaken for one of these guards.
+templates:
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should reject a socketPath at the filesystem root
+    template: haproxytemplateconfig.yaml
+    set:
+      # dir("/haproxy.sock") is "/", and that parent is what gets mounted as the
+      # shared emptyDir — it would shadow both containers' root filesystems.
+      vector.socketPath: /haproxy.sock
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.socketPath must be inside a subdirectory, not directly at the filesystem root, got "/haproxy.sock". The chart mounts the socket''s parent directory as a shared emptyDir in both the haproxy and vector containers, so a parent of "/" would shadow their root filesystems. Use something like /run/vector/haproxy.sock.'
+
+  - it: should reject a relative socketPath
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.socketPath: run/vector/haproxy.sock
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.socketPath must be an absolute path, got "run/vector/haproxy.sock". HAProxy''s `log <path>` form requires one.'
+
+  - it: should reject a metricsPort that collides with an HAProxy port
+    template: haproxytemplateconfig.yaml
+    set:
+      # 8404 is haproxy.ports.stats; both bind in the same pod network namespace,
+      # so without this guard the pod would CrashLoopBackOff on bind instead.
+      vector.metricsPort: 8404
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.metricsPort (8404) collides with haproxy.ports.stats. Both bind in the same pod network namespace; pick a different port.'
+
+  - it: should reject an unpinned image tag
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.image.tag: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.image.tag must be pinned to an explicit tag so a silent upstream bump can''t change the log pipeline under a running fleet.'
+
+  - it: should bind the hub metrics on loopback with vector on and pod-routable with it off
+    template: haproxytemplateconfig.yaml
+    set:
+      spoaHub.enabled: true
+    asserts:
+      - matchRegex:
+          path: spec.templatingSettings.extraContext.spoaHub.hub.metricsAddr
+          pattern: '^127\.0\.0\.1:9095$'
+
+  - it: should bind the hub metrics pod-routable when vector is disabled
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.enabled: false
+      spoaHub.enabled: true
+    asserts:
+      - matchRegex:
+          path: spec.templatingSettings.extraContext.spoaHub.hub.metricsAddr
+          pattern: '^0\.0\.0\.0:9095$'
