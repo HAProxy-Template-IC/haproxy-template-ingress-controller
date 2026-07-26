@@ -43,7 +43,7 @@ ARG MARKDOWNLINT_VERSION=0.14.0
 # renovate: datasource=github-releases depName=errata-ai/vale
 ARG VALE_VERSION=3.15.1
 # renovate: datasource=github-releases depName=goreleaser/goreleaser
-ARG GORELEASER_VERSION=2.17.0
+ARG GORELEASER_VERSION=2.17.1
 # renovate: datasource=github-releases depName=sigstore/cosign
 ARG COSIGN_VERSION=3.1.2
 # renovate: datasource=github-releases depName=anchore/syft
