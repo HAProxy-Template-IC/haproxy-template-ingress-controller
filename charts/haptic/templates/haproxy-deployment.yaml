@@ -328,7 +328,7 @@ spec:
                   {{- end }}
               log_targets:
                 - log_to: stdout
-                  log_level: trace
+                  log_level: {{ $dataplane.logLevel | default "info" }}
                   log_format: text
                   {{- with $dataplane.aclFormat }}
                   acl_format: {{ . | quote }}

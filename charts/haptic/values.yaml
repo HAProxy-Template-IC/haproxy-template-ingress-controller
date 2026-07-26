@@ -657,6 +657,25 @@ controller:
           # or captured request headers push records past it. Accepted range:
           # 1024-65535; outside it the render fails rather than truncating.
           maxLineBytes: 16384
+          # Drop records for uninteresting requests. OPT-IN, and off by default
+          # on purpose.
+          #
+          # Retaining a full access log for weeks is lawful under legitimate
+          # interest (GDPR Art. 6(1)(f)) — data minimisation does not require
+          # discarding it. And it is operationally valuable: when a customer
+          # reports a broken request, the SUCCESSFUL requests immediately before
+          # and after it are what let you tell "this one request failed" from
+          # "everything was failing", or spot the retry that succeeded. Suppress
+          # only when volume genuinely forces it.
+          #
+          # Volume for scale: a record is ~740 bytes, so ~700 MB per million
+          # requests.
+          #
+          #   successful   drop 2xx/3xx records that no gate denied. Denials
+          #                (denied_by set), 4xx and 5xx are ALWAYS kept, so the
+          #                failures a customer reports are never the ones lost.
+          suppress:
+            successful: false
           # Where access-log records go. Defaults to the container's stdout.
           #
           # HAProxy's own process and alert messages are NOT affected by this —
@@ -1097,6 +1116,22 @@ haproxy:
     extraPorts: []
   # Dataplane API sidecar configuration
   dataplane:
+    # Log level for the Dataplane API sidecar. It logs one line per file
+    # operation, so `trace` — which this chart used to hardcode — produced ~671
+    # lines for a single startup plus config cycle, all of it about the
+    # controller's own pushes and none of it about request traffic. `info` keeps
+    # the config-change record without the per-file chatter.
+    #
+    # Raise to `debug` or `trace` when diagnosing a config push that the
+    # controller reports as failing but HAProxy accepts.
+    #
+    # This stream carries no end-user data: the only client is the HAPTIC
+    # controller, so the logged addresses are its pod IP and the paths are
+    # Dataplane API endpoints. Verified against a live cluster — no request
+    # bodies, no certificate material, not even for a cert push.
+    #
+    #   trace | debug | info | warning | error
+    logLevel: info
     service:
       type: ClusterIP
       # port references haproxy.ports.dataplane (set in template)

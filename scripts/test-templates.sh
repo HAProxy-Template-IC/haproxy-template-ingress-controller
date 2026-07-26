@@ -553,7 +553,7 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set-json 'controller.config.templatingSettings.extraContext.accessLog={"maxLineBytes":32768,"fields":{"tenant":"req.hdr(X-Tenant)","region":"str(prod-eu)"}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject unknown accessLog fields" \
-        'extraContext.accessLog contains unknown field "fieldz". Valid fields: fields, maxLineBytes, targets.' \
+        'extraContext.accessLog contains unknown field "fieldz". Valid fields: fields, maxLineBytes, suppress, targets.' \
         --set-string 'controller.config.templatingSettings.extraContext.accessLog.fieldz=x'
     run_helm_failure_guard \
         "Access-log Helm guard: reject an invalid JSON field name" \
@@ -578,6 +578,21 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         "Access-log Helm guard: reject injection through ring serverOptions" \
         "must not contain control characters or '#'" \
         --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"r","address":"127.0.0.1:6514","serverOptions":"ssl # x"}}]'
+    run_helm_success_guard \
+        "Access-log Helm guard: accept opt-in suppression of successful requests" \
+        --set controller.config.templatingSettings.extraContext.accessLog.suppress.successful=true
+    run_helm_failure_guard \
+        "Access-log Helm guard: reject an unknown accessLog.suppress field" \
+        "suppress contains unknown field" \
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.suppress={"successfull":true}'
+    run_helm_failure_guard \
+        "Access-log Helm guard: reject a non-boolean accessLog.suppress.successful" \
+        "must be a boolean" \
+        --set-string controller.config.templatingSettings.extraContext.accessLog.suppress.successful=maybe
+    run_helm_failure_guard \
+        "HAProxy Helm guard: reject an invalid dataplane log level" \
+        "haproxy.dataplane.logLevel" \
+        --set haproxy.dataplane.logLevel=verbose
     run_helm_failure_guard \
         "Access-log Helm guard: reject a level that silently drops every record" \
         "silently drops every one of them" \

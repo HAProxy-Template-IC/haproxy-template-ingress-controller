@@ -111,7 +111,11 @@ the process listens somewhere else.
        first-class API that bypasses Helm entirely. */ -}}
 {{- $accessLog := $extraContext.accessLog | default dict -}}
 {{- if not (kindIs "map" $accessLog) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog must be a map." -}}{{- end -}}
-{{- range $field := keys $accessLog -}}{{- if not (has $field (list "fields" "maxLineBytes" "targets")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog contains unknown field %q. Valid fields: fields, maxLineBytes, targets." $field) -}}{{- end -}}{{- end -}}
+{{- range $field := keys $accessLog -}}{{- if not (has $field (list "fields" "maxLineBytes" "targets" "suppress")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog contains unknown field %q. Valid fields: fields, maxLineBytes, suppress, targets." $field) -}}{{- end -}}{{- end -}}
+{{- $suppress := $accessLog.suppress | default dict -}}
+{{- if not (kindIs "map" $suppress) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog.suppress must be a map." -}}{{- end -}}
+{{- range $field := keys $suppress -}}{{- if not (has $field (list "successful")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.suppress contains unknown field %q. Valid fields: successful." $field) -}}{{- end -}}{{- end -}}
+{{- if and (hasKey $suppress "successful") (not (kindIs "bool" $suppress.successful)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.suppress.successful must be a boolean, got %q." (toString $suppress.successful)) -}}{{- end -}}
 {{- /* Log targets. Structure and enums are checked here so `helm install` fails
        fast; base.yaml's util-access-log-targets repeats them for the CR path. */ -}}
 {{- $logTargets := $accessLog.targets | default list -}}
@@ -260,6 +264,11 @@ the process listens somewhere else.
 {{- end -}}
 
 {{- define "haptic.haproxy.validateValues" -}}
+{{- $hapDataplane := .Values.haproxy.dataplane | default dict -}}
+{{- $dpLogLevels := list "trace" "debug" "info" "warning" "error" -}}
+{{- if and (hasKey $hapDataplane "logLevel") (not (has ($hapDataplane.logLevel | toString) $dpLogLevels)) -}}
+  {{- fail (printf "haproxy.dataplane.logLevel %q is invalid. Valid: %s." (toString $hapDataplane.logLevel) (join ", " $dpLogLevels)) -}}
+{{- end -}}
 {{- $haproxy := .Values.haproxy -}}
 {{- if not (kindIs "map" $haproxy) -}}{{- fail "haproxy must be a map." -}}{{- end -}}
 {{- $enterprise := $haproxy.enterprise | default dict -}}

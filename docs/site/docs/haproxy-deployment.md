@@ -166,7 +166,7 @@ Every frontend emits one JSON object per request (or per connection, for the
 TCP-mode frontends), using HAProxy's native JSON log encoding:
 
 ```json
-{"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"SRV_1","method":"GET","host":"echo.example.com","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"t_request":0,"t_queue":0,"t_connect":1,"t_response":3,"t_total":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
+{"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"SRV_1","method":"GET","host":"echo.example.com","listener_port":"443","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"t_request":0,"t_queue":0,"t_connect":1,"t_response":3,"t_total":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
 ```
 
 The log target is `log stdout len 16384 format raw local0 info`. `format raw`
@@ -188,6 +188,7 @@ render.
 | `client_ip` | Client address, after any `src-ip-header` rewrite |
 | `frontend`, `backend`, `server` | Which listener served it, where it went, which pod |
 | `method`, `host`, `path`, `http_version` | Request identity. `path` excludes the query string |
+| `listener_port` | The port the routing lookup was keyed on, as a string. Host and path map keys are scoped by it (`<host>:<port>`), so it distinguishes a request that matched no route from one that matched the wrong listener's routes. For a Gateway listener this is the per-Gateway pod port the chart allocated, not the Gateway's `spec.listeners[].port`. Empty on frontends that run no routing logic (`status`, the cache-origin leg) |
 | `status`, `bytes` | Response status and bytes sent to the client (JSON numbers) |
 | `t_request`, `t_queue`, `t_connect`, `t_response`, `t_total` | Timers in milliseconds: receiving the request, queueing, connecting, the backend's response, and the total active time |
 | `retries` | Connection retries, which `option redispatch` makes routine during a rolling update |
@@ -330,6 +331,41 @@ Two things to know:
   whole run. But those records are gone — only a ring buffers them for replay.
 
 Redirecting the stream changes who can read the records, not what they contain.
+
+#### Dropping records you don't need
+
+The access log is ~740 bytes per record, so about 700 MB per million requests. If
+that volume genuinely forces your hand, you can drop the records for successful
+requests:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        accessLog:
+          suppress:
+            successful: true
+```
+
+Denials, 4xx, and 5xx are always kept, so the failures a customer reports are
+never the ones you discarded.
+
+**This is off by default, and reaching for it first is usually a mistake.**
+Retaining a full access log for weeks is lawful under legitimate interest (GDPR
+Art. 6(1)(f)) — data minimisation doesn't require throwing it away. And the
+successful requests immediately before and after a failure are exactly what let
+you tell "this one request broke" from "everything was broken," or spot the retry
+that succeeded. Route the log somewhere access-controlled first; suppress only
+when volume, not privacy, is the problem.
+
+The rule is emitted as `http-after-response`, not `http-response`. That matters:
+`http-response` rules only run for responses that came from a *server*, so a WAF
+deny or any other HAProxy-generated response would never be evaluated. TCP-mode
+frontends are unaffected: `http-after-response` is HTTP-only, the internal TCP frontend
+already carries `option dontlog-normal`, and the
+TLS-passthrough frontend deliberately logs every connection because that record
+is the only one it produces.
 They still hold personal data, so retention limits and access controls still
 apply at the destination.
 
