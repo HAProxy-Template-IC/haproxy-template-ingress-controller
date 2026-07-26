@@ -38,7 +38,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 | --------------- | --------------------------------------- |
 | Hub               | `v0.11.0`                     |
 | `api-gateway`    | `v0.1.0`      |
-| `coraza`          | `v0.7.0`           |
+| `coraza`          | `v0.8.0`           |
 | `external-auth`   | `v0.5.0`    |
 | `fingerprinting`  | `v0.3.0`   |
 | `maxmind`         | `v0.4.0`          |
@@ -130,16 +130,33 @@ Rule-hit metrics tell you *which* rules fire. To tie a rule hit to one request, 
 | `waf_rule_id` | which CRS rule interrupted, for the one 403 a user complained about |
 | `waf_score` | the anomaly score, so you can see how far from the threshold this request sat |
 | `waf_rules_hit` | how many rules matched on this request — one noisy rule, or twenty |
+| `waf_matched_var` | **which request fields** the rules matched on, as names: `ARGS_GET:id,REQUEST_LINE`. Never the values |
 | `waf_action` | `allow` or `deny`, so detect-mode traffic is distinguishable |
 | `denied_by` | `waf` when the WAF blocked, so a 403 from the WAF is distinguishable from the five other gates that also return 403 |
 
 Those fields cost nothing extra: they're on by default whenever the coraza plugin is enabled, and the access log can be routed to an access-controlled destination instead of the container's stdout. See [Access logging](../haproxy-deployment.md#access-logging).
 
-For most false positives that's enough — the rule id plus the request path identifies the pattern. What the access log doesn't carry is the matched *target*: which `ARGS` key or header the rule fired on.
+`waf_matched_var` closes the loop: it names the request fields the rules matched on, so `waf_rule_id` tells you *which rule* and `waf_matched_var` tells you *on what*. That's everything a scoped `ruleExclusions` entry needs, from the access log alone.
 
-### See what a rule matched on
+The names are ordered with the reported rule's own targets first, then the rest most-severe-first, deduplicated and capped at five. Only request-derived variables appear (`ARGS*`, `REQUEST_*`, `QUERY_STRING`, `PATH_INFO`, `FILES*`, `MULTIPART*`, `XML`, `JSON`) — Coraza's internal `TX:*` scoring collection is filtered out, since it names nothing an exclusion can target. Requires coraza plugin v0.8.0 or later.
 
-Prefer a hash over the raw value. Set `rule_match_log` with `matched_data_log = "hash"` and the plugin logs one rule-match line per match carrying a hash of the matched value — enough to recognize the same false positive recurring across requests, with no request content recorded anywhere. Reproduce the whole `params` block, because your value replaces it:
+```json
+{"waf_action":"deny","waf_rule_id":942100,"waf_score":5,"waf_rules_hit":3,
+ "waf_matched_var":"ARGS_GET:id,REQUEST_LINE","denied_by":"waf"}
+```
+
+Read that as: rule 942100 fired on the `id` query argument. The exclusion follows directly:
+
+```yaml
+my-policy:
+  ruleExclusions:
+    - rules: [942100]
+      excludeTarget: "ARGS:id"
+```
+
+### See the value a rule matched on
+
+You rarely need this — the field name is what an exclusion targets. When you do, prefer a hash over the raw value. Set `rule_match_log` with `matched_data_log = "hash"` and the plugin logs one rule-match line per match carrying a hash of the matched value — enough to recognize the same false positive recurring across requests, with no request content recorded anywhere. Reproduce the whole `params` block, because your value replaces it:
 
 ```yaml
 spoaHub:
