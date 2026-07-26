@@ -47,8 +47,11 @@ test-gateway-listener-tls-options-version-and-ciphers
 test-gateway-mixed-unsupported-protocol
 test-gateway-multi-port-listener-bind
 test-gateway-per-gateway-services-shape
+test-gateway-pod-port-allocator-churn-keeps-incumbent-ports
+test-gateway-pod-port-allocator-churn-keeps-incumbent-ports-after-delete
 test-gateway-pod-port-allocator-custom-base
 test-gateway-pod-port-allocator-multi-gateway
+test-gateway-pod-port-allocator-oldest-wins-contested-slot
 test-gateway-slot-preservation
 test-gateway-slot-preservation-lower-ip
 test-gateway-static-addresses-name-fits-rfc1123-label
