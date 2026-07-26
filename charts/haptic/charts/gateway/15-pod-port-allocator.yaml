@@ -20,11 +20,14 @@ templateSnippets:
   #
   # Each (Gateway, port) key hashes to a slot in
   # [basePort, basePort+rangeSize); same-slot collisions between current
-  # keys are resolved by linear probing in sorted-key order. The result
-  # is a pure function of the current Gateway set: the same key always
-  # maps to the same port no matter what order Gateways were created in,
-  # what the cluster cache currently contains, or which render computes
-  # it.
+  # keys are resolved by linear probing in OLDEST-FIRST order (ascending
+  # Gateway creationTimestamp, key as tie-break). The result is a pure
+  # function of the current Gateway set: the same key always maps to the
+  # same port no matter what the cluster cache currently contains or
+  # which render computes it, and — because slots are handed out
+  # oldest-first — a key's port depends only on itself and on the keys
+  # of OLDER Gateways. Creating or deleting a NEWER Gateway can never
+  # move an existing Gateway's port.
   #
   # DO NOT "improve" this by reading committed Services back from the
   # cluster cache to stabilise allocations. A previous version did
@@ -47,12 +50,30 @@ templateSnippets:
   #     re-triggering a render. (Gateway-API conformance CI, 2026-07-03.)
   #
   # Hash+probe trades those failure modes for one small, bounded one: a
-  # key whose slot probe-chains through another key's slot shifts by one
-  # when that neighbour appears/disappears (likelihood ~keys/rangeSize
-  # per churn event, i.e. ~3% at 30 concurrent Gateway-ports over a
-  # 1000-port range — and the shifted Gateway's Service targetPort and
-  # bind move in the SAME render, so the exposure is one kube-proxy
-  # sync, not a persistent break).
+  # key whose slot probe-chains through another key's slot can shift
+  # when that neighbour DISAPPEARS (likelihood ~keys/rangeSize per
+  # deletion, i.e. ~3% at 30 concurrent Gateway-ports over a 1000-port
+  # range, and only for the YOUNGER member of a collision — oldest-wins
+  # ordering means an appearing Gateway shifts nobody).
+  #
+  # A shift is not free, and the exposure is NOT just "one kube-proxy
+  # sync": the shifted Gateway's Service targetPort and its bind move in
+  # the same render, but they leave the render on two different paths —
+  # the Service is applied immediately and unthrottled
+  # (pkg/controller/resourceapplier/component.go handleReconciliation-
+  # Completed → applyAndPrune), while the config waits out the
+  # deployer's minDeploymentInterval remainder plus a reload (a bind
+  # change is laneStructural, so the runtime-eligible fast path can't
+  # carry it). Anything pinned to the OLD pod port — an established
+  # keep-alive/h2 connection held open by conntrack, a `kubectl
+  # port-forward` that resolved targetPort earlier — keeps arriving
+  # there for the life of that connection. If the old port is unbound
+  # the client gets a clean refusal and reconnects; if another Gateway
+  # has meanwhile bound it, the request is silently scoped to THAT
+  # Gateway (404 via default_backend, or that Gateway's catch-all).
+  # Oldest-wins ordering is what keeps the second, cross-tenant case out
+  # of the common path: on deletion the mover VACATES its old slot
+  # rather than being evicted from it in favour of a newcomer.
   #
   # The map is initialised once per render via `shared.ComputeIfAbsent`
   # so concurrent map renderers see a consistent view.
@@ -109,10 +130,11 @@ templateSnippets:
               continue
             }
             allTuples = append(allTuples, map[string]any{
-              "key":    gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort),
-              "gwNs":   gwNs,
-              "gwName": gwName,
-              "lPort":  lPort,
+              "key":     gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort),
+              "gwNs":    gwNs,
+              "gwName":  gwName,
+              "lPort":   lPort,
+              "created": tostring(gw.Metadata.CreationTimestamp),
             })
           }
         }
@@ -128,12 +150,50 @@ templateSnippets:
             sha256 of the key itself, so the same key lands on the same
             pod port in every render, on every replica, regardless of
             snapshot staleness. Only genuine slot collisions between
-            keys present in THIS render probe forward, in sorted-key
-            order so the assignment is deterministic.
+            keys present in THIS render probe forward, in AGE-THEN-KEY
+            order (see below) so the assignment is deterministic.
 
             7 hex chars (28 bits) keeps parseInt inside int32 range on
             any platform; 268M values over a ~1000-slot range is
             uniform enough. -#}
+        {#- OLDEST-WINS probe order. Slots are handed out walking the
+            keys in ascending (Gateway creationTimestamp, key) order, so
+            a key's port depends ONLY on itself and on the keys of
+            OLDER Gateways. Creating a Gateway can therefore never move
+            an existing Gateway's pod port, no matter how the hashes
+            collide: the newcomer is processed last and probes past the
+            slots the incumbents already hold.
+
+            That invariant is what makes a moved port safe(ish) to live
+            with. Under the previous key-only order the winner of a
+            contested slot was whichever key sorted first, so a
+            newly-created Gateway could evict a long-lived one — and
+            the evicted Gateway's OLD pod port was, in the same render,
+            taken over by the newcomer's bind. Anything still addressing
+            the old pod port directly (an established keep-alive
+            connection pinned by conntrack, a `kubectl port-forward`
+            that resolved targetPort before the shift) then reached a
+            DIFFERENT Gateway's routes: its host key missed every map
+            entry (404 via default_backend) or, worse, matched that
+            Gateway's catch-all and crossed tenants. Oldest-wins removes
+            the eviction case entirely; the remaining case (deleting the
+            OLDER member of a collision pair lets the younger one move
+            down to the freed slot) vacates a port instead of handing it
+            to a neighbour, so stale clients get a clean connection
+            refusal and reconnect.
+
+            creationTimestamp is safe to read here and is NOT the
+            forbidden read-back: it is an immutable field of the watched
+            Gateway itself, arriving atomically with the object, not a
+            lagging observation of the controller's own output. It
+            cannot oscillate. Gateways whose timestamp is absent
+            (fixtures, hand-built objects) sort LAST — treated as
+            newest, so they can never evict a Gateway of known age — and
+            then fall back to key order, which is exactly the previous
+            behaviour. RFC3339 timestamps are fixed-width, so a plain
+            lexicographic sort is chronological; second granularity
+            means same-second creations tie and fall back to key order.
+            -#}
         var portKeys = []any{}
         var seenKeys = map[string]bool{}
         for _, tAny := range allTuples {
@@ -141,7 +201,14 @@ templateSnippets:
           var pk = tostring(t["gwNs"]) + "/" + tostring(t["gwName"]) + ":" + tostring(toint(t["lPort"]))
           if !seenKeys[pk] {
             seenKeys[pk] = true
-            portKeys = append(portKeys, pk)
+            var created = tostring(t["created"])
+            if created == "" {
+              created = "9999-12-31T23:59:59Z"
+            }
+            {#- "\t" separates the sort prefix from the key: it can
+                appear in neither an RFC3339 timestamp nor a
+                namespace/name, so the split below is unambiguous. -#}
+            portKeys = append(portKeys, created + "\t" + pk)
           }
         }
 
@@ -154,8 +221,12 @@ templateSnippets:
         }
         var portPod = map[string]any{}
         var usedSlots = map[int]bool{}
-        for _, pkAny := range sortedKeys {
-          var pk = tostring(pkAny)
+        for _, sortKeyAny := range sortedKeys {
+          {#- Strip the creationTimestamp sort prefix — only the
+              (Gateway, port) key is hashed, so the home slot stays a
+              pure function of the key and is unaffected by age. -#}
+          var sortKeyParts = split(tostring(sortKeyAny), "\t")
+          var pk = tostring(sortKeyParts[len(sortKeyParts)-1])
           var hashVal, hashErr = parseInt(sha256(pk)[0:7], 16)
           if hashErr != nil {
             {#- Unreachable — sha256 output is always valid hex — but

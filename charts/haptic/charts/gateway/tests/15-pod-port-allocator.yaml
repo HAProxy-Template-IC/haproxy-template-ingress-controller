@@ -5,6 +5,11 @@ validationTests:
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       dumpPodPortAllocations: "true"
+      # Both knobs pinned so an operator's own extraContext (which a
+      # per-test extraContext inherits for keys it doesn't set) can't
+      # move the expected slots and fail the controller's load gate.
+      perGatewayPodPortBase: 18000
+      perGatewayPodPortRange: 1000
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -113,6 +118,10 @@ validationTests:
       controllerName: "haproxy-haptic.org/controller"
       dumpPodPortAllocations: "true"
       perGatewayPodPortBase: 25000
+      # Pinned so an operator's own `extraContext.perGatewayPodPortRange`
+      # (which the per-test extraContext would otherwise inherit) can't
+      # change the expected slots and fail the load gate.
+      perGatewayPodPortRange: 1000
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -140,6 +149,176 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+# gw-pod-port: default/gw-only:https:443 = 25302$'
+
+  test-gateway-pod-port-allocator-oldest-wins-contested-slot:
+    requires: [gateways]
+    description: "Two Gateways whose (Gateway, port) keys hash to the SAME slot must be resolved oldest-first: the older Gateway keeps the home slot and the younger one probes forward. `default/gw-old-n:80` and `default/gw-new-m:80` both hash to slot 80 (verify: `python3 -c 'import hashlib; print(18000 + int(hashlib.sha256(b\"default/gw-old-n:80\").hexdigest()[:7], 16) % 1000)'` — same for gw-new-m). gw-new-m sorts BEFORE gw-old-n lexicographically, so a key-only probe order would hand slot 80 to the younger Gateway and push the older one to 18081. That is the eviction that broke live traffic: the evicted Gateway's Service targetPort and bind move to a new port while its old port is taken over, in the same render, by the newcomer's bind — so every client still addressing the old port (established keep-alive connection pinned by conntrack, a `kubectl port-forward` that resolved targetPort earlier) is silently scoped to a DIFFERENT Gateway's routes and 404s via default_backend with no recovery. Oldest-wins makes a Gateway's port a function of its own key plus the keys of OLDER Gateways only, so creating a Gateway can never move an existing one. Ports are pinned with base and range fixed in this test's extraContext, so no operator setting can falsify the expectation."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      dumpPodPortAllocations: "true"
+      perGatewayPodPortBase: 18000
+      perGatewayPodPortRange: 1000
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-new-m
+            namespace: default
+            creationTimestamp: "2026-06-01T00:00:00Z"
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-old-n
+            namespace: default
+            creationTimestamp: "2026-01-01T00:00:00Z"
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+    assertions:
+      - type: haproxy_valid
+
+      # The older Gateway holds the contested home slot (18000 + 80).
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-old-n:http:80 = 18080$'
+
+      # The younger Gateway is the one that probes forward.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-new-m:http:80 = 18081$'
+
+  test-gateway-pod-port-allocator-churn-keeps-incumbent-ports:
+    requires: [gateways]
+    description: "Churn invariance, part 1 of 2 (the paired test is `test-gateway-pod-port-allocator-churn-keeps-incumbent-ports-after-delete`, which renders the SAME fixture minus the middle Gateway and asserts the SAME two ports). Three Gateways: `gw-old-n` (oldest, home slot 80), `gw-new-m` (newest, home slot 80 — collides), `gw-bystander` (home slot 725). Deleting or creating `gw-new-m` must not move either survivor's pod port, because a moved port breaks every client pinned to the old one until it reconnects — and if a neighbour has meanwhile bound that port, the pinned client is silently served by the wrong Gateway. Oldest-wins probe order gives that: a key's slot depends only on itself and on the keys of OLDER Gateways. Ports are pinned with base and range fixed in this test's extraContext, so no operator setting can falsify the expectation."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      dumpPodPortAllocations: "true"
+      perGatewayPodPortBase: 18000
+      perGatewayPodPortRange: 1000
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-old-n
+            namespace: default
+            creationTimestamp: "2026-01-01T00:00:00Z"
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+        # The "middle" Gateway — present here, absent in the paired test.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-new-m
+            namespace: default
+            creationTimestamp: "2026-06-01T00:00:00Z"
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-bystander
+            namespace: default
+            creationTimestamp: "2026-03-01T00:00:00Z"
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+    assertions:
+      - type: haproxy_valid
+
+      # Same two values as the paired after-delete test.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-old-n:http:80 = 18080$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-bystander:http:80 = 18725$'
+
+  test-gateway-pod-port-allocator-churn-keeps-incumbent-ports-after-delete:
+    requires: [gateways]
+    description: "Churn invariance, part 2 of 2 (paired with `test-gateway-pod-port-allocator-churn-keeps-incumbent-ports`). Same fixture with the middle Gateway `gw-new-m` deleted; the two survivors must keep the exact ports asserted in the paired test. Keep the two fixtures and the two expected ports in sync — the pair is only meaningful when the surviving Gateways and their asserted ports are identical in both."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      dumpPodPortAllocations: "true"
+      perGatewayPodPortBase: 18000
+      perGatewayPodPortRange: 1000
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-old-n
+            namespace: default
+            creationTimestamp: "2026-01-01T00:00:00Z"
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-bystander
+            namespace: default
+            creationTimestamp: "2026-03-01T00:00:00Z"
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+    assertions:
+      - type: haproxy_valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-old-n:http:80 = 18080$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-bystander:http:80 = 18725$'
 
   test-gateway-listener-port-override-stands-alone:
     requires: [gatewayclasses, gateways]
