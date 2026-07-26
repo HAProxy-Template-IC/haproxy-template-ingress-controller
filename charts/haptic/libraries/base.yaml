@@ -123,6 +123,249 @@ templateSnippets:
   #     NOT warn (the two in the SAME section do).
   # ============================================================================
 
+  util-access-log-targets:
+    template: |-
+      {#-
+        Parses and validates extraContext.accessLog.targets once per render into
+        shared["accessLogTargets"], a list of normalised maps:
+          {address, format, facility, level, ring}   (ring is nil or a map)
+
+        WHY THIS EXISTS: the access log carries a client_ip field — personal data.
+        Organisations that must keep it out of a general-purpose log store need to
+        route it somewhere access-controlled, and overriding a chart-owned snippet
+        is not configuration. HAProxy's own process and alert messages are NOT
+        affected: they stay on the `global` stdout target, so `kubectl logs` keeps
+        working for on-call while only the personal-data-bearing stream moves.
+
+        Consumers render this snippet (it emits nothing) and then read
+        shared.Get("accessLogTargets").
+
+        Verified against HAProxy 3.0 and 3.4:
+          - a `log` line may reference a ring defined LATER in the file, so the
+            ring sections can come from global-top-* (which renders after
+            `defaults`),
+          - with a ring target, an unreachable collector costs the data plane
+            nothing: 25/25 requests served in 112ms with the collector down, and
+            all 25 records buffered and flushed once it came back.
+      -#}
+      {%- var _, _ = shared.ComputeIfAbsent("accessLogTargets", func() any {
+        var formats = []string{"raw", "rfc3164", "rfc5424", "local", "priority", "short", "timed", "iso"}
+        var facilities = []string{"kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news",
+                                  "uucp", "cron", "auth2", "ftp", "ntp", "audit", "alert", "cron2",
+                                  "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7"}
+        {#- Only the levels that actually emit an access record. The level is a
+            MAX severity filter and access logs are emitted at info, so anything
+            stricter (notice and up) silently drops EVERY record while
+            `haproxy -c` still returns 0 — measured: notice/warning/err each
+            produced zero records. A knob whose plausible values destroy the log
+            is not a knob. -#}
+        var levels = []string{"info", "debug"}
+        var addrRe = regexp("^(stdout|stderr|fd@[0-9]+|ring@[A-Za-z_][A-Za-z0-9_-]{0,63}|/[^[:space:]]+|\\[[0-9A-Fa-f:]+\\]:[0-9]{1,5}|[0-9A-Za-z._-]+:[0-9]{1,5})$")
+        var ringNameRe = regexp("^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+        {#- No unix@ here: HAProxy 3.4 rejects a UNIX ring server outright while
+            3.0 accepts it, so offering it would render a config that only works
+            on some of the supported versions. A UNIX socket collector is reached
+            with the plain-path address form instead, which is a datagram target. -#}
+        var ringAddrRe = regexp("^(\\[[0-9A-Fa-f:]+\\]:[0-9]{1,5}|[0-9A-Za-z._-]+:[0-9]{1,5})$")
+        var durationRe = regexp("^[0-9]+(us|ms|s|m|h|d)?$")
+        {#- A 5-digit shape match is not enough. HAProxy hard-ALERTs on a port
+            above 65535 ("invalid port '99999'", measured on 3.0 and 3.4), so the
+            value would pass Helm, reach the controller, and take down the config
+            load instead of being rejected where the operator set it. Port 0 it
+            ACCEPTS at config check (exit 0) even though nothing can be delivered
+            there, so only this check catches it. -#}
+        var portRe = regexp(":([0-9]{1,5})$")
+        var checkPort = func(addr string, what string) {
+          {#- An absolute path is a UNIX socket, not host:port, and a colon is a
+              legal filename character — so `/var/run/log:99999` is a valid
+              destination whose trailing digits are part of the name, not a port. -#}
+          if hasPrefix(addr, "/") {
+            return
+          }
+          var m = portRe.FindSubmatch(addr)
+          if len(m) > 0 {
+            var port = toint(m[1])
+            if port < 1 || port > 65535 {
+              fail(what + " '" + addr + "' has port " + tostring(port) + ", outside 1-65535. A port above 65535 is rejected by HAProxy at config parse; port 0 is accepted there but no record can ever be delivered to it.")
+            }
+          }
+        }
+
+        var rawTargets = extraContext | dig("accessLog", "targets")
+        var list = []any{}
+        if rawTargets != nil {
+          var l, ok = rawTargets.([]any)
+          if !ok {
+            fail("controller.config.templatingSettings.extraContext.accessLog.targets must be a list of log targets.")
+          }
+          list = l
+        }
+        {#- An ABSENT key takes the chart default. An explicitly EMPTY list does
+            not: it would fall back to stdout, which is the one destination this
+            knob exists to move records off, so the operator who wrote it would
+            silently get the opposite of what they asked for. -#}
+        if rawTargets != nil && len(list) == 0 {
+          fail("controller.config.templatingSettings.extraContext.accessLog.targets is an empty list. Name at least one target — use [{address: stdout}] for the chart default; an empty list would silently fall back to stdout, which is what this setting exists to move the access log away from.")
+        }
+        if len(list) == 0 {
+          list = append(list, map[string]any{"address": "stdout"})
+        }
+
+        {#- A `log ring@<name>` whose ring does not exist passes `haproxy -c`
+            (return code 0, so the render's validation gate accepts it) and then
+            makes HAProxy REFUSE TO START: "unknown ring named '<name>'", exit 1.
+            Validation green, data plane down. So the only ring names accepted in
+            an address are the ones this chart emits, collected here first. -#}
+        var declaredRings = map[string]bool{}
+        for _, entry := range list {
+          var t, ok = entry.(map[string]any)
+          if ok && t["ring"] != nil {
+            var r, rok = t["ring"].(map[string]any)
+            if rok {
+              declaredRings[tostring(r["name"] | fallback("accesslog"))] = true
+            }
+          }
+        }
+
+        var out = []any{}
+        var seenRings = map[string]bool{}
+        var seenLines = map[string]bool{}
+        for _, entry := range list {
+          var t, ok = entry.(map[string]any)
+          if !ok {
+            fail("Each controller.config.templatingSettings.extraContext.accessLog.targets entry must be a map with an address (or a ring).")
+          }
+          for _, k := range keys(t) {
+            if k != "address" && k != "format" && k != "facility" && k != "level" && k != "ring" {
+              fail("accessLog.targets entry contains unknown field '" + k + "'. Valid fields: address, format, facility, level, ring.")
+            }
+          }
+
+          {#- A ring is a buffered TCP client the chart emits as its own section;
+              the target then logs to ring@<name>. Giving both is ambiguous. -#}
+          var ringRaw = t["ring"]
+          var ring any = nil
+          var address = tostring(t["address"] | fallback(""))
+          if ringRaw != nil {
+            var r, rok = ringRaw.(map[string]any)
+            if !rok {
+              fail("accessLog.targets[].ring must be a map (name, address, size, logProto, connectTimeout, serverTimeout, serverOptions).")
+            }
+            if address != "" {
+              fail("accessLog.targets entry sets both 'address' (" + address + ") and 'ring'. A ring target logs to ring@<name>, so set one or the other.")
+            }
+            for _, k := range keys(r) {
+              if k != "name" && k != "address" && k != "size" && k != "logProto" && k != "connectTimeout" && k != "serverTimeout" && k != "serverOptions" {
+                fail("accessLog.targets[].ring contains unknown field '" + k + "'. Valid fields: name, address, size, logProto, connectTimeout, serverTimeout, serverOptions.")
+              }
+            }
+            var ringName = tostring(r["name"] | fallback("accesslog"))
+            if !ringNameRe.Match(ringName) {
+              fail("Invalid accessLog.targets[].ring.name '" + ringName + "'. It names an HAProxy section, so it must match ^[A-Za-z_][A-Za-z0-9_-]{0,63}$.")
+            }
+            if seenRings[ringName] {
+              fail("Duplicate accessLog.targets[].ring.name '" + ringName + "'. Two ring sections cannot share a name.")
+            }
+            seenRings[ringName] = true
+            var ringAddr = tostring(r["address"] | fallback(""))
+            if !ringAddrRe.Match(ringAddr) {
+              fail("Invalid accessLog.targets[].ring.address '" + ringAddr + "' for ring '" + ringName + "'. Expected <host>:<port> or [<ipv6>]:<port> — the address of the log collector the ring forwards to. For a UNIX socket collector use a plain-path address target instead; HAProxy 3.4 rejects a UNIX ring server.")
+            }
+            checkPort(ringAddr, "accessLog.targets[].ring.address")
+            var ringSize = toint(r["size"] | fallback(65536))
+            if ringSize < 4096 || ringSize > 134217728 {
+              fail("accessLog.targets[].ring.size for ring '" + ringName + "' must be between 4096 and 134217728 bytes; it is the in-memory buffer that holds records while the collector is unavailable.")
+            }
+            {#- The ring section carries `maxlen <maxLineBytes>`, and HAProxy caps
+                that at the buffer minus a ~197-byte header. A size below that
+                bound is only a [WARNING] ("event max length ... forced to N") —
+                which the render's haproxy_valid gate treats as success — and then
+                every record longer than N is truncated mid-byte into invalid
+                JSON. Identical on 3.0 and 3.4; 256 is the measured overhead
+                rounded up. -#}
+            var rawMaxLine = tostring(extraContext | dig("accessLog", "maxLineBytes") | fallback(16384))
+            if regex_search(rawMaxLine, "^[0-9]{1,5}$") {
+              var maxLine = toint(rawMaxLine)
+              if ringSize < maxLine+256 {
+                fail("accessLog.targets[].ring.size for ring '" + ringName + "' is " + tostring(ringSize) + ", too small for accessLog.maxLineBytes " + tostring(maxLine) + ". HAProxy would cap the ring's maxlen to the buffer minus its header and truncate every longer record into invalid JSON, warning but not failing. Give the ring at least " + tostring(maxLine+256) + " bytes (the buffer holds roughly size/maxLineBytes records while the collector is down).")
+              }
+            }
+            var logProto = tostring(r["logProto"] | fallback("legacy"))
+            if logProto != "legacy" && logProto != "octet-count" {
+              fail("accessLog.targets[].ring.logProto for ring '" + ringName + "' must be legacy (RFC 6587 non-transparent framing, newline-delimited) or octet-count.")
+            }
+            var connectTimeout = tostring(r["connectTimeout"] | fallback("5s"))
+            var serverTimeout = tostring(r["serverTimeout"] | fallback("10s"))
+            if !durationRe.Match(connectTimeout) || !durationRe.Match(serverTimeout) {
+              fail("accessLog.targets[].ring connectTimeout/serverTimeout for ring '" + ringName + "' must be HAProxy durations such as 5s or 500ms.")
+            }
+            {#- serverOptions is spliced verbatim onto the `server` line, which is
+                what makes TLS and any other server keyword reachable without the
+                chart modelling each one. Spaces are therefore allowed; a newline
+                or a comment marker would let it inject a directive. -#}
+            var serverOptions = tostring(r["serverOptions"] | fallback(""))
+            if regex_search(serverOptions, "[[:cntrl:]#]") {
+              fail("Invalid accessLog.targets[].ring.serverOptions for ring '" + ringName + "': it is appended verbatim to the ring's `server` line and must not contain control characters or '#' (config-injection guard).")
+            }
+            ring = map[string]any{
+              "name": ringName, "address": ringAddr, "size": ringSize, "logProto": logProto,
+              "connectTimeout": connectTimeout, "serverTimeout": serverTimeout, "serverOptions": serverOptions,
+            }
+            address = "ring@" + ringName
+          }
+
+          if address == "" {
+            fail("An accessLog.targets entry needs an address (stdout, stderr, fd@<n>, <host>:<port>, /path/to.sock or ring@<name>) or a ring.")
+          }
+          if !addrRe.Match(address) {
+            fail("Invalid accessLog.targets[].address '" + address + "'. Expected stdout, stderr, fd@<n>, <host>:<port>, [<ipv6>]:<port>, an absolute socket path, or ring@<name>.")
+          }
+          if hasPrefix(address, "ring@") && !declaredRings[address[5:]] {
+            fail("accessLog.targets[].address '" + address + "' points at a ring no target declares. HAProxy accepts this at config check and then refuses to start (\"unknown ring named\"), so the render rejects it instead. Declare the ring on the target itself with a `ring:` block; to use a ring you define yourself, override the util-access-log-targets snippet.")
+          }
+
+          checkPort(address, "accessLog.targets[].address")
+
+          {#- Default the framing to the target: stdout wants bare JSON so
+              `kubectl logs | jq` works, while anything else is a syslog
+              endpoint that expects a header it can parse. -#}
+          var defaultFormat = "rfc5424"
+          if address == "stdout" || address == "stderr" {
+            defaultFormat = "raw"
+          }
+          var format = tostring(t["format"] | fallback(defaultFormat))
+          if !(formats contains format) {
+            fail("Invalid accessLog.targets[].format '" + format + "' for address '" + address + "'. Valid: " + join(formats, ", ") + ".")
+          }
+          var facility = tostring(t["facility"] | fallback("local0"))
+          if !(facilities contains facility) {
+            fail("Invalid accessLog.targets[].facility '" + facility + "'. It must be one of the 24 standard syslog facilities.")
+          }
+          var level = tostring(t["level"] | fallback("info"))
+          if !(levels contains level) {
+            fail("Invalid accessLog.targets[].level '" + level + "'. Valid: " + join(levels, ", ") + ". The level is a maximum-severity filter and access records are emitted at info, so a stricter level (notice and above) silently drops every one of them.")
+          }
+
+          {#- Each target renders one `log` line, and HAProxy sends every record
+              down every one of them. Two targets that produce an IDENTICAL line
+              therefore log each request TWICE — accepted by `haproxy -c`, silent
+              at runtime, and visible only as doubled volume in the collector.
+              The reachable way to hit this is a ring target plus a second entry
+              addressing that same ring. Targets differing in any field are real
+              fan-out and stay allowed. -#}
+          var lineKey = address + " " + format + " " + facility + " " + level
+          if seenLines[lineKey] {
+            fail("Two accessLog.targets entries render the same log line ('" + lineKey + "'), so every request would be logged twice. Drop the duplicate, or make the targets differ (a different format, facility, or level).")
+          }
+          seenLines[lineKey] = true
+
+          out = append(out, map[string]any{
+            "address": address, "format": format, "facility": facility, "level": level, "ring": ring,
+          })
+        }
+        return out
+      }) -%}
+
   util-log-format-http:
     template: |-
       {#-
@@ -1210,7 +1453,19 @@ templateSnippets:
   defaults-settings-100-options:
     template: |
       mode http
-      log global
+      {#- Access-log targets, one `log` line each. This replaces the historical
+          `log global`, which tied traffic logs to whatever the global section
+          used: proxies now log where extraContext.accessLog.targets says, while
+          HAProxy's own process and alert messages keep using the global stdout
+          target. With the default (stdout/raw/local0/info) the rendered line is
+          what `log global` resolved to anyway. -#}
+      {{- render "util-access-log-targets" -}}
+      {%- var alTargets = shared.Get("accessLogTargets").([]any) -%}
+      {%- var alMaxLen = toint(extraContext | dig("accessLog", "maxLineBytes") | fallback(16384)) -%}
+      {%- for _, tAny := range alTargets %}
+        {%- var t = tAny.(map[string]any) %}
+      log {{ t["address"] }} len {{ alMaxLen }} format {{ t["format"] }} {{ t["facility"] }} {{ t["level"] }}
+      {%- end %}
       option httplog
       option dontlognull
       option log-health-checks
@@ -1630,6 +1885,36 @@ templateSnippets:
           http-request return status 200 hdr "grpc-status" "12" hdr "grpc-message" "Unimplemented" if { req.hdr(content-type) -m sub "application/grpc" }
           http-after-response set-header content-type "application/grpc" if { res.hdr(grpc-status) -m found }
           http-request return status 404
+      {%- end %}
+
+  global-top-100-access-log-rings:
+    template: |-
+      {#-
+        One `ring` section per access-log target that declares one. A ring is a
+        buffered TCP client: records queue in memory when the collector is down
+        and flush on reconnect, so a restarting log shipper never touches the
+        data plane (measured: 25/25 requests served with the collector stopped,
+        all 25 records delivered afterwards). Plain `log <host>:<port>` is UDP
+        and drops them instead.
+
+        This renders after the `defaults` section that references the ring, which
+        HAProxy accepts — forward references to a ring are resolved post-parse
+        (verified on 3.0 and 3.4).
+      -#}
+      {{- render "util-access-log-targets" -}}
+      {%- for _, tAny := range shared.Get("accessLogTargets").([]any) %}
+        {%- var t = tAny.(map[string]any) %}
+        {%- if t["ring"] != nil %}
+          {%- var r = t["ring"].(map[string]any) %}
+      {{ "\n" }}ring {{ r["name"] }}
+          description "haptic access log -> {{ r["address"] }}"
+          format {{ t["format"] }}
+          maxlen {{ toint(extraContext | dig("accessLog", "maxLineBytes") | fallback(16384)) }}
+          size {{ r["size"] }}
+          timeout connect {{ r["connectTimeout"] }}
+          timeout server {{ r["serverTimeout"] }}
+          server {{ r["name"] }} {{ r["address"] }} log-proto {{ r["logProto"] }}{% if r["serverOptions"] != "" %} {{ r["serverOptions"] }}{% end %}
+        {%- end %}
       {%- end %}
 
   global-top-050-peers:
@@ -2853,3 +3138,373 @@ validationTests:
         description: >-
           The marker must precede the deny: `deny` ends rule processing, so a
           marker after it would never run.
+
+  test-access-log-target-default-is-stdout:
+    description: >-
+      With no accessLog.targets the access log goes to stdout exactly as before,
+      and HAProxy's own process messages keep their own global stdout target.
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^global$.*?^  log stdout len 16384 format raw local0 info$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^defaults$.*?^  log stdout len 16384 format raw local0 info$'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^  log global$'
+        description: >-
+          Replaced by an explicit target, so the access log no longer inherits
+          whatever the global section happens to use.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^ring '
+
+  test-access-log-target-ring:
+    description: >-
+      A ring target emits its own buffered-TCP ring section and points the
+      defaults log line at it, so access records leave the container instead of
+      landing on stdout — while process messages still go to stdout.
+    extraContext:
+      accessLog:
+        targets:
+          - ring:
+              name: accesslog
+              address: 127.0.0.1:6514
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^defaults$.*?^  log ring@accesslog len 16384 format rfc5424 local0 info$'
+        description: >-
+          The framing defaults to rfc5424 for a non-stdout target: a collector
+          parses the syslog envelope and the JSON record inside it.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^ring accesslog$.*?^  server accesslog 127\.0\.0\.1:6514 log-proto legacy$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^ring accesslog$.*?^  size 65536$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^global$.*?^  log stdout len 16384 format raw local0 info$'
+        description: Process/alert messages are unaffected — kubectl logs still works.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?ms)^defaults$.*?^  log stdout'
+        description: No access-log copy on stdout, which is the whole point.
+
+  test-access-log-target-remote-and-fanout:
+    description: >-
+      An address target works without a ring (here a UDP syslog endpoint), and
+      several targets fan out — the migration case, where records go to the new
+      collector and stdout at once.
+    extraContext:
+      accessLog:
+        targets:
+          - address: 10.0.0.5:514
+            format: rfc5424
+            facility: local6
+            level: debug
+          - address: stdout
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  log 10\.0\.0\.5:514 len 16384 format rfc5424 local6 debug$'
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?ms)^defaults$.*?^  log '
+        expected: "1"
+        description: match_count anchors on the first line only; the fan-out pair is asserted individually.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^defaults$.*?^  log stdout len 16384 format raw local0 info$'
+
+  test-access-log-target-ring-with-tls-server-options:
+    description: >-
+      serverOptions is spliced verbatim onto the ring's server line, so TLS (or
+      any other server keyword) is reachable without the chart modelling it.
+
+      Two sharp edges this fixture encodes deliberately. The address is an IP
+      because HAProxy resolves a ring server's address at config-PARSE time, so a
+      name that does not resolve during validation fails the render — a sidecar
+      (127.0.0.1) or a literal IP always works, a Service DNS name needs
+      `resolvers`/`init-addr` through serverOptions. And the TLS options carry no
+      ca-file, because any file referenced here must also exist where the config
+      is validated (the controller pod), not just in the HAProxy pod; deliver
+      such material through the chart's file mechanism so both see it.
+    extraContext:
+      accessLog:
+        targets:
+          - ring:
+              name: secure-log
+              address: 10.43.12.7:6514
+              size: 131072
+              logProto: octet-count
+              connectTimeout: 2s
+              serverTimeout: 30s
+              serverOptions: "ssl verify none"
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'server secure-log 10\.43\.12\.7:6514 log-proto octet-count ssl verify none'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^  log ring@secure-log len 16384 format rfc5424 local0 info$'
+
+  test-access-log-target-rejects-address-and-ring:
+    description: A target that sets both an address and a ring is ambiguous.
+    extraContext:
+      accessLog:
+        targets:
+          - address: stdout
+            ring:
+              name: accesslog
+              address: 127.0.0.1:6514
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "sets both 'address' \\(stdout\\) and 'ring'"
+
+  test-access-log-target-rejects-bad-address:
+    description: >-
+      The address is spliced into a `log` directive, so it is charset-checked
+      rather than trusted.
+    extraContext:
+      accessLog:
+        targets:
+          - address: "stdout local0 info\nfrontend evil"
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid accessLog.targets\\[\\].address"
+
+  test-access-log-target-rejects-unknown-field:
+    extraContext:
+      accessLog:
+        targets:
+          - address: stdout
+            formatt: raw
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "accessLog.targets entry contains unknown field 'formatt'"
+
+  test-access-log-target-rejects-injection-in-server-options:
+    description: >-
+      serverOptions allows spaces (it carries real server keywords) so a newline
+      or comment marker is what would let it inject a directive.
+    extraContext:
+      accessLog:
+        targets:
+          - ring:
+              name: accesslog
+              address: 127.0.0.1:6514
+              serverOptions: "ssl # sneaky"
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "must not contain control characters or '#'"
+
+  test-access-log-target-rejects-dangling-ring-reference:
+    description: >-
+      A `log ring@<name>` with no such ring passes `haproxy -c` and then makes
+      HAProxy refuse to start — validation green, data plane down. The render
+      rejects it instead, because no gate downstream would catch it.
+    extraContext:
+      accessLog:
+        targets:
+          - address: ring@nowhere
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "points at a ring no target declares"
+
+  test-access-log-target-socket-path-may-end-in-digits:
+    description: >-
+      The port bound must not misread a UNIX socket path. A colon is a legal
+      filename character, so `/var/run/log:99999` is a valid destination whose
+      trailing digits are part of the name — the check applies to the host:port
+      forms only.
+    extraContext:
+      accessLog:
+        targets:
+          - address: /var/run/log:99999
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^defaults$.*?^  log /var/run/log:99999 len 16384 format rfc5424 local0 info$'
+
+  test-access-log-target-rejects-out-of-range-port:
+    description: >-
+      The address shape allows five port digits, but HAProxy hard-ALERTs above
+      65535 ("invalid port '99999'", measured on 3.0 and 3.4). Without this the
+      value passes Helm and takes down the controller's config load instead of
+      being rejected where the operator set it.
+    extraContext:
+      accessLog:
+        targets:
+          - address: 10.0.0.5:99999
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "has port 99999, outside 1-65535"
+
+  test-access-log-target-rejects-out-of-range-ring-port:
+    description: >-
+      Same bound on a ring server address, which reaches HAProxy through a
+      different directive (`server` in the ring section, not `log`).
+    extraContext:
+      accessLog:
+        targets:
+          - ring:
+              name: shipper
+              address: 10.0.0.5:99999
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "has port 99999, outside 1-65535"
+
+  test-access-log-target-rejects-ring-too-small-for-a-record:
+    description: >-
+      The ring section carries `maxlen <maxLineBytes>`, and HAProxy caps that at
+      the buffer minus a ~197-byte header. Undersized, it emits only a [WARNING]
+      — which `haproxy_valid` treats as success — and then truncates every longer
+      record mid-byte into invalid JSON, defeating the point of maxLineBytes.
+      Measured identically on HAProxy 3.0 and 3.4.
+    extraContext:
+      accessLog:
+        maxLineBytes: 16384
+        targets:
+          - ring:
+              name: tiny
+              address: 127.0.0.1:6514
+              size: 4096
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "too small for accessLog.maxLineBytes 16384"
+
+  test-access-log-target-rejects-duplicate-log-line:
+    description: >-
+      HAProxy sends every record down every `log` line, so two targets rendering
+      an identical line log each request twice — accepted by `haproxy -c`, and
+      visible only as doubled volume at the collector. The reachable way to hit
+      this is a ring target plus a second entry addressing that same ring.
+    extraContext:
+      accessLog:
+        targets:
+          - ring:
+              name: shipper
+              address: 127.0.0.1:6514
+          - address: ring@shipper
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "would be logged twice"
+
+  test-access-log-targets-fan-out-to-one-address-with-distinct-settings:
+    description: >-
+      The duplicate-line guard keys on the whole rendered line, not the address,
+      so two targets sharing an address but differing in facility are real fan-out
+      and stay allowed.
+    extraContext:
+      accessLog:
+        targets:
+          - address: stdout
+          - address: stdout
+            facility: local1
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^defaults$.*?^  log stdout len 16384 format raw local0 info$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^defaults$.*?^  log stdout len 16384 format raw local1 info$'
+
+  test-access-log-targets-rejects-empty-list:
+    description: >-
+      An empty list would fall back to stdout — the one destination this setting
+      exists to move records off — so the operator who wrote it would silently get
+      the opposite of what they asked for. An ABSENT key still takes the default.
+    extraContext:
+      accessLog:
+        targets: []
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "is an empty list"
+
+  test-access-log-target-rejects-duplicate-ring-name:
+    description: >-
+      Two targets naming the same ring would emit two `ring <name>` sections.
+      Reject the second one where the operator can see which target caused it,
+      rather than leaving HAProxy to reason about a duplicate section.
+    extraContext:
+      accessLog:
+        targets:
+          - ring:
+              name: dup
+              address: 127.0.0.1:6514
+          - ring:
+              name: dup
+              address: 127.0.0.1:6515
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Two ring sections cannot share a name"
+
+  test-access-log-target-rejects-unusable-level:
+    description: >-
+      The level is a maximum-severity filter and access records are emitted at
+      info, so `notice` and above silently drop every record while haproxy -c
+      still returns 0. Measured: notice/warning/err each emitted zero records.
+    extraContext:
+      accessLog:
+        targets:
+          - address: stdout
+            level: notice
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "a stricter level \\(notice and above\\) silently drops every one of them"
+
+  test-access-log-target-rejects-unix-ring-server:
+    description: >-
+      HAProxy 3.4 rejects a UNIX ring server while 3.0 accepts it, so the chart
+      refuses the form rather than rendering a config that works on some
+      supported versions only.
+    extraContext:
+      accessLog:
+        targets:
+          - ring:
+              name: accesslog
+              address: unix@/var/run/log.sock
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "HAProxy 3.4 rejects a UNIX ring server"

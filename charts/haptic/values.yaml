@@ -657,6 +657,60 @@ controller:
           # or captured request headers push records past it. Accepted range:
           # 1024-65535; outside it the render fails rather than truncating.
           maxLineBytes: 16384
+          # Where access-log records go. Defaults to the container's stdout.
+          #
+          # HAProxy's own process and alert messages are NOT affected by this —
+          # they keep their own stdout target, so `kubectl logs` stays useful for
+          # on-call even when the access log is routed elsewhere. That split is
+          # the point: the access log carries a client_ip field (personal data
+          # under GDPR), which many organisations must keep out of a general
+          # log store that every employee can read.
+          #
+          # Each entry renders one HAProxy `log` line. Several entries fan out to
+          # several destinations, which is what a migration needs.
+          #
+          #   address   stdout | stderr | fd@<n> | <host>:<port> | [<ipv6>]:<port>
+          #             | /path/to.sock | ring@<name>. Plain <host>:<port> is UDP.
+          #             A ring@<name> must name a ring declared by one of these
+          #             targets: HAProxy accepts a dangling reference at config
+          #             check and then refuses to start.
+          #   format    raw | rfc3164 | rfc5424 | local | priority | short | timed
+          #             | iso. Defaults to raw for stdout/stderr (so `kubectl logs
+          #             | jq` works) and rfc5424 otherwise (a collector parses the
+          #             syslog envelope, then the JSON record inside it).
+          #   facility  one of the 24 syslog facilities (default local0)
+          #   level     info (default) or debug. This is a MAXIMUM severity and
+          #             access records are emitted at info, so anything stricter
+          #             drops every one of them while haproxy -c still passes.
+          #   ring      buffered TCP client instead of a bare address; the chart
+          #             emits the ring section and logs to ring@<name>. Records
+          #             queue in memory while the collector is down and flush on
+          #             reconnect, so a restarting log shipper never affects
+          #             traffic. Plain UDP would drop them.
+          #
+          # Ship to a Vector (or Fluent Bit) sidecar over a buffered TCP ring:
+          #
+          #   targets:
+          #     - ring:
+          #         name: accesslog
+          #         address: 127.0.0.1:6514   # <host>:<port>; no UNIX sockets
+          #         size: 65536               # in-memory buffer, bytes; must be
+          #                                   # at least maxLineBytes + 256
+          #         logProto: legacy          # legacy (newline) | octet-count
+          #         connectTimeout: 5s
+          #         serverTimeout: 10s
+          #         # appended verbatim to the ring's `server` line, e.g.
+          #         # "ssl verify required ca-file /etc/haproxy/ssl/ca.pem" or
+          #         # "resolvers dns init-addr last,libc,none" for a DNS name.
+          #         # Any file referenced here must ALSO exist where the config is
+          #         # validated (the controller pod), not only in the HAProxy pod.
+          #         serverOptions: ""
+          #
+          # A ring server's address is resolved at config-parse time, so use a
+          # loopback sidecar address or a literal IP unless you pass resolvers
+          # through serverOptions.
+          targets:
+            - address: stdout
         # Template-library routing behavior. This lives in extraContext so the
         # rendered HAProxyTemplateConfig carries the same setting that selected
         # the library variant at Helm render time.

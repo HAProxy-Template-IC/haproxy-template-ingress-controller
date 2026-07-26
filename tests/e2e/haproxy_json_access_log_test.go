@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
@@ -27,19 +28,26 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
-// readHAProxyAccessLog returns the recent stdout of the `haproxy` container
-// across all HAProxy pods. That stdout IS the access log in this chart (`log
-// stdout ... format raw`), so it is the only place the emitted log record can be
-// observed — the chart's validationTests can prove the log-format directive
-// renders, but not that HAProxy produces a parseable record from it.
-func readHAProxyAccessLog(ctx context.Context, t *testing.T) (string, error) {
+// readHAProxyAccessLog returns the stdout of the `haproxy` container across all
+// HAProxy pods, from `since` onwards. That stdout IS the access log in this chart
+// (`log stdout ... format raw`), so it is the only place the emitted log record
+// can be observed — the chart's validationTests can prove the log-format
+// directive renders, but not that HAProxy produces a parseable record from it.
+//
+// The window is bounded by TIME, not by a line count. A `--tail=N` read races the
+// log volume of whatever else is running: on a busy shard (api-gateway, with WAF
+// and schema tests driving traffic in parallel) this test's own record scrolled
+// out of a 500-line tail before the poll observed it, and the test failed while
+// the feature was fine.
+func readHAProxyAccessLog(ctx context.Context, t *testing.T, since time.Time) (string, error) {
 	t.Helper()
 	var all strings.Builder
 	for _, pod := range listHAProxyPods(t) {
 		cmd := exec.CommandContext(ctx, "kubectl",
 			"--kubeconfig", kubeconfigPath,
 			"-n", ControllerNamespace,
-			"logs", pod, "-c", "haproxy", "--tail=500",
+			"logs", pod, "-c", "haproxy",
+			"--since-time="+since.UTC().Format(time.RFC3339),
 		)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
@@ -57,9 +65,9 @@ func readHAProxyAccessLog(ctx context.Context, t *testing.T) (string, error) {
 //
 // Matching on the request's own unique marker path is what makes this safe under
 // -parallel: every other test's traffic is on a different path.
-func findAccessLogRecord(ctx context.Context, t *testing.T, marker string) map[string]any {
+func findAccessLogRecord(ctx context.Context, t *testing.T, since time.Time, marker string) map[string]any {
 	t.Helper()
-	return findAccessLogRecordWhere(ctx, t, "path "+marker, func(rec map[string]any) bool {
+	return findAccessLogRecordWhere(ctx, t, since, "path "+marker, func(rec map[string]any) bool {
 		return rec["path"] == marker
 	})
 }
@@ -72,13 +80,13 @@ func findAccessLogRecord(ctx context.Context, t *testing.T, marker string) map[s
 // messages are not JSON, by design), but a JSON-looking line that fails to parse
 // fails the test — that is what truncation at `len` or a leftover syslog prefix
 // would look like.
-func findAccessLogRecordWhere(ctx context.Context, t *testing.T, desc string, want func(map[string]any) bool) map[string]any {
+func findAccessLogRecordWhere(ctx context.Context, t *testing.T, since time.Time, desc string, want func(map[string]any) bool) map[string]any {
 	t.Helper()
 	var found map[string]any
 	var rawLine string
 
 	err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
-		logs, err := readHAProxyAccessLog(c, t)
+		logs, err := readHAProxyAccessLog(c, t, since)
 		if err != nil {
 			return false, err
 		}
@@ -146,6 +154,8 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 	const wantTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 
 	var marker, ns string
+	// Bound every log read to this test's own window.
+	since := time.Now().Add(-5 * time.Second)
 
 	feature := features.New("HAProxy access log: one parseable JSON record per request").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -172,7 +182,7 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 				WithHeader("traceparent", traceparent).
 				ExpectOK(t)
 
-			rec := findAccessLogRecord(ctx, t, marker)
+			rec := findAccessLogRecord(ctx, t, since, marker)
 
 			if got := recordString(t, rec, "method"); got != "GET" {
 				t.Errorf("method = %q, want GET", got)
@@ -206,7 +216,7 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 			return ctx
 		}).
 		Assess("the request id is an opaque UUIDv7 carrying no client address", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			rec := findAccessLogRecord(ctx, t, marker)
+			rec := findAccessLogRecord(ctx, t, since, marker)
 			reqID := recordString(t, rec, "req_id")
 			if !uuidV7Pattern.MatchString(reqID) {
 				t.Errorf("req_id = %q, want an RFC 9562 UUIDv7 (unique-id-format %%[uuid(7)])", reqID)
@@ -219,7 +229,7 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 			return ctx
 		}).
 		Assess("an inbound W3C traceparent joins the record to a trace", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			rec := findAccessLogRecord(ctx, t, marker)
+			rec := findAccessLogRecord(ctx, t, since, marker)
 			if got := recordString(t, rec, "trace_id"); got != wantTraceID {
 				t.Errorf("trace_id = %q, want %q (extracted from the traceparent header)", got, wantTraceID)
 			}
@@ -245,6 +255,7 @@ func TestHAProxyJSONAccessLogGatewayResource(t *testing.T) {
 
 	var marker, ns string
 	var fwd GatewayForward
+	since := time.Now().Add(-5 * time.Second)
 
 	feature := features.New("HAProxy access log: Gateway traffic reports the HTTPRoute as its owning resource").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -279,7 +290,7 @@ func TestHAProxyJSONAccessLogGatewayResource(t *testing.T) {
 		Assess("resource is the HTTPRoute namespace/name", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			httpclient.ForForwarded(t, fwd.HTTPPort, 0).GET(host, marker).ExpectOK(t)
 
-			rec := findAccessLogRecord(ctx, t, marker)
+			rec := findAccessLogRecord(ctx, t, since, marker)
 			want := ns + "/echo-json-log-gw"
 			got := recordString(t, rec, "resource")
 			if got != want {

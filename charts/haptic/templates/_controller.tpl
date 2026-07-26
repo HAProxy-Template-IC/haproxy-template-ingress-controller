@@ -111,7 +111,98 @@ the process listens somewhere else.
        first-class API that bypasses Helm entirely. */ -}}
 {{- $accessLog := $extraContext.accessLog | default dict -}}
 {{- if not (kindIs "map" $accessLog) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog must be a map." -}}{{- end -}}
-{{- range $field := keys $accessLog -}}{{- if not (has $field (list "fields" "maxLineBytes")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog contains unknown field %q. Valid fields: fields, maxLineBytes." $field) -}}{{- end -}}{{- end -}}
+{{- range $field := keys $accessLog -}}{{- if not (has $field (list "fields" "maxLineBytes" "targets")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog contains unknown field %q. Valid fields: fields, maxLineBytes, targets." $field) -}}{{- end -}}{{- end -}}
+{{- /* Log targets. Structure and enums are checked here so `helm install` fails
+       fast; base.yaml's util-access-log-targets repeats them for the CR path. */ -}}
+{{- $logTargets := $accessLog.targets | default list -}}
+{{- if not (kindIs "slice" $logTargets) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog.targets must be a list of log targets." -}}{{- end -}}
+{{- /* An ABSENT key takes the chart default; an explicitly EMPTY list would fall
+       back to stdout, the one destination this knob exists to move records off. */ -}}
+{{- if and (hasKey $accessLog "targets") (eq (len $logTargets) 0) -}}{{- fail "controller.config.templatingSettings.extraContext.accessLog.targets is an empty list. Name at least one target — use [{address: stdout}] for the chart default; an empty list would silently fall back to stdout, which is what this setting exists to move the access log away from." -}}{{- end -}}
+{{- $logFormats := list "raw" "rfc3164" "rfc5424" "local" "priority" "short" "timed" "iso" -}}
+{{- $logFacilities := list "kern" "user" "mail" "daemon" "auth" "syslog" "lpr" "news" "uucp" "cron" "auth2" "ftp" "ntp" "audit" "alert" "cron2" "local0" "local1" "local2" "local3" "local4" "local5" "local6" "local7" -}}
+{{- /* The level is a MAX severity filter and access records are emitted at info,
+       so notice and above silently drop every record while haproxy -c returns 0. */ -}}
+{{- $logLevels := list "info" "debug" -}}
+{{- /* Ring names this chart will emit. A `log ring@<name>` with no such ring
+       passes haproxy -c and then makes HAProxy refuse to start, so an address may
+       only reference a ring declared here. */ -}}
+{{- $declaredRings := dict -}}
+{{- $seenLogLines := dict -}}
+{{- range $i, $target := $logTargets -}}
+  {{- if kindIs "map" $target -}}
+    {{- $r := $target.ring | default dict -}}
+    {{- if and (kindIs "map" $r) (gt (len $r) 0) -}}
+      {{- $ringName := $r.name | default "accesslog" | toString -}}
+      {{- if hasKey $declaredRings $ringName -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.name %q is declared by an earlier target. Two ring sections cannot share a name." $i $ringName) -}}{{- end -}}
+      {{- $_ := set $declaredRings $ringName true -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- range $i, $target := $logTargets -}}
+  {{- if not (kindIs "map" $target) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d] must be a map with an address (or a ring)." $i) -}}{{- end -}}
+  {{- range $field := keys $target -}}{{- if not (has $field (list "address" "format" "facility" "level" "ring")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d] contains unknown field %q. Valid fields: address, format, facility, level, ring." $i $field) -}}{{- end -}}{{- end -}}
+  {{- $addr := $target.address | default "" -}}
+  {{- $ring := $target.ring | default dict -}}
+  {{- if not (kindIs "map" $ring) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring must be a map." $i) -}}{{- end -}}
+  {{- if and (ne $addr "") (gt (len $ring) 0) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d] sets both address and ring. A ring target logs to ring@<name>, so set one or the other." $i) -}}{{- end -}}
+  {{- if and (eq $addr "") (eq (len $ring) 0) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d] needs an address (stdout, stderr, fd@<n>, <host>:<port>, /path/to.sock or ring@<name>) or a ring." $i) -}}{{- end -}}
+  {{- if and (ne $addr "") (not (regexMatch "^(stdout|stderr|fd@[0-9]+|ring@[A-Za-z_][A-Za-z0-9_-]{0,63}|/[^[:space:]]+|\\[[0-9A-Fa-f:]+\\]:[0-9]{1,5}|[0-9A-Za-z._-]+:[0-9]{1,5})$" $addr)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].address %q is not a valid HAProxy log target." $i $addr) -}}{{- end -}}
+  {{- /* A 5-digit shape match is not enough: HAProxy hard-ALERTs above 65535, so
+         the value would pass here and take down the controller's config load. */ -}}
+  {{- /* Skip an absolute path: it is a UNIX socket, and a colon is a legal
+         filename character, so trailing digits there are part of the name. */ -}}
+  {{- $addrPort := "" -}}
+  {{- if not (hasPrefix "/" $addr) -}}{{- $addrPort = regexFind ":[0-9]{1,5}$" $addr -}}{{- end -}}
+  {{- if $addrPort -}}
+    {{- $p := trimPrefix ":" $addrPort | int -}}
+    {{- if or (lt $p 1) (gt $p 65535) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].address %q has port %d, outside 1-65535. A port above 65535 is rejected by HAProxy at config parse; port 0 is accepted there but no record can ever be delivered to it." $i $addr $p) -}}{{- end -}}
+  {{- end -}}
+  {{- if hasPrefix "ring@" $addr -}}
+    {{- if not (hasKey $declaredRings (trimPrefix "ring@" $addr)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].address %q points at a ring no target declares. HAProxy accepts this at config check and then refuses to start, so it is rejected here. Declare the ring on the target with a ring: block." $i $addr) -}}{{- end -}}
+  {{- end -}}
+  {{- if and (hasKey $target "format") (not (has $target.format $logFormats)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].format %q is invalid. Valid: %s." $i (toString $target.format) (join ", " $logFormats)) -}}{{- end -}}
+  {{- if and (hasKey $target "facility") (not (has $target.facility $logFacilities)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].facility %q must be one of the 24 standard syslog facilities." $i (toString $target.facility)) -}}{{- end -}}
+  {{- if and (hasKey $target "level") (not (has $target.level $logLevels)) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].level %q is invalid. Valid: %s. The level is a maximum-severity filter and access records are emitted at info, so a stricter level silently drops every one of them." $i (toString $target.level) (join ", " $logLevels)) -}}{{- end -}}
+  {{- if gt (len $ring) 0 -}}
+    {{- range $field := keys $ring -}}{{- if not (has $field (list "name" "address" "size" "logProto" "connectTimeout" "serverTimeout" "serverOptions")) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring contains unknown field %q. Valid fields: name, address, size, logProto, connectTimeout, serverTimeout, serverOptions." $i $field) -}}{{- end -}}{{- end -}}
+    {{- $ringName := $ring.name | default "accesslog" -}}
+    {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_-]{0,63}$" $ringName) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.name %q names an HAProxy section and must match ^[A-Za-z_][A-Za-z0-9_-]{0,63}$." $i $ringName) -}}{{- end -}}
+    {{- $ringAddr := $ring.address | default "" -}}
+    {{- if not (regexMatch "^(\\[[0-9A-Fa-f:]+\\]:[0-9]{1,5}|[0-9A-Za-z._-]+:[0-9]{1,5})$" $ringAddr) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.address %q must be <host>:<port> or [<ipv6>]:<port>. For a UNIX socket collector use a plain-path address target; HAProxy 3.4 rejects a UNIX ring server while 3.0 accepts it." $i $ringAddr) -}}{{- end -}}
+    {{- $ringPort := regexFind ":[0-9]{1,5}$" $ringAddr -}}
+    {{- if $ringPort -}}
+      {{- $rp := trimPrefix ":" $ringPort | int -}}
+      {{- if or (lt $rp 1) (gt $rp 65535) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.address %q has port %d, outside 1-65535. A port above 65535 is rejected by HAProxy at config parse; port 0 is accepted there but no record can ever be delivered to it." $i $ringAddr $rp) -}}{{- end -}}
+    {{- end -}}
+    {{- $ringSize := dig "size" 65536 $ring | toString -}}
+    {{- if not (regexMatch "^[0-9]{4,9}$" $ringSize) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.size must be an integer between 4096 and 134217728." $i) -}}{{- end -}}
+    {{- if or (lt (int $ringSize) 4096) (gt (int $ringSize) 134217728) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.size must be an integer between 4096 and 134217728." $i) -}}{{- end -}}
+    {{- /* The ring carries `maxlen <maxLineBytes>` and HAProxy caps that at the
+           buffer minus a ~197-byte header, emitting only a [WARNING] and then
+           truncating every longer record into invalid JSON. Same on 3.0 and 3.4. */ -}}
+    {{- $rawMaxLine := dig "maxLineBytes" 16384 $accessLog | toString -}}
+    {{- if regexMatch "^[0-9]{1,5}$" $rawMaxLine -}}
+      {{- if lt (int $ringSize) (add (int $rawMaxLine) 256) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.size is %s, too small for accessLog.maxLineBytes %s. HAProxy would cap the ring's maxlen to the buffer minus its header and truncate every longer record into invalid JSON, warning but not failing. Give the ring at least %d bytes." $i $ringSize $rawMaxLine (add (int $rawMaxLine) 256)) -}}{{- end -}}
+    {{- end -}}
+    {{- if and (hasKey $ring "logProto") (not (has $ring.logProto (list "legacy" "octet-count"))) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.logProto must be legacy or octet-count." $i) -}}{{- end -}}
+    {{- range $tk := list "connectTimeout" "serverTimeout" -}}
+      {{- if and (hasKey $ring $tk) (not (regexMatch "^[0-9]+(us|ms|s|m|h|d)?$" (toString (get $ring $tk)))) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.%s must be an HAProxy duration such as 5s or 500ms." $i $tk) -}}{{- end -}}
+    {{- end -}}
+    {{- $ringOpts := $ring.serverOptions | default "" -}}
+    {{- if regexMatch "[[:cntrl:]#]" (toString $ringOpts) -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d].ring.serverOptions is appended verbatim to the ring's server line and must not contain control characters or '#' (config-injection guard)." $i) -}}{{- end -}}
+  {{- end -}}
+  {{- /* Each target renders one `log` line and HAProxy sends every record down all
+         of them, so two identical lines log each request twice — accepted by
+         haproxy -c, silent at runtime. Targets differing in any field are real
+         fan-out and stay allowed. */ -}}
+  {{- $effAddr := $addr -}}
+  {{- if gt (len $ring) 0 -}}{{- $effAddr = printf "ring@%s" ($ring.name | default "accesslog" | toString) -}}{{- end -}}
+  {{- $defaultFormat := ternary "raw" "rfc5424" (or (eq $effAddr "stdout") (eq $effAddr "stderr")) -}}
+  {{- $lineKey := printf "%s %s %s %s" $effAddr ($target.format | default $defaultFormat | toString) ($target.facility | default "local0" | toString) ($target.level | default "info" | toString) -}}
+  {{- if hasKey $seenLogLines $lineKey -}}{{- fail (printf "controller.config.templatingSettings.extraContext.accessLog.targets[%d] renders the same log line as an earlier target (%q), so every request would be logged twice. Drop the duplicate, or make the targets differ (a different format, facility, or level)." $i $lineKey) -}}{{- end -}}
+  {{- $_ := set $seenLogLines $lineKey true -}}
+{{- end -}}
 {{- $maxLineBytes := dig "maxLineBytes" 16384 $accessLog | toString -}}
 {{- /* Cap the digit count before `int`: Sprig's cast silently returns 0 on an
        int64 overflow, so a 30-digit value would reach the range check as 0 and be
