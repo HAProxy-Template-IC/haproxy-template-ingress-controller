@@ -18,9 +18,24 @@ workflow:
     # Same exemption for standalone scale-tier runs (SCALE_RUN=1 triggers
     # only the nightly-scale job on top of the ordinary pipeline).
     - if: $SCALE_RUN == "1"
+    # Manual (web UI) and API triggers stay available on any branch, with or
+    # without an MR — the escape hatch for running CI on work before opening
+    # one. Listed above the suppression below so an explicit trigger always
+    # wins over it.
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+    # Suppress the branch pipeline once an MR exists — the MR pipeline covers
+    # the same SHA. This alone is not enough: on the FIRST push of a branch the
+    # MR does not exist yet, so $CI_OPEN_MERGE_REQUESTS is empty and a full
+    # branch pipeline ran anyway, immediately duplicated by the MR pipeline when
+    # the MR was opened seconds later. Measured 2026-07-26: six branches, six
+    # duplicate pipelines, 611 wasted minutes — pipeline 2706745120 (branch) and
+    # 2706745144 (MR) both ran the same sha 8a9be25b.
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
-    - if: $CI_COMMIT_BRANCH
+    # So: branch pipelines only for the default branch. A feature branch gets CI
+    # when its MR opens, not before. To run CI on a branch with no MR yet, open
+    # a draft MR, or trigger it manually (the web/api rule above).
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
 
 variables:
