@@ -590,6 +590,39 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         "Access-log Helm guard: reject a ring reference no target declares" \
         "points at a ring no target declares" \
         --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"ring@nowhere"}]'
+    # Matched WAF request data must not be in the DEFAULT rendered log-format — it
+    # echoes request payload fragments. Deliberately a repo-side check, not a
+    # validationTest: operators are documented to opt in by contributing a
+    # log-fields-* snippet for txn.hub.coraza.data, and validationTests are also
+    # the controller's fatal load gate against the operator's own config — so as
+    # a test this would crash-loop the controller of anyone who followed the
+    # documentation. Reuses the coverage render above, which is ours.
+    echo -e "${YELLOW}Checking matched WAF request data is not in the default log-format...${NC}" >&2
+    WAFDATA_CONFIG=$(mktemp /tmp/haptic-wafdata-XXXXXX.yaml)
+    WAFDATA_DUMP=$(mktemp /tmp/haptic-wafdata-dump-XXXXXX.txt)
+    helm template "$CHART_DIR" --namespace default $HAPROXY_VERSION_ARG \
+        --set controller.templateLibraries.nginxIngress.enabled=true \
+        --set controller.templateLibraries.hapticAnnotations.enabled=true \
+        2>/dev/null | yq 'select(.kind == "HAProxyTemplateConfig")' > "$WAFDATA_CONFIG"
+    if ! "$CONTROLLER_BIN" validate --file "$WAFDATA_CONFIG" "${SCHEMA_DIR_ARGS[@]}" \
+            --test test-spoa-hub-access-log-fields --dump-rendered > "$WAFDATA_DUMP" 2>&1; then
+        echo -e "${RED}Error: WAF-data render failed:${NC}" >&2
+        tail -20 "$WAFDATA_DUMP" >&2
+        rm -f "$WAFDATA_CONFIG" "$WAFDATA_DUMP"
+        exit 1
+    fi
+    if ! grep -q 'log-format "%{+json}o' "$WAFDATA_DUMP"; then
+        echo -e "${RED}WAF-data guard: no JSON log-format in the rendered dump — the check cannot run${NC}" >&2
+        rm -f "$WAFDATA_CONFIG" "$WAFDATA_DUMP"
+        exit 1
+    fi
+    if grep 'log-format "%{+json}o' "$WAFDATA_DUMP" | grep -q 'txn\.hub\.coraza\.data'; then
+        echo -e "${RED}WAF-data guard: the default log-format logs txn.hub.coraza.data (matched request payload)${NC}" >&2
+        rm -f "$WAFDATA_CONFIG" "$WAFDATA_DUMP"
+        exit 1
+    fi
+    rm -f "$WAFDATA_CONFIG" "$WAFDATA_DUMP"
+    echo -e "${GREEN}WAF-data guard: matched request data is not in the default log-format${NC}" >&2
     run_helm_success_guard \
         "Access-log Helm guard: accept a socket path whose name ends in digits" \
         --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"/var/run/log:99999"}]'

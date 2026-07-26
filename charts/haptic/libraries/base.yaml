@@ -529,7 +529,20 @@ templateSnippets:
         variable renders "" and never omits the key, so the JSON schema is
         identical on every frontend.
 
-        Deliberately omitted: %cp (already inside req_id), %U, %Tt (inflated by
+        NOT logged, though it would help: the port the routing key was built from.
+        Gateway host/path map keys are `<host>:<port>/...`, so a routing miss
+        shows only as backend=default_backend with no way to tell a wrong key
+        from a missing map entry — that cost a real CI diagnosis. The obvious
+        candidate does not work: `var(txn.listener_port)` renders null on the
+        plain-HTTP path, because the inner frontend is entered over a UNIX socket
+        where `dst_port` does not resolve, so the var is empty for every request
+        that arrives through the demux. Logging it would add a permanently-null
+        key. Fixing this needs the port carried across the demux hop first.
+
+        Deliberately omitted: %cp — the client PORT. Note the reason changed with
+        the UUIDv7 request id: the old `%ci:%cp_%fi:%fp_...` format carried the
+        port, an opaque uuid(7) does not. It stays out because a source port
+        identifies a connection rather than a request. Also omitted: %U, %Tt (inflated by
         keep-alive idle next to t_total), the %ac/%fc/%bc/%sc concurrency
         counters and %sq/%bq queue depths (Prometheus answers saturation better,
         and queues stay 0 without an opt-in maxconn), %r (duplicates
