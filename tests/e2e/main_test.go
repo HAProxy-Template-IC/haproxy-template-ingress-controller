@@ -373,13 +373,35 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
 
+// pullImageRetries is how many times a registry pull is attempted before the
+// suite gives up. Every e2e shard pulls these images during TestMain, so a
+// single upstream blip used to red a whole pipeline for no local reason: a
+// Docker Hub `502 Bad Gateway` on ealen/echo-server took out test-e2e-rate-limit
+// on main before any test ran. The retry covers only the network fetch — the
+// kind import that follows is local and fails deterministically.
+const pullImageRetries = 3
+
 func pullImageIntoKind(ctx context.Context, image string) error {
-	pull := exec.CommandContext(ctx, "docker", "pull", image)
-	pull.Stdout, pull.Stderr = os.Stderr, os.Stderr
-	if err := pull.Run(); err != nil {
-		return fmt.Errorf("docker pull %s: %w", image, err)
+	var err error
+	for attempt := 1; attempt <= pullImageRetries; attempt++ {
+		pull := exec.CommandContext(ctx, "docker", "pull", image)
+		pull.Stdout, pull.Stderr = os.Stderr, os.Stderr
+		if err = pull.Run(); err == nil {
+			return loadImageIntoKind(ctx, image)
+		}
+		if attempt == pullImageRetries {
+			break
+		}
+		backoff := time.Duration(attempt*attempt) * 2 * time.Second
+		fmt.Fprintf(os.Stderr, "e2e: docker pull %s failed (attempt %d/%d): %v; retrying in %s\n",
+			image, attempt, pullImageRetries, err, backoff)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("docker pull %s: %w", image, ctx.Err())
+		case <-time.After(backoff):
+		}
 	}
-	return loadImageIntoKind(ctx, image)
+	return fmt.Errorf("docker pull %s failed after %d attempts: %w", image, pullImageRetries, err)
 }
 
 // loadImageIntoKind pipes `docker save <image>` into `ctr image import` inside
@@ -784,7 +806,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	//     measurements, and production runs INFO.
 	if os.Getenv(scaleEnableEnv) == "1" {
 		args = append(args,
-			"--set", "resources.limits.memory=2Gi",
+			"--set", "controller.resources.limits.memory=2Gi",
 			"--set", "controller.logLevel=INFO",
 			"--set", "controller.config.logging.level=INFO",
 		)

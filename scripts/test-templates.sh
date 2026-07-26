@@ -677,6 +677,11 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         "Controller Helm guard: reject chart-only routing field beside CR fields" \
         "controller.config.routing moved to controller.config.templatingSettings.extraContext.routing" \
         --set-string controller.config.routing.regexMatchOrder=last
+    run_helm_success_guard \
+        "Controller Helm guard: accept the e2e scale tier's value set (tests/e2e/main_test.go)" \
+        --set controller.resources.limits.memory=2Gi \
+        --set controller.logLevel=INFO \
+        --set controller.config.logging.level=INFO
     run_helm_failure_guard \
         "Controller Helm guard: reject ambiguous root workload values" \
         "image moved to controller.image so every workload setting has an explicit component owner" \
