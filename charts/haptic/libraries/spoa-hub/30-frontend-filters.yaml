@@ -81,15 +81,27 @@ templateSnippets:
         waf_rule_id and waf_score are what the Prometheus rule-hit counters
         cannot give you: the join from one specific 403 a user complained about
         to the CRS rule that produced it, and the anomaly score distribution that
-        drives threshold tuning in detect mode. Both are near-empty on the happy
-        path. txn.hub.coraza.data is deliberately never logged — it echoes
-        request payload fragments (PII + log injection) and is off by default.
+        drives threshold tuning in detect mode. waf_rules_hit is the per-request
+        count of rules that matched — the detect-mode noise signal for one
+        request, where the metric gives only the fleet aggregate. All three are
+        near-empty on the happy path.
+
+        None of these is typed :sint. The vars only exist once the coraza SPOE
+        message has run, and a typed item whose fetch does not resolve emits ""
+        into a numeric JSON slot — a string where the schema promises a number.
+
+        txn.hub.coraza.data is deliberately never logged here — it echoes request
+        payload fragments and is off by default (expose_matched_data=false). An
+        operator who needs the matched target for false-positive triage opts into
+        it knowingly; the JSON encoder escapes quotes and newlines, so the
+        remaining cost is PII plus the maxLineBytes budget, not log injection.
       -#}
       {%- var messages = toStringSlice(extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{})) %}
       {%- if messages contains "check-request" %}
       %(waf_action)[var(txn.hub.coraza.action)]
       %(waf_rule_id)[var(txn.hub.coraza.rule_id)]
       %(waf_score)[var(txn.hub.coraza.anomaly_score)]
+      %(waf_rules_hit)[var(txn.hub.coraza.rules_hit)]
       {%- end %}
 
   log-fields-310-rate-limit:

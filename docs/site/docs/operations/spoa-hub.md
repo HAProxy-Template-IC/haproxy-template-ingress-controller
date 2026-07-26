@@ -121,9 +121,77 @@ sort_desc(sum by (rule_id, severity) (
 
 Zero `949110`/`949111` hits over a representative window is your clean baseline: flip `enforcement: detect` to `deny` and you're done. Nonzero hits need classification first.
 
-### Classify hits with the audit log
+### Classify hits from the access log
 
-Rule-hit counters tell you *which* rules fire; the Coraza audit log tells you *on what*. Enable it through the trusted policy's `secLang` (self-service catalogs can't — ask the administrator to adopt the policy or enable the log in the shared directives):
+Rule-hit metrics tell you *which* rules fire. To tie a rule hit to one request, read HAProxy's JSON access log — every request already carries the WAF verdict, correlated with `req_id`:
+
+| Field | Answers |
+| ----- | ------- |
+| `waf_rule_id` | which CRS rule interrupted, for the one 403 a user complained about |
+| `waf_score` | the anomaly score, so you can see how far from the threshold this request sat |
+| `waf_rules_hit` | how many rules matched on this request — one noisy rule, or twenty |
+| `waf_action` | `allow` or `deny`, so detect-mode traffic is distinguishable |
+| `denied_by` | `waf` when the WAF blocked, so a 403 from the WAF is distinguishable from the five other gates that also return 403 |
+
+Those fields cost nothing extra: they're on by default whenever the coraza plugin is enabled, and the access log can be routed to an access-controlled destination instead of the container's stdout. See [Access logging](../haproxy-deployment.md#access-logging).
+
+For most false positives that's enough — the rule id plus the request path identifies the pattern. What the access log doesn't carry is the matched *target*: which `ARGS` key or header the rule fired on.
+
+### See what a rule matched on
+
+Prefer a hash over the raw value. Set `rule_match_log` with `matched_data_log = "hash"` and the plugin logs one rule-match line per match carrying a hash of the matched value — enough to recognize the same false positive recurring across requests, with no request content recorded anywhere. Reproduce the whole `params` block, because your value replaces it:
+
+```yaml
+spoaHub:
+  plugins:
+    coraza:
+      params: |
+        detect_only = false
+        transaction_ttl_ms = 10000
+        max_cached_transactions = 1024
+        rule_match_log = true
+        matched_data_log = "hash"
+        expose_matched_data = false
+```
+
+The line carries `sha256:<hex>` in place of the value, plus the rule id and the rule's own message.
+
+!!! warning "Don't use `matched_data_log = \"truncate\"` to work around a hash you can't read"
+    `truncate` logs the matched bytes themselves — up to `matched_data_max_bytes`, at `WARN`, on the sidecar's stdout. The plugin's own source calls this out: `MatchedRule.Data` may contain credentials or arbitrary request bodies. A hash you can group by is almost always the answer; when you genuinely need the value, use the SPOE route below so it lands in the access log, whose destination you control.
+
+When you need the literal value, return it through SPOE rather than logging it in the hub. Set `expose_matched_data = true` (the value is capped by `matched_data_max_bytes`, default 128 bytes) and the plugin hands the matched data back to HAProxy in `txn.hub.coraza.data`:
+
+```yaml
+spoaHub:
+  plugins:
+    coraza:
+      params: |
+        detect_only = false
+        transaction_ttl_ms = 10000
+        max_cached_transactions = 1024
+        rule_match_log = false
+        matched_data_log = "none"
+        expose_matched_data = true
+```
+
+Then add it to the access log with a `log-fields-*` snippet. Contribute it as a snippet rather than through `accessLog.fields`, because a log-format item is evaluated when the line is written — after the WAF has run — while `accessLog.fields` captures at request time:
+
+```yaml
+controller:
+  config:
+    templateSnippets:
+      log-fields-900-waf-matched-data:
+        template: |-
+          %(waf_data)[var(txn.hub.coraza.data)]
+```
+
+This puts the matched value in the access log, which you can route away from stdout — so the sensitive field lands in the one stream whose destination you control.
+
+### Last resort: the Coraza audit log
+
+When you need the full transaction — every matched rule with its target and the request metadata together — enable Coraza's own audit engine through the trusted policy's `secLang`. A self-service catalog can't: ask the administrator to adopt the policy, or to enable the log in the shared directives.
+
+Nothing is written today: the audit engine is enabled by Coraza's recommended configuration, but `SecAuditLog` has no target, so the writer is a no-op. Setting a target is what turns the stream on — and **set `SecAuditLogParts` in the same breath.** Coraza's default part set is `ABIJDEFHZ`, which includes the request body (`I`) and the response body (`E`); the narrower set below deliberately leaves both out.
 
 ```yaml
 my-policy:
@@ -135,13 +203,17 @@ my-policy:
     SecAuditLogFormat JSON
 ```
 
-Audit records land on the spoa-hub container's stdout as JSON — one record per request that matched a rule — where your cluster log pipeline picks them up:
+Records land on the spoa-hub container's stdout as JSON, one per request that matched a rule:
 
 ```console
 kubectl logs -n <namespace> <haproxy-pod> -c spoa-hub | grep '"transaction"'
 ```
 
-Each record names the matched rules, the matched values, and the request details, which is what you need to decide: a true positive stays; a false positive becomes a scoped exclusion on the policy, no SecLang needed.
+Understand what you're turning on. With parts `ABFHKZ` each record carries the client IP and ports (`A`), the full request line **including the query string** and every request header — `Cookie` and `Authorization` among them (`B`), and per matched rule the bytes that matched (`K`). The request body (`C`) isn't included, which is the one thing this set leaves out.
+
+Two properties make this the last resort rather than the default. These records are personal data, in volume. And Coraza's audit writer opens its target directly, so it bypasses the hub's and the plugin's log configuration completely: no log level, and no `accessLog.targets`-style routing, applies to it. `SecAuditLog` accepts a file path, so you can point it at a mounted volume instead of `/dev/stdout` if you need the detail without your general log pipeline collecting it.
+
+Turn it off once the policy is tuned.
 
 You have two structured, self-service-safe ways to tune a false positive: `ruleExclusions` for exclusions and `allowedMethods` for method-driven hits.
 
@@ -172,7 +244,7 @@ Widen the method allowlist when a whole class of hits comes from a method the ap
 
 ### Flip to deny
 
-After the exclusions have been in place for another observation window with zero would-block hits, set `enforcement: deny`. Keep the audit log on for the first days: `plugin_coraza_denials_total` now shows real blocks, and every denial has a matching audit record to justify it.
+After the exclusions have been in place for another observation window with zero would-block hits, set `enforcement: deny`. Watch `plugin_coraza_denials_total` for the first days — it now counts real blocks — and use the access log's `waf_rule_id` and `denied_by` to justify any individual one. If you turned the audit log on to classify hits, turn it off again here.
 
 ## Managed shared rate-limit store
 

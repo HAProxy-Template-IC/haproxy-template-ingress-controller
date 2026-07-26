@@ -71,6 +71,19 @@ validationTests:
         pattern: '%\(waf_score\)\[var\(txn\.hub\.coraza\.anomaly_score\)\]'
       - type: contains
         target: haproxy.cfg
+        pattern: '%\(waf_rules_hit\)\[var\(txn\.hub\.coraza\.rules_hit\)\]'
+        description: >-
+          Per-request count of matched rules — the detect-mode noise signal for a
+          single request, which the fleet-aggregate metric cannot give.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'waf_rules_hit:sint'
+        description: >-
+          Must stay untyped: the var only exists after the coraza SPOE message
+          runs, and a typed item whose fetch does not resolve emits "" into a
+          numeric JSON slot.
+      - type: contains
+        target: haproxy.cfg
         pattern: '%\(rate_limit_allowed\)\[var\(txn\.hub\.rate_limit\.allowed\)\]'
       - type: contains
         target: haproxy.cfg
