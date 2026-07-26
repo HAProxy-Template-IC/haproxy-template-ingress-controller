@@ -90,6 +90,13 @@ templateSnippets:
         message has run, and a typed item whose fetch does not resolve emits ""
         into a numeric JSON slot — a string where the schema promises a number.
 
+        waf_matched_var names the request FIELDS the rules matched on — e.g.
+        `ARGS_GET:id,REQUEST_LINE` — and never their values (coraza plugin
+        >= v0.8.0). That is the "on what did it fire" half of triage, which
+        otherwise requires Coraza's audit log, and that log writes the client IP,
+        every request header and the matched bytes to the sidecar's stdout. Names
+        are safe to log where values are not, so this needs no opt-in.
+
         txn.hub.coraza.data is deliberately never logged here — it echoes request
         payload fragments and is off by default (expose_matched_data=false). An
         operator who needs the matched target for false-positive triage opts into
@@ -102,6 +109,7 @@ templateSnippets:
       %(waf_rule_id)[var(txn.hub.coraza.rule_id)]
       %(waf_score)[var(txn.hub.coraza.anomaly_score)]
       %(waf_rules_hit)[var(txn.hub.coraza.rules_hit)]
+      %(waf_matched_var)[var(txn.hub.coraza.matched_var)]
       {%- end %}
 
   log-fields-310-rate-limit:

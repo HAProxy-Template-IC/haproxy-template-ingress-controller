@@ -75,6 +75,21 @@ validationTests:
         description: >-
           Per-request count of matched rules — the detect-mode noise signal for a
           single request, which the fleet-aggregate metric cannot give.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(waf_matched_var\)\[var\(txn\.hub\.coraza\.matched_var\)\]'
+        description: >-
+          The NAMES of the request fields rules matched on. This is what removes
+          the need for Coraza's audit log to answer "on what did it fire" — and
+          that log writes the client IP, all request headers and the matched
+          bytes to the sidecar's stdout.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'waf_matched_var:sint'
+        description: >-
+          Must stay untyped like its siblings: the var only exists once the
+          coraza message has run, and a typed item whose fetch does not resolve
+          emits "" into a numeric JSON slot.
       - type: not_contains
         target: haproxy.cfg
         pattern: 'waf_rules_hit:sint'
