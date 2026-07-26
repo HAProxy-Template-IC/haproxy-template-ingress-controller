@@ -468,6 +468,47 @@ templateSnippets:
         {%- items = append(items, "%(" + name + ")[var(txn.log_" + name + ")]") -%}
       {%- end -%}
       {%- lines = append(lines, "log-format \"%{+json}o " + join(items, " ") + "\"") -%}
+
+      {#- Optional suppression of uninteresting records. OFF unless the operator
+          asks for it: a full log is lawful under legitimate interest (GDPR
+          Art. 6(1)(f)), and the successful requests either side of a failure are
+          what distinguish "one request broke" from "everything was broken" when a
+          customer reports a problem.
+
+          http-AFTER-response, not http-response: http-response rules only run for
+          responses that came from a SERVER, so a 403 from a WAF deny or any other
+          `http-request return` would slip past the condition and — worse — a
+          suppression written there would never fire at all for them. Measured on
+          3.0 and 3.4: with http-after-response, 5/5 successes are dropped while a
+          denial and a 500 are kept; with http-response, all seven are logged.
+
+          The condition keeps every failure and every denial, so the records a
+          customer complains about are never the ones discarded. -#}
+      {#- Validated here as well as in Helm: the HAProxyTemplateConfig CR is a
+          first-class API that bypasses Helm entirely. A typo'd subkey would
+          otherwise leave suppression silently off, which is the failure mode an
+          operator would least notice — the log keeps working, just larger than
+          they asked for. -#}
+      {%- var suppressRaw = extraContext | dig("accessLog", "suppress") -%}
+      {%- if suppressRaw != nil -%}
+        {%- var sup, supOk = suppressRaw.(map[string]any) -%}
+        {%- if !supOk -%}
+          {{- fail("controller.config.templatingSettings.extraContext.accessLog.suppress must be a map with a 'successful' boolean.") -}}
+        {%- end -%}
+        {%- for _, k := range keys(sup) -%}
+          {%- if k != "successful" -%}
+            {{- fail("accessLog.suppress contains unknown field '" + k + "'. Valid fields: successful.") -}}
+          {%- end -%}
+        {%- end -%}
+        {%- var sv, svPresent = sup["successful"] -%}
+        {%- if svPresent && tostring(sv) != "true" && tostring(sv) != "false" -%}
+          {{- fail("accessLog.suppress.successful must be a boolean, got '" + tostring(sv) + "'.") -}}
+        {%- end -%}
+      {%- end -%}
+      {%- var suppressSuccessful = extraContext | dig("accessLog", "suppress", "successful") | fallback(false) -%}
+      {%- if tostring(suppressSuccessful) == "true" -%}
+        {%- lines = append(lines, "http-after-response set-log-level silent if { status ge 200 } { status lt 400 } !{ var(txn.denied_by) -m found }") -%}
+      {%- end -%}
       {{- "\n  " + join(lines, "\n  ") -}}
 
   util-log-format-tcp:
@@ -529,15 +570,19 @@ templateSnippets:
         variable renders "" and never omits the key, so the JSON schema is
         identical on every frontend.
 
-        NOT logged, though it would help: the port the routing key was built from.
-        Gateway host/path map keys are `<host>:<port>/...`, so a routing miss
-        shows only as backend=default_backend with no way to tell a wrong key
-        from a missing map entry — that cost a real CI diagnosis. The obvious
-        candidate does not work: `var(txn.listener_port)` renders null on the
-        plain-HTTP path, because the inner frontend is entered over a UNIX socket
-        where `dst_port` does not resolve, so the var is empty for every request
-        that arrives through the demux. Logging it would add a permanently-null
-        key. Fixing this needs the port carried across the demux hop first.
+        `listener_port` is the port the routing key was built from — the same
+        value the `host:<port>` and `:<port>` map lookups use. Gateway host/path
+        map keys are `<host>:<port>/...`, so without it a routing miss shows only
+        as backend=default_backend with no way to tell a wrong key from a missing
+        map entry (that cost a real CI diagnosis). It resolves on the plain-HTTP
+        path too: the demux backends send PROXY v2 (`send-proxy-v2`) and the inner
+        binds `accept-proxy`, so `dst_port` on a UNIX-socket bind is the ORIGINAL
+        TCP listener port, not the socket. `,concat` is a string cast, and it is
+        load-bearing: the value is a sint when it comes straight from `dst_port`
+        and a string once a `frontend-routing-listener-port-*` library remaps it
+        through `map()`, so an uncast item would flip the JSON type between
+        `18080` and `"18080"` from one request to the next in the SAME frontend
+        and split a typed log index.
 
         Deliberately omitted: %cp — the client PORT. Note the reason changed with
         the UUIDv7 request id: the old `%ci:%cp_%fi:%fp_...` format carried the
@@ -557,6 +602,7 @@ templateSnippets:
       %(server)s
       %(method)HM
       %(host)[var(txn.host)]
+      %(listener_port)[var(txn.listener_port),concat]
       %(path)HPO
       %(http_version)HV
       %(status:sint)ST
@@ -2915,6 +2961,22 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '%\(resource\)\[var\(txn\.resource_id\)\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(listener_port\)\[var\(txn\.listener_port\),concat\]'
+        description: >-
+          The port the host/path map keys were built from — what tells a wrong
+          routing key from a missing map entry. `,concat` casts to a string
+          because the value is a sint straight from `dst_port` but a string once
+          a `frontend-routing-listener-port-*` library remaps it through `map()`;
+          without the cast the JSON type flips between requests in one frontend.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '%\(listener_port:'
+        description: >-
+          Untyped deliberately: `frontend status` and the cache-origin leg emit
+          the same log-format without running the routing logic, so the variable
+          is unset there and a typed item would put "" in a numeric JSON slot.
       - type: not_contains
         target: haproxy.cfg
         pattern: 'var\(req\.gw_rule_id\)'
@@ -3414,6 +3476,73 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "too small for accessLog.maxLineBytes 16384"
+
+  test-access-log-suppress-off-by-default:
+    description: >-
+      With suppression not requested, no frontend gets a set-log-level rule, so
+      every request is logged. Each of these tests pins accessLog.suppress in its
+      OWN extraContext: validationTests also run as the controller's fatal load
+      gate against the operator's config, so a test that assumed the default
+      would crash-loop the controller of anyone who enabled suppression.
+    extraContext:
+      accessLog:
+        suppress:
+          successful: false
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'set-log-level silent'
+
+  test-access-log-suppress-successful:
+    description: >-
+      Opting in emits one http-after-response rule per HTTP frontend that keeps
+      every denial, 4xx and 5xx. http-AFTER-response, not http-response: the
+      latter only runs for responses that came from a server, so a WAF deny or
+      any other `http-request return` would never be evaluated. Measured on 3.0
+      and 3.4 — with http-after-response 5/5 successes are dropped and a denial
+      plus a 500 are kept; with http-response all seven are logged.
+    extraContext:
+      accessLog:
+        suppress:
+          successful: true
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-after-response set-log-level silent if \{ status ge 200 \} \{ status lt 400 \} !\{ var\(txn\.denied_by\) -m found \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'http-response set-log-level silent'
+        description: >-
+          Must not be an http-response rule — that hook never runs for
+          HAProxy-generated responses, so denials would slip the condition.
+
+  test-access-log-suppress-rejects-unknown-field:
+    description: A typo'd subkey would silently leave suppression off, so it is rejected.
+    extraContext:
+      accessLog:
+        suppress:
+          successfull: true
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "accessLog.suppress contains unknown field 'successfull'"
+
+  test-access-log-suppress-rejects-non-boolean:
+    description: A non-boolean would be read as false and silently disable suppression.
+    extraContext:
+      accessLog:
+        suppress:
+          successful: "maybe"
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "accessLog.suppress.successful must be a boolean"
 
   test-access-log-target-rejects-duplicate-log-line:
     description: >-
