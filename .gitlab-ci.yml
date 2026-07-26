@@ -428,8 +428,11 @@ test:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    # Unit tests only depend on Go sources + testdata fixtures.
+    # Unit tests only depend on Go sources + testdata fixtures — on main as much
+    # as on an MR. `.rules-go` therefore governs both: on a main push `changes:`
+    # evaluates the merge commit's diff, so a merge that touched no Go file is
+    # byte-identical in Go terms to the main commit already tested. Scheduled
+    # pipelines evaluate `changes:` as always-true, so nightly still runs this.
     - !reference [.rules-go, rules]
   tags:
     - saas-linux-large-amd64
@@ -591,10 +594,40 @@ validate-helm-libraries:
 # Produces images with tags: ci-<pipeline_id>-haproxy<version>
 build-snapshot:
   extends: .snapshot-build-base
+  # Trigger set is the UNION of every job that `needs:` this one. Five of the six
+  # needs are HARD (only gateway-conformance-report is `optional: true`), and
+  # GitLab refuses to create a pipeline whose hard-needs target is absent — the
+  # failure mode `.rules-spoa` documents at length. So this list must stay a
+  # superset of its dependents' triggers; under-covering breaks pipeline creation,
+  # not just this job.
+  #
+  # Deliberately NOT `.rules-code`: that carries `**/*.md`, so a prose-only change
+  # built a snapshot image that nothing in the pipeline consumed — measured 2.1 min
+  # on !1425's MR pipeline plus 2.2 min post-merge.
+  #
+  #   dependent                  its trigger                     covered here by
+  #   test-acceptance            .rules-go + charts/haptic/**/*   .rules-go, .rules-helm
+  #   .test-e2e-base             go/scripts + .rules-spoa-chart   .rules-go, .rules-spoa-chart
+  #   test-gateway-conformance   go/scripts + .rules-spoa-chart   .rules-go, .rules-spoa-chart
+  #   test-ingress-conformance   + Dockerfile.ingress-conformance-test,
+  #                                tests/conformance/patches/**   the changes: block
+  #   test-helm-defaults         .rules-spoa-chart + .gitlab-ci.yml
+  #                                                              .rules-spoa-chart, .rules-go
+  #
+  # Anchors are referenced rather than copied so a path added to one of them
+  # propagates here automatically — the lockstep drift the file warns about.
+  # `changes:` is always true on scheduled pipelines, so the nightly heartbeat
+  # (test-gateway-conformance / test-ingress-conformance run on `SCHEDULE_KIND`)
+  # still gets its image.
   rules:
     - if: $CI_COMMIT_TAG
       when: never
-    - !reference [.rules-code, rules]
+    - !reference [.rules-go, rules]
+    - !reference [.rules-helm, rules]
+    - !reference [.rules-spoa-chart, rules]
+    - changes:
+        - Dockerfile.ingress-conformance-test
+        - tests/conformance/patches/**
   interruptible: true
   variables:
     PLATFORMS: "linux/amd64"
@@ -804,6 +837,13 @@ build-playground-wasm:
         - scripts/**/*
         - docs/site/docs/operations/spoa-hub.md
         - .gitlab-ci.yml
+        # Same lockstep reason as `scripts/**/*` above, for the ingress-
+        # conformance path: test-ingress-conformance and its -smoke sibling
+        # trigger on these two and hard-`needs:` build-spoa-image-snapshot, so a
+        # patch-only or conformance-Dockerfile-only MR would be refused at
+        # creation ("build-spoa-image-snapshot does not exist in the pipeline").
+        - Dockerfile.ingress-conformance-test
+        - tests/conformance/patches/**
         # Go-source paths. `test-e2e` triggers on these (its own
         # `changes:` lists **/*.go, go.mod, go.sum) and `needs:`
         # `build-spoa-image-snapshot` non-optionally — so the build
@@ -1193,9 +1233,12 @@ smoke-spoa-amd64:
     - saas-linux-small-amd64
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
       when: never
+    # `.rules-spoa` governs main too — the bare default-branch rule it replaces
+    # smoked the hub image on every main push, including prose-only merges. A
+    # main push that changes no SPOA input rebuilds a byte-equivalent image, so
+    # the previous smoke already covered it.
     - !reference [.rules-spoa, rules]
   needs:
     - job: build-spoa-image-snapshot
@@ -1220,7 +1263,15 @@ smoke-spoa-arm64:
       command: ["--mtu=1400"]
   rules:
     - if: $CI_COMMIT_TAG =~ /^v.*/
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Not on MR/feature pipelines: they build the snapshot amd64-only, so there
+    # is no multi-arch manifest to smoke (see the comment above). This `never`
+    # also covers non-`v` tags, where CI_COMMIT_BRANCH is unset and so compares
+    # unequal to the default branch — preserving today's behaviour of not running
+    # for them.
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+      when: never
+    # On main, gate on the SPOA inputs rather than running for every push.
+    - !reference [.rules-spoa, rules]
   needs:
     - job: build-spoa-image-main
       optional: true
@@ -1237,12 +1288,16 @@ smoke-spoa-arm64:
   extends:
     - .docker-dind
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
       when: never
     # Integration tests exercise the Go binary against a kind cluster —
     # a docs-only / config-only change can't affect them. (Was .rules-code,
     # which fired the full 5× 2xlarge matrix on any `**/*.md` edit.)
+    # `.rules-go` governs main too: the previous bare default-branch rule ran the
+    # whole 2xlarge matrix on every main push, including prose-only merges
+    # (measured 6.6 min on the bcd25622 docs merge). On main `changes:` evaluates
+    # the merge commit diff, so no-Go-change means nothing to re-test; nightly is
+    # unaffected because scheduled pipelines treat `changes:` as always true.
     - !reference [.rules-go, rules]
   timeout: 30 minutes
   interruptible: true
@@ -1295,11 +1350,14 @@ test-integration-extra-versions:
     - if: $CI_COMMIT_TAG
       when: never
     # Nightly wins on any branch (kept in lockstep with the sibling
-    # test-e2e-extra-versions / full-conformance jobs). The default-branch
-    # rule mirrors .test-integration-base (integration runs on every main
-    # push); MRs match neither and so never run the interior versions.
+    # test-e2e-extra-versions / full-conformance jobs), then MR/feature
+    # pipelines are excluded outright so the interior versions never run there,
+    # then main is gated on Go inputs like .test-integration-base — a prose-only
+    # merge used to run all three interior versions (10.3 min on bcd25622).
     - if: $SCHEDULE_KIND == "nightly"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+      when: never
+    - !reference [.rules-go, rules]
 
 # Combined unit + integration coverage report (merges all HAProxy version coverage files)
 coverage-combined:
@@ -1308,9 +1366,12 @@ coverage-combined:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     # Follows `test` + `test-integration` (both .rules-go) in lockstep —
     # it merges their coverage artifacts, so it must run exactly when they do.
+    # That lockstep is why the bare default-branch rule had to go from here at
+    # the same time as from those two: keeping it would have left this job
+    # running on a prose-only main push with `test` skipped, and its `needs:
+    # test` is hard.
     - !reference [.rules-go, rules]
   tags:
     - saas-linux-medium-amd64
