@@ -113,7 +113,7 @@ func TestIngressRateLimit(t *testing.T) {
 			// the shared (SPOA) limiter produced. txn.denied_by is what makes
 			// the block attributable — this asserts the marker actually fires
 			// on the wire, with the deny's own condition.
-			rec := findAccessLogRecordWhere(ctx, t,
+			rec := findAccessLogRecordWhere(ctx, t, time.Now().Add(-2*time.Minute),
 				fmt.Sprintf("a 429 for host %s", host),
 				func(rec map[string]any) bool {
 					status, ok := rec["status"].(float64)

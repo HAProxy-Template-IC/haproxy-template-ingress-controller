@@ -1209,8 +1209,13 @@ validationTests:
     assertions:
       - type: haproxy_valid
       # The clamped value (50) is what the consumer emits; the original never appears.
+      # Both assertions name the consumer position. A bare `not_contains: 8888`
+      # would also match the validation harness's own temp path
+      # (`default-path origin /tmp/haproxy-validate-<random>/...`, which lands in
+      # the asserted haproxy.cfg), so it failed roughly once in a few thousand
+      # runs — whenever that random number happened to contain 8888.
       - { type: contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 50' }
-      - { type: not_contains, target: haproxy.cfg, pattern: '8888' }
+      - { type: not_contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 8888' }
 
   # REJECT on a bound violation aborts only the offending resource's admission.
   test-governance-min-max-reject:

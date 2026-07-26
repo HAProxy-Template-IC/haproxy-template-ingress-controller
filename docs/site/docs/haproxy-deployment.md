@@ -236,6 +236,103 @@ custom fields or captured request headers push records past it: HAProxy truncate
 a longer line mid-byte, which makes the record unparseable. A value outside the
 range fails the render rather than silently truncating every record.
 
+### Where the logs go
+
+By default records go to the container's stdout. That's convenient, but in a
+typical cluster stdout is scraped into a general-purpose log store — and the
+access log carries `client_ip`, which is personal data. `accessLog.targets`
+routes the access log somewhere access-controlled instead:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        accessLog:
+          targets:
+            - ring:
+                name: accesslog
+                address: 127.0.0.1:6514   # a log-shipper sidecar on loopback
+```
+
+**HAProxy's own process and alert messages aren't affected.** They keep a
+separate stdout target, so `kubectl logs` stays useful for on-call while only the
+personal-data-bearing stream moves. That split is why the access-log target lives
+in the `defaults` section and the process-log target in `global`.
+
+Each entry renders one HAProxy `log` line, so several entries fan out — which is
+what you want while migrating from one collector to another:
+
+| Field | Meaning |
+|-------|---------|
+| `address` | `stdout`, `stderr`, `fd@<n>`, `<host>:<port>` (UDP), `[<ipv6>]:<port>`, an absolute socket path, or `ring@<name>` |
+| `format` | `raw`, `rfc3164`, `rfc5424`, `local`, `priority`, `short`, `timed`, `iso`. Defaults to `raw` for stdout/stderr and `rfc5424` otherwise |
+| `facility`, `level` | Syslog facility (default `local0`) and level, either `info` (default) or `debug` |
+| `ring` | Send through a buffered TCP ring instead of a bare address |
+
+`level` is a *maximum* severity filter, and HAProxy emits access records at
+`info`. Anything stricter — `notice`, `warning`, `err` — therefore drops every
+record while `haproxy -c` still reports the config as valid, so the chart accepts
+only the two levels that deliver.
+
+An `address` of `ring@<name>` must name a ring some target in this list declares.
+HAProxy accepts a dangling reference at config check and then refuses to start
+with `unknown ring named`, so the render rejects it instead.
+
+#### Why a ring for a sidecar
+
+A `ring` is a buffered TCP client: records queue in memory when the collector is
+unavailable and flush when it reconnects. Measured with the collector stopped,
+25 of 25 requests were served in 112 ms total with no HAProxy errors, and all 25
+records arrived once it came back. A plain `<host>:<port>` target is UDP and
+drops them instead.
+
+Ring fields: `name`, `address` (`<host>:<port>` or `[<ipv6>]:<port>` — HAProxy
+3.4 rejects a Unix socket as a ring server, so send to a Unix-socket collector
+with a plain-path `address` target instead), `size` (buffer bytes, default 65536 — it must exceed `maxLineBytes` by at least 256, or HAProxy caps the ring's record length to the buffer minus its header and truncates every longer record into invalid JSON, warning but not failing),
+`logProto` (`legacy` for newline-delimited RFC 6587, or `octet-count`),
+`connectTimeout`, `serverTimeout`, and `serverOptions` — appended verbatim to the
+ring's `server` line, which is how you reach TLS or any other server keyword
+without the chart modelling each one.
+
+A collector reads this as ordinary syslog carrying a JSON payload. In Vector, a
+`syslog` source parses the envelope and one `remap` recovers the record:
+
+```yaml
+sources:
+  haproxy_access:
+    type: syslog
+    mode: tcp
+    address: 0.0.0.0:6514
+transforms:
+  parsed:
+    type: remap
+    inputs: [haproxy_access]
+    source: |
+      . = parse_json!(string!(.message))
+```
+
+Two things to know:
+
+- **A ring server's address is resolved when the config is parsed.** A Service DNS
+  name that doesn't resolve at that moment fails the render. Use a loopback
+  sidecar address or a literal IP, or pass `resolvers`/`init-addr` through
+  `serverOptions`.
+- **Any file referenced from `serverOptions`** (a `ca-file`, a client `crt`) must
+  exist wherever the config is validated — the controller pod — not only in the
+  HAProxy pod. Deliver such material through the chart's file mechanism so both
+  see it.
+- **A plain-path (Unix socket) target does no buffering.** It's the way to reach a
+  collector on a socket, since HAProxy 3.4 rejects a Unix socket as a ring server.
+  The socket doesn't have to exist when HAProxy starts, so a sidecar that comes up
+  later is fine: measured with the socket absent, 25 of 25 requests were served
+  and HAProxy logged one rate-limited `sendmsg()/writev() failed` alert for the
+  whole run. But those records are gone — only a ring buffers them for replay.
+
+Redirecting the stream changes who can read the records, not what they contain.
+They still hold personal data, so retention limits and access controls still
+apply at the destination.
+
 ### Request IDs
 
 `req_id` is an RFC 9562 **UUIDv7** (`unique-id-format %[uuid(7)]`): opaque, but
