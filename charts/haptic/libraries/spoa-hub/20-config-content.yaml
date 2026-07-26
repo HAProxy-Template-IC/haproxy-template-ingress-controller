@@ -293,7 +293,7 @@ templateSnippets:
       {{ render "spoe-message-mirror-body" }}
       {%- else -%}
       spoe-message {{ msg }}
-          args ip=src
+          args ip=src req_id=unique-id
       {%- end %}
       {%- end %}
 
@@ -357,8 +357,19 @@ templateSnippets:
   spoe-message-check-auth-body:
     template: |-
       spoe-message check-auth
-          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri){{- render_glob "spoe-message-check-auth-extra-args-*" -}}
+          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri) req_id=unique-id{{- render_glob "spoe-message-check-auth-extra-args-*" -}}
 
+  # Every message carries `req_id=unique-id` — the same value HAProxy's
+  # `unique-id-format` puts in the JSON access log's `req_id` field
+  # (base.yaml's defaults-settings-*-access-log-request-id). The hub adopts it
+  # (spoa-hub >= v0.11.0) so its own log lines name the same request as the
+  # access-log record; older hubs never look the argument up, so sending it is
+  # harmless. It is a CORRELATION LABEL only. Never wire a client-controlled
+  # expression (req.hdr(...), urlp(...), cook(...)) into it: the hub validates
+  # the charset but cannot know the value's provenance, and a plugin that keyed
+  # a cache on a client-chosen id would let one request's state serve another.
+  # `unique-id` is HAProxy's own generated value, which is why it is safe here.
+  #
   # Canonical spoe-message check-request body. Args follow the
   # haproxy-spoa-hub-plugin-coraza message contract (plugin.rs:266-307):
   #
@@ -404,7 +415,7 @@ templateSnippets:
   spoe-message-check-request-body:
     template: |-
       spoe-message check-request
-          args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body body-mode=var(txn.coraza_body_mode) body-complete=var(txn.coraza_body_complete) detect-only=var(txn.coraza_detect_only) app=var(txn.coraza_app)
+          args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body body-mode=var(txn.coraza_body_mode) body-complete=var(txn.coraza_body_complete) detect-only=var(txn.coraza_detect_only) app=var(txn.coraza_app) req_id=unique-id
 
   # Canonical spoe-message check-ratelimit body. Rendered by name from
   # spoe-conf-content's per-message dispatch when "check-ratelimit" is in the
@@ -439,7 +450,7 @@ templateSnippets:
   spoe-message-check-ratelimit-body:
     template: |-
       spoe-message check-ratelimit
-          args key=var(txn.rl_key) limit=var(txn.rl_limit) period=var(txn.rl_period) burst=var(txn.rl_burst) mode=var(txn.rl_mode)
+          args key=var(txn.rl_key) limit=var(txn.rl_limit) period=var(txn.rl_period) burst=var(txn.rl_burst) mode=var(txn.rl_mode) req_id=unique-id
 
   # Canonical spoe-message validate-request body. Rendered when the
   # api-gateway plugin is enabled. Args follow the plugin process() contract:
@@ -471,7 +482,7 @@ templateSnippets:
   spoe-message-validate-request-body:
     template: |-
       spoe-message validate-request
-          args schema_id=var(txn.req_schema_id) body=req.body content_type=req.hdr(Content-Type) max_body_bytes=var(txn.req_schema_max_body) fail_open=var(txn.req_schema_fail_open)
+          args schema_id=var(txn.req_schema_id) body=req.body content_type=req.hdr(Content-Type) max_body_bytes=var(txn.req_schema_max_body) fail_open=var(txn.req_schema_fail_open) req_id=unique-id
 
   # Canonical spoe-message mirror body — a SINGLE static message that fans
   # out to every mirror target for the request. Rendered by name from
@@ -514,4 +525,4 @@ templateSnippets:
   spoe-message-mirror-body:
     template: |-
       spoe-message mirror
-          args arg_targets=var(txn.gw_mirror_targets) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body
+          args arg_targets=var(txn.gw_mirror_targets) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body req_id=unique-id
