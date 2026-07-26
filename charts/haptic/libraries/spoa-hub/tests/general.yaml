@@ -209,6 +209,87 @@ validationTests:
   # spoa-hub-config.toml rendering (ADR-0007 / MR3)
   # ============================================================================
 
+  test-spoa-hub-spoe-messages-carry-req-id:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: >-
+      Every spoe-message carries req_id=unique-id, so the hub adopts HAProxy's
+      own request id (spoa-hub >= v0.11.0) and its log lines name the same
+      request as the JSON access log. The message bodies are separate snippets,
+      so an edit can drop the argument from one of them — this asserts each
+      enabled message individually rather than counting.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+            - check-request
+            - check-ratelimit
+            - validate-request
+            - mirror
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: file:spoe.conf
+        pattern: '(?m)^spoe-message check-auth$\n\s+args [^\n]*\breq_id=unique-id\b'
+        description: >-
+          Anchored to the args line immediately after this header. A lazy
+          (?s).*? gap would match a LATER message's args line, so the assertion
+          would pass while this message had lost the argument.
+      - type: contains
+        target: file:spoe.conf
+        pattern: '(?m)^spoe-message check-request$\n\s+args [^\n]*\breq_id=unique-id\b'
+      - type: contains
+        target: file:spoe.conf
+        pattern: '(?m)^spoe-message check-ratelimit$\n\s+args [^\n]*\breq_id=unique-id\b'
+      - type: contains
+        target: file:spoe.conf
+        pattern: '(?m)^spoe-message validate-request$\n\s+args [^\n]*\breq_id=unique-id\b'
+      - type: contains
+        target: file:spoe.conf
+        pattern: '(?m)^spoe-message mirror$\n\s+args [^\n]*\breq_id=unique-id\b'
+      # HAProxy must actually generate an id, or `unique-id` fetches empty and the
+      # hub falls back to its own — losing the correlation the argument exists for.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'unique-id-format %\[uuid\(7\)\]'
+
+  test-spoa-hub-req-id-is-never-client-controlled:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: >-
+      req_id must be HAProxy's own generated id, never a client-supplied value.
+      The hub validates the charset but cannot know the provenance, and a plugin
+      that keyed state on a client-chosen id would let one request's state serve
+      another. This pins that no chart edit wires a request-derived fetch in.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+            - check-request
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: file:spoe.conf
+        pattern: 'req_id=(req\.hdr|hdr|urlp|cook|req\.cook|url_param)'
+
   test-spoa-hub-config-render-default:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.

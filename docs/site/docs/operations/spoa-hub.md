@@ -36,7 +36,7 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 
 | Component       | Pinned version                          |
 | --------------- | --------------------------------------- |
-| Hub               | `v0.10.0`                     |
+| Hub               | `v0.11.0`                     |
 | `api-gateway`    | `v0.1.0`      |
 | `coraza`          | `v0.7.0`           |
 | `external-auth`   | `v0.5.0`    |
@@ -245,6 +245,33 @@ Widen the method allowlist when a whole class of hits comes from a method the ap
 ### Flip to deny
 
 After the exclusions have been in place for another observation window with zero would-block hits, set `enforcement: deny`. Watch `plugin_coraza_denials_total` for the first days — it now counts real blocks — and use the access log's `waf_rule_id` and `denied_by` to justify any individual one. If you turned the audit log on to classify hits, turn it off again here.
+
+## Correlating hub logs with the access log
+
+The hub's log lines carry `span.req_id`, holding the same value as the JSON access
+log's `req_id` field for that request. So a hub warning and the HAProxy record for
+the request that caused it can be joined on one key:
+
+```console
+# the access-log record
+kubectl logs -n <namespace> <haproxy-pod> -c haproxy | jq 'select(.req_id=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'
+
+# and anything the hub said about the same request
+kubectl logs -n <namespace> <haproxy-pod> -c spoa-hub | jq 'select(.["span.req_id"]=="019f9e64-e9de-7d1b-88c9-76644f0e9b86")'
+```
+
+The chart sends HAProxy's own `unique-id` on every SPOE message, and the hub adopts
+it. Nothing to configure. Requires spoa-hub v0.11.0 or later; an older hub ignores
+the argument and logs its own internal id instead.
+
+`spoa_request_id_source_total{source}` reports which id each message used —
+`adopted`, `generated`, or `rejected`. **Alert on `rejected`**: it means the hub
+replaced a supplied id, so its logs and the access log name every request
+differently, and no other signal shows that.
+
+The id is a correlation label. Don't build anything that treats it as unique — it
+comes off the wire, so a plugin keying state on it could serve one request's state
+to another.
 
 ## Managed shared rate-limit store
 
