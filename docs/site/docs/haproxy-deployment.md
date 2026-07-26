@@ -229,6 +229,13 @@ label. Field names must match `^[A-Za-z_][A-Za-z0-9_]{0,39}$` and must not
 collide with a built-in field; expressions must not contain whitespace, `#`, `"`
 or a backslash. A violation fails the render with a message naming the field.
 
+Because the capture happens at request time, a value that doesn't exist yet reads
+empty — a WAF verdict, a cache status, an auth outcome, or anything else a
+[SPOA hub](operations/spoa-hub.md) message produces later in the transaction. For
+those, contribute a [`log-fields-*` snippet](#contribute-a-field-from-your-own-library)
+instead: its items are evaluated when the line is written, after every filter has
+run.
+
 To log the query string, opt in with `query: query` — it's excluded by default
 because query strings are a common accidental carrier of tokens and session ids.
 
@@ -402,8 +409,10 @@ annotation.
 
 ### Contribute a field from your own library
 
-`log-fields-*` is the extension point. A snippet emits named log-format items and
-nothing else:
+`log-fields-*` is the extension point. Use it instead of
+[`accessLog.fields`](#add-your-own-fields) when the value only exists at log time,
+or when a template library should contribute the field for every install that
+enables the feature. A snippet emits named log-format items and nothing else:
 
 ```yaml
 controller:
