@@ -677,7 +677,7 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.resources.requests.cpu` | string | `50m` | SPOA hub CPU request |
 | `spoaHub.resources.requests.memory` | string | `128Mi` | SPOA hub memory request |
 | `spoaHub.resources.limits.memory` | string | `256Mi` | SPOA hub memory limit |
-| `spoaHub.monitoring.podMonitor.enabled` | bool | `false` | Create a PodMonitor for the HAProxy pod that scrapes the hub data-path metrics (`spoa_*`, `plugin_coraza_*`) and HAProxy's exporter (`:8404`). Requires `spoaHub.hub.metricsAddr` to be a non-loopback bind (such as `0.0.0.0:9095`); rendering fails otherwise |
+| `spoaHub.monitoring.podMonitor.enabled` | bool | `false` | Create a PodMonitor for the HAProxy pod that scrapes the hub data-path metrics (`spoa_*`, `plugin_coraza_*`) and HAProxy's exporter (`:8404`). Only rendered when `vector.enabled` is false — with Vector on, `vector.podMonitor` scrapes the single merged endpoint instead. The `auto` default for `spoaHub.hub.metricsAddr` already resolves to a pod-routable bind in that case; rendering fails only if you pin a loopback address by hand |
 | `spoaHub.monitoring.podMonitor.interval` | duration | `30s` | PodMonitor scrape interval |
 | `spoaHub.monitoring.podMonitor.scrapeTimeout` | duration | `10s` | PodMonitor scrape timeout |
 | `spoaHub.monitoring.podMonitor.labels` | map | `{}` | PodMonitor labels (used by Prometheus to select which PodMonitors to use) |
@@ -689,7 +689,7 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.hub.blockingThreadKeepAliveSecs` | int | `30` | Keep-alive seconds for blocking-thread workers |
 | `spoaHub.hub.maxBlockingThreads` | int/null | `null` | Process-wide blocking-pool cap. Null derives the sum of resolved per-plugin concurrency; an explicit value must be at least that sum. Changing it rolls the HAProxy pods because Tokio fixes this pool at process start |
 | `spoaHub.hub.reloadDrainTimeoutMs` | int/null | `null` | Hot-reload quiesce-and-drain budget. Null derives 1.5 times the largest plugin timeout, clamped to 1–30 seconds. `0` restores unsafe legacy immediate retirement and can lose in-flight/background work |
-| `spoaHub.hub.metricsAddr` | string | `127.0.0.1:9095` | Hub Prometheus `/metrics` listen address. Loopback by default — the HAProxy container scrapes it via the shared pod network namespace. Set `""` to disable the endpoint (loses per-plugin counters) or `0.0.0.0:9095` to expose it cluster-wide (the metrics carry per-Ingress/route cardinality) |
+| `spoaHub.hub.metricsAddr` | string | `auto` | Hub Prometheus `/metrics` listen address. `auto` binds it where whatever scrapes it can reach: `127.0.0.1:9095` when `vector.enabled` is true (Vector scrapes over loopback from inside the pod and re-exports on its own port), `0.0.0.0:9095` when it's false (Prometheus scrapes the pod IP directly, so a loopback bind would be a dead target). Set an explicit `<ip>:<port>` to override, or `""` to disable the endpoint (loses per-plugin counters). The metrics carry per-Ingress/route cardinality, so prefer the derived value over exposing it unnecessarily |
 | `spoaHub.hub.goGCPercent` | int | `300` | Go GC target percentage (`GOGC`) for the sidecar's embedded Go runtime (the coraza plugin). Higher than Go's default `100` collects less often under load — fewer stop-the-world pauses and less GC-assist CPU stealing on the request path — for a lower p99 tail. `GOMEMLIMIT` is derived automatically as a soft cap at 90% of the container memory limit. Set `100` to restore Go's default |
 | `spoaHub.haproxy.socketPath` | string | `/run/spoa/hub.sock` | Unix socket path shared between HAProxy and the hub |
 | `spoaHub.haproxy.modeSpop` | bool | `true` | Use HAProxy 3.1+ `mode spop` backend; auto-falls back to `mode tcp` on 3.0. Set `false` to force `mode tcp` on 3.1+ |
@@ -713,6 +713,34 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `spoaHub.extraVolumeMounts` | list | `[]` | Extra volume mounts added to the spoa-hub container only (rendered through `tpl`) — for MMDB files (`maxmind`), OpenID Connect (OIDC) client secrets (`sso-auth`), and similar plugin data |
 
 Available plugin names (`<name>`): `api-gateway`, `coraza`, `external-auth`, `fingerprinting`, `maxmind`, `mirror`, `otel`, `rate-limit`, `sso-auth`. See `values.yaml` for each plugin's defaults and the upstream plugin README for the `params:` schema.
+
+## Vector sidecar
+
+A [Vector](https://vector.dev) container on every HAProxy pod. It receives the access log over a Unix datagram socket and re-exports HAProxy's and the SPOA hub's Prometheus metrics alongside its own on a single port. See [Access logging](haproxy-deployment.md#access-logging).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `vector.enabled` | bool | `true` | Run the Vector sidecar on each HAProxy pod. When enabled, the access log goes to `vector.socketPath` instead of stdout and surfaces under `kubectl logs <pod> -c vector`. Set to `false` to log straight to the HAProxy container's stdout and scrape HAProxy (and the hub) directly |
+| `vector.image.repository` | string | `timberio/vector` | Vector image repository |
+| `vector.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
+| `vector.image.tag` | string | `0.57.0-debian` | Pinned Vector version. Renovate bumps it; keep the `# renovate:` comment above the value or tracking stops. An empty tag is rejected — a floating tag would change the log pipeline under a running fleet |
+| `vector.metricsPort` | int | `9598` | Port serving the merged `/metrics` (HAProxy's exporter, the hub's metrics, and Vector's own). Rejected at render time if it collides with an `haproxy.ports.*` entry or the hub's metrics port |
+| `vector.socketPath` | string | `/run/vector/haproxy.sock` | Unix datagram socket HAProxy writes access-log records to. Must be an absolute path with no whitespace — HAProxy's `log <path>` form requires one |
+| `vector.scrapeIntervalSecs` | int | `15` | How often Vector scrapes the HAProxy and hub endpoints it re-exports. Keep at or below Prometheus's own interval, or Prometheus samples a value Vector hasn't refreshed |
+| `vector.resources.requests.cpu` | string | `50m` | CPU request for the Vector container |
+| `vector.resources.requests.memory` | string | `64Mi` | Memory request for the Vector container |
+| `vector.resources.limits.memory` | string | `256Mi` | Memory limit for the Vector container |
+| `vector.securityContext.allowPrivilegeEscalation` | bool | `false` | Container security context for Vector |
+| `vector.securityContext.readOnlyRootFilesystem` | bool | `true` | Read-only root filesystem; Vector's writable paths are the `data_dir` and `/tmp` emptyDir volumes |
+| `vector.securityContext.runAsNonRoot` | bool | `true` | Refuse to run as root |
+| `vector.securityContext.capabilities.drop` | list | `[ALL]` | Linux capabilities to drop |
+| `vector.podMonitor.enabled` | bool | `false` | Create a `PodMonitor` for the merged endpoint. Requires the prometheus-operator CRDs. Enabling it replaces the two endpoints the spoa-hub `PodMonitor` declares with one target per pod, and lets `spoaHub.hub.metricsAddr` stay loopback-only |
+| `vector.podMonitor.interval` | string | `30s` | Scrape interval |
+| `vector.podMonitor.scrapeTimeout` | string | `10s` | Scrape timeout |
+| `vector.podMonitor.labels` | map | `{}` | Extra labels on the `PodMonitor` (for a Prometheus `podMonitorSelector`) |
+| `vector.podMonitor.relabelings` | list | `[]` | `relabelings` applied to the endpoint |
+| `vector.podMonitor.metricRelabelings` | list | `[]` | `metricRelabelings` applied to the endpoint |
+| `vector.extraVolumeMounts` | list | `[]` | Extra volume mounts added to the Vector container only (rendered through `tpl`) — for credentials a downstream sink needs |
 
 ## HAProxy resources & scheduling
 

@@ -80,6 +80,8 @@ cyclomatic
 DaemonSet
 DAG
 Datadog
+datagram
+datagrams
 dataplane
 Dataplane
 Debounce
@@ -314,7 +316,6 @@ repoint
 resourceapplier
 RFC
 Robusta
-STEK
 Rollout
 rollout
 routable
@@ -347,6 +348,7 @@ SPOE
 SSL
 stderr
 stdout
+STEK
 subcommand
 subcommand's
 subpackages

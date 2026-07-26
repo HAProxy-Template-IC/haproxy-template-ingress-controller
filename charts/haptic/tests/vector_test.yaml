@@ -1,0 +1,67 @@
+suite: vector sidecar
+templates:
+  - haproxy-deployment.yaml
+tests:
+  - it: should render the sidecar by default with readiness gated on the metrics port
+    template: haproxy-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers
+          content:
+            name: vector
+          any: true
+      # The index is pinned by asserting the name at the same index, so a change in
+      # container order fails loudly here instead of silently moving the probe
+      # assertions onto a different container.
+      - equal:
+          path: spec.template.spec.containers[3].name
+          value: vector
+      # Readiness must target the metrics port: the exporter that serves it exists
+      # only in the config HAPTIC pushes, so this IS the config-version gate.
+      - equal:
+          path: spec.template.spec.containers[3].readinessProbe.httpGet.port
+          value: vector-metrics
+      - equal:
+          path: spec.template.spec.containers[3].readinessProbe.httpGet.path
+          value: /metrics
+      # Deliberately NO livenessProbe on that port — nothing listens before the
+      # first push, so a liveness probe would kill the container in a loop and it
+      # would never survive long enough to receive the config.
+      - isNull:
+          path: spec.template.spec.containers[3].livenessProbe
+      # Whole-volume mount, never subPath: kubelet implements subPath as an
+      # isolated bind-mount that does not propagate inotify, so --watch-config
+      # would never fire and the sidecar would never become Ready.
+      - contains:
+          path: spec.template.spec.containers[3].volumeMounts
+          content:
+            name: general-storage
+            mountPath: /etc/haproxy/general
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[3].volumeMounts
+          content:
+            name: vector-socket
+            mountPath: /run/vector
+
+  - it: should give the haproxy container write access to the log socket
+    template: haproxy-deployment.yaml
+    asserts:
+      # HAProxy is the datagram SENDER, so it needs the socket directory mounted
+      # read-write; a datagram sender gets no error when the socket is missing.
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: vector-socket
+            mountPath: /run/vector
+
+  - it: should remove every trace of the sidecar when disabled
+    template: haproxy-deployment.yaml
+    set:
+      vector.enabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers
+          content:
+            name: vector
+          any: true

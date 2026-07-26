@@ -1993,7 +1993,29 @@ templateSnippets:
 
   status-extra-100-prometheus-exporter:
     template: |
+      {#- With the vector sidecar enabled, vector is the only thing that should
+          reach this exporter: it scrapes 127.0.0.1 from inside the pod and
+          re-exports everything on its own port, so /metrics has no reason to be
+          answerable from the pod IP.
+
+          The gate is on `dst` (the address the client connected TO), not on the
+          bind, because this frontend ALSO serves /healthz and /ready for the
+          kubelet's probes — and the kubelet connects to the POD IP. Binding this
+          listener to loopback would make every probe fail and the pod would never
+          become Ready. Conditioning the exporter instead keeps the probes
+          reachable while /metrics answers only over loopback (a request from the
+          pod IP falls through to the frontend's 404).
+
+          `extraContext.vector` is present only when the sidecar is enabled, so its
+          presence is the switch. -#}
+      {#- Parenthesised: the pipe binds looser than `!=`, so the unparenthesised
+          form pipes extraContext into the comparison and fails to compile. -#}
+      {%- var vectorOn = (extraContext | dig("vector")) != nil -%}
+      {%- if vectorOn %}
+      http-request use-service prometheus-exporter if { path /metrics } { dst 127.0.0.0/8 }
+      {%- else %}
       http-request use-service prometheus-exporter if { path /metrics }
+      {%- end %}
 
   global-top:
     template: |
@@ -2680,13 +2702,27 @@ validationTests:
       - type: haproxy_valid
 
   test-status-frontend-prometheus-exporter:
-    description: Status frontend exposes Prometheus exporter on /metrics by default
+    description: >-
+      Status frontend exposes the Prometheus exporter on /metrics, reachable from
+      any address when no vector sidecar fronts it.
     fixtures: {}
+    # extraContext.vector absent = sidecar disabled. Pinned rather than inherited
+    # so this keeps covering the unconditional form even though the chart now
+    # ships vector.enabled=true; the loopback-gated form has its own test in the
+    # vector library.
+    extraContext:
+      vector: null
     assertions:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request use-service prometheus-exporter if { path /metrics }"
+        # (?m) so `$` anchors to end-of-LINE; without it Go's `$` means end of the
+        # whole config and the assertion can never match.
+        pattern: '(?m)^  http-request use-service prometheus-exporter if \{ path /metrics \}$'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'dst 127\.0\.0\.0/8'
+        description: Without the sidecar the exporter must stay reachable from the pod IP for a direct Prometheus scrape
 
   test-guid-directives:
     description: GUIDs are present on frontends, backends, and default_backend
@@ -3216,9 +3252,19 @@ validationTests:
 
   test-access-log-target-default-is-stdout:
     description: >-
-      With no accessLog.targets the access log goes to stdout exactly as before,
-      and HAProxy's own process messages keep their own global stdout target.
+      With accessLog.targets set to stdout the access log goes to stdout exactly
+      as before, and HAProxy's own process messages keep their own global stdout
+      target.
     fixtures: {}
+    # Pinned explicitly rather than relying on the absent-key default: the chart
+    # now ships vector.enabled=true, which points the default target at the
+    # vector socket, so an unpinned test would assert whatever the current
+    # sidecar default happens to be instead of the stdout path it exists to
+    # cover. test-access-log-target-vector-socket covers the other default.
+    extraContext:
+      accessLog:
+        targets:
+          - address: stdout
     assertions:
       - type: haproxy_valid
       - type: contains

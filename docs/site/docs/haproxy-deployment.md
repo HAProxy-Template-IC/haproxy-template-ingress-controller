@@ -246,10 +246,15 @@ range fails the render rather than silently truncating every record.
 
 ### Where the logs go
 
-By default records go to the container's stdout. That's convenient, but in a
-typical cluster stdout is scraped into a general-purpose log store — and the
-access log carries `client_ip`, which is personal data. `accessLog.targets`
-routes the access log somewhere access-controlled instead:
+By default records go to the [Vector sidecar](#vector-sidecar), which prints them
+to its own stdout — so `kubectl logs <pod> -c vector` shows the access log, and
+`kubectl logs <pod> -c haproxy` shows only HAProxy's startup and error output. With
+`vector.enabled=false` the records go to the HAProxy container's stdout instead.
+
+Either way stdout is convenient, but in a typical cluster it's scraped into a
+general-purpose log store — and the access log carries `client_ip`, which is
+personal data. `accessLog.targets` routes the access log somewhere
+access-controlled instead:
 
 ```yaml
 controller:
@@ -375,6 +380,61 @@ TLS-passthrough frontend deliberately logs every connection because that record
 is the only one it produces.
 They still hold personal data, so retention limits and access controls still
 apply at the destination.
+
+### Vector sidecar
+
+Every HAProxy pod runs a [Vector](https://vector.dev) container by default
+(`vector.enabled`). It does two jobs.
+
+**It receives the access log.** HAProxy writes records to a Unix datagram socket
+(`vector.socketPath`, default `/run/vector/haproxy.sock`) on a volume shared with
+the HAProxy container, and Vector prints them to stdout. To send them somewhere
+else, override the rendered config as shown in
+[Change the destination or the whole format](#change-the-destination-or-the-whole-format).
+
+**It merges the metrics endpoints.** Vector scrapes HAProxy's Prometheus exporter
+and — when the sidecar is enabled — the SPOA hub's metrics over loopback from
+inside the pod, then re-exports both alongside its own on one port
+(`vector.metricsPort`, default `9598`). Prometheus therefore scrapes one target per
+pod instead of two:
+
+```yaml
+vector:
+  podMonitor:
+    enabled: true
+```
+
+Because Vector reaches both endpoints over loopback, neither needs to answer on the
+pod IP, and the chart binds them accordingly:
+
+| | `vector.enabled=true` | `vector.enabled=false` |
+|---|---|---|
+| HAProxy `/metrics` | answered only for connections arriving on `127.0.0.0/8` | answered on any address |
+| Hub `/metrics` (`spoaHub.hub.metricsAddr: auto`) | `127.0.0.1:9095` | `0.0.0.0:9095` |
+| Prometheus scrapes | `vector.podMonitor` (one target) | `spoaHub.monitoring.podMonitor` (two targets) |
+
+HAProxy's `/healthz` and `/ready` stay reachable on the pod IP in both cases — the
+kubelet's probes connect there, so only the exporter is restricted, not the
+listener.
+
+Set `vector.enabled=false` to remove the container and restore the previous
+behaviour exactly: HAProxy logs to its own stdout and Prometheus scrapes HAProxy
+and the hub directly.
+
+#### How the config reaches it
+
+The same path the SPOA hub's config takes. HAPTIC renders the Vector config and
+pushes it through the Dataplane API into the shared general-storage volume, where
+Vector's file watch picks it up and reloads without a restart. A bootstrap
+ConfigMap seeds the file so the log socket exists before HAProxy starts — a Unix
+datagram sender gets no error when nothing is listening, so early records would
+otherwise be dropped silently.
+
+The sidecar reports Ready only after HAPTIC's config has arrived. Its readiness
+probe targets the metrics port, and only the rendered config declares the exporter
+that serves it, so a pod never joins the Service advertising metrics it can't yet
+produce — the same principle as HAProxy's own `/ready`, which answers only once a
+pushed config is live.
 
 ### Request IDs
 

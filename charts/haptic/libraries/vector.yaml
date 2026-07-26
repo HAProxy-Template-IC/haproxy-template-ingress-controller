@@ -1,0 +1,265 @@
+# Vector sidecar library — renders the vector config HAPTIC pushes to each
+# HAProxy pod.
+#
+# Loaded only when vector.enabled is true, so when the sidecar is off this file
+# contributes nothing at all — no empty general file, no dangling scrape source.
+#
+# The config is declared as a STATIC `files:` entry rather than registered through
+# fileRegistry.Register(): the filename is fixed and there is exactly one of them.
+# fileRegistry earns its keep only when the filename or the NUMBER of files is
+# computed at render time (per-Ingress CA bundles, per-listener crt-lists).
+#
+# Delivery path, identical to the spoa-hub's config (ADR-0007):
+#   render -> dataplane API general-storage -> <GeneralStorageDir>/vector.yaml
+#   -> vector's --watch-config sees the write -> graceful reload, no restart.
+#
+# The readiness gate: this rendered config declares the prometheus_exporter sink,
+# and the bootstrap ConfigMap deliberately does NOT. The kubelet probes the
+# metrics port, so the container only becomes Ready once this file has been
+# pushed and reloaded. Measured against timberio/vector 0.57.0: enabling vector's
+# `api` block on a hot reload does NOT start the API server, so an api /health
+# probe would never pass — the exporter port is the gate that actually works.
+
+_helm_load:
+  enable: '{{ .Values.vector.enabled }}'
+
+files:
+  vector.yaml:
+    template: |
+      {%- var vec = extraContext | dig("vector") | fallback(map[string]any{}) -%}
+      {%- var socketPath = vec | dig_string("/run/vector/haproxy.sock", "socketPath") -%}
+      {%- var metricsPort = vec | dig("metricsPort") | fallback(9598) -%}
+      {%- var scrapeSecs = vec | dig("scrapeIntervalSecs") | fallback(15) -%}
+      {%- var statsPort = vec | dig("haproxyStatsPort") | fallback(0) -%}
+      {%- var hubPort = vec | dig("spoaHubMetricsPort") | fallback(0) -%}
+      {%- var dataDir = vec | dig_string("/var/lib/vector", "dataDir") -%}
+      {#- Mirror of haptic.vector.validateValues in _vector.tpl. Duplicated on
+          purpose: the HAProxyTemplateConfig CR is a first-class API that bypasses
+          Helm, so a Helm-only guard protects nothing for a hand-written CR. -#}
+      {%- if !hasPrefix(socketPath, "/") -%}
+        {%- fail("extraContext.vector.socketPath must be an absolute path, got '" + socketPath + "'. HAProxy's `log <path>` form requires one.") -%}
+      {%- end -%}
+      {%- if toint(metricsPort) < 1 || toint(metricsPort) > 65535 -%}
+        {%- fail("extraContext.vector.metricsPort must be a TCP port between 1 and 65535, got '" + tostring(metricsPort) + "'.") -%}
+      {%- end -%}
+      {%- if toint(scrapeSecs) < 1 -%}
+        {%- fail("extraContext.vector.scrapeIntervalSecs must be a positive integer, got '" + tostring(scrapeSecs) + "'.") -%}
+      {%- end -%}
+      # Rendered by HAPTIC — do not edit. Overwritten on every reconciliation.
+      data_dir: {{ dataDir }}
+
+      sources:
+        # HAProxy's log target is in the `global` section, which carries BOTH
+        # access-log records and runtime process messages. The two have different
+        # shapes, so this is a byte passthrough: parsing as JSON here would drop
+        # every process line as a decode error. A future log-derived-metrics step
+        # can parse in a transform without changing this source.
+        haproxy_log:
+          type: socket
+          mode: unix_datagram
+          path: {{ socketPath }}
+          # HAProxy must be able to write to a socket vector created. Both
+          # containers run as the pod's runAsUser, so this is belt-and-braces.
+          socket_file_mode: 0o666
+          decoding:
+            codec: bytes
+      {%- if toint(statsPort) > 0 %}
+
+        # Re-export HAProxy's own Prometheus exporter so Prometheus scrapes one
+        # endpoint per pod instead of one per container.
+        haproxy_metrics:
+          type: prometheus_scrape
+          endpoints:
+            - http://127.0.0.1:{{ toint(statsPort) }}/metrics
+          scrape_interval_secs: {{ toint(scrapeSecs) }}
+          instance_tag: instance
+          honor_labels: true
+      {%- end %}
+      {%- if toint(hubPort) > 0 %}
+
+        # Same for the spoa-hub sidecar's metrics (spoa_*, plugin_coraza_*).
+        # honor_labels keeps the hub's own label set intact so existing
+        # dashboards and recording rules keep matching.
+        spoa_hub_metrics:
+          type: prometheus_scrape
+          endpoints:
+            - http://127.0.0.1:{{ toint(hubPort) }}/metrics
+          scrape_interval_secs: {{ toint(scrapeSecs) }}
+          instance_tag: instance
+          honor_labels: true
+      {%- end %}
+
+        vector_metrics:
+          type: internal_metrics
+
+      sinks:
+        # For now the access log just goes to stdout, so `kubectl logs -c vector`
+        # shows it. Point this at a real sink by overriding this file's template
+        # through controller.config.templateSnippets.
+        stdout:
+          type: console
+          inputs: [haproxy_log]
+          encoding:
+            codec: text
+
+        # The single scrape target. Its presence is ALSO the readiness gate — see
+        # the header comment.
+        metrics:
+          type: prometheus_exporter
+          inputs:
+      {%- if toint(statsPort) > 0 %}
+            - haproxy_metrics
+      {%- end %}
+      {%- if toint(hubPort) > 0 %}
+            - spoa_hub_metrics
+      {%- end %}
+            - vector_metrics
+          address: 0.0.0.0:{{ toint(metricsPort) }}
+
+validationTests:
+  test-vector-config-rendered:
+    description: Vector config renders with the log socket, both scrape sources, and the exporter
+    fixtures: {}
+    extraContext:
+      vector:
+        socketPath: /run/vector/haproxy.sock
+        metricsPort: 9598
+        scrapeIntervalSecs: 15
+        haproxyStatsPort: 8404
+        spoaHubMetricsPort: 9101
+        dataDir: /var/lib/vector
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must still be valid with vector enabled
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'mode: unix_datagram'
+        description: Log source must be a UNIX datagram socket
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'path: /run/vector/haproxy\.sock'
+        description: Socket path must come from the operator value
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'codec: bytes'
+        description: >-
+          Byte passthrough, not JSON decoding — the global log target carries
+          non-JSON process messages alongside JSON access records
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'http://127\.0\.0\.1:8404/metrics'
+        description: Must re-export HAProxy's exporter
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'http://127\.0\.0\.1:9101/metrics'
+        description: Must re-export the spoa-hub's metrics
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'address: 0\.0\.0\.0:9598'
+        description: Exporter must bind the configured metrics port
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'type: prometheus_exporter'
+        description: >-
+          The exporter sink is the readiness gate — without it the kubelet probe
+          on the metrics port never passes
+
+  test-vector-config-no-spoa-hub:
+    description: Without a hub metrics port, no dangling spoa_hub scrape source or input is emitted
+    fixtures: {}
+    extraContext:
+      vector:
+        socketPath: /run/vector/haproxy.sock
+        metricsPort: 9598
+        scrapeIntervalSecs: 15
+        haproxyStatsPort: 8404
+        # Explicit 0, not omitted: a test's extraContext MERGES over the _global
+        # baseline, so leaving this out inherits the chart's real hub port and the
+        # not_contains below would test nothing.
+        spoaHubMetricsPort: 0
+        dataDir: /var/lib/vector
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'spoa_hub_metrics'
+        description: >-
+          A scrape source pointing at a port nothing listens on would make vector
+          log a connection error every scrape_interval forever
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'http://127\.0\.0\.1:8404/metrics'
+        description: HAProxy's exporter must still be re-exported
+
+  test-access-log-target-vector-socket:
+    description: >-
+      With vector enabled the access log is emitted to the mounted UNIX datagram
+      socket instead of stdout — the counterpart to
+      test-access-log-target-default-is-stdout in base.yaml.
+    fixtures: {}
+    extraContext:
+      accessLog:
+        targets:
+          - address: /run/vector/haproxy.sock
+            format: raw
+    assertions:
+      - type: haproxy_valid
+        description: A plain-path log target must pass HAProxy's config check
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^global$.*?^  log /run/vector/haproxy\.sock len 16384 format raw local0 info$'
+        description: >-
+          The plain-path form is HAProxy's UNIX datagram target; deliberately not
+          `unix@`, which HAProxy 3.4 rejects for a ring server
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '^  log stdout '
+        description: >-
+          Nothing should still be logging to stdout — a second target would double
+          every record once vector re-emits to its own stdout
+
+  test-vector-metrics-loopback-only:
+    description: >-
+      With the sidecar enabled, HAProxy answers /metrics only over loopback (vector
+      scrapes it from inside the pod), while /healthz and /ready stay reachable
+      from the pod IP for the kubelet's probes.
+    fixtures: {}
+    extraContext:
+      vector:
+        socketPath: /run/vector/haproxy.sock
+        metricsPort: 9598
+        scrapeIntervalSecs: 15
+        haproxyStatsPort: 8404
+        spoaHubMetricsPort: 0
+    assertions:
+      - type: haproxy_valid
+        description: The dst ACL must pass HAProxy's config check
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request use-service prometheus-exporter if \{ path /metrics \} \{ dst 127\.0\.0\.0/8 \}'
+        description: >-
+          Gated on dst (the address connected TO), not on the bind — binding this
+          listener to loopback would break the kubelet probes on the same port
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request return status 200 content-type text/plain string "READY" if \{ path /ready \}'
+        description: /ready must stay unconditional or the pod never becomes Ready
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request return status 200 content-type text/plain string "OK" if \{ path /healthz \}'
+        description: /healthz must stay unconditional for the liveness probe
+
+  test-vector-socket-path-must-be-absolute:
+    description: A relative socketPath is rejected at render time
+    fixtures: {}
+    extraContext:
+      vector:
+        socketPath: run/vector/haproxy.sock
+        metricsPort: 9598
+        scrapeIntervalSecs: 15
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'socketPath must be an absolute path'
+        description: HAProxy resolves a relative log path against default-path origin

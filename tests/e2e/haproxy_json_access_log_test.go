@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,11 +29,52 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
-// readHAProxyAccessLog returns the stdout of the `haproxy` container across all
-// HAProxy pods, from `since` onwards. That stdout IS the access log in this chart
-// (`log stdout ... format raw`), so it is the only place the emitted log record
-// can be observed — the chart's validationTests can prove the log-format
-// directive renders, but not that HAProxy produces a parseable record from it.
+// accessLogContainer is the container whose stdout carries the access log.
+//
+// With the vector sidecar enabled (the chart default) HAProxy logs to a UNIX
+// datagram socket and vector prints the records to ITS stdout, so the log is in
+// the `vector` container. With vector.enabled=false HAProxy logs to its own
+// stdout. Resolved once per run against the actual pod spec rather than assumed,
+// so the suite keeps working in both configurations.
+var (
+	accessLogContainerOnce sync.Once
+	accessLogContainerName string
+)
+
+func resolveAccessLogContainer(ctx context.Context, t *testing.T) string {
+	t.Helper()
+	accessLogContainerOnce.Do(func() {
+		accessLogContainerName = "haproxy"
+		pods := listHAProxyPods(t)
+		if len(pods) == 0 {
+			return
+		}
+		cmd := exec.CommandContext(ctx, "kubectl",
+			"--kubeconfig", kubeconfigPath,
+			"-n", ControllerNamespace,
+			"get", "pod", pods[0],
+			"-o", `jsonpath={.spec.containers[*].name}`,
+		)
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			return
+		}
+		for _, name := range strings.Fields(stdout.String()) {
+			if name == "vector" {
+				accessLogContainerName = "vector"
+				return
+			}
+		}
+	})
+	return accessLogContainerName
+}
+
+// readHAProxyAccessLog returns the access-log stdout across all HAProxy pods,
+// from `since` onwards. That stdout IS the access log in this chart
+// (`log ... format raw`), so it is the only place the emitted log record can be
+// observed — the chart's validationTests can prove the log-format directive
+// renders, but not that HAProxy produces a parseable record from it.
 //
 // The window is bounded by TIME, not by a line count. A `--tail=N` read races the
 // log volume of whatever else is running: on a busy shard (api-gateway, with WAF
@@ -41,19 +83,20 @@ import (
 // the feature was fine.
 func readHAProxyAccessLog(ctx context.Context, t *testing.T, since time.Time) (string, error) {
 	t.Helper()
+	container := resolveAccessLogContainer(ctx, t)
 	var all strings.Builder
 	for _, pod := range listHAProxyPods(t) {
 		cmd := exec.CommandContext(ctx, "kubectl",
 			"--kubeconfig", kubeconfigPath,
 			"-n", ControllerNamespace,
-			"logs", pod, "-c", "haproxy",
+			"logs", pod, "-c", container,
 			"--since-time="+since.UTC().Format(time.RFC3339),
 		)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("kubectl logs %s -c haproxy: %w (stderr: %s)", pod, err, stderr.String())
+			return "", fmt.Errorf("kubectl logs %s -c %s: %w (stderr: %s)", pod, container, err, stderr.String())
 		}
 		all.WriteString(stdout.String())
 	}
