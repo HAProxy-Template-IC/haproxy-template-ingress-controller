@@ -1188,6 +1188,21 @@ validationTests:
           name: default-ssl-cert
           namespace: haptic
           ecdsaName: ""
+        # Session tickets pinned OFF for the whole suite, for the same reason the
+        # default certificate is pinned above: a synthetic test must resolve the
+        # _global baseline, never the operator's real setting. With it ON, the SSL
+        # library emits a tls-ticket-keys file whose key material is freshly
+        # crypto-random on EVERY render, which
+        #   (a) makes the `deterministic` assertion unsatisfiable, and
+        #   (b) appends `tls-ticket-keys <file>` to every HTTPS bind, breaking the
+        #       end-anchored bind-shape assertions in the gateway tests.
+        # Both become a controller crash-loop at the load gate — observed on a live
+        # cluster that had set tls.sessionTickets.enabled: true, where the tests
+        # pass under chart defaults (feature off) and fail only for the operator.
+        # test-ssl-session-tickets-seed opts back IN explicitly (with its own
+        # pinned date), so the feature itself stays covered.
+        sessionTickets:
+          enabled: false
     fixtures:
       secrets:
         # Default SSL certificate, required by every test that renders a full

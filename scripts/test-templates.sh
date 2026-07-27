@@ -204,6 +204,16 @@ if ! helm template "$CHART_DIR" \
     --set controller.templateLibraries.nginxIngress.enabled=true \
     --set defaultSSLCertificate.secretName=regression-custom-rsa-cert \
     --set defaultSSLCertificate.ecdsaSecretName=regression-custom-ecdsa-cert \
+    `# Regression guard: run the WHOLE suite with the session-ticket opt-in ON.` \
+    `# The suite otherwise only ever exercises chart defaults, where the feature` \
+    `# is off — so a test that the opt-in falsifies passes here and crash-loops` \
+    `# the operator's controller at the load gate. That is exactly what happened:` \
+    `# with tickets on, the SSL library emits a per-render crypto-random` \
+    `# tls-ticket-keys file, breaking the deterministic assertion AND every` \
+    `# end-anchored HTTPS bind-shape assertion. Five tests, none visible under` \
+    `# defaults. Isolation now lives in the ssl library's _global baseline; this` \
+    `# flag is what proves it stays effective.` \
+    --set 'controller.config.templatingSettings.extraContext.tls.sessionTickets.enabled=true' \
     --set 'controller.config.templatingSettings.extraContext.governance.enabled=true' \
     --set 'controller.config.templatingSettings.extraContext.governance.rules[0].resource=ingresses' \
     --set-string "controller.config.templatingSettings.extraContext.governance.rules[0].path=metadata.annotations['haproxy-haptic.org/waf-policy']" \
