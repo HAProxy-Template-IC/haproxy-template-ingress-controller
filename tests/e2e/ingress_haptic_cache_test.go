@@ -76,6 +76,37 @@ func TestHapticVarnishCache(t *testing.T) {
 		},
 	})
 	assertVarnishRejectsUnauthorizedPod(t)
+	assertNoRateLimitStoreWithoutSharedLimiter(t)
+}
+
+// assertNoRateLimitStoreWithoutSharedLimiter proves the chart deploys no shared
+// rate-limit store in a shard that never enabled the shared limiter.
+//
+// This shard is the right place for it, and the ONLY one that can catch this failure
+// mode. rateLimit.shared.managedStore.enabled defaults to true while
+// rateLimit.shared.enabled defaults to false, and the store's render gate once consulted
+// only the former — so the controller rendered a Valkey StatefulSet, a PDB and two
+// Services that nothing consumed. On a default install that surfaced (invisibly) as a
+// forbidden-apply hot loop, which scripts/test-helm-defaults.sh now fails on. But THIS
+// shard sets cache.varnish.enabled=true, and the Role's apps grant is or-combined across
+// the two tiers — so here the StatefulSet apply SUCCEEDS and the useless workload is
+// really created, with no error anywhere to notice it. Only counting the objects catches
+// that, which is why a log-scanning guard is not enough on its own.
+func assertNoRateLimitStoreWithoutSharedLimiter(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "kubectl",
+		"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+		"get", "statefulset,poddisruptionbudget,service",
+		"-l", labelSelectorRateLimitStore, "-o", "name").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list rate-limit store objects: %v: %s", err, out)
+	}
+	if found := string(bytes.TrimSpace(out)); found != "" {
+		t.Fatalf("shared rate limiting is disabled in this shard, but the chart deployed store objects:\n%s", found)
+	}
 }
 
 // assertVarnishRejectsUnauthorizedPod proves the cache NetworkPolicy is

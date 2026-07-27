@@ -35,6 +35,7 @@
 #   8 - HAProxy configuration check failed or emitted warnings
 #   9 - HAProxy bootstrap worker-retirement check failed
 #  10 - HAProxyTemplateConfig admission failed or emitted warnings
+#  11 - Controller could not apply a rendered k8sResource (chart RBAC gap)
 
 set -euo pipefail
 
@@ -451,6 +452,54 @@ verify_bootstrap_workers_retired() {
     done
 
     ok "Bootstrap workers retired on all ${#pods[@]} HAProxy replicas"
+}
+
+# Fails if the controller could not apply something its own templates rendered.
+#
+# This is the ONLY gate for that class, and it has to read the log because the
+# controller deliberately swallows the failure: the resource applier logs at ERROR and
+# returns an error outcome that is never counted, never reflected in a status condition,
+# never exported as a metric, and never propagated to an exit code. It also never gives
+# up — the checksum cache is written only on the success path, so a permanently-forbidden
+# apply is retried on every reconciliation forever.
+#
+# The class this catches: the chart renders a Kubernetes resource via a library's
+# k8sResources whose gate is broader than the RBAC gate in templates/role.yaml. That
+# shipped once — on pure defaults the chart rendered a Valkey rate-limit StatefulSet and
+# PDB it had no permission to apply, producing 704 forbidden applies in 74 seconds while
+# every job stayed green. Any future kind added to a k8sResources entry without a
+# matching grant fails here.
+#
+# Position matters: call this AFTER start_port_forward, which has already blocked until
+# the controller-applied Service exists. That proves at least one applier pass completed,
+# so no sleep or poll loop is needed.
+verify_controller_applies_clean() {
+    info "Checking that the controller applied every rendered k8sResource..."
+
+    local logs
+    logs=$(kubectl logs -n "$NAMESPACE" \
+        -l "app.kubernetes.io/component=controller" -c controller \
+        --tail=-1 2>/dev/null || true)
+
+    if [[ -z "$logs" ]]; then
+        die "Could not read controller logs, so the resource-applier check could not run" 11
+    fi
+
+    # Deliberately narrow: these two messages are unambiguous defects on a default
+    # install. A bare `level=ERROR` match would be flaky — a real run showed transient
+    # "Dataplane API request failed" errors during pod churn.
+    local failures
+    failures=$(grep -E 'level=ERROR.*(Failed to apply rendered resource|Failed to resolve GVR for rendered resource)' <<<"$logs" || true)
+
+    if [[ -n "$failures" ]]; then
+        error "The controller rendered resources it cannot apply:"
+        # Distinct GVR/name pairs, so a hot loop of thousands of lines stays readable.
+        grep -oE 'name=[^ ]+ gvr="[^"]+"' <<<"$failures" | sort -u | sed 's/^/    /' >&2
+        error "Total failed applies: $(wc -l <<<"$failures")"
+        die "Chart RBAC does not cover what the chart's templates render (see templates/role.yaml)" 11
+    fi
+
+    ok "No resource-applier failures in the controller log"
 }
 
 #------------------------------------------------------------------------------
@@ -880,6 +929,7 @@ main() {
     smoke_test_http
     smoke_test_https
     verify_ssl_certificate
+    verify_controller_applies_clean
     stop_port_forward
 
     echo ""

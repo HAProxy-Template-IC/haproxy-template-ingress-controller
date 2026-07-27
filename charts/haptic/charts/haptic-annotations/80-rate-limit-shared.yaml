@@ -119,8 +119,21 @@ templateSnippets:
 k8sResources:
   rate-limit-store:
     template: |
+      {#- managedStore is a SUB-option of rateLimit.shared: "when shared rate limiting
+          is on, deploy the store for you" — which is why it defaults to true. So it
+          must also require shared.enabled, and for a hard reason beyond tidiness: the
+          chart's RBAC (templates/role.yaml, the apps/statefulsets and
+          policy/poddisruptionbudgets rules) grants apply permission only when BOTH
+          flags are set. Gating on managedStore alone made the render gate true and the
+          RBAC gate false on PURE DEFAULTS, so the controller rendered a Valkey
+          StatefulSet + PDB it could not apply and retried forever — 704 forbidden
+          applies in 74s on a real cluster, with no backoff (the checksum cache is
+          written only on success) and no metric, status condition or non-zero exit
+          anywhere to surface it. This gate must stay identical to role.yaml's.
+          Pinned by test-haptic-rate-limit-store-requires-shared-opt-in. -#}
+      {%- var sharedEnabled = extraContext | dig("rateLimit", "shared", "enabled") | fallback("false") | tostring() %}
       {%- var enabled = extraContext | dig("rateLimit", "shared", "managedStore", "enabled") | fallback("false") | tostring() %}
-      {%- if enabled == "true" %}
+      {%- if sharedEnabled == "true" && enabled == "true" %}
       {%- var base = extraContext | dig("rateLimit", "shared", "managedStore", "serviceName") | fallback("haptic-rate-limit-store") | tostring() %}
       {%- var sentinelSvc = base + "-sentinel" %}
       {%- var ns = extraContext | dig("rateLimit", "shared", "managedStore", "namespace") | fallback("default") | tostring() %}
