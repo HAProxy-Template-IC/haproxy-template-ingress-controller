@@ -15,6 +15,19 @@ tests:
       - failedTemplate:
           errorMessage: 'vector.socketPath must be inside a subdirectory, not directly at the filesystem root, got "/haproxy.sock". The chart mounts the socket''s parent directory as a shared emptyDir in both the haproxy and vector containers, so a parent of "/" would shadow their root filesystems. Use something like /run/vector/haproxy.sock.'
 
+  - it: should refuse the combination that silently stops all scraping
+    template: haproxytemplateconfig.yaml
+    set:
+      spoaHub.enabled: true
+      spoaHub.monitoring.podMonitor.enabled: true
+      # vector.podMonitor.enabled left at its false default — with the sidecar on
+      # the chart skips the spoaHub PodMonitor, so this pair means NOTHING scrapes
+      # haproxy_* or spoa_* and nothing says so. A live cluster was in exactly this
+      # state; the render must refuse it rather than lose the metrics quietly.
+    asserts:
+      - failedTemplate:
+          errorMessage: 'spoaHub.monitoring.podMonitor.enabled=true has no effect while vector.enabled=true: the chart skips that PodMonitor because the vector sidecar re-exports both the hub''s and HAProxy''s metrics on one endpoint. Set vector.podMonitor.enabled=true to scrape the merged endpoint (recommended), or set vector.enabled=false to keep scraping the hub directly. Leaving it as-is would silently stop every haproxy_* and spoa_* scrape.'
+
   - it: should reject shell metacharacters in socketPath
     template: haproxytemplateconfig.yaml
     set:

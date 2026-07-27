@@ -106,6 +106,22 @@ guard that lives only here would not protect a hand-written CR.
   {{- if lt ($v.scrapeIntervalSecs | int) 1 -}}
     {{- fail (printf "vector.scrapeIntervalSecs must be a positive integer, got %v." $v.scrapeIntervalSecs) -}}
   {{- end -}}
+  {{- /* Refuse the combination that silently stops all scraping. With the sidecar
+         on, the chart skips the spoaHub PodMonitor (vector fronts both endpoints)
+         — so if vector's own PodMonitor is off, an operator who HAD working hub +
+         HAProxy scraping loses every haproxy_* and spoa_* series on upgrade, with
+         nothing failing to tell them. Exactly the state a live cluster was in
+         before this guard existed. Failing the render is loud and one line to
+         resolve either way. */ -}}
+  {{- /* Gated on the hub actually being DEPLOYED, not just on the flag. spoaHub.enabled
+         auto-derives from plugins.*.enabled and defaults to null, so a values file can
+         carry monitoring.podMonitor.enabled=true with no plugins on — the hub never
+         renders, its PodMonitor never rendered either, and nothing is lost. Failing
+         that configuration would be a false positive. Mirrors the same predicate
+         spoa-hub-podmonitor.yaml itself uses. */ -}}
+  {{- if and (include "haptic.spoaHub.enabled" .) .Values.spoaHub.monitoring.podMonitor.enabled (not $v.podMonitor.enabled) -}}
+    {{- fail "spoaHub.monitoring.podMonitor.enabled=true has no effect while vector.enabled=true: the chart skips that PodMonitor because the vector sidecar re-exports both the hub's and HAProxy's metrics on one endpoint. Set vector.podMonitor.enabled=true to scrape the merged endpoint (recommended), or set vector.enabled=false to keep scraping the hub directly. Leaving it as-is would silently stop every haproxy_* and spoa_* scrape." -}}
+  {{- end -}}
   {{- if eq (trim ($v.image.tag | toString)) "" -}}
     {{- fail "vector.image.tag must be pinned to an explicit tag so a silent upstream bump can't change the log pipeline under a running fleet." -}}
   {{- end -}}

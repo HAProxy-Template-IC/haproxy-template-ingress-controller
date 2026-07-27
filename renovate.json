@@ -63,6 +63,19 @@
       "depNameTemplate": "timberio/vector",
       "packageNameTemplate": "timberio/vector",
       "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<compatibility>[a-z]+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Varnish image tag in charts/haptic/values.yaml. The value is a bare `image: <repo>:<tag>` string, which Renovate's built-in helm-values manager does not recognise (it looks for an image.repository + image.tag pair), so this pin needs an explicit manager or it is never bumped.",
+      "fileMatch": [
+        "^charts/haptic/values\\.yaml$"
+      ],
+      "matchStrings": [
+        "# renovate:\\s*datasource=docker\\s+depName=varnish[^\\n]*\\n\\s*image:\\s*varnish:(?<currentValue>[0-9]+\\.[0-9]+(\\.[0-9]+)?)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "varnish",
+      "packageNameTemplate": "varnish"
     }
   ],
   "packageRules": [
