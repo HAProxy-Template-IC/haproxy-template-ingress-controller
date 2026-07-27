@@ -53,8 +53,8 @@ guard that lives only here would not protect a hand-written CR.
   {{- fail "vector must be a map." -}}
 {{- end -}}
 {{- range $field := keys $v -}}
-  {{- if not (has $field (list "enabled" "image" "metricsPort" "socketPath" "scrapeIntervalSecs" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
-    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, socketPath, scrapeIntervalSecs, resources, securityContext, podMonitor, extraVolumeMounts." $field) -}}
+  {{- if not (has $field (list "enabled" "image" "metricsPort" "socketPath" "scrapeIntervalSecs" "excludeMetrics" "excludeMaintServerMetrics" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
+    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, socketPath, scrapeIntervalSecs, excludeMetrics, excludeMaintServerMetrics, resources, securityContext, podMonitor, extraVolumeMounts." $field) -}}
   {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $v.enabled) -}}
@@ -102,6 +102,37 @@ guard that lives only here would not protect a hand-written CR.
          library validates what it can see (the address itself). */ -}}
   {{- if eq (dir ($v.socketPath | toString)) "/" -}}
     {{- fail (printf "vector.socketPath must be inside a subdirectory, not directly at the filesystem root, got %q. The chart mounts the socket's parent directory as a shared emptyDir in both the haproxy and vector containers, so a parent of \"/\" would shadow their root filesystems. Use something like /run/vector/haproxy.sock." $v.socketPath) -}}
+  {{- end -}}
+  {{- /* Validate the exclusion patterns. An invalid or quote-bearing regex reaches
+         the rendered vector config and fails its load — which crash-loops the
+         sidecar, so it has to be caught here. VRL uses the Rust regex crate and
+         Go uses RE2; both are RE2-family, so a pattern Go rejects would not have
+         worked there either. */ -}}
+  {{- /* Not a string: it becomes a scrape-URL suffix, and a truthy-looking string
+         like "false" would silently enable the filter. */ -}}
+  {{- if not (kindIs "bool" $v.excludeMaintServerMetrics) -}}
+    {{- fail (printf "vector.excludeMaintServerMetrics must be a boolean, got %v." $v.excludeMaintServerMetrics) -}}
+  {{- end -}}
+  {{- if not (kindIs "slice" ($v.excludeMetrics | default list)) -}}
+    {{- fail "vector.excludeMetrics must be a list of regex strings." -}}
+  {{- end -}}
+  {{- range $pat := ($v.excludeMetrics | default list) -}}
+    {{- $ps := $pat | toString -}}
+    {{- if eq (trim $ps) "" -}}
+      {{- fail "vector.excludeMetrics contains an empty pattern. An empty regex matches every metric name and would drop the entire exposition." -}}
+    {{- end -}}
+    {{- /* Checked character by character rather than with one escaped regex: the
+           escapes needed for a combined pattern do not survive Helm's parser. */ -}}
+    {{- range $bad := (list "'" "\"" "\\" "\n" "\r") -}}
+      {{- if contains $bad $ps -}}
+        {{- fail (printf "vector.excludeMetrics pattern %q contains a quote, backslash or newline. Patterns are embedded in a VRL r'...' literal in the rendered config, so those characters would break vector's config load and crash-loop the sidecar." $ps) -}}
+      {{- end -}}
+    {{- end -}}
+    {{- /* Compile check. MUST be mustRegexMatch: sprig's plain regexMatch does
+           `match, _ := regexp.MatchString(...)` — it DISCARDS the compile error and
+           returns false, so `regexMatch $ps ""` validated nothing at all and an
+           uncompilable pattern rendered clean, then crash-looped the sidecar. */ -}}
+    {{- $_ := mustRegexMatch $ps "" -}}
   {{- end -}}
   {{- if lt ($v.scrapeIntervalSecs | int) 1 -}}
     {{- fail (printf "vector.scrapeIntervalSecs must be a positive integer, got %v." $v.scrapeIntervalSecs) -}}
