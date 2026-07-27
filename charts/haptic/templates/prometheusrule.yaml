@@ -102,6 +102,15 @@ spec:
             summary: "No HAProxy pods discovered"
             description: "Controller {{ `{{ $labels.pod }}` }} finds no HAProxy pods to manage - no config is reaching the data plane"
         {{- end }}
+        {{- if $defaults.accessLogDropped }}
+        - alert: HAProxyAccessLogRecordsDropped
+          expr: increase(haproxy_process_dropped_logs_total[5m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "HAProxy is dropping access-log records"
+            description: "HAProxy pod {{ `{{ $labels.pod }}` }} dropped {{ `{{ $value | humanize }}` }} access-log records in 5m. The log reaches the vector sidecar over a UNIX datagram socket, which absorbs only ~167 records; when vector stops draining (topology reload, GC pause, CPU starvation) HAProxy discards records rather than blocking traffic. Requests are unaffected, but the log is incomplete — which matters most during an incident, when it is the evidence you reach for. Raise vector's CPU request or reduce log volume with accessLog.suppress."
+        {{- end }}
         {{- if $defaults.criticalEventsDropped }}
         - alert: HAProxyControllerCriticalEventsDropped
           expr: increase(haptic_events_dropped_critical_total[5m]) > 0
