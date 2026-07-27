@@ -715,6 +715,16 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         "SPOA Hub Helm guard: reject zero HAProxy processing margin" \
         "spoaHub.haproxy.timeoutProcessingMarginMs must be between 1 and 60000 milliseconds." \
         --set-string spoaHub.haproxy.timeoutProcessingMarginMs=0
+    # spoaHub.enabled=true with every plugin disabled used to render a sidecar
+    # plus a bootstrap config the controller then orphan-deleted, and an
+    # auto-wired validator entry pointing at a file no render produced.
+    # Disabling the gateway library turns off `mirror`, the only default-on
+    # plugin, which is what empties the SPOE message union.
+    run_helm_failure_guard \
+        "SPOA Hub Helm guard: reject a forced-on sidecar with no enabled plugin" \
+        "spoaHub is enabled but no enabled plugin contributes an SPOE message" \
+        --set spoaHub.enabled=true \
+        --set controller.templateLibraries.gateway.enabled=false
     run_helm_failure_guard \
         "Controller Helm guard: reject CRD terminology for config object name" \
         "controller.crdName was renamed to controller.configName" \
