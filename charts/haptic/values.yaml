@@ -2114,6 +2114,62 @@ vector:
   # samples a value vector has not refreshed yet.
   scrapeIntervalSecs: 15
 
+  # Omit servers in MAINT state from HAProxy's exporter, via its own `?no-maint`
+  # scrape parameter.
+  #
+  # This is the single biggest lever on scrape size, because in HAPTIC's model MAINT
+  # means "reserved slot with no backing pod". Backends render a fixed number of
+  # server slots so that scaling a Deployment needs no HAProxy reload, and the spare
+  # slots sit `disabled`. Each still emits a full metric set of zeros.
+  #
+  # Measured on a real 2-pod fleet: 159 of 193 slots (82%) were empty placeholders,
+  # accounting for 10,176 of 15,116 series (67%) and 1.15 MB of every 1.67 MB scrape.
+  #
+  # What you keep: no metric NAME disappears, so dashboards and rules that select by
+  # name keep working — only the empty slots' series go. The per-backend census
+  #   haproxy_backend_agg_server_status{state="MAINT"}
+  # still reports how many slots are free, which is exactly why haproxy_backend_agg_*
+  # is NOT in the excludeMetrics defaults below.
+  #
+  # What you lose: per-slot visibility of an individual MAINT server. In HAPTIC's
+  # model slots are fungible placeholders, so that is not a signal worth 67% of the
+  # scrape — but set this to false if you alert on a specific server being drained.
+  #
+  # Verified honoured on HAProxy 3.0 (the supported floor) and 3.4.
+  excludeMaintServerMetrics: true
+
+  # Metric families to DROP before re-exporting. Each entry is a regex matched
+  # against the metric name (not the labels). Set to [] to re-export everything.
+  #
+  # The default drops HAProxy's host-computed maxima, which are a Prometheus
+  # anti-pattern: they cannot be aggregated across pods, and a "since the process
+  # started" maximum never resets, so it reports the all-time worst value forever.
+  #
+  #   haproxy_*_max_sessions / _max_queue / _max_session_rate
+  #       -> max_over_time(haproxy_*_current_sessions[1h]) etc. — a WINDOWED max you
+  #          can actually reason about, from series that are already exported.
+  #   haproxy_*_max_*_time_seconds
+  #       -> a since-boot latency maximum is not aggregatable and cannot be reset;
+  #          use the _average_seconds series (kept, see below) or the SPOA/access-log
+  #          timings for tail latency.
+  #
+  # NOT dropped by default, though both are aggregates:
+  #
+  #   haproxy_backend_agg_*  — with excludeMaintServerMetrics above it becomes the
+  #       ONLY remaining free-slot census, so dropping it would remove the signal
+  #       rather than duplicate it. Add '^haproxy_backend_agg_' here if you keep the
+  #       per-server series instead (excludeMaintServerMetrics: false), where
+  #       count by (proxy) (haproxy_server_status == 1) reproduces it sliceably.
+  #   haproxy_*_average_seconds — an average over the last 1024 connections, but
+  #       HAProxy's exporter publishes NO histogram, summary, _sum or _count anywhere
+  #       (verified), so these averages are the only latency signal it offers. Add
+  #       '_average_seconds$' if you take latency from the access log instead.
+  #
+  # Patterns may not contain quotes, backslashes or newlines: they are embedded in
+  # the rendered vector config, and an invalid one would crash-loop the sidecar.
+  excludeMetrics:
+    - '^haproxy_(server|backend)_max_'
+
   resources:
     requests:
       cpu: 50m

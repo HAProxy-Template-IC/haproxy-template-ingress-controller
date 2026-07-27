@@ -257,6 +257,8 @@ spec:
           "scrapeIntervalSecs" (.Values.vector.scrapeIntervalSecs | int)
           "haproxyStatsPort" (.Values.haproxy.ports.stats | int)
           "spoaHubMetricsPort" $hubScrape
+          "excludeMetrics" (.Values.vector.excludeMetrics | default list)
+          "excludeMaintServerMetrics" .Values.vector.excludeMaintServerMetrics
           "dataDir" "/var/lib/vector") }}
 
     {{- /* Point the access log at the socket — but only if the operator hasn't

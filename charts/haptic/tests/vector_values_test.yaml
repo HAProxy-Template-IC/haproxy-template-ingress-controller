@@ -66,6 +66,81 @@ tests:
       - failedTemplate:
           errorMessage: 'vector.image.tag must be pinned to an explicit tag so a silent upstream bump can''t change the log pipeline under a running fleet.'
 
+  # excludeMetrics guards. These cover the Helm path, which is what every normal
+  # install goes through; the Scriggo copies in libraries/vector.yaml only matter
+  # for a hand-written HAProxyTemplateConfig CR. Every pattern below reaches the
+  # rendered vector config verbatim, and a bad one fails vector's config LOAD —
+  # i.e. it crash-loops the sidecar rather than degrading, so the render must refuse.
+  - it: should reject an uncompilable exclusion pattern
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.excludeMetrics:
+        - ^haproxy_((
+    asserts:
+      # Regression guard on a real hole: this was written with sprig's plain
+      # regexMatch, which does `match, _ := regexp.MatchString(...)` and DISCARDS
+      # the compile error — so the check passed anything and this pattern rendered
+      # clean. Only mustRegexMatch surfaces it.
+      - failedTemplate:
+          errorPattern: 'error parsing regexp: missing closing \)'
+
+  - it: should reject an empty exclusion pattern
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.excludeMetrics:
+        - ""
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.excludeMetrics contains an empty pattern. An empty regex matches every metric name and would drop the entire exposition.'
+
+  - it: should reject an exclusion pattern carrying a quote
+    template: haproxytemplateconfig.yaml
+    set:
+      # Patterns are emitted inside a VRL r'...' literal, so a single quote breaks
+      # out of it and corrupts the config vector is about to load.
+      vector.excludeMetrics:
+        - "^haproxy_'"
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.excludeMetrics pattern "^haproxy_''" contains a quote, backslash or newline. Patterns are embedded in a VRL r''...'' literal in the rendered config, so those characters would break vector''s config load and crash-loop the sidecar.'
+
+  - it: should reject excludeMetrics that is not a list
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.excludeMetrics: ^haproxy_server_max_
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.excludeMetrics must be a list of regex strings.'
+
+  - it: should accept the shipped defaults and pass them to the render context
+    template: haproxytemplateconfig.yaml
+    asserts:
+      # The library reads them from here, so this is the seam between the two.
+      - equal:
+          path: spec.templatingSettings.extraContext.vector.excludeMetrics
+          value:
+            - ^haproxy_(server|backend)_max_
+      # haproxy_backend_agg_* is deliberately NOT in this list. With
+      # excludeMaintServerMetrics on, agg_server_status{state="MAINT"} is the only
+      # remaining free-slot census, so excluding it would remove the signal rather
+      # than de-duplicate it. Pinned so it can't drift back in unnoticed.
+      - notContains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetrics
+          content: ^haproxy_backend_agg_
+      - equal:
+          path: spec.templatingSettings.extraContext.vector.excludeMaintServerMetrics
+          value: true
+
+  - it: should reject a non-boolean excludeMaintServerMetrics
+    template: haproxytemplateconfig.yaml
+    set:
+      # A string reaches the render as truthy, so "false" would enable the very
+      # filter the operator was trying to switch off.
+      vector.excludeMaintServerMetrics: "false"
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.excludeMaintServerMetrics must be a boolean, got false.'
+
   - it: should bind the hub metrics on loopback with vector on and pod-routable with it off
     template: haproxytemplateconfig.yaml
     set:
