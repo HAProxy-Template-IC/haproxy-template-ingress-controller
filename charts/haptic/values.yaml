@@ -1525,7 +1525,12 @@ rateLimit:
     # externalStore.urls below.
     managedStore:
       # Enabled by default so turning on the shared limiter is production-ready
-      # without another hidden opt-in.
+      # without another hidden opt-in. It only takes effect when
+      # rateLimit.shared.enabled is also true: this is a sub-option of the shared
+      # limiter, not an independent switch, and nothing consumes the store while the
+      # limiter is off. The store's render gate deliberately requires both flags,
+      # matching the RBAC gate in templates/role.yaml — a store rendered without the
+      # matching grant cannot be applied and the controller retries it forever.
       enabled: true
       image: valkey/valkey:9-alpine
       imagePullPolicy: IfNotPresent

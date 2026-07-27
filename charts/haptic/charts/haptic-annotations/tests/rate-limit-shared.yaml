@@ -214,10 +214,17 @@ validationTests:
         pattern: "shared rate limiting is not enabled"
 
   test-haptic-rate-limit-store-resource:
-    description: the optional Valkey store emits Sentinel-managed HA resources via k8sResources
+    description: >-
+      With shared rate limiting on, the optional Valkey store emits Sentinel-managed HA
+      resources via k8sResources
     extraContext:
       rateLimit:
         shared:
+          # Required, not incidental: the store renders only when the shared limiter is
+          # on, because that is the condition under which role.yaml grants the RBAC to
+          # apply it. A per-test extraContext deep-merges over the production one, so
+          # setting managedStore alone does NOT imply this.
+          enabled: true
           managedStore:
             enabled: true
             serviceName: haptic-rate-limit-store
@@ -262,3 +269,69 @@ validationTests:
       - type: contains
         target: "k8s:rate-limit-store"
         pattern: "containerPort: 26379"
+
+  test-haptic-rate-limit-store-requires-shared-opt-in:
+    description: >-
+      managedStore.enabled alone does NOT deploy the store — the render gate must match
+      the RBAC gate in templates/role.yaml
+    # THE REGRESSION GUARD for the forbidden-apply hot loop. managedStore.enabled
+    # defaults to TRUE while shared.enabled defaults to FALSE, and role.yaml grants
+    # apps/statefulsets + policy/poddisruptionbudgets only when BOTH are set. Before the
+    # fix this combination — which is the CHART DEFAULT — rendered a Valkey StatefulSet
+    # and PDB the controller had no permission to apply, so it retried ~9.5x/second
+    # forever, logging at ERROR with no metric, no status condition and no non-zero exit
+    # to surface it. If anyone loosens the render gate again, this goes red.
+    #
+    # Note the paired positive above (test-haptic-rate-limit-store-resource): together
+    # they prove the gate discriminates, rather than this one passing because the
+    # resource name is misspelled. An absent k8sResources key resolves to the empty
+    # string, so a not_contains alone would pass vacuously.
+    extraContext:
+      rateLimit:
+        shared:
+          enabled: false
+          managedStore:
+            enabled: true
+            serviceName: haptic-rate-limit-store
+            namespace: default
+    fixtures:
+      ingresses: []
+    assertions:
+      - type: not_contains
+        target: "k8s:rate-limit-store"
+        pattern: "kind: StatefulSet"
+        description: No Valkey StatefulSet without the shared limiter — the Role can't apply one
+      - type: not_contains
+        target: "k8s:rate-limit-store"
+        pattern: "kind: PodDisruptionBudget"
+        description: >-
+          Nor a PDB. The Role's policy grant is or-combined with the varnish tier, so
+          cache.varnish.enabled=true with its own PDB disabled re-exposes exactly this
+      - type: not_contains
+        target: "k8s:rate-limit-store"
+        pattern: "kind: Service"
+        description: >-
+          Nor the headless and sentinel Services. These DID get created before the fix
+          (services RBAC is unconditional), leaving two Services for a store that never
+          existed
+
+  test-haptic-rate-limit-store-requires-managed-store:
+    description: With an external store, the shared limiter deploys no chart-owned workload
+    # The bring-your-own-store path: shared limiting on, chart store off. Pins that
+    # `enabled: false` is honoured rather than being treated as "unset, use the default".
+    extraContext:
+      rateLimit:
+        shared:
+          enabled: true
+          managedStore:
+            enabled: false
+          externalStore:
+            urls:
+              - redis://byo-valkey:6379
+    fixtures:
+      ingresses: []
+    assertions:
+      - type: not_contains
+        target: "k8s:rate-limit-store"
+        pattern: "kind: StatefulSet"
+        description: The operator's own store is in use, so the chart deploys none

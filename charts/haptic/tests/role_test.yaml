@@ -1,0 +1,102 @@
+suite: controller Role — RBAC must match what the templates render
+# The controller applies template-declared resources (a library's `k8sResources:`) via
+# Server-Side Apply, so every kind a library can render needs a grant here. When a render
+# gate is broader than its RBAC gate, the applier hot-loops on forbidden applies: it logs
+# at ERROR, counts nothing, sets no status condition, exports no metric, and never backs
+# off (the checksum cache is written only on success). Nothing fails.
+#
+# That shipped once. On PURE DEFAULTS the chart rendered a Valkey rate-limit StatefulSet
+# and PodDisruptionBudget it had no permission to apply — 704 forbidden applies in 74
+# seconds on a real cluster. Cause: the store's render gate read only
+# `rateLimit.shared.managedStore.enabled` (default TRUE) while these rules require it
+# AND `rateLimit.shared.enabled` (default FALSE).
+#
+# These tests pin the Role's side of that contract, so a future "fix" that widens the
+# RBAC instead of narrowing the render is caught here, and it stays explicit which side
+# is authoritative: the RBAC gate is, and render gates must match it.
+templates:
+  - role.yaml
+tests:
+  - it: should grant no workload permissions on chart defaults
+    template: role.yaml
+    asserts:
+      # If this ever starts failing because a grant was added, the question to ask is
+      # whether a template started rendering a workload by default — not whether the
+      # grant should be widened.
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["statefulsets", "deployments"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: should still grant no workload permissions when only managedStore is enabled
+    template: role.yaml
+    set:
+      # This IS the default combination, spelled out. The store must not render here, so
+      # the absence of a grant is correct rather than a gap — asserted from the other
+      # side by test-haptic-rate-limit-store-requires-shared-opt-in.
+      rateLimit.shared.enabled: false
+      rateLimit.shared.managedStore.enabled: true
+      cache.varnish.enabled: false
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["statefulsets", "deployments"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: should grant workload permissions once shared rate limiting deploys a store
+    template: role.yaml
+    set:
+      rateLimit.shared.enabled: true
+      rateLimit.shared.managedStore.enabled: true
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["statefulsets", "deployments"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: should grant statefulsets but not PDBs when varnish opts out of its PDB
+    template: role.yaml
+    set:
+      cache.varnish.enabled: true
+      cache.varnish.podDisruptionBudget.enabled: false
+    asserts:
+      # The apps grant is or-combined across the two tiers, so varnish alone satisfies it.
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["statefulsets", "deployments"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      # But the policy grant disappears. This exact combination is why enabling varnish
+      # only PARTIALLY masked the rate-limit-store bug: the StatefulSet became appliable
+      # while its PodDisruptionBudget kept failing.
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
