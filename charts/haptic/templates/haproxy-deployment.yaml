@@ -523,6 +523,40 @@ spec:
             # SIGTERM directly on shutdown, instead of the shell swallowing it.
             - |
               rm -f '{{ $vector.socketPath }}'
+              # Wait for the config instead of dying without it. The init container
+              # seeds a bootstrap copy, but the dataplane's general-file sync can
+              # transiently prune it as an orphan until a reconcile includes it —
+              # and during a controller rollout there is a leaderless window where
+              # no reconcile happens at all. Vector treats a missing --config as
+              # fatal, so that window turned into CrashLoopBackOff, whose backoff
+              # then delayed recovery well past the config actually arriving
+              # (observed: 4 restarts before it came back).
+              #
+              # Waiting keeps the container alive and quiet until there is
+              # something to load. Readiness is unaffected: it gates on the
+              # exporter, which only the RENDERED config declares, so the pod still
+              # stays out of the Service until the real config is live.
+              # Deliberately unbounded, but NOT silent. Exiting instead would put us
+              # straight back in CrashLoopBackOff, whose backoff is what made the
+              # transient case slow to recover — so waiting is the point. The risk
+              # is the opposite failure: if the config never arrives (a persistent
+              # sync problem, not the transient window), the container would sit
+              # Running-but-NotReady with one repeating line, which is easy to miss.
+              #
+              # So the message escalates once past the transient window. The pod is
+              # also NotReady throughout — the readiness probe on the metrics port
+              # never passes — so kube-state-metrics alerting sees it regardless of
+              # whether anyone reads the log.
+              _waited=0
+              while [ ! -s /etc/haproxy/general/vector.yaml ]; do
+                if [ "$_waited" -lt 30 ]; then
+                  echo "waiting for /etc/haproxy/general/vector.yaml (not pushed yet; ${_waited}s)"
+                else
+                  echo "WARNING: still no /etc/haproxy/general/vector.yaml after ${_waited}s — HAPTIC has not pushed the vector config; this pod stays NotReady until it does. Check the controller is Ready and holds the leader lease."
+                fi
+                _waited=$((_waited + 2))
+                sleep 2
+              done
               exec /usr/bin/vector --watch-config --config /etc/haproxy/general/vector.yaml
           ports:
             # Named so the PodMonitor can reference it: prometheus-operator only

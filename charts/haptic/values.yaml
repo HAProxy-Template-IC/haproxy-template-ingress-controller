@@ -1461,6 +1461,13 @@ cache:
     replicas: 2
     # Stock upstream Varnish image — no custom build needed for the loopback
     # topology. Pin to a digest in production.
+    #
+    # Renovate tracks this through the `varnish image` customManager in
+    # renovate.json. A bare `image: repo:tag` string is invisible to Renovate's
+    # built-in helm-values manager (that one only recognises an
+    # image.repository + image.tag pair), so without the comment + manager this
+    # pin silently never gets bumped — which is how it sat at 9.0.
+    # renovate: datasource=docker depName=varnish
     image: varnish:9.0
     imagePullPolicy: IfNotPresent
     # -s malloc,<size> — size at roughly 75% of the pod memory limit (Varnish

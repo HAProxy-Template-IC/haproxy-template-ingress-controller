@@ -61,6 +61,14 @@ tests:
           # Quoted: the path is interpolated into a shell script. The charset
           # guard in _vector.tpl is the real boundary, this is defence in depth.
           pattern: "(?m)^rm -f '/run/vector/haproxy\\.sock'$"
+      # Waits for the config rather than dying without it: the file can be
+      # transiently absent (the dataplane prunes it as an orphan until a reconcile
+      # includes it, and a controller rollout has a leaderless window), and vector
+      # treats a missing --config as fatal — which turned into CrashLoopBackOff
+      # whose backoff outlasted the config actually arriving.
+      - matchRegex:
+          path: spec.template.spec.containers[3].args[0]
+          pattern: '(?m)^while \[ ! -s /etc/haproxy/general/vector\.yaml \]; do$'
       # exec, so vector is PID 1 and gets SIGTERM directly instead of the shell
       # swallowing it.
       - matchRegex:
