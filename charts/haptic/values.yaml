@@ -1669,8 +1669,11 @@ spoaHub:
   # Master enable. Leave as null to auto-derive from plugins.*.enabled
   # (the typical case). Set to false to force the sidecar off even when a
   # plugin is enabled (rare; mostly for migrations or chart testing).
-  # Set to true to render the sidecar even with no plugins enabled (useful
-  # for chart-rendering tests).
+  # Set to true to deploy the sidecar even when the plugins you want are
+  # not auto-enabled by their default predicates — you must still enable at
+  # least one plugin under plugins.*, because a hub with no enabled plugin
+  # has no SPOE message to serve. Rendering fails with an explanatory error
+  # if you set this true and leave every plugin disabled.
   enabled: null
 
   image:

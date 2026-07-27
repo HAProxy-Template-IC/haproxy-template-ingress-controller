@@ -15,6 +15,11 @@ When spoa-hub is enabled (`extraContext.spoaHub.enabled`; the chart auto-loads t
 - **WHEN** spoa-hub is not enabled
 - **THEN** no spoe.conf or spoa-hub-config.toml SHALL be registered and no spoa-hub backend SHALL be emitted.
 
+#### Scenario: The sidecar is never deployed alongside a dormant library
+
+- **WHEN** `spoaHub.enabled` is forced true but no enabled plugin contributes an SPOE message
+- **THEN** chart rendering SHALL fail. The sidecar SHALL NOT be deployed with the library dormant, because the chart's bootstrap initContainer seeds `spoa-hub-config.toml` into general storage while the library renders no runtime TOML, and the controller's general-file sync would orphan-delete the file out from under the running hub.
+
 #### Scenario: SPOP mode falls back on HAProxy 3.0
 
 - **WHEN** the injected haproxyVersion is 3.0

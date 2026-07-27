@@ -841,10 +841,20 @@ spec:
          and the spoa-hub backend block. We compute the union of
          enabled-plugin messages once here rather than asking Scriggo
          to recompute it on every render. The controller stays generic
-         — it never learns the word "spoaHub". An empty messages list
-         (sidecar forced on with no plugins enabled) leaves the library
-         dormant; HAProxy rejects an spoe-agent with no `messages`,
-         so emitting nothing is the only safe behaviour. */ -}}
+         — it never learns the word "spoaHub".
+
+         An empty messages list is rejected below rather than left
+         dormant. HAProxy does reject an spoe-agent with no `messages`,
+         so the library must not emit one — but staying silent is not
+         safe either: `haptic.spoaHub.enabled` still deploys the sidecar
+         and the bootstrap initContainer still seeds
+         /etc/haproxy/general/spoa-hub-config.toml, while the library
+         renders no runtime TOML. The controller's general-file sync
+         then sees a file it did not render and orphan-deletes it out
+         from under the running hub, and the auto-wired `spoa-hub`
+         validator entry below points at a file that never exists. The
+         combination is unusable in every direction, so fail at the
+         gate instead of shipping it. */ -}}
   {{- if include "haptic.spoaHub.enabled" . }}
     {{- $messages := list }}
     {{- $pluginEntries := list }}
@@ -905,6 +915,9 @@ spec:
         {{- end }}
         {{- $pluginEntries = append $pluginEntries $entry }}
       {{- end }}
+    {{- end }}
+    {{- if not (uniq $messages) }}
+      {{- fail "spoaHub is enabled but no enabled plugin contributes an SPOE message, so the sidecar would be deployed with nothing to serve: HAProxy would get no spoe-agent, and the controller would orphan-delete the sidecar's bootstrap config from general storage. Enable at least one plugin under spoaHub.plugins.* (each supplies its own messages), or leave spoaHub.enabled unset so the sidecar is only deployed when a plugin turns it on." }}
     {{- end }}
     {{- with uniq $messages }}
       {{- $hub := $.Values.spoaHub.haproxy }}

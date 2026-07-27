@@ -18,7 +18,30 @@
 # bodies over the configured cap before the SPOE roundtrip, and waits for
 # request bodies only on routes that actually opted into validation.
 templateSnippets:
+  # Public entry point for the schema scan. The body below mutates the shared
+  # `globalFeatures` map in place, and SharedContext's mutex guards only its own
+  # top-level map — not writes into a value it handed out. This wrapper routes
+  # every caller through one `shared.ComputeIfAbsent` key so the body runs once
+  # and late callers BLOCK on singleflight until it has finished, exactly like
+  # util-*-coraza-scan (charts/haptic/charts/nginx-ingress/40-auth-spoe.yaml).
+  #
+  # This matters because the scan has two callers that can both be cold in the
+  # same render: `map-request-schema-820-haptic` below, reached from the static
+  # `request-schema.map` entry (charts/haptic/libraries/spoa-hub/_index.yaml),
+  # and `spoa-hub-config-content` via `render_glob "util-*-api-gateway-schemas"`.
+  # spec.maps and spec.files templates all render in one unbounded errgroup
+  # (pkg/controller/renderer/service.go), so two unguarded callers would race on
+  # `gf[...] = ...` — a `fatal error: concurrent map writes`, which is a runtime
+  # throw that bypasses recover() and takes the controller process down.
   util-820-api-gateway-schemas:
+    template: |-
+      {%- var _, _ = shared.ComputeIfAbsent("apiGatewaySchemaScan", func() any { return render "util-821-api-gateway-schema-scan" }) -%}
+
+  # Implementation of util-820-api-gateway-schemas. Never render this directly —
+  # go through util-820 so the ComputeIfAbsent serialisation applies. The name
+  # deliberately does not end in "-api-gateway-schemas" so the glob in
+  # spoa-hub-config-content matches only the wrapper.
+  util-821-api-gateway-schema-scan:
     template: |-
       {%- var apiGatewayAny = extraContext | dig("apiGateway") -%}
       {%- if apiGatewayAny == nil %}{%- apiGatewayAny = map[string]any{} %}{%- end -%}
