@@ -44,6 +44,29 @@ tests:
             name: vector-socket
             mountPath: /run/vector
 
+  - it: should unlink a stale socket before starting vector
+    template: haproxy-deployment.yaml
+    asserts:
+      # Vector panics with EADDRINUSE rather than unlinking an existing UNIX
+      # datagram socket, and the socket is on an emptyDir that survives a
+      # container restart — so without this the container can never restart. The
+      # panic also unwinds into a graceful exit 0, so it reads as "Completed".
+      - equal:
+          path: spec.template.spec.containers[3].command
+          value: ["/bin/sh", "-c"]
+      - matchRegex:
+          path: spec.template.spec.containers[3].args[0]
+          # (?m) so the anchors bind to a LINE — args[0] is a multi-line script
+          # and Go's ^/$ would otherwise mean start/end of the whole string.
+          # Quoted: the path is interpolated into a shell script. The charset
+          # guard in _vector.tpl is the real boundary, this is defence in depth.
+          pattern: "(?m)^rm -f '/run/vector/haproxy\\.sock'$"
+      # exec, so vector is PID 1 and gets SIGTERM directly instead of the shell
+      # swallowing it.
+      - matchRegex:
+          path: spec.template.spec.containers[3].args[0]
+          pattern: 'exec /usr/bin/vector --watch-config --config /etc/haproxy/general/vector\.yaml'
+
   - it: should give the haproxy container write access to the log socket
     template: haproxy-deployment.yaml
     asserts:

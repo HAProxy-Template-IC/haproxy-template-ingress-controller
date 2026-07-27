@@ -84,6 +84,15 @@ guard that lives only here would not protect a hand-written CR.
   {{- if regexMatch "[[:space:]]" ($v.socketPath | toString) -}}
     {{- fail (printf "vector.socketPath must not contain whitespace, got %q." $v.socketPath) -}}
   {{- end -}}
+  {{- /* The path is interpolated into the vector container's `/bin/sh -c` start
+         script (it unlinks a stale socket before exec'ing vector), so restrict it
+         to an explicit allowlist rather than trusting it. It is quoted there as
+         well, but a value containing a single quote would break out of the
+         quoting, so the charset check is the real boundary — belt and braces,
+         because this is the one place a values string reaches a shell. */ -}}
+  {{- if not (regexMatch "^[A-Za-z0-9._/-]+$" ($v.socketPath | toString)) -}}
+    {{- fail (printf "vector.socketPath may only contain letters, digits, dot, underscore, hyphen and slash, got %q. It is interpolated into the sidecar's shell start script, so shell metacharacters are refused." $v.socketPath) -}}
+  {{- end -}}
   {{- /* The socket's PARENT directory is what gets mounted as the shared emptyDir
          (haptic.vector.socketDir), in both the haproxy and vector containers. A
          path directly at the root, e.g. /haproxy.sock, makes that parent "/" and
