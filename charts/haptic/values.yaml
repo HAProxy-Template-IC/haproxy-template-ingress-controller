@@ -264,6 +264,10 @@ controller:
         haproxyPodsRejected: true
         noHAProxyPods: true
         criticalEventsDropped: true
+        # HAProxy discarded access-log records because the vector sidecar
+        # stopped draining the UNIX datagram socket. Traffic is unaffected;
+        # the log is not.
+        accessLogDropped: true
     grafanaDashboard:
       enabled: false
       labels:

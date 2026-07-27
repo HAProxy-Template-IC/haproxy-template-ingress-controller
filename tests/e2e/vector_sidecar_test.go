@@ -150,7 +150,7 @@ func TestVectorSidecar(t *testing.T) {
 			// path, not just that something is listening on loopback.
 			var body string
 			err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
-				out, err := apiProxyGet(c, pod, 9598, "metrics")
+				out, err := apiProxyGet(c, pod, VectorMetricsPort, "metrics")
 				if err != nil {
 					return false, nil
 				}

@@ -273,6 +273,44 @@ separate stdout target, so `kubectl logs` stays useful for on-call while only th
 personal-data-bearing stream moves. That split is why the access-log target lives
 in the `defaults` section and the process-log target in `global`.
 
+### The access log is lossy under back-pressure
+
+HAProxy reaches the Vector sidecar over a Unix **datagram** socket. Datagram
+delivery is fire-and-forget: HAProxy hands the record to the kernel and moves on.
+If Vector stops draining that socket, its receive queue fills and HAProxy
+**discards** further records rather than blocking.
+
+That trade-off is deliberate — the alternative is stalling request processing
+behind a slow log consumer — but it means **the access log isn't a guaranteed
+record of traffic**. Requests are served normally while records vanish.
+
+The socket is the shock absorber, and it's small. At the default
+`net.core.rmem_default` of 212992 bytes it holds roughly **167 records** of the
+~700-byte JSON shape (the kernel charges per-datagram overhead, not payload).
+Converted to time at your request rate, that's how long Vector may stall before
+records are lost:
+
+| Request rate | Stall tolerated |
+|---|---|
+| 1 000 req/s | ~170 ms |
+| 5 000 req/s | ~35 ms |
+
+Things that can exceed that window: a Vector topology reload (the sidecar
+reloads on config change), a garbage-collection pause, or CPU starvation on a
+busy node.
+
+**Loss is exact and observable.** HAProxy counts every discarded record:
+
+```
+haproxy_process_dropped_logs_total    # Prometheus, via the vector sidecar's endpoint
+DroppedLogs                           # `show info` on the stats socket
+```
+
+The chart ships an alert on it (`HAProxyAccessLogRecordsDropped`, enabled with
+`controller.monitoring.prometheusRule`). Watch it: a gap in the access log is
+least welcome during an incident, which is exactly when load is highest. If it
+fires, give Vector more CPU or cut log volume with `accessLog.suppress`.
+
 Each entry renders one HAProxy `log` line, so several entries fan out — which is
 what you want while migrating from one collector to another:
 

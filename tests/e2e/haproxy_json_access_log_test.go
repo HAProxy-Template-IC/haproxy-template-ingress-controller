@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -128,6 +129,15 @@ func findAccessLogRecordWhere(ctx context.Context, t *testing.T, since time.Time
 	var found map[string]any
 	var rawLine string
 
+	// Baseline the drop counter BEFORE waiting. HAProxy reaches vector over a
+	// UNIX *datagram* socket, so when vector stops draining — a topology reload,
+	// a GC pause, CPU starvation on a loaded node — HAProxy discards records
+	// instead of blocking traffic. The socket absorbs only ~167 records at the
+	// default 212992-byte rmem, so the window is small. A discarded record never
+	// arrives, which is a different fault from a slow one and must not be
+	// reported as a plain timeout: waiting longer cannot fix it.
+	droppedBefore, haveCounter := haproxyDroppedLogsTotal(ctx, t)
+
 	err := testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
 		logs, err := readHAProxyAccessLog(c, t, since)
 		if err != nil {
@@ -150,6 +160,13 @@ func findAccessLogRecordWhere(ctx context.Context, t *testing.T, since time.Time
 		return false, nil
 	})
 	if err != nil {
+		if droppedAfter, ok := haproxyDroppedLogsTotal(ctx, t); ok && haveCounter && droppedAfter > droppedBefore {
+			t.Fatalf("no JSON access-log record matching %s arrived, and HAProxy dropped %.0f log record(s) while waiting "+
+				"(haproxy_process_dropped_logs_total %.0f→%.0f): the record was LOST on the UNIX datagram socket to vector, "+
+				"not merely late — vector stopped draining long enough to fill the socket. Raising the wait cannot fix this; "+
+				"look at why vector stalled. Original wait error: %v",
+				desc, droppedAfter-droppedBefore, droppedBefore, droppedAfter, err)
+		}
 		t.Fatalf("no JSON access-log record matching %s appeared within timeout: %v", desc, err)
 	}
 
@@ -160,6 +177,37 @@ func findAccessLogRecordWhere(ctx context.Context, t *testing.T, since time.Time
 		t.Fatalf("access-log line carries a syslog prefix, so the stream is not parseable as JSON: %s", rawLine)
 	}
 	return found
+}
+
+// haproxyDroppedLogsTotal sums haproxy_process_dropped_logs_total across the
+// HAProxy pods, read through the same merged vector endpoint Prometheus scrapes.
+// The bool reports whether the series was found at all, so a scrape failure is
+// never mistaken for "zero drops". Measured behaviour, HAProxy 3.4.2: with the
+// receiver not draining, 3000 requests delivered 167 records and this counter
+// reported exactly the 2833 lost; with the receiver draining, zero.
+func haproxyDroppedLogsTotal(ctx context.Context, t *testing.T) (float64, bool) {
+	t.Helper()
+	var total float64
+	var seen bool
+	for _, pod := range listHAProxyPods(t) {
+		body, err := apiProxyGet(ctx, pod, VectorMetricsPort, "metrics")
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(body, "\n") {
+			name, value, ok := strings.Cut(strings.TrimSpace(line), " ")
+			if !ok || name != "haproxy_process_dropped_logs_total" {
+				continue
+			}
+			v, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil {
+				continue
+			}
+			total += v
+			seen = true
+		}
+	}
+	return total, seen
 }
 
 func recordString(t *testing.T, rec map[string]any, field string) string {
