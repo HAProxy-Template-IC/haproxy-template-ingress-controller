@@ -293,8 +293,10 @@ post
 pprof
 preconfigured
 preload
+prepends
 Prometheus
 PrometheusRule
+protobuf
 PROXY
 PUT
 Quantizes
@@ -388,6 +390,7 @@ UID
 UIDs
 unary
 uncacheable
+uninspected
 unmocked
 unparseable
 unserved
@@ -398,6 +401,7 @@ upstream's
 URI
 URL
 URL's
+urlencoded
 URLRewrite
 userbases
 userlist

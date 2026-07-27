@@ -183,7 +183,23 @@ validationTests:
       # bodyless request; the 411 rejects only a chunked body with no length.
       - { type: contains, target: haproxy.cfg, pattern: "return status 415 if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\} !\\{ var\\(txn.coraza_detect_only\\) -m bool \\} \\{ var\\(txn.coraza_content_policy\\) -m str json \\} \\{ req.hdr\\(Content-Length\\) -m found \\}" }
       - { type: contains, target: haproxy.cfg, pattern: "return status 411 if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\} !\\{ var\\(txn.coraza_detect_only\\) -m bool \\} \\{ req.hdr\\(Transfer-Encoding\\) -m found \\} !\\{ req.hdr\\(Content-Length\\) -m found \\}" }
-      - { type: contains, target: haproxy.cfg, pattern: "wait-for-body time 100ms if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\}" }
+      # The wait is split by enforcement mode: detect (shadow) must never block
+      # live traffic, so it waits only for a DECLARED body — an HTTP/2 streaming
+      # request (gRPC bidi: no Content-Length, body open until the peer is done)
+      # would otherwise run the wait to its timeout and get a 408 the backend
+      # never saw. Enforce still waits unconditionally: a body it cannot bound
+      # must not reach the backend uninspected.
+      - { type: contains, target: haproxy.cfg, pattern: "wait-for-body time 100ms if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\} \\{ var\\(txn.coraza_detect_only\\) -m bool \\} \\{ req.hdr\\(Content-Length\\) -m found \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "wait-for-body time 100ms if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\} !\\{ var\\(txn.coraza_detect_only\\) -m bool \\}" }
+      # A detect-mode wait that is not gated on Content-Length is the bug: it
+      # blocks streaming traffic that shadow mode promises never to block.
+      - { type: not_contains, target: haproxy.cfg, pattern: "wait-for-body time 100ms if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\}\n" }
+      # body-complete mirrors the wait split: the SPOE contract only allows it
+      # to be asserted where a wait actually ran, so detect mode may not claim a
+      # complete body for a request whose length was never declared.
+      - { type: contains, target: haproxy.cfg, pattern: "set-var\\(txn.coraza_body_complete\\) bool\\(true\\) if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\} \\{ var\\(txn.coraza_detect_only\\) -m bool \\} \\{ req.hdr\\(Content-Length\\) -m found \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "set-var\\(txn.coraza_body_complete\\) bool\\(true\\) if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\} !\\{ var\\(txn.coraza_detect_only\\) -m bool \\}" }
+      - { type: not_contains, target: haproxy.cfg, pattern: "set-var\\(txn.coraza_body_complete\\) bool\\(true\\) if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\}\n" }
       - { type: contains, target: "file:spoe.conf", pattern: "body-mode=var\\(txn.coraza_body_mode\\) body-complete=var\\(txn.coraza_body_complete\\) detect-only=var\\(txn.coraza_detect_only\\)" }
 
   test-haptic-waf-policy-seclang-shared:

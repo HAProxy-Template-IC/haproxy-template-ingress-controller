@@ -296,11 +296,46 @@ templateSnippets:
       http-request set-var(txn.coraza_body_size) req.body_size if { var(txn.coraza_body_mode) -m str buffered }
       http-request set-var(txn.denied_by) str(waf_body_too_large) if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { var(txn.coraza_body_size),sub(txn.coraza_max_body) -m int gt 0 }
       http-request return status 413 if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { var(txn.coraza_body_size),sub(txn.coraza_max_body) -m int gt 0 }
-      http-request wait-for-body time {{ corazaBodyWaitTimeout }} if { var(txn.coraza_body_mode) -m str buffered }
+      {#- The wait is split by enforcement mode because only one of them is
+          allowed to block.
+
+          A request whose body length is not declared (no Content-Length) and
+          that has not finished arriving cannot be waited for safely: HTTP/2
+          streaming — gRPC client/bidi streaming above all — keeps the body open
+          until the peer is done, so the wait runs to its timeout and HAProxy
+          answers 408 with the backend never contacted. A bodyless request is
+          NOT affected: it is complete on arrival, so wait-for-body returns
+          immediately (verified: an h2 DELETE with no body forwards at TR=0).
+
+          Detect (shadow) mode is documented as observing without blocking live
+          traffic, so it must never produce that 408 — it waits only for a body
+          whose length is declared, and an unbounded one is simply left
+          uninspected, exactly as the other body-contract rules already degrade
+          in detect mode.
+
+          Enforce mode keeps waiting unconditionally: a body it cannot bound
+          must not reach the backend uninspected, so the timeout's 408 is a
+          fail-closed refusal rather than a defect. The consequence is that a
+          buffered policy cannot be combined with a streaming route — see
+          docs/site/docs/libraries/haptic-annotations.md#waf-and-grpc-streaming. -#}
+      http-request wait-for-body time {{ corazaBodyWaitTimeout }} if { var(txn.coraza_body_mode) -m str buffered } { var(txn.coraza_detect_only) -m bool } { req.hdr(Content-Length) -m found }
+      http-request wait-for-body time {{ corazaBodyWaitTimeout }} if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool }
       http-request set-var(txn.coraza_body_len) req.body_len if { var(txn.coraza_body_mode) -m str buffered }
       http-request set-var(txn.denied_by) str(waf_body_incomplete) if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { var(txn.coraza_body_len),sub(txn.coraza_body_size) -m int lt 0 }
       http-request return status 413 if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool } { var(txn.coraza_body_len),sub(txn.coraza_body_size) -m int lt 0 }
-      http-request set-var(txn.coraza_body_complete) bool(true) if { var(txn.coraza_body_mode) -m str buffered }
+      {#- body-complete must mirror the wait split exactly, or it lies. The SPOE
+          contract (20-config-content.yaml) is that a buffered profile sets
+          complete only after HAProxy proves the advertised body fits and was
+          received in full — so the flag may only be asserted where a wait
+          actually ran. Detect mode skips the wait for an undeclared body, and
+          claiming completeness there would hand Coraza whatever bytes happened
+          to be buffered, tagged as a whole body, producing a shadow verdict on
+          a truncated request that an operator would read as "enforcement would
+          have been safe". Enforce always waits, and a wait that times out has
+          already returned 408 before reaching here, so its unconditional form
+          stays correct. -#}
+      http-request set-var(txn.coraza_body_complete) bool(true) if { var(txn.coraza_body_mode) -m str buffered } { var(txn.coraza_detect_only) -m bool } { req.hdr(Content-Length) -m found }
+      http-request set-var(txn.coraza_body_complete) bool(true) if { var(txn.coraza_body_mode) -m str buffered } !{ var(txn.coraza_detect_only) -m bool }
       http-request send-spoe-group spoa-hub check-request-group if { var(txn.coraza_active) -m bool }
       {#- Hub admission and plugin engine failures fail closed in both enforce
           and detect modes. Detect-only coercion happens inside Coraza only for

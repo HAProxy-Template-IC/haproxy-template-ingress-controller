@@ -368,6 +368,29 @@ Each policy supports `description`, `enforcement`, nested `requestBody.mode`/`ma
 
 `requestBody.mode: none` inspects metadata without buffering or limiting uploads. `any` inspects a complete bounded body; `json` additionally requires a JSON media type. Body routes require an unambiguous `Content-Length`; oversized or incomplete bodies are rejected before Coraza. A policy that omits `requestBody.maxBytes` uses `policies.requestBody.defaultMaxBytes`; it may never exceed `policies.requestBody.maxBytes`. Keeping those two settings separate lets an administrator approve one larger policy without silently enlarging every policy that relied on the default. The effective per-policy cap is set both in HAProxy and in that Coraza application, so neither layer silently inspects a different amount. Template body behavior lives under `extraContext.waf.policies.requestBody`; SPOA timeout/concurrency live only under `spoaHub.plugins.coraza`; the process-global HAProxy buffer lives under `extraContext.requestBodyInspection.haproxyBuffer`.
 
+##### WAF and gRPC streaming
+
+Set `requestBody.mode: none` on any route carrying gRPC client-streaming or bidirectional-streaming calls. Metadata inspection — method, path, headers, source IP — still runs, so the route keeps WAF coverage of everything the engine can actually read.
+
+This isn't a HAPTIC limitation to work around. Coraza buffers a complete request body because that's what makes blocking reliable, and it ships body processors for urlencoded, multipart, JSON, and (partially) XML — [there is no protobuf or gRPC processor](https://www.coraza.io/docs/reference/body-processing/). So even a fully buffered gRPC body is an opaque length-prefixed binary blob to the rule set: CRS finds nothing in it, while every byte still costs buffering. Other Coraza integrations hit the same wall and say so plainly — Solo's WAF server [doesn't support streaming](https://docs.solo.io/kgateway/2.2.x/security/waf/overview/) either, and ModSecurity has carried an [open request to parse gRPC bodies since 2021](https://github.com/owasp-modsecurity/ModSecurity/issues/2645).
+
+A body-inspecting mode (`any` or `json`) therefore can't be combined with a streaming route. Those modes wait for a complete, bounded body, and a streaming request never provides one: it declares no `Content-Length` and holds the body open until the peer is done. The wait runs to `policies.requestBody.waitTimeout` and HAProxy answers `408`, having never contacted the backend. That's fail-closed, not a bypass — a body the WAF can't bound is never forwarded uninspected — but the route stops working, so pick `none` deliberately rather than discovering it in production.
+
+Unary gRPC is unaffected in every mode: its body is complete on arrival, so the wait returns immediately.
+
+Detect (shadow) mode never blocks a streaming request. It waits only for a body whose length is declared and leaves an unbounded one uninspected, so switching a buffered policy to `detect` can't take a streaming route down. A declared body is still buffered in detect mode, keeping shadow verdicts faithful to what enforcement would have decided. Where the wait is skipped the body is reported to the engine as incomplete, so a shadow verdict is never computed over a partly arrived request and then read as a sign that enforcement would have been safe.
+
+**Don't reach for partial-body inspection.** Coraza's `SecRequestBodyLimitAction ProcessPartial` truncates at the limit and runs the rules on what it has, which looks like a way to inspect a stream. It isn't: an attacker prepends padding up to the inspected size and the payload lands in the uninspected remainder. [Coraza documents that bypass](https://www.coraza.io/docs/seclang/directives/), and HAPTIC's `reject` posture is deliberate.
+
+Because body rules can't protect a streaming route, protect it with the controls that don't need the body — all available as annotations on the same route:
+
+| Control | Annotation |
+|---------|-----------|
+| Per-method authorization (a gRPC path is `/package.Service/Method`) | `allowed-methods`, `allowlist-source-range` |
+| Caller identity | `jwt-*`, `api-key-*`, client mTLS |
+| Abuse and volume limits | `rate-limit-*` |
+| Message size cap | `max-request-body-size` |
+
 For an immutable cluster baseline, configure a default and disable selection:
 
 ```yaml
