@@ -26,6 +26,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -419,8 +420,32 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 	t.Helper()
 
 	ing := buildIngress(namespace, spec)
-	if err := client.Resources(namespace).Create(ctx, ing); err != nil {
-		t.Fatalf("create Ingress %s/%s: %v", namespace, spec.Name, err)
+	// Retry an admission denial that says a referenced resource "was not found".
+	//
+	// The webhook renders the proposed Ingress against the CONTROLLER's stores, and
+	// those are eventually consistent: a fixture that just created a ConfigMap or
+	// Secret the Ingress references (PreSetup does exactly this for
+	// request-schema-configmap) can win the race to the API server and still lose
+	// it to the controller's watch. The render then fails "…was not found" and the
+	// webhook denies — a fixture race, not a product defect.
+	//
+	// Scoped deliberately: only this message is retried, and only for a bounded
+	// window, so a genuinely missing reference still fails with the same error
+	// instead of being masked.
+	createErr := client.Resources(namespace).Create(ctx, ing)
+	if createErr != nil && strings.Contains(createErr.Error(), "was not found") {
+		_ = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
+			ing = buildIngress(namespace, spec)
+			createErr = client.Resources(namespace).Create(c, ing)
+			if createErr == nil {
+				return true, nil
+			}
+			// Keep waiting only while it is still the store-lag denial.
+			return !strings.Contains(createErr.Error(), "was not found"), nil
+		})
+	}
+	if createErr != nil {
+		t.Fatalf("create Ingress %s/%s: %v", namespace, spec.Name, createErr)
 	}
 
 	// Wait for HAProxyCfg.status to report every HAProxy pod at the

@@ -496,14 +496,34 @@ spec:
         - name: vector
           image: {{ include "haptic.vector.image" . }}
           imagePullPolicy: {{ $vector.image.pullPolicy }}
+          # Unlink a stale socket before starting. Vector does NOT unlink an
+          # existing UNIX datagram socket — it panics with EADDRINUSE — and the
+          # socket lives on an emptyDir that SURVIVES a container restart. So
+          # once this container restarts for any reason it can never come back:
+          # it trips over the socket it created itself, every time. Worse, the
+          # panic unwinds into a graceful shutdown, so the container exits 0
+          # ("Completed") and a fatal error reads as a clean exit.
+          #
+          # This must live in the container command, not the init container:
+          # init containers do not re-run on a container restart, which is
+          # exactly when the stale socket is there.
+          #
+          # Reproduced and fixed against vector 0.57.0: second start without
+          # this → running=false, exit=0, AddrInUse; with it → starts clean and
+          # re-creates the socket. An in-process --watch-config reload does not
+          # re-bind an unchanged source, so the reload path needs nothing.
+          command: ["/bin/sh", "-c"]
           args:
             # --watch-config makes vector reload when HAPTIC pushes a new config
             # through the dataplane API. Verified against 0.57.0 that the watch
             # fires for the write-then-atomic-rename pattern the dataplane uses,
             # so the default (inotify) watcher is sufficient — no --watch-config-method poll.
-            - --watch-config
-            - --config
-            - /etc/haproxy/general/vector.yaml
+            #
+            # `exec` so vector becomes PID 1 of the container and receives
+            # SIGTERM directly on shutdown, instead of the shell swallowing it.
+            - |
+              rm -f '{{ $vector.socketPath }}'
+              exec /usr/bin/vector --watch-config --config /etc/haproxy/general/vector.yaml
           ports:
             # Named so the PodMonitor can reference it: prometheus-operator only
             # builds targets from declared container ports, so a bare targetPort

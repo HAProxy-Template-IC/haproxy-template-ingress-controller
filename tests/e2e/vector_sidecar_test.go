@@ -211,6 +211,62 @@ func TestVectorSidecar(t *testing.T) {
 			}
 			return ctx
 		}).
+		Assess("the sidecar recovers from a container restart", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			// Proves a restart works at all. It does NOT cover the stale-socket
+			// failure that took down a live cluster, and must not be read as if it
+			// does: `kill 1` is SIGTERM, and vector UNLINKS its socket on a graceful
+			// shutdown (verified against 0.57.0), so this path is clean whether or not
+			// the chart unlinks. Confirmed empirically — with the unlink removed from
+			// the chart, this assertion still passes.
+			//
+			// An unclean death cannot be forced from here: PID 1 cannot be SIGKILLed
+			// from inside its own PID namespace, and planting a stale file in the
+			// restart window loses the race. The regression guard for the unlink is
+			// therefore the chart assertion in charts/haptic/tests/vector_test.yaml
+			// ("should unlink a stale socket before starting vector"); the behavioural
+			// proof is recorded in the fix commit (second start without the unlink:
+			// running=false, exit=0, AddrInUse).
+			before, err := podJSONPath(ctx, pod,
+				`{.status.containerStatuses[?(@.name=="vector")].restartCount}`)
+			if err != nil {
+				t.Fatalf("reading vector restartCount: %v", err)
+			}
+
+			// Kill PID 1 in the vector container; `exec` in the command means that
+			// is vector itself, so the kubelet restarts the container in place and
+			// the emptyDir (with the socket) is still there.
+			if _, err := execInHAProxyPod(ctx, pod, "vector", "/bin/sh", "-c", "kill 1"); err != nil {
+				// A killed PID 1 tears the exec down too; that is expected.
+				t.Logf("kill 1 returned %v (expected — the exec dies with the container)", err)
+			}
+
+			// It must both restart AND come back Ready.
+			var restarts, ready string
+			err = testutil.WaitForCondition(ctx, testutil.FastWaitConfig(), func(c context.Context) (bool, error) {
+				restarts, _ = podJSONPath(c, pod,
+					`{.status.containerStatuses[?(@.name=="vector")].restartCount}`)
+				ready, _ = podJSONPath(c, pod,
+					`{.status.containerStatuses[?(@.name=="vector")].ready}`)
+				return restarts != before && ready == "true", nil
+			})
+			if err != nil {
+				logs, _ := execInHAProxyPod(ctx, pod, "haproxy", "sh", "-c",
+					"ls -l /run/vector/ 2>&1 || true")
+				t.Fatalf("vector did not recover from a restart (restarts %s->%s, ready=%q): "+
+					"a stale socket makes the bind fail with EADDRINUSE.\nsocket dir: %s",
+					before, restarts, ready, logs)
+			}
+
+			// The log path must still work afterwards — a socket unlinked but never
+			// re-created would leave HAProxy writing into the void.
+			out, err := execInHAProxyPod(ctx, pod, "haproxy", "sh", "-c",
+				"test -S /run/vector/haproxy.sock && echo present || echo MISSING")
+			if err != nil || !strings.Contains(out, "present") {
+				t.Errorf("log socket was not re-created after the restart: %q (err=%v)", out, err)
+			}
+
+			return ctx
+		}).
 		Assess("an access-log record reaches the sidecar over the Unix socket", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			// End-to-end proof that the datagrams arrive. A UNIX datagram sender gets
 			// NO error when nothing is listening, so a wrong socket path would look
