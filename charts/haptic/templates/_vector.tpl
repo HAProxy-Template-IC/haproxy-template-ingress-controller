@@ -53,8 +53,8 @@ guard that lives only here would not protect a hand-written CR.
   {{- fail "vector must be a map." -}}
 {{- end -}}
 {{- range $field := keys $v -}}
-  {{- if not (has $field (list "enabled" "image" "metricsPort" "socketPath" "scrapeIntervalSecs" "excludeMetrics" "excludeMaintServerMetrics" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
-    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, socketPath, scrapeIntervalSecs, excludeMetrics, excludeMaintServerMetrics, resources, securityContext, podMonitor, extraVolumeMounts." $field) -}}
+  {{- if not (has $field (list "enabled" "image" "metricsPort" "socketPath" "scrapeIntervalSecs" "excludeMetrics" "excludeMaintServerMetrics" "omitEmptyLogFields" "resources" "securityContext" "podMonitor" "extraVolumeMounts")) -}}
+    {{- fail (printf "vector contains unknown field %q. Valid fields: enabled, image, metricsPort, socketPath, scrapeIntervalSecs, excludeMetrics, excludeMaintServerMetrics, omitEmptyLogFields, resources, securityContext, podMonitor, extraVolumeMounts." $field) -}}
   {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $v.enabled) -}}
@@ -103,16 +103,21 @@ guard that lives only here would not protect a hand-written CR.
   {{- if eq (dir ($v.socketPath | toString)) "/" -}}
     {{- fail (printf "vector.socketPath must be inside a subdirectory, not directly at the filesystem root, got %q. The chart mounts the socket's parent directory as a shared emptyDir in both the haproxy and vector containers, so a parent of \"/\" would shadow their root filesystems. Use something like /run/vector/haproxy.sock." $v.socketPath) -}}
   {{- end -}}
-  {{- /* Validate the exclusion patterns. An invalid or quote-bearing regex reaches
-         the rendered vector config and fails its load — which crash-loops the
-         sidecar, so it has to be caught here. VRL uses the Rust regex crate and
-         Go uses RE2; both are RE2-family, so a pattern Go rejects would not have
-         worked there either. */ -}}
+  {{- /* Same reason as excludeMaintServerMetrics: a truthy-looking string like
+         "false" would silently enable the transform. */ -}}
+  {{- if not (kindIs "bool" $v.omitEmptyLogFields) -}}
+    {{- fail (printf "vector.omitEmptyLogFields must be a boolean, got %v." $v.omitEmptyLogFields) -}}
+  {{- end -}}
   {{- /* Not a string: it becomes a scrape-URL suffix, and a truthy-looking string
          like "false" would silently enable the filter. */ -}}
   {{- if not (kindIs "bool" $v.excludeMaintServerMetrics) -}}
     {{- fail (printf "vector.excludeMaintServerMetrics must be a boolean, got %v." $v.excludeMaintServerMetrics) -}}
   {{- end -}}
+  {{- /* Validate the exclusion patterns. An invalid or quote-bearing regex reaches
+         the rendered vector config and fails its load — which crash-loops the
+         sidecar, so it has to be caught here. VRL uses the Rust regex crate and
+         Go uses RE2; both are RE2-family, so a pattern Go rejects would not have
+         worked there either. */ -}}
   {{- if not (kindIs "slice" ($v.excludeMetrics | default list)) -}}
     {{- fail "vector.excludeMetrics must be a list of regex strings." -}}
   {{- end -}}

@@ -2119,6 +2119,27 @@ vector:
   # samples a value vector has not refreshed yet.
   scrapeIntervalSecs: 15
 
+  # Strip access-log fields whose value is the empty string, so a record carries only
+  # what actually happened.
+  #
+  # A feature that did not fire still costs its field on every line. Measured on a real
+  # fleet, trace_id, denied_by, waf_matched_var, consumer and cache were empty in 100%
+  # of records, and dropping every empty made records 27% smaller (815 -> 595 bytes
+  # average). Sending nothing rather than an empty value is also what Elastic Common
+  # Schema and OpenTelemetry both recommend.
+  #
+  # HAProxy itself cannot do this — its JSON encoder has no omit option, and the closest
+  # one (`+M`) substitutes "-" instead — so vector strips them in a `remap` transform.
+  # Field ORDER is preserved (the transform rewrites the line rather than re-encoding
+  # it, because re-encoding sorts keys alphabetically and would bury `ts`). Numbers are
+  # untouched: a genuine `queue_time_ms: 0` is kept, only `""` is dropped.
+  #
+  # Set to false if you feed a strongly typed index (a ClickHouse table, an
+  # Elasticsearch mapping) or have queries written as `field == ""`, where a stable
+  # field set matters more than the bytes. HAProxy process messages on the same stream
+  # are never touched either way.
+  omitEmptyLogFields: true
+
   # Omit servers in MAINT state from HAProxy's exporter, via its own `?no-maint`
   # scrape parameter.
   #

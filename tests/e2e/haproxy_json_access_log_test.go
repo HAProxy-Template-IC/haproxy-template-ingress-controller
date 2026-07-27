@@ -242,8 +242,8 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 			if status != 200 {
 				t.Errorf("status = %v, want 200", status)
 			}
-			if _, ok := rec["t_total"].(float64); !ok {
-				t.Errorf("t_total is %T, want a JSON number", rec["t_total"])
+			if _, ok := rec["total_time_ms"].(float64); !ok {
+				t.Errorf("total_time_ms is %T, want a JSON number", rec["total_time_ms"])
 			}
 			if got := recordString(t, rec, "ts"); got == "" {
 				t.Error("ts is empty: `format raw` drops the syslog timestamp, so the record must carry its own")
@@ -252,9 +252,18 @@ func TestHAProxyJSONAccessLog(t *testing.T) {
 			if want, got := ns+"/echo-json-log", recordString(t, rec, "resource"); got != want {
 				t.Errorf("resource = %q, want %q", got, want)
 			}
-			// An allowed request must not look denied.
-			if got := recordString(t, rec, "denied_by"); got != "" {
-				t.Errorf("denied_by = %q on an allowed request, want empty", got)
+			// An allowed request must not look denied. The field is normally ABSENT
+			// here rather than empty: vector's omit-empty transform
+			// (vector.omitEmptyLogFields, on by default) strips fields whose value is
+			// the empty string, and no gate fired. Accept either, so the assertion
+			// holds with the transform on or off — but never accept a non-empty value.
+			if v, ok := rec["denied_by"]; ok {
+				got, isStr := v.(string)
+				if !isStr {
+					t.Errorf("denied_by is %T, want a JSON string: %v", v, v)
+				} else if got != "" {
+					t.Errorf("denied_by = %q on an allowed request, want empty or absent", got)
+				}
 			}
 			return ctx
 		}).
