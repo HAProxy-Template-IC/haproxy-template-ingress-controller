@@ -61,6 +61,67 @@ validationTests:
         target: map:body-size.map
         pattern: "default_bs-ing_svc_bs-svc_80 8388608"
 
+  test-haptic-request-buffering-off:
+    description: haproxy-haptic.org/request-buffering — off lands in request-buffering.map, overriding the fleet-wide on default for this backend only
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: rb-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rb-ing
+            annotations:
+              haproxy-haptic.org/request-buffering: "off"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: buffer.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: rb-svc, port: {number: 80}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:request-buffering.map
+        pattern: "default_rb-ing_svc_rb-svc_80 off"
+
+  test-haptic-request-buffering-invalid:
+    description: haproxy-haptic.org/request-buffering — a value other than on/off is rejected at admission
+    extraContext:
+      renderMode: admission
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rb-bad-ing
+            annotations:
+              haproxy-haptic.org/request-buffering: "yes"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: buffer-bad.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: rb-svc, port: {number: 80}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid value 'yes' for annotation 'haproxy-haptic.org/request-buffering'"
+
   test-haptic-next-upstream:
     description: haproxy-haptic.org/retry-on maps to retry-on plus retries
     fixtures:

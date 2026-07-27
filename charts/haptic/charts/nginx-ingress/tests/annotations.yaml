@@ -1675,7 +1675,7 @@ validationTests:
 
   test-nginx-ingress-mirror-target:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
-    description: "mirror-target mirrors the Ingress's requests to the spoa-hub mirror plugin — a host-gated append to txn.gw_mirror_targets + the single send-spoe-group mirror-group, plus option http-buffer-request. Only the authority of the nginx URL template is used as the target."
+    description: "mirror-target mirrors the Ingress's requests to the spoa-hub mirror plugin — a host-gated append to txn.gw_mirror_targets + the single send-spoe-group mirror-group, plus a Content-Length-gated http-request wait-for-body. Only the authority of the nginx URL template is used as the target."
     fixtures:
       services:
         - apiVersion: v1
@@ -1710,7 +1710,7 @@ validationTests:
         pattern: "send-spoe-group spoa-hub mirror-group if \\{ var\\(txn.gw_mirror_targets\\) -m found \\}"
       - type: contains
         target: haproxy.cfg
-        pattern: "option http-buffer-request"
+        pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} !\\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str off \\}"
 
   test-nginx-ingress-mirror-target-same-host-both-mirror:
     _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'

@@ -204,10 +204,12 @@ func TestRunValidationTestsSync_BootstrapErrorSurfaces(t *testing.T) {
 	}
 }
 
-// TestSuiteRunBudget pins the suite-size scaling (#77): the 25s floor holds
-// for small suites, and large suites get time proportional to their work —
-// the chart's 362-test suite (which legitimately needs 26-28s on a contended
-// CI node) must fit its budget. The envelope must stay strictly larger than
+// TestSuiteRunBudget pins the suite-size scaling (#77): the 25s floor is ADDED
+// to per-test time, so every suite gets the small-suite headroom plus time
+// proportional to its own work. Taking max(floor, scaled) instead pinned every
+// suite under 250 tests to exactly 25s and reintroduced #77 at the crossover —
+// the chart's ~249-test effective suite needed 27.3s against a 24.9s scaled
+// value that clamped to the floor. The envelope must stay strictly larger than
 // the run budget for any size, or the coordinator would declare the
 // validationtests validator a missing responder instead of receiving its
 // self-reported verdict.
@@ -215,15 +217,25 @@ func TestSuiteRunBudget(t *testing.T) {
 	if got := SuiteRunBudget(0); got != 25*time.Second {
 		t.Fatalf("zero-suite budget must be the 25s floor, got %s", got)
 	}
-	if got := SuiteRunBudget(100); got != 25*time.Second {
-		t.Fatalf("100 tests (10s scaled) must keep the 25s floor, got %s", got)
+	if got := SuiteRunBudget(100); got != 35*time.Second {
+		t.Fatalf("100 tests must be floor + 10s = 35s, got %s", got)
 	}
-	if got := SuiteRunBudget(362); got != 36200*time.Millisecond {
-		t.Fatalf("the incident's 362-test suite must scale to 36.2s, got %s", got)
+	if got := SuiteRunBudget(362); got != 61200*time.Millisecond {
+		t.Fatalf("the incident's 362-test suite must get floor + 36.2s = 61.2s, got %s", got)
 	}
-	for _, n := range []int{0, 1, 100, 250, 362, 1000} {
+	// The crossover that clamping broke: a ~249-test suite observed at 27.3s
+	// must fit, where max(floor, scaled) gave it exactly 25s.
+	if got := SuiteRunBudget(249); got <= 28*time.Second {
+		t.Fatalf("a 249-test suite observed at 27.3s must fit its budget, got %s", got)
+	}
+	// Strictly increasing in suite size — no plateau where extra tests get no
+	// extra time, which is exactly the shape that produced the false rejection.
+	for _, n := range []int{0, 1, 100, 249, 250, 362, 1000} {
 		if SuiteValidationEnvelope(n) <= SuiteRunBudget(n) {
 			t.Fatalf("envelope must be strictly larger than the run budget for %d tests", n)
+		}
+		if n > 0 && SuiteRunBudget(n) <= SuiteRunBudget(n-1) {
+			t.Fatalf("budget must strictly increase with suite size at %d tests", n)
 		}
 	}
 }

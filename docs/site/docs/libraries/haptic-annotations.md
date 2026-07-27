@@ -167,6 +167,7 @@ Path/target rewriting, body-size limits, upstream retries, Host/header overrides
 | `haproxy-haptic.org/backend-connection-header` | ✅ Supported | Overrides the `Connection` header sent to the backend server. |
 | `haproxy-haptic.org/path-rewrite` | ✅ Supported | Rewrites the request path via `http-request replace-path`: a `<from> <to>` pair rewrites the match, and a bare value replaces the whole path. |
 | `haproxy-haptic.org/max-request-body-size` | ✅ Supported | Limits the request body size (accepts `k`, `m`, or `g` suffixes), returning `413` when exceeded; `0` means unlimited. |
+| `haproxy-haptic.org/request-buffering` | ✅ Supported | `on` or `off`, overriding the fleet-wide `requestBuffering.enabled` default for this route. See [Request buffering](#request-buffering). |
 | `haproxy-haptic.org/retry-on` | ✅ Supported | Sets the conditions under which HAProxy retries a failed request against the next server, emitting `retry-on`. Conditions cover connection failures, response timeouts, malformed responses, and per-status-code retries (`http_<code>`); a disable value emits `retries 0`. `option redispatch` in defaults sends the retry to a different server. |
 | `haproxy-haptic.org/retries` | ✅ Supported | Sets the number of retry attempts against backend servers via HAProxy `retries`; `0` keeps the default. |
 | `haproxy-haptic.org/session-cookie-domain` | ✅ Supported | Sets the session cookie's `Domain` via the `domain` cookie keyword. |
@@ -181,6 +182,20 @@ Path/target rewriting, body-size limits, upstream retries, Host/header overrides
 | `haproxy-haptic.org/session-cookie-strategy` | ✅ Supported | Selects the cookie mode: `insert` (default), `rewrite`, or `prefix`; `insert` and `prefix` add `indirect nocache`. |
 | `haproxy-haptic.org/set-host` | ✅ Supported | Overrides the `Host` header sent to the upstream. |
 | `haproxy-haptic.org/x-forwarded-prefix` | ✅ Supported | Sets the `X-Forwarded-Prefix` header sent to the upstream. |
+
+#### Request buffering
+
+HAProxy buffers request bodies by default, so a client that trickles its upload holds an HAProxy buffer instead of a backend server slot. Set `haproxy-haptic.org/request-buffering` to change that for one route:
+
+```yaml
+metadata:
+  annotations:
+    haproxy-haptic.org/request-buffering: "off"
+```
+
+Use `off` when the route's clients declare a `Content-Length` but still expect a response before the request body ends, such as a resumable-upload endpoint. Use `on` to buffer one route while [`requestBuffering.enabled`](base.md#request-buffering) is `false` fleet-wide.
+
+Only requests that declare a `Content-Length` are ever buffered, so `on` can't break a gRPC or chunked streaming route. The base library explains [why that condition is the right one](base.md#streaming-requests-are-never-buffered).
 
 ### Headers, CORS, and access control
 

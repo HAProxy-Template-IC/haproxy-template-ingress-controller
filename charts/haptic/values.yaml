@@ -789,6 +789,30 @@ controller:
             # this for large cookies, JWTs, tracing headers, or similar metadata.
             reservedBytes: 8192
 
+        # Wait for the request body before opening a backend connection, so a
+        # client that trickles its upload pins an HAProxy buffer instead of a
+        # backend server slot (the "slow POST" attack). HAProxy releases the
+        # request once the body is complete OR tune.bufsize is full, so this
+        # never buffers a whole upload — a large body proceeds as soon as the
+        # first bufsize bytes arrive.
+        #
+        # Only requests that declare a Content-Length are held. Nothing that
+        # streams can declare its length upfront, so gRPC (which sends neither
+        # Content-Length nor Transfer-Encoding, for unary and streaming calls
+        # alike) and chunked streaming uploads are never buffered — buffering
+        # those deadlocks the stream until the wait expires and the client gets
+        # a 408 the backend never saw.
+        #
+        # Override per route with the haproxy-haptic.org/request-buffering
+        # annotation. See
+        # https://haproxy-haptic.org/docs/latest/libraries/base/#request-buffering
+        requestBuffering:
+          enabled: true
+          # How long HAProxy waits for the declared body. On expiry the client
+          # gets 408 and the backend is never contacted, so keep this above the
+          # time your slowest legitimate client needs to send tune.bufsize bytes.
+          waitTimeout: 10s
+
         # Template-library behavior for API-gateway features. Plugin execution
         # limits remain under spoaHub.plugins.api-gateway.
         apiGateway:
