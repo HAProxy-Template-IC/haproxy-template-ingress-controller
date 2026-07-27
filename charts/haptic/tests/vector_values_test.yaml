@@ -131,6 +131,23 @@ tests:
           path: spec.templatingSettings.extraContext.vector.excludeMaintServerMetrics
           value: true
 
+  - it: should reject a non-boolean omitEmptyLogFields
+    template: haproxytemplateconfig.yaml
+    set:
+      # A string is truthy in the render, so "false" would enable the very transform
+      # the operator was switching off.
+      vector.omitEmptyLogFields: "false"
+    asserts:
+      - failedTemplate:
+          errorMessage: 'vector.omitEmptyLogFields must be a boolean, got false.'
+
+  - it: should strip empty access-log fields by default
+    template: haproxytemplateconfig.yaml
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.vector.omitEmptyLogFields
+          value: true
+
   - it: should reject a non-boolean excludeMaintServerMetrics
     template: haproxytemplateconfig.yaml
     set:

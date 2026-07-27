@@ -259,6 +259,7 @@ spec:
           "spoaHubMetricsPort" $hubScrape
           "excludeMetrics" (.Values.vector.excludeMetrics | default list)
           "excludeMaintServerMetrics" .Values.vector.excludeMaintServerMetrics
+          "omitEmptyLogFields" .Values.vector.omitEmptyLogFields
           "dataDir" "/var/lib/vector") }}
 
     {{- /* Point the access log at the socket — but only if the operator hasn't

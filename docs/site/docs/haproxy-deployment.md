@@ -166,7 +166,7 @@ Every frontend emits one JSON object per request (or per connection, for the
 TCP-mode frontends), using HAProxy's native JSON log encoding:
 
 ```json
-{"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"SRV_1","method":"GET","host":"echo.example.com","listener_port":"443","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"t_request":0,"t_queue":0,"t_connect":1,"t_response":3,"t_total":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
+{"ts":"2026-07-25T19:05:19.615Z","req_id":"019f9ae9-3a61-7814-8601-774735249ecd","trace_id":"","client_ip":"10.244.0.1","frontend":"https","backend":"default_echo_echo_80","server":"SRV_1","method":"GET","host":"echo.example.com","listener_port":"443","path":"/api/v1","http_version":"HTTP/1.1","status":200,"bytes":73,"request_time_ms":0,"queue_time_ms":0,"connect_time_ms":1,"response_time_ms":3,"total_time_ms":4,"retries":0,"term":"----","resource":"default/echo","denied_by":"","tls_version":"TLSv1.3","tls_sni":"echo.example.com"}
 ```
 
 The log target is `log stdout len 16384 format raw local0 info`. `format raw`
@@ -183,14 +183,14 @@ render.
 | Field | Meaning |
 |-------|---------|
 | `ts` | Request accept time, Coordinated Universal Time (UTC), with milliseconds |
-| `req_id` | Correlation id (see [Request IDs](#request-ids)) |
-| `trace_id` | Trace id from an inbound W3C `traceparent`; empty when the client sends none |
+| `req_id` | Identifies **one request through this proxy**. HAPTIC generates it and forwards it upstream as `X-Request-ID`, so it's the join key to your application's own logs. Always present. See [Request IDs](#request-ids) |
+| `trace_id` | Identifies **one distributed transaction across every service**, taken from an inbound W3C `traceparent`; empty when the client sends none. It's deliberately *not* a substitute for `req_id`: every hop and every service in a trace shares one `trace_id`, so it can't identify a single request — and `req_id` doesn't exist in your tracing backend, so it can't open a trace. Keep both if you run tracing. If you don't and never plan to, `trace_id` costs about 14 bytes per record, and you can drop it by overriding `log-fields-100-core` through `controller.config.templateSnippets` |
 | `client_ip` | Client address, after any `src-ip-header` rewrite |
 | `frontend`, `backend`, `server` | Which listener served it, where it went, which pod |
 | `method`, `host`, `path`, `http_version` | Request identity. `path` excludes the query string |
 | `listener_port` | The port the routing lookup was keyed on, as a string. Host and path map keys are scoped by it (`<host>:<port>`), so it distinguishes a request that matched no route from one that matched the wrong listener's routes. For a Gateway listener this is the per-Gateway pod port the chart allocated, not the Gateway's `spec.listeners[].port`. Empty on frontends that run no routing logic (`status`, the cache-origin leg) |
 | `status`, `bytes` | Response status and bytes sent to the client (JSON numbers) |
-| `t_request`, `t_queue`, `t_connect`, `t_response`, `t_total` | Timers in milliseconds: receiving the request, queueing, connecting, the backend's response, and the total active time |
+| `request_time_ms`, `queue_time_ms`, `connect_time_ms`, `response_time_ms`, `total_time_ms` | Timers in **milliseconds** — the `_ms` suffix is part of the name because other proxies report seconds. In order: receiving the request, waiting in the queue, establishing the backend connection, the backend's response, and the total. A timer is **`-1`** when its phase never happened, which is HAProxy's own convention: `connect_time_ms: -1` means the connection was never established, so a `-1` is a signal, not a bad reading. `total_time_ms` excludes idle time between keep-alive requests on HTTP frontends, and is the whole session duration on TCP frontends |
 | `retries` | Connection retries, which `option redispatch` makes routine during a rolling update |
 | `term` | HAProxy's 4-character termination state — separates a client abort from a server abort, a timeout, and a response HAProxy generated itself |
 | `resource` | `<namespace>/<name>` of the Ingress, HTTPRoute or custom resource that owns the matched route — the join key back to Kubernetes |

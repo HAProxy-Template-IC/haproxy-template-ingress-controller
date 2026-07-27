@@ -537,9 +537,9 @@ templateSnippets:
             "%(backend)b",
             "%(server)s",
             "%(bytes:sint)B",
-            "%(t_queue:sint)Tw",
-            "%(t_connect:sint)Tc",
-            "%(t_total:sint)Tt",
+            "%(queue_time_ms:sint)Tw",
+            "%(connect_time_ms:sint)Tc",
+            "%(total_time_ms:sint)Tt",
             "%(retries:sint)rc",
             "%(term)ts",
           } -%}
@@ -588,7 +588,7 @@ templateSnippets:
         the UUIDv7 request id: the old `%ci:%cp_%fi:%fp_...` format carried the
         port, an opaque uuid(7) does not. It stays out because a source port
         identifies a connection rather than a request. Also omitted: %U, %Tt (inflated by
-        keep-alive idle next to t_total), the %ac/%fc/%bc/%sc concurrency
+        keep-alive idle next to total_time_ms), the %ac/%fc/%bc/%sc concurrency
         counters and %sq/%bq queue depths (Prometheus answers saturation better,
         and queues stay 0 without an opt-in maxconn), %r (duplicates
         method/path/http_version and carries the query), and %CC/%CS cookies.
@@ -607,11 +607,11 @@ templateSnippets:
       %(http_version)HV
       %(status:sint)ST
       %(bytes:sint)B
-      %(t_request:sint)TR
-      %(t_queue:sint)Tw
-      %(t_connect:sint)Tc
-      %(t_response:sint)Tr
-      %(t_total:sint)Ta
+      %(request_time_ms:sint)TR
+      %(queue_time_ms:sint)Tw
+      %(connect_time_ms:sint)Tc
+      %(response_time_ms:sint)Tr
+      %(total_time_ms:sint)Ta
       %(retries:sint)rc
       %(term)tsc
       %(resource)[var(txn.resource_id)]

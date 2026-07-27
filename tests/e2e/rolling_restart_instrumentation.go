@@ -181,7 +181,7 @@ func (s *proberSnapshotter) snapshot(failure probeFailure) {
 	}
 
 	// ── Backend reachability evidence ──────────────────────────────────
-	// An access-log record with `"term":"sC--"` and `"t_connect":-1` says
+	// An access-log record with `"term":"sC--"` and `"connect_time_ms":-1` says
 	// "TCP connect to backend failed" — but doesn't say WHY. Three competing explanations:
 	//   (a) HAProxy SRV_1 had a stale/wrong address (haptic bug)
 	//   (b) Backend was correct but unreachable from THIS HAProxy pod
