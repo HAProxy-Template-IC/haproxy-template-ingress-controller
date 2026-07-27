@@ -374,6 +374,78 @@ validationTests:
         target: haproxy.cfg
         pattern: "use_backend default_canary-weight-ingress_svc_canary-service_80 if \\{ rand\\(100\\) lt 20 \\}"
 
+  test-haptic-mirror-buffer-honours-per-route-optout:
+    description: >-
+      A route that opts out with request-buffering=off is not re-buffered by a
+      SIBLING route's mirror-target on the same shared frontend. The mirror
+      buffer runs frontend-wide, so without the per-backend map check in its
+      condition the documented opt-out would be silently defeated by an
+      unrelated mirrored Ingress.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: mirror-service}
+          spec:
+            ports: [{port: 80}]
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: upload-service}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mirrored
+            annotations:
+              haproxy-haptic.org/mirror-target: "http://mirror.internal:8443"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: mirrored.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: mirror-service, port: {number: 80}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: upload
+            annotations:
+              haproxy-haptic.org/request-buffering: "off"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: upload.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: {name: upload-service, port: {number: 80}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:request-buffering.map
+        pattern: "default_upload_svc_upload-service_80 off"
+      # Both buffering rules — base's own and the mirror's — must consult the
+      # map, so the opted-out backend escapes each of them.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} \\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str on \\}"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} !\\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str off \\}"
+      # An unconditional mirror buffer is exactly the bug this pins.
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\}\n"
+
   test-haptic-mirror-target:
     description: haproxy-haptic.org mirror-target buffers the body and fires the SPOE mirror group
     fixtures:
@@ -424,7 +496,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "option http-buffer-request"
+        pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} !\\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str off \\}"
       - type: contains
         target: haproxy.cfg
         pattern: "set-var\\(txn.gw_mirror_targets\\) str\\(https\\|mirror.internal:8443\\|50000\\|3;\\),concat\\(,txn.gw_mirror_targets,\\) if \\{ var\\(txn.host\\) -m str mirror.example.com \\}"

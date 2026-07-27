@@ -303,6 +303,36 @@ HAProxy can't auto-detect HTTP/2 cleartext (h2c) on a plaintext bind, and it can
 
 The `default_backend` returns a gRPC-aware fallback for unmatched requests. For `application/grpc` requests it returns a trailers-only response (`grpc-status: 12`, Unimplemented) instead of a plain 404 — without a valid `content-type`, grpc-go reports "malformed header: missing HTTP content-type" and tears down the whole HTTP/2 connection, cancelling every multiplexed stream on it. Because HAProxy's `http-request return` strips `content-type` from its header arguments, the base library re-adds it with `http-after-response set-header`, which runs on responses produced by the `return` action. Non-gRPC requests get a plain `404`.
 
+### Request buffering
+
+HAProxy waits for the request body before it takes a backend connection, so a client that trickles its upload holds an HAProxy buffer instead of a backend server slot. This is the standard defence against the slow POST attack, where an attacker declares a large body and sends it a byte at a time to exhaust the application's worker pool.
+
+Buffering is on by default. Turn it off fleet-wide, or change how long HAProxy waits:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        requestBuffering:
+          enabled: true
+          waitTimeout: 10s
+```
+
+Override it for a single route with the [`haproxy-haptic.org/request-buffering`](haptic-annotations.md#request-buffering) annotation (`on` or `off`). The override lives in `request-buffering.map`, so changing one route's setting reloads nothing, and it's authoritative: a route set to `off` isn't buffered even when a sibling route on the same frontend enables [request mirroring](haptic-annotations.md#canary-and-traffic-mirroring), which buffers bodies of its own accord. The consequence for a mirrored route that opts out is that its mirror receives an empty body.
+
+HAProxy releases the request as soon as *either* the body is complete or `tune.bufsize` is full, so this is slow-client protection rather than an upload buffer — a 1 GB upload proceeds once the first 16 KiB arrive. When the wait expires with neither condition met, the client gets a `408` and the backend is never contacted.
+
+#### Streaming requests are never buffered
+
+Only requests that declare a `Content-Length` are held. Nothing that streams can know its length in advance, so this single condition excludes every streaming protocol without naming any of them.
+
+That exclusion is load-bearing rather than cosmetic. Buffering a bidirectional stream deadlocks it: the client sends its first message and waits for a response, but HAProxy hasn't forwarded the request headers yet, so the backend never sees the call and never answers. Neither side can make progress until the wait expires and the client receives a `408` that the backend never produced.
+
+gRPC sends neither `Content-Length` nor `Transfer-Encoding` — for unary and streaming calls alike — so no gRPC request is ever buffered. Chunked HTTP/1.1 uploads are excluded on the same rule, which also covers long-poll and command-channel patterns where the server answers before the request body ends.
+
+Setting the annotation to `on` therefore can't break a streaming route. Use `off` for a route whose clients *do* declare a `Content-Length` but still expect a response before the body ends, such as a resumable-upload endpoint.
+
 ### Built-in operators and functions
 
 #### `render_glob` (operator)
@@ -552,6 +582,7 @@ And these per-backend feature maps, all keyed by backend name and looked up with
 | Map File | Purpose |
 |----------|---------|
 | body-size.map | Request body-size limit in bytes |
+| request-buffering.map | Per-route request-buffering override (`on`/`off`) |
 | reqhdr-host.map | Upstream `Host` header override |
 | reqhdr-xfwd-prefix.map | `X-Forwarded-Prefix` header value |
 | reqhdr-connection.map | `Connection` header override |

@@ -395,13 +395,65 @@ verify_config_admission_warning_free() {
         printf '%s\n' "$output" >&2
         die "Default HAProxyTemplateConfig failed admission" 10
     fi
-    if grep -q '^Warning:' <<< "$output"; then
-        error "HAProxyTemplateConfig admission emitted warnings:"
-        printf '%s\n' "$output" >&2
+    # One warning is the DESIGNED degradation, not a defect: Kubernetes caps a
+    # webhook's timeoutSeconds at 30 and the controller reserves one second to
+    # return a structured response, so the admission budget has a hard 29s
+    # ceiling no value can raise. The bundled suite's own run time has outgrown
+    # what fits inside it alongside schema bootstrap and the strict prospective
+    # render, and it only grows as libraries add tests. The webhook therefore
+    # admits with this warning and defers to the controller's load gate, which
+    # is the authoritative, fail-closed check — and which this function asserts
+    # separately below. Treating it as fatal would assert an invariant the
+    # design deliberately falsifies. Every OTHER warning stays fatal.
+    local unexpected
+    unexpected=$(grep '^Warning:' <<< "$output" \
+        | grep -v 'validationTests did not finish before the HAProxyTemplateConfig admission deadline' || true)
+    if [[ -n "$unexpected" ]]; then
+        error "HAProxyTemplateConfig admission emitted unexpected warnings:"
+        printf '%s\n' "$unexpected" >&2
         die "Default HAProxyTemplateConfig was not fully validated at admission" 10
     fi
 
-    ok "Default HAProxyTemplateConfig passes admission without warnings"
+    ok "Default HAProxyTemplateConfig passes admission without unexpected warnings"
+
+    # The authoritative gate. The controller runs the same suite on load and
+    # crash-loops rather than serve a config whose own tests fail, so
+    # Validated=True for the CURRENT generation is what proves the shipped
+    # default is actually servable. This is what regressed when the run budget
+    # clamped at its floor: admission warned (tolerated above) AND the load
+    # gate rejected the config, and only the warning was visible here.
+    # Patience comes from the script's single documented knob, not a second
+    # invented one: the load gate's own budget scales with suite size (25s floor
+    # + ~100ms per test, plus bootstrap and engine compile), so any fixed poll
+    # window here would silently go stale as libraries add tests — the exact
+    # drift that produced the budget bug this assertion exists to catch.
+    local name="${configs[0]}" gen observed status reason
+    gen=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+    if ! kubectl wait --for=condition=Validated "haproxytemplateconfig/$name" \
+        -n "$NAMESPACE" --timeout="${TIMEOUT}s" >/dev/null 2>&1; then
+        status=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Validated")].status}' 2>/dev/null || true)
+        observed=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
+            -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)
+        reason=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Validated")].message}' 2>/dev/null || true)
+        error "HAProxyTemplateConfig load gate did not accept the default config within ${TIMEOUT}s:"
+        error "  generation=$gen observedGeneration=${observed:-<none>} Validated=${status:-<none>}"
+        error "  message: ${reason:-<none>}"
+        die "Default HAProxyTemplateConfig was rejected by the controller's load gate" 10
+    fi
+
+    # Validated=True alone could be a leftover from an earlier generation, so
+    # pin it to the spec the API server is serving right now.
+    observed=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" \
+        -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)
+    if [[ "$observed" != "$gen" ]]; then
+        error "HAProxyTemplateConfig Validated=True is stale:"
+        error "  generation=$gen observedGeneration=${observed:-<none>}"
+        die "Default HAProxyTemplateConfig status lags the current generation" 10
+    fi
+
+    ok "Default HAProxyTemplateConfig accepted by the load gate (Validated=True, generation $gen)"
 }
 
 verify_bootstrap_workers_retired() {

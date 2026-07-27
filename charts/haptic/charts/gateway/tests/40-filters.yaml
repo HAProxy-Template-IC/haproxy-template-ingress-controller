@@ -691,7 +691,7 @@ validationTests:
 
   test-httproute-request-mirror-single:
     requires: [httproutes]
-    description: "HTTPRoute with a single RequestMirror filter at full traffic (no percent / fraction): appends one scheme|host:port|timeout|retries entry to txn.gw_mirror_targets and fires the single mirror-group once, plus option http-buffer-request on the frontend (without which req.body would be empty at the plugin)."
+    description: "HTTPRoute with a single RequestMirror filter at full traffic (no percent / fraction): appends one scheme|host:port|timeout|retries entry to txn.gw_mirror_targets and fires the single mirror-group once, plus a Content-Length-gated http-request wait-for-body on the frontend (without which req.body would be empty at the plugin; gated so a GRPCRoute sharing the frontend isn't deadlocked)."
     fixtures:
       services:
         - apiVersion: v1
@@ -739,7 +739,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'option http-buffer-request'
+        pattern: 'http-request wait-for-body time 10s if \{ req\.hdr\(content-length\) -m found \} !\{ var\(txn\.backend_name\),map\(.*request-buffering\.map,on\) -m str off \}'
 
       - type: contains
         target: haproxy.cfg

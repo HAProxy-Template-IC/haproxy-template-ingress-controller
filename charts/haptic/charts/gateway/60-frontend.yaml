@@ -1232,14 +1232,35 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
-  # Filter: RequestMirror — early frontend directive forcing
-  # `option http-buffer-request`. Mirroring needs HAProxy to buffer the
-  # full request body before the SPOE notification fires; without
-  # this option `req.body` arrives empty at the plugin and PUT/POST
-  # mirrors silently drop their bodies. Emitting `option ...` lives
-  # in frontend-extra-* so it lands BEFORE any http-request directive
-  # the mirror filter (or any other filter) might add.
-  frontend-extra-200-gateway-mirror-buffer:
+  # Filter: RequestMirror — early frontend directive buffering the request
+  # body. Mirroring needs HAProxy to buffer the full body before the SPOE
+  # notification fires; without it `req.body` arrives empty at the plugin
+  # and PUT/POST mirrors silently drop their bodies.
+  #
+  # Gated on Content-Length, NOT frontend-wide `option http-buffer-request`.
+  # This snippet fires for the whole frontend as soon as ONE route carries a
+  # RequestMirror filter, and the frontend is shared with every other route on
+  # the Gateway — including GRPCRoutes. Unconditional buffering deadlocks a
+  # gRPC stream (the client waits for a response HAProxy hasn't forwarded)
+  # until the wait expires and the client gets a 408 the backend never saw.
+  # Nothing that streams can declare a Content-Length, so this gate excludes
+  # every such protocol by construction. Trade-off: a chunked request body
+  # (no Content-Length) is no longer mirrored — the mirror sees an empty body
+  # rather than the whole frontend breaking.
+  #
+  # It also honours a route's `request-buffering: off` opt-out, which is why
+  # this lives in frontend-filters-* rather than the earlier frontend-extra-*
+  # phase: txn.backend_name is only set by frontend-routing-logic, which runs
+  # between the two, so the per-backend map is unreadable in frontend-extra-*.
+  # Without the map check a single mirrored route would silently re-buffer
+  # every opted-out route on the same frontend — the map override is
+  # documented as authoritative, so it has to actually be. The map default is
+  # `on` (not the fleet-wide setting) because mirroring needs the body even
+  # where fleet buffering is off; only an explicit per-route `off` suppresses
+  # it, and such a route's own mirror then sees an empty body, which is what
+  # opting out means. Band 091 keeps it after base's 090 rule and far ahead of
+  # the mirror fire at 950.
+  frontend-filters-091-gateway-mirror-buffer:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {{- render "util-gateway-analysis" -}}
@@ -1247,9 +1268,11 @@ templateSnippets:
       {%- if gaVal == nil %}{% return %}{% end %}
       {%- var ga = gaVal.(map[string]any) %}
       {%- if ga["hasMirror_filter"] %}
-      # gateway/frontend-extra-mirror-buffer: required so req.body reaches
+      {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
+      {%- var rbMap, _ = pathResolver.GetPath("request-buffering.map", "map") %}
+      # gateway/mirror-buffer: required so req.body reaches
       # the mirror plugin (see frontend-filters-550-gateway-mirror).
-      option http-buffer-request
+      http-request wait-for-body time {{ mirrorWait }} if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map({{ rbMap }},on) -m str off }
       {%- end %}
 
   # Filter: RequestMirror — append each mirror target to the per-request

@@ -105,6 +105,51 @@ templateSnippets:
       {%- end -%}
 
   # ============================================================================
+  # Request buffering (reload-free map)
+  # ============================================================================
+
+  map-request-buffering-830-haptic:
+    template: |
+      {#-
+        HAPTIC Request Buffering Override
+
+        Documentation: docs/site/docs/libraries/haptic-annotations.md#request-buffering
+
+        Annotation: haproxy-haptic.org/request-buffering
+        Values: "on" | "off"
+
+        Emits `<backend_name> on|off` into request-buffering.map. The
+        resource-agnostic frontend-filters-090-request-buffering rule in base.yaml
+        reads it, using extraContext.requestBuffering.enabled as the map default,
+        so a route can opt out of a fleet-wide default or opt into buffering while
+        the fleet default is off — either way a map-only, reload-free change.
+
+        Only requests carrying a Content-Length are buffered at all, so "on" never
+        endangers a gRPC or chunked streaming route. Use "off" for a route whose
+        clients declare a Content-Length but still expect a response before the
+        body ends (resumable uploads, some long-poll command channels).
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var buffering = ingress.Metadata.Annotations["haproxy-haptic.org/request-buffering"] -%}
+        {%- if buffering != "" -%}
+          {%- if buffering != "on" && buffering != "off" -%}
+            {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Invalid value '" + buffering + "' for annotation 'haproxy-haptic.org/request-buffering' on Ingress '" + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + "'. Valid: on, off.") -}}
+            {%- continue -%}
+          {%- end -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- var be = BackendNameIngress(ingress, path) -%}
+              {%- if first_seen("map-request-buffering", be) -%}
+      {{ "\n" }}{{ be }} {{ buffering }}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # ============================================================================
   # retry-on retry policy
   # ============================================================================
 

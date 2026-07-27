@@ -10,7 +10,7 @@
 #   - features-800-haptic-canary-colocation  — mark canary Ingresses so the main
 #     Ingress owns the base route (they only overlay a use_backend split).
 #   - frontend-filters-810-haptic-canary      — emit the use_backend split rules.
-#   - frontend-extra-805-haptic-mirror-buffer  — buffer request bodies + fail loud
+#   - frontend-filters-092-haptic-mirror-buffer  — buffer request bodies + fail loud
 #     when the spoa-hub mirror plugin is not enabled.
 #   - frontend-filters-820-haptic-mirror       — fire the per-Ingress SPOE mirror.
 templateSnippets:
@@ -158,12 +158,12 @@ templateSnippets:
 
   # mirror-target needs the full request body buffered before the SPOE mirror
   # notification fires (else PUT/POST bodies arrive empty at the plugin) — mirrors
-  # gateway/frontend-extra-200-gateway-mirror-buffer. Also the plugin-enabled
+  # gateway/frontend-filters-091-gateway-mirror-buffer. Also the plugin-enabled
   # guard: with the spoa-hub mirror plugin disabled there is no mirror-group to
   # fire (frontend-filters-950-spoa-hub-mirror-fire is gated on the plugin), so a
   # mirror-target annotation would silently do nothing — fail() with an
   # actionable message instead of dropping the mirror.
-  frontend-extra-805-haptic-mirror-buffer:
+  frontend-filters-092-haptic-mirror-buffer:
     template: |
       {%- var hasMirror = false %}
       {%- var firstKey = "" %}
@@ -184,8 +184,24 @@ templateSnippets:
         {%- if !mirrorEnabled %}
           {{- fail("Ingress " + firstKey + " sets 'haproxy-haptic.org/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
         {%- end %}
+        {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
+      {#- Gated on Content-Length, not frontend-wide `option http-buffer-request`:
+          one mirrored Ingress turns this on for the whole shared frontend, and
+          unconditional buffering deadlocks any gRPC or streaming route there
+          until the wait expires and the client gets a 408 the backend never saw.
+          Nothing that streams can declare a Content-Length. Trade-off: a chunked
+          request body is no longer mirrored.
+
+          The map check honours a route's `request-buffering: off` opt-out, and is
+          why this sits in frontend-filters-* rather than the earlier
+          frontend-extra-* phase: txn.backend_name is only set by
+          frontend-routing-logic, which runs between the two. Without it a single
+          mirrored Ingress would silently re-buffer every opted-out route on the
+          same frontend. Map default `on` (not the fleet setting) because
+          mirroring needs the body even where fleet buffering is off. #}
       # haptic/mirror-buffer ({{ firstKey }}): buffer the request body so it reaches the mirror plugin
-      option http-buffer-request
+        {%- var rbMap, _ = pathResolver.GetPath("request-buffering.map", "map") %}
+      http-request wait-for-body time {{ mirrorWait }} if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map({{ rbMap }},on) -m str off }
       {%- end %}
 
   frontend-filters-820-haptic-mirror:
@@ -205,7 +221,7 @@ templateSnippets:
           - haproxy-haptic.org/mirror-target: "scheme://host[:port][/path]" (required)
 
         Requires the spoa-hub mirror plugin (spoaHub.plugins.mirror). With the
-        plugin disabled the render fails loud (frontend-extra-805-haptic-mirror-buffer).
+        plugin disabled the render fails loud (frontend-filters-092-haptic-mirror-buffer).
 
         Only the authority (host:port) of the target is used as the plugin's
         target — the plugin re-attaches the live request path/query. Default

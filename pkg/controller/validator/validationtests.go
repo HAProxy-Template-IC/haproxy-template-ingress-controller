@@ -63,21 +63,27 @@ const validationTestsRunTimeout = 25 * time.Second
 const suitePerTestBudget = 100 * time.Millisecond
 
 // SuiteRunBudget returns the live-gate test-execution budget for a suite of
-// the given size: the validationTestsRunTimeout floor, scaled up by
-// suitePerTestBudget per test once the suite outgrows it. A fixed 25s cap
-// rejected the chart's all-passing 362-test suite on contended CI nodes
-// (issue #77: 362/362 passed in 27.8s, cancelled at 25s, config rejected as
-// "partially-validated"). Scaling with suite size keeps small suites on the
-// tight bound while a legitimately large suite gets time proportional to its
-// work. Exported so configchange can derive its scatter-gather envelope from
-// the SAME formula — the envelope must stay strictly larger than this budget
-// (see SuiteValidationEnvelope).
+// the given size: the validationTestsRunTimeout floor PLUS suitePerTestBudget
+// per test. A fixed 25s cap rejected the chart's all-passing 362-test suite on
+// contended CI nodes (issue #77: 362/362 passed in 27.8s, cancelled at 25s,
+// config rejected as "partially-validated"). Scaling with suite size keeps
+// small suites on a tight bound while a legitimately large suite gets time
+// proportional to its work. Exported so configchange can derive its
+// scatter-gather envelope from the SAME formula — the envelope must stay
+// strictly larger than this budget (see SuiteValidationEnvelope).
+//
+// The floor is ADDED, not max()'d. Taking the larger of the two pinned every
+// suite below 250 tests to exactly 25s, so the floor — chosen as headroom for
+// a *small* suite on a cold node — silently became the whole budget for a
+// suite doing ten times the work. That reintroduced #77's false rejection at
+// the crossover: the chart's ~249-test effective suite (post-`requires`
+// stripping on a cluster without Gateway CRDs) needed 27.3s against a budget
+// that computed to 24.9s and therefore clamped to the 25s floor, and a
+// perfectly good default config was rejected as partially-validated. Adding
+// the floor is also what the doc comment on suitePerTestBudget and the
+// shipped changelog ("25s floor + ~100ms per test") always described.
 func SuiteRunBudget(testCount int) time.Duration {
-	scaled := time.Duration(testCount) * suitePerTestBudget
-	if scaled < validationTestsRunTimeout {
-		return validationTestsRunTimeout
-	}
-	return scaled
+	return validationTestsRunTimeout + time.Duration(testCount)*suitePerTestBudget
 }
 
 // suiteEnvelopeMargin is the fixed part of what SuiteValidationEnvelope adds

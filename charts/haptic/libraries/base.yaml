@@ -1603,6 +1603,50 @@ templateSnippets:
          forwardfor). #}
       {{ "\n" }}http-response set-header Server haptic
 
+  frontend-filters-090-request-buffering:
+    template: |
+      {#-
+        Resource-agnostic request buffering (slow-client / slow-POST defence).
+
+        Holds the request until the body is complete — or the buffer is full, or
+        the wait expires — before a backend connection is taken. Without it a
+        client that trickles a declared body pins a backend server slot for as
+        long as it likes; with it, that client only ever holds HAProxy.
+
+        The gate is `Content-Length present`, and that is the whole gRPC/streaming
+        story. A request that streams bidirectionally cannot declare its length
+        upfront, so requiring Content-Length excludes every such protocol by
+        construction — no Content-Type sniffing, no list of exempt media types to
+        keep current. gRPC over HTTP/2 sends neither Content-Length nor
+        Transfer-Encoding, for unary AND streaming calls, so it never matches.
+        This matters: buffering a bidirectional stream deadlocks it (the client
+        waits for a response HAProxy hasn't forwarded yet) until the wait expires
+        and the client gets a 408 the backend never saw. See
+        docs/site/docs/libraries/base.md#request-buffering.
+
+        Buffering never holds more than `tune.bufsize` — wait-for-body also
+        releases on a full buffer — so this is slow-client protection, not an
+        upload buffer, and a large upload proceeds as soon as the first bufsize
+        bytes land.
+
+        Per-route override comes from request-buffering.map keyed on the resolved
+        backend (`on`/`off`); resource libraries populate it via
+        map-request-buffering-* snippets. The map's default value carries the
+        fleet-wide setting, so one rule covers both directions and flipping a
+        single route is a map-only, reload-free change.
+      -#}
+      {%- var rbWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") -%}
+      {%- if !regex_search(rbWait, "^[0-9]+(us|ms|s|m|h|d)?$") -%}
+        {{- fail("Invalid value '" + rbWait + "' for extraContext.requestBuffering.waitTimeout. Expected an HAProxy duration such as '10s', '500ms' or '2m'.") -}}
+      {%- end -%}
+      {%- var rbDefault = "off" -%}
+      {%- if extraContext | dig("requestBuffering", "enabled") | fallback(true) -%}
+        {%- rbDefault = "on" -%}
+      {%- end -%}
+      {%- var rbMap, _ = pathResolver.GetPath("request-buffering.map", "map") %}
+      # base/request-buffering (extraContext.requestBuffering, default {{ rbDefault }})
+      http-request wait-for-body time {{ rbWait }} if { req.hdr(content-length) -m found } { var(txn.backend_name),map({{ rbMap }},{{ rbDefault }}) -m str on }
+
   frontend-filters-250-request-body-size:
     template: |
       {%- var bsMap, _ = pathResolver.GetPath("body-size.map", "map") -%}
@@ -2072,6 +2116,14 @@ maps:
       # libraries (map-body-size-*); enforced by frontend-filters-250-request-body-size.
       # See https://haproxy-haptic.org/docs/latest/libraries/base/#map-files
       {{ render_glob "map-body-size-*" -}}
+
+  request-buffering.map:
+    template: |
+      # Per-backend request-buffering override: backend_name → on|off. Populated by
+      # resource libraries (map-request-buffering-*); applied by
+      # frontend-filters-090-request-buffering. Backends with no entry inherit the
+      # fleet-wide extraContext.requestBuffering.enabled default.
+      {{ render_glob "map-request-buffering-*" -}}
 
   reqhdr-host.map:
     template: |
@@ -3215,6 +3267,95 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "must not contain whitespace"
+
+  test-request-buffering-default-on:
+    description: >-
+      Request buffering is on by default and gates on Content-Length, which is
+      what keeps gRPC and every other streaming protocol out of it — none can
+      declare a length upfront. The per-route map default carries the fleet-wide
+      setting, so the rule needs no second form.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: buffering
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: buffer.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request wait-for-body time 10s if \{ req\.hdr\(content-length\) -m found \} \{ var\(txn\.backend_name\),map\(.*request-buffering\.map,on\) -m str on \}'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'option http-buffer-request'
+
+  test-request-buffering-disabled-fleet-wide:
+    description: >-
+      Disabling it flips the map's default to off, leaving the same inert rule in
+      place so a single route can still opt back in via the map.
+    extraContext:
+      requestBuffering:
+        enabled: false
+        waitTimeout: 2s
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: buffering
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: buffer.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request wait-for-body time 2s if \{ req\.hdr\(content-length\) -m found \} \{ var\(txn\.backend_name\),map\(.*request-buffering\.map,off\) -m str on \}'
+
+  test-request-buffering-rejects-bad-timeout:
+    description: >-
+      An unparseable waitTimeout would land verbatim in the config; reject it at
+      render time rather than at HAProxy's config check.
+    extraContext:
+      requestBuffering:
+        waitTimeout: "10 seconds"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: buffering
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: buffer.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Expected an HAProxy duration"
 
   test-access-log-denied-by-body-size:
     description: >-

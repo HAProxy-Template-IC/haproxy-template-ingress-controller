@@ -386,12 +386,14 @@ typegen
 UDP
 UID
 UIDs
+unary
 uncacheable
 unmocked
 unparseable
 unserved
 untyped
 unvalidated
+uploader
 upstream's
 URI
 URL

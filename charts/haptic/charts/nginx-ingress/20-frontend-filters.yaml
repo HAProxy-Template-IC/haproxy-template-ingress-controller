@@ -323,12 +323,12 @@ templateSnippets:
 
   # nginx mirror-target needs the full request body buffered before the SPOE
   # mirror notification fires (else PUT/POST bodies arrive empty at the plugin)
-  # — mirrors gateway/frontend-extra-200-gateway-mirror-buffer. Also the
+  # — mirrors gateway/frontend-filters-091-gateway-mirror-buffer. Also the
   # plugin-enabled guard: with the spoa-hub mirror plugin disabled there is no
   # mirror-group to fire (frontend-filters-950-spoa-hub-mirror-fire is gated on
   # the plugin), so a mirror-target annotation would silently do nothing —
   # fail() with an actionable message.
-  frontend-extra-205-nginx-ingress-mirror-buffer:
+  frontend-filters-093-nginx-ingress-mirror-buffer:
     template: |
       {%- var hasMirror = false %}
       {%- var firstKey = "" %}
@@ -349,8 +349,24 @@ templateSnippets:
         {%- if !mirrorEnabled %}
           {{- fail("Ingress " + firstKey + " sets 'nginx.ingress.kubernetes.io/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
         {%- end %}
+        {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
+      {#- Gated on Content-Length, not frontend-wide `option http-buffer-request`:
+          one mirrored Ingress turns this on for the whole shared frontend, and
+          unconditional buffering deadlocks any gRPC or streaming route there
+          until the wait expires and the client gets a 408 the backend never saw.
+          Nothing that streams can declare a Content-Length. Trade-off: a chunked
+          request body is no longer mirrored.
+
+          The map check honours a route's `request-buffering: off` opt-out, and is
+          why this sits in frontend-filters-* rather than the earlier
+          frontend-extra-* phase: txn.backend_name is only set by
+          frontend-routing-logic, which runs between the two. Without it a single
+          mirrored Ingress would silently re-buffer every opted-out route on the
+          same frontend. Map default `on` (not the fleet setting) because
+          mirroring needs the body even where fleet buffering is off. #}
       # nginx-ingress/mirror-buffer: buffer the request body so it reaches the mirror plugin
-      option http-buffer-request
+        {%- var rbMap, _ = pathResolver.GetPath("request-buffering.map", "map") %}
+      http-request wait-for-body time {{ mirrorWait }} if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map({{ rbMap }},on) -m str off }
       {%- end %}
 
   frontend-filters-555-nginx-ingress-mirror:

@@ -397,6 +397,9 @@ migrationCoverage:
       haproxy-haptic.org/rate-limit-allowlist:
         status: supported
         note: "Comma-separated CIDRs exempted via a trailing negated src guard; routed through ValidateCidrList so invalid CIDRs fail loudly."
+      haproxy-haptic.org/request-buffering:
+        status: supported
+        note: "on|off per-route override of extraContext.requestBuffering.enabled → reload-free request-buffering.map; only Content-Length-carrying requests are ever buffered, so gRPC and chunked streaming are excluded either way."
       haproxy-haptic.org/request-capture:
         status: supported
         note: "newline-separated header names -> capture request header, frontend-wide (capture slots are positional, not host-scopable); guarded"
