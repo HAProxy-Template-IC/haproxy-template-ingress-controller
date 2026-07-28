@@ -19,7 +19,6 @@ declare -A PLUGIN_LIBS=(
     [fingerprinting]="libfingerprinting_plugin.so"
     [maxmind]="libmaxmind_plugin.so"
     [mirror]="libmirror_plugin.so"
-    [otel]="libotel_plugin.so"
     [rate-limit]="librate_limit_plugin.so"
     [sso-auth]="libhaproxy_spoa_hub_plugin_sso_auth.so"
 )
@@ -29,7 +28,6 @@ declare -A PLUGIN_LIBS=(
 # The values below are placeholders chosen to satisfy schemas with
 # zero external-resource dependency:
 #  - sso-auth needs cookie_secret_1 (>=16 chars) + cookie_domain.
-#  - otel needs an `instrumentation` block (single name + scopes).
 #  - api-gateway / coraza / external-auth / fingerprinting / mirror / rate-limit tolerate empty params.
 # maxmind is excluded entirely because its schema requires at least
 # one `databases.<name>.path` pointing at a real MMDB file we can't
@@ -42,15 +40,12 @@ declare -A PLUGIN_PARAMS=(
     [external-auth]=""
     [fingerprinting]=""
     [mirror]=""
-    [otel]='[plugins.params.instrumentation]
-name = "smoke-test"
-scopes = ["request"]'
     [rate-limit]=""
     [sso-auth]='[plugins.params]
 cookie_secret_1 = "0123456789abcdef0"
 cookie_domain = "smoke.example.com"'
 )
-PLUGINS=(api-gateway coraza external-auth fingerprinting mirror otel rate-limit sso-auth)
+PLUGINS=(api-gateway coraza external-auth fingerprinting mirror rate-limit sso-auth)
 
 echo "==> Pulling ${IMAGE}"
 docker pull "${IMAGE}"

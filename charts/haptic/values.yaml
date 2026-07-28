@@ -1742,8 +1742,9 @@ defaultSSLCertificate:
   #   -----END PRIVATE KEY-----
 
 # SPOA hub sidecar
-# Bundles the haproxy-spoa-hub binary plus seven plugin shared libraries
-# (coraza, external-auth, fingerprinting, maxmind, mirror, otel, sso-auth) inside
+# Bundles the haproxy-spoa-hub binary plus eight plugin shared libraries
+# (api-gateway, coraza, external-auth, fingerprinting, maxmind, mirror,
+# rate-limit, sso-auth) inside
 # the HAProxy pod. Communicates with HAProxy over a Unix-domain socket.
 # The sidecar is rendered conditionally — absent when no plugin is
 # enabled, automatically present when at least one is.
@@ -2057,18 +2058,6 @@ spoaHub:
         verify_tls = false
         # worker_threads = 4
         pool_max_idle_per_host = 32
-    otel:
-      enabled: '{{ false }}'
-      timeoutMs: 50
-      messages: ["otel-on-request", "otel-on-response"]
-      dependsOn: []
-      # Dotted keys (instead of an `[instrumentation]` header) keep these
-      # values inside the `[plugins.params]` scope. For richer configs with
-      # arrays of tables (tracer_pipelines, exporters, …), use
-      # `[plugins.params.tracer_pipelines]` etc. — see the upstream README.
-      params: |
-        instrumentation.name = "haproxy-edge"
-        instrumentation.scopes = ["request", "response"]
     rate-limit:
       # Shared, fleet-wide rate limiting via the haproxy-spoa-hub
       # rate-limit plugin. Opt-in (off by default). Unlike the per-pod

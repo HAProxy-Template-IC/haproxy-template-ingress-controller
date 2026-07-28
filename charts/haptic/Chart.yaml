@@ -70,7 +70,7 @@ annotations:
     - kind: added
       description: nginx-ingress template library for nginx.ingress.kubernetes.io annotation compatibility
     - kind: added
-      description: SPOA hub sidecar with seven plugins (WAF, external auth, request mirroring, fingerprinting, MaxMind, OTel, SSO)
+      description: SPOA hub sidecar with eight plugins (API gateway, WAF, external auth, request mirroring, fingerprinting, MaxMind, rate limiting, SSO)
     - kind: added
       description: Extended Gateway API support (TLSRoute, TCPRoute, RequestMirror, static addresses, ListenerSet, session persistence)
     - kind: added
