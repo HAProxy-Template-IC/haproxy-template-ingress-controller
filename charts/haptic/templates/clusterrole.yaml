@@ -69,6 +69,14 @@ rules:
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxytemplateconfigs/status"]
     verbs: ["update", "patch"]
+  # HAProxyValidationTests: the suite the load gate runs. A 403 here is a hard
+  # load failure rather than an empty suite, which would pass unconditionally.
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxyvalidationtests"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxyvalidationtests/status"]
+    verbs: ["update", "patch"]
   # Auxiliary file CRDs for config publishing
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxycfgs", "haproxygeneralfiles", "haproxycrtlistfiles", "haproxymapfiles"]

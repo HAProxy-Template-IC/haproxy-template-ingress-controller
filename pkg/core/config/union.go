@@ -56,8 +56,8 @@ func UnionValidationTests(sources []ValidationTestSource) (map[string]Validation
 			test := src.Tests[name]
 
 			if name == GlobalValidationTestName {
-				merged, err := mergeGlobalBaseline(union[name], test, origin[name], src.Origin)
-				if err != nil {
+				merged := union[name]
+				if err := mergeGlobalBaseline(&merged, &test, origin[name], src.Origin); err != nil {
 					return nil, err
 				}
 				union[name] = merged
@@ -83,7 +83,7 @@ func UnionValidationTests(sources []ValidationTestSource) (map[string]Validation
 
 // mergeGlobalBaseline accumulates one source's `_global` contribution onto what
 // earlier sources contributed.
-func mergeGlobalBaseline(acc, add ValidationTest, accOrigin, addOrigin string) (ValidationTest, error) {
+func mergeGlobalBaseline(acc, add *ValidationTest, accOrigin, addOrigin string) error {
 	if acc.Fixtures == nil && add.Fixtures != nil {
 		acc.Fixtures = make(map[string][]any, len(add.Fixtures))
 	}
@@ -104,23 +104,23 @@ func mergeGlobalBaseline(acc, add ValidationTest, accOrigin, addOrigin string) (
 	// suite inherits whichever won.
 	var err error
 	if acc.CurrentConfig, err = mergeScalar(acc.CurrentConfig, add.CurrentConfig, "currentConfig", accOrigin, addOrigin); err != nil {
-		return acc, err
+		return err
 	}
 	if acc.MinHAProxyVersion, err = mergeScalar(acc.MinHAProxyVersion, add.MinHAProxyVersion, "minHAProxyVersion", accOrigin, addOrigin); err != nil {
-		return acc, err
+		return err
 	}
 	if acc.CurrentFiles, err = mergeStringMap(acc.CurrentFiles, add.CurrentFiles, "currentFiles", accOrigin, addOrigin); err != nil {
-		return acc, err
+		return err
 	}
 	if acc.ExtraContext, err = mergeAnyMap(acc.ExtraContext, add.ExtraContext, "extraContext", accOrigin, addOrigin); err != nil {
-		return acc, err
+		return err
 	}
 
 	// `_global` assertions are never executed — the runner treats the entry as a
 	// baseline, not a test — so they are carried for completeness only.
 	acc.Assertions = append(acc.Assertions, add.Assertions...)
 
-	return acc, nil
+	return nil
 }
 
 func mergeScalar(acc, add, field, accOrigin, addOrigin string) (string, error) {

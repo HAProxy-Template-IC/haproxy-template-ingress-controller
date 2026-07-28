@@ -218,6 +218,32 @@ func (c *Client) GetResource(ctx context.Context, gvr schema.GroupVersionResourc
 	return resource, nil
 }
 
+// ListResources returns every object of gvr in the client's namespace matching
+// labelSelector (empty selects all).
+//
+// An error is returned rather than an empty list for any failure, including a
+// 403: callers that treat "found nothing" as a legitimate state cannot
+// otherwise distinguish it from "was not allowed to look".
+func (c *Client) ListResources(ctx context.Context, gvr schema.GroupVersionResource, labelSelector string) (*unstructured.UnstructuredList, error) {
+	if c.namespace == "" {
+		return nil, &ClientError{
+			Operation: "list resources",
+			Cause:     errors.New("no namespace available (not in cluster and not specified)"),
+		}
+	}
+
+	list, err := c.dynamicClient.Resource(gvr).Namespace(c.namespace).
+		List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		return nil, &ClientError{
+			Operation: fmt.Sprintf("list resources %s (selector %q) in namespace %s", gvr.Resource, labelSelector, c.namespace),
+			Cause:     err,
+		}
+	}
+
+	return list, nil
+}
+
 // DiscoverNamespace reads the current namespace from the service account token.
 //
 // Returns:

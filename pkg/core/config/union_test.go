@@ -23,17 +23,44 @@ func src(origin string, tests map[string]ValidationTest) ValidationTestSource {
 	return ValidationTestSource{Origin: origin, Tests: tests}
 }
 
+// unionCase drives both union tables. The runner lives here rather than being
+// repeated per table so each test stays a list of cases.
+type unionCase struct {
+	name    string
+	sources []ValidationTestSource
+	wantErr string
+	check   func(t *testing.T, got map[string]ValidationTest)
+}
+
+func runUnionCases(t *testing.T, cases []unionCase) {
+	t.Helper()
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := UnionValidationTests(tt.sources)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got none (union=%#v)", tt.wantErr, got)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error %q does not contain %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			tt.check(t, got)
+		})
+	}
+}
+
 func TestUnionValidationTests(t *testing.T) {
-	tests := []struct {
-		name    string
-		sources []ValidationTestSource
-		wantErr string
-		check   func(t *testing.T, got map[string]ValidationTest)
-	}{
+	tests := []unionCase{
 		{
 			name:    "no sources yields an empty map, not nil",
 			sources: nil,
 			check: func(t *testing.T, got map[string]ValidationTest) {
+				t.Helper()
 				if got == nil {
 					t.Fatal("got nil map; callers range over this and a nil map hides the zero-test case")
 				}
@@ -49,6 +76,7 @@ func TestUnionValidationTests(t *testing.T) {
 				src("tests-obj", map[string]ValidationTest{"b": {Description: "B"}}),
 			},
 			check: func(t *testing.T, got map[string]ValidationTest) {
+				t.Helper()
 				if len(got) != 2 || got["a"].Description != "A" || got["b"].Description != "B" {
 					t.Fatalf("got %#v", got)
 				}
@@ -68,11 +96,19 @@ func TestUnionValidationTests(t *testing.T) {
 				src("config", map[string]ValidationTest{"a": {Description: "A"}, "b": {Description: "B"}}),
 			},
 			check: func(t *testing.T, got map[string]ValidationTest) {
+				t.Helper()
 				if len(got) != 2 {
 					t.Fatalf("got %d tests, want 2", len(got))
 				}
 			},
 		},
+	}
+
+	runUnionCases(t, tests)
+}
+
+func TestUnionValidationTests_GlobalBaseline(t *testing.T) {
+	tests := []unionCase{
 		{
 			name: "_global fixtures accumulate instead of replacing",
 			sources: []ValidationTestSource{
@@ -87,6 +123,7 @@ func TestUnionValidationTests(t *testing.T) {
 				}}),
 			},
 			check: func(t *testing.T, got map[string]ValidationTest) {
+				t.Helper()
 				g := got[GlobalValidationTestName]
 				if len(g.Fixtures["services"]) != 2 {
 					t.Fatalf("services fixtures = %v, want both base and extra — a replace here silently drops a library's baseline", g.Fixtures["services"])
@@ -103,6 +140,7 @@ func TestUnionValidationTests(t *testing.T) {
 				src("b", map[string]ValidationTest{GlobalValidationTestName: {Description: "y"}}),
 			},
 			check: func(t *testing.T, got map[string]ValidationTest) {
+				t.Helper()
 				if _, ok := got[GlobalValidationTestName]; !ok {
 					t.Fatal("_global missing")
 				}
@@ -119,6 +157,7 @@ func TestUnionValidationTests(t *testing.T) {
 				}}),
 			},
 			check: func(t *testing.T, got map[string]ValidationTest) {
+				t.Helper()
 				g := got[GlobalValidationTestName]
 				if len(g.Requires) != 3 {
 					t.Fatalf("requires = %v, want 3 unique", g.Requires)
@@ -135,6 +174,7 @@ func TestUnionValidationTests(t *testing.T) {
 				src("b", map[string]ValidationTest{GlobalValidationTestName: {ExtraContext: map[string]any{"y": 2}}}),
 			},
 			check: func(t *testing.T, got map[string]ValidationTest) {
+				t.Helper()
 				g := got[GlobalValidationTestName]
 				if len(g.ExtraContext) != 2 {
 					t.Fatalf("extraContext = %v, want both keys", g.ExtraContext)
@@ -156,6 +196,7 @@ func TestUnionValidationTests(t *testing.T) {
 				src("b", map[string]ValidationTest{GlobalValidationTestName: {CurrentConfig: "global\n"}}),
 			},
 			check: func(t *testing.T, got map[string]ValidationTest) {
+				t.Helper()
 				if got[GlobalValidationTestName].CurrentConfig != "global\n" {
 					t.Fatal("identical values should merge silently")
 				}
@@ -179,24 +220,7 @@ func TestUnionValidationTests(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := UnionValidationTests(tt.sources)
-			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got none (union=%#v)", tt.wantErr, got)
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("error %q does not contain %q", err.Error(), tt.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			tt.check(t, got)
-		})
-	}
+	runUnionCases(t, tests)
 }
 
 // The runner reads _global once, so accumulated fixtures must land in a stable
