@@ -42,4 +42,8 @@
 //
 // +k8s:deepcopy-gen=package
 // +groupName=haproxy-haptic.org
+// groupGoName is required, not cosmetic: client-gen derives Go identifiers from
+// the group name, and "haproxy-haptic" yields FakeHaproxy-hapticV1alpha1, which
+// does not compile.
+// +groupGoName=HaproxyTemplateIC
 package v1alpha1

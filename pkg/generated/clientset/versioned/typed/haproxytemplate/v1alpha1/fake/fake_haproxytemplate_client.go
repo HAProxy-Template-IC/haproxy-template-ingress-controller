@@ -26,12 +26,12 @@ type FakeHaproxyTemplateICV1alpha1 struct {
 	*testing.Fake
 }
 
-func (c *FakeHaproxyTemplateICV1alpha1) HAProxyCfgs(namespace string) v1alpha1.HAProxyCfgInterface {
-	return newFakeHAProxyCfgs(c, namespace)
-}
-
 func (c *FakeHaproxyTemplateICV1alpha1) HAProxyCRTListFiles(namespace string) v1alpha1.HAProxyCRTListFileInterface {
 	return newFakeHAProxyCRTListFiles(c, namespace)
+}
+
+func (c *FakeHaproxyTemplateICV1alpha1) HAProxyCfgs(namespace string) v1alpha1.HAProxyCfgInterface {
+	return newFakeHAProxyCfgs(c, namespace)
 }
 
 func (c *FakeHaproxyTemplateICV1alpha1) HAProxyGeneralFiles(namespace string) v1alpha1.HAProxyGeneralFileInterface {
@@ -44,6 +44,10 @@ func (c *FakeHaproxyTemplateICV1alpha1) HAProxyMapFiles(namespace string) v1alph
 
 func (c *FakeHaproxyTemplateICV1alpha1) HAProxyTemplateConfigs(namespace string) v1alpha1.HAProxyTemplateConfigInterface {
 	return newFakeHAProxyTemplateConfigs(c, namespace)
+}
+
+func (c *FakeHaproxyTemplateICV1alpha1) HAProxyValidationTestses(namespace string) v1alpha1.HAProxyValidationTestsInterface {
+	return newFakeHAProxyValidationTestses(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

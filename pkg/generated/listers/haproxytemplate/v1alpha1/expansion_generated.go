@@ -16,14 +16,6 @@
 
 package v1alpha1
 
-// HAProxyCfgListerExpansion allows custom methods to be added to
-// HAProxyCfgLister.
-type HAProxyCfgListerExpansion interface{}
-
-// HAProxyCfgNamespaceListerExpansion allows custom methods to be added to
-// HAProxyCfgNamespaceLister.
-type HAProxyCfgNamespaceListerExpansion interface{}
-
 // HAProxyCRTListFileListerExpansion allows custom methods to be added to
 // HAProxyCRTListFileLister.
 type HAProxyCRTListFileListerExpansion interface{}
@@ -31,6 +23,14 @@ type HAProxyCRTListFileListerExpansion interface{}
 // HAProxyCRTListFileNamespaceListerExpansion allows custom methods to be added to
 // HAProxyCRTListFileNamespaceLister.
 type HAProxyCRTListFileNamespaceListerExpansion interface{}
+
+// HAProxyCfgListerExpansion allows custom methods to be added to
+// HAProxyCfgLister.
+type HAProxyCfgListerExpansion interface{}
+
+// HAProxyCfgNamespaceListerExpansion allows custom methods to be added to
+// HAProxyCfgNamespaceLister.
+type HAProxyCfgNamespaceListerExpansion interface{}
 
 // HAProxyGeneralFileListerExpansion allows custom methods to be added to
 // HAProxyGeneralFileLister.
@@ -55,3 +55,11 @@ type HAProxyTemplateConfigListerExpansion interface{}
 // HAProxyTemplateConfigNamespaceListerExpansion allows custom methods to be added to
 // HAProxyTemplateConfigNamespaceLister.
 type HAProxyTemplateConfigNamespaceListerExpansion interface{}
+
+// HAProxyValidationTestsListerExpansion allows custom methods to be added to
+// HAProxyValidationTestsLister.
+type HAProxyValidationTestsListerExpansion interface{}
+
+// HAProxyValidationTestsNamespaceListerExpansion allows custom methods to be added to
+// HAProxyValidationTestsNamespaceLister.
+type HAProxyValidationTestsNamespaceListerExpansion interface{}

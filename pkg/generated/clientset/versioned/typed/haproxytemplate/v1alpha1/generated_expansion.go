@@ -16,12 +16,14 @@
 
 package v1alpha1
 
-type HAProxyCfgExpansion interface{}
-
 type HAProxyCRTListFileExpansion interface{}
+
+type HAProxyCfgExpansion interface{}
 
 type HAProxyGeneralFileExpansion interface{}
 
 type HAProxyMapFileExpansion interface{}
 
 type HAProxyTemplateConfigExpansion interface{}
+
+type HAProxyValidationTestsExpansion interface{}

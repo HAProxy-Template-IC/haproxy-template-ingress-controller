@@ -34,12 +34,12 @@ type Interface interface {
 // Clientset contains the clients for groups.
 type Clientset struct {
 	*discovery.DiscoveryClient
-	haproxytemplateicV1alpha1 *haproxytemplateicv1alpha1.HaproxyTemplateICV1alpha1Client
+	haproxyTemplateICV1alpha1 *haproxytemplateicv1alpha1.HaproxyTemplateICV1alpha1Client
 }
 
 // HaproxyTemplateICV1alpha1 retrieves the HaproxyTemplateICV1alpha1Client
 func (c *Clientset) HaproxyTemplateICV1alpha1() haproxytemplateicv1alpha1.HaproxyTemplateICV1alpha1Interface {
-	return c.haproxytemplateicV1alpha1
+	return c.haproxyTemplateICV1alpha1
 }
 
 // Discovery retrieves the DiscoveryClient
@@ -86,7 +86,7 @@ func NewForConfigAndClient(c *rest.Config, httpClient *http.Client) (*Clientset,
 
 	var cs Clientset
 	var err error
-	cs.haproxytemplateicV1alpha1, err = haproxytemplateicv1alpha1.NewForConfigAndClient(&configShallowCopy, httpClient)
+	cs.haproxyTemplateICV1alpha1, err = haproxytemplateicv1alpha1.NewForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func NewForConfigOrDie(c *rest.Config) *Clientset {
 // New creates a new Clientset for the given RESTClient.
 func New(c rest.Interface) *Clientset {
 	var cs Clientset
-	cs.haproxytemplateicV1alpha1 = haproxytemplateicv1alpha1.New(c)
+	cs.haproxyTemplateICV1alpha1 = haproxytemplateicv1alpha1.New(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClient(c)
 	return &cs

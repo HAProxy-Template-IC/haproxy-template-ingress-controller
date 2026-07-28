@@ -57,6 +57,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&HAProxyGeneralFileList{},
 		&HAProxyCRTListFile{},
 		&HAProxyCRTListFileList{},
+		&HAProxyValidationTests{},
+		&HAProxyValidationTestsList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil

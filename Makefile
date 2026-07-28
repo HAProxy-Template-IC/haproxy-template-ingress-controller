@@ -517,6 +517,17 @@ test-helm-defaults: $(if $(HELM_DEFAULTS_IMAGE),,docker-build-test) ## Install t
 	fi
 	bash scripts/test-helm-defaults.sh --image "$(or $(HELM_DEFAULTS_IMAGE),haptic:test-haproxy$(HAPROXY_VERSION))"
 
+test-install-without-gateway-api: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Assert a default install converges on a cluster with no Gateway API CRDs
+	@# Every other suite installs Gateway API first. This one must not, which is
+	@# why it owns its own cluster rather than joining the e2e one.
+	bash scripts/test-install-without-gateway-api.sh $(if $(KEEP_CLUSTER),--keep,)
+
+test-chart-upgrade: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Upgrade the last released chart to this worktree and assert nothing breaks
+	@# Owns its own kind cluster: it installs a released chart whose pre-upgrade
+	@# hook applies that release's cluster-scoped CRDs, which would downgrade the
+	@# schemas under any suite sharing the cluster.
+	bash scripts/test-chart-upgrade.sh $(if $(KEEP_CLUSTER),--keep,)
+
 build-integration-test: ## Build integration test binary (without running)
 	@echo "Building integration test binary..."
 	@mkdir -p bin
@@ -775,13 +786,16 @@ verify: ## Verify dependencies
 verify-generate: ## Verify generated code (CRDs, DeepCopy) is up-to-date
 	@echo "Verifying generated code is up-to-date..."
 	@$(MAKE) generate-crds generate-deepcopy
+	@# Deliberately does NOT revert the regenerated files. It used to, which meant
+	@# running this with a freshly regenerated (but not yet committed) type threw
+	@# that work away and left the tree unbuildable. CI runs on a fresh checkout,
+	@# so there is nothing there worth reverting either.
 	@if ! git diff --quiet --exit-code -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go'; then \
 		echo ""; \
 		echo "ERROR: Generated files are out of date:"; \
 		git diff --stat -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go'; \
 		echo ""; \
-		echo "Run 'make generate-crds generate-deepcopy' and commit the result."; \
-		git checkout -- charts/haptic/crds/ 'pkg/apis/**/zz_generated.*.go'; \
+		echo "The regenerated files have been left in place — commit them."; \
 		exit 1; \
 	fi
 	@echo "✓ Generated code is up-to-date"

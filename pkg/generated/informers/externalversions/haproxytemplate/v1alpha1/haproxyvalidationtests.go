@@ -31,38 +31,38 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// HAProxyCfgInformer provides access to a shared informer and lister for
-// HAProxyCfgs.
-type HAProxyCfgInformer interface {
+// HAProxyValidationTestsInformer provides access to a shared informer and lister for
+// HAProxyValidationTestses.
+type HAProxyValidationTestsInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() haproxytemplatev1alpha1.HAProxyCfgLister
+	Lister() haproxytemplatev1alpha1.HAProxyValidationTestsLister
 }
 
-type hAProxyCfgInformer struct {
+type hAProxyValidationTestsInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
 	tweakListOptions internalinterfaces.TweakListOptionsFunc
 	namespace        string
 }
 
-// NewHAProxyCfgInformer constructs a new informer for HAProxyCfg type.
+// NewHAProxyValidationTestsInformer constructs a new informer for HAProxyValidationTests type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewHAProxyCfgInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewHAProxyCfgInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+func NewHAProxyValidationTestsInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewHAProxyValidationTestsInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
 }
 
-// NewFilteredHAProxyCfgInformer constructs a new informer for HAProxyCfg type.
+// NewFilteredHAProxyValidationTestsInformer constructs a new informer for HAProxyValidationTests type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredHAProxyCfgInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return NewHAProxyCfgInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+func NewFilteredHAProxyValidationTestsInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+	return NewHAProxyValidationTestsInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
 }
 
-// NewHAProxyCfgInformerWithOptions constructs a new informer for HAProxyCfg type with additional options.
+// NewHAProxyValidationTestsInformerWithOptions constructs a new informer for HAProxyValidationTests type with additional options.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewHAProxyCfgInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
-	gvr := schema.GroupVersionResource{Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxycfgs"}
+func NewHAProxyValidationTestsInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	gvr := schema.GroupVersionResource{Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxyvalidationtestss"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
 	return cache.NewSharedIndexInformerWithOptions(
@@ -71,28 +71,28 @@ func NewHAProxyCfgInformerWithOptions(client versioned.Interface, namespace stri
 				if tweakListOptions != nil {
 					tweakListOptions(&opts)
 				}
-				return client.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).List(context.Background(), opts)
+				return client.HaproxyTemplateICV1alpha1().HAProxyValidationTestses(namespace).List(context.Background(), opts)
 			},
 			WatchFunc: func(opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&opts)
 				}
-				return client.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).Watch(context.Background(), opts)
+				return client.HaproxyTemplateICV1alpha1().HAProxyValidationTestses(namespace).Watch(context.Background(), opts)
 			},
 			ListWithContextFunc: func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&opts)
 				}
-				return client.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).List(ctx, opts)
+				return client.HaproxyTemplateICV1alpha1().HAProxyValidationTestses(namespace).List(ctx, opts)
 			},
 			WatchFuncWithContext: func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&opts)
 				}
-				return client.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).Watch(ctx, opts)
+				return client.HaproxyTemplateICV1alpha1().HAProxyValidationTestses(namespace).Watch(ctx, opts)
 			},
 		}, client),
-		&apishaproxytemplatev1alpha1.HAProxyCfg{},
+		&apishaproxytemplatev1alpha1.HAProxyValidationTests{},
 		cache.SharedIndexInformerOptions{
 			ResyncPeriod: options.ResyncPeriod,
 			Indexers:     options.Indexers,
@@ -101,14 +101,14 @@ func NewHAProxyCfgInformerWithOptions(client versioned.Interface, namespace stri
 	)
 }
 
-func (f *hAProxyCfgInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewHAProxyCfgInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
+func (f *hAProxyValidationTestsInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+	return NewHAProxyValidationTestsInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
-func (f *hAProxyCfgInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyCfg{}, f.defaultInformer)
+func (f *hAProxyValidationTestsInformer) Informer() cache.SharedIndexInformer {
+	return f.factory.InformerFor(&apishaproxytemplatev1alpha1.HAProxyValidationTests{}, f.defaultInformer)
 }
 
-func (f *hAProxyCfgInformer) Lister() haproxytemplatev1alpha1.HAProxyCfgLister {
-	return haproxytemplatev1alpha1.NewHAProxyCfgLister(f.Informer().GetIndexer())
+func (f *hAProxyValidationTestsInformer) Lister() haproxytemplatev1alpha1.HAProxyValidationTestsLister {
+	return haproxytemplatev1alpha1.NewHAProxyValidationTestsLister(f.Informer().GetIndexer())
 }

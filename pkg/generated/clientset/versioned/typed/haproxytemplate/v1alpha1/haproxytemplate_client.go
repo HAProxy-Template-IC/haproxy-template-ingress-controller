@@ -26,11 +26,12 @@ import (
 
 type HaproxyTemplateICV1alpha1Interface interface {
 	RESTClient() rest.Interface
-	HAProxyCfgsGetter
 	HAProxyCRTListFilesGetter
+	HAProxyCfgsGetter
 	HAProxyGeneralFilesGetter
 	HAProxyMapFilesGetter
 	HAProxyTemplateConfigsGetter
+	HAProxyValidationTestsesGetter
 }
 
 // HaproxyTemplateICV1alpha1Client is used to interact with features provided by the haproxy-haptic.org group.
@@ -38,12 +39,12 @@ type HaproxyTemplateICV1alpha1Client struct {
 	restClient rest.Interface
 }
 
-func (c *HaproxyTemplateICV1alpha1Client) HAProxyCfgs(namespace string) HAProxyCfgInterface {
-	return newHAProxyCfgs(c, namespace)
-}
-
 func (c *HaproxyTemplateICV1alpha1Client) HAProxyCRTListFiles(namespace string) HAProxyCRTListFileInterface {
 	return newHAProxyCRTListFiles(c, namespace)
+}
+
+func (c *HaproxyTemplateICV1alpha1Client) HAProxyCfgs(namespace string) HAProxyCfgInterface {
+	return newHAProxyCfgs(c, namespace)
 }
 
 func (c *HaproxyTemplateICV1alpha1Client) HAProxyGeneralFiles(namespace string) HAProxyGeneralFileInterface {
@@ -56,6 +57,10 @@ func (c *HaproxyTemplateICV1alpha1Client) HAProxyMapFiles(namespace string) HAPr
 
 func (c *HaproxyTemplateICV1alpha1Client) HAProxyTemplateConfigs(namespace string) HAProxyTemplateConfigInterface {
 	return newHAProxyTemplateConfigs(c, namespace)
+}
+
+func (c *HaproxyTemplateICV1alpha1Client) HAProxyValidationTestses(namespace string) HAProxyValidationTestsInterface {
+	return newHAProxyValidationTestses(c, namespace)
 }
 
 // NewForConfig creates a new HaproxyTemplateICV1alpha1Client for the given config.
