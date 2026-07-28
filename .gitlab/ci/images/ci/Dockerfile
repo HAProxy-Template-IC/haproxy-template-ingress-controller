@@ -47,7 +47,7 @@ ARG GORELEASER_VERSION=2.17.1
 # renovate: datasource=github-releases depName=sigstore/cosign
 ARG COSIGN_VERSION=3.1.2
 # renovate: datasource=github-releases depName=anchore/syft
-ARG SYFT_VERSION=1.49.0
+ARG SYFT_VERSION=1.50.0
 # renovate: datasource=github-releases depName=helm/helm versioning=semver allowedVersions=<4
 ARG HELM_VERSION=3.20.1
 # renovate: datasource=github-releases depName=kubernetes/kubernetes
