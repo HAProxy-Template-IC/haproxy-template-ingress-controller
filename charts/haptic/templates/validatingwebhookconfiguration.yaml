@@ -5,7 +5,7 @@
   The validating webhook fronts the same render pipeline the controller runs
   for an active reconcile, so its scope must match the resources the
   controller actually watches. We therefore source `watchedResources` from
-  the same `haptic.watchedResourcesUnion` helper that `clusterrole.yaml`
+  the same `haptic.mergeLibraries` helper that `haproxytemplateconfig.yaml`
   uses to compose the CRD spec. Library files (libraries/ingress.yaml etc.)
   declare `enableValidationWebhook: true` on each resource that should be
   validated; this template emits one webhook rule per such resource.
@@ -13,7 +13,8 @@
   using the same camelCase shape as the library files (the merge helper
   uses camelCase throughout).
 */ -}}
-{{- $watched := include "haptic.watchedResourcesUnion" . | fromYaml }}
+{{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
+{{- $watched := merge ($mergedLibraries.watchedResources | default dict) (.Values.controller.config.watchedResources | default dict) }}
 {{- $webhookRules := list }}
 {{- range $name, $resource := $watched }}
   {{- if $resource.enableValidationWebhook }}
