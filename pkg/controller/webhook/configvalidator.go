@@ -25,6 +25,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configtest"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
@@ -109,6 +110,7 @@ type ConfigValidator struct {
 	bootstrap            SchemaBootstrapper
 	effectiveResolver    func(ctx context.Context, cfg *coreconfig.Config) (*coreconfig.Config, error)
 	mergeWithSiblings    func(ctx context.Context, incoming *unstructured.Unstructured) (*unstructured.Unstructured, bool, error)
+	resolveTests         func(ctx context.Context, cfg *coreconfig.Config, crd *v1alpha1.HAProxyTemplateConfig) error
 	runningConfigVersion string
 }
 
@@ -189,6 +191,11 @@ type ConfigValidatorConfig struct {
 	// nil and validate the object as-is.
 	MergeWithSiblings func(ctx context.Context, incoming *unstructured.Unstructured) (merged *unstructured.Unstructured, managed bool, err error)
 
+	// ResolveTests (optional) folds in the tests carried by companion
+	// HAProxyValidationTests objects, so admission judges the suite the
+	// controller will actually run rather than the inline tests alone.
+	ResolveTests func(ctx context.Context, cfg *coreconfig.Config, crd *v1alpha1.HAProxyTemplateConfig) error
+
 	// RunningConfigVersion is the AppVersionLabel value on the controller's
 	// currently-loaded HAProxyTemplateConfig CR — i.e. the chart app version of
 	// the running deployment. The webhook compares it against the SAME label on
@@ -236,6 +243,7 @@ func NewConfigValidator(cfg *ConfigValidatorConfig) *ConfigValidator {
 		bootstrap:            cfg.Bootstrap,
 		effectiveResolver:    cfg.EffectiveResolver,
 		mergeWithSiblings:    cfg.MergeWithSiblings,
+		resolveTests:         cfg.ResolveTests,
 		runningConfigVersion: cfg.RunningConfigVersion,
 	}
 }
@@ -385,17 +393,17 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 	}
 	u = merged
 
-	cfg, _, err := conversion.ParseCRD(u)
-	if err != nil {
-		return false, fmt.Sprintf("parsing HAProxyTemplateConfig: %v", err), nil
+	cfg, crd, parseReason := parseAndGate(u)
+	if parseReason != "" {
+		return false, parseReason, nil
 	}
 
-	// Structural gate on the MERGED config. The CRD schema cannot carry these
-	// requirements any more — a single object of a merged set is legitimately
-	// incomplete — so without this the only thing standing between an operator
-	// and a crash-looping controller would be the load gate itself.
-	if err := coreconfig.ValidateMergedCompleteness(cfg); err != nil {
-		return false, fmt.Sprintf("invalid HAProxyTemplateConfig: %v", err), nil
+	// Before the completeness gate and the suite run, so admission judges the
+	// same tests the load gate will. A failure here admits with a warning
+	// rather than denying: at install time the config is applied before its
+	// companion objects exist, and the load gate is the authoritative check.
+	if warning := v.foldCompanionTests(ctx, cfg, crd, namespace, name); warning != nil {
+		return true, "", warning
 	}
 
 	cfg, skipResolve := v.resolveEffective(ctx, cfg, namespace, name)
@@ -524,4 +532,45 @@ func (v *ConfigValidator) resolveSchemas(ctx context.Context, cfg *coreconfig.Co
 		return v.declarations, v.typedResourceTypes
 	}
 	return helpers.BuildAdditionalDeclarations(cfg, bootstrapResult), bootstrapResult.Types
+}
+
+// foldCompanionTests folds in the tests carried by companion
+// HAProxyValidationTests objects, so admission judges the suite the controller
+// will actually run rather than the inline tests alone.
+//
+// A failure admits with a warning instead of denying: at install time the
+// configuration is applied before its companion objects exist, and the load gate
+// is the authoritative check either way.
+func (v *ConfigValidator) foldCompanionTests(
+	ctx context.Context,
+	cfg *coreconfig.Config,
+	crd *v1alpha1.HAProxyTemplateConfig,
+	namespace, name string,
+) []string {
+	if v.resolveTests == nil {
+		return nil
+	}
+	if err := v.resolveTests(ctx, cfg, crd); err != nil {
+		v.logger.Warn("Could not resolve companion validation tests; admitting (load gate still enforces)",
+			"namespace", namespace, "name", name, "error", err)
+		return []string{fmt.Sprintf(
+			"validation tests carried by HAProxyValidationTests could not be resolved (%v); "+
+				"the controller's load gate will still enforce them", err)}
+	}
+	return nil
+}
+
+// parseAndGate parses the merged object and applies the structural gate. The
+// CRD schema cannot carry those requirements any more — a single object of a
+// merged set is legitimately incomplete — so without this the only thing
+// between an operator and a crash-looping controller is the load gate itself.
+func parseAndGate(u *unstructured.Unstructured) (*coreconfig.Config, *v1alpha1.HAProxyTemplateConfig, string) {
+	cfg, crd, err := conversion.ParseCRD(u)
+	if err != nil {
+		return nil, nil, fmt.Sprintf("parsing HAProxyTemplateConfig: %v", err)
+	}
+	if err := coreconfig.ValidateMergedCompleteness(cfg); err != nil {
+		return nil, nil, fmt.Sprintf("invalid HAProxyTemplateConfig: %v", err)
+	}
+	return cfg, crd, ""
 }

@@ -274,6 +274,11 @@ func createDryRunValidator(
 		MergeWithSiblings: func(ctx context.Context, incoming *unstructured.Unstructured) (*unstructured.Unstructured, bool, error) {
 			return mergeWithSiblingConfigs(ctx, k8sClient, crdNames, incoming)
 		},
+		// Same resolver the load gate uses, so a config is admitted against the
+		// suite it will be loaded with rather than its inline tests alone.
+		ResolveTests: func(ctx context.Context, cfg *coreconfig.Config, crd *v1alpha1.HAProxyTemplateConfig) error {
+			return unionDiscoveredValidationTests(ctx, k8sClient, cfg, crd, logger)
+		},
 		// The chart app version of the controller's currently-running config
 		// (its app.kubernetes.io/version label). When a prospective config's
 		// same label differs (a rolling upgrade applying a config from a newer
