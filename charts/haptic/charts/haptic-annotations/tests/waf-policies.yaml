@@ -202,6 +202,219 @@ validationTests:
       - { type: not_contains, target: haproxy.cfg, pattern: "set-var\\(txn.coraza_body_complete\\) bool\\(true\\) if \\{ var\\(txn.coraza_body_mode\\) -m str buffered \\}\n" }
       - { type: contains, target: "file:spoe.conf", pattern: "body-mode=var\\(txn.coraza_body_mode\\) body-complete=var\\(txn.coraza_body_complete\\) detect-only=var\\(txn.coraza_detect_only\\)" }
 
+  test-haptic-waf-body-policy-on-grpc-backend-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      A body-inspecting WAF policy on an Ingress that declares a gRPC backend is
+      rejected at admission. Coraza cannot inspect a gRPC stream — the buffered
+      wait times out with 408 while unary calls keep working, so the breakage is
+      invisible until someone opens a stream.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: grpc-api }
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          inline:
+            body-inspection:
+              requestBody:
+                mode: any
+            headers-only:
+              requestBody:
+                mode: none
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: grpc-api
+            annotations: { haproxy-haptic.org/waf-policy: body-inspection, haproxy-haptic.org/backend-protocol: grpc }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: grpc-api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "has a gRPC backend and WAF policy 'body-inspection'"
+
+  test-haptic-waf-body-policy-on-nginx-grpc-backend-rejected:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: the same guard sees the nginx-compat spelling of a gRPC backend
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: grpc-api-nginx }
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          inline:
+            body-inspection:
+              requestBody:
+                mode: any
+            headers-only:
+              requestBody:
+                mode: none
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: grpc-api-nginx
+            annotations: { haproxy-haptic.org/waf-policy: body-inspection, nginx.ingress.kubernetes.io/backend-protocol: GRPCS }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: grpc-api-nginx.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "has a gRPC backend and WAF policy"
+
+  test-haptic-waf-headers-only-policy-on-grpc-backend-allowed:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      requestBody.mode none is the supported combination for gRPC, so it must
+      render cleanly — the guard must not fire on the configuration it tells
+      operators to adopt. Plain h2 is likewise untouched: HTTP/2 to the backend
+      is equally a REST backend whose bodies ARE bounded.
+    extraContext:
+      renderMode: admission
+      admissionSubject: { store: ingresses, namespace: default, name: grpc-ok }
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          inline:
+            body-inspection:
+              requestBody:
+                mode: any
+            headers-only:
+              requestBody:
+                mode: none
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: grpc-ok
+            annotations: { haproxy-haptic.org/waf-policy: headers-only, haproxy-haptic.org/backend-protocol: grpc }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: grpc-ok.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: h2-rest
+            annotations: { haproxy-haptic.org/waf-policy: body-inspection, haproxy-haptic.org/backend-protocol: h2 }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: h2-rest.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: "map:coraza-body.map"
+        pattern: "default/grpc-ok none"
+      - type: contains
+        target: "map:coraza-body.map"
+        pattern: "default/h2-rest buffered"
+
+  test-haptic-waf-body-policy-on-grpc-backend-warns-on-reconcile:
+    _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
+    description: >-
+      On a live reconcile the same combination must NOT abort the render. A
+      pre-existing gRPC Ingress with a body-inspecting policy records a Warning
+      Event and keeps serving: unary calls are inspected correctly and the
+      streaming ones already fail closed with 408, so there is no fail-open to
+      close and no reason to take the fleet down. This is the regression pin
+      for the admission-wedge class — a chart upgrade that starts rejecting a
+      pre-existing annotation must never break every render.
+    extraContext:
+      renderMode: reconcile
+      waf:
+        ingressPermissions:
+          allowPolicySelection: true
+        policies:
+          inline:
+            body-inspection:
+              requestBody:
+                mode: any
+          configMapRefs: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: grpc-legacy
+            annotations: { haproxy-haptic.org/waf-policy: body-inspection, haproxy-haptic.org/backend-protocol: grpc }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: grpc-legacy.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: unaffected
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: unaffected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      # The render completes at all — that is the property under test.
+      - type: haproxy_valid
+      # The offending route keeps its policy rather than being 503'd: the
+      # runtime already refuses exactly the calls that cannot be inspected.
+      - type: contains
+        target: "map:coraza-body.map"
+        pattern: "default/grpc-legacy buffered"
+      # And an unrelated Ingress still renders, which is what the wedge class
+      # destroyed.
+      - type: contains
+        target: "map:host.map"
+        pattern: "unaffected\\.example\\.com"
+
   test-haptic-waf-policy-seclang-shared:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
     description: policy-authored SecLang compiles once and remains reusable across Ingresses

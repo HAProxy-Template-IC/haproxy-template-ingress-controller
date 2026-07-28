@@ -380,6 +380,10 @@ Unary gRPC is unaffected in every mode: its body is complete on arrival, so the 
 
 Detect (shadow) mode never blocks a streaming request. It waits only for a body whose length is declared and leaves an unbounded one uninspected, so switching a buffered policy to `detect` can't take a streaming route down. A declared body is still buffered in detect mode, keeping shadow verdicts faithful to what enforcement would have decided. Where the wait is skipped the body is reported to the engine as incomplete, so a shadow verdict is never computed over a partly arrived request and then read as a sign that enforcement would have been safe.
 
+HAPTIC enforces this rather than leaving it to be discovered in production. An Ingress that declares a gRPC backend (`haproxy-haptic.org/backend-protocol: grpc`/`grpcs`, or the nginx-compat `GRPC`/`GRPCS`) **and** selects a policy with a body-inspecting `requestBody.mode` is rejected when you apply it, with a message naming the policy and the fix. A route that already carries the combination isn't taken down: it records a `Warning` Event with reason `WafBodyPolicyOnGRPCRoute` and keeps serving, because the runtime already refuses exactly the calls it can't inspect and the unary ones are inspected correctly — there's nothing to fail closed.
+
+Plain `h2`/`h2-ssl` backends aren't affected. HTTP/2 to the backend is how gRPC travels, but it's equally an ordinary HTTP API backend whose bodies are bounded and can be inspected, so the check keys on the unambiguous gRPC declarations only.
+
 **Don't reach for partial-body inspection.** Coraza's `SecRequestBodyLimitAction ProcessPartial` truncates at the limit and runs the rules on what it has, which looks like a way to inspect a stream. It isn't: an attacker prepends padding up to the inspected size and the payload lands in the uninspected remainder. [Coraza documents that bypass](https://www.coraza.io/docs/seclang/directives/), and HAPTIC's `reject` posture is deliberate.
 
 Because body rules can't protect a streaming route, protect it with the controls that don't need the body — all available as annotations on the same route:

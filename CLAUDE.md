@@ -99,6 +99,43 @@ Kernighan & Pike *The Practice of Programming* ch.1,
 
 - **Name generic code for what it does, not who first uses it.** A file, function, type, or package that is generic — usable by more than one caller — must be named after its capability, never after its first consumer or use case. Naming `filters_governance.go` for the generic `resource()` / `jsonpathGet()` / `jsonpathSet()` helpers because governance happened to be the first caller is wrong; the capability name (`filters_jsonpath.go`) is correct. The same holds for functions (`buildGovernanceContext` for an otherwise-generic context builder), types, and packages. Test: if the name only makes sense once you know the first consumer, rename it. A consumer-specific name is right only for genuinely consumer-specific code.
 
+### Comments and user-visible messages
+
+**Short and to the point — this applies to code comments AND to every message a
+human reads at runtime**: error strings, `fail()` messages, Kubernetes Events,
+warnings, log lines, rendered config comments.
+
+A user-visible message answers three things and stops:
+
+1. **What is wrong**, naming the resource or setting.
+2. **What it causes** — the observable symptom, not the internals.
+3. **What to do** — one concrete fix.
+
+Everything else belongs in the code comment or the docs, not in the message.
+Background, mechanism, and rationale are for the reader who is debugging the
+code; the operator reading an error is trying to fix their config.
+
+```go
+// Too long — mechanism, a parenthetical aside, and two alternative fixes.
+"Ingress default/api declares a gRPC backend and selects WAF policy 'p', whose
+requestBody.mode inspects the body. Coraza buffers a complete body to inspect it
+and ships no protobuf body processor, so a gRPC stream can never satisfy it:
+client-streaming and bidirectional calls will time out with 408 (unary calls keep
+working, which hides it). Set requestBody.mode: none on the policy for this route
+— metadata inspection still applies — or move the gRPC service to a route
+without a body-inspecting policy."
+
+// Right — what, effect, fix.
+"Ingress default/api has a gRPC backend and WAF policy 'p', which buffers request
+bodies. A gRPC stream never completes its body, so streaming calls fail with 408.
+Set requestBody.mode: none on the policy."
+```
+
+Comments follow the same discipline: explain what is not obvious from the code —
+the constraint, the measurement, the reason a simpler version is wrong — and cut
+everything a reader can see for themselves. A comment longer than the code it
+explains is usually restating it.
+
 ### Go Idioms
 
 - Follow standard Go conventions (effective Go, Go proverbs)
