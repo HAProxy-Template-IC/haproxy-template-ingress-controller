@@ -703,13 +703,25 @@ func mergeConfigFiles(filePaths []string) (
 // typed spec: the typed form adds zero values for every field the YAML omits
 // (`logging: {}`, `extraContext: null`), which would drown any real difference.
 func dumpMergedSpec() error {
-	merged, bareSpec, _, err := mergeConfigFiles(validateConfigFiles)
+	merged, bareSpec, testDocs, err := mergeConfigFiles(validateConfigFiles)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
 	var payload any = bareSpec
 	if merged != nil {
+		spec, _ := merged.Object["spec"].(map[string]any)
+		// Fold companion tests in, so what this prints is the whole suite the
+		// controller would run. Without it a consumer of the dump — the
+		// playground's presets, for one — would silently get a config with no
+		// tests at all.
+		if len(testDocs) > 0 && spec != nil {
+			tests, unionErr := unionDumpedTests(spec, testDocs)
+			if unionErr != nil {
+				return unionErr
+			}
+			spec["validationTests"] = tests
+		}
 		payload = merged.Object["spec"]
 	}
 	out, err := yaml.Marshal(payload)
@@ -891,4 +903,28 @@ func setupValidationPaths(configSpec *v1alpha1.HAProxyTemplateConfigSpec) (
 	}
 
 	return resolvedPaths.ToValidationPaths(), capabilities, localVersion, cleanup, nil
+}
+
+// unionDumpedTests folds companion tests into the verbatim merged spec for
+// --dump-merged. It goes through the typed union rather than merging the
+// unstructured maps directly, so the dump obeys the same collision and _global
+// rules the controller does instead of a second, quietly different set.
+func unionDumpedTests(spec map[string]any, testDocs []*unstructured.Unstructured) (map[string]any, error) {
+	inline := &v1alpha1.HAProxyTemplateConfigSpec{}
+	if raw, ok := spec["validationTests"]; ok {
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(
+			map[string]any{"validationTests": raw}, inline); err != nil {
+			return nil, fmt.Errorf("reading inline validationTests: %w", err)
+		}
+	}
+	if err := unionFileValidationTests(inline, testDocs); err != nil {
+		return nil, err
+	}
+
+	out, err := runtime.DefaultUnstructuredConverter.ToUnstructured(inline)
+	if err != nil {
+		return nil, fmt.Errorf("re-encoding merged validationTests: %w", err)
+	}
+	tests, _ := out["validationTests"].(map[string]any)
+	return tests, nil
 }

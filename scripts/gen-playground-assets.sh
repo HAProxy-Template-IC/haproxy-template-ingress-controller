@@ -49,7 +49,7 @@ render_config() {
   # preset is exactly what the controller would assemble.
   local rendered="$OUT/presets/.$id.multi.yaml"
   helm template "$CHART" --namespace default "${av[@]}" "${sets[@]}" \
-    | yq 'select(.kind == "HAProxyTemplateConfig")' > "$rendered"
+    | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' > "$rendered"
   (cd "$REPO" && go run ./cmd/controller validate -f "$rendered" --dump-merged) \
     > "$OUT/presets/$id.config.yaml"
   rm -f "$rendered"
