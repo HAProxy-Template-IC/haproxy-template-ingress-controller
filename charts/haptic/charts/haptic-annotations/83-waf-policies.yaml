@@ -982,6 +982,28 @@ templateSnippets:
                 ruleMaxBodyBytes = policyMaxBody[policy]
               }
 
+              // Only the unambiguous gRPC values match. `h2`/`h2-ssl` is how
+              // gRPC travels but is equally a bounded HTTP API, so flagging it
+              // would reject working configs; haproxy-ingress has no gRPC value
+              // to key on.
+              //
+              // Warn rather than fail closed: the runtime already refuses the
+              // streaming calls (408) and inspects the unary ones, so there is
+              // no fail-open to close and 503-ing the route would cause the
+              // outage the misconfiguration does not.
+              if bodyMode == "buffered" {
+                var declaredProto = annotations["haproxy-haptic.org/backend-protocol"]
+                var nginxProto = annotations["nginx.ingress.kubernetes.io/backend-protocol"]
+                var isGRPC = declaredProto == "grpc" || declaredProto == "grpcs" || nginxProto == "GRPC" || nginxProto == "GRPCS"
+                if isGRPC {
+                  var wafGRPCMessage = "Ingress " + resourceID + " has a gRPC backend and WAF policy '" + policy +
+                    "', which buffers request bodies. A gRPC stream never completes its body, so streaming calls fail with 408." +
+                    " Set requestBody.mode: none on the policy."
+                  if underAdmission { fail(wafGRPCMessage) }
+                  recordEvent(ingress, "WafBodyPolicyOnGRPCRoute", wafGRPCMessage)
+                }
+              }
+
               var appName = ""
               if policy != "" {
                 appName = "policy:" + policy
