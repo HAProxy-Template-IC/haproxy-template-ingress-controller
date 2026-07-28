@@ -135,7 +135,7 @@ func runIteration(
 	// The type bootstrapper is also reused by the step-2.5 startup validationTests
 	// gate below, so it's hoisted to a local rather than constructed inline.
 	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
-	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, crdNames, logger)
+	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, crdNames, newValidationTestResolver(ctx, k8sClient, logger), logger)
 	defer setup.Cancel()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)

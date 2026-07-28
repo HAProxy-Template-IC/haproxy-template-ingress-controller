@@ -70,6 +70,8 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	./scripts/gen-migration-docs.sh --check
 	@echo "Checking chart values docs coverage..."
 	./scripts/check-values-docs.sh
+	@echo "Checking every webhook-routed kind has a Go handler..."
+	./scripts/check-webhook-kinds.sh
 	@echo "Checking playground/facade highlight bundle is in sync..."
 	node scripts/check-highlight-bundle.mjs
 	@echo "Linting YAML files..."

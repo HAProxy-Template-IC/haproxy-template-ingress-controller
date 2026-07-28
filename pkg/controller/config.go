@@ -117,6 +117,15 @@ func fetchAndValidateInitialConfig(
 		return nil, fmt.Errorf("parsing initial Secret: %w", err)
 	}
 
+	// Before ValidateStructure, so the discovered tests go through the same
+	// structural checks and requires-stripping as the inline ones.
+	if err := unionDiscoveredValidationTests(ctx, k8sClient, cfg, crd, logger); err != nil {
+		return nil, fmt.Errorf("resolving validation tests: %w", err)
+	}
+	if err := enforceRequireValidationTests(cfg, crd.Spec.RequireValidationTests); err != nil {
+		return nil, err
+	}
+
 	// Validate initial configuration
 	logger.Info("Validating initial configuration and credentials")
 

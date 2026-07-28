@@ -91,12 +91,25 @@ func SetBuildInfo(version, haproxyVersion string) {
 }
 
 // GVRs for Kubernetes resources used by the controller.
+const (
+	// hapticAPIGroup and hapticAPIVersion identify HAPTIC's own CRDs.
+	hapticAPIGroup   = "haproxy-haptic.org"
+	hapticAPIVersion = "v1alpha1"
+)
+
 var (
 	// crdGVR is the GVR for HAProxyTemplateConfig custom resource.
 	crdGVR = schema.GroupVersionResource{
-		Group:    "haproxy-haptic.org",
-		Version:  "v1alpha1",
+		Group:    hapticAPIGroup,
+		Version:  hapticAPIVersion,
 		Resource: "haproxytemplateconfigs",
+	}
+	// validationTestsGVR is the GVR for HAProxyValidationTests, HAPTIC's own
+	// kind carrying the suite the load gate runs.
+	validationTestsGVR = schema.GroupVersionResource{
+		Group:    hapticAPIGroup,
+		Version:  hapticAPIVersion,
+		Resource: "haproxyvalidationtests",
 	}
 	// secretGVR is the GVR for Kubernetes Secrets.
 	secretGVR = schema.GroupVersionResource{
@@ -106,8 +119,8 @@ var (
 	}
 	// haproxyCfgGVR is the GVR for HAProxyCfg custom resource.
 	haproxyCfgGVR = schema.GroupVersionResource{
-		Group:    "haproxy-haptic.org",
-		Version:  "v1alpha1",
+		Group:    hapticAPIGroup,
+		Version:  hapticAPIVersion,
 		Resource: "haproxycfgs",
 	}
 	// haproxyMapFileGVR, haproxyGeneralFileGVR, and haproxyCRTListFileGVR are the
@@ -434,6 +447,7 @@ func setupComponents(
 	introspectionRegistry *introspection.Registry,
 	typeBootstrapper validator.TypeBootstrapper,
 	crdNames []string,
+	resolveTests configloader.ValidationTestResolver,
 	logger *slog.Logger,
 ) *componentSetup {
 	logger.Info("Stage 1: Creating config management components")
@@ -462,7 +476,7 @@ func setupComponents(
 
 	// Create components
 	eventCommentator := commentator.NewEventCommentator(bus, logger, 500)
-	configLoaderComponent := configloader.NewConfigLoaderComponent(bus, crdNames, logger)
+	configLoaderComponent := configloader.NewConfigLoaderComponent(bus, crdNames, resolveTests, logger)
 	credentialsLoaderComponent := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
 
 	// Create config validators (scatter-gather responders for HAProxyTemplateConfig CRD validation)
