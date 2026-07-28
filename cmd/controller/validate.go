@@ -698,6 +698,16 @@ func splitConfigDocuments(data []byte) ([]*unstructured.Unstructured, error) {
 			return nil, err
 		}
 		document := &unstructured.Unstructured{Object: object}
+		// Refusing beats skipping: this command is a pre-apply gate, and an
+		// empty suite passes unconditionally, so quietly dropping an object
+		// that carries tests would report success having run none of them.
+		// Remove this once the union is wired through to ConvertSpec.
+		if document.GetKind() == "HAProxyValidationTests" {
+			return nil, fmt.Errorf(
+				"%s/%s is a HAProxyValidationTests object, which this command cannot run yet; "+
+					"validating without it would pass while running none of its tests",
+				document.GetNamespace(), document.GetName())
+		}
 		if document.GetKind() != "HAProxyTemplateConfig" {
 			continue
 		}
