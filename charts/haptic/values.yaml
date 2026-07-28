@@ -644,6 +644,53 @@ controller:
         # authenticated consumer, and `denied_by`, which names the gate that
         # blocked a request. See
         # https://haproxy-haptic.org/docs/latest/haproxy-deployment/#access-logging
+        # W3C Trace Context. OFF by default, deliberately: turning it on writes a
+        # `traceparent` header onto every upstream request, and there is no
+        # sensible default destination for traces, so it is an explicit opt-in
+        # rather than something that changes what your backends receive on an
+        # upgrade.
+        #
+        # With it OFF, an inbound trace id is still adopted into the access log's
+        # `trace_id` field, so records can be joined to a trace someone else is
+        # collecting. Nothing is minted and nothing is propagated.
+        #
+        # With it ON, HAProxy owns trace identity entirely — no SPOA sidecar is
+        # involved, so this works with the hub disabled:
+        #   - a valid inbound traceparent is adopted (same trace, its span becomes
+        #     the parent, its sampling decision is honoured),
+        #   - otherwise a W3C-valid trace id and span id are minted,
+        #   - `traceparent` is set on the request before it reaches the backend,
+        #     so your services join the same trace,
+        #   - `span_id`, `parent_span_id` and `trace_flags` join the access log,
+        #     which is what lets the log record be exported as a span.
+        tracing:
+          enabled: false
+          # Percentage of requests sampled when HAPTIC is the trace ROOT. An
+          # inbound traceparent's decision is always honoured instead, because
+          # re-deciding mid-trace produces half-sampled traces. Requests that are not sampled requests
+          # still propagate `traceparent` with flags 00, so downstream honours the
+          # same decision rather than starting its own.
+          sampleRate: 100
+          # Export spans to an OTLP/HTTP collector. Leave the endpoint empty for
+          # propagation-only tracing: HAProxy still sets `traceparent` so your
+          # backends join the trace and their spans reach whatever they already
+          # report to — HAPTIC just contributes no span of its own.
+          #
+          # Spans are built from ACCESS-LOG RECORDS in the vector sidecar, not from
+          # a SPOA hop. That is what gives complete coverage: `http-response` rules
+          # never run for HAProxy-generated responses, so a SPOE-based exporter
+          # cannot see a single 502/503/504, deny, redirect or errorfile — the
+          # failures traces exist for. Every one of those produces a log record.
+          # It also costs no round trip on the request path.
+          #
+          # Requires vector.enabled=true; the render fails otherwise rather than
+          # exporting nothing silently.
+          otlp:
+            # Full URL of an OTLP/HTTP traces endpoint, e.g.
+            # http://tempo.observability.svc.cluster.local:4318/v1/traces
+            endpoint: ""
+            # `service.name` reported for HAPTIC's own spans.
+            serviceName: haptic
         accessLog:
           # Extra JSON fields: <field name> -> exactly one HAProxy sample
           # expression. Each is captured into txn.log_<name> at request time,

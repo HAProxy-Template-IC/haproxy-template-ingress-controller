@@ -1,33 +1,7 @@
-# nginx-ingress library — backend-directives-* annotation handlers.
-# session-affinity, timeouts, load-balance, proxy-body-size, backend-protocol,
-# proxy-protocol, rewrite-target, rate-limiting, upstream-hash, config-snippet.
-# (Two source blocks — general directives + rate/hash/snippet — merged here;
-# the basic-auth backend directive lives in 40-auth-spoe with the rest of auth.)
 templateSnippets:
-  # ============================================================================
-  # Backend Directives
-  # ============================================================================
 
   backend-directives-670-nginx-ingress-session-affinity:
     template: |
-      {#-
-        Nginx Ingress Session Affinity (Cookie Persistence)
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#session-affinity
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/affinity: "cookie" (required to enable)
-          - nginx.ingress.kubernetes.io/session-cookie-name: "<name>" (default: INGRESSCOOKIE)
-          - nginx.ingress.kubernetes.io/session-cookie-hash: accepted but NOT configurable in
-            HAProxy (md5/sha1/index cannot be honoured); emits a warning, does not change hashing
-          - nginx.ingress.kubernetes.io/session-cookie-path: "<path>" (optional)
-          - nginx.ingress.kubernetes.io/session-cookie-secure: "true" (optional -> attr Secure)
-          - nginx.ingress.kubernetes.io/session-cookie-samesite: "Strict|Lax|None" (optional -> attr SameSite=<v>)
-
-        Generated HAProxy Config:
-          cookie <name> insert indirect nocache dynamic [attr Path=<p>] [attr Secure] [attr SameSite=<v>]
-          dynamic-cookie-key <sha256-of-ns/name>
-      -#}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -40,23 +14,13 @@ templateSnippets:
           {%- var cookiePath = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-path"] %}
           {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
           {%- if cookiePath != "" %}
-            {#- HAProxy's `cookie` directive does not accept a bare `path`
-                keyword (unlike nginx). The supported set is rewrite /
-                insert / prefix / indirect / nocache / postonly / domain /
-                maxidle / dynamic / maxlife / attr. Use `attr Path=<path>`
-                to surface the cookie path attribute on the Set-Cookie
-                header HAProxy emits. -#}
+            {#- HAProxy's `cookie` has no bare `path` keyword; the path rides on `attr Path=`. -#}
             {%- cookieDir = cookieDir + " attr Path=" + cookiePath %}
           {%- end %}
-          {#- session-cookie-secure -> Secure cookie attribute. HAProxy's
-              `cookie` directive supports repeated `attr` keywords. -#}
           {%- var cookieSecure = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-secure"] %}
           {%- if cookieSecure == "true" %}
             {%- cookieDir = cookieDir + " attr Secure" %}
           {%- end %}
-          {#- session-cookie-samesite -> SameSite cookie attribute. Only the
-              three browser-defined values are valid; reject anything else
-              rather than emit a malformed Set-Cookie attribute. -#}
           {%- var cookieSameSite = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-samesite"] %}
           {%- if cookieSameSite != "" %}
             {%- if cookieSameSite != "Strict" && cookieSameSite != "Lax" && cookieSameSite != "None" %}
@@ -64,17 +28,11 @@ templateSnippets:
             {%- end %}
             {%- cookieDir = cookieDir + " attr SameSite=" + cookieSameSite %}
           {%- end %}
-          {#- session-cookie-domain -> native `domain` cookie keyword (HAProxy
-              adds Domain=<d> to the Set-Cookie it inserts). -#}
           {%- var cookieDomain = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-domain"] %}
           {%- if cookieDomain != "" %}
             {%- cookieDir = cookieDir + " domain " + ValidateConfigValue(cookieDomain, "nginx.ingress.kubernetes.io/session-cookie-domain", key, false) %}
           {%- end %}
-          {#- session-cookie-max-age (preferred) / session-cookie-expires (legacy)
-              -> `attr Max-Age=<seconds>` on the inserted Set-Cookie, i.e. the
-              BROWSER cookie lifetime nginx's Max-Age/Expires controls (not
-              HAProxy's internal `maxlife` stickiness window). HAProxy can't
-              compute an absolute Expires date, so both map to Max-Age. -#}
+          {#- Max-Age is the browser cookie lifetime, not HAProxy's `maxlife` stickiness window; Expires maps here too because HAProxy can't emit an absolute date. -#}
           {%- var cookieMaxAge = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-max-age"] %}
           {%- var cookieExpires = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-expires"] %}
           {%- var cookieLife = cookieMaxAge %}
@@ -89,11 +47,6 @@ templateSnippets:
             {%- end %}
             {%- cookieDir = cookieDir + " attr Max-Age=" + cookieLife %}
           {%- end %}
-          {#- session-cookie-hash selects the cookie-value hashing algorithm in
-              nginx (md5|sha1|index). HAProxy uses `dynamic` cookies (the server
-              name hashed via dynamic-cookie-key) and that algorithm is not
-              operator-selectable, so the value cannot be honoured — surface a
-              warning rather than silently ignore it (cf. proxy-ssl-verify-depth). -#}
           {%- var cookieHash = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-hash"] %}
           {%- if cookieHash != "" %}
       # Warning: nginx.ingress.kubernetes.io/session-cookie-hash={{ cookieHash }} on Ingress {{ key }} is not configurable in HAProxy — dynamic cookies always hash via dynamic-cookie-key.
@@ -106,24 +59,6 @@ templateSnippets:
 
   backend-directives-700-nginx-ingress-timeouts:
     template: |
-      {#-
-        Nginx Ingress Backend Timeouts
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-timeouts
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/proxy-connect-timeout: "<seconds>" (plain number)
-          - nginx.ingress.kubernetes.io/proxy-read-timeout: "<seconds>" (plain number)
-          - nginx.ingress.kubernetes.io/proxy-send-timeout: "<seconds>" (plain number)
-
-        Note: Nginx values are plain seconds. We append 's' suffix for HAProxy.
-        proxy-read-timeout and proxy-send-timeout both map to HAProxy's timeout server.
-        If both are set, the larger value is used.
-
-        Generated HAProxy Config:
-          timeout connect <val>s
-          timeout server <val>s
-      -#}
       {%- if ingress != nil %}
         {%- var connectTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-connect-timeout"] %}
         {%- var readTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"] %}
@@ -136,7 +71,6 @@ templateSnippets:
       timeout connect {{ connectTimeout }}s
         {% end %}
         {%- if readTimeout != "" || sendTimeout != "" %}
-          {#- Both map to timeout server; use the larger value if both set -#}
           {%- var serverVal = 0 %}
           {%- if readTimeout != "" %}
             {%- serverVal = toint(readTimeout) %}
@@ -153,24 +87,6 @@ templateSnippets:
 
   backend-directives-710-nginx-ingress-load-balance:
     template: |
-      {#-
-        Nginx Ingress Load Balancing Algorithm
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-nginx-load-balancing
-
-        Annotation: nginx.ingress.kubernetes.io/load-balance
-        Values: round_robin, least_conn, ip_hash, random, ewma
-
-        Mapping to HAProxy:
-          round_robin -> roundrobin
-          least_conn  -> leastconn
-          ip_hash     -> source
-          random      -> random
-          ewma        -> leastconn (closest equivalent)
-
-        Generated HAProxy Config:
-          balance <algorithm>
-      -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -198,24 +114,8 @@ templateSnippets:
 
   backend-directives-715-nginx-ingress-next-upstream:
     template: |
-      {#-
-        Nginx Ingress proxy-next-upstream — when to retry against the next server.
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-next-upstream
-
-        Annotations:
-          - proxy-next-upstream: space-separated conditions (error, timeout,
-              invalid_header, http_500/502/503/504/403/404/429, non_idempotent, off)
-          - proxy-next-upstream-tries: max attempts (0 = unlimited in nginx)
-
-        HAProxy mapping (backend-level):
-          error -> conn-failure ; timeout -> response-timeout ;
-          invalid_header -> junk-response ; http_<NNN> -> <NNN> ;
-          off -> `retries 0` ; tries N(>0) -> `retries N`.
-        `option redispatch` is already set in defaults so a retry lands on a
-        different server. Ignored (no HAProxy CE equivalent): non_idempotent and
-        proxy-next-upstream-timeout.
-      -#}
+      {#- A retry lands on a different server only because base.yaml's defaults set `option redispatch`. -#}
+      {#- Silently ignored, no HAProxy CE equivalent: non_idempotent, proxy-next-upstream-timeout. -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -258,9 +158,7 @@ templateSnippets:
       retry-on {{ join(conds, " ") }}
             {%- end %}
             {%- if tries != "" %}
-              {#- Reject non-integer values up front: toint() returns 0 for junk
-                  like "abc"/"2.5", which would otherwise be silently dropped and
-                  hide an operator typo. -#}
+              {#- toint() returns 0 for junk like "abc"/"2.5", so an unchecked typo would silently drop the retry limit. -#}
               {%- if !regex_search(tries, "^[0-9]+$") %}
                 {{- fail("Invalid value '" + tries + "' for 'nginx.ingress.kubernetes.io/proxy-next-upstream-tries' on Ingress '" + key + "'. Must be a non-negative integer.") -}}
               {%- end %}
@@ -275,21 +173,8 @@ templateSnippets:
 
   map-body-size-720-nginx-ingress:
     template: |
-      {#-
-        Nginx Ingress Proxy Body Size Limit (Strategy 1: relocated to a map)
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-max-body-size
-
-        Annotation: nginx.ingress.kubernetes.io/proxy-body-size
-        Values: plain number (bytes), or with k/K, m/M, g/G suffix
-        Value "0" means unlimited (no map entry emitted).
-
-        Emits `<backend_name> <bytes>` into body-size.map. The resource-agnostic
-        frontend-filters-250-request-body-size rule in base.yaml enforces it
-        (http-request deny 413) keyed on the resolved backend, so the per-backend
-        `http-request deny` no longer lives in the backend section — adding or
-        changing the cap is a map-only, reload-free update.
-      -#}
+      {#- "0" means unlimited in nginx, hence no map entry. -#}
+      {#- base.yaml's frontend-filters-250-request-body-size enforces the map (deny 413) keyed on the resolved backend, so a cap change is map-only and reload-free. -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var bodySize = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-body-size"] -%}
@@ -310,8 +195,7 @@ templateSnippets:
           %%}
           {%- if bytes > 0 -%}
             {%- for _, rule := range ingress.Spec.Rules -%}
-              {#- rule.Http is a value struct; .Paths is an empty slice when the
-                  rule has no http block, so the loop is a no-op (no nil guard). -#}
+              {#- rule.Http is a value struct: .Paths is empty without an http block, so no nil guard. -#}
               {%- for _, path := range rule.Http.Paths -%}
                 {%- var be = BackendNameIngress(ingress, path) -%}
                 {%- if first_seen("map-body-size", be) -%}
@@ -325,21 +209,7 @@ templateSnippets:
 
   backend-directives-725-nginx-ingress-limit-rate:
     template: |
-      {#-
-        Nginx Ingress limit-rate / limit-rate-after — per-connection download throttle.
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#limit-rate
-
-        Annotations:
-          - limit-rate: max bytes/sec sent to a single client connection (e.g. "100k")
-          - limit-rate-after: bytes transferred before throttling kicks in (e.g. "1m")
-
-        HAProxy mapping (per-stream bandwidth limit, HAProxy CE >= 2.7):
-          filter bwlim-out <name> default-limit <rate> default-period 1s [min-size <after>]
-          http-request set-bandwidth-limit <name>
-        bwlim-out limits data sent toward the client; min-size is the offset before
-        the limit applies (= limit-rate-after).
-      -#}
+      {#- bwlim-out throttles data sent toward the client; min-size is the byte offset before throttling starts (= limit-rate-after). -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -366,22 +236,6 @@ templateSnippets:
 
   backend-directives-730-nginx-ingress-backend-protocol:
     template: |
-      {#-
-        Nginx Ingress Backend Protocol
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#backend-protocol
-
-        Annotation: nginx.ingress.kubernetes.io/backend-protocol
-        Values: HTTP, HTTPS, GRPC, GRPCS
-
-        Mapping to HAProxy server options:
-          HTTP   -> (no additional flags)
-          HTTPS  -> ssl verify none
-          GRPC   -> proto h2
-          GRPCS  -> ssl verify none proto h2
-
-        AJP and FCGI are not supported in HAProxy and will fail with an error.
-      -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -389,7 +243,7 @@ templateSnippets:
         {%- var proto = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/backend-protocol"] %}
         {%- if proto != "" %}
           {%- if proto == "HTTP" %}
-            {#- HTTP/1.1 is default, no flag needed -#}
+            {#- HTTP/1.1 needs no server flag -#}
           {%- else if proto == "HTTPS" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
           {%- else if proto == "GRPC" %}
@@ -408,19 +262,6 @@ templateSnippets:
 
   backend-directives-740-nginx-ingress-proxy-protocol:
     template: |
-      {#-
-        Nginx Ingress Proxy Protocol to Backend
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-protocol
-
-        Annotation: nginx.ingress.kubernetes.io/use-proxy-protocol
-        Values: "true" | "false"
-
-        When enabled, sends PROXY protocol v2 header to the backend.
-
-        Generated HAProxy Config:
-          (appends send-proxy-v2 to server options)
-      -#}
       {%- if ingress != nil %}
         {%- var pp = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/use-proxy-protocol"] %}
         {%- if pp == "true" %}
@@ -430,19 +271,6 @@ templateSnippets:
 
   backend-directives-750-nginx-ingress-rewrite-target:
     template: |
-      {#-
-        Nginx Ingress Rewrite Target
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#rewrite
-
-        Annotation: nginx.ingress.kubernetes.io/rewrite-target
-
-        Nginx capture groups use $1, $2, etc. HAProxy uses \1, \2, etc.
-        This template translates $N to \N in the rewrite target value.
-
-        Generated HAProxy Config:
-          http-request replace-path (.*) <translated-value>
-      -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -451,13 +279,7 @@ templateSnippets:
         {%- if rewrite != "" %}
           {#- Translate $1..$9 capture groups to \1..\9 -#}
           {%- rewrite = regexp("\\$([1-9])").ReplaceAll(rewrite, "\\$1") %}
-          {#- Capture/regex rewrites (translated value contains a \1..\9 backreference)
-              stay backend-scoped — the regex side can't be map-driven. LITERAL
-              rewrites go to path-rewrite.map via map-path-rewrite-750-nginx-ingress
-              and are applied reload-free as a frontend set-path. The two branches
-              are mutually exclusive (one rewrite value per backend). The predicate
-              keys on an actual \N backreference, not any backslash, so a literal
-              path that happens to contain a backslash routes to the map. -#}
+          {#- Only a \N backreference forces backend scope (the regex side can't be map-driven); literal rewrites go to path-rewrite.map via map-path-rewrite-750-nginx-ingress. -#}
           {%- if regex_search(rewrite, "\\\\[1-9]") %}
       # nginx-ingress/backend-directives-rewrite-target ({{ key }})
       http-request replace-path (.*) {{ rewrite }}
@@ -467,9 +289,7 @@ templateSnippets:
 
   map-path-rewrite-750-nginx-ingress:
     template: |
-      {#- nginx rewrite-target LITERAL replacement (no \N capture) → path-rewrite.map,
-          consumed by base.yaml frontend-filters-400-path-rewrite as a set-path.
-          Capture rewrites stay as replace-path in backend-directives-750. -#}
+      {#- Literal rewrites only (no \N); base.yaml's frontend-filters-400-path-rewrite applies them as set-path. -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -493,46 +313,9 @@ templateSnippets:
   backend-directives-770-nginx-ingress-rate-limiting:
     template: |
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
-      {#-
-        Nginx Ingress Rate Limiting
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#rate-limiting
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/limit-rps: "<requests-per-second>"
-          - nginx.ingress.kubernetes.io/limit-rpm: "<requests-per-minute>"
-          - nginx.ingress.kubernetes.io/limit-connections: "<connections>"
-          - nginx.ingress.kubernetes.io/limit-whitelist: "<CIDR>,<CIDR>,..." (exempt sources)
-
-        HAProxy supports only one stick-table per backend, and a stick-table
-        can hold each data type only once: `store http_req_rate` is keyed by
-        the data type, so two http_req_rate counters with different periods
-        (1s vs 60s) cannot coexist in one table — HAProxy rejects the second
-        with "store option 'http_req_rate' already enabled, ignored". So
-        limit-rps and limit-rpm are mutually exclusive at the HAProxy layer.
-
-        Precedence: limit-rps > limit-rpm > limit-connections. When a
-        higher-precedence option is set, the lower ones are ignored (a comment
-        notes it). limit-connections uses a different counter type (conn_cur).
-
-        limit-whitelist appends a trailing negated `src` ACL to the deny line
-        so requests from the listed CIDRs are never rate-limited.
-
-        For limit-rps:
-          stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
-          http-request track-sc0 src
-          http-request deny deny_status 429 if { sc_http_req_rate(0) gt <rps> }
-
-        For limit-rpm:
-          stick-table type ip size 100k expire 60s store http_req_rate(60s)
-          http-request track-sc0 src
-          http-request deny deny_status 429 if { sc_http_req_rate(0) gt <rpm> }
-
-        For limit-connections:
-          stick-table type ip size 100k expire 30s store conn_cur peers localinstance
-          http-request track-sc0 src
-          http-request deny deny_status 429 if { sc_conn_cur(0) gt <connections> }
-      -#}
+      {#- One stick-table per backend, and it stores each data type once: http_req_rate(1s) and
+          http_req_rate(60s) can't coexist ("store option 'http_req_rate' already enabled, ignored"),
+          so limit-rps and limit-rpm are mutually exclusive. conn_cur is a separate data type. -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -541,7 +324,6 @@ templateSnippets:
         {%- var limitRpm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rpm"] %}
         {%- var limitConn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-connections"] %}
         {%- var limitWhitelist = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-whitelist"] %}
-        {#- Build the optional trailing exemption ACL from limit-whitelist. -#}
         {%- var exempt = "" %}
         {%- if limitWhitelist != "" %}
           {%- var validated = ValidateCidrList(limitWhitelist, "nginx.ingress.kubernetes.io/limit-whitelist", key) %}
@@ -550,7 +332,6 @@ templateSnippets:
           {%- end %}
         {%- end %}
         {%- if limitRps != "" || limitRpm != "" %}
-          {#- Note any lower-precedence options that this render ignores. -#}
           {%- var ignored = []string{} %}
           {%- if limitRps != "" && limitRpm != "" %}{%- ignored = append(ignored, "limit-rpm") %}{%- end %}
           {%- if limitConn != "" %}{%- ignored = append(ignored, "limit-connections") %}{%- end %}
@@ -560,8 +341,7 @@ templateSnippets:
       # nginx-ingress/rate-limiting ({{ key }})
           {%- end %}
           {%- if limitRps != "" %}
-      {#- `peers localinstance` (base.yaml) preserves the per-source counter -#}
-      {#- across reloads so the limit isn't reset to zero on config churn. -#}
+      {#- `peers localinstance` (base.yaml) carries the per-source counter across reloads. -#}
       stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
       http-request track-sc0 src
       http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ limitRps }} }{{ exempt }}
@@ -581,19 +361,11 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  # Nginx Ingress upstream request headers (Strategy 1: relocated to maps).
-  # upstream-vhost / x-forwarded-prefix / connection-proxy-header were per-backend
-  # `http-request set-header` directives; they now emit `<backend_name> <value>`
-  # into per-header maps consumed by base.yaml's resource-agnostic
-  # frontend-filters-26x-request-set-* rules, so changing a value is a map-only,
-  # reload-free update. ValidateConfigValue still guards against config injection.
-  # Docs:
-  #   https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#upstream-vhost
-  #   https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#x-forwarded-prefix
+  # These maps are consumed by base.yaml's frontend-filters-26x-request-set-* rules,
+  # so changing a header value is a map-only, reload-free update.
   map-reqhdr-host-760-nginx-ingress:
     template: |
-      {#- nginx upstream-vhost → reqhdr-host.map (shares "map-reqhdr-host"
-          first_seen namespace with the haproxytech set-host emitter). -#}
+      {#- Shares the "map-reqhdr-host" first_seen namespace with the haproxytech set-host emitter. -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -613,7 +385,6 @@ templateSnippets:
 
   map-reqhdr-xfwd-prefix-760-nginx-ingress:
     template: |
-      {#- nginx x-forwarded-prefix → reqhdr-xfwd-prefix.map -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -633,7 +404,6 @@ templateSnippets:
 
   map-reqhdr-connection-760-nginx-ingress:
     template: |
-      {#- nginx connection-proxy-header → reqhdr-connection.map -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -653,27 +423,6 @@ templateSnippets:
 
   backend-directives-780-nginx-ingress-upstream-hash:
     template: |
-      {#-
-        Nginx Ingress Upstream Hash-Based Load Balancing
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-nginx-upstream-hashing
-
-        Annotation: nginx.ingress.kubernetes.io/upstream-hash-by
-
-        Translates nginx variables to HAProxy fetches:
-          $request_uri  -> url
-          $remote_addr  -> src
-          $cookie_XXXX  -> req.cook(XXXX)
-          $http_xxxx    -> req.hdr(xxxx) (underscores replaced with hyphens)
-          $arg_XXXX     -> url_param(XXXX)
-
-        If the value starts with $ but doesn't match known patterns, fails with error.
-        If the value doesn't start with $, it's passed through as-is (assumed HAProxy fetch).
-
-        Generated HAProxy Config:
-          balance hash <expr>
-          hash-type consistent
-      -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -695,7 +444,7 @@ templateSnippets:
           {%- else if hasPrefix(hashBy, "$") %}
             {{- fail("Unsupported nginx variable '" + hashBy + "' for annotation 'nginx.ingress.kubernetes.io/upstream-hash-by' on Ingress '" + key + "'. Supported: $request_uri, $remote_addr, $cookie_XXXX, $http_xxxx, $arg_XXXX") -}}
           {%- else %}
-            {#- Not a nginx variable, pass through as HAProxy fetch -#}
+            {#- Not an nginx variable: passed through unvalidated as a raw HAProxy fetch -#}
             {%- expr = hashBy %}
           {%- end %}
       # nginx-ingress/backend-directives-upstream-hash ({{ key }})
@@ -706,14 +455,6 @@ templateSnippets:
 
   backend-directives-900-nginx-ingress-config-snippet:
     template: |
-      {#-
-        Nginx Ingress Backend Configuration Snippet
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#configuration-snippet
-
-        Annotation: nginx.ingress.kubernetes.io/configuration-snippet
-        Allows injecting raw HAProxy directives into the backend.
-      -#}
       {%- if ingress != nil %}
         {%- var snippet = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"] %}
         {%- if snippet != "" %}

@@ -5,25 +5,11 @@ templateSnippets:
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- var exactEntries = []any{} %}
       {%- var regexEntries = []any{} %}
-      {#- catchallEntries — per-Gateway "this Gateway has at least one
-          HTTPS/TLS listener with no hostname (or hostname `*`)" markers.
-          Appended to the regex map AFTER the more-specific wildcard
-          patterns so map_reg's first-match-wins picks specific
-          listeners over the catch-all fallback. The identity is the
-          Gateway's namespace+name — the catch-all is a property of the
-          Gateway as a whole; multiple catch-all listeners on the same
-          Gateway collapse to the same identity (which is correct per
-          spec since they all accept the same un-claimed hostnames). -#}
+      {#- Per-Gateway "has a hostname-less HTTPS/TLS listener" markers, appended to the
+          regex map LAST so map_reg first-match-wins prefers specific patterns. -#}
       {%%
-        // classifyHostname appends entries to the right output slice
-        // for a single (HTTPS / TLS) listener hostname `lh`. Returns
-        // true when the listener is a catch-all (empty / `*`), so the
-        // outer loop knows to emit the per-Gateway catch-all marker
-        // once. Shared between the Gateway-owned and ListenerSet-owned
-        // listener loops below — keeping the classification in one
-        // place is what blocks drift between the two halves
-        // (previously the wildcard regex's `$` anchor was escaped
-        // inconsistently across the duplicated bodies).
+        // Returns true for a catch-all listener (empty / `*`). Kept shared: while the
+        // Gateway and ListenerSet loops had copies, their `$` anchors drifted apart.
         var classifyHostname = func(lh string) bool {
           if lh == "" || lh == "*" {
             return true
@@ -53,9 +39,6 @@ templateSnippets:
             {%- end %}
           {%- end %}
         {%- end %}
-        {#- Walk accepted ListenerSet listeners on this Gateway too so
-            the misdirected-listener detection covers ListenerSet-claimed
-            HTTPS hostnames. -#}
         {%- _ = render "util-listenersets-contrib" default "" -%}
         {%- var lsSeamRaw = shared.Get("listenersetsUntyped") %}
         {%- var lsSeamAll = []any{} %}
@@ -81,11 +64,7 @@ templateSnippets:
           {%- catchallEntries = append(catchallEntries, "^.*$ catchall:" + gwNs + "/" + gwName) %}
         {%- end %}
       {%- end %}
-      {#- Append catch-all entries last so wildcard regexes win. The
-          identity prefix `catchall:` makes catch-all-vs-catch-all
-          comparisons explicit and keeps catch-all identities distinct
-          from any user hostname (HTTP host header rules forbid `:` in
-          a hostname, so the prefix is collision-free). -#}
+      {#- `catchall:` cannot collide with a user hostname: HTTP forbids `:` in a host. -#}
       {%- for _, e := range catchallEntries %}
         {%- regexEntries = append(regexEntries, e) %}
       {%- end %}
@@ -97,63 +76,36 @@ templateSnippets:
       http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map_reg({{ regexPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_sni_listener) -m len 0 }
       http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map({{ exactPath }},'') if { var(txn.gw_host_canonical) -m found }
       http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map_reg({{ regexPath }},'') if { var(txn.gw_host_canonical) -m found } { var(txn.gw_host_listener) -m len 0 }
-      {#- The catch-all marker in the regex map (`^.*$ catchall:<gw-ns>/<gw-name>`) makes every
-          SNI matching a Gateway with any hostname-less HTTPS listener yield a non-empty
-          gw_sni_listener, so the `len 0` gate only fires for orphan TLS (SNI matches no Gateway,
-          served by the default cert) where a 421 would mis-flag an unclaimed request.
-          Conformance: HTTPRouteHTTPSListenerDetectMisdirectedRequests's 15 sub-cases hinge on
-          the marker — without it SNI=example.org → gw_sni_listener="" blocks the spec-mandated
-          421 (e.g. SNI=example.org + Host=second-example.org). -#}
+      {#- The `^.*$ catchall:` markers keep gw_sni_listener non-empty for a Gateway with a
+          hostname-less listener; without them the `len 0` gate kills the 421 that conformance
+          HTTPRouteHTTPSListenerDetectMisdirectedRequests requires. The gate then only fires for
+          orphan TLS (SNI matches no Gateway), where a 421 would mis-flag the request. -#}
       # 421: SNI matched one listener but the Host belongs to a different one (misdirected request).
-      {#- txn.denied_by attributes the block in the access log. There is a second
-          421 source (the cache-origin frontend refusing an infrastructure
-          backend), so `frontend` alone doesn't disambiguate. Condition copied
-          byte-for-byte from the return below. -#}
+      {#- A second 421 source (cache-origin frontend) makes `frontend` alone ambiguous in
+          the access log. The condition must stay byte-identical to the return below. -#}
       http-request set-var(txn.denied_by) str(gw_sni_host_mismatch) if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
       http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
   log-fields-500-gateway:
     requires: [gateways]
     template: |-
-      {#-
-        Gateway route identity for the JSON access log.
-
-        Extension point: log-fields-* (band 500, "core functionality" — the band
-        every other gateway contribution uses). See base.yaml's "Access log"
-        block for the contribution contract.
-
-        txn.gw_rule_id is set by frontend-matchers-advanced-500-gateway for every
-        winning route rule (shape <ns>_<name>_<ruleIdx>). base's `resource` field
-        already carries <ns>/<name>; this adds WHICH rule of a multi-rule route
-        matched, which is the question a Gateway operator asks when traffic lands
-        on an unexpected backend.
-
-        Registered only when at least one Gateway exists, so an Ingress-only
-        install never carries a permanently-empty key.
-      -#}
+      {#- txn.gw_rule_id (<ns>_<name>_<ruleIdx>) comes from frontend-matchers-advanced-500-gateway;
+          gated on Gateways existing so an Ingress-only install has no permanently-empty log key. -#}
       {%- if len(resources.gateways.List()) > 0 %}
       %(gw_route)[var(txn.gw_rule_id)]
       {%- end %}
 
-  # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
-  # Named with 010- prefix so alphabetical sort matches intended execution order
   frontend-matchers-advanced-010-route-id-setup:
     template: |
-      {#- Process GW_ROUTE_ID qualifier to extract route type and route ID #}
-      {#- Format: GW_ROUTE_ID:<route_type>:<routeIds> #}
-      {#- Example: GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
-      {#- This runs first (010 prefix) to set variables used by later matchers #}
+      {#- txn.path_match qualifier format: GW_ROUTE_ID:<route_type>:<routeIds>, e.g. GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
       # gateway/frontend-matchers-advanced-010-route-id-setup
       http-request set-var(req.gw_route_type) var(txn.path_match),field(2,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
       http-request set-var(req.gw_routeId) var(txn.path_match),field(3,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
 
-  # Advanced matcher generator - creates http-request statements for method/header/query matching
-  # Named with 500- prefix so alphabetical sort matches intended execution order (runs after 010-)
   frontend-matchers-advanced-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {{- "" }}
-      {# Generate http-request statements for routes with advanced matchers
-         This is injected into base template via the advanced-matcher-* extension point #}
+      {# Non-stripping form: keeps the blank line before the section marker. #}
       # gateway/frontend-matchers-advanced-500-gateway
       {{ render "util-gateway-analysis" -}}
       {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
@@ -161,25 +113,11 @@ templateSnippets:
       {%- if len(sortedRoutes) > 0 %}
       # Advanced route matching (method/header/query)
       {%- for _, routeInfo := range sortedRoutes %}
-        {#- Pivot to type-switch dispatch (ADR-0010 type-switch
-            restructure): instead of reading pre-flattened
-            `routeInfo["match"]` / `routeInfo["path"]` slots as `any`
-            type-switch on routeInfo["route"] and re-derive the
-            match via typed `r.Spec.Rules[ruleIdx].Matches[matchIdx]`.
-            Per-Kind field shapes get compile-time validated; field
-            renames surface as build errors. Each case extracts the
-            primitives the common emission block needs into untyped
-            scalars so the emission stays DRY — everything after the
-            switch is stringly-typed value handling, which is the
-            right shape
-            because HAProxy config emission is text. -#}
         {%- var riRouteId = routeInfo["routeId"] %}
         {%- var riConflictGroup = routeInfo["conflictGroup"] %}
         {%- var riRuleIdx int = routeInfo["ruleIdx"] %}
         {%- var riMatchIdx int = routeInfo["matchIdx"] %}
 
-        {#- Per-Kind extracted values (defaulted before the switch
-            so the emission block below can assume they are set). -#}
         {%- var riKind = "" %}
         {%- var riNs = "" %}
         {%- var riName = "" %}
@@ -204,9 +142,6 @@ templateSnippets:
             {%- var rule = r.Spec.Rules[riRuleIdx] %}
             {%- if riMatchIdx >= 0 && riMatchIdx < len(rule.Matches) %}
               {%- var match = rule.Matches[riMatchIdx] %}
-              {#- Typed access: match.Path.Type / .Value / .Method /
-                  .Headers / .QueryParams resolve at engine compile
-                  time; a typo here is a build error. -#}
               {%- if match.Path.Type != "" %}{%- pathType = match.Path.Type %}{%- end %}
               {%- if match.Path.Value != "" %}{%- pathValue = match.Path.Value %}{%- end %}
               {%- if match.Method != "" %}
@@ -214,14 +149,8 @@ templateSnippets:
                 {%- riMethod = match.Method %}
               {%- end %}
               {%- for _, h := range match.Headers %}
-                {#- HTTPHeaderMatch.type defaults to "Exact" when
-                    omitted (Gateway-API spec). The chart sees the
-                    HTTPRoute as authored — server-side CRD apply
-                    defaults the field, but the chart-validation
-                    harness doesn't, and conformance fixtures omit
-                    `type:` to exercise the spec default. Normalize
-                    here so the emission block treats both forms
-                    identically. -#}
+                {#- Gateway API defaults the match type to "Exact"; the chart sees the
+                    route as authored, and the offline harness applies no CRD defaults. -#}
                 {%- var hType = h.Type %}
                 {%- if hType == "" %}{%- hType = "Exact" %}{%- end %}
                 {%- headerSpecs = append(headerSpecs, map[string]any{
@@ -242,12 +171,8 @@ templateSnippets:
           {%- riIsGrpc = true %}
           {%- riNs = r.Metadata.Namespace %}
           {%- riName = r.Metadata.Name %}
-          {#- GRPCRoute uses a synthesized PathPrefix "/" at
-              analysis time (see 20-route-analysis.yaml's GRPCRoute
-              loop) — the gRPC method matchers narrow within that
-              prefix. The path defaults remain PathPrefix / for
-              GRPCRoutes, which is exactly what's already
-              initialised above. -#}
+          {#- 20-route-analysis.yaml synthesizes PathPrefix "/" for GRPCRoutes; the gRPC
+              method matchers narrow within it, so the defaults above already hold. -#}
           {%- if riRuleIdx >= 0 && riRuleIdx < len(r.Spec.Rules) %}
             {%- var rule = r.Spec.Rules[riRuleIdx] %}
             {%- if riMatchIdx >= 0 && riMatchIdx < len(rule.Matches) %}
@@ -269,28 +194,13 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- Detect "path-only" rules — those with no method/header/
-            query/grpc sub-matchers. The Gateway API spec requires
-            evaluating rules in order of specificity, falling
-            through to less-specific rules when a more-specific
-            rule's sub-matchers don't all pass. The existing
-            gw_routeId scope check (set by the path-map step to the
-            most-specific path's rule IDs) blocks fallback across
-            paths within the same HTTPRoute, so a path-only catch-
-            all loses to a failed-but-more-specific sibling. We give
-            path-only rules a relaxed scope check (gw_routeId begins
-            with this HTTPRoute's prefix) plus a direct path
-            predicate, restoring spec-compliant fallback semantics
-            without altering the strict scope check for rules that
-            already gate on their own sub-matchers. -#}
+        {#- Path-only rules need the relaxed scope check below: gw_routeId holds only the
+            most-specific path's rule IDs, so a path-only catch-all would lose to a
+            more-specific sibling whose sub-matchers failed, but the spec wants fallback. -#}
         {%- var isPathOnly = !hasMethod && len(headerSpecs) == 0 && len(paramSpecs) == 0 && !hasGrpcMethod %}
-        {#- Early exit: skip if another matcher already won -#}
         {%- var conditions = []any{"!{ var(txn.gw_rule_id) -m found }"} %}
 
         {%- if isPathOnly %}
-          {#- Path-only fallback: scope to this HTTPRoute (any rule
-              of it must have been the path-map winner), plus the
-              rule's path must match the request directly. -#}
           {%- var httprouteScope = riNs + "_" + riName + "_" %}
           {%- conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + httprouteScope + "\" }") %}
           {%- if pathType == "Exact" %}
@@ -299,23 +209,9 @@ templateSnippets:
             {%- var escapedPathOnly = replace(pathValue, "$", "\\$") %}
             {%- conditions = append(conditions, "{ path -m reg \"" + escapedPathOnly + "\" }") %}
           {%- else %}
-            {#- PathPrefix (default). Per Gateway API spec, PathPrefix
-                matches whole segments — `/v2` matches `/v2`, `/v2/`,
-                `/v2/foo`, but NOT `/v2example`. HAProxy's plain
-                `path_beg` is byte-prefix (no boundary) and matches
-                the last case incorrectly; `path_dir` does a segment
-                match but it matches a directory ANYWHERE in the
-                path (so `/v2` would match `/foo/v2/example`). The
-                spec requires anchoring at the START of the path.
-
-                Use a regex anchored to ^ that matches either the
-                exact prefix or the prefix followed by a slash:
-
-                    ^<prefix>(/|$)
-
-                Special case: bare `/` (root) matches every path —
-                emit a trivial path_beg "/" condition that's cheaper
-                than a regex and still always satisfied. -#}
+            {#- Gateway API PathPrefix matches whole segments anchored at the path start:
+                `path_beg` is a byte prefix (matches /v2example) and `path_dir` matches a
+                segment anywhere (/foo/v2/example), so neither works — use `^<prefix>(/|$)`. -#}
             {%- if pathValue == "/" || pathValue == "" %}
               {%- conditions = append(conditions, "{ path_beg \"/\" }") %}
             {%- else %}
@@ -324,25 +220,18 @@ templateSnippets:
                 {%- pathPrefixValue = pathPrefixValue[:len(pathPrefixValue)-1] %}
               {%- end %}
               {%- var escaped = sanitize_regex(pathPrefixValue) %}
-              {#- HAProxy expands $VAR / ${VAR} in config strings; the
-                  documented escape for a literal dollar is `\$`. -#}
+              {#- HAProxy expands $VAR in config strings; `\$` is the literal-dollar escape. -#}
               {%- conditions = append(conditions, "{ path -m reg \"^" + escaped + "(/|\\$)\" }") %}
             {%- end %}
           {%- end %}
         {%- else %}
-          {#- Rule has sub-matchers — keep the strict same-path
-              conflictGroup check; the sub-matchers' own predicates
-              already narrow the rule to its declared path. -#}
           {%- conditions = append(conditions, "{ var(req.gw_routeId) -m str \"" + riConflictGroup + "\" }") %}
         {%- end %}
 
-        {#- Method matcher (HTTPRoute only) -#}
         {%- if hasMethod && riKind == "HTTPRoute" %}
           {%- conditions = append(conditions, "{ method " + riMethod + " }") %}
         {%- end %}
 
-        {#- Header matchers — defaults already normalised inside the
-            type-switch above. -#}
         {%- for _, hSpec := range headerSpecs %}
           {%- var hm map[string]any = hSpec %}
           {%- var hType = tostring(hm["type"]) %}
@@ -351,13 +240,11 @@ templateSnippets:
           {%- if hType == "Exact" %}
             {%- conditions = append(conditions, "{ req.hdr(" + hName + ") \"" + hValue + "\" }") %}
           {%- else if hType == "RegularExpression" %}
-            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) -#}
             {%- var escapedHeaderValue = replace(hValue, "$", "\\$") %}
             {%- conditions = append(conditions, "{ req.hdr(" + hName + ") -m reg \"" + escapedHeaderValue + "\" }") %}
           {%- end %}
         {%- end %}
 
-        {#- Query parameter matchers (HTTPRoute only). -#}
         {%- for _, pSpec := range paramSpecs %}
           {%- var pm map[string]any = pSpec %}
           {%- var pType = tostring(pm["type"]) %}
@@ -366,28 +253,14 @@ templateSnippets:
           {%- if pType == "Exact" %}
             {%- conditions = append(conditions, "{ urlp(" + pName + ") \"" + pValue + "\" }") %}
           {%- else if pType == "RegularExpression" %}
-            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) -#}
             {%- var escapedParamValue = replace(pValue, "$", "\\$") %}
             {%- conditions = append(conditions, "{ urlp(" + pName + ") -m reg \"" + escapedParamValue + "\" }") %}
           {%- end %}
         {%- end %}
 
-        {#- GRPCRoute method matcher. Match against the request URL
-            path. For HTTP/2 (which is what GRPCRoute requires per
-            the Gateway API spec, plus what HAProxy emits via ALPN
-            h2 on chart-static HTTPS frontends and via the
-            http_frontend_h2c plumbing on plaintext h2c), HAProxy
-            parses the `:path` pseudo-header and exposes it through
-            the `path` sample fetch — NOT through `req.hdr(:path)`,
-            which targets regular HTTP/1.1 headers and yields an
-            empty string for the pseudo-header. Using
-            `req.hdr(:path)` here meant every gRPC method matcher
-            silently never fired and the request fell through to
-            default_backend (404), which broke
-            test-grpcroute-https-listener-alpn-h2 and the upstream
-            GRPCExactMethodMatching / GRPCRouteHeaderMatching /
-            GRPCRouteListenerHostnameMatching / GRPCRouteNamedRule /
-            GRPCRouteWeight conformance suites. -#}
+        {#- HAProxy exposes the HTTP/2 `:path` pseudo-header through the `path` fetch, NOT
+            through `req.hdr(:path)` — that yields "" and every gRPC method matcher then
+            silently never fires, dropping the request to default_backend (404). -#}
         {%- if hasGrpcMethod %}
           {%- var grpcPath = "/" + grpcService %}
           {%- if grpcMethodName != "" %}
@@ -401,9 +274,7 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- Set txn.gw_rule_id to mark this rule as winner -#}
         {%- if len(conditions) > 0 %}
-          {#- Build matcher type description for provenance comment -#}
           {%- var descParts = []any{} %}
           {%- if hasMethod && riKind == "HTTPRoute" %}
             {%- descParts = append(descParts, "method " + riMethod) %}
@@ -421,9 +292,7 @@ templateSnippets:
           {%- if len(descParts) > 0 %}{%- matcherDesc = join(descParts, ", ") %}{%- end %}
       # Rule: {{ riKind }} {{ riNs }}/{{ riName }} rule[{{ riRuleIdx }}] - {{ matcherDesc }}
       http-request set-var(txn.gw_rule_id) str({{ riRouteId }}) if {{ join(conditions, " ") }}
-          {#- Debug headers if enabled -#}
           {%- if debug | fallback(false) %}
-            {#- Build detailed match reason -#}
             {%- var matchTypes = []any{} %}
             {%- if hasMethod && riKind == "HTTPRoute" %}
               {%- matchTypes = append(matchTypes, "method") %}
@@ -446,15 +315,13 @@ templateSnippets:
       {% end %}
       {% end %}
 
-  # Path match setting - sets txn.path_match based on winning rule ID
-  # Named with 900- prefix so alphabetical sort matches intended execution order (runs last)
   frontend-matchers-advanced-900-path-match:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {{- "" }}
-      {# Set txn.path_match for backend selection based on winning rule
-         Runs after frontend-matchers-advanced-500-gateway sets txn.gw_rule_id (900 prefix ensures late ordering) #}
+      {# Reads txn.gw_rule_id, set by frontend-matchers-advanced-500-gateway. Non-stripping
+         form: keeps the blank line before the section marker. #}
       # gateway/frontend-matchers-advanced-900-path-match
       {{ render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
@@ -464,15 +331,6 @@ templateSnippets:
       {%- if len(gatewayAllRoutes) > 0 %}
       # Set txn.path_match for backend selection based on txn.gw_rule_id
       {% for _, routeInfo := range gatewayAllRoutes -%}
-        {#- toSlice() normalises the typed []struct{...HTTPRouteBackendRef...}
-            (rule.BackendRefs on the typed parent route, reached via the
-            polymorphic routeInfo["rule"] slot + dig fallthrough into
-            typed structs) into []any so the chart's downstream
-            iteration / append patterns work uniformly. The pre-typed-
-            access `| fallback([]any{})` relied on dig() returning nil
-            for typed-struct intermediates, which it no longer does. -#}
-        {#- Extract rule.BackendRefs via per-Kind type-switch on
-            routeInfo["route"]. -#}
         {%- var backendRefs []any = nil %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -492,24 +350,11 @@ templateSnippets:
             }
           }
         %%}
-        {#- NO `if len(backendRefs) > 0` guard here: a matched rule with ZERO
-            backendRefs (omitted or empty) must ALSO route to the 500 sink, not
-            fall through to 404. With no refs, validRefs below is empty, so the
-            len(validRefs)==0 branch emits BACKEND:gw-invalid-backend (HTTP 500) —
-            per the Gateway API rule that a matched rule with no usable backend
-            returns 500 (conformance HTTPRouteNoBackendRefs). -#}
+        {#- Deliberately no `len(backendRefs) > 0` guard: a matched rule with zero
+            backendRefs must reach the 500 sink below too, not fall through to 404
+            (conformance HTTPRouteNoBackendRefs). -#}
         {%- if true %}
-          {#- Filter to backendRefs the chart can route to. Per Gateway API
-              spec, a backendRef is "valid" only when:
-                - Group is "" or "core" (kept simple, the chart only
-                  supports core/v1 Services)
-                - Kind is Service
-                - The referenced Service actually exists
-              Anything else must result in HTTP 500 for traffic that
-              matches this rule. The route's ResolvedRefs status
-              condition reflects the failure separately
-              (InvalidKind / BackendNotFound, set elsewhere). Filter
-              once here and dispatch on the valid count. -#}
+          {#- The route's ResolvedRefs=InvalidKind/BackendNotFound condition is set elsewhere. -#}
           {%- var validRefs = []any{} %}
           {%- var routeNs = tostring(routeInfo | dig("route", "metadata", "namespace") | fallback("")) %}
           {%- var routeKind = tostring(routeInfo | dig("route", "kind") | fallback("HTTPRoute")) %}
@@ -522,11 +367,8 @@ templateSnippets:
               {%- var refNs = tostring(refMap | dig("namespace") | fallback(routeNs)) %}
               {%- var svc = resources.services.GetSingle(refNs, refName) %}
               {%- if svc != nil %}
-                {#- Cross-namespace backend refs require a permitting
-                    ReferenceGrant (per Gateway API spec). Without one,
-                    the route should set ResolvedRefs=False/RefNotPermitted
-                    AND traffic must NOT flow to the unauthorized backend
-                    (we route those rules to gw-invalid-backend → 500). -#}
+                {#- Spec: a cross-namespace ref without a ReferenceGrant must not receive
+                    traffic — dropping it here routes the rule to gw-invalid-backend (500). -#}
                 {%- var refPermitted = true %}
                 {%- if refNs != routeNs %}
                   {%- if ReferenceGrantPermitted(
@@ -544,30 +386,16 @@ templateSnippets:
 
           {%- var qualifier = "" %}
           {%- if len(validRefs) == 0 %}
-            {#- No valid backendRefs at all → route to the chart-level
-                500-returning sink. Spec calls for HTTP 500 (not 503)
-                whenever every backendRef in a rule is unresolvable.
-                Conformance tests gating this:
-                  HTTPRouteInvalidBackendRefUnknownKind — kind=NonExistent
-                  HTTPRouteInvalidNonExistentBackendRef — Service missing
-                Both share the same handling: route to gw-invalid-backend,
-                which carries `http-request return status 500`. -#}
+            {#- Spec wants 500 (not 503) when every backendRef is unresolvable;
+                gw-invalid-backend is the sink carrying `http-request return status 500`. -#}
             {%- qualifier = "BACKEND:gw-invalid-backend" %}
           {%- else if len(validRefs) == 1 %}
-            {#- Single valid backend: BACKEND qualifier #}
             {%- var backendRef any = validRefs[0] %}
             {%- var backendName = "gtw_" + (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (backendRef | dig("name")) + "_" + (backendRef | dig("port")) %}
             {%- qualifier = "BACKEND:" + backendName %}
           {%- else %}
-            {#- Multiple valid backends: MULTIBACKEND qualifier. Note: a
-                mixed (valid + invalid) rule renders as MULTIBACKEND with
-                only the valid refs counted in the weighted distribution.
-                The traffic share that should have gone to invalid refs
-                "leaks" to the valid ones — a coarse approximation of the
-                spec's "invalid share returns 500" rule. Refining to a
-                proper weighted invalid-sink is follow-up work; the
-                all-invalid case (the conformance test that gates this)
-                is handled correctly above. -#}
+            {#- Known approximation: in a mixed valid/invalid rule the invalid refs' traffic
+                share leaks to the valid ones instead of returning 500 for that share. -#}
             {%- var totalWeight = 0 %}
             {%- for _, ref := range validRefs %}
               {%- var refMap any = ref %}
@@ -581,7 +409,6 @@ templateSnippets:
         {% end %}
       {% end %}
       {% end %}
-  # Filter: RequestHeaderModifier - modifies request headers before backend selection
   frontend-filters-450-gateway-cors:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
@@ -591,13 +418,9 @@ templateSnippets:
       {%- if gaVal == nil %}{% return %}{% end %}
       {%- var ga = gaVal.(map[string]any) %}
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- HTTPRoute-only filter: skip non-HTTPRoute via typed
-            assertion on routeInfo["route"]. -#}
         {%- var _, isHTTPRoute = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
         {%- if !isHTTPRoute %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
-        {#- Extract rule.Filters via per-Kind type-switch on
-            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -621,8 +444,6 @@ templateSnippets:
           {%- if (filter | dig("type")) != "CORS" %}{%- continue %}{%- end %}
           {%- var cors = filter | dig("cors") %}
           {%- if cors == nil %}{%- continue %}{%- end %}
-          {#- Build origin regex. "*" = match-any (no Origin filter); else
-              alternation of exact + wildcard patterns. -#}
           {%- var allowOrigins = cors | dig("allowOrigins") | fallback([]any{}) | toSlice() %}
           {%- var hasWildcardOrigin = false %}
           {%- var originAlternatives = []any{} %}
@@ -631,9 +452,7 @@ templateSnippets:
             {%- if os == "*" %}
               {%- hasWildcardOrigin = true %}
             {%- else if regex_search(os, "\\*") %}
-              {#- wildcard pattern — escape, then turn the literal `\*\.`
-                  into a single-or-more-label match. We accept any number
-                  of left labels (Gateway API allows any subdomain depth). -#}
+              {#- Gateway API allows any subdomain depth, so `*.` matches one-or-more labels. -#}
               {%- var literal = tostring(sanitize_regex(os)) %}
               {%- var pattern = tostring(replace(literal, "\\*\\.", "[^.]+(?:\\.[^.]+)*\\.")) %}
               {%- originAlternatives = append(originAlternatives, "^" + pattern + "\\$") %}
@@ -645,10 +464,8 @@ templateSnippets:
           {%- if !hasWildcardOrigin && len(originAlternatives) > 0 %}
             {%- originRegex = "(?:" + join(originAlternatives, "|") + ")" %}
           {%- end %}
-          {#- Allow-credentials. With credentials true, Allow-Origin must
-              echo the request Origin (browsers reject "*"). With
-              credentials false, "*" alone makes wildcard origins also
-              echo the request Origin (sub-test compliance). -#}
+          {#- Browsers reject a literal `*` in Allow-Origin when credentials are on, so
+              Allow-Origin always echoes the request Origin. -#}
           {%- var allowCreds = cors | dig("allowCredentials") | fallback(false) %}
           {%- var methods = cors | dig("allowMethods") | fallback([]any{}) | toSlice() %}
           {%- var methodsList = []any{} %}
@@ -656,21 +473,9 @@ templateSnippets:
           {%- for _, m := range methods %}
             {%- var ms = tostring(m) %}
             {%- if ms == "*" %}
-              {#- Wildcard methods: echo the request's
-                  Access-Control-Request-Method on the response. The
-                  CORS spec allows either `*` or the requested method
-                  with `allowCredentials: false`, but with credentials
-                  true browsers REJECT a literal `*` and demand the
-                  exact method — so echoing the requested one works in
-                  both cases. The chart used to expand `*` to a fixed
-                  list of standard methods, but the conformance suite
-                  (Gateway API HTTPRouteCORS test cases
-                  "CORS preflight request with POST method should be
-                  allowed by allowMethods with wildcard" and
-                  "CORS preflight request requesting auth and specific
-                  method and headers should be allowed and always echo
-                  the origin") only accepts the requested method or a
-                  literal `*` — not an expanded list. -#}
+              {#- Echo Access-Control-Request-Method rather than `*` or an expanded method
+                  list: browsers reject a literal `*` when credentials are on, and the
+                  HTTPRouteCORS conformance cases accept only `*` or the requested method. -#}
               {%- hasWildcardMethod = true %}
               {%- break %}
             {%- end %}
@@ -681,10 +486,7 @@ templateSnippets:
           {%- for _, h := range headers %}
             {%- var hs = tostring(h) %}
             {%- if hs == "*" %}
-              {#- Wildcard headers: echo the requested headers from
-                  Access-Control-Request-Headers verbatim. We skip the
-                  literal Allow-Headers emission and rely on a per-request
-                  echo via %[req.fhdr(...)]. -#}
+              {#- Sentinel: a `["*"]` list means echo Access-Control-Request-Headers per request. -#}
               {%- headersList = []any{"*"} %}
               {%- break %}
             {%- end %}
@@ -696,25 +498,14 @@ templateSnippets:
             {%- exposeList = append(exposeList, tostring(eh)) %}
           {%- end %}
           {%- var maxAge = cors | dig("maxAge") | fallback(0) %}
-          {#- Construct the route-id condition + Origin gate. The
-              originRegex is "" when allowOrigins contains "*"; we then
-              accept any non-empty Origin. -#}
           {%- var ruleCond = RouteIdCondition(routeId) %}
           {%- var originCond = "{ req.fhdr(Origin) -m found }" %}
           {%- if originRegex != "" %}
             {%- originCond = originCond + " { req.fhdr(Origin) -m reg \"" + originRegex + "\" }" %}
           {%- end %}
-          {#- HAProxy quirk: synthetic responses from `http-request return`
-              do NOT flow through the frontend http-response phase, so any
-              CORS response header set via `http-response set-header` is
-              dropped on the floor for preflight requests. We carry the
-              CORS headers inline on the `http-request return` directive
-              itself (via repeated `hdr <name> <value>` arguments), which
-              is the only way they reach the synthesised 200 / 204
-              response. Simple (non-preflight) cross-origin responses
-              still flow through the backend, so for those we keep the
-              http-response set-header path which DOES apply on
-              backend-served responses. -#}
+          {#- HAProxy quirk: `http-request return` responses skip the http-response phase,
+              so preflight CORS headers must ride inline as `hdr` arguments; only
+              backend-served responses can use http-response set-header. -#}
       http-request set-var(txn.gw_cors_origin) req.fhdr(Origin) if {{ originCond }} {{ ruleCond }}
           {%- if len(headersList) > 0 && headersList[0] == "*" %}
       http-request set-var(txn.gw_cors_acrh) req.fhdr(Access-Control-Request-Headers) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
@@ -722,14 +513,7 @@ templateSnippets:
           {%- if hasWildcardMethod %}
       http-request set-var(txn.gw_cors_acrm) req.fhdr(Access-Control-Request-Method) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
           {%- end %}
-          {#- Build the http-request return directive's hdr arguments.
-              All CORS preflight responses share the same set of mandatory
-              headers; some are gated on policy options (allowCreds,
-              exposeHeaders, headers list, maxAge). HAProxy caps each
-              directive at 64 tokens; the smallest practical CORS policy
-              already needs ~10 hdr triples (3 tokens each) plus the
-              return statement itself, so the chart prefers the inline
-              hdr form over multiple set-header lines. -#}
+          {#- HAProxy caps a directive at 64 tokens and each `hdr` triple costs 3. -#}
           {%- var preflightHdrs = []any{} %}
           {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-origin \"%[var(txn.gw_cors_origin)]\"") %}
           {%- if allowCreds %}
@@ -754,20 +538,10 @@ templateSnippets:
             {%- preflightHdrs = append(preflightHdrs, "hdr access-control-expose-headers \"" + join(exposeList, ", ") + "\"") %}
           {%- end %}
       http-request return status 200 {{ join(preflightHdrs, " ") }} if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }}
-      {# Non-matching-origin preflight short-circuit: per Gateway API spec,
-         OPTIONS preflights to a CORS-enabled route whose Origin is NOT in
-         allowOrigins must NOT receive any access-control-* response headers.
-         The conformance suite expects a 200 / 204 / 403 — anything that
-         doesn't echo the disallowed origin. If we let the request fall
-         through to the backend, the backend's body is echoed back and the
-         test fails on the body / path expectation. Return 204 with no
-         headers when this route's CORS filter would have matched a
-         different origin. #}
+      {# A disallowed-origin preflight must get no access-control-* headers; falling through
+         to the backend echoes its body and fails the conformance body/path check. #}
       http-request return status 204 if METH_OPTIONS { req.fhdr(Origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }} !{ var(txn.gw_cors_origin) -m found }
-          {# Simple cross-origin responses (non-preflight): backend-served
-              responses still flow through http-response normally so the
-              set-header path works. Same allow-origin / allow-credentials
-              / expose-headers semantics as preflight. #}
+          {# Non-preflight responses come from the backend, so set-header applies to them. #}
       http-response set-header "access-control-allow-origin" "%[var(txn.gw_cors_origin)]" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
           {%- if allowCreds %}
       http-response set-header "access-control-allow-credentials" "true" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
@@ -775,18 +549,13 @@ templateSnippets:
           {%- if len(exposeList) > 0 %}
       http-response set-header "access-control-expose-headers" "{{ join(exposeList, ", ") }}" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
           {%- end %}
-      {# A literal blank-line separator — the `{%-` end markers below strip
-         the trailing whitespace + newline of the prior directive, which
-         fuses successive routes' last + first CORS directives onto one
-         malformed line. The `{% show "\n" %}` is the only Scriggo form
-         that survives the strip. #}{% show "\n" %}
+      {# The `{%-` end markers below strip the prior directive's newline, fusing successive
+         routes' CORS directives onto one malformed line; only the explicit show survives. #}{% show "\n" %}
         {%- end %}
       {%- end %}
-  # Filter: RequestRedirect - redirects requests to different locations
   frontend-filters-500-gateway-request-header:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#- RequestHeaderModifier: set, add, or remove request headers -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
@@ -795,8 +564,6 @@ templateSnippets:
       {%- if ga["hasRequestHeader_filter"] %}
       # gateway/frontend-filters-gateway-request-header
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- Extract rule.Filters via per-Kind type-switch on
-            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -839,17 +606,11 @@ templateSnippets:
         {%- end %}
       {%- end %}
       {%- end %}
-  # HTTPRoute spec.rules[].timeouts is rendered directly into each
-  # gateway backend (see GenerateGatewayBackends). HAProxy doesn't allow
-  # `http-request set-timeout server` in the frontend section, so the
-  # frontend just sets txn.gw_rule_id (already done by the route matcher
-  # at frontend-matchers-advanced-900-path-match time) and the backend
-  # gates set-timeout on that variable.
-  # Filter: ResponseHeaderModifier - modifies response headers before sending to client
+  # HAProxy rejects `http-request set-timeout server` in a frontend, so HTTPRoute
+  # spec.rules[].timeouts is emitted in the backend instead, gated on txn.gw_rule_id.
   frontend-filters-500-gateway-response-header:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#- ResponseHeaderModifier: set, add, or remove response headers -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
@@ -858,8 +619,6 @@ templateSnippets:
       {%- if ga["hasResponseHeader_filter"] %}
       # gateway/frontend-filters-gateway-response-header
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- Extract rule.Filters via per-Kind type-switch on
-            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -902,42 +661,9 @@ templateSnippets:
         {%- end %}
       {%- end %}
       {%- end %}
-  # Filter: HTTPRoute CORS — implements SupportHTTPRouteCORS
-  #
-  # Per Gateway API spec, the CORS filter (spec.rules[].filters[type=CORS])
-  # has these knobs:
-  #   - allowOrigins: list of origins (exact, wildcard "*", or pattern
-  #     "https://*.foo.com" — wildcard is suffix-style on host part)
-  #   - allowMethods: list of HTTP methods or "*"
-  #   - allowHeaders: list of header names or "*"
-  #   - exposeHeaders: list of headers to expose to the browser
-  #   - allowCredentials: bool
-  #   - maxAge: int (preflight cache duration, in seconds)
-  #
-  # Browsers send a CORS preflight (OPTIONS with Origin and
-  # Access-Control-Request-Method) before non-simple cross-origin
-  # requests. The data plane must short-circuit that with a synthetic
-  # 200/204 response carrying the negotiated headers — never letting
-  # the OPTIONS reach the backend. Simple cross-origin requests (with
-  # an Origin header but no preflight) flow to the backend, and the
-  # response gets the relevant headers tacked on.
-  #
-  # We render two HAProxy bits per CORS rule:
-  #   1. http-request return ... if METH_OPTIONS Origin matches ...
-  #      → preflight short-circuit (with the full set of CORS headers)
-  #   2. http-response set-header ... if Origin matches and the rule
-  #      matched (txn.gw_rule_id)
-  #      → headers on the actual response (Allow-Origin,
-  #         Allow-Credentials, Expose-Headers)
-  #
-  # Origin matching is encoded as a regex over the Origin header.
-  # Exact entries get sanitize_regex'd; wildcard entries
-  # ("https://*.foo.com") become "^https://[^.]+(?:\.[^.]+)*\.foo\.com\$";
-  # the lone "*" means "match any origin".
   frontend-filters-500-gateway-redirect:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#- RequestRedirect: redirect to different scheme, host, port, or path -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
@@ -945,27 +671,15 @@ templateSnippets:
       {%- var ga = gaVal.(map[string]any) %}
       {%- if ga["hasRedirect_filter"] %}
       # gateway/frontend-filters-gateway-redirect
-      {# txn.gw_request_scheme captures the inbound request's scheme
-         so a RequestRedirect with no spec.scheme can preserve it.
-         Set once per request, reused by every redirect's URL template.
-         Comment uses the non-stripping `{# #}` form (NOT `{#- -#}`)
-         so the newline between the marker comment above and the
-         http-request directives below is preserved. The stripping
-         form fused them into one comment line which silently dropped
-         every directive in the block. #}
+      {# txn.gw_request_scheme preserves the inbound scheme for redirects without
+         spec.scheme. Keep this comment non-stripping: the stripping form fuses the
+         marker above with the directives below and silently drops them. #}
       http-request set-var(txn.gw_request_scheme) str(http) if !{ ssl_fc }
       http-request set-var(txn.gw_request_scheme) str(https) if { ssl_fc }
-      {#- The port-omit rule below reads txn.gw_listener_port (the USER-FACING
-          Gateway listener port). It is set UNCONDITIONALLY upstream in
-          frontend-routing-listener-port-100-gateway (15-pod-port-allocator.yaml),
-          NOT here, so the pod-gw-listener-port.map converter is in the startup
-          config and HAProxy actually loads the map file. A converter that only
-          appears once a redirect route exists gets added at runtime by the
-          DataPlane API without the map ever being loaded, so the lookup
-          silently misses and the internal pod port leaks into Location. -#}
+      {#- txn.gw_listener_port must stay set unconditionally upstream (15-pod-port-allocator):
+          a map converter first appearing at runtime is added by the DataPlane API without its
+          map ever being loaded, so the lookup misses and the pod port leaks into Location. -#}
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- Extract rule.Filters via per-Kind type-switch on
-            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -992,48 +706,22 @@ templateSnippets:
             {%- var cond = RouteIdCondition(routeId) %}
             {%- var redir = filter | dig("requestRedirect") %}
             {%- if redir != nil %}
-              {#-
-                The Gateway API redirect filter is implemented as a single
-                `http-request redirect location "<URL>" code N` line. We
-                always use the `location` form so scheme / hostname / port /
-                path / status-code can be combined freely; HAProxy's
-                `prefix` form prepends the prefix to the full original URI,
-                which doesn't match the spec's "replace matched prefix"
-                semantics for ReplacePrefixMatch.
-
-                <URL> is built from:
-                  - scheme:    spec.scheme (or sample-fetch %[var(txn.scheme)] / "http" fallback)
-                  - host:      spec.hostname (or sample-fetch from Host header)
-                  - port:      spec.port (optional, only emitted when set)
-                  - pathPart:  one of
-                                 spec.path.replaceFullPath verbatim,
-                                 ReplacePrefixMatch via a per-request var
-                                   computed by regsub on the original path,
-                                 or the original path via %[path] sample.
-              -#}
+              {#- Always the `location` form: HAProxy's `prefix` form prepends to the full
+                  original URI, which isn't ReplacePrefixMatch semantics. -#}
               {%- var scheme = redir | dig("scheme") | fallback("") %}
               {%- var hostname = redir | dig("hostname") | fallback("") %}
               {%- var port = redir | dig("port") | fallback("") %}
               {%- var pathMod = redir | dig("path") %}
               {%- var statusCode = redir | dig("statusCode") | fallback(302) %}
 
-              {#- Per Gateway API spec for RequestRedirect: when
-                  spec.scheme is unset the redirect MUST keep the
-                  request's scheme, not silently downgrade to http.
-                  Use ssl_fc to discover the inbound scheme at request
-                  time (set in a txn-scope var so the redirect URL
-                  template can interpolate it). -#}
+              {#- Spec: an unset spec.scheme MUST keep the request's scheme, not downgrade. -#}
               {%- var schemePart = scheme %}
               {%- if schemePart == "" %}{%- schemePart = "%[var(txn.gw_request_scheme)]" %}{%- end %}
               {%- var hostPart = hostname %}
               {%- if hostPart == "" %}{%- hostPart = "%[req.hdr(Host),field(1,:)]" %}{%- end %}
 
-              {#- For ReplacePrefixMatch, set a per-request variable holding
-                  the rewritten path (matched prefix → replacement, rest of
-                  segment-aware path preserved verbatim). The route condition
-                  already gates segment-aware matching upstream, so any
-                  request that reaches this filter is known to start with the
-                  declared prefix. -#}
+              {#- Upstream route matching guarantees the path starts with the declared
+                  prefix, so regsub can rewrite it unconditionally. -#}
               {%- var pathExpr = "%[path]" %}
               {%- if pathMod != nil %}
                 {%- var pathType = pathMod | dig("type") %}
@@ -1043,32 +731,16 @@ templateSnippets:
                   {%- var matchPrefix = tostring(routeInfo.(map[string]any)["pathValue"]) %}
                   {%- if matchPrefix == "" %}{%- matchPrefix = "/" %}{%- end %}
                   {%- var replacementPrefix = (pathMod | dig_string("", "replacePrefixMatch")) %}
-                  {#- regsub uses POSIX ERE: anchor at start, escape the
-                      matched prefix's regex metachars. The replacement has
-                      no metachars (Gateway API enforces a path literal). -#}
+                  {#- The replacement needs no escaping: Gateway API enforces a path literal. -#}
                   {%- var escapedPrefix = sanitize_regex(matchPrefix) %}
       http-request set-var(txn.gw_redirect_path) path,regsub("^{{ escapedPrefix }}","{{ replacementPrefix }}") if {{ cond }}
                   {%- pathExpr = "%[var(txn.gw_redirect_path)]" %}
                 {%- end %}
               {%- end %}
 
-              {#- Per Gateway API spec
-                  (https://gateway-api.sigs.k8s.io/reference/spec/#httprequestredirectfilter):
-                  the implementation MUST NOT include the port in the
-                  Location header when the resulting (scheme, port) pair
-                  is (http, 80) or (https, 443) — it's the default
-                  for the scheme.
-                  Conformance test HTTPRouteRequestRedirect's
-                  `/scheme-nil-and-port-80` and `/scheme-https-and-port-443`
-                  sub-tests assert this directly. We can apply the rule
-                  at template-render time only when both scheme and
-                  port are statically known (spec.scheme set + spec.port
-                  set); the dynamic-scheme + static-port case is the
-                  shape every other implementation uses, mapping
-                  empty-spec.scheme → "preserve request scheme", so for
-                  port=80 we omit when spec.scheme ∈ {"", "http"} (request
-                  is http for HTTP listeners, https won't happen on those)
-                  and for port=443 when spec.scheme ∈ {"", "https"}. -#}
+              {#- Spec: Location MUST omit the port when the resulting (scheme, port) is
+                  (http,80) or (https,443). Decidable at render time only when both are
+                  static; an empty spec.scheme counts as the listener's own scheme. -#}
               {%- var portStr = tostring(port) %}
               {%- var omitPort = false %}
               {%- if portStr == "80" && (scheme == "" || scheme == "http") %}{%- omitPort = true %}{%- end %}
@@ -1076,57 +748,15 @@ templateSnippets:
               {%- var loc = schemePart + "://" + hostPart %}
               {%- var dynamicPort = portStr == "" && scheme == "" %}
               {%- if portStr != "" && !omitPort %}{%- loc = loc + ":" + portStr %}{%- end %}
-              {#- Per Gateway API spec for RequestRedirect: when both
-                  spec.scheme and spec.port are unspecified, the
-                  redirect port MUST be the Gateway listener port. We
-                  can't know the listener port at template-render time
-                  (a single route can attach to multiple listeners), so
-                  we use the inbound dst_port at runtime. The chart's
-                  HTTP/HTTPS listeners bind on the literal port numbers
-                  (80/443 by default), so dst_port is the actual
-                  Gateway listener port — no Service-NAT indirection.
-                  Omit when (request scheme, dst_port) is the
-                  well-known pair (http,80) / (https,443) per the spec
-                  static-omit rule. txn.gw_redir_port_part holds the
-                  port suffix to interpolate (empty when omitted,
-                  ":<port>" otherwise). Each request matches at most
-                  one redirect rule (dispatched by the route condition
-                  upstream), so a single shared variable name is safe;
-                  the route-condition gate keeps the set-var lines
-                  inert for non-matching requests. -#}
+              {#- Spec: with both scheme and port unset the redirect port MUST be the Gateway
+                  listener port, which one route can have several of — so resolve it per
+                  request. One shared var is safe: a request matches at most one redirect. -#}
               {%- if dynamicPort %}
-                {#- Chart-static's HTTP / HTTPS internal ports come
-                    from the chart's `haproxy.ports.http` / `https`
-                    values, threaded through extraContext at chart-
-                    render time. Defaults are 80 / 443, matching the
-                    Gateway-API-spec well-known port numbers. We use
-                    `txn.gw_listener_port` (set at the top of this
-                    snippet from pod-gw-listener-port.map) rather than
-                    the raw `dst_port` sample so the per-Gateway-IP path
-                    (phase 4 binds on an allocated pod port like 18000
-                    instead of the Gateway listener port) still produces
-                    the right Location header: that map translates the
-                    pod port back to the user-facing Gateway listener
-                    port, and the omit rule (Gateway API: omit port from
-                    Location when the resulting (scheme, port) is
-                    (http, 80) or (https, 443)) therefore tests the
-                    listener-side value, not the Service-NAT-internal
-                    one. NOTE: `txn.listener_port` can't be used here —
-                    on the per-Gateway path it equals the pod port
-                    (identity pod-listener-port.map, for host-key
-                    isolation), so it would leak :18000 into Location.
-                    For chart-static binds the map lookup misses and
-                    `gw_listener_port` == `dst_port`, so the rule still
-                    works on operator-chosen httpPort / httpsPort. -#}
-                {#- Fallbacks match every other site in the chart
-                    (10-features.yaml, 50-binds.yaml, ssl.yaml,
-                    base.yaml): defaults are the dataplane-API-internal
-                    ports 8080/8443, not the user-facing 80/443. The
-                    real defaults come from extraContext.httpPort /
-                    httpsPort, which `templates/haproxytemplateconfig.yaml`
-                    always plumbs from `haproxy.ports.http` /
-                    `haproxy.ports.https` in values.yaml — so this
-                    fallback effectively never fires in production. -#}
+                {#- Use txn.gw_listener_port, not txn.listener_port or raw dst_port: on the
+                    per-Gateway-IP path the latter two are the allocated pod port (e.g. 18000)
+                    and would leak into Location; the map translates back to the listener port. -#}
+                {#- Fallbacks are the dataplane-internal 8080/8443 (chart-wide convention), not
+                    80/443; extraContext.httpPort/httpsPort is always plumbed in production. -#}
                 {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
                 {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
       http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.gw_listener_port) -m int {{ httpPort }} } !{ ssl_fc }
@@ -1145,11 +775,9 @@ templateSnippets:
         {%- end %}
       {%- end %}
       {%- end %}
-  # Filter: URLRewrite - rewrites request URLs before sending to backend
   frontend-filters-500-gateway-urlrewrite:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#- URLRewrite: rewrite hostname or path before backend -#}
       {%- import "util-route-condition" for RouteIdCondition -%}
       {{- render "util-gateway-analysis" -}}
       {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
@@ -1158,8 +786,6 @@ templateSnippets:
       {%- if ga["hasUrlrewrite_filter"] %}
       # gateway/frontend-filters-gateway-urlrewrite
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- Extract rule.Filters via per-Kind type-switch on
-            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -1201,20 +827,14 @@ templateSnippets:
                 {%- else if pathType == "ReplacePrefixMatch" %}
                   {%- var origPrefix = tostring(routeInfo.(map[string]any)["pathValue"]) %}
                   {%- if origPrefix == "" %}{%- origPrefix = "/" %}{%- end %}
-                  {#- Strip a trailing slash from origPrefix so "/foo/" matches
-                      the same paths as "/foo" — Gateway API treats them
-                      equivalently for prefix purposes. -#}
+                  {#- Gateway API treats "/foo/" and "/foo" as the same prefix. -#}
                   {%- if hasSuffix(origPrefix, "/") && origPrefix != "/" %}
                     {%- origPrefix = origPrefix[:len(origPrefix)-1] %}
                   {%- end %}
                   {%- var regexPrefix = origPrefix | replace(".", "\\.") | replace("/", "\\/") %}
                   {%- var rp = pathMod | dig("replacePrefixMatch") | tostring() %}
-                  {#- Trim trailing slash from the replacement; we always
-                      add the slash separator ourselves before the capture
-                      group so we never produce "//rest" when rp == "/" or
-                      "/foo/" + "/rest". The exact-match line uses rp as-is
-                      (or "/" if empty) so a request that exactly equals
-                      the matched prefix gets exactly the replacement. -#}
+                  {#- The separator is added before the capture group, so the replacement's
+                      own trailing slash must go or the result is "//rest". -#}
                   {%- var rpExact = rp %}
                   {%- if rpExact == "" %}{%- rpExact = "/" %}{%- end %}
                   {%- var rpStripped = rp %}
@@ -1232,34 +852,15 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
-  # Filter: RequestMirror — early frontend directive buffering the request
-  # body. Mirroring needs HAProxy to buffer the full body before the SPOE
-  # notification fires; without it `req.body` arrives empty at the plugin
-  # and PUT/POST mirrors silently drop their bodies.
-  #
-  # Gated on Content-Length, NOT frontend-wide `option http-buffer-request`.
-  # This snippet fires for the whole frontend as soon as ONE route carries a
-  # RequestMirror filter, and the frontend is shared with every other route on
-  # the Gateway — including GRPCRoutes. Unconditional buffering deadlocks a
-  # gRPC stream (the client waits for a response HAProxy hasn't forwarded)
-  # until the wait expires and the client gets a 408 the backend never saw.
-  # Nothing that streams can declare a Content-Length, so this gate excludes
-  # every such protocol by construction. Trade-off: a chunked request body
-  # (no Content-Length) is no longer mirrored — the mirror sees an empty body
-  # rather than the whole frontend breaking.
-  #
-  # It also honours a route's `request-buffering: off` opt-out, which is why
-  # this lives in frontend-filters-* rather than the earlier frontend-extra-*
-  # phase: txn.backend_name is only set by frontend-routing-logic, which runs
-  # between the two, so the per-backend map is unreadable in frontend-extra-*.
-  # Without the map check a single mirrored route would silently re-buffer
-  # every opted-out route on the same frontend — the map override is
-  # documented as authoritative, so it has to actually be. The map default is
-  # `on` (not the fleet-wide setting) because mirroring needs the body even
-  # where fleet buffering is off; only an explicit per-route `off` suppresses
-  # it, and such a route's own mirror then sees an empty body, which is what
-  # opting out means. Band 091 keeps it after base's 090 rule and far ahead of
-  # the mirror fire at 950.
+  # Gated on Content-Length, not frontend-wide `option http-buffer-request`: one
+  # mirrored route turns this on for the whole shared frontend, and unconditional
+  # buffering deadlocks a gRPC stream into a 408 the backend never saw. Nothing that
+  # streams can send a Content-Length, so the gate excludes them by construction;
+  # a chunked body is therefore mirrored empty rather than breaking the frontend.
+  # Lives in frontend-filters-* because txn.backend_name — the key of the per-route
+  # `request-buffering: off` opt-out map — is only set by frontend-routing-logic,
+  # which runs after frontend-extra-*. That map defaults to `on` rather than the
+  # fleet-wide setting because mirroring needs the body even where buffering is off.
   frontend-filters-091-gateway-mirror-buffer:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
@@ -1275,43 +876,13 @@ templateSnippets:
       http-request wait-for-body time {{ mirrorWait }} if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map({{ rbMap }},on) -m str off }
       {%- end %}
 
-  # Filter: RequestMirror — append each mirror target to the per-request
-  # mirror list.
-  #
-  # For each HTTPRoute rule with one or more RequestMirror filters (Gateway
-  # API allows multiple — SupportHTTPRouteRequestMultipleMirrors), append
-  # one `scheme|host:port|timeout_ms|retries` entry to txn.gw_mirror_targets,
-  # gated by the route's RouteIdCondition and the filter's percent / fraction
-  # sampling. A single static `mirror` SPOE message + `mirror-group` carries
-  # the whole list: HAProxy SPOE processes each group at most once per stream,
-  # but the mirror message's `arg_targets` is the full list and the plugin
-  # (haproxy-spoa-hub-plugin-mirror v0.6.0+) fans out to every entry. So N
-  # filters on one rule just append N entries — no per-index message/group,
-  # and nothing in spoe.conf or the hub TOML changes when routes change.
-  # frontend-filters-950-spoa-hub-mirror-fire fires the group once, after
-  # every source has appended.
-  #
-  # Sampling: `rand(100) lt <percent>` is the canonical HAProxy idiom
-  # for uniform percentage gating. The Gateway API spec allows both a
-  # plain `percent` (integer 0-100) and a `fraction { numerator,
-  # denominator }`. We normalise both to a percent-of-100 integer at
-  # render time so the ACL is always the same `rand(100) lt N` shape;
-  # the precision loss from fraction → percent rounding is acceptable
-  # for traffic mirroring (the upstream SupportHTTPRouteRequestPercentage
-  # Mirror conformance test runs 500 requests with ±15% tolerance, so
-  # integer rounding within 1% has no observable effect on the result).
-  # When percent == 100 we skip the rand() ACL entirely so the
-  # generated config is identical to the no-percent case — saves a
-  # branch on every mirrored request.
-  #
-  # ReferenceGrant gating: the backendRef resolution path
-  # (gateway/30-backends.yaml) already filters out cross-namespace
-  # backendRefs that lack a matching ReferenceGrant — those routes
-  # have their `filters[*].requestMirror.backendRef` marked invalid in
-  # gatewayAnalysis. Filters with an unresolvable backendRef skip
-  # emission below (their target is empty) and the route's status
-  # condition surfaces `ResolvedRefs=False/RefNotPermitted` via the
-  # existing status-side path.
+  # Appends `scheme|host:port|timeout_ms|retries` entries to txn.gw_mirror_targets.
+  # One static SPOE message + mirror-group carries the whole list — HAProxy runs a
+  # group at most once per stream, and the plugin (mirror v0.6.0+) fans out to every
+  # entry — so N filters on a rule just append N entries and spoe.conf never changes
+  # when routes do. frontend-filters-950-spoa-hub-mirror-fire fires the group after
+  # all appends. Cross-namespace refs lacking a ReferenceGrant arrive already marked
+  # invalid from gateway/30-backends.yaml and emit nothing here.
   frontend-filters-550-gateway-mirror:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
@@ -1323,14 +894,10 @@ templateSnippets:
       {%- if ga["hasMirror_filter"] %}
       # gateway/frontend-filters-gateway-mirror
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- HTTPRoute-only filter: skip non-HTTPRoute via typed
-            assertion on routeInfo["route"]. -#}
         {%- var _, isHTTPRoute = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
         {%- if !isHTTPRoute %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
         {%- var cond = RouteIdCondition(routeId) %}
-        {#- Extract rule.Filters via per-Kind type-switch on
-            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -1360,23 +927,11 @@ templateSnippets:
           {%- if bName == "" %}{%- continue %}{%- end %}
           {%- var bNs = backendRef | dig("namespace") | fallback(routeInfo | dig("namespace")) | tostring() %}
           {%- var bPort = backendRef | dig("port") | fallback(80) %}
-          {#- Target as Kubernetes Service DNS. kube-proxy / cluster
-              DNS load-balances across the Service's endpoints; we
-              don't resolve to pod IPs here because mirror dispatch is
-              fire-and-forget and individual endpoint failures don't
-              affect the primary request. -#}
+          {#- Service DNS, not pod IPs: mirror dispatch is fire-and-forget, so an
+              individual endpoint failure must not affect the primary request. -#}
           {%- var target = bName + "." + bNs + ".svc.cluster.local:" + tostring(bPort) %}
-          {#- Scheme detection from the target Service's port spec.
-              Gateway API convention (per k8s service-port-protocols):
-              - `appProtocol: https` (KEP-4858 canonical)
-              - `appProtocol: kubernetes.io/https` (older spec form)
-              - port name == "https" (Ingress / haproxy-ingress convention)
-              Any of those marks the port as HTTPS; everything else is
-              treated as plain HTTP. Mirror dispatch doesn't validate
-              TLS certs by default (`verify_tls = false` in v0.1.0+
-              plugin params); operators wanting strict validation set
-              `verify_tls = true` once BackendTLSPolicy-style trust
-              material is plumbed through. -#}
+          {#- Mirror dispatch does not validate TLS certs (plugin default
+              `verify_tls = false`). -#}
           {%- var bScheme = "http" %}
           {%- var svc = resources.services.GetSingle(bNs, tostring(bName)) %}
           {%- if svc != nil %}
@@ -1388,8 +943,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-          {#- Normalise percent/fraction to integer percent. Default
-              100 (full mirror) when neither is set. -#}
           {%- var percent int = 100 %}
           {%- var pct = mirror | dig("percent") %}
           {%- if pct != nil %}
@@ -1404,32 +957,14 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-          {#- Percentage sampling. Only ONE directive gates on the sample
-              (the append below) — the mirror-group fire keys off
-              `txn.gw_mirror_targets` being non-empty, not the sample — so a
-              single inline `rand(100)` draw is enough (no stored sample var,
-              no per-filter index). When percent == 100 the ACL is skipped
-              entirely so the full-mirror config stays branch-free. -#}
+          {#- One inline rand() draw suffices: only the append below gates on the sample —
+              the group fire keys off txn.gw_mirror_targets being non-empty. -#}
           {%- var sampleCond = "" %}
           {%- if percent < 100 %}
             {%- sampleCond = " { rand(100) -m int lt " + tostring(percent) + " }" %}
           {%- end %}
-      {#- Append this filter's target to the per-request mirror list.
-          Entry format `scheme|host:port|timeout_ms|retries` (see
-          spoe-message-mirror-body); the single mirror-group carries the
-          whole list and the plugin fans out to each entry, so a rule with
-          several RequestMirror filters just appends several entries — no
-          per-index message/group, no spoe.conf change when routes change.
-          The group is fired once, after all appends, by
-          frontend-filters-950-spoa-hub-mirror-fire.
-
-          Timeout + retry budget come from the chart-wide `timeout server`
-          and a sensible retry default (matches HAProxy's built-in
-          `retries 3`) so a mirror dispatch waits as long as a normal
-          backend request would — the generous default closes the
-          gateway-conformance `HTTPRouteRequestMultipleMirrors` flake
-          (kube-proxy iptables / CoreDNS propagation cold-start race
-          against freshly-created in-cluster Services). -#}
+          {#- The generous timeout/retry budget closes a HTTPRouteRequestMultipleMirrors
+              flake: kube-proxy/CoreDNS cold-start against freshly-created Services. -#}
           {%- var timeoutMs = toint(extraContext | dig("timeout_server") | fallback("50000")) %}
           {%- var retriesCount = toint(extraContext | dig("retries") | fallback("3")) %}
           {%- var entry = bScheme + "|" + target + "|" + tostring(timeoutMs) + "|" + tostring(retriesCount) %}
@@ -1437,7 +972,3 @@ templateSnippets:
         {%- end %}
       {%- end %}
       {%- end %}
-
-  # ============================================================================
-  # Status Patch Registration
-  # ============================================================================

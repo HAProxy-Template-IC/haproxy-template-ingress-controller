@@ -39,6 +39,60 @@ The test for the exception: *could an operator plausibly swap this resource out 
 
 **Corollary on the chart side.** Resource-specific behaviour lives in resource-specific libraries (`ingress.yaml`, `gateway/*.yaml`, `haproxytech.yaml`, etc.), never in `base.yaml`. Vendor annotation libraries (`haproxy-ingress/`, `nginx-ingress/`, etc.) follow the same pattern. See `charts/CLAUDE.md` for the chart-side version.
 
+## Comments (RULE #2)
+
+**The default is no comment.** A comment is a liability: it rots and it is re-read on
+every visit.
+
+Comment length is **not** a size lever: `haptic.stripSnippetComments` and
+`haptic.filterTests` (`templates/_libraries.tpl`) already strip Scriggo comments and
+validationTest `description` fields before anything is rendered, so 120 KB of source
+comments cost the rendered objects 665 bytes. Write short comments because long ones
+are a reading tax and rot faster — not to save bytes. What fills an object is template
+*code* and validationTest *fixtures and assertions*, and both size ceilings are gated
+in `make lint-chart` (`cr-size-check` per object, `chart-size-check` for the Helm
+release Secret) — so if size is genuinely the concern, read the gate's output rather
+than shortening a comment.
+
+**Delete the comment, fix the code.** Each of these has a refactor, not a comment:
+
+| Smell | Instead |
+|---|---|
+| Restates the code | Delete it |
+| Carries a unit or meaning | Rename the identifier (`widthInPixels`, not `width // pixels`) |
+| Labels a block | Extract a function / snippet |
+| Explains a sub-expression | Introduce a named variable or constant |
+| Asserts a precondition | Write the check |
+| Explains bad code | Rewrite the code (Kernighan & Pike, rule 22) |
+| Commented-out code, history, attribution | Delete it — git has it |
+| Banner boxes, ASCII decoration | One plain line |
+
+**Keep only what the code cannot say** — Ousterhout's test: it must be *not obvious
+from the code*, and at a different level of detail than the code.
+
+- why **not** the obvious alternative; a guard against a well-meaning "fix"
+- a non-local invariant or ordering dependency
+- units, ownership, what nil means, sentinel values, boundary conditions
+- surprising external behaviour, or a workaround — **with a reference**
+
+**Length is capped by intent, not by taste:**
+
+- One line is the default. Two is a lot. **A paragraph means it belongs elsewhere.**
+- Long rationale goes to an ADR, a docs page, or the MR description; the code keeps
+  **one line and a pointer**. Document once, reference it — never restate it.
+- Applies equally to `validationTests` `description:` fields and any prose inside a
+  chart template — those DO ship in the CR.
+
+If you catch yourself explaining a hard-won debugging insight inline, that is the
+signal to write it in the MR or an ADR and leave one line behind.
+
+Sources: [Google TotT — To Comment or Not to Comment?](https://testing.googleblog.com/2017/07/code-health-to-comment-or-not-to-comment.html),
+[Google C++ style](https://google.github.io/styleguide/cppguide.html#Comments),
+Kernighan & Pike *The Practice of Programming* ch.1,
+[Ousterhout on comments](https://web.stanford.edu/~ouster/cgi-bin/cs190-winter18/lecture.php?topic=comments),
+[Linux kernel ch.8](https://www.kernel.org/doc/html/latest/process/coding-style.html),
+[go.dev/doc/comment](https://go.dev/doc/comment).
+
 ## Coding Standards
 
 ### Naming

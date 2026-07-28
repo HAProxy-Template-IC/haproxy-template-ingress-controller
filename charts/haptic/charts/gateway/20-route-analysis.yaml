@@ -2,9 +2,6 @@ templateSnippets:
   util-gateway-analysis:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#- Caches route analysis in shared.gatewayAnalysis: {sortedRoutes, pathGroups, allRoutes}
-          Uses ComputeIfAbsent for race-free caching across parallel template renders.
-          The compute function runs exactly once, even with concurrent access. -#}
       {%- import "util-analyze-routes" for AnalyzeRoutes %}
       {%%
         var _, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any {
@@ -14,17 +11,9 @@ templateSnippets:
         })
       %%}
 
-  # Compile-safe ListenerSet seam. The ONLY shared-pipeline site that touches
-  # `resources.listenersets`: stashes the store content as untyped values in
-  # shared. Shared consumers render this with `default ""` and read the keys
-  # back comma-ok — empty when the listenersets watch is stripped (Gateway
-  # API < v1.5), so Gateway routing keeps working without ListenerSets
-  # instead of the whole pipeline stripping with them.
-  #
-  #   {%- _ = render "util-listenersets-contrib" default "" -%}
-  #   {%- var lsData, _ = shared.Get("listenersetsUntyped").(map[string]any) %}
-  #   {%- var lsAll, _ = lsData["all"].([]any) %}
-  #   {%- var ls = lsData["byKey"] | dig(ns + "/" + name) %}
+  # The ONLY site allowed to touch `resources.listenersets`. Consumers render it
+  # with `default ""` and read shared "listenersetsUntyped", so a missing
+  # ListenerSet CRD (Gateway API < v1.5) strips this snippet alone, not the pipeline.
   util-listenersets-contrib:
     requires: [listenersets]
     template: |
@@ -44,74 +33,16 @@ templateSnippets:
     requires: [gateways, referencegrants]
     template: |
       {#-
-        Effective listeners per Gateway = the Gateway's own
-        spec.listeners + spec.listeners from every accepted ListenerSet
-        whose parentRef points at it AND whose listener does not lose a
-        precedence-based hostname/protocol conflict.
-
-        Caches a `map[gatewayKey][]listener` in shared so each
-        consumer pays one ComputeIfAbsent + one map-key lookup
-        regardless of how many sites read it. Also caches a per-
-        ListenerSet acceptance/conflict map under
-        "listenersetStatuses" so the F3 status patch and the routing
-        sites agree byte-for-byte on which listeners survived.
-
-        Each listener entry is a map[string]any with the original
-        Listener fields plus three flat provenance keys:
-        `__sourceKind` ("Gateway" | "ListenerSet"), `__sourceNs`,
-        `__sourceName` (the source resource's namespace and name);
-        an `_index` field with the listener's position in its owning
-        resource (used for transition-time keying); and an `_accepted`
-        bool indicating whether the listener's owning resource passed
-        the parent gate. Flat keys are used instead of a nested
-        `_source` map because Scriggo mis-evaluates the latter under
-        certain conditions (literal map keys "kind"/"namespace"/"name"
-        get rebound to listener-field values like "protocol" and
-        "hostname"; see in-line comments at the LS listener loop).
-        Routing/binding sites can treat the merged set uniformly;
-        status patching consumes the per-LS statuses sub-key on the
-        same effectiveListeners cache.
-
-        Acceptance gate (matches the F3 status patch byte-for-byte):
-          default-deny when allowedListeners is unset
-          from=All       admit every namespace
-          from=Same      admit ListenerSets in the parent Gateway namespace
-          from=Selector  admit when the ListenerSet namespace labels
-                         match allowedListeners.namespaces.selector.matchLabels
-          cross-namespace parentRef requires a ReferenceGrant in the
-          Gateway namespace permitting from {ListenerSet, lsNs} to
-          {Gateway, gwName}.
-
-        Conflict detection (per Gateway API spec):
-          ProtocolConflict - multiple listeners on the same port use
-            different protocols. Earlier (Gateway > earlier ListenerSet
-            > later ListenerSet, then index) wins.
-          HostnameConflict - multiple listeners on the same port use
-            the same hostname. Earlier wins.
-          Conflicting losers are dropped from the active routing set
-          but recorded in listenersetStatuses for status emission.
+        Provenance lives in flat `__source*` keys, not a nested `_source` map:
+        Scriggo rebinds literal map keys "kind"/"namespace"/"name" to
+        listener-field values ("protocol", "hostname") under this loop shape.
       -#}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- _ = render "util-listenersets-contrib" default "" -%}
       {%%
         var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
-          // The cache value is a single map containing two sub-keys:
-          //   "listeners" — map[gatewayKey][]listener (the merged effective
-          //                 listener list per Gateway)
-          //   "statuses"  — map[<ns>/<name>] (per-LS status map)
-          //
-          // statuses[<ns>/<name>] = map carrying the pre-computed acceptance
-          // state F3 emits as conditions. Fields:
-          //   permitted (bool)        - passed allowedListeners + RG gate
-          //   rejectionReason (string)
-          //   rejectionMessage (string)
-          //   listenerConflicts ([]any) - per-listener {name, index,
-          //     conflicted (string or ""), accepted (bool)}.
-          //
-          // Folding both into one cache value means "effectiveListeners
-          // populated" implies "statuses populated". F3's status patch reads
-          // this single value rather than depending on a separate, possibly-
-          // unpopulated listenersetStatuses key.
+          // Statuses share this one cache value so "effectiveListeners populated"
+          // implies "statuses populated"; the F3 status patch reads both from here.
           var statuses = map[string]any{}
 
           var out = map[string][]any{}
@@ -121,9 +52,7 @@ templateSnippets:
             var gwName = gw.Metadata.Name
             var gwKey = gwNs + "/" + gwName
 
-            // Determine the Gateway allowedListeners gate once per
-            // Gateway. A Gateway with no allowedListeners default-denies
-            // (per Gateway API spec for SupportListenerSet).
+            // No allowedListeners = default-deny (Gateway API SupportListenerSet).
             var allowed = dig(gw, "spec", "allowedListeners")
             var allowedFrom = "None"
             var allowedSelector any = nil
@@ -131,25 +60,14 @@ templateSnippets:
               allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
               allowedSelector = dig(allowed, "namespaces", "selector", "matchLabels")
             }
-            // Scriggo workaround: without this `ComputeIfAbsent` capture
-            // the closure later mis-evaluates `allowedFrom` (it picks
-            // up listener-field strings like "protocol" or "hostname"
-            // instead of the literal value computed above). The capture
-            // pins the resolved value into a stable closure environment,
-            // forcing Scriggo to materialise the correct binding before
-            // the LS-acceptance switch runs. Use a per-Gateway cache key
-            // so the call stays a no-op across multiple renders.
+            // Scriggo quirk: without this capture the LS-acceptance switch below
+            // reads listener-field strings ("protocol"/"hostname") as allowedFrom.
             var _, _ = shared.ComputeIfAbsent("__captureAllowedFrom_"+gwKey, func() any {
               return map[string]any{"allowedFrom": allowedFrom, "allowed": allowed}
             })
 
-            // Sort the ListenerSets attached to this Gateway by
-            // (creationTimestamp, namespace, name) so precedence is
-            // deterministic across renders.
-            // Untyped via util-listenersets-contrib (rendered by the
-            // outer snippet): typed resources.listenersets access here
-            // would strip the whole analysis pipeline on clusters
-            // without the ListenerSet CRD.
+            // Untyped read: typed resources.listenersets here would strip this
+            // whole snippet on clusters without the ListenerSet CRD.
             var lsDataRaw = shared.Get("listenersetsUntyped")
             var lsAll = []any{}
             if lsDataRaw != nil {
@@ -169,15 +87,8 @@ templateSnippets:
               }
               attachedSets = append(attachedSets, ls)
             }
-            // Deterministic precedence: sort by (creationTimestamp asc, then
-            // namespace/name asc) using the engine's sort_by (Go sort.Stable,
-            // O(n log n)) — the same helper the rest of this file already uses
-            // for route ordering. A hand-rolled bubble-sort was previously
-            // used here; besides being O(n^2), nested-loop sorts mis-lower
-            // under Scriggo and can silently drop elements (the exact footgun
-            // that dropped TCPRoutes in 90-tcproute.yaml). Empty
-            // creationTimestamp (test fixtures) maps to a high sentinel so it
-            // sorts LAST, never displacing real ListenerSets.
+            // Never hand-roll a nested-loop sort here: Scriggo mis-lowers them and
+            // silently drops elements. Empty creationTimestamp → sentinel, sorts last.
             var lsSortItems = []any{}
             for _, ls := range attachedSets {
               var lsTs = dig_string(ls, "", "metadata", "creationTimestamp")
@@ -194,15 +105,9 @@ templateSnippets:
               attachedSets = append(attachedSets, lsItem.(map[string]any)["ls"])
             }
 
-            // Build the candidate listener list for conflict detection.
-            // Each entry is a map carrying the listener fields plus
-            // __sourceKind / __sourceNs / __sourceName / _index /
-            // _accepted (bool — whether the listener's owning resource
-            // passed the parent gate).
             var candidates = []any{}
 
-            // Gateway own listeners come first; they always pass the
-            // parent gate (no ListenerSet involved), so _accepted=true.
+            // Gateway's own listeners go first: they win every precedence conflict.
             for li, l := range gw.Spec.Listeners {
               var lc = map[string]any{
                 "name":          l.Name,
@@ -220,13 +125,11 @@ templateSnippets:
               candidates = append(candidates, lc)
             }
 
-            // ListenerSet listeners, in precedence order.
             for _, ls := range attachedSets {
               var lsNs = dig_string(ls, "", "metadata", "namespace")
               var lsName = dig_string(ls, "", "metadata", "name")
               var lsKey = lsNs + "/" + lsName
 
-              // Parent acceptance gate.
               var permitted = false
               var rejectionReason = "NotAllowed"
               var rejectionMessage = "Parent Gateway does not allow ListenerSets from this namespace"
@@ -243,11 +146,8 @@ templateSnippets:
                   if nsObj == nil {
                     permitted = false
                   } else {
-                    // nsObj is typed *resources.namespaces.T — labels
-                    // are map[string]string directly. allowedSelector
-                    // is the listener's matchLabels, polymorphic via
-                    // the Gateway-or-ListenerSet listenerOwner above,
-                    // so it stays `any` and goes through to_str_map.
+                    // to_str_map, not .(map[string]any): typegen labels are
+                    // map[string]string, which that assertion panics on.
                     var selMap = to_str_map(allowedSelector)
                     var allMatch = true
                     for k, v := range selMap {
@@ -264,16 +164,11 @@ templateSnippets:
                 permitted = false
               }
 
-              // Per Gateway API conformance (ListenerSetReferenceGrant
-              // + ListenerSetAllowedNamespaceSelector), cross-namespace
-              // ListenerSet parentRefs do NOT require a ReferenceGrant
-              // — the Gateway's `allowedListeners` IS the policy.
-              // ReferenceGrant only gates resource references (Secret,
-              // ConfigMap, …) attached to listeners.
+              // Cross-namespace ListenerSet parentRefs need NO ReferenceGrant:
+              // allowedListeners is the policy (Gateway API conformance). RG
+              // only gates Secret/ConfigMap references made by listeners.
 
-              // Pre-stash the per-LS status entry so F3 can read it
-              // back. listenerConflicts gets filled in further below
-              // after conflict detection runs.
+              // listenerConflicts is filled in after conflict detection, below.
               statuses[lsKey] = map[string]any{
                 "permitted":         permitted,
                 "rejectionReason":   rejectionReason,
@@ -281,10 +176,8 @@ templateSnippets:
                 "listenerConflicts": []any{},
               }
 
-              // Even when not permitted we still want listener entries
-              // for the per-listener status output (Programmed=False/
-              // NotAllowed flows via _accepted=false). They are flagged
-              // _accepted=false so routing/binding loops skip them.
+              // Non-permitted listeners are still emitted (_accepted=false) so
+              // status can report Programmed=False; routing loops skip them.
               for li, l := range dig(ls, "spec", "listeners") | toSlice() {
                 var lc = map[string]any{
                   "name":          dig(l, "name"),
@@ -303,18 +196,8 @@ templateSnippets:
               }
             }
 
-            // Conflict detection across the precedence-ordered list.
-            //   ProtocolConflict - multiple listeners on the same port
-            //     with different protocols. Earlier (higher precedence)
-            //     wins; later listeners get Conflicted=True/ProtocolConflict.
-            //   HostnameConflict - multiple listeners on the same port
-            //     using the same hostname. Earlier wins; later listeners
-            //     get Conflicted=True/HostnameConflict.
-            // Conflict detection: rewritten to avoid `continue` because
-            // Scriggo's `continue` inside this nested-if structure has
-            // misbehaved here in past debugging sessions, terminating the
-            // outer for-loop prematurely. Use boolean skip flags + nested
-            // if-blocks instead — semantically identical, robust.
+            // No `continue` in this loop: Scriggo's continue inside these nested
+            // ifs terminates the outer for-loop. Skip flags instead.
             var winningProtoByPort = map[int]string{}
             var claimedHostByPort = map[string]bool{}
             for ci := 0; ci < len(candidates); ci++ {
@@ -347,13 +230,7 @@ templateSnippets:
               }
             }
 
-            // Surface per-listener conflicts back into the
-            // listenersetStatuses map so F3 can emit them as
-            // Conflicted=True/<reason> on the ListenerSet
-            // status.listeners[]. Avoids `continue` because Scriggo's
-            // `continue` mis-handles this nested-if shape (terminates the
-            // outer for-loop early instead of going to the next
-            // iteration); using a plain `if` body works identically.
+            // No `continue` here either (see the loop above).
             for ci := 0; ci < len(candidates); ci++ {
               var lc = candidates[ci].(map[string]any)
               var srcKind = tostring(lc["__sourceKind"])
@@ -382,12 +259,6 @@ templateSnippets:
               }
             }
 
-            // Routing/binding/cert sites consume the merged list. Drop
-            // entries whose owning ListenerSet was not permitted (they
-            // do not program into HAProxy) and entries flagged
-            // _conflicted (a conflicting listener does not program; its
-            // claim is held by the precedence-winning sibling).
-            // Same pattern: skip flag in lieu of `continue`.
             var listeners = []any{}
             for _, c := range candidates {
               var lc = c.(map[string]any)
@@ -416,34 +287,14 @@ templateSnippets:
     requires: [gateways, referencegrants]
     template: |
       {#-
-        IsListenerSetAdmitted — the routing-layer ListenerSet gate.
-
-        Returns "true" / "false" — Scriggo macro return-type constraint
-        (text-format only). Callers compare with `== "true"`.
-
-        Implements the same gate util-effective-listeners uses, in macro
-        form so the routing sites (multi-port-bind, misdirected map,
-        host-map, mTLS) can apply it without re-deriving the logic. The
-        F3 status patch (status-patches-220-listenerset) reads the
-        listenersetStatuses cache directly rather than calling this
-        macro, but they agree on the gate result.
-
-        Gate:
-          1. parentRef.name + parentRef.namespace points at `gw`
-          2. allowedListeners admits this LS's namespace
-             (default-deny → deny; from=All → admit; from=Same →
-             ns equality; from=Selector → matchLabels against
-             resources.namespaces[lsNs].metadata.labels)
-          3. cross-namespace parentRef requires a ReferenceGrant in
-             the Gateway's namespace permitting from
-             {ListenerSet, lsNs} to {Gateway, gwName}.
+        Returns "true" / "false" — Scriggo macros can only return text.
+        Duplicates the acceptance gate util-effective-listeners applies;
+        change both together or routing and status disagree.
       -#}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- macro IsListenerSetAdmitted(gw *resources.gateways.T, ls any) -%}
-        {#- `ls any`, dig-navigated: a typed *resources.listenersets.T param
-            would make every importer require the listensets CRD. Typed
-            callers keep working — dig() navigates typed structs and
-            untyped maps alike. -#}
+        {#- `ls any`, not *resources.listenersets.T: a typed parameter would make
+            every importer require the ListenerSet CRD. dig() handles both. -#}
         {%- var gwNs = gw.Metadata.Namespace -%}
         {%- var gwName = gw.Metadata.Name -%}
         {%- var result = "false" -%}
@@ -452,12 +303,9 @@ templateSnippets:
           {%- var pNs = dig_string(ls, "", "spec", "parentRef", "namespace") -%}
           {%- if pNs == "" %}{%- pNs = lsNs %}{%- end -%}
           {%- if pNs == gwNs -%}
-            {#- AllowedListeners is optional AND newer than the oldest
-                schema generation the gateways candidate list can resolve
-                (it arrived with ListenerSets in Gateway API v1.5) — so
-                dig-guarded, never typed: typed access fails to COMPILE
-                against pre-1.5 Gateway schemas. Absent block = default-
-                deny (`allowedFrom = "None"`), matching the CRD default. -#}
+            {#- dig, never typed: `allowedListeners` arrived in Gateway API v1.5
+                and typed access fails to COMPILE against older Gateway schemas.
+                Absent block = default-deny. -#}
             {%- var allowedFrom = dig_string(gw, "None", "spec", "allowedListeners", "namespaces", "from") -%}
             {%- if allowedFrom == "" %}{%- allowedFrom = "None" %}{%- end -%}
             {%- var allowedSelector = dig(gw, "spec", "allowedListeners", "namespaces", "selector", "matchLabels") -%}
@@ -473,9 +321,8 @@ templateSnippets:
               {%- if len(selMap) > 0 -%}
                 {%- var nsObj = resources.namespaces.GetSingle(lsNs) -%}
                 {%- if nsObj != nil -%}
-                  {#- allowedSelector arrives via dig() (any) — normalise
-                      through to_str_map; nsObj.Metadata.Labels is typed
-                      map[string]string from typegen. -#}
+                  {#- to_str_map, not .(map[string]any): typegen labels are
+                      map[string]string, which that assertion panics on. -#}
                   {%- var allMatch = "true" -%}
                   {%- for k, v := range selMap -%}
                     {%- var actual, ok = nsObj.Metadata.Labels[k] -%}
@@ -490,12 +337,8 @@ templateSnippets:
               {%- end -%}
             {%- end -%}
             {%- if permitted == "true" -%}
-              {#- Per Gateway API conformance (ListenerSetReferenceGrant
-                  + ListenerSetAllowedNamespaceSelector), cross-namespace
-                  ListenerSet parentRefs do NOT require a ReferenceGrant
-                  — the Gateway's `allowedListeners` IS the policy.
-                  ReferenceGrant only gates resource references
-                  (Secret, ConfigMap, …) attached to listeners. -#}
+              {#- Cross-namespace ListenerSet parentRefs need NO ReferenceGrant:
+                  allowedListeners is the policy (Gateway API conformance). -#}
               {%- result = "true" -%}
             {%- end -%}
           {%- end -%}
@@ -504,29 +347,10 @@ templateSnippets:
       {%- end macro -%}
 
       {#-
-        IsRouteAllowedOnListener — listener-level
-        `allowedRoutes.namespaces` gate, applied when a route's
-        parentRef has resolved to a specific listener.
-
-        Per Gateway API spec a listener accepts a route only when its
-        `allowedRoutes.namespaces.from` permits the route's namespace:
-
-          * `from: All`      — any namespace.
-          * `from: Same`     — only listenerOwnerNs (the Gateway's or
-                               ListenerSet's namespace).
-          * `from: Selector` — namespaces whose labels match
-                               `selector.matchLabels`.
-          * (unset)          — defaults to `Same`.
-
-        Returns "true" / "false" (Scriggo macro return-type
-        constraint). Callers use `hasPrefix(... , "true")`.
-
-        Exists separately from IsListenerSetAdmitted because the gates
-        are distinct: IsListenerSetAdmitted checks the parent
-        Gateway's `allowedListeners` (LS-level admission), while this
-        macro checks the listener's `allowedRoutes` (route-level
-        admission). A LS can be admitted on a Gateway but its
-        listener can still reject a specific route's namespace.
+        Returns "true" / "false" — Scriggo macros can only return text.
+        Not foldable into IsListenerSetAdmitted: that gates a ListenerSet on the
+        Gateway's allowedListeners, this gates a route on the listener's
+        allowedRoutes. An admitted LS can still reject a route's namespace.
       -#}
       {%- macro IsRouteAllowedOnListener(routeNs string, listener any, listenerOwnerNs string) -%}
         {%- var allowedFrom = "Same" -%}
@@ -547,11 +371,8 @@ templateSnippets:
           {%- if allowedSelector != nil -%}
             {%- var nsObj = resources.namespaces.GetSingle(routeNs) -%}
             {%- if nsObj != nil -%}
-              {#- nsObj is typed *resources.namespaces.T — labels are
-                  map[string]string directly. allowedSelector is the
-                  listener's matchLabels (polymorphic from Gateway-or-
-                  ListenerSet listenerOwner above), so it stays `any`
-                  and needs to_str_map. -#}
+              {#- to_str_map, not .(map[string]any): typegen labels are
+                  map[string]string, which that assertion panics on. -#}
               {%- var selMap = to_str_map(allowedSelector) -%}
               {%- var allMatch = "true" -%}
               {%- for k, v := range selMap -%}
@@ -572,26 +393,6 @@ templateSnippets:
   util-analyze-routes:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#-
-        Analyzes HTTPRoute/GRPCRoute resources and populates result with:
-        - allRoutes: flat list of normalized route objects
-        - pathGroups: routes grouped by host+path for conflict detection
-        - sortedRoutes: routes sorted by precedence (method > headers > query > order)
-
-        Hostname expansion: a route with `spec.hostnames` set produces one
-        entry per declared hostname. A route with NO hostnames inherits
-        the hostname(s) of every listener it attaches to (per Gateway
-        API spec — "If the listener has hostnames specified and the
-        HTTPRoute does not, the route inherits the listener's
-        hostname"). This is what makes a sectionName-targeted route
-        scope to its listener's hostname instead of bleeding across
-        every Gateway sharing the frontend port.
-
-        For each (route, attaching-listener) pair the routeInfo's
-        hostname becomes the listener's hostname (or "" when the
-        listener has no hostname either, which the host map handles via
-        the regsub wildcard fallback).
-      -#}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocolOr, ListenerHostname %}
@@ -600,22 +401,10 @@ templateSnippets:
         {{ render "util-gateway-port-scope" -}}
         {%- var allRoutes = []any{} %}
 
-        {#- Process HTTPRoutes #}
         {%- for _, route := range resources.httproutes.List() %}
-          {#- Compute the effective hostnames per Gateway API intersection
-              rules. For each parentRef we accept (Gateway-targeted) and
-              each attached listener:
-                - route empty + listener empty           → ""        (catch-all)
-                - route empty + listener H               → H         (route inherits)
-                - route H... + listener ""               → each H    (route narrows)
-                - route H... + listener L                → per-pair intersection
-                                                            (drops pairs with no intersection)
-              The aggregated set is what the chart should emit map entries for;
-              hostnames that don't intersect any attached listener fall away,
-              which is what the spec requires (a route with `wildcard.io` in
-              spec.hostnames must NOT route to a `*.wildcard.io` listener,
-              because `*.wildcard.io` doesn't match the bare `wildcard.io`).
-              Routes with no surviving intersection produce no entries. -#}
+          {#- Non-intersecting hostnames fall away by design: `wildcard.io` must
+              NOT route to a `*.wildcard.io` listener, so a route can legitimately
+              end up with no entries at all. -#}
           {%- var routeHostnames = route.Spec.Hostnames %}
           {%- var parentRefs = route.Spec.ParentRefs %}
           {%- var effectiveHosts = map[string]bool{} %}
@@ -632,23 +421,11 @@ templateSnippets:
               {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
               {%- if gw != nil %}
                 {%- resolvedGwCount = resolvedGwCount + 1 %}
-                {#- Pre-compute mTLS-blocked listener names for THIS Gateway
-                    inline so the route-analysis pass doesn't depend on
-                    features-110-gateway-frontend-mtls having run first
-                    (it doesn't, when map files render in their own
-                    context). Per Gateway API spec, a listener whose
-                    spec.tls.frontend.default OR matching perPort
-                    validation references a non-existent / wrong-kind /
-                    cross-ns-without-RG ConfigMap or Secret cannot
-                    terminate TLS, and routes attached to it must not
-                    serve — otherwise the chart's HTTPS frontend would
-                    happily route them via a SIBLING Gateway's bind
-                    (closes the GatewayFrontendInvalidDefaultClient
-                    CertificateValidation conformance gap). The check
-                    here matches the resolvability test
-                    features-110-gateway-frontend-mtls performs but
-                    against the live resource stores rather than
-                    consuming pre-populated state. -#}
+                {#- Computed here, not read back from
+                    features-110-gateway-frontend-mtls: map files render in their
+                    own context, where that snippet has not run. A listener whose
+                    mTLS validation ref is unresolvable can't terminate TLS, and
+                    its routes must not serve via a sibling Gateway's bind. -#}
                 {{ ComputeGwMtlsBlocked(gw) }}
                 {%- var gwMtlsBlockedAny, _ = shared.ComputeIfAbsent(
                       "gwMtlsBlocked:"+gwNs+"/"+gwName,
@@ -658,30 +435,14 @@ templateSnippets:
                   {%- var listenerName = listener.Name %}
                   {%- if section == "" || section == listenerName %}
                     {%- var listenerPort = toint(listener.Port) %}
-                    {#- parentRef.port pin: per Gateway API spec, attach
-                        only to listeners on the named port. -#}
-                    {#- Listener-level admission gate: prPort pin AND
-                        allowedRoutes.namespaces (the listener's owner
-                        is the Gateway, so listenerOwnerNs == gwNs)
-                        AND not mtls-blocked. Combined into one
-                        condition so the surrounding end-block
-                        structure stays unchanged. -#}
                     {%- if !gwMtlsBlocked[listenerName] && (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, gwNs), "true") %}
-                      {#- Compose a port suffix for non-default HTTP/HTTPS
-                          ports so the host_match key includes it. The
-                          inbound Host header carries the port verbatim for
-                          non-default ports, so the host-map lookup with
-                          un-stripped Host directly matches `<host>:<port>`. -#}
+                      {#- The Host header carries `:port` verbatim on non-default
+                          ports, so the host-map key must carry it too. -#}
                       {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
                       {%- var listenerHostname = ListenerHostname(listener) %}
-                      {#- Per-Gateway port scope (mirrors 40-maps-host): a
-                          catch-all (no-hostname) listener, and any listener on
-                          a non-default port, keys by the Gateway's
-                          representative pod port so its routes resolve only via
-                          this Gateway's bind (GatewayHTTPListenerIsolation).
-                          Default-port hostname'd listeners keep the bare-host
-                          key (base's wildcard cascade carries no port). Falls
-                          back to the listener port for pinned / chart-static. -#}
+                      {#- Keys must match 40-maps-host exactly. Default-port
+                          hostname'd listeners keep the bare host key — base's
+                          wildcard cascade carries no port. -#}
                       {%- var portSuffix = "" %}
                       {%- if listenerPort > 0 %}
                         {%- var portScope = shared.Get("gatewayPortScope").(map[string]any) %}
@@ -694,21 +455,9 @@ templateSnippets:
                           {%- portSuffix = ":" + tostring(scopePort) %}
                         {%- end %}
                       {%- end %}
-                      {#- Listener isolation: per Gateway API spec, when a
-                          route on a less-specific listener (e.g. catch-all)
-                          declares a hostname that's more-specifically owned
-                          by a sibling listener, the sibling owns the host.
-                          We only need to filter when the host CATEGORY
-                          would land in a different listener's regex bucket;
-                          for routes attached to a non-empty listener via
-                          intersection, the intersection result already
-                          falls in the listener's own bucket. So drop the
-                          filter when listenerHostname is non-empty (the
-                          intersection guarantees the candidate is at-or-
-                          inside the listener's claim). For catch-all
-                          listeners, drop any route hostname whose host
-                          category is fully owned by a sibling — i.e. the
-                          sibling matches the candidate. -#}
+                      {#- Listener isolation (Gateway API): a more-specific
+                          sibling listener owns the host, so a catch-all
+                          listener must not claim it. -#}
                       {%- var currentRank = toint(HostnameRank(listenerHostname)) %}
                       {%- if len(routeHostnames) == 0 %}
                         {%- effectiveHosts[listenerHostname + portSuffix] = true %}
@@ -735,30 +484,10 @@ templateSnippets:
                         {%- for _, rh := range routeHostnames %}
                           {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                           {%- if inter != "" %}
-                            {#- Listener isolation per Gateway API spec: even
-                                when route hostnames intersect THIS listener,
-                                drop the intersection if it's more-specifically
-                                claimed by a sibling listener on the same
-                                Gateway. The sibling owns the host and only
-                                routes attached to that sibling may serve it.
-                                Closes the GatewayHTTPListenerIsolation
-                                "intersecting hostnames" subtests where a
-                                route on `*.example.com` listener also lists
-                                `*.foo.example.com` in spec.hostnames; that
-                                hostname belongs to the more-specific
-                                `*.foo.example.com` listener. -#}
-                            {#- A sibling "covers" inter when intersect(sibling, inter)
-                                equals inter exactly — i.e. every host matching
-                                inter also matches sibling. Combined with rank >
-                                current, the sibling is a strict superset claim
-                                that owns inter end-to-end (e.g. inter=
-                                `*.foo.example.com`, sibling=`*.foo.example.com`
-                                or sibling=`abc.foo.example.com` for inter=
-                                `abc.foo.example.com`). The previous check used
-                                HostnameSinglePairMatch — true on ANY overlap —
-                                which incorrectly filtered the listener's own
-                                pattern when a more-specific subdomain sibling
-                                merely intersected it. -#}
+                            {#- A sibling only "covers" inter when
+                                intersect(sibling, inter) == inter exactly.
+                                HostnameSinglePairMatch is true on ANY overlap and
+                                wrongly drops the listener's own pattern. -#}
                             {%- var ownedBySibling = false %}
                             {%- for _, sibling := range gw.Spec.Listeners %}
                               {%- if !ownedBySibling %}
@@ -782,14 +511,8 @@ templateSnippets:
                 {%- end %}
               {%- end %}
             {%- else if prGroup == "gateway.networking.k8s.io" && prKind == "ListenerSet" %}
-              {#- ListenerSet parentRef (GEP-1713 SupportListenerSet routing).
-                  Resolves the ListenerSet, walks its parent Gateway, and
-                  applies the same listener filters / hostname intersection
-                  as the Gateway branch above — only over the ListenerSet's
-                  own spec.listeners. ListenerSet admission state is
-                  authoritative on the LS status side; we inline the gate
-                  here so route resolution doesn't depend on the side-effect
-                  ordering of the status patch. -#}
+              {#- The admission gate is applied inline so route resolution doesn't
+                  depend on the status patch's side-effect ordering. -#}
               {%- var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
               {%- var lsName = tostring(dig(parentRef, "name") | fallback("")) %}
               {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
@@ -808,13 +531,8 @@ templateSnippets:
                     {%- var listenerName = dig_string(listener, "", "name") %}
                     {%- if section == "" || section == listenerName %}
                       {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
-                      {#- Listener-level admission gate (LS branch):
-                          prPort pin AND allowedRoutes.namespaces.
-                          Listener owner is the LS itself, so
-                          listenerOwnerNs == lsNs (NOT the parent
-                          Gateway's namespace). Merged into one
-                          condition so the surrounding end-block
-                          structure stays unchanged. -#}
+                      {#- The listener's owner is the LS, so listenerOwnerNs is
+                          lsNs — NOT the parent Gateway's namespace. -#}
                       {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, lsNs), "true") %}
                         {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
                         {%- var portSuffix = "" %}
@@ -834,12 +552,8 @@ templateSnippets:
                           {%- for _, rh := range routeHostnames %}
                             {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                             {%- if inter != "" %}
-                              {#- Listener isolation per Gateway API spec
-                                  (LS branch): drop intersections more-
-                                  specifically claimed by a sibling listener
-                                  on the SAME LS. Mirrors the Gateway branch
-                                  fix; siblings come from the LS's own
-                                  spec.listeners, not the parent Gateway. -#}
+                              {#- Siblings come from the LS's own spec.listeners,
+                                  not the parent Gateway's. -#}
                               {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
                               {%- var lsOwnedBySibling = false %}
                               {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
@@ -866,15 +580,9 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-          {#- Two fallbacks share the "use route hostnames as-is" branch:
-                1. No parentRefs at all (true orphan).
-                2. parentRefs present but none resolve to a known Gateway
-                   (typical for chart-test fixtures that omit Gateway
-                   resources to keep the fixture small).
-              When at least one parentRef DID resolve, we trust the
-              intersection result — an empty effectiveHosts there means
-              the spec-correct outcome that no listener intersects, and
-              the route correctly produces no entries. -#}
+          {#- Gated on resolvedGwCount, not on an empty effectiveHosts: once any
+              parentRef resolves, empty is the spec-correct "no listener
+              intersects" and the route must produce no entries. -#}
           {%- if resolvedGwCount == 0 %}
             {%- if len(routeHostnames) == 0 %}
               {%- effectiveHosts[""] = true %}
@@ -911,11 +619,8 @@ templateSnippets:
                   {%- queryParamCount = len(match.QueryParams) %}
                 {%- end %}
                 {%- var pathKey = hostname + "|" + pathType + "|" + pathValue %}
-                {#- routeInfo: typed route pointer + ruleIdx/matchIdx as
-                    the single source of truth; sort scalars
-                    (pathType/pathValueLen/hasMethod/headerCount/
-                    queryParamCount) precomputed here so sort_by avoids
-                    dig'ing into typed sub-structs at sort time. -#}
+                {#- Sort scalars are precomputed here so sort_by needn't dig into
+                    typed sub-structs. -#}
                 {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
@@ -935,12 +640,8 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- Process GRPCRoutes similarly. Mirror the listener-inheritance
-            logic so GRPCRoutes don't bleed across Gateways either. -#}
+        {#- Mirrors the HTTPRoute branch above; keep the two in sync. -#}
         {%- for _, route := range resources.grpcroutes.List() %}
-          {#- Same listener-intersection treatment as HTTPRoutes above —
-              see the HTTPRoute branch's comment for the full case
-              breakdown. -#}
           {%- var routeHostnames = route.Spec.Hostnames %}
           {%- var parentRefs = route.Spec.ParentRefs %}
           {%- var effectiveHosts = map[string]bool{} %}
@@ -957,23 +658,11 @@ templateSnippets:
               {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
               {%- if gw != nil %}
                 {%- resolvedGwCount = resolvedGwCount + 1 %}
-                {#- Pre-compute mTLS-blocked listener names for THIS Gateway
-                    inline so the route-analysis pass doesn't depend on
-                    features-110-gateway-frontend-mtls having run first
-                    (it doesn't, when map files render in their own
-                    context). Per Gateway API spec, a listener whose
-                    spec.tls.frontend.default OR matching perPort
-                    validation references a non-existent / wrong-kind /
-                    cross-ns-without-RG ConfigMap or Secret cannot
-                    terminate TLS, and routes attached to it must not
-                    serve — otherwise the chart's HTTPS frontend would
-                    happily route them via a SIBLING Gateway's bind
-                    (closes the GatewayFrontendInvalidDefaultClient
-                    CertificateValidation conformance gap). The check
-                    here matches the resolvability test
-                    features-110-gateway-frontend-mtls performs but
-                    against the live resource stores rather than
-                    consuming pre-populated state. -#}
+                {#- Computed here, not read back from
+                    features-110-gateway-frontend-mtls: map files render in their
+                    own context, where that snippet has not run. A listener whose
+                    mTLS validation ref is unresolvable can't terminate TLS, and
+                    its routes must not serve via a sibling Gateway's bind. -#}
                 {{ ComputeGwMtlsBlocked(gw) }}
                 {%- var gwMtlsBlockedAny, _ = shared.ComputeIfAbsent(
                       "gwMtlsBlocked:"+gwNs+"/"+gwName,
@@ -983,30 +672,14 @@ templateSnippets:
                   {%- var listenerName = listener.Name %}
                   {%- if section == "" || section == listenerName %}
                     {%- var listenerPort = toint(listener.Port) %}
-                    {#- parentRef.port pin: per Gateway API spec, attach
-                        only to listeners on the named port. -#}
-                    {#- Listener-level admission gate: prPort pin AND
-                        allowedRoutes.namespaces (the listener's owner
-                        is the Gateway, so listenerOwnerNs == gwNs)
-                        AND not mtls-blocked. Combined into one
-                        condition so the surrounding end-block
-                        structure stays unchanged. -#}
                     {%- if !gwMtlsBlocked[listenerName] && (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, gwNs), "true") %}
-                      {#- Compose a port suffix for non-default HTTP/HTTPS
-                          ports so the host_match key includes it. The
-                          inbound Host header carries the port verbatim for
-                          non-default ports, so the host-map lookup with
-                          un-stripped Host directly matches `<host>:<port>`. -#}
+                      {#- The Host header carries `:port` verbatim on non-default
+                          ports, so the host-map key must carry it too. -#}
                       {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
                       {%- var listenerHostname = ListenerHostname(listener) %}
-                      {#- Per-Gateway port scope (mirrors 40-maps-host): a
-                          catch-all (no-hostname) listener, and any listener on
-                          a non-default port, keys by the Gateway's
-                          representative pod port so its routes resolve only via
-                          this Gateway's bind (GatewayHTTPListenerIsolation).
-                          Default-port hostname'd listeners keep the bare-host
-                          key (base's wildcard cascade carries no port). Falls
-                          back to the listener port for pinned / chart-static. -#}
+                      {#- Keys must match 40-maps-host exactly. Default-port
+                          hostname'd listeners keep the bare host key — base's
+                          wildcard cascade carries no port. -#}
                       {%- var portSuffix = "" %}
                       {%- if listenerPort > 0 %}
                         {%- var portScope = shared.Get("gatewayPortScope").(map[string]any) %}
@@ -1019,21 +692,9 @@ templateSnippets:
                           {%- portSuffix = ":" + tostring(scopePort) %}
                         {%- end %}
                       {%- end %}
-                      {#- Listener isolation: per Gateway API spec, when a
-                          route on a less-specific listener (e.g. catch-all)
-                          declares a hostname that's more-specifically owned
-                          by a sibling listener, the sibling owns the host.
-                          We only need to filter when the host CATEGORY
-                          would land in a different listener's regex bucket;
-                          for routes attached to a non-empty listener via
-                          intersection, the intersection result already
-                          falls in the listener's own bucket. So drop the
-                          filter when listenerHostname is non-empty (the
-                          intersection guarantees the candidate is at-or-
-                          inside the listener's claim). For catch-all
-                          listeners, drop any route hostname whose host
-                          category is fully owned by a sibling — i.e. the
-                          sibling matches the candidate. -#}
+                      {#- Listener isolation (Gateway API): a more-specific
+                          sibling listener owns the host, so a catch-all
+                          listener must not claim it. -#}
                       {%- var currentRank = toint(HostnameRank(listenerHostname)) %}
                       {%- if len(routeHostnames) == 0 %}
                         {%- effectiveHosts[listenerHostname + portSuffix] = true %}
@@ -1060,30 +721,10 @@ templateSnippets:
                         {%- for _, rh := range routeHostnames %}
                           {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                           {%- if inter != "" %}
-                            {#- Listener isolation per Gateway API spec: even
-                                when route hostnames intersect THIS listener,
-                                drop the intersection if it's more-specifically
-                                claimed by a sibling listener on the same
-                                Gateway. The sibling owns the host and only
-                                routes attached to that sibling may serve it.
-                                Closes the GatewayHTTPListenerIsolation
-                                "intersecting hostnames" subtests where a
-                                route on `*.example.com` listener also lists
-                                `*.foo.example.com` in spec.hostnames; that
-                                hostname belongs to the more-specific
-                                `*.foo.example.com` listener. -#}
-                            {#- A sibling "covers" inter when intersect(sibling, inter)
-                                equals inter exactly — i.e. every host matching
-                                inter also matches sibling. Combined with rank >
-                                current, the sibling is a strict superset claim
-                                that owns inter end-to-end (e.g. inter=
-                                `*.foo.example.com`, sibling=`*.foo.example.com`
-                                or sibling=`abc.foo.example.com` for inter=
-                                `abc.foo.example.com`). The previous check used
-                                HostnameSinglePairMatch — true on ANY overlap —
-                                which incorrectly filtered the listener's own
-                                pattern when a more-specific subdomain sibling
-                                merely intersected it. -#}
+                            {#- A sibling only "covers" inter when
+                                intersect(sibling, inter) == inter exactly.
+                                HostnameSinglePairMatch is true on ANY overlap and
+                                wrongly drops the listener's own pattern. -#}
                             {%- var ownedBySibling = false %}
                             {%- for _, sibling := range gw.Spec.Listeners %}
                               {%- if !ownedBySibling %}
@@ -1107,7 +748,6 @@ templateSnippets:
                 {%- end %}
               {%- end %}
             {%- else if prGroup == "gateway.networking.k8s.io" && prKind == "ListenerSet" %}
-              {#- ListenerSet parentRef — same shape as HTTPRoute branch. -#}
               {%- var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
               {%- var lsName = tostring(dig(parentRef, "name") | fallback("")) %}
               {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
@@ -1126,13 +766,8 @@ templateSnippets:
                     {%- var listenerName = dig_string(listener, "", "name") %}
                     {%- if section == "" || section == listenerName %}
                       {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
-                      {#- Listener-level admission gate (LS branch):
-                          prPort pin AND allowedRoutes.namespaces.
-                          Listener owner is the LS itself, so
-                          listenerOwnerNs == lsNs (NOT the parent
-                          Gateway's namespace). Merged into one
-                          condition so the surrounding end-block
-                          structure stays unchanged. -#}
+                      {#- The listener's owner is the LS, so listenerOwnerNs is
+                          lsNs — NOT the parent Gateway's namespace. -#}
                       {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, lsNs), "true") %}
                         {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
                         {%- var portSuffix = "" %}
@@ -1152,12 +787,8 @@ templateSnippets:
                           {%- for _, rh := range routeHostnames %}
                             {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                             {%- if inter != "" %}
-                              {#- Listener isolation per Gateway API spec
-                                  (LS branch): drop intersections more-
-                                  specifically claimed by a sibling listener
-                                  on the SAME LS. Mirrors the Gateway branch
-                                  fix; siblings come from the LS's own
-                                  spec.listeners, not the parent Gateway. -#}
+                              {#- Siblings come from the LS's own spec.listeners,
+                                  not the parent Gateway's. -#}
                               {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
                               {%- var lsOwnedBySibling = false %}
                               {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
@@ -1184,7 +815,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-          {#- Same fallback as HTTPRoute branch — see comment there. -#}
           {%- if resolvedGwCount == 0 %}
             {%- if len(routeHostnames) == 0 %}
               {%- effectiveHosts[""] = true %}
@@ -1207,19 +837,9 @@ templateSnippets:
               {%- var iterCount = matchCount %}
               {%- if iterCount == 0 %}{%- iterCount = 1 %}{%- end %}
               {%- for matchIdx := 0; matchIdx < iterCount; matchIdx++ %}
-                {#- Precomputed sort scalars + per-match metadata.
-                    GRPCRoute has no path matcher of its own (per
-                    spec, gRPC method matchers narrow within the
-                    listener-claimed hostname tree); the synthetic
-                    PathPrefix "/" emits into the prefix map so
-                    gw_routeId fires for every request URL. Without
-                    that, the GRPCRoute rule's scope check fails and
-                    the request falls through to default_backend
-                    (404). Closes the upstream GRPCExactMethod-
-                    Matching / GRPCRouteHeaderMatching /
-                    GRPCRouteListenerHostnameMatching / GRPCRouteNamed-
-                    Rule / GRPCRouteWeight conformance tests, plus
-                    the e2e TestGRPCOverTLS regression. -#}
+                {#- GRPCRoute has no path matcher: the synthetic PathPrefix "/"
+                    must stay, or gw_routeId never fires for the request URL and
+                    every gRPC request falls through to default_backend (404). -#}
                 {%- var hasMethod = false %}
                 {%- var headerCount = 0 %}
                 {%- if matchCount > 0 %}
@@ -1248,23 +868,11 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- Group by path key to detect conflicts #}
         {%- var pathGroups = group_by(allRoutes, "pathKey") %}
 
-        {#- Check for conflicts and mark routes needing VAR qualifier.
-            "Conflict" here means two routes share the same pathKey
-            but have different method / header / queryParam matchers
-            — the chart needs a per-route VAR qualifier in the
-            rendered http-request rules so the matchers pick the
-            right backend. The conditions key is the deterministic
-            serialisation of the matcher set; two routes with
-            identical sets share a key and don't conflict. -#}
+        {#- "Conflict" = same pathKey, different matcher set; downstream emits a
+            per-route VAR qualifier for those. -#}
         {%%
-          {#- buildConditions(routeInfo) reads the matcher set from
-              the typed route + ruleIdx/matchIdx (per ADR-0010).
-              Two sibling cases — HTTPRouteMatch has a string Method;
-              GRPCRouteMatch has a struct Method that we serialise
-              Type/Service/Method into a comparable string here. -#}
           var buildConditions = func(ri any) string {
             var rm = ri.(map[string]any)
             var ruleIdx = toint(rm["ruleIdx"])
@@ -1298,16 +906,13 @@ templateSnippets:
                 return conditions
               }
               var match = rule.Matches[matchIdx]
-              // GRPCRouteMatch.Method is a struct (Type/Service/
-              // Method), not a string — serialise into the same
-              // shape the previous polymorphic dig+tostring produced.
               if match.Method.Service != "" || match.Method.Method != "" {
                 conditions = conditions + "method:" + match.Method.Type + "/" + match.Method.Service + "/" + match.Method.Method
               }
               for _, h := range match.Headers {
                 conditions = conditions + ";header:" + h.Name + "=" + h.Value
               }
-              // GRPCRoute has no QueryParams field — skip.
+              // GRPCRoute has no QueryParams.
             }
             return conditions
           }
@@ -1324,7 +929,6 @@ templateSnippets:
             {%- end %}
           {%- end %}
 
-          {#- Rebuild routes list with updated dicts #}
           {%- var updatedRoutes = []any{} %}
           {%- for _, route := range routes %}
             {%- var routeObj = route["route"] %}
@@ -1340,22 +944,18 @@ templateSnippets:
             {%- updatedRoutes = append(updatedRoutes, updatedRoute) %}
           {%- end %}
 
-          {#- Build conflictGroup string #}
           {%- var routeIds = map_extract(updatedRoutes, "routeId") %}
           {%- var conflictGroup = join(sort_strings(routeIds), "__") %}
 
-          {#- Add conflictGroup to each route #}
           {%- var finalRoutes = []any{} %}
           {%- for _, route := range updatedRoutes %}
             {%- var routeWithGroup = merge(route, map[string]any{"conflictGroup": conflictGroup}) %}
             {%- finalRoutes = append(finalRoutes, routeWithGroup) %}
           {%- end %}
 
-          {#- Update pathGroups with modified routes #}
           {%- pathGroups[pathKey] = finalRoutes %}
         {%- end %}
 
-        {#- Rebuild allRoutes from updated pathGroups #}
         {%- var finalAllRoutes = []any{} %}
         {%- for _, pathKey := range keys(pathGroups) %}
           {%- var pathRoutes []any = pathGroups[pathKey] %}
@@ -1364,11 +964,7 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- Sort by precomputed scalars (set during routeInfo emission)
-            rather than dig'ing into the legacy `$.match.*` / `$.path.*`
-            polymorphic slots. The :desc modifier on the bool /
-            length-based criteria gives the existing
-            most-specific-first ordering. -#}
+        {#- Most-specific-first ordering; route emission downstream depends on it. -#}
         {%- var sortedRoutes = finalAllRoutes | sort_by([]string{
           "$.pathType",
           "$.pathValueLen:desc",
@@ -1380,17 +976,12 @@ templateSnippets:
           "$.ruleIdx",
         }) %}
 
-        {#- Pre-compute filter existence flags (optimization: avoids repeated iteration) #}
         {%- var hasRequestHeader = false %}
         {%- var hasResponseHeader = false %}
         {%- var hasRedirect = false %}
         {%- var hasUrlrewrite = false %}
         {%- var hasMirror = false %}
         {%%
-          // Type-switch on routeInfo["route"] to read filters via the
-          // typed rule struct. Filter type strings
-          // (RequestHeaderModifier / etc.) match the schema's enum
-          // values for both Kinds.
           for _, route := range finalAllRoutes {
             var rm = route.(map[string]any)
             var ruleIdx = toint(rm["ruleIdx"])
@@ -1423,20 +1014,16 @@ templateSnippets:
                   case "RequestMirror":
                     hasMirror = true
                   }
-                  // GRPCRouteFilter has no RequestRedirect or
-                  // URLRewrite cases per the spec — schema-enforced
-                  // by typegen.
+                  // GRPCRouteFilter has no RequestRedirect/URLRewrite.
                 }
               }
             }
           }
         %%}
 
-        {#- Populate result map with analysis data #}
         {%- result["pathGroups"] = pathGroups %}
         {%- result["sortedRoutes"] = sortedRoutes %}
         {%- result["allRoutes"] = finalAllRoutes %}
-        {#- Filter existence flags for optimized filter template rendering #}
         {%- result["hasRequestHeader_filter"] = hasRequestHeader %}
         {%- result["hasResponseHeader_filter"] = hasResponseHeader %}
         {%- result["hasRedirect_filter"] = hasRedirect %}

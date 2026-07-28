@@ -34,14 +34,12 @@ files:
       {%- var hubPort = vec | dig("spoaHubMetricsPort") | fallback(0) -%}
       {%- var dataDir = vec | dig_string("/var/lib/vector", "dataDir") -%}
       {%- var excludes = vec | dig("excludeMetrics") | fallback([]any{}) | toSlice() -%}
-      {#- Type-checked, not just defaulted. Scriggo's `if` treats ANY non-empty string
-          as truthy, so a hand-written CR carrying the string "false" would silently
-          enable ?no-maint — the exact bypass the Helm-side bool guard exists to stop,
-          reached through the other API surface. There is no isbool() filter, so assert
-          the type. fallback() is nil-only, so an explicit `false` survives it. -#}
-      {#- Same comma-ok type assertion as excludeMaintServerMetrics below, and for the
-          same reason: Scriggo's `if` treats any non-empty string as truthy, so a CR
-          carrying the string "false" would silently enable the transform. -#}
+      {#- Endpoint lives under extraContext.tracing, not vector: it describes the
+          deployment's tracing setup. Empty = no span pipeline. -#}
+      {%- var otlpEndpoint = extraContext | dig_string("", "tracing", "otlp", "endpoint") -%}
+      {%- var otlpService = extraContext | dig_string("haptic", "tracing", "otlp", "serviceName") -%}
+      {#- Scriggo's `if` treats any non-empty string as truthy, so a CR with the
+          string "false" would ENABLE this. No isbool(); fallback() is nil-only. -#}
       {%- var omitEmptyRaw = vec | dig("omitEmptyLogFields") -%}
       {%- var omitEmpty = true -%}
       {%- if omitEmptyRaw != nil -%}
@@ -160,9 +158,82 @@ files:
         vector_metrics:
           type: internal_metrics
 
-      {%- if len(excludes) > 0 || omitEmpty %}
+      {%- if len(excludes) > 0 || omitEmpty || otlpEndpoint != "" %}
 
       transforms:
+      {%- end %}
+      {%- if otlpEndpoint != "" %}
+        # Turn access-log records into OTLP spans.
+        #
+        # Deriving spans from the LOG rather than from a SPOE hop is what gives
+        # complete coverage: `http-response` rules never run for HAProxy-generated
+        # responses, so a SPOE-based exporter cannot see a single 502/503/504,
+        # deny, redirect or errorfile — the failures traces exist for. Every one of
+        # those produces an access-log record. It also costs no round trip on the
+        # request path.
+        #
+        # HAProxy already minted the ids and made the sampling decision (see
+        # extraContext.tracing), so this stage only reshapes; it never invents an
+        # id and never re-decides sampling.
+        spans:
+          type: remap
+          inputs: [haproxy_log]
+          # A record that is not a sampled access-log line is dropped from THIS
+          # path only — the stdout sink still gets every line, including HAProxy's
+          # process messages.
+          drop_on_abort: true
+          reroute_dropped: false
+          source: |
+            m, merr = string(.message)
+            if merr != null { abort }
+            r, perr = parse_json(m)
+            if perr != null { abort }
+            o = object(r) ?? {}
+            tid = string(o.trace_id) ?? ""
+            sid = string(o.span_id) ?? ""
+            if tid == "" || sid == "" { abort }
+            # Honour the sampling decision HAProxy already took and propagated.
+            # trace-flags is a BITFIELD, not an enum: W3C defines bit 0 as
+            # sampled and reserves the rest, so an adopted "03" (sampled +
+            # random-trace-id) is sampled. Test the bit, not the byte — VRL has
+            # no % operator, hence mod().
+            flags_int = parse_int(string(o.trace_flags) ?? "", 16) ?? 0
+            if mod(flags_int, 2) != 1 { abort }
+            start_ns = to_unix_timestamp(parse_timestamp(string(o.ts) ?? "", "%Y-%m-%dT%H:%M:%S%.fZ") ?? now(), unit: "nanoseconds")
+            # A timer is -1 when its phase never happened; a negative duration
+            # would make the span end before it started.
+            dur = to_int(o.total_time_ms) ?? 0
+            if dur < 0 { dur = 0 }
+            st = to_int(o.status) ?? 0
+            attrs = [
+              {"key":"http.request.method","value":{"stringValue": string(o.method) ?? ""}},
+              {"key":"url.path","value":{"stringValue": string(o.path) ?? ""}},
+              {"key":"server.address","value":{"stringValue": string(o.host) ?? ""}},
+              {"key":"http.response.status_code","value":{"intValue": to_string(st)}},
+              {"key":"client.address","value":{"stringValue": string(o.client_ip) ?? ""}},
+              {"key":"haproxy.backend","value":{"stringValue": string(o.backend) ?? ""}},
+              {"key":"haproxy.term_state","value":{"stringValue": string(o.term) ?? ""}},
+              {"key":"haptic.resource","value":{"stringValue": string(o.resource) ?? ""}},
+              {"key":"haptic.request_id","value":{"stringValue": string(o.req_id) ?? ""}},
+              {"key":"haptic.denied_by","value":{"stringValue": string(o.denied_by) ?? ""}}
+            ]
+            span = {
+              "traceId": tid,
+              "spanId": sid,
+              # Span names MUST be low cardinality (semconv) — never the raw path,
+              # which would give a trace backend one "operation" per URL. The
+              # owning Ingress/HTTPRoute is the route identity here.
+              "name": (string(o.method) ?? "") + " " + (string(o.resource) ?? ""),
+              "kind": 2,
+              "startTimeUnixNano": to_string(start_ns),
+              "endTimeUnixNano": to_string(start_ns + dur * 1000000),
+              "attributes": attrs
+            }
+            # OTLP: parentSpanId must be ABSENT on a root span, not empty.
+            pid = string(o.parent_span_id) ?? ""
+            if pid != "" { span = set!(span, ["parentSpanId"], pid) }
+            if st >= 500 { span = set!(span, ["status"], {"code": 2}) }
+            . = span
       {%- end %}
       {%- if omitEmpty %}
         # Strip fields whose value is the empty string, so a record carries only what
@@ -248,6 +319,27 @@ files:
           inputs: [{% if omitEmpty %}log_drop_empty{% else %}haproxy_log{% end %}]
           encoding:
             codec: text
+      {%- if otlpEndpoint != "" %}
+
+        # OTLP/HTTP + JSON. The generic `http` sink, NOT the `opentelemetry` sink:
+        # that sink's `otlp` codec only encodes resourceLogs / resourceMetrics and
+        # rejects resourceSpans, and vector has no way to turn a log line into the
+        # Trace-typed event its trace branch needs. payload_prefix/suffix wrap the
+        # sink's batched JSON array into one valid ExportTraceServiceRequest, so a
+        # batch is one document rather than several concatenated ones.
+        otlp_traces:
+          type: http
+          inputs: [spans]
+          uri: "{{ otlpEndpoint }}"
+          method: post
+          encoding:
+            codec: json
+          payload_prefix: '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"{{ otlpService }}"}}]},"scopeSpans":[{"scope":{"name":"haptic"},"spans":'
+          payload_suffix: '}]}]}'
+          request:
+            headers:
+              content-type: application/json
+      {%- end %}
 
         # The single scrape target. Its presence is ALSO the readiness gate — see
         # the header comment.
@@ -356,6 +448,73 @@ validationTests:
           instance_tag stamps the scraped target onto every series (identical on every
           pod, and shadowed by Prometheus's own instance label) — 393 KB per scrape on
           a real fleet
+
+  test-vector-otlp-span-pipeline:
+    description: An OTLP endpoint renders the span transform and the OTLP/HTTP sink
+    fixtures: {}
+    extraContext:
+      tracing:
+        enabled: true
+        otlp:
+          endpoint: http://tempo:4318/v1/traces
+          serviceName: haptic-edge
+      vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, haproxyStatsPort: 0, spoaHubMetricsPort: 0, dataDir: /var/lib/vector, excludeMetrics: [] }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^\s+spans:'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'uri: "http://tempo:4318/v1/traces"'
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'inputs: \[spans\]'
+        description: The sink must read the span transform, not the raw log
+      # The generic http sink, NOT the opentelemetry sink: that sink's otlp codec
+      # only encodes resourceLogs/resourceMetrics and rejects resourceSpans, and
+      # vector cannot turn a log line into the Trace-typed event its trace branch
+      # needs. Verified against the real binary and a collector.
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'payload_prefix'
+        description: >-
+          The batched JSON array is wrapped into ONE ExportTraceServiceRequest;
+          without it a batch is several concatenated documents and the collector
+          400s while vector drops them as non-retriable
+      - type: contains
+        target: file:vector.yaml
+        pattern: '"stringValue":"haptic-edge"'
+        description: serviceName reaches the resource attributes
+      - type: contains
+        target: file:vector.yaml
+        pattern: 'if mod\(flags_int, 2\) != 1 \{ abort \}'
+        description: >-
+          The sampling decision HAProxy already took is honoured here rather than
+          re-made — re-deciding downstream produces half-sampled traces
+
+  test-vector-no-otlp-endpoint-no-span-pipeline:
+    description: Without an endpoint neither the span transform nor the sink is rendered
+    fixtures: {}
+    # PINNED EMPTY, not merely omitted. A per-test extraContext deep-merges over
+    # the deployment's, so a test asserting a feature's ABSENCE must switch that
+    # feature off explicitly — otherwise an operator who enables it makes this test
+    # fail, and a failing validationTest fails the LOAD GATE and crash-loops the
+    # controller.
+    extraContext:
+      tracing:
+        otlp:
+          endpoint: ""
+      vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, haproxyStatsPort: 0, spoaHubMetricsPort: 0, dataDir: /var/lib/vector, excludeMetrics: [] }
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: 'otlp_traces'
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: '(?m)^\s+spans:'
+        description: No dead transform when nothing consumes it
 
   test-vector-omit-empty-log-fields:
     description: omitEmptyLogFields renders the remap transform and the stdout sink reads it

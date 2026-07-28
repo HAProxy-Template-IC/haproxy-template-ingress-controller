@@ -134,6 +134,43 @@ tests:
           path: spec.templatingSettings.extraContext.vector.excludeMaintServerMetrics
           value: true
 
+  # Trace-export guards. Both live in HELM rather than in the Scriggo render, and
+  # that placement is the point: a validationTest legitimately pins individual
+  # extraContext keys (test-status-frontend-prometheus-exporter sets
+  # `vector: null`), so the same cross-key check at render time would fail the LOAD
+  # GATE on a good config and crash-loop the controller instead of refusing an
+  # install.
+  - it: should refuse an OTLP endpoint without the vector sidecar
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.enabled: false
+      controller.config.templatingSettings.extraContext.tracing.enabled: true
+      controller.config.templatingSettings.extraContext.tracing.otlp.endpoint: http://tempo:4318/v1/traces
+    asserts:
+      - failedTemplate:
+          errorPattern: 'endpoint is set .* but vector\.enabled is false'
+
+  - it: should refuse an OTLP endpoint while tracing is disabled
+    template: haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.tracing.otlp.endpoint: http://tempo:4318/v1/traces
+    asserts:
+      - failedTemplate:
+          errorPattern: 'endpoint is set .* but tracing\.enabled is false'
+
+  - it: should accept tracing with an endpoint when the sidecar is on
+    template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      controller.config.templatingSettings.extraContext.tracing.enabled: true
+      controller.config.templatingSettings.extraContext.tracing.otlp.endpoint: http://tempo:4318/v1/traces
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.tracing.otlp.endpoint
+          value: http://tempo:4318/v1/traces
+
   - it: should reject a non-boolean omitEmptyLogFields
     template: haproxytemplateconfig.yaml
     set:
