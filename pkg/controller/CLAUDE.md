@@ -138,6 +138,47 @@ func (c *Component) Start(ctx context.Context) error {
 }
 ```
 
+## Validation Tests Come From Two Places
+
+A configuration's `validationTests` may be inline on `HAProxyTemplateConfig` or
+carried by `HAProxyValidationTests` objects its `spec.validationTestsSelector`
+matches. The controller runs the **union**; the split exists because tests
+dominate the object's size while being needed only when the configuration is
+validated, never when it is rendered.
+
+`conversion.UnionValidationTests` is the single implementation, and it operates
+on the **API types** rather than `coreconfig` for a reason: the offline
+`validate` command and the admission webhook both hold the spec, not the
+converted config. A union written into the converted config is silently
+discarded on those paths — that shipped once and was caught only by a companion
+test that could not pass.
+
+Three call sites, all sharing it:
+
+| where | when |
+|---|---|
+| `config.go` `fetchAndValidateInitialConfig` | after `ParseCRD`, **before** `ValidateStructure` |
+| `configloader.ConfigLoaderComponent` | before it publishes `ConfigParsedEvent` |
+| `webhook/configvalidator.go` | before the completeness gate and the suite run |
+
+The ordering at the first two is load-bearing: `ValidateStructure` and the
+`requires`/`requiresFields` stripping in `effective.go` both read
+`cfg.ValidationTests`, so tests folded in later are tests neither ever saw, and
+they would false-fail on a cluster missing an optional CRD.
+
+**Never let a discovery failure become an empty result.** `len(ValidationTests)
+== 0` short-circuits to success in three independent places
+(`validator/validationtests.go` twice, `configtest/configtest.go` once), so a
+403, a selector typo or an unsynced cache arriving as "found nothing" would load
+a configuration that validated cleanly having run nothing. Hence:
+
+- a failed List **errors** on the load path;
+- it **warns and admits** at admission — during a fresh install the
+  configuration is applied before its companion objects exist, so denying would
+  reject the very install creating them, and the load gate is authoritative;
+- `spec.requireValidationTests` turns "no tests at all" into a refusal, enforced
+  **on load only**, for the same install-ordering reason.
+
 ## Utility Components Pattern
 
 Not all dependencies require event coordination. The controller uses both **pure components** and **utility components**:
