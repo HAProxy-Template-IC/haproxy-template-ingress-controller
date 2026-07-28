@@ -36,6 +36,7 @@ test-listenerset-hostname-conflict
 test-listenerset-listener-multi-port-bind
 test-listenerset-protocol-conflict
 test-listenerset-rendered-variant-includes-programmed-observed-generation
+test-proxy-protocol-passthrough-binds-on-ssl-tcp
 test-tcproute-basic-l4-forward
 test-tcproute-multi-listener-single-backend
 test-tcproute-oldest-route-wins-port

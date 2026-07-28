@@ -627,6 +627,24 @@ controller:
             # Response headers exposing HAProxy's routing decision. Disabled by
             # default because they reveal backend and route internals to clients.
             enabled: false
+        # Extra HTTP/HTTPS binds that require a PROXY protocol header, for a
+        # deployment behind an L4 load balancer (edge HAProxy, cloud NLB). The
+        # balancer sends `send-proxy-v2`; HAProxy then reports the real client in
+        # logs, rate limiting, WAF and IP ACLs instead of the balancer's address.
+        #
+        # These are ADDITIONAL ports — haproxy.ports.http/https stay open and
+        # unchanged. HAProxy has no "PROXY optional" bind, so a bind that
+        # requires the header rejects every connection without one; putting it on
+        # a separate port keeps direct, in-cluster and NodePort access working.
+        # Point only the balancer at these ports.
+        #
+        # Enabling adds them to the HAProxy Service, the container ports, and the
+        # NetworkPolicy. See
+        # https://haproxy-haptic.org/docs/latest/haproxy-deployment/#proxy-protocol
+        proxyProtocol:
+          enabled: false
+          httpPort: 8081
+          httpsPort: 8444
         # HAProxy access log. Every frontend emits one JSON object per
         # request (or per connection, for the TCP-mode frontends), using
         # HAProxy's native JSON log encoding. The log target is `format raw`, so

@@ -296,3 +296,19 @@ the process listens somewhere else.
   {{- if eq (trim (toString $pin)) "" -}}{{- fail (printf "haproxy.enterprise.enabled=true has no tested image pin for haproxyVersion %q; select a supported series or set haproxy.image.tag explicitly." .Values.haproxyVersion) -}}{{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Normalized PROXY-protocol bind settings as YAML: {enabled, httpPort, httpsPort}.
+
+Single source for the port numbers so the HAProxy binds (rendered from
+extraContext by base.yaml / ssl.yaml), the Service ports, the container ports
+and the NetworkPolicy cannot drift apart. Field validation lives in
+haproxytemplateconfig.yaml, which fails the install on a bad value.
+
+Usage: {{- $pp := include "haptic.proxyProtocol" . | fromYaml }}
+*/}}
+{{- define "haptic.proxyProtocol" -}}
+{{- $configured := dig "config" "templatingSettings" "extraContext" "proxyProtocol" dict .Values.controller -}}
+{{- if not (kindIs "map" $configured) -}}{{- $configured = dict -}}{{- end -}}
+{{- merge (deepCopy $configured) (dict "enabled" false "httpPort" 8081 "httpsPort" 8444) | toYaml -}}
+{{- end -}}

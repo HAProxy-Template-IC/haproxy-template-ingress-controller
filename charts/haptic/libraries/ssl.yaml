@@ -422,6 +422,26 @@ templateSnippets:
       http-request redirect scheme https code {{ code }} if !{ ssl_fc } { var(txn.host),map_str({{ pathResolver.GetPath("ssl-redirect-" + code + ".map", "map") }}) -m found }
       {%- end %}
 
+  # HTTPS twin of base.yaml's http-bind-extra-010-proxy-protocol. Skipped when
+  # passthrough moves the HTTPS port to ssl-tcp — terminating here would take
+  # passthrough hosts out of SNI routing.
+  https-bind-extra-010-proxy-protocol:
+    template: |
+      {%- var gfMap = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
+      {%- var sslTCPOwnsPort = len(passthroughBackends) > 0 && tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
+      {%- if !sslTCPOwnsPort && tostring(extraContext | dig("proxyProtocol", "enabled") | fallback(false)) == "true" %}
+      bind *:{{ toint(extraContext | dig("proxyProtocol", "httpsPort") | fallback(8444)) }} accept-proxy{{ render "util-ssl-bind-options" }}
+      {%- end -%}
+
+  # Passthrough half of the pair above. `frontend ssl-tcp` exists only when it
+  # owns the HTTPS port, so the topology check is the render site itself.
+  ssl-tcp-bind-extra-010-proxy-protocol:
+    template: |
+      {%- if tostring(extraContext | dig("proxyProtocol", "enabled") | fallback(false)) == "true" %}
+      bind *:{{ toint(extraContext | dig("proxyProtocol", "httpsPort") | fallback(8444)) }} accept-proxy
+      {%- end -%}
+
   frontends-500-ssl-tcp:
     template: |
       {%- var gf = shared.Get("globalFeatures") -%}
@@ -435,6 +455,7 @@ templateSnippets:
           guid fe:ssl-tcp
           mode tcp{{ render "util-log-format-tcp" }}
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}
+          {{ render_glob "ssl-tcp-bind-extra-*" | indent(2, true) }}
 
           # Extract SNI for routing decisions (wait up to 5s for client hello)
           tcp-request inspect-delay 5s
@@ -1347,3 +1368,85 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: 'tls_resumed'
+
+  test-proxy-protocol-https-bind:
+    description: >-
+      With TLS termination (no passthrough backends) `frontend https` owns the
+      HTTPS port, so the PROXY-protocol twin lands there and terminates TLS with
+      the same crt-list and ALPN as the plain bind.
+    extraContext:
+      proxyProtocol:
+        enabled: true
+        httpPort: 8081
+        httpsPort: 8444
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["example.com"]
+                secretName: default-ssl-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend https$.*?^\s+bind \*:443 ssl crt-list .*?alpn h2,http/1\.1$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend https$.*?^\s+bind \*:8444 accept-proxy ssl crt-list .*?alpn h2,http/1\.1$'
+
+  test-proxy-protocol-https-bind-disabled:
+    description: >-
+      Negative control for test-proxy-protocol-https-bind. Sets enabled=false
+      explicitly rather than leaning on the chart default: per-test extraContext
+      deep-merges into the operator's, so an operator who turns proxyProtocol on
+      would otherwise fail this test and crash-loop on the load gate. Scoped to
+      `bind *:<port> accept-proxy` because the ssl-loopback path binds a unix
+      socket with accept-proxy on every render.
+    extraContext:
+      proxyProtocol:
+        enabled: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["example.com"]
+                secretName: default-ssl-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bind \*:[0-9]+ accept-proxy'

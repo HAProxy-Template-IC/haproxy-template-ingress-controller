@@ -797,6 +797,33 @@ fi
 # global context at test run time), so they run in the main validation pass
 # above under the standard render — no per-profile helm renders are needed.
 
+# PROXY-protocol opt-in profile. Unlike the profiles above this runs the WHOLE
+# test set, not named tests: the hazard it guards is an UNRELATED test breaking
+# once an operator flips the opt-in. Per-test extraContext deep-merges over the
+# operator's, so a test asserting a feature is absent fails as soon as someone
+# enables it — and the load gate turns that into a controller crash-loop on a
+# config CI called green. Any absence assertion must pin its own opt-in; this
+# profile is what catches the ones that don't.
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    PROXY_PROTOCOL_CONFIG=$(mktemp /tmp/haptic-proxy-protocol-config-XXXXXX.yaml)
+    trap 'rm -f "$TEMP_CONFIG" "$RATE_LIMIT_CONFIG" "$PROXY_PROTOCOL_CONFIG"' EXIT
+    echo -e "${YELLOW}Rendering PROXY-protocol profile...${NC}" >&2
+    if ! helm template "$CHART_DIR" \
+        --namespace default \
+        $HAPROXY_VERSION_ARG \
+        --set controller.config.templatingSettings.extraContext.proxyProtocol.enabled=true \
+        | yq 'select(.kind == "HAProxyTemplateConfig")' \
+        > "$PROXY_PROTOCOL_CONFIG"; then
+        echo -e "${RED}Error: Failed to render PROXY-protocol Helm profile${NC}" >&2
+        exit 1
+    fi
+    echo -e "${YELLOW}PROXY-protocol profile: full validation pass...${NC}" >&2
+    if ! "$CONTROLLER_BIN" validate --file "$PROXY_PROTOCOL_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@"; then
+        echo -e "${RED}PROXY-protocol profile: tests that pass with the opt-in OFF must also pass with it ON — the load gate crash-loops the controller otherwise${NC}" >&2
+        FULL_RC=1
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # Degraded Gateway API profiles (skipped when a single --test is requested or
 # a custom schema dir is in play). For each committed old-release CRD bundle

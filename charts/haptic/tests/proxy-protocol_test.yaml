@@ -1,0 +1,213 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: proxy protocol binds
+# The HAProxy binds themselves are pinned by chart-validation tests
+# (test-proxy-protocol-* in libraries/base.yaml, libraries/ssl.yaml and
+# charts/gateway/tests/24-routing-tls.yaml). This suite covers the chart-side
+# wiring those binds depend on: container ports, Service ports, NetworkPolicy,
+# and the value validation.
+templates:
+  - haproxy-deployment.yaml
+  - haproxy-networkpolicy.yaml
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should not open proxy-protocol ports by default
+    templates:
+      - haproxy-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: proxy-http
+            containerPort: 8081
+            protocol: TCP
+
+  - it: should add container ports when enabled
+    templates:
+      - haproxy-deployment.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: proxy-http
+            containerPort: 8081
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: proxy-https
+            containerPort: 8444
+            protocol: TCP
+
+  - it: should honour custom port numbers
+    templates:
+      - haproxy-deployment.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      controller.config.templatingSettings.extraContext.proxyProtocol.httpPort: 9080
+      controller.config.templatingSettings.extraContext.proxyProtocol.httpsPort: 9443
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: proxy-http
+            containerPort: 9080
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: proxy-https
+            containerPort: 9443
+            protocol: TCP
+
+  # The user-facing Service is rendered by the controller from
+  # extraContext.haproxyService.ports; the chart's job is to put the entries
+  # there. targetPort is the container-port NAME, so the two stay in step even
+  # if the Service port is later overridden.
+  - it: should add Service ports when enabled
+    templates:
+      - haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+    asserts:
+      - contains:
+          path: spec.templatingSettings.extraContext.haproxyService.ports
+          content:
+            name: proxy-http
+            port: 8081
+            targetPort: proxy-http
+            protocol: TCP
+      - contains:
+          path: spec.templatingSettings.extraContext.haproxyService.ports
+          content:
+            name: proxy-https
+            port: 8444
+            targetPort: proxy-https
+            protocol: TCP
+
+  - it: should open the proxy-protocol ports in a restrictive NetworkPolicy
+    templates:
+      - haproxy-networkpolicy.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      haproxy.networkPolicy.enabled: true
+      haproxy.networkPolicy.allowExternal: false
+      haproxy.networkPolicy.allowedSources:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+    asserts:
+      - contains:
+          path: spec.ingress[0].ports
+          content:
+            port: 8081
+            protocol: TCP
+      - contains:
+          path: spec.ingress[0].ports
+          content:
+            port: 8444
+            protocol: TCP
+
+  - it: should reject a proxy-protocol port that collides with a static HAProxy port
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      controller.config.templatingSettings.extraContext.proxyProtocol.httpPort: 8404
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.proxyProtocol.httpPort (8404) collides with haproxy.ports.stats. The PROXY-protocol binds are additional listeners on the same pod; give them a free port."
+
+  - it: should reject identical http and https proxy-protocol ports
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      controller.config.templatingSettings.extraContext.proxyProtocol.httpsPort: 8081
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.proxyProtocol.httpPort and .httpsPort are both 8081. They are separate HAProxy binds and must differ."
+
+  - it: should reject an unknown proxyProtocol field
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      controller.config.templatingSettings.extraContext.proxyProtocol.port: 8081
+    asserts:
+      - failedTemplate:
+          errorMessage: 'controller.config.templatingSettings.extraContext.proxyProtocol contains unknown field "port". Valid fields: enabled, httpPort, httpsPort.'
+
+  - it: should reject an out-of-range proxy-protocol port
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      controller.config.templatingSettings.extraContext.proxyProtocol.httpPort: 70000
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.proxyProtocol.httpPort must be a port between 1 and 65535, got 70000."
+
+  # The Service template dedupes by name and never checks numbers for the static
+  # port set, so a collision with haproxy.service.extraPorts silently drops the
+  # operator's entry or renders a Service the API server rejects. Fail the
+  # install instead.
+  - it: should reject an extraPorts entry reusing a proxy-protocol port number
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      haproxy.service.extraPorts:
+        - name: custom-tcp
+          port: 8081
+          targetPort: 8081
+          protocol: TCP
+    asserts:
+      - failedTemplate:
+          errorMessage: "controller.config.templatingSettings.extraContext.proxyProtocol.httpPort (8081) collides with haproxy.service.extraPorts. The PROXY-protocol binds are additional listeners on the same pod; give them a free port."
+
+  - it: should reject an extraPorts entry reusing a proxy-protocol port name
+    templates:
+      - haproxytemplateconfig.yaml
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      haproxy.service.extraPorts:
+        - name: proxy-https
+          port: 9999
+          targetPort: 9999
+          protocol: TCP
+    asserts:
+      - failedTemplate:
+          errorMessage: 'haproxy.service.extraPorts declares a port named "proxy-https", which the PROXY-protocol listeners also use. Rename your entry, or disable controller.config.templatingSettings.extraContext.proxyProtocol.'
+
+  - it: should accept extraPorts that do not collide
+    templates:
+      - haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
+    set:
+      controller.config.templatingSettings.extraContext.proxyProtocol.enabled: true
+      haproxy.service.extraPorts:
+        - name: custom-tcp
+          port: 9999
+          targetPort: 9999
+          protocol: TCP
+    asserts:
+      - contains:
+          path: spec.templatingSettings.extraContext.haproxyService.ports
+          content:
+            name: proxy-http
+            port: 8081
+            targetPort: proxy-http
+            protocol: TCP
+      - contains:
+          path: spec.templatingSettings.extraContext.haproxyService.ports
+          content:
+            name: custom-tcp
+            port: 9999
+            targetPort: 9999
+            protocol: TCP
