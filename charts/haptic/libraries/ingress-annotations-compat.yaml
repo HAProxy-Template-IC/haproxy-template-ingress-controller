@@ -28,7 +28,7 @@
 #   Level 2.5: ingress-annotations-compat   <- this library
 #   Level 3:   haproxytech, haproxy-ingress, nginx-ingress
 
-# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}'
 

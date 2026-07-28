@@ -4,7 +4,7 @@
 # Libraries like ingress.yaml and gateway.yaml extend these primitives via:
 #   - Plugin patterns: render_glob "backends-*", "map-host-*", etc.
 
-# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 # The "frontend-routing-logic-regex-last" snippet below is the alternate
 # variant of frontend-routing-logic; we conditionally swap it in and always
 # strip the alternate so it never appears in the merged HAProxyTemplateConfig.
@@ -736,7 +736,7 @@ templateSnippets:
         Performance-first path matching variant: Exact > Prefix-exact > Prefix > Regex.
 
         This snippet exists only to be swapped into "frontend-routing-logic" by
-        haptic.mergeLibraries when extraContext.routing.regexMatchOrder=last.
+        the base library's _helm_load when extraContext.routing.regexMatchOrder=last.
         It is unset before the merged config is rendered, so it never appears in
         the operator-visible HAProxyTemplateConfig output.
 

@@ -21,17 +21,37 @@ Work in this package when:
 
 ## Package Purpose
 
-Pure event-driven component that subscribes to `ConfigResourceChangedEvent` and converts the wrapped HAProxyTemplateConfig CRD into the internal `*config.Config`. This is part of Stage 1 (Config Management) in the controller lifecycle.
+Pure event-driven component that subscribes to `ConfigResourceChangedEvent` and converts the wrapped HAProxyTemplateConfig CRDs into the internal `*config.Config`. This is part of Stage 1 (Config Management) in the controller lifecycle.
+
+**It merges a SET, not a single object.** The chart renders one config per
+template library plus one for the operator (ADR-0014), and the component is
+constructed with the ordered names it should merge. Each config has its own
+watcher, so they arrive — and later change — one at a time. The component holds
+the latest object per name and stays silent until every configured name has been
+seen; a change to any one re-merges against the held copies of the others, so a
+library change still loses to the operator's override.
+
+A change event for a name it was not configured with is logged and dropped.
 
 The controller is CRD-driven, not ConfigMap-driven; this component does **not** read raw ConfigMap data.
 
 Key responsibilities:
 
 - Type-assert the event payload to `*unstructured.Unstructured`
-- Validate it's `haproxy-haptic.org/v1alpha1.HAProxyTemplateConfig`
-- Run `pkg/controller/conversion.ParseCRD` to produce `*config.Config` and the typed CRD wrapper
-- Publish `ConfigParsedEvent` on success
-- Log errors for unsupported types or conversion failures (no event is published)
+- Record it under its name, and wait until the whole configured set is present
+- Run `conversion.MergeSpecs` over the set, in configured order, later wins
+- Validate it's `haproxy-haptic.org/v1alpha1.HAProxyTemplateConfig` and run
+  `conversion.ParseCRD` to produce `*config.Config` and the typed CRD wrapper
+- Publish `ConfigParsedEvent` on success, versioned by
+  `conversion.CompositeVersion` — the merged object carries only the primary's
+  resourceVersion, and the redundant-reinit guard compares versions for equality,
+  so a library-only change would otherwise be silently dropped
+- Log a snippet-override line for each `templateSnippets` name defined by more
+  than one config (an operator override is the expected case; two libraries
+  colliding is a bug that used to resolve silently)
+- Log errors for unsupported types, merge failures, or conversion failures (no
+  event is published — the previously published config keeps serving, so a torn
+  read during a rolling upgrade resolves itself on the next event)
 
 ## Architecture
 

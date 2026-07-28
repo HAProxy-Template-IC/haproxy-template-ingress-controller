@@ -23,7 +23,7 @@
 # haproxy-haptic.org group (e.g. haproxy-haptic.org/ownership) are NOT claimed
 # as Ingress annotation keys here.
 
-# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.hapticAnnotations.enabled }}'
   inject:

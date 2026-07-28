@@ -8,7 +8,9 @@ HAProxyTemplateConfig CRD schema, credentials management, environment variables,
 
 ### Requirement: HAProxyTemplateConfig CRD Schema
 
-The controller SHALL be configured via an HAProxyTemplateConfig Custom Resource Definition with typed fields. The CRD SHALL serve as the primary configuration mechanism defining templates, watched resources, and auxiliary configuration.
+The controller SHALL be configured via HAProxyTemplateConfig Custom Resources with typed fields, serving as the primary configuration mechanism defining templates, watched resources, and auxiliary configuration.
+
+The controller SHALL accept an ORDERED LIST of such resources and merge them, later wins, before any validation or rendering. The MERGED result — not any single object — SHALL be the unit of completeness: fields the controller requires are optional per object and enforced after the merge. `migrationCoverage` SHALL accumulate across the set rather than being overwritten. Merge order SHALL come from the configured name list, never from object names, resourceVersions, or creation timestamps. A list of one SHALL behave identically to a single resource. See ADR-0014.
 
 #### Scenario: Controller reads configuration from CRD
 
@@ -31,7 +33,7 @@ THEN the controller SHALL fail to start with an error indicating the missing Sec
 
 ### Requirement: Environment Variables
 
-The controller SHALL support configuration via environment variables: CRD_NAME (name of the HAProxyTemplateConfig resource), SECRET_NAME (name of the credentials Secret), WEBHOOK_CERT_DIR (directory holding the validating webhook's TLS certificate files; empty disables the webhook), and LOG_LEVEL (logging verbosity).
+The controller SHALL support configuration via environment variables: CRD_NAME (comma-separated names of the HAProxyTemplateConfig resources, in merge order), SECRET_NAME (name of the credentials Secret), WEBHOOK_CERT_DIR (directory holding the validating webhook's TLS certificate files; empty disables the webhook), and LOG_LEVEL (logging verbosity).
 
 #### Scenario: CRD_NAME selects the configuration resource
 

@@ -81,7 +81,7 @@
 # WAF (Coraza, requires spoaHub.plugins.coraza):
 #   - modsecurity-snippet, enable-modsecurity
 
-# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'
 

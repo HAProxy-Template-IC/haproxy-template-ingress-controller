@@ -164,7 +164,36 @@
 {{- if and $wafPoliciesConfigured (not $controller.templateLibraries.hapticAnnotations.enabled) }}
   {{- fail "controller.config.templatingSettings.extraContext.waf.policies requires controller.templateLibraries.hapticAnnotations.enabled=true because WAF policies are a HAPTIC Ingress annotation feature." }}
 {{- end }}
+{{- /* One HAProxyTemplateConfig per enabled template library, then one for the
+       operator's own config. The controller is handed all of them via CRD_NAME
+       and merges them in that order, later wins — see ADR-0014. Splitting keeps
+       every object clear of etcd's ~1.5 MiB per-object ceiling, which the
+       single merged config had reached at 99.4%.
+
+       The library objects are emitted first so the rendered stream reads in
+       merge order; Helm's install ordering does not depend on it. */ -}}
+{{- $prepared := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
+{{- range $library := $prepared }}
+{{- /* statusPatch is a Helm-only field on a watchedResource — the ClusterRole
+       turns it into a status/patch rule and the CRD has no such property. */ -}}
+{{- range $_, $resource := ($library.config.watchedResources | default dict) }}
+  {{- $_ := unset $resource "statusPatch" }}
+{{- end }}
+---
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: {{ printf "%s-%s" $controller.configName $library.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "haptic.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: template-library
+    haproxy-haptic.org/template-library: {{ $library.name }}
+spec:
+  {{- toYaml $library.config | nindent 2 }}
+{{- end }}
 {{- if $controller.config }}
+---
 apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
@@ -172,6 +201,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-config
 spec:
   {{- $config := $controller.config | deepCopy }}
   {{- with $config.credentialsSecretRef }}
@@ -1047,13 +1077,10 @@ spec:
     {{- end }}
     {{- $_ := set $config "validators" $merged }}
   {{- end }}
-  {{- /* Merge template libraries into config */ -}}
-  {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-  {{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "k8sResources" "haproxyConfig" "validationTests" "migrationCoverage" }}
-    {{- with index $mergedLibraries $key }}
-      {{- $_ := set $config $key . }}
-    {{- end }}
-  {{- end }}
+  {{- /* Library content is NOT folded in here any more — each library is its
+         own object and the controller merges the set. What stays on this
+         object is the operator's own controller.config.*, which the controller
+         merges last so it still wins over every library. */ -}}
   {{- /* No default-ssl-cert fixture rewrite needed: ssl.yaml's _global test
          pins a synthetic default certificate (extraContext.tls.defaultCertificate
          = default-ssl-cert @ haptic) that every test renders against, decoupled
@@ -1118,15 +1145,19 @@ spec:
          replaces explicit false/0/"" values with library defaults — a severe
          least-surprise and authorization bug (for example
          ingressPermissions.allowPolicySelection=false became true). */ -}}
-  {{- with ($mergedLibraries.templatingSettings | default dict).extraContext }}
-    {{- $mergedExtraContext := mergeOverwrite (deepCopy .) $extraContext }}
+  {{- $libraryDefaults := dict }}
+  {{- range $library := $prepared }}
+    {{- with dig "templatingSettings" "extraContext" dict $library.config }}
+      {{- $libraryDefaults = mustMergeOverwrite $libraryDefaults (deepCopy .) }}
+    {{- end }}
+  {{- end }}
+  {{- if $libraryDefaults }}
+    {{- $mergedExtraContext := mergeOverwrite $libraryDefaults $extraContext }}
     {{- $_ := set $config.templatingSettings "extraContext" $mergedExtraContext }}
     {{- $extraContext = $mergedExtraContext }}
   {{- end }}
-  {{- /* watchedResources: merge with the operator's override instead of replacing it */ -}}
-  {{- with $mergedLibraries.watchedResources }}
-    {{- $_ := set $config "watchedResources" (merge ($config.watchedResources | default dict) .) }}
-  {{- end }}
+  {{- /* watchedResources needs no union here: each library carries its own and
+         the controller merges them under this object's, which stays last. */ -}}
   {{- /* Strip Helm-only fields from watchedResources before CRD rendering */ -}}
   {{- range $name, $resource := $config.watchedResources }}
     {{- $_ := unset $resource "statusPatch" }}

@@ -2,11 +2,15 @@ package configloader
 
 import (
 	"log/slog"
+	"slices"
+	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceloader"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const (
@@ -31,18 +35,33 @@ const (
 // ConfigParsedEvent.
 type ConfigLoaderComponent struct {
 	*resourceloader.BaseLoader
+
+	// names is the configured merge order. A change event for a name that is
+	// not in this list is ignored: the controller merges exactly the configs it
+	// was told about.
+	names []string
+
+	// mu guards sources, which accumulates the latest observed object per name.
+	// One watcher per name means the set arrives (and later changes) one object
+	// at a time, so the component holds the others to re-merge against.
+	mu      sync.Mutex
+	sources map[string]*unstructured.Unstructured
 }
 
 // NewConfigLoaderComponent creates a new ConfigLoader component.
 //
 // Parameters:
 //   - eventBus: The EventBus to subscribe to and publish on
+//   - crdNames: the HAProxyTemplateConfig names to merge, in merge order
 //   - logger: Structured logger for diagnostics
 //
 // Returns:
 //   - *ConfigLoaderComponent ready to start
-func NewConfigLoaderComponent(eventBus *busevents.EventBus, logger *slog.Logger) *ConfigLoaderComponent {
-	c := &ConfigLoaderComponent{}
+func NewConfigLoaderComponent(eventBus *busevents.EventBus, crdNames []string, logger *slog.Logger) *ConfigLoaderComponent {
+	c := &ConfigLoaderComponent{
+		names:   slices.Clone(crdNames),
+		sources: make(map[string]*unstructured.Unstructured, len(crdNames)),
+	}
 	c.BaseLoader = resourceloader.NewBaseLoader(
 		eventBus, logger, ComponentName, EventBufferSize, c,
 		events.EventTypeConfigResourceChanged,
@@ -57,40 +76,55 @@ func (c *ConfigLoaderComponent) ProcessEvent(event busevents.Event) {
 	}
 }
 
-// processConfigChange handles a ConfigResourceChangedEvent by parsing the config resource.
+// processConfigChange records the changed config and, once every configured
+// name has been observed, re-merges the whole set and publishes the result.
+//
+// Only one object changes per event, so the others are replayed from the held
+// set. A `helm upgrade` writes them one at a time, producing a burst of events
+// and therefore a burst of intermediate merges; the ConfigChangeHandler's
+// reinit debounce collapses those into one reinitialisation.
 func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResourceChangedEvent) {
 	resource, ok := c.AssertUnstructured("ConfigResourceChangedEvent", event.Resource)
 	if !ok {
 		return
 	}
 
-	// Get resourceVersion for tracking
-	version := resource.GetResourceVersion()
-
-	// Detect resource type from apiVersion and kind
-	apiVersion := resource.GetAPIVersion()
-	kind := resource.GetKind()
-
+	name := resource.GetName()
 	c.Logger().Debug("Processing config resource change",
-		"api_version", apiVersion,
-		"kind", kind,
-		"version", version)
+		"name", name,
+		"api_version", resource.GetAPIVersion(),
+		"kind", resource.GetKind(),
+		"version", resource.GetResourceVersion())
 
-	// Process CRD. ParseCRD validates the GVK (kind + apiVersion) itself.
-	cfg, templateConfig, err := conversion.ParseCRD(resource)
-
-	if err != nil {
-		c.Logger().Error("Failed to process config resource",
-			"error", err,
-			"api_version", apiVersion,
-			"kind", kind,
-			"version", version)
+	sources, complete := c.record(name, resource)
+	if !complete {
 		return
 	}
 
+	merged, overrides, err := conversion.MergeSpecs(sources)
+	if err != nil {
+		// Fail open: the previously published config keeps serving. A torn
+		// read during a rolling upgrade resolves itself on the next event.
+		c.Logger().Error("Failed to merge config resources", "error", err, "names", c.names)
+		return
+	}
+	for _, override := range overrides {
+		c.Logger().Info("Template snippet overridden by a later config",
+			"snippet", override.Name,
+			"overridden_from", override.PreviousSource,
+			"defined_by", override.WinningSource)
+	}
+
+	// ParseCRD validates the GVK (kind + apiVersion) itself.
+	cfg, templateConfig, err := conversion.ParseCRD(merged)
+	if err != nil {
+		c.Logger().Error("Failed to process config resource", "error", err, "names", c.names)
+		return
+	}
+
+	version := conversion.CompositeVersion(sources)
 	c.Logger().Info("Configuration processed successfully",
-		"api_version", apiVersion,
-		"kind", kind,
+		"names", c.names,
 		"version", version)
 
 	// Publish ConfigParsedEvent with both parsed config and original CRD
@@ -98,4 +132,36 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	// the ConfigChangeHandler correlates with credentials.
 	parsedEvent := events.NewConfigParsedEvent(cfg, templateConfig, version, "")
 	c.EventBus().Publish(parsedEvent)
+}
+
+// record stores the observed object under its name and returns the full set in
+// merge order, plus whether every configured name has been seen yet. An object
+// whose name is not configured is dropped.
+func (c *ConfigLoaderComponent) record(name string, resource *unstructured.Unstructured) ([]*unstructured.Unstructured, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !slices.Contains(c.names, name) {
+		c.Logger().Warn("Ignoring change to a HAProxyTemplateConfig this controller was not configured to merge",
+			"name", name, "configured", c.names)
+		return nil, false
+	}
+	// Last write wins, with no staleness check: BaseLoader dispatches
+	// ProcessEvent from a single goroutine and the informer delivers events for
+	// one object in order, so the newest observation is always the last one to
+	// arrive. resourceVersion is opaque and not ordered, so it cannot be
+	// compared to do better than this.
+	c.sources[name] = resource
+
+	sources := make([]*unstructured.Unstructured, 0, len(c.names))
+	for _, configured := range c.names {
+		source, seen := c.sources[configured]
+		if !seen {
+			c.Logger().Debug("Waiting for the rest of the configured HAProxyTemplateConfigs",
+				"missing", configured)
+			return nil, false
+		}
+		sources = append(sources, source)
+	}
+	return sources, true
 }

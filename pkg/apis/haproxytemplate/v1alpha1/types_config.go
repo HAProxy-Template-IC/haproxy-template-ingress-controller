@@ -41,6 +41,14 @@ type HAProxyTemplateConfig struct {
 }
 
 // HAProxyTemplateConfigSpec defines the desired state of HAProxyTemplateConfig.
+//
+// A controller can be pointed at several of these at once (`--crd-name` takes an
+// ordered list) and merges them, later wins. **The merged set, not any single
+// object, is the unit of completeness** — the chart emits one config per template
+// library, and a library config legitimately carries nothing but
+// `templateSnippets` and `validationTests`. That is why fields the controller
+// genuinely requires are marked optional here and enforced after the merge by
+// config.ValidateStructure instead of by the apiserver.
 type HAProxyTemplateConfigSpec struct {
 	// CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
 	//
@@ -49,12 +57,15 @@ type HAProxyTemplateConfigSpec struct {
 	//   - dataplane_password: Password for HAProxy Dataplane API
 	//
 	// If the namespace is omitted, it defaults to the same namespace as this config resource.
-	// +kubebuilder:validation:Required
-	CredentialsSecretRef SecretReference `json:"credentialsSecretRef"`
+	// +optional
+	CredentialsSecretRef SecretReference `json:"credentialsSecretRef,omitempty"`
 
 	// PodSelector identifies which HAProxy pods to configure.
-	// +kubebuilder:validation:Required
-	PodSelector PodSelector `json:"podSelector"`
+	//
+	// Required in the merged config (config.ValidateStructure rejects an empty
+	// matchLabels); optional per object so a library config need not repeat it.
+	// +optional
+	PodSelector PodSelector `json:"podSelector,omitempty"`
 
 	// Controller contains controller-level settings (ports, leader election, etc.).
 	// +optional
@@ -83,9 +94,11 @@ type HAProxyTemplateConfigSpec struct {
 	//
 	// Each key is a user-defined name for the resource type (e.g., "ingresses", "services").
 	// This name is used in templates to access the resources.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinProperties=1
-	WatchedResources map[string]WatchedResource `json:"watchedResources"`
+	//
+	// The merged config must declare at least one (config.ValidateStructure);
+	// a single object may declare none.
+	// +optional
+	WatchedResources map[string]WatchedResource `json:"watchedResources,omitempty"`
 
 	// Validators declares pluggable validator sidecars consulted by the
 	// admission webhook before admitting changes that affect plugin
@@ -146,8 +159,11 @@ type HAProxyTemplateConfigSpec struct {
 	K8sResources map[string]K8sResource `json:"k8sResources,omitempty"`
 
 	// HAProxyConfig contains the main HAProxy configuration template.
-	// +kubebuilder:validation:Required
-	HAProxyConfig HAProxyConfig `json:"haproxyConfig"`
+	//
+	// Exactly one object in a merged set supplies it (the base library);
+	// config.ValidateStructure rejects a merged config whose template is empty.
+	// +optional
+	HAProxyConfig HAProxyConfig `json:"haproxyConfig,omitempty"`
 
 	// ValidationTests contains embedded validation test definitions.
 	//
@@ -164,9 +180,13 @@ type HAProxyTemplateConfigSpec struct {
 	// MigrationCoverage declares, per migration source (another ingress
 	// controller whose annotations a template library emulates), how each
 	// of the source's annotations is handled. The controller treats this
-	// as opaque data: it is contributed by template libraries, merged by
-	// the Helm chart, and consumed by tooling such as `migrate-check` —
-	// no entry influences rendering or reconciliation.
+	// as opaque data: it is contributed by template libraries and consumed
+	// by tooling such as `migrate-check` — no entry influences rendering or
+	// reconciliation.
+	//
+	// This is the one spec field that ACCUMULATES across a merged set rather
+	// than being overwritten: every contributing library's declaration
+	// survives, in merge order. See conversion.MergeSpecs.
 	// +optional
 	// +listType=map
 	// +listMapKey=source
@@ -719,9 +739,12 @@ type ValidationTest struct {
 	//       kind: Ingress
 	//       metadata:
 	//         name: test-ingress
-	// +kubebuilder:validation:Required
+	//
+	// Optional per object so several libraries can each contribute part of the
+	// shared `_global` baseline; see Assertions.
+	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
-	Fixtures map[string][]runtime.RawExtension `json:"fixtures"`
+	Fixtures map[string][]runtime.RawExtension `json:"fixtures,omitempty"`
 
 	// HTTPResources defines mock HTTP content for this test.
 	//
@@ -802,9 +825,16 @@ type ValidationTest struct {
 	RequiresFields []string `json:"requiresFields,omitempty"`
 
 	// Assertions defines the validation checks to perform.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinItems=1
-	Assertions []ValidationAssertion `json:"assertions"`
+	//
+	// Optional in the schema, required in practice: config.ValidateStructure
+	// rejects a merged config whose test declares none. The schema cannot
+	// express it because the reserved `_global` entry is a shared baseline
+	// rather than a test — the runner never executes its assertions — and
+	// several template libraries each contribute part of it, so each of their
+	// objects carries an incomplete `_global` that only becomes whole after
+	// the merge.
+	// +optional
+	Assertions []ValidationAssertion `json:"assertions,omitempty"`
 }
 
 // HTTPResourceFixture defines mock HTTP content for validation tests.

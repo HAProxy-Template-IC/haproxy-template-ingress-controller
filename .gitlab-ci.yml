@@ -1768,14 +1768,14 @@ test-e2e-extra-versions:
     - !reference [.rules-spoa-chart, rules]
 
 # Per-vendor e2e shards. The default test-e2e job installs with all three vendor
-# annotation libraries DISABLED (e2e-values.yaml) — enabling all three at once
-# produces a HAProxyTemplateConfig CR that exceeds etcd's ~1.5 MiB object limit,
-# a config no real user runs (the vendor libraries are mutually-exclusive
-# migration aids; a user enables at most one alongside haproxy-haptic.org/*).
-# Each vendor is exercised in its own shard (HAPTIC_E2E_PROFILE), which enables
-# just that one library on top of the core values, keeping the CR under the
-# limit. Vendor tests auto-skip in shards where their library is off (see
+# annotation libraries DISABLED; each vendor is exercised in its own shard
+# (HAPTIC_E2E_PROFILE), which enables just that one library on top of the core
+# values. Vendor tests auto-skip in shards where their library is off (see
 # skipIfVendorDisabled / RequireVendorLibrary in tests/e2e/feature_helpers.go).
+# The shards isolate one vendor's annotations from another's in a shared fixture
+# set. They are no longer required by object size: since ADR-0014 the chart
+# renders one config per template library, and `make cr-size-check` renders the
+# all-vendor profile on every chart-test run.
 # One HAProxy version per vendor shard — the version dimension is already covered
 # by test-e2e's matrix; re-running it per vendor would multiply e2e jobs 4×.
 .test-e2e-vendor-base:

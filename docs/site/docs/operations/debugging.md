@@ -115,6 +115,25 @@ Or read the last *published* config straight from the `HAProxyCfg` CRD — this 
 kubectl exec -n haptic deployment/haptic-controller -- haptic-controller config view > current.cfg
 ```
 
+**What configuration is the controller actually using?**
+
+A Helm install splits the configuration across one `HAProxyTemplateConfig` per
+enabled template library plus one for your own `controller.config`, so no single
+object shows the whole picture. `--input` fetches every object named in the
+Deployment's `CRD_NAME` and prints the merged spec — the input side, as opposed
+to the rendered HAProxy output above:
+
+```bash
+kubectl get haproxytemplateconfig -n haptic            # which objects exist
+kubectl exec -n haptic deployment/haptic-controller -- \
+  haptic-controller config view --input > current-input.yaml
+```
+
+If a snippet isn't behaving as you expect, check the controller's startup logs
+for `Template snippet overridden by a later config` — it names the snippet and
+both objects involved, which is how you find out that a library (or your own
+config) is shadowing a definition from an earlier one.
+
 **Why did the last reconciliation fail?**
 
 ```bash

@@ -133,6 +133,26 @@ HAProxyTemplateConfig timeout is admitted with a warning because its
 `failurePolicy: Ignore` is specifically intended to preserve operator recovery;
 the daemon load gate remains authoritative.
 
+### Merged-set admission
+
+`ConfigValidator` judges the config the controller would actually **load**, not
+the object being applied. It substitutes the prospective object into the
+controller's configured set (`ConfigValidatorConfig.MergeWithSiblings`, wired in
+`pkg/controller/webhook.go` to fetch the others and run `conversion.MergeSpecs`)
+and validates the merge.
+
+Validating one object of a merged set in isolation would deny every apply: since
+ADR-0014 a template-library object carries no `podSelector`, and the operator's
+own object is missing every library it overrides.
+
+An object the controller does **not** merge is validated standalone, exactly as
+before — self-contained is the right frame for a config this controller does not
+assemble, and skipping it would silently weaken the gate for hand-written
+configs (`TestHAProxyTemplateConfigAdmission_Rejects*` cover precisely that
+case). Only a merge *failure* admits with a warning, the same posture as
+effective-config resolution: a transient apiserver blip must not block an
+operator's recovery apply, and the load gate still enforces deterministically.
+
 ### Version-gated deferral (rolling-upgrade skew)
 
 `ConfigValidator` also admits-with-warning on a template **compile** or

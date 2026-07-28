@@ -464,7 +464,12 @@ func runIteration(ctx context.Context, k8sClient *client.Client, ...) error {
     go credentialsLoader.Start(iterCtx)
     go handler.Start(iterCtx)
 
-    // Stage 2: synchronously fetch + validate the CRD/Secret before continuing.
+    // Stage 2: synchronously fetch + validate the CRDs/Secret before continuing.
+    // --crd-name is an ordered LIST: every named HAProxyTemplateConfig is
+    // fetched in parallel, merged later-wins by conversion.MergeSpecs, and the
+    // whole pipeline below (ValidateStructure, effective-config resolution, the
+    // load gate) runs on the merged result. Startup waits for ALL of them —
+    // a partial set is as unusable as none. See ADR-0014.
     cfg, creds := fetchAndValidate(ctx, k8sClient, ...)
 
     // Stage 3: watch each spec.watchedResources entry; wait for initial sync.

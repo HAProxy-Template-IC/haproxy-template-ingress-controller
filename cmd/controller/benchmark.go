@@ -112,7 +112,7 @@ func runBenchmark(_ *cobra.Command, _ []string) error {
 	slog.SetDefault(logger)
 
 	// Load config
-	configSpec, err := loadConfigFromFile(benchmarkConfigFile)
+	configSpec, err := loadConfigFromFiles([]string{benchmarkConfigFile})
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}

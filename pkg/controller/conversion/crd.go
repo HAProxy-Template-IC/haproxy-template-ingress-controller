@@ -40,16 +40,8 @@ const (
 //   - *v1alpha1.HAProxyTemplateConfig: Original CRD for Kubernetes metadata (name, namespace, UID)
 //   - error: Validation or conversion failure
 func ParseCRD(resource *unstructured.Unstructured) (*config.Config, *v1alpha1.HAProxyTemplateConfig, error) {
-	// Validate resource type
-	apiVersion := resource.GetAPIVersion()
-	kind := resource.GetKind()
-
-	if kind != expectedKind {
-		return nil, nil, fmt.Errorf("expected %s, got %s", expectedKind, kind)
-	}
-
-	if apiVersion != expectedAPIVersion {
-		return nil, nil, fmt.Errorf("expected apiVersion %s, got %s", expectedAPIVersion, apiVersion)
+	if err := validateResourceType(resource); err != nil {
+		return nil, nil, err
 	}
 
 	// Convert unstructured to typed CRD

@@ -269,7 +269,8 @@ func (p *persistentInfra) InReinitGrace() bool {
 // Parameters:
 //   - ctx: Context for cancellation (SIGTERM, SIGINT, etc.)
 //   - k8sClient: Kubernetes client for API access
-//   - crdName: Name of the HAProxyTemplateConfig CRD
+//   - crdNames: Names of the HAProxyTemplateConfigs to merge, in merge order
+//     (later wins); the last one is the primary, see primaryConfigName
 //   - secretName: Name of the Secret containing HAProxy Dataplane API credentials
 //   - webhookCertDir: Directory holding the webhook TLS cert (tls.crt/tls.key); empty disables the webhook
 //   - webhookAdmissionTimeouts: Controller-side admission deadlines. Zero
@@ -282,14 +283,15 @@ func (p *persistentInfra) InReinitGrace() bool {
 func Run(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdName, secretName, webhookCertDir string,
+	crdNames []string,
+	secretName, webhookCertDir string,
 	webhookAdmissionTimeouts WebhookAdmissionTimeouts,
 	debugPort int,
 ) error {
 	logger := slog.Default()
 
 	logger.Debug("HAProxy Template Ingress Controller starting",
-		"crd_name", crdName,
+		"crd_names", crdNames,
 		"secret", secretName,
 		"webhook_cert_dir", webhookCertDir,
 		"namespace", k8sClient.Namespace())
@@ -330,7 +332,7 @@ func Run(
 			return nil
 		default:
 			// Run one iteration
-			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, logger)
+			err := runIteration(ctx, k8sClient, crdNames, secretName, webhookCertDir, webhookAdmissionTimeouts, debugPort, webhookPort, infra, logger)
 			if err != nil {
 				// Check if error is context cancellation (graceful shutdown)
 				if ctx.Err() != nil {
@@ -431,6 +433,7 @@ func setupComponents(
 	ctx context.Context,
 	introspectionRegistry *introspection.Registry,
 	typeBootstrapper validator.TypeBootstrapper,
+	crdNames []string,
 	logger *slog.Logger,
 ) *componentSetup {
 	logger.Info("Stage 1: Creating config management components")
@@ -459,7 +462,7 @@ func setupComponents(
 
 	// Create components
 	eventCommentator := commentator.NewEventCommentator(bus, logger, 500)
-	configLoaderComponent := configloader.NewConfigLoaderComponent(bus, logger)
+	configLoaderComponent := configloader.NewConfigLoaderComponent(bus, crdNames, logger)
 	credentialsLoaderComponent := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
 
 	// Create config validators (scatter-gather responders for HAProxyTemplateConfig CRD validation)

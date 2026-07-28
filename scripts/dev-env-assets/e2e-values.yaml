@@ -76,12 +76,14 @@ controller:
     gateway:
       enabled: true
     # The vendor annotation libraries are opt-in and stay OFF in this core
-    # profile: enabling all three at once renders an HAProxyTemplateConfig CR
-    # larger than etcd's 1.5 MiB object limit. The e2e suite still exercises each
-    # one, sharded — main_test.go force-enables a single vendor per shard from
+    # profile so one vendor's annotations can't interact with another's in the
+    # shared fixture set. The e2e suite exercises each one sharded —
+    # main_test.go force-enables a single vendor per shard from
     # HAPTIC_E2E_PROFILE (haproxytech / haproxy-ingress / nginx), and vendor tests
     # auto-skip in the shards where their library is off. hapticAnnotations is on
     # by default and covers the ingress_haptic_* suite in every shard.
+    # Enabling all three together is supported since ADR-0014 (one config object
+    # per template library); it is no longer an object-size hazard.
     # The external-auth + coraza SPOA plugins that the haptic-native auth-url /
     # waf tests need are enabled explicitly under spoaHub.plugins below (they must
     # not depend on a vendor library that a given shard turns off).

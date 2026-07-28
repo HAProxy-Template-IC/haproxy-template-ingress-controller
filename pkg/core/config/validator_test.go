@@ -589,7 +589,7 @@ func TestValidateRequires(t *testing.T) {
 			"snippet-a": {Name: "snippet-a", Template: "x", Requires: []string{"routes"}},
 		}
 		cfg.ValidationTests = map[string]ValidationTest{
-			"test-a": {Requires: []string{"routes"}},
+			"test-a": {Requires: []string{"routes"}, Assertions: []ValidationAssertion{{Type: "haproxy_valid"}}},
 		}
 		assert.NoError(t, ValidateStructure(cfg))
 	})
@@ -607,7 +607,7 @@ func TestValidateRequires(t *testing.T) {
 	t.Run("dangling test requires is rejected", func(t *testing.T) {
 		cfg := base()
 		cfg.ValidationTests = map[string]ValidationTest{
-			"test-a": {Requires: []string{"nonexistent"}},
+			"test-a": {Requires: []string{"nonexistent"}, Assertions: []ValidationAssertion{{Type: "haproxy_valid"}}},
 		}
 		err := ValidateStructure(cfg)
 		assert.Error(t, err)
@@ -617,7 +617,7 @@ func TestValidateRequires(t *testing.T) {
 	t.Run("requiresFields naming a watched resource field is valid", func(t *testing.T) {
 		cfg := base()
 		cfg.ValidationTests = map[string]ValidationTest{
-			"test-a": {RequiresFields: []string{"routes.spec.rules.filters.cors"}},
+			"test-a": {RequiresFields: []string{"routes.spec.rules.filters.cors"}, Assertions: []ValidationAssertion{{Type: "haproxy_valid"}}},
 		}
 		assert.NoError(t, ValidateStructure(cfg))
 	})
@@ -625,7 +625,7 @@ func TestValidateRequires(t *testing.T) {
 	t.Run("requiresFields with dangling first segment is rejected", func(t *testing.T) {
 		cfg := base()
 		cfg.ValidationTests = map[string]ValidationTest{
-			"test-a": {RequiresFields: []string{"nonexistent.spec.rules"}},
+			"test-a": {RequiresFields: []string{"nonexistent.spec.rules"}, Assertions: []ValidationAssertion{{Type: "haproxy_valid"}}},
 		}
 		err := ValidateStructure(cfg)
 		assert.Error(t, err)
@@ -637,7 +637,7 @@ func TestValidateRequires(t *testing.T) {
 		for _, entry := range []string{"routes", "routes."} {
 			cfg := base()
 			cfg.ValidationTests = map[string]ValidationTest{
-				"test-a": {RequiresFields: []string{entry}},
+				"test-a": {RequiresFields: []string{entry}, Assertions: []ValidationAssertion{{Type: "haproxy_valid"}}},
 			}
 			err := ValidateStructure(cfg)
 			assert.Error(t, err, "entry %q must be rejected", entry)
@@ -652,4 +652,100 @@ func TestWatchedResource_CandidateVersions(t *testing.T) {
 
 	single := WatchedResource{APIVersion: "example.io/v1"}
 	assert.Equal(t, []string{"example.io/v1"}, single.CandidateVersions())
+}
+
+// mergedCompletenessConfig is the minimum a merged config must satisfy: the
+// fields whose CRD `Required` markers were dropped so a single object of a
+// merged set can be incomplete (ADR-0014). Deliberately carries none of the
+// dataplane runtime defaults — ValidateMergedCompleteness must not demand them,
+// or the admission webhook would start denying hand-written configs.
+func mergedCompletenessConfig() *Config {
+	return &Config{
+		PodSelector:      PodSelector{MatchLabels: map[string]string{"app": "haproxy"}},
+		WatchedResources: map[string]WatchedResource{"ingresses": {APIVersion: "networking.k8s.io/v1", Resources: "ingresses", IndexBy: []string{"metadata.namespace"}}},
+		HAProxyConfig:    HAProxyConfig{Template: "global"},
+	}
+}
+
+func TestValidateMergedCompleteness(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{
+			name:   "a complete merged config with no dataplane defaults passes",
+			mutate: func(*Config) {},
+		},
+		{
+			name:    "podSelector is required after the merge",
+			mutate:  func(c *Config) { c.PodSelector = PodSelector{} },
+			wantErr: "pod_selector: match_labels cannot be empty",
+		},
+		{
+			name:    "at least one watched resource is required after the merge",
+			mutate:  func(c *Config) { c.WatchedResources = nil },
+			wantErr: "watched_resources: at least one resource must be configured",
+		},
+		{
+			name:    "the haproxy template is required after the merge",
+			mutate:  func(c *Config) { c.HAProxyConfig = HAProxyConfig{} },
+			wantErr: "haproxy_config: template cannot be empty",
+		},
+		{
+			name: "a test that asserts nothing is rejected",
+			mutate: func(c *Config) {
+				c.ValidationTests = map[string]ValidationTest{"silent": {}}
+			},
+			wantErr: "validation_tests.silent: must declare at least one assertion",
+		},
+		{
+			name: "a test with an assertion is accepted",
+			mutate: func(c *Config) {
+				c.ValidationTests = map[string]ValidationTest{
+					"real": {Assertions: []ValidationAssertion{{Type: "haproxy_valid"}}},
+				}
+			},
+		},
+		{
+			// _global is a shared baseline, not a test — the runner never
+			// executes its assertions, and several libraries each contribute
+			// part of it, so their objects carry an incomplete one.
+			name: "the _global baseline may assert nothing",
+			mutate: func(c *Config) {
+				c.ValidationTests = map[string]ValidationTest{
+					GlobalValidationTestName: {Fixtures: map[string][]any{}},
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := mergedCompletenessConfig()
+			tt.mutate(cfg)
+
+			err := ValidateMergedCompleteness(cfg)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// The load-path gate must keep enforcing everything the narrower prospective
+// gate does, so a config the webhook admits can't fail differently on load.
+func TestValidateStructure_SubsumesMergedCompleteness(t *testing.T) {
+	cfg := mergedCompletenessConfig()
+	cfg.Logging = LoggingConfig{Level: "INFO"}
+	cfg.Dataplane = DataplaneConfig{
+		Port: 5555, MapsDir: "/etc/haproxy/maps", SSLCertsDir: "/etc/haproxy/certs",
+		GeneralStorageDir: "/etc/haproxy/general", ConfigFile: "/etc/haproxy/haproxy.cfg",
+	}
+	cfg.ValidationTests = map[string]ValidationTest{"silent": {}}
+
+	assert.ErrorContains(t, ValidateStructure(cfg),
+		"validation_tests.silent: must declare at least one assertion")
 }

@@ -529,6 +529,9 @@ tests:
 
   - it: should not surface a spoaHub extraContext entry when no plugin-triggering library is enabled
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
@@ -539,6 +542,9 @@ tests:
 
   - it: should surface spoaHub config under extraContext when a plugin is enabled
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       spoaHub.plugins.fingerprinting.enabled: true
     asserts:
@@ -557,6 +563,9 @@ tests:
 
   - it: should derive HAProxy processing timeout from the slowest enabled plugin
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       spoaHub.plugins.sso-auth.enabled: true
     asserts:
@@ -566,6 +575,9 @@ tests:
 
   - it: should accept an explicit HAProxy processing timeout above all plugin deadlines
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       spoaHub.plugins.sso-auth.enabled: true
       spoaHub.haproxy.timeoutProcessing: 7s
@@ -585,6 +597,9 @@ tests:
 
   - it: should sum plugin timeouts only when plugins share one SPOE message
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       controller.templateLibraries.gateway.enabled: false
       spoaHub.plugins.fingerprinting.enabled: true
@@ -755,6 +770,9 @@ tests:
 
   - it: should surface shared rate-limit extraContext and store params
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       rateLimit.shared.enabled: true
       rateLimit.shared.managedStore.enabled: true
@@ -777,6 +795,9 @@ tests:
 
   - it: should allow disabling the managed rate-limit store PodDisruptionBudget
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       rateLimit.shared.enabled: true
       rateLimit.shared.managedStore.enabled: true
@@ -788,6 +809,9 @@ tests:
 
   - it: should union messages from multiple enabled plugins in extraContext
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       spoaHub.plugins.fingerprinting.enabled: true
       spoaHub.plugins.coraza.enabled: true

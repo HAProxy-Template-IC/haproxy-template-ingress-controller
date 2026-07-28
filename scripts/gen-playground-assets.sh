@@ -43,8 +43,16 @@ render_config() {
   done
   [ "$apiver" = yes ] && av=(--api-versions=gateway.networking.k8s.io/v1/GatewayClass)
   echo "==> $id config -> $OUT/presets/$id.config.yaml"
+  # The chart renders one HAProxyTemplateConfig per enabled template library
+  # (ADR-0014), but the playground shows and renders a single config. Merge the
+  # set through the controller's own merge rather than a yq-based one, so the
+  # preset is exactly what the controller would assemble.
+  local rendered="$OUT/presets/.$id.multi.yaml"
   helm template "$CHART" --namespace default "${av[@]}" "${sets[@]}" \
-    | yq 'select(.kind == "HAProxyTemplateConfig")' > "$OUT/presets/$id.config.yaml"
+    | yq 'select(.kind == "HAProxyTemplateConfig")' > "$rendered"
+  (cd "$REPO" && go run ./cmd/controller validate -f "$rendered" --dump-merged) \
+    > "$OUT/presets/$id.config.yaml"
+  rm -f "$rendered"
 }
 
 # Defaults (no --set): ingress + gateway + haproxytech + haproxy-ingress on,

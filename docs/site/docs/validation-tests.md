@@ -60,9 +60,15 @@ Beyond running the controller (`haptic-controller run`), the controller binary p
 To validate the config currently deployed in your cluster instead of a local file:
 
 ```bash
-kubectl get haproxytemplateconfig -n haptic haptic-config -o yaml > /tmp/haptic-config.yaml
+haptic-controller config view --input -n haptic > /tmp/haptic-config.yaml
 haptic-controller validate -f /tmp/haptic-config.yaml
 ```
+
+A Helm install spreads the configuration across one object per enabled template
+library, so dumping a single object would only give you part of it — `config view
+--input` merges the set the same way the controller does. Each library's tests
+ship in that library's object and all of them run together as one suite against
+the merged config, exactly as before.
 
 Or run tests right here — this is a complete config with a `validationTests` block. Press **Run live**, then open the **tests** tab to see each assertion pass or fail:
 

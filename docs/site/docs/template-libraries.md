@@ -4,11 +4,24 @@ Template libraries are modular, composable configuration packages that extend HA
 
 ## Overview
 
-HAPTIC uses a library-based architecture where YAML configuration files are merged at Helm render time. This enables:
+HAPTIC uses a library-based architecture where each library is a YAML configuration file. This enables:
 
 - **Modularity**: Enable only the features you need
 - **Extensibility**: Add custom configuration via extension points
 - **Customization**: Override or extend library behavior through values.yaml
+
+The chart renders each enabled library as its own `HAProxyTemplateConfig`, plus
+one for your own `controller.config`. The controller merges them at startup in a
+fixed order, and later libraries win over earlier ones for the same key, so your
+config always wins over every library. To see the merged result:
+
+```bash
+haptic-controller config view --input -n haptic
+```
+
+Splitting the configuration this way keeps each object well clear of the ~1.5 MiB
+size limit Kubernetes enforces per object, so you can enable as many libraries as
+you need.
 
 See the full library stack compose into one HAProxy config live:
 

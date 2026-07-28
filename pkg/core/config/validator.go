@@ -18,9 +18,10 @@ func ValidateStructure(cfg *Config) error {
 		return errors.New("config is nil")
 	}
 
-	// Validate PodSelector
-	if err := validatePodSelector(&cfg.PodSelector); err != nil {
-		return fmt.Errorf("pod_selector: %w", err)
+	// Completeness first: a missing podSelector or template is more fundamental
+	// than a mistuned port, and reporting the port instead would bury it.
+	if err := ValidateMergedCompleteness(cfg); err != nil {
+		return err
 	}
 
 	// Controller config (currently only LeaderElection, which has its own
@@ -37,21 +38,76 @@ func ValidateStructure(cfg *Config) error {
 		return fmt.Errorf("dataplane: %w", err)
 	}
 
-	// Validate WatchedResources
+	// Validate WatchedResources (full per-resource checks; the prospective gate
+	// below only enforces that at least one exists)
 	if err := validateWatchedResources(cfg.WatchedResources); err != nil {
 		return fmt.Errorf("watched_resources: %w", err)
 	}
 
 	// Validate requires references (snippets/tests → watched resources)
-	if err := validateRequires(cfg); err != nil {
-		return err
+	return validateRequires(cfg)
+}
+
+// ValidateMergedCompleteness checks the requirements the CRD schema can no
+// longer express, because a single HAProxyTemplateConfig of a merged set is
+// legitimately incomplete (ADR-0014): a template-library object carries only
+// template content, and several libraries each contribute part of the shared
+// `_global` validationTests baseline.
+//
+// It is deliberately narrower than ValidateStructure: it covers exactly the
+// fields whose `+kubebuilder:validation:Required` markers were dropped, so the
+// gates that judge a *prospective* config — the admission webhook and
+// `controller validate` — restore the apiserver-side guarantee without also
+// demanding the runtime defaults (dataplane directories, ports) that the chart
+// supplies but a hand-written config need not.
+func ValidateMergedCompleteness(cfg *Config) error {
+	if cfg == nil {
+		return errors.New("config is nil")
 	}
 
-	// Validate HAProxyConfig
+	if err := validatePodSelector(&cfg.PodSelector); err != nil {
+		return fmt.Errorf("pod_selector: %w", err)
+	}
+
+	// Only the MinProperties=1 the CRD used to carry. The per-resource checks
+	// in validateWatchedResources (indexBy and friends) were never expressed in
+	// the schema, so applying them to a prospective config would tighten
+	// admission for reasons unrelated to the merge.
+	if len(cfg.WatchedResources) == 0 {
+		return errors.New("watched_resources: at least one resource must be configured")
+	}
+
 	if err := validateHAProxyConfig(&cfg.HAProxyConfig); err != nil {
 		return fmt.Errorf("haproxy_config: %w", err)
 	}
 
+	return validateValidationTests(cfg)
+}
+
+// GlobalValidationTestName is the reserved validationTests entry that is a
+// shared baseline rather than a test: it contributes fixtures and an
+// extraContext baseline to every other test, and the runner never executes its
+// assertions.
+const GlobalValidationTestName = "_global"
+
+// validateValidationTests rejects a test that would silently pass because it
+// asserts nothing.
+//
+// The CRD schema cannot express this. Several template libraries each
+// contribute part of the shared `_global` baseline, so each of their objects
+// carries an incomplete `_global` that only becomes whole after the merge —
+// which is why `assertions` is optional in the schema and enforced here, on the
+// merged config, instead.
+func validateValidationTests(cfg *Config) error {
+	for name := range cfg.ValidationTests {
+		if name == GlobalValidationTestName {
+			continue
+		}
+		if len(cfg.ValidationTests[name].Assertions) == 0 {
+			return fmt.Errorf("validation_tests.%s: must declare at least one assertion "+
+				"(a test with none passes without checking anything)", name)
+		}
+	}
 	return nil
 }
 

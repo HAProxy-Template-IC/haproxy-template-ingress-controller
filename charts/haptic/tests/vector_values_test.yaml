@@ -114,6 +114,9 @@ tests:
 
   - it: should accept the shipped defaults and pass them to the render context
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     asserts:
       # The library reads them from here, so this is the seam between the two.
       - equal:
@@ -143,6 +146,9 @@ tests:
 
   - it: should strip empty access-log fields by default
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     asserts:
       - equal:
           path: spec.templatingSettings.extraContext.vector.omitEmptyLogFields
@@ -160,6 +166,9 @@ tests:
 
   - it: should bind the hub metrics on loopback with vector on and pod-routable with it off
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       spoaHub.enabled: true
     asserts:
@@ -169,6 +178,9 @@ tests:
 
   - it: should bind the hub metrics pod-routable when vector is disabled
     template: haproxytemplateconfig.yaml
+    documentSelector:
+      path: metadata.name
+      value: haptic-config
     set:
       vector.enabled: false
       spoaHub.enabled: true

@@ -274,7 +274,15 @@ func TestConfigValidator_SkewDefersTemplateFailure(t *testing.T) {
 				"namespace": "haptic",
 				"name":      "haptic-config",
 			},
+			// A real prospective config carries these; the validator now runs
+			// the structural completeness gate (the requirements the CRD schema
+			// gave up when a single object of a merged set became legitimately
+			// incomplete) before it ever compiles a template.
 			"spec": map[string]any{
+				"podSelector": map[string]any{"matchLabels": map[string]any{"app": "haproxy"}},
+				"watchedResources": map[string]any{
+					"namespaces": map[string]any{"apiVersion": "v1", "resources": "namespaces"},
+				},
 				"haproxyConfig": map[string]any{"template": template},
 			},
 		}}
