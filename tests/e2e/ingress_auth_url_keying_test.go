@@ -147,8 +147,10 @@ func TestIngressAuthURLRegexPath(t *testing.T) {
 	// nginx.ingress.kubernetes.io/auth-url annotation (nginxIngress) to make
 	// the auth check fire, and the haproxy-ingress.github.io/path-type=regex
 	// annotation (haproxyIngress) to route the request via the regex path.
-	// Under single-vendor sharding no shard enables both, so gating on each
-	// makes it skip unless both are present rather than fail with one off.
+	// Under the old single-vendor sharding no shard enabled both, so this test
+	// skipped everywhere and never actually ran. The core profile now enables
+	// all three, so it executes; the guards stay for the conformance profile,
+	// which enables only nginx-ingress.
 	RequireVendorLibrary(t, "nginxIngress")
 	RequireVendorLibrary(t, "haproxyIngress")
 	const (

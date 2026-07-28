@@ -1767,36 +1767,16 @@ test-e2e-extra-versions:
         - .gitlab-ci.yml
     - !reference [.rules-spoa-chart, rules]
 
-# Per-vendor e2e shards. The default test-e2e job installs with all three vendor
-# annotation libraries DISABLED; each vendor is exercised in its own shard
-# (HAPTIC_E2E_PROFILE), which enables just that one library on top of the core
-# values. Vendor tests auto-skip in shards where their library is off (see
-# skipIfVendorDisabled / RequireVendorLibrary in tests/e2e/feature_helpers.go).
-# The shards isolate one vendor's annotations from another's in a shared fixture
-# set. They are no longer required by object size: since ADR-0014 the chart
-# renders one config per template library, and `make cr-size-check` renders the
-# all-vendor profile on every chart-test run.
-# One HAProxy version per vendor shard — the version dimension is already covered
-# by test-e2e's matrix; re-running it per vendor would multiply e2e jobs 4×.
-.test-e2e-vendor-base:
-  extends: .test-e2e-base
-  variables:
-    HAPROXY_VERSION: "3.2"
-
-test-e2e-vendor-haproxytech:
-  extends: .test-e2e-vendor-base
-  variables:
-    HAPTIC_E2E_PROFILE: "haproxytech"
-
-test-e2e-vendor-haproxy-ingress:
-  extends: .test-e2e-vendor-base
-  variables:
-    HAPTIC_E2E_PROFILE: "haproxy-ingress"
-
-test-e2e-vendor-nginx:
-  extends: .test-e2e-vendor-base
-  variables:
-    HAPTIC_E2E_PROFILE: "nginx"
+# There are no per-vendor e2e shards. test-e2e installs all three vendor
+# annotation libraries at once (e2e-values.yaml), so every vendor test runs in
+# it — measured 103 tests where the sharded core job ran 63 and skipped 46.
+#
+# The combination used to exceed etcd's ~1.5 MiB per-object limit, which is what
+# forced one shard per vendor. Since ADR-0014 the chart renders one config per
+# template library and the largest is ~35% of the limit; `make cr-size-check`
+# renders exactly this profile on every chart-test run. The libraries co-exist
+# because a mixed-family Ingress is an error the chart raises per resource, not
+# per install.
 
 # Shared-cache (Varnish tier) e2e shard. Installs with
 # controller.cache.varnish.enabled=true and runs the cache tests

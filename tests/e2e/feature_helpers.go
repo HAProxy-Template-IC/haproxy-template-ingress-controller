@@ -35,30 +35,29 @@ var vendorPrefixes = map[string]string{
 	"nginx.ingress.kubernetes.io/": "nginxIngress",
 }
 
-// activeVendorLibrary returns the single vendor library enabled in the current
-// e2e shard (from HAPTIC_E2E_PROFILE), or "" for the core / conformance
-// profiles. See the sharding note in main_test.go.
-func activeVendorLibrary() string {
-	switch os.Getenv("HAPTIC_E2E_PROFILE") {
-	case "haproxytech":
-		return "haproxytech"
-	case "haproxy-ingress":
-		return "haproxyIngress"
-	case "nginx":
-		return "nginxIngress"
-	default:
-		return ""
+// enabledVendorLibraries reports which vendor annotation libraries the running
+// install has enabled.
+//
+// The core profile enables all three, which the per-object config split
+// (ADR-0014) made possible — before it, the merged config exceeded etcd's
+// per-object limit and each vendor needed its own shard. The conformance profile
+// enables only nginx-ingress, so the gate still has to be a query rather than a
+// constant.
+func enabledVendorLibraries() map[string]bool {
+	if os.Getenv("HAPTIC_E2E_PROFILE") == "conformance" {
+		return map[string]bool{"nginxIngress": true}
 	}
+	return map[string]bool{"haproxytech": true, "haproxyIngress": true, "nginxIngress": true}
 }
 
 // RequireVendorLibrary skips the test unless the named vendor library
-// (haproxytech | haproxyIngress | nginxIngress) is the one enabled in the
-// current e2e shard. Use it in vendor tests whose setup doesn't run through
+// (haproxytech | haproxyIngress | nginxIngress) is enabled in the current
+// install. Use it in vendor tests whose setup doesn't run through
 // RunSimpleIngressTest.
 func RequireVendorLibrary(t *testing.T, lib string) {
 	t.Helper()
-	if activeVendorLibrary() != lib {
-		t.Skipf("vendor library %q is not enabled in this e2e shard (HAPTIC_E2E_PROFILE=%q); it runs in the %q shard", lib, os.Getenv("HAPTIC_E2E_PROFILE"), lib)
+	if !enabledVendorLibraries()[lib] {
+		t.Skipf("vendor library %q is not enabled in this e2e profile (HAPTIC_E2E_PROFILE=%q)", lib, os.Getenv("HAPTIC_E2E_PROFILE"))
 	}
 }
 
@@ -96,11 +95,11 @@ func RequireAPIGatewayProfile(t *testing.T) {
 // change: a haproxy.org/* test runs only in the haproxytech shard, and so on.
 func skipIfVendorDisabled(t *testing.T, annotations map[string]string) {
 	t.Helper()
-	active := activeVendorLibrary()
+	enabled := enabledVendorLibraries()
 	for key := range annotations {
 		for prefix, lib := range vendorPrefixes {
-			if strings.HasPrefix(key, prefix) && lib != active {
-				t.Skipf("annotation %q needs vendor library %q, not enabled in this e2e shard (HAPTIC_E2E_PROFILE=%q)", key, lib, os.Getenv("HAPTIC_E2E_PROFILE"))
+			if strings.HasPrefix(key, prefix) && !enabled[lib] {
+				t.Skipf("annotation %q needs vendor library %q, not enabled in this e2e profile (HAPTIC_E2E_PROFILE=%q)", key, lib, os.Getenv("HAPTIC_E2E_PROFILE"))
 			}
 		}
 	}

@@ -1839,9 +1839,13 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "default-server no-check"
+      # Scoped to this test's own backend. A bare `default-server check` matches
+      # any OTHER backend that legitimately health-checks — the Varnish cache
+      # tier does — which made this assertion true only while the cache tier
+      # happened to be disabled, and a load-gate crash-loop once it wasn't.
       - type: not_contains
         target: haproxy.cfg
-        pattern: "default-server check"
+        pattern: 'backend default_nocheck-ingress_svc_echo_80\n  guid [^\n]*\n  default-server check'
 
   test-haproxytech-check-interval:
     description: haproxy.org/check-interval sets the inter parameter on default-server
@@ -1875,6 +1879,13 @@ validationTests:
 
   test-haproxytech-scale-server-slots:
     description: haproxy.org/scale-server-slots overrides the pre-allocated slot count
+    # `server SRV_6 ` cannot be anchored to one backend the way a
+    # `default-server` line can, so this test pins the config surface its
+    # absence assertion depends on: any other backend with more slots — the
+    # Varnish cache tier has them — would otherwise falsify it, and the load
+    # gate turns that into a crash-loop.
+    extraContext:
+      cache: { varnish: { enabled: false } }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1

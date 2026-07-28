@@ -485,7 +485,7 @@ func TestIngressAnnotations(t *testing.T) {
 				}
 			}
 		}
-		if rowLib != "" && activeVendorLibrary() != rowLib {
+		if rowLib != "" && !enabledVendorLibraries()[rowLib] {
 			continue
 		}
 

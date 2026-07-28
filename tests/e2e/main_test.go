@@ -639,9 +639,6 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	// fixtures that don't belong in conformance runs.
 	profile := os.Getenv("HAPTIC_E2E_PROFILE")
 	var valuesBytes []byte
-	// vendorLib names the ONE vendor annotation library a per-vendor shard
-	// enables on top of the core values. Empty for the core / conformance runs.
-	var vendorLib string
 	// cacheProfile enables the Varnish shared-cache tier for the cache shard.
 	cacheProfile := profile == "cache"
 	// rateLimitProfile enables shared rate limiting and its Valkey store.
@@ -652,15 +649,6 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	case "conformance":
 		valuesBytes = devassets.ConformanceValuesYAML
 		fmt.Fprintln(os.Stderr, "e2e: using conformance values profile")
-	case "haproxytech":
-		valuesBytes = devassets.E2EValuesYAML
-		vendorLib = "haproxytech"
-	case "haproxy-ingress":
-		valuesBytes = devassets.E2EValuesYAML
-		vendorLib = "haproxyIngress"
-	case "nginx":
-		valuesBytes = devassets.E2EValuesYAML
-		vendorLib = "nginxIngress"
 	default:
 		valuesBytes = devassets.E2EValuesYAML
 	}
@@ -713,24 +701,12 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		"--set", "haproxy.service.type=LoadBalancer",
 		"--timeout", DefaultHelmInstallTimeout.String(),
 	}
-	// Per-vendor e2e sharding. The core profile (default) installs with all three
-	// vendor annotation libraries DISABLED and each vendor is exercised in its own
-	// shard (HAPTIC_E2E_PROFILE=haproxytech | haproxy-ingress | nginx), which
-	// enables just that one library on top of the core. Vendor tests skip in
-	// shards where their library is off — see skipIfVendorDisabled /
-	// RequireVendorLibrary in feature_helpers.go.
-	//
-	// This is now about scope isolation, not size: enabling all three at once used
-	// to exceed etcd's ~1.5 MiB per-object limit, but the chart renders one config
-	// per template library (ADR-0014) and the largest is ~35% of it. `make
-	// cr-size-check` renders exactly that all-vendor profile as the standing
-	// regression test. Collapsing the shards is a viable CI-minute saving; it is a
-	// separate change because the shards also keep one vendor's annotations from
-	// interacting with another's in a single fixture set.
-	if vendorLib != "" {
-		args = append(args, "--set", "controller.templateLibraries."+vendorLib+".enabled=true")
-		fmt.Fprintf(os.Stderr, "e2e: vendor shard — enabling %s on top of core values\n", vendorLib)
-	}
+	// All three vendor annotation libraries are enabled by the core values
+	// (e2e-values.yaml), so every vendor test runs in the default profile and
+	// there are no per-vendor shards. That became possible with the per-object
+	// config split (ADR-0014): the combination used to exceed etcd's ~1.5 MiB
+	// per-object limit, and `make cr-size-check` now renders exactly this
+	// profile as the standing size regression test.
 	// Cache shard: deploy the Varnish tier (one replica keeps the shard quick).
 	// The tier's origin is the HAProxy Service; loopback + caching are exercised
 	// by TestHapticVarnishCache (gated on this profile via RequireCacheProfile).
