@@ -75,24 +75,25 @@ controller:
   templateLibraries:
     gateway:
       enabled: true
-    # The vendor annotation libraries are opt-in and stay OFF in this core
-    # profile so one vendor's annotations can't interact with another's in the
-    # shared fixture set. The e2e suite exercises each one sharded —
-    # main_test.go force-enables a single vendor per shard from
-    # HAPTIC_E2E_PROFILE (haproxytech / haproxy-ingress / nginx), and vendor tests
-    # auto-skip in the shards where their library is off. hapticAnnotations is on
-    # by default and covers the ingress_haptic_* suite in every shard.
-    # Enabling all three together is supported since ADR-0014 (one config object
-    # per template library); it is no longer an object-size hazard.
-    # The external-auth + coraza SPOA plugins that the haptic-native auth-url /
-    # waf tests need are enabled explicitly under spoaHub.plugins below (they must
-    # not depend on a vendor library that a given shard turns off).
+    # All three vendor annotation libraries are ON, so every vendor test runs in
+    # this one profile instead of a shard per vendor. That became possible with
+    # the per-object config split (ADR-0014): the combination used to exceed
+    # etcd's ~1.5 MiB per-object limit, and the largest object is now ~35% of it.
+    #
+    # They co-exist safely because a mixed-family Ingress is an error the chart
+    # raises per resource, not per install — each test's Ingress uses one
+    # family, and a vendor's annotations are inert on resources that don't carry
+    # them. hapticAnnotations covers the ingress_haptic_* suite alongside them.
+    #
+    # The external-auth + coraza SPOA plugins the haptic-native auth-url / waf
+    # tests need are enabled explicitly under spoaHub.plugins below rather than
+    # inherited from a vendor library.
     haproxytech:
-      enabled: false
+      enabled: true
     haproxyIngress:
-      enabled: false
+      enabled: true
     nginxIngress:
-      enabled: false
+      enabled: true
 
   # Route the rendered SPOA-hub TOML through the validator sidecar at
   # admission time. The webhook dry-renders the prospective config
@@ -168,7 +169,7 @@ controller:
         diagnostics:
           routingHeaders:
             enabled: true  # Enable introspection headers for development
-        # Exercise one-annotation reusable WAF policies in every e2e shard.
+        # Exercise one-annotation reusable WAF policies in the e2e suite.
         waf:
           # The e2e suite deliberately exercises every legacy/vendor escape
           # hatch. Production defaults keep these privileges disabled.
@@ -264,11 +265,11 @@ spoaHub:
     logLevel: debug
   plugins:
     external-auth:
-      # Enabled explicitly: the haptic-native TestHapticExternalAuth
-      # (haproxy-haptic.org/auth-url) runs in every e2e shard, so the plugin
-      # can't depend on the vendor-library OR (values.yaml gates external-auth on
-      # nginxIngress, which the per-vendor shards toggle off). Chart default keeps
-      # it off unless a vendor library that uses it is enabled.
+      # Enabled explicitly rather than inherited from the vendor-library OR
+      # (values.yaml gates external-auth on nginxIngress): the haptic-native
+      # TestHapticExternalAuth (haproxy-haptic.org/auth-url) must not depend on a
+      # vendor library staying enabled. Chart default keeps it off unless a
+      # vendor library that uses it is enabled.
       enabled: true
       params: |
         timeout_ms = 5000
@@ -281,10 +282,10 @@ spoaHub:
           "x-forwarded-host", "x-forwarded-uri"
         ]
         extract_headers = ["x-auth-user", "x-auth-roles"]
-    # Enabled explicitly: the haptic-native TestHapticWAF
-    # (haproxy-haptic.org/waf) runs in every e2e shard, so coraza can't depend on
-    # the vendor-library OR (values.yaml gates it on nginx-ingress OR
-    # haproxy-ingress, which the per-vendor shards toggle off). Override
+    # Enabled explicitly rather than inherited from the vendor-library OR
+    # (values.yaml gates it on nginx-ingress OR haproxy-ingress): the
+    # haptic-native TestHapticWAF (haproxy-haptic.org/waf) must not depend on a
+    # vendor library staying enabled. Override
     # `directives` to
     # the smallest viable rule set — operators wanting OWASP CRS get
     # the chart default; CI keeps it minimal so per-test
