@@ -703,6 +703,11 @@ func (in *HAProxyTemplateConfigSpec) DeepCopyInto(out *HAProxyTemplateConfigSpec
 			(*out)[key] = *val.DeepCopy()
 		}
 	}
+	if in.ValidationTestsSelector != nil {
+		in, out := &in.ValidationTestsSelector, &out.ValidationTestsSelector
+		*out = new(v1.LabelSelector)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.MigrationCoverage != nil {
 		in, out := &in.MigrationCoverage, &out.MigrationCoverage
 		*out = make([]MigrationCoverageSource, len(*in))

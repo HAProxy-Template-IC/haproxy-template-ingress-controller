@@ -177,6 +177,38 @@ type HAProxyTemplateConfigSpec struct {
 	// +optional
 	ValidationTests map[string]ValidationTest `json:"validationTests,omitempty"`
 
+	// ValidationTestsSelector selects HAProxyValidationTests objects in this
+	// namespace whose tests join the ones above. The controller runs the union;
+	// a test name may appear in only one source.
+	//
+	// Tests are kept out of this object because they dominate its size while
+	// being needed only when the configuration is validated, never when it is
+	// rendered. Nothing forces that split: inline tests remain fully supported,
+	// and an operator using neither the chart nor this selector loses nothing.
+	//
+	// A nil selector matches nothing. An empty selector (`{}`) matches every
+	// HAProxyValidationTests in the namespace, which is how two HAPTIC releases
+	// in one namespace would steal each other's tests — the chart sets a
+	// release-scoped selector rather than leaving it empty.
+	// +optional
+	ValidationTestsSelector *metav1.LabelSelector `json:"validationTestsSelector,omitempty"`
+
+	// RequireValidationTests refuses to load a configuration that ends up with
+	// no validation tests at all.
+	//
+	// This exists because an empty suite is an unconditional pass: a selector
+	// typo, a missing RBAC rule or an unsynced cache would otherwise leave the
+	// load gate running zero tests and reporting success, which is
+	// indistinguishable from a configuration that genuinely has none. Set it
+	// whenever tests are expected, and the difference becomes a refusal instead
+	// of silence.
+	//
+	// It is enforced only when the configuration is loaded, never at admission:
+	// during a fresh install the configuration is admitted before the tests
+	// objects exist, so enforcing it there would deadlock on apply ordering.
+	// +optional
+	RequireValidationTests bool `json:"requireValidationTests,omitempty"`
+
 	// MigrationCoverage declares, per migration source (another ingress
 	// controller whose annotations a template library emulates), how each
 	// of the source's annotations is handled. The controller treats this
