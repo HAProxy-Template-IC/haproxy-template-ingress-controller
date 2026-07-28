@@ -52,12 +52,22 @@ func unionDiscoveredValidationTests(
 	ctx context.Context,
 	lister validationTestLister,
 	cfg *coreconfig.Config,
-	selector *metav1.LabelSelector,
+	crd *v1alpha1.HAProxyTemplateConfig,
 	logger *slog.Logger,
 ) error {
-	sources := []coreconfig.ValidationTestSource{{
+	var selector *metav1.LabelSelector
+	inline := map[string]v1alpha1.ValidationTest{}
+	if crd != nil {
+		selector = crd.Spec.ValidationTestsSelector
+		inline = crd.Spec.ValidationTests
+	}
+
+	// The union runs on the API types because every other consumer of it — the
+	// offline validate command and the admission webhook — holds the spec, not
+	// the converted config. Converting once at the end keeps one implementation.
+	sources := []conversion.ValidationTestSource{{
 		Origin: "HAProxyTemplateConfig spec.validationTests",
-		Tests:  cfg.ValidationTests,
+		Tests:  inline,
 	}}
 
 	// A nil selector selects nothing — distinct from an empty selector, which
@@ -78,18 +88,22 @@ func unionDiscoveredValidationTests(
 			if err != nil {
 				return fmt.Errorf("reading HAProxyValidationTests %s: %w", item.GetName(), err)
 			}
-			sources = append(sources, coreconfig.ValidationTestSource{
+			sources = append(sources, conversion.ValidationTestSource{
 				Origin: "HAProxyValidationTests/" + item.GetName(),
 				Tests:  tests,
 			})
 		}
 	}
 
-	union, err := coreconfig.UnionValidationTests(sources)
+	union, err := conversion.UnionValidationTests(sources)
 	if err != nil {
 		return err
 	}
-	cfg.ValidationTests = union
+	converted, err := conversion.ConvertSpec(&v1alpha1.HAProxyTemplateConfigSpec{ValidationTests: union})
+	if err != nil {
+		return fmt.Errorf("converting unioned validation tests: %w", err)
+	}
+	cfg.ValidationTests = converted.ValidationTests
 
 	if logger != nil && len(sources) > 1 {
 		logger.Info("Discovered validation tests",
@@ -117,22 +131,12 @@ func enforceRequireValidationTests(cfg *coreconfig.Config, required bool) error 
 // validationTestsFromObject reads the tests out of a HAProxyValidationTests
 // object and converts them to the internal shape the runner consumes, reusing
 // the config converter so both sources are decoded identically.
-func validationTestsFromObject(obj *unstructured.Unstructured) (map[string]coreconfig.ValidationTest, error) {
+func validationTestsFromObject(obj *unstructured.Unstructured) (map[string]v1alpha1.ValidationTest, error) {
 	typed := &v1alpha1.HAProxyValidationTests{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, typed); err != nil {
 		return nil, err
 	}
-	if len(typed.Spec.ValidationTests) == 0 {
-		return map[string]coreconfig.ValidationTest{}, nil
-	}
-
-	converted, err := conversion.ConvertSpec(&v1alpha1.HAProxyTemplateConfigSpec{
-		ValidationTests: typed.Spec.ValidationTests,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return converted.ValidationTests, nil
+	return typed.Spec.ValidationTests, nil
 }
 
 // sortedByName fixes the order tests objects are folded in, so the accumulated
@@ -155,7 +159,7 @@ func newValidationTestResolver(
 	logger *slog.Logger,
 ) func(*coreconfig.Config, *v1alpha1.HAProxyTemplateConfig) error {
 	return func(cfg *coreconfig.Config, crd *v1alpha1.HAProxyTemplateConfig) error {
-		if err := unionDiscoveredValidationTests(ctx, lister, cfg, crd.Spec.ValidationTestsSelector, logger); err != nil {
+		if err := unionDiscoveredValidationTests(ctx, lister, cfg, crd, logger); err != nil {
 			return err
 		}
 		return enforceRequireValidationTests(cfg, crd.Spec.RequireValidationTests)

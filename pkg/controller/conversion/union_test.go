@@ -12,14 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package config
+package conversion
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/runtime"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
 
-func src(origin string, tests map[string]ValidationTest) ValidationTestSource {
+func src(origin string, tests map[string]v1alpha1.ValidationTest) ValidationTestSource {
 	return ValidationTestSource{Origin: origin, Tests: tests}
 }
 
@@ -29,7 +36,7 @@ type unionCase struct {
 	name    string
 	sources []ValidationTestSource
 	wantErr string
-	check   func(t *testing.T, got map[string]ValidationTest)
+	check   func(t *testing.T, got map[string]v1alpha1.ValidationTest)
 }
 
 func runUnionCases(t *testing.T, cases []unionCase) {
@@ -59,7 +66,7 @@ func TestUnionValidationTests(t *testing.T) {
 		{
 			name:    "no sources yields an empty map, not nil",
 			sources: nil,
-			check: func(t *testing.T, got map[string]ValidationTest) {
+			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
 				if got == nil {
 					t.Fatal("got nil map; callers range over this and a nil map hides the zero-test case")
@@ -72,10 +79,10 @@ func TestUnionValidationTests(t *testing.T) {
 		{
 			name: "tests from separate sources combine",
 			sources: []ValidationTestSource{
-				src("config", map[string]ValidationTest{"a": {Description: "A"}}),
-				src("tests-obj", map[string]ValidationTest{"b": {Description: "B"}}),
+				src("config", map[string]v1alpha1.ValidationTest{"a": {Description: "A"}}),
+				src("tests-obj", map[string]v1alpha1.ValidationTest{"b": {Description: "B"}}),
 			},
-			check: func(t *testing.T, got map[string]ValidationTest) {
+			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
 				if len(got) != 2 || got["a"].Description != "A" || got["b"].Description != "B" {
 					t.Fatalf("got %#v", got)
@@ -85,17 +92,17 @@ func TestUnionValidationTests(t *testing.T) {
 		{
 			name: "duplicate name across sources is an error naming both",
 			sources: []ValidationTestSource{
-				src("HAProxyTemplateConfig/cfg", map[string]ValidationTest{"dup": {Description: "first"}}),
-				src("HAProxyValidationTests/extra", map[string]ValidationTest{"dup": {Description: "second"}}),
+				src("HAProxyTemplateConfig/cfg", map[string]v1alpha1.ValidationTest{"dup": {Description: "first"}}),
+				src("HAProxyv1alpha1.ValidationTests/extra", map[string]v1alpha1.ValidationTest{"dup": {Description: "second"}}),
 			},
-			wantErr: "defined by both HAProxyTemplateConfig/cfg and HAProxyValidationTests/extra",
+			wantErr: "defined by both HAProxyTemplateConfig/cfg and HAProxyv1alpha1.ValidationTests/extra",
 		},
 		{
 			name: "duplicate within one source is not a collision",
 			sources: []ValidationTestSource{
-				src("config", map[string]ValidationTest{"a": {Description: "A"}, "b": {Description: "B"}}),
+				src("config", map[string]v1alpha1.ValidationTest{"a": {Description: "A"}, "b": {Description: "B"}}),
 			},
-			check: func(t *testing.T, got map[string]ValidationTest) {
+			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
 				if len(got) != 2 {
 					t.Fatalf("got %d tests, want 2", len(got))
@@ -112,19 +119,19 @@ func TestUnionValidationTests_GlobalBaseline(t *testing.T) {
 		{
 			name: "_global fixtures accumulate instead of replacing",
 			sources: []ValidationTestSource{
-				src("base", map[string]ValidationTest{GlobalValidationTestName: {
-					Fixtures: map[string][]any{"services": {"svc-base"}},
+				src("base", map[string]v1alpha1.ValidationTest{globalValidationTestName: {
+					Fixtures: map[string][]runtime.RawExtension{"services": {raw("svc-base")}},
 				}}),
-				src("ssl", map[string]ValidationTest{GlobalValidationTestName: {
-					Fixtures: map[string][]any{"secrets": {"sec-ssl"}},
+				src("ssl", map[string]v1alpha1.ValidationTest{globalValidationTestName: {
+					Fixtures: map[string][]runtime.RawExtension{"secrets": {raw("sec-ssl")}},
 				}}),
-				src("extra", map[string]ValidationTest{GlobalValidationTestName: {
-					Fixtures: map[string][]any{"services": {"svc-extra"}},
+				src("extra", map[string]v1alpha1.ValidationTest{globalValidationTestName: {
+					Fixtures: map[string][]runtime.RawExtension{"services": {raw("svc-extra")}},
 				}}),
 			},
-			check: func(t *testing.T, got map[string]ValidationTest) {
+			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
-				g := got[GlobalValidationTestName]
+				g := got[globalValidationTestName]
 				if len(g.Fixtures["services"]) != 2 {
 					t.Fatalf("services fixtures = %v, want both base and extra — a replace here silently drops a library's baseline", g.Fixtures["services"])
 				}
@@ -136,12 +143,12 @@ func TestUnionValidationTests_GlobalBaseline(t *testing.T) {
 		{
 			name: "_global is never reported as a duplicate",
 			sources: []ValidationTestSource{
-				src("a", map[string]ValidationTest{GlobalValidationTestName: {Description: "x"}}),
-				src("b", map[string]ValidationTest{GlobalValidationTestName: {Description: "y"}}),
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {Description: "x"}}),
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {Description: "y"}}),
 			},
-			check: func(t *testing.T, got map[string]ValidationTest) {
+			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
-				if _, ok := got[GlobalValidationTestName]; !ok {
+				if _, ok := got[globalValidationTestName]; !ok {
 					t.Fatal("_global missing")
 				}
 			},
@@ -149,16 +156,16 @@ func TestUnionValidationTests_GlobalBaseline(t *testing.T) {
 		{
 			name: "_global requires and requiresFields union without duplicates",
 			sources: []ValidationTestSource{
-				src("a", map[string]ValidationTest{GlobalValidationTestName: {
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {
 					Requires: []string{"gateways", "ingresses"}, RequiresFields: []string{"spec.x"},
 				}}),
-				src("b", map[string]ValidationTest{GlobalValidationTestName: {
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {
 					Requires: []string{"ingresses", "httproutes"}, RequiresFields: []string{"spec.x", "spec.y"},
 				}}),
 			},
-			check: func(t *testing.T, got map[string]ValidationTest) {
+			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
-				g := got[GlobalValidationTestName]
+				g := got[globalValidationTestName]
 				if len(g.Requires) != 3 {
 					t.Fatalf("requires = %v, want 3 unique", g.Requires)
 				}
@@ -170,34 +177,34 @@ func TestUnionValidationTests_GlobalBaseline(t *testing.T) {
 		{
 			name: "_global extraContext merges disjoint keys",
 			sources: []ValidationTestSource{
-				src("a", map[string]ValidationTest{GlobalValidationTestName: {ExtraContext: map[string]any{"x": 1}}}),
-				src("b", map[string]ValidationTest{GlobalValidationTestName: {ExtraContext: map[string]any{"y": 2}}}),
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {ExtraContext: rawJSON(`{"x": 1}`)}}),
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {ExtraContext: rawJSON(`{"y": 2}`)}}),
 			},
-			check: func(t *testing.T, got map[string]ValidationTest) {
+			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
-				g := got[GlobalValidationTestName]
-				if len(g.ExtraContext) != 2 {
-					t.Fatalf("extraContext = %v, want both keys", g.ExtraContext)
+				g := got[globalValidationTestName]
+				if len(g.ExtraContext.Raw) == 0 {
+					t.Fatalf("extraContext = %s, want the merged document", g.ExtraContext.Raw)
 				}
 			},
 		},
 		{
 			name: "_global extraContext conflict on the same key is an error",
 			sources: []ValidationTestSource{
-				src("a", map[string]ValidationTest{GlobalValidationTestName: {ExtraContext: map[string]any{"mode": "http"}}}),
-				src("b", map[string]ValidationTest{GlobalValidationTestName: {ExtraContext: map[string]any{"mode": "tcp"}}}),
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {ExtraContext: rawJSON(`{"mode": "http"}`)}}),
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {ExtraContext: rawJSON(`{"mode": "tcp"}`)}}),
 			},
 			wantErr: "extraContext.mode is set to different values",
 		},
 		{
 			name: "_global identical scalar from two sources is not a conflict",
 			sources: []ValidationTestSource{
-				src("a", map[string]ValidationTest{GlobalValidationTestName: {CurrentConfig: "global\n"}}),
-				src("b", map[string]ValidationTest{GlobalValidationTestName: {CurrentConfig: "global\n"}}),
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentConfig: "global\n"}}),
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentConfig: "global\n"}}),
 			},
-			check: func(t *testing.T, got map[string]ValidationTest) {
+			check: func(t *testing.T, got map[string]v1alpha1.ValidationTest) {
 				t.Helper()
-				if got[GlobalValidationTestName].CurrentConfig != "global\n" {
+				if got[globalValidationTestName].CurrentConfig != "global\n" {
 					t.Fatal("identical values should merge silently")
 				}
 			},
@@ -205,16 +212,16 @@ func TestUnionValidationTests_GlobalBaseline(t *testing.T) {
 		{
 			name: "_global currentConfig conflict is an error",
 			sources: []ValidationTestSource{
-				src("a", map[string]ValidationTest{GlobalValidationTestName: {CurrentConfig: "one"}}),
-				src("b", map[string]ValidationTest{GlobalValidationTestName: {CurrentConfig: "two"}}),
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentConfig: "one"}}),
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentConfig: "two"}}),
 			},
 			wantErr: "currentConfig is set to different values",
 		},
 		{
 			name: "_global currentFiles conflict on the same filename is an error",
 			sources: []ValidationTestSource{
-				src("a", map[string]ValidationTest{GlobalValidationTestName: {CurrentFiles: map[string]string{"f": "1"}}}),
-				src("b", map[string]ValidationTest{GlobalValidationTestName: {CurrentFiles: map[string]string{"f": "2"}}}),
+				src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentFiles: map[string]string{"f": "1"}}}),
+				src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {CurrentFiles: map[string]string{"f": "2"}}}),
 			},
 			wantErr: "currentFiles.f is set to different values",
 		},
@@ -228,11 +235,11 @@ func TestUnionValidationTests_GlobalBaseline(t *testing.T) {
 func TestUnionValidationTests_FixtureOrderIsDeterministic(t *testing.T) {
 	build := func() []ValidationTestSource {
 		return []ValidationTestSource{
-			src("a", map[string]ValidationTest{GlobalValidationTestName: {
-				Fixtures: map[string][]any{"services": {"a1", "a2"}, "secrets": {"as"}},
+			src("a", map[string]v1alpha1.ValidationTest{globalValidationTestName: {
+				Fixtures: map[string][]runtime.RawExtension{"services": {raw("a1"), raw("a2")}, "secrets": {raw("as")}},
 			}}),
-			src("b", map[string]ValidationTest{GlobalValidationTestName: {
-				Fixtures: map[string][]any{"services": {"b1"}, "secrets": {"bs"}},
+			src("b", map[string]v1alpha1.ValidationTest{globalValidationTestName: {
+				Fixtures: map[string][]runtime.RawExtension{"services": {raw("b1")}, "secrets": {raw("bs")}},
 			}}),
 		}
 	}
@@ -241,19 +248,19 @@ func TestUnionValidationTests_FixtureOrderIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := first[GlobalValidationTestName].Fixtures["services"]
+	want := first[globalValidationTestName].Fixtures["services"]
 
 	for i := 0; i < 50; i++ {
 		got, err := UnionValidationTests(build())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		gotServices := got[GlobalValidationTestName].Fixtures["services"]
+		gotServices := got[globalValidationTestName].Fixtures["services"]
 		if len(gotServices) != len(want) {
 			t.Fatalf("run %d: length changed: %v vs %v", i, gotServices, want)
 		}
 		for j := range want {
-			if gotServices[j] != want[j] {
+			if !bytes.Equal(gotServices[j].Raw, want[j].Raw) {
 				t.Fatalf("run %d: order changed at %d: %v vs %v", i, j, gotServices, want)
 			}
 		}
@@ -263,21 +270,36 @@ func TestUnionValidationTests_FixtureOrderIsDeterministic(t *testing.T) {
 // Accumulating into a source's own map would corrupt the caller's object, which
 // for the live path is a cached informer item shared with every other consumer.
 func TestUnionValidationTests_DoesNotMutateSources(t *testing.T) {
-	a := map[string]ValidationTest{GlobalValidationTestName: {
-		Fixtures: map[string][]any{"services": {"only-a"}},
+	a := map[string]v1alpha1.ValidationTest{globalValidationTestName: {
+		Fixtures: map[string][]runtime.RawExtension{"services": {raw("only-a")}},
 	}}
-	b := map[string]ValidationTest{GlobalValidationTestName: {
-		Fixtures: map[string][]any{"services": {"only-b"}},
+	b := map[string]v1alpha1.ValidationTest{globalValidationTestName: {
+		Fixtures: map[string][]runtime.RawExtension{"services": {raw("only-b")}},
 	}}
 
 	if _, err := UnionValidationTests([]ValidationTestSource{src("a", a), src("b", b)}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if got := len(a[GlobalValidationTestName].Fixtures["services"]); got != 1 {
+	if got := len(a[globalValidationTestName].Fixtures["services"]); got != 1 {
 		t.Fatalf("source a was mutated: services now has %d entries, want 1", got)
 	}
-	if got := len(b[GlobalValidationTestName].Fixtures["services"]); got != 1 {
+	if got := len(b[globalValidationTestName].Fixtures["services"]); got != 1 {
 		t.Fatalf("source b was mutated: services now has %d entries, want 1", got)
 	}
 }
+
+func raw(s string) runtime.RawExtension { return runtime.RawExtension{Raw: []byte(`"` + s + `"`)} }
+
+func rawJSON(s string) runtime.RawExtension { return runtime.RawExtension{Raw: []byte(s)} }
+
+// The union restates the reserved name rather than importing pkg/core/config,
+// which must not depend on the API types. If they ever diverge, every _global
+// contribution silently becomes an ordinary test and collides.
+func TestGlobalNameMatchesCore(t *testing.T) {
+	if globalValidationTestName != coreconfig.GlobalValidationTestName {
+		t.Fatalf("reserved name drifted: %q vs %q", globalValidationTestName, coreconfig.GlobalValidationTestName)
+	}
+}
+
+var _ = json.Marshal

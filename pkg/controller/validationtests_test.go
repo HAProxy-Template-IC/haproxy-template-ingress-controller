@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
 
@@ -58,14 +59,29 @@ func testsObject(name string, testNames ...string) unstructured.Unstructured {
 	}}
 }
 
+// crdWith builds the config object the union reads its inline tests and
+// selector from.
+func crdWith(selector *metav1.LabelSelector, inline map[string]v1alpha1.ValidationTest) *v1alpha1.HAProxyTemplateConfig {
+	return &v1alpha1.HAProxyTemplateConfig{Spec: v1alpha1.HAProxyTemplateConfigSpec{
+		ValidationTests:         inline,
+		ValidationTestsSelector: selector,
+	}}
+}
+
 func everything() *metav1.LabelSelector { return &metav1.LabelSelector{} }
+
+func inlineTest(name string) map[string]v1alpha1.ValidationTest {
+	return map[string]v1alpha1.ValidationTest{name: {
+		Assertions: []v1alpha1.ValidationAssertion{{Type: "haproxy_valid"}},
+	}}
+}
 
 func TestUnionDiscoveredValidationTests_NilSelector(t *testing.T) {
 	t.Run("nil selector discovers nothing and leaves inline tests alone", func(t *testing.T) {
-		cfg := &coreconfig.Config{ValidationTests: map[string]coreconfig.ValidationTest{"inline": {}}}
+		cfg := &coreconfig.Config{}
 		lister := &fakeLister{items: []unstructured.Unstructured{testsObject("extra", "discovered")}}
 
-		if err := unionDiscoveredValidationTests(context.Background(), lister, cfg, nil, nil); err != nil {
+		if err := unionDiscoveredValidationTests(context.Background(), lister, cfg, crdWith(nil, inlineTest("inline")), nil); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if _, found := cfg.ValidationTests["discovered"]; found {
@@ -79,13 +95,13 @@ func TestUnionDiscoveredValidationTests_NilSelector(t *testing.T) {
 
 func TestUnionDiscoveredValidationTests_Discovery(t *testing.T) {
 	t.Run("discovered tests join the inline ones", func(t *testing.T) {
-		cfg := &coreconfig.Config{ValidationTests: map[string]coreconfig.ValidationTest{"inline": {}}}
+		cfg := &coreconfig.Config{}
 		lister := &fakeLister{items: []unstructured.Unstructured{
 			testsObject("a", "from-a"),
 			testsObject("b", "from-b"),
 		}}
 
-		if err := unionDiscoveredValidationTests(context.Background(), lister, cfg, everything(), nil); err != nil {
+		if err := unionDiscoveredValidationTests(context.Background(), lister, cfg, crdWith(everything(), inlineTest("inline")), nil); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		for _, want := range []string{"inline", "from-a", "from-b"} {
@@ -101,7 +117,7 @@ func TestUnionDiscoveredValidationTests_Discovery(t *testing.T) {
 		cfg := &coreconfig.Config{}
 		lister := &fakeLister{err: errors.New("forbidden: cannot list haproxyvalidationtests")}
 
-		err := unionDiscoveredValidationTests(context.Background(), lister, cfg, everything(), nil)
+		err := unionDiscoveredValidationTests(context.Background(), lister, cfg, crdWith(everything(), inlineTest("inline")), nil)
 		if err == nil {
 			t.Fatal("a failed List must fail the load; an empty suite passes unconditionally three layers down")
 		}
@@ -111,10 +127,10 @@ func TestUnionDiscoveredValidationTests_Discovery(t *testing.T) {
 	})
 
 	t.Run("a duplicate test name across objects is an error", func(t *testing.T) {
-		cfg := &coreconfig.Config{ValidationTests: map[string]coreconfig.ValidationTest{"clash": {}}}
+		cfg := &coreconfig.Config{}
 		lister := &fakeLister{items: []unstructured.Unstructured{testsObject("extra", "clash")}}
 
-		err := unionDiscoveredValidationTests(context.Background(), lister, cfg, everything(), nil)
+		err := unionDiscoveredValidationTests(context.Background(), lister, cfg, crdWith(everything(), inlineTest("clash")), nil)
 		if err == nil {
 			t.Fatal("expected a collision error")
 		}
@@ -130,7 +146,7 @@ func TestUnionDiscoveredValidationTests_Selector(t *testing.T) {
 		lister := &fakeLister{}
 		selector := &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/instance": "haptic"}}
 
-		if err := unionDiscoveredValidationTests(context.Background(), lister, cfg, selector, nil); err != nil {
+		if err := unionDiscoveredValidationTests(context.Background(), lister, cfg, crdWith(selector, nil), nil); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !strings.Contains(lister.selector, "app.kubernetes.io/instance=haptic") {

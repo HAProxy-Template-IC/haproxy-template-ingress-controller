@@ -12,23 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package config
+package conversion
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
+
+	"k8s.io/apimachinery/pkg/runtime"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 )
 
 // ValidationTestSource is one contributor of validation tests: the config's own
-// inline `spec.validationTests`, or a HAProxyValidationTests object selected by
+// inline `spec.validationTests`, or a HAProxyv1alpha1.ValidationTests object selected by
 // it.
 type ValidationTestSource struct {
 	// Origin identifies the contributor in error messages. It is the only way an
 	// operator learns which two objects collided, so it must name the object —
-	// e.g. "HAProxyValidationTests/haptic-config-tests".
+	// e.g. "HAProxyv1alpha1.ValidationTests/haptic-config-tests".
 	Origin string
 
-	Tests map[string]ValidationTest
+	Tests map[string]v1alpha1.ValidationTest
 }
 
 // UnionValidationTests combines every source into the single map the test
@@ -46,8 +52,8 @@ type ValidationTestSource struct {
 //
 // Sources are processed in the order given, which fixes the order of
 // accumulated fixtures so a render is reproducible.
-func UnionValidationTests(sources []ValidationTestSource) (map[string]ValidationTest, error) {
-	union := make(map[string]ValidationTest)
+func UnionValidationTests(sources []ValidationTestSource) (map[string]v1alpha1.ValidationTest, error) {
+	union := make(map[string]v1alpha1.ValidationTest)
 	// Which source contributed each name, for the collision message.
 	origin := make(map[string]string)
 
@@ -55,7 +61,7 @@ func UnionValidationTests(sources []ValidationTestSource) (map[string]Validation
 		for _, name := range sortedTestNames(src.Tests) {
 			test := src.Tests[name]
 
-			if name == GlobalValidationTestName {
+			if name == globalValidationTestName {
 				merged := union[name]
 				if err := mergeGlobalBaseline(&merged, &test, origin[name], src.Origin); err != nil {
 					return nil, err
@@ -83,15 +89,15 @@ func UnionValidationTests(sources []ValidationTestSource) (map[string]Validation
 
 // mergeGlobalBaseline accumulates one source's `_global` contribution onto what
 // earlier sources contributed.
-func mergeGlobalBaseline(acc, add *ValidationTest, accOrigin, addOrigin string) error {
+func mergeGlobalBaseline(acc, add *v1alpha1.ValidationTest, accOrigin, addOrigin string) error {
 	if acc.Fixtures == nil && add.Fixtures != nil {
-		acc.Fixtures = make(map[string][]any, len(add.Fixtures))
+		acc.Fixtures = make(map[string][]runtime.RawExtension, len(add.Fixtures))
 	}
 	for _, kind := range sortedFixtureKinds(add.Fixtures) {
 		acc.Fixtures[kind] = append(acc.Fixtures[kind], add.Fixtures[kind]...)
 	}
 
-	acc.HTTPFixtures = append(acc.HTTPFixtures, add.HTTPFixtures...)
+	acc.HTTPResources = append(acc.HTTPResources, add.HTTPResources...)
 	acc.Requires = appendUnique(acc.Requires, add.Requires)
 	acc.RequiresFields = appendUnique(acc.RequiresFields, add.RequiresFields)
 
@@ -112,7 +118,7 @@ func mergeGlobalBaseline(acc, add *ValidationTest, accOrigin, addOrigin string) 
 	if acc.CurrentFiles, err = mergeStringMap(acc.CurrentFiles, add.CurrentFiles, "currentFiles", accOrigin, addOrigin); err != nil {
 		return err
 	}
-	if acc.ExtraContext, err = mergeAnyMap(acc.ExtraContext, add.ExtraContext, "extraContext", accOrigin, addOrigin); err != nil {
+	if acc.ExtraContext, err = mergeRawExtension(acc.ExtraContext, add.ExtraContext, "extraContext", accOrigin, addOrigin); err != nil {
 		return err
 	}
 
@@ -150,20 +156,49 @@ func mergeStringMap(acc, add map[string]string, field, accOrigin, addOrigin stri
 	return acc, nil
 }
 
-func mergeAnyMap(acc, add map[string]any, field, accOrigin, addOrigin string) (map[string]any, error) {
-	if len(add) == 0 {
+// mergeRawExtension merges two `_global.extraContext` documents key by key.
+//
+// It decodes rather than comparing bytes because the baseline is genuinely
+// composed: several libraries each contribute their own keys to it, so byte
+// inequality is the normal case and rejecting it would break every multi-library
+// install. Only a key both sides set to different values is a conflict.
+func mergeRawExtension(acc, add runtime.RawExtension, field, accOrigin, addOrigin string) (runtime.RawExtension, error) {
+	if len(add.Raw) == 0 {
 		return acc, nil
 	}
-	if acc == nil {
-		acc = make(map[string]any, len(add))
+	if len(acc.Raw) == 0 || bytes.Equal(acc.Raw, add.Raw) {
+		return add, nil
 	}
-	for _, k := range sortedAnyMapKeys(add) {
-		if existing, ok := acc[k]; ok && fmt.Sprintf("%v", existing) != fmt.Sprintf("%v", add[k]) {
+
+	var accMap, addMap map[string]any
+	if err := json.Unmarshal(acc.Raw, &accMap); err != nil {
+		return acc, fmt.Errorf("%s %s: %s is not a JSON object: %w", globalValidationTestName, field, accOrigin, err)
+	}
+	if err := json.Unmarshal(add.Raw, &addMap); err != nil {
+		return acc, fmt.Errorf("%s %s: %s is not a JSON object: %w", globalValidationTestName, field, addOrigin, err)
+	}
+
+	for _, k := range sortedAnyMapKeys(addMap) {
+		if existing, ok := accMap[k]; ok && fmt.Sprintf("%v", existing) != fmt.Sprintf("%v", addMap[k]) {
 			return acc, globalConflict(field, k, accOrigin, addOrigin)
 		}
-		acc[k] = add[k]
+		accMap[k] = addMap[k]
 	}
-	return acc, nil
+
+	merged, err := json.Marshal(accMap)
+	if err != nil {
+		return acc, err
+	}
+	return runtime.RawExtension{Raw: merged}, nil
+}
+
+func sortedAnyMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func globalConflict(field, key, accOrigin, addOrigin string) error {
@@ -177,7 +212,7 @@ func globalConflict(field, key, accOrigin, addOrigin string) error {
 	return fmt.Errorf(
 		"validationTests %s: %s is set to different values by %s and %s: "+
 			"the baseline is shared by every test, so one value would silently override the other",
-		GlobalValidationTestName, where, accOrigin, addOrigin)
+		globalValidationTestName, where, accOrigin, addOrigin)
 }
 
 func appendUnique(acc, add []string) []string {
@@ -197,7 +232,7 @@ func appendUnique(acc, add []string) []string {
 // The map iteration order below is fixed so that accumulated fixtures — and
 // therefore the rendered config a test asserts on — do not vary between runs.
 
-func sortedTestNames(m map[string]ValidationTest) []string {
+func sortedTestNames(m map[string]v1alpha1.ValidationTest) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -206,7 +241,7 @@ func sortedTestNames(m map[string]ValidationTest) []string {
 	return keys
 }
 
-func sortedFixtureKinds(m map[string][]any) []string {
+func sortedFixtureKinds(m map[string][]runtime.RawExtension) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -224,11 +259,7 @@ func sortedStringMapKeys(m map[string]string) []string {
 	return keys
 }
 
-func sortedAnyMapKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
+// globalValidationTestName mirrors coreconfig.GlobalValidationTestName. It is
+// restated rather than imported because pkg/core/config must not depend on the
+// API types, and the two are pinned equal by TestGlobalNameMatchesCore.
+const globalValidationTestName = "_global"
