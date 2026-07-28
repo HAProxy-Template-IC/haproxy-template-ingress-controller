@@ -109,13 +109,27 @@ tests:
             containerPort: 0
             protocol: TCP
 
-  - it: should configure the watched HAProxyTemplateConfig name from configName
+  # CRD_NAME is the controller's merge order. It must list every enabled
+  # library's config first and the operator's own config last, and it must match
+  # the set haproxytemplateconfig.yaml emits exactly — the same literal is
+  # asserted from the other side in library_loader_test.yaml, so a drift between
+  # the two turns one of them red.
+  - it: should configure the watched HAProxyTemplateConfig names from configName, in merge order
     set:
       controller.configName: edge-config
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name == "CRD_NAME")].value
-          value: edge-config
+          value: edge-config-base,edge-config-ssl,edge-config-ingress,edge-config-gateway,edge-config-ingress-annotations-compat,edge-config-haptic-annotations,edge-config-spoa-hub,edge-config-vector,edge-config
+
+  - it: should add a vendor library to CRD_NAME in its merge-order position
+    set:
+      controller.configName: edge-config
+      controller.templateLibraries.nginxIngress.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "CRD_NAME")].value
+          value: edge-config-base,edge-config-ssl,edge-config-ingress,edge-config-gateway,edge-config-ingress-annotations-compat,edge-config-haptic-annotations,edge-config-nginx-ingress,edge-config-spoa-hub,edge-config-vector,edge-config
 
   - it: should set resources when specified
     set:

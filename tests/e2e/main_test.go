@@ -714,14 +714,19 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		"--timeout", DefaultHelmInstallTimeout.String(),
 	}
 	// Per-vendor e2e sharding. The core profile (default) installs with all three
-	// vendor annotation libraries DISABLED (e2e-values.yaml) — enabling all three
-	// at once produces a HAProxyTemplateConfig CR that exceeds etcd's ~1.5 MiB
-	// object limit, a config no real user runs (the vendor libraries are
-	// mutually-exclusive migration aids; a user enables at most one). Each vendor
-	// is instead exercised in its own shard (HAPTIC_E2E_PROFILE=haproxytech |
-	// haproxy-ingress | nginx), which enables just that one library on top of the
-	// core. Vendor tests skip in shards where their library is off — see
-	// skipIfVendorDisabled / RequireVendorLibrary in feature_helpers.go.
+	// vendor annotation libraries DISABLED and each vendor is exercised in its own
+	// shard (HAPTIC_E2E_PROFILE=haproxytech | haproxy-ingress | nginx), which
+	// enables just that one library on top of the core. Vendor tests skip in
+	// shards where their library is off — see skipIfVendorDisabled /
+	// RequireVendorLibrary in feature_helpers.go.
+	//
+	// This is now about scope isolation, not size: enabling all three at once used
+	// to exceed etcd's ~1.5 MiB per-object limit, but the chart renders one config
+	// per template library (ADR-0014) and the largest is ~35% of it. `make
+	// cr-size-check` renders exactly that all-vendor profile as the standing
+	// regression test. Collapsing the shards is a viable CI-minute saving; it is a
+	// separate change because the shards also keep one vendor's annotations from
+	// interacting with another's in a single fixture set.
 	if vendorLib != "" {
 		args = append(args, "--set", "controller.templateLibraries."+vendorLib+".enabled=true")
 		fmt.Fprintf(os.Stderr, "e2e: vendor shard — enabling %s on top of core values\n", vendorLib)

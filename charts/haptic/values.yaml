@@ -331,8 +331,10 @@ controller:
           - ipBlock:
               cidr: "::/0"
       additionalRules: []
-  # Template libraries. Merge order is fixed in templates/_libraries.tpl
-  # (haptic.mergeLibraries). Merge-order docs and per-library references:
+  # Template libraries. Each enabled one is rendered as its own
+  # HAProxyTemplateConfig and the controller merges them in the order fixed by
+  # templates/_libraries.tpl (haptic.libraryFiles); see ADR-0014. Merge-order
+  # docs and per-library references:
   # https://haproxy-haptic.org/docs/dev/template-libraries/
   templateLibraries:
     # Resource-agnostic core. Defines the haproxyConfig template and the
@@ -390,8 +392,8 @@ controller:
     # nginx.ingress.kubernetes.io/* compatibility (ingress-nginx migration). Opt-in.
     nginxIngress:
       enabled: false
-    # HAProxy-side wiring for the bundled spoa-hub sidecar. Auto-enabled by
-    # haptic.mergeLibraries when any spoaHub.plugins.* is on; flip to true
+    # HAProxy-side wiring for the bundled spoa-hub sidecar. Auto-loaded when
+    # any spoaHub.plugins.* is on; flip to true
     # here only to force-load the library with no plugins enabled.
     spoaHub:
       enabled: false

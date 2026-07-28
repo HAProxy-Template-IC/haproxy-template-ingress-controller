@@ -4,9 +4,14 @@ Development context for working with the HAProxy Template Ingress Controller Hel
 
 ## Chart Architecture
 
-### Library Merging System
+### Library Loading and Merging
 
-The chart uses a library-based architecture where multiple YAML files are merged at Helm render time. The full sequence (read `templates/_libraries.tpl` `define "haptic.mergeLibraries"` for the canonical order):
+The chart uses a library-based architecture where multiple YAML files become one
+effective configuration. **The chart no longer merges them.** It renders one
+`HAProxyTemplateConfig` per enabled library plus one for the operator's own
+config, and the controller merges the set at startup in `CRD_NAME` order (see
+ADR-0014). Read `templates/_libraries.tpl` `define "haptic.libraryFiles"` for the
+canonical order:
 
 ```
 Merge Order (lowest to highest priority):
@@ -19,35 +24,58 @@ Merge Order (lowest to highest priority):
 7. haproxy-ingress/        - haproxy-ingress.github.io/* annotation compatibility
 8. nginx-ingress/          - nginx.ingress.kubernetes.io/* compat (disabled by default)
 9. spoa-hub/               - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
-10. controller.config.*    - User overrides from values.yaml (highest priority)
+10. vector.yaml            - Vector sidecar config (reads earlier libraries' decisions)
+11. controller.config.*    - User overrides from values.yaml (highest priority)
 ```
 
-Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. The `spoa-hub` library is also auto-loaded by `haptic.mergeLibraries` whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
+Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false — a skipped library renders no object at all. The `spoa-hub` library is also auto-loaded whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
 
-The frontend path-matching order is selected at base-load time by `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` (`default` or `last`). When `last`, `haptic.mergeLibraries` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before merge so it never appears in the rendered HAProxyTemplateConfig.
+Objects are named `<controller.configName>-<library slug>`, with the operator's own config keeping the plain `controller.configName`. The names carry **no** ordering authority — order comes from `CRD_NAME` — so inserting a library never renames an existing object.
 
-**Merge Logic** (`templates/_libraries.tpl`, `define "haptic.mergeLibraries"`):
+The frontend path-matching order is selected at base-load time by `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` (`default` or `last`). When `last`, the base library's `_helm_load` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before rendering so it never appears in the output.
 
-The loader iterates a fixed ordered list of library files. The merge order is a system property and lives in `_libraries.tpl`. Per-library loading rules — enable predicates and any chart-time mutations of the parsed YAML — live next to the resources they parameterize, in each library's top-level `_helm_load:` block. The block is stripped before merge so it never appears in the rendered HAProxyTemplateConfig.
+**Loader logic** (`templates/_libraries.tpl`, `define "haptic.prepareLibraries"`):
+
+The loader iterates a fixed ordered list of library files. The order is a system property and lives in `_libraries.tpl`. Per-library loading rules — enable predicates and any chart-time mutations of the parsed YAML — live next to the resources they parameterize, in each library's top-level `_helm_load:` block. Every underscore-prefixed top-level key is stripped before rendering, so neither `_helm_load` nor `ssl.yaml`'s `_test_tls_*` YAML-anchor scratch values reach an object.
 
 ```yaml
-{{- define "haptic.mergeLibraries" -}}
-{{- $merged := dict }}
-{{- $libraryFiles := list "libraries/base.yaml" ... "libraries/spoa-hub/" }}
-{{- range $file := $libraryFiles }}
-  {{- $library := $context.Files.Get $file | fromYaml }}
+{{- define "haptic.prepareLibraries" -}}
+{{- $prepared := list }}
+{{- range $file := include "haptic.libraryFiles" $context | fromYamlArray }}
+  {{- $library := $context.Files.Get $file | fromYaml }}   {# or subchart / split-dir #}
   {{- $loadHints := $library._helm_load | default dict }}
-  {{- if eq (tpl $loadHints.enable $context | trim) "true" }}
+  {{- if and (not $skip) (eq (tpl $loadHints.enable $context | trim) "true") }}
     # apply _helm_load.inject items, optionally gated by inject.when
     # apply _helm_load.unset items
-    # strip _helm_load
     # apply haptic.filterTests universally (no-op for libs without _helm_skip_test)
-    {{- $merged = mustMergeOverwrite $merged $library }}
+    # strip every underscore-prefixed top-level key
+    # strip Scriggo comments from templateSnippets
+    {{- $prepared = append $prepared (dict "name" <slug> "config" $library) }}
   {{- end }}
 {{- end }}
-# Then merge user-provided controller.config.* (highest priority).
+{{- dict "libraries" $prepared | toYaml }}
 {{- end }}
 ```
+
+**Two helpers derive from the same list and must agree**: `haptic.prepareLibraries`
+(the objects) and `haptic.libraryConfigNames` (the `CRD_NAME` value the deployment
+passes). Helm cannot share one evaluation across template files, so the agreement
+is pinned by test instead — `library_loader_test.yaml` asserts the emitted set and
+`deployment_test.yaml` asserts the same literal list from the `CRD_NAME` side.
+
+**Where merge semantics live now.** `pkg/controller/conversion.MergeSpecs` merges
+with `mergo.MergeWithOverwrite`, the exact call sprig's `mustMergeOverwrite` makes
+against the same vendored mergo — so chart-time and controller-time semantics
+match by construction. Maps deep-merge key-wise, lists replace, and
+`migrationCoverage` concatenates (it is a list of per-source declarations; an
+overwrite would keep only the last library's). A duplicate `templateSnippets` name
+across libraries still resolves to the later one, but the controller now logs each
+override instead of resolving it silently.
+
+**`haptic.watchedResourcesUnion`** gives the templates that must reason about the
+whole watch set (the ClusterRole, the ValidatingWebhookConfiguration) the union
+across every library plus the operator's, with the operator winning. It retains
+the Helm-only `statusPatch` field, which the object emitter strips.
 
 ### `_helm_load:` Schema
 
@@ -83,7 +111,7 @@ Real examples in the source:
 - `libraries/base.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.templatingSettings.extraContext.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
 - `libraries/spoa-hub/` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
 
-Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:` block, and append its path to `$libraryFiles` in `_libraries.tpl`'s `mergeLibraries`. The merge function does not need a new branch.
+Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:` block, and append its path to `haptic.libraryFiles` in `_libraries.tpl`. The loader does not need a new branch, and the new library gets its own `HAProxyTemplateConfig` and its own slot in `CRD_NAME` automatically. Update the expected object count and `CRD_NAME` literal in `tests/library_loader_test.yaml` and `tests/deployment_test.yaml`.
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
@@ -502,7 +530,7 @@ Do not remove or rename the `default-path origin` line in `base.yaml` — `Valid
 
 ### Testing Library Changes
 
-Since libraries are merged at Helm render time, you must test the **merged output**, not individual library files.
+A library is only meaningful merged with the others, so you must test the **merged output**, not individual library files. `helm template` now emits one object per library; `controller validate -f` merges every document in a stream, so piping the whole rendered set into it validates exactly what the controller would assemble. `--dump-merged` prints that merged spec without running any test.
 
 **Recommended: Use the Test Script**
 
@@ -2213,7 +2241,7 @@ charts/haptic/
 │   └── spoa-hub/               # SPOA hub sidecar wiring (auto-enabled with spoaHub)
 │
 ├── templates/                   # Helm templates
-│   ├── _libraries.tpl          # Library merging (haptic.mergeLibraries)
+│   ├── _libraries.tpl          # Library loading (haptic.prepareLibraries, haptic.libraryFiles)
 │   ├── _naming.tpl             # Names, labels, apiGroup/apiVersion split
 │   ├── _image.tpl              # Image refs, binary paths, runAsUser
 │   ├── _credentials.tpl        # Dataplane API username/password

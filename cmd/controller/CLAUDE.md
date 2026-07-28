@@ -53,6 +53,17 @@ The primary controller daemon that watches Kubernetes resources and manages HAPr
 
 CLI tool for validating HAProxyTemplateConfig CRDs with embedded validation tests. Used both by humans (`haptic-controller validate -f config.yaml`) and CI/CD pipelines.
 
+`-f` is repeatable and each file may hold several YAML documents; every
+HAProxyTemplateConfig across them is merged in order through the same
+`conversion.MergeSpecs` the daemon uses. That means `helm template … | yq
+'select(.kind == "HAProxyTemplateConfig")' > all.yaml` then `validate -f
+all.yaml` validates exactly what the controller would assemble — which is how
+`scripts/test-templates.sh` stays honest now that the chart emits one object per
+library. `--dump-merged` prints the merged spec and exits without running a test.
+
+A lone file holding a single document still accepts a bare spec (no
+apiVersion/kind), the shape hand-written fixtures use.
+
 ### `benchmark` — Render Performance (benchmark*.go)
 
 Renders the templates in a HAProxyTemplateConfig repeatedly against fixture data and reports timings. Useful for spotting template regressions before they hit reconciliation.
@@ -85,7 +96,16 @@ violation. The chart wires this as a `pre-install`/`pre-upgrade` hook Job
 
 ### `config` — Inspect Live HAProxy Config (config.go)
 
-`haptic-controller config view` fetches the published `HAProxyCfg` CRD from the cluster (the rendered HAProxy configuration the controller deployed last), decompresses it if needed, and prints the raw config to stdout. It is a **live-cluster** command — it talks to the API server, not a local file. Flags: `--crd-name`, `--namespace`, `--kubeconfig` (no `-f`). The CRD name defaults via `--crd-name` → `CRD_NAME` env → `haproxy-config`. Useful for `haptic-controller config view | bat -l haproxy` style inspection on a running deployment.
+`haptic-controller config view` fetches the published `HAProxyCfg` CRD from the cluster (the rendered HAProxy configuration the controller deployed last), decompresses it if needed, and prints the raw config to stdout. It is a **live-cluster** command — it talks to the API server, not a local file. Flags: `--crd-name` (repeatable/comma-separated), `--namespace`, `--kubeconfig`, `--input` (no `-f`).
+
+`--input` prints the merged **input** config instead: it fetches every
+`--crd-name` and merges them. Since the chart splits the config across one object
+per template library, no single object shows the whole picture any more, and this
+is how an operator gets it back. Without `--input` the published HAProxyCfg name
+is derived from the LAST `--crd-name` — the primary. Names default via
+`--crd-name` → `CRD_NAME` env → `haproxy-config`. Useful for
+`haptic-controller config view | bat -l haproxy` style inspection on a running
+deployment.
 
 ### `version` — Build Info (version.go)
 
@@ -250,7 +270,7 @@ Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cm
 
 | Flag | Env var | Default | Purpose |
 |------|---------|---------|---------|
-| `--crd-name` | `CRD_NAME` | `haproxy-config` | Name of the `HAProxyTemplateConfig` CRD the controller reads. |
+| `--crd-name` | `CRD_NAME` | `haproxy-config` | Names of the `HAProxyTemplateConfig` objects the controller reads, **merged in the order given, later wins**. Repeatable, or comma-separated via the env var. The chart passes one per enabled template library with the operator's own config last (ADR-0014); a single name behaves exactly as before. |
 | `--secret-name` | `SECRET_NAME` | `haproxy-credentials` | Name of the `Secret` with `dataplane_username` / `dataplane_password`. |
 | `--webhook-cert-dir` | `WEBHOOK_CERT_DIR` | `""` (disabled) | Directory holding the validating-admission-webhook server's TLS cert (`tls.crt`/`tls.key`); the chart mounts the cert Secret here and sets this to `/etc/webhook/certs`. The server reads and hot-reloads the files on rotation. Empty disables the webhook entirely. |
 | `--webhook-resource-admission-timeout` | `WEBHOOK_RESOURCE_ADMISSION_TIMEOUT` | `9s` | Controller-side deadline for watched-resource dry-run admission. Keep it below the matching `ValidatingWebhookConfiguration.timeoutSeconds`; the chart derives it automatically. |

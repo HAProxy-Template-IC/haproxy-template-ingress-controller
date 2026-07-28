@@ -32,7 +32,7 @@
 #   - Sharded generation: Automatic parallel processing for large route sets
 #   - Extension points: frontend-matchers-advanced-*, frontend-filters-*
 
-# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 #
 # The library loads whenever the operator enables it — there is NO
 # .Capabilities gate anymore. Availability of the Gateway API CRDs is a

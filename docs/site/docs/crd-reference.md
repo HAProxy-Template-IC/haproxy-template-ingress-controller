@@ -600,6 +600,35 @@ kubectl get htplcfg haproxy-config -o yaml
 kubectl get htplcfg -w
 ```
 
+A Helm install creates several of these: one per enabled template library, named
+`<configName>-<library>`, plus `<configName>` for your own `controller.config`.
+The controller merges them in the order listed in the `CRD_NAME` environment
+variable on the controller Deployment, and later entries win — your own config is
+last, so it overrides every library.
+
+Only `<configName>` is yours to edit. The library objects are chart output and
+`helm upgrade` overwrites them; to change what a library emits, override the
+snippet by name under `controller.config.templateSnippets` instead.
+
+To see what the controller actually assembles from the whole set:
+
+```bash
+haptic-controller config view --input -n haptic
+```
+
+Validation status is reported on `<configName>` only — it represents the merged
+set. Offline, `haptic-controller validate -f <file>` accepts the flag repeatedly
+and accepts multi-document files, so you can validate a whole rendered set:
+
+```bash
+helm template charts/haptic | yq 'select(.kind == "HAProxyTemplateConfig")' > all.yaml
+haptic-controller validate -f all.yaml
+haptic-controller validate -f all.yaml --dump-merged   # print the merged spec
+```
+
+Applying a single hand-written `HAProxyTemplateConfig` — without Helm — still
+works exactly as before: point `--crd-name` at it and it's the whole config.
+
 ### Validate before applying
 
 ```bash

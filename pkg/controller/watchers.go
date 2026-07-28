@@ -84,7 +84,7 @@ func setupResourceWatchers(
 func setupConfigWatchers(
 	setup *componentSetup,
 	k8sClient *client.Client,
-	crdName string,
+	crdNames []string,
 	secretName string,
 	crdGVR schema.GroupVersionResource,
 	secretGVR schema.GroupVersionResource,
@@ -92,30 +92,37 @@ func setupConfigWatchers(
 ) error {
 	logger.Info("Stage 4: Starting config watchers")
 
-	// Create watcher for HAProxyTemplateConfig CRD
-	crdWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
-		GVR:       crdGVR,
-		Namespace: k8sClient.Namespace(),
-		Name:      crdName,
-		OnChange: func(obj any) error {
-			setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
-			return nil
-		},
-		// OnSyncComplete delivers the current state after initial sync.
-		// This ensures eventual consistency: if updates arrived during the sync window
-		// (when OnChange callbacks are suppressed), the current state is delivered here.
-		OnSyncComplete: func(obj any) error {
-			if obj == nil {
-				logger.Debug("CRD watcher sync complete, no resource in cache (skipping event)")
+	// One watcher per configured HAProxyTemplateConfig. Each emits its own
+	// change event; the configloader keeps the set and re-merges, so a change
+	// to any one of them re-derives the whole config. A helm upgrade writes
+	// them one at a time, which the handler's reinit debounce coalesces.
+	crdWatchers := make([]*watcher.SingleWatcher, 0, len(crdNames))
+	for _, crdName := range crdNames {
+		crdWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
+			GVR:       crdGVR,
+			Namespace: k8sClient.Namespace(),
+			Name:      crdName,
+			OnChange: func(obj any) error {
+				setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
 				return nil
-			}
-			logger.Debug("CRD watcher sync complete, publishing current state")
-			setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
-			return nil
-		},
-	}, k8sClient)
-	if err != nil {
-		return fmt.Errorf("creating HAProxyTemplateConfig watcher: %w", err)
+			},
+			// OnSyncComplete delivers the current state after initial sync.
+			// This ensures eventual consistency: if updates arrived during the sync window
+			// (when OnChange callbacks are suppressed), the current state is delivered here.
+			OnSyncComplete: func(obj any) error {
+				if obj == nil {
+					logger.Debug("CRD watcher sync complete, no resource in cache (skipping event)", "name", crdName)
+					return nil
+				}
+				logger.Debug("CRD watcher sync complete, publishing current state", "name", crdName)
+				setup.Bus.Publish(events.NewConfigResourceChangedEvent(obj))
+				return nil
+			},
+		}, k8sClient)
+		if err != nil {
+			return fmt.Errorf("creating HAProxyTemplateConfig watcher for %q: %w", crdName, err)
+		}
+		crdWatchers = append(crdWatchers, crdWatcher)
 	}
 
 	secretWatcher, err := watcher.NewSingle(&types.SingleWatcherConfig{
@@ -144,7 +151,10 @@ func setupConfigWatchers(
 	}
 
 	// Start watchers (tracked by errgroup for graceful shutdown)
-	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "HAProxyTemplateConfig watcher", crdWatcher.Start)
+	for i, crdWatcher := range crdWatchers {
+		startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel,
+			fmt.Sprintf("HAProxyTemplateConfig watcher (%s)", crdNames[i]), crdWatcher.Start)
+	}
 	startInErrGroup(setup.ErrGroup, setup.IterCtx, logger, setup.Cancel, "Secret watcher", secretWatcher.Start)
 
 	logger.Debug("Watchers started, waiting for initial sync")
@@ -152,12 +162,14 @@ func setupConfigWatchers(
 	// Wait for watchers to complete initial sync in parallel
 	watcherGroup, watcherCtx := errgroup.WithContext(setup.IterCtx)
 
-	watcherGroup.Go(func() error {
-		if err := crdWatcher.WaitForSync(watcherCtx); err != nil {
-			return fmt.Errorf("HAProxyTemplateConfig watcher sync failed: %w", err)
-		}
-		return nil
-	})
+	for i, crdWatcher := range crdWatchers {
+		watcherGroup.Go(func() error {
+			if err := crdWatcher.WaitForSync(watcherCtx); err != nil {
+				return fmt.Errorf("HAProxyTemplateConfig watcher sync failed for %q: %w", crdNames[i], err)
+			}
+			return nil
+		})
+	}
 
 	watcherGroup.Go(func() error {
 		if err := secretWatcher.WaitForSync(watcherCtx); err != nil {

@@ -66,3 +66,45 @@ func TestResolveDurationOption(t *testing.T) {
 		assert.Contains(t, err.Error(), "must not exceed 29s")
 	})
 }
+
+// A hand-set CRD_NAME with a trailing comma or spaces would otherwise reach
+// GetResource as an empty or space-padded name and surface as a confusing
+// not-found instead of being ignored.
+func TestSplitConfigNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		fromEnv string
+		want    []string
+	}{
+		{name: "single name", fromEnv: "haptic-config", want: []string{"haptic-config"}},
+		{name: "ordered list", fromEnv: "a,b,c", want: []string{"a", "b", "c"}},
+		{name: "spaces after separators are trimmed", fromEnv: "a, b ,c", want: []string{"a", "b", "c"}},
+		{name: "trailing separator adds no empty name", fromEnv: "a,b,", want: []string{"a", "b"}},
+		{name: "leading separator adds no empty name", fromEnv: ",a", want: []string{"a"}},
+		{name: "separators only yield nothing", fromEnv: ",,", want: nil},
+		{name: "whitespace only yields nothing", fromEnv: "  ", want: nil},
+		{name: "empty yields nothing", fromEnv: "", want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, splitConfigNames(tt.fromEnv))
+		})
+	}
+}
+
+// An empty env value must fall through to the default rather than to no config
+// at all, which would leave the controller with nothing to watch.
+func TestResolveConfigNames(t *testing.T) {
+	t.Setenv("CRD_NAME", "")
+	assert.Equal(t, []string{defaultCRDName}, resolveConfigNames(nil))
+
+	t.Setenv("CRD_NAME", ",,")
+	assert.Equal(t, []string{defaultCRDName}, resolveConfigNames(nil))
+
+	t.Setenv("CRD_NAME", "from-env")
+	assert.Equal(t, []string{"from-env"}, resolveConfigNames(nil))
+
+	// The flag wins over the env var.
+	assert.Equal(t, []string{"from-flag"}, resolveConfigNames([]string{"from-flag"}))
+}

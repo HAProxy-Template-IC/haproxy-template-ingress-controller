@@ -218,7 +218,7 @@ func executeMigrateCheck(ctx context.Context, opts *migrateCheckOptions, logger 
 // renders the bundled Helm chart in-process.
 func acquireConfigSpec(opts *migrateCheckOptions) (*v1alpha1.HAProxyTemplateConfigSpec, error) {
 	if opts.configFile != "" {
-		spec, err := loadConfigFromFile(opts.configFile)
+		spec, err := loadConfigFromFiles([]string{opts.configFile})
 		if err != nil {
 			return nil, fmt.Errorf("loading config %s: %w", opts.configFile, err)
 		}

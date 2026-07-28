@@ -8,12 +8,12 @@ The `haptic-controller` binary provides the following subcommands: `run` (main c
 
 ### Requirement: Run Command
 
-The `haptic-controller run` command SHALL start the main controller daemon that watches Kubernetes resources, renders HAProxy configurations from templates, and synchronizes them to HAProxy instances. The command SHALL accept the following flags: `--crd-name` (HAProxyTemplateConfig CRD name), `--secret-name` (credentials Secret name), `--webhook-cert-dir` (directory holding the webhook TLS certificate files; empty disables the webhook), `--kubeconfig` (path to kubeconfig for out-of-cluster development), and `--debug-port` (debug HTTP server port, 0 to disable).
+The `haptic-controller run` command SHALL start the main controller daemon that watches Kubernetes resources, renders HAProxy configurations from templates, and synchronizes them to HAProxy instances. The command SHALL accept the following flags: `--crd-name` (HAProxyTemplateConfig names, repeatable or comma-separated, merged in the order given), `--secret-name` (credentials Secret name), `--webhook-cert-dir` (directory holding the webhook TLS certificate files; empty disables the webhook), `--kubeconfig` (path to kubeconfig for out-of-cluster development), and `--debug-port` (debug HTTP server port, 0 to disable).
 
 #### Scenario: Flag and environment variable defaults
 
 WHEN the `run` command is invoked without flags
-THEN `--crd-name` SHALL default to `CRD_NAME` env var or `"haproxy-config"`, `--secret-name` SHALL default to `SECRET_NAME` env var or `"haproxy-credentials"`, `--webhook-cert-dir` SHALL default to `WEBHOOK_CERT_DIR` env var or `""` (empty, disabling webhooks), and `--debug-port` SHALL default to `DEBUG_PORT` env var or `0`.
+THEN `--crd-name` SHALL default to the comma-separated `CRD_NAME` env var or `["haproxy-config"]`, `--secret-name` SHALL default to `SECRET_NAME` env var or `"haproxy-credentials"`, `--webhook-cert-dir` SHALL default to `WEBHOOK_CERT_DIR` env var or `""` (empty, disabling webhooks), and `--debug-port` SHALL default to `DEBUG_PORT` env var or `0`.
 
 #### Scenario: Configuration priority order
 
@@ -41,7 +41,7 @@ THEN the controller SHALL produce debug-level log output.
 
 ### Requirement: Validate Command
 
-The `haptic-controller validate` command SHALL load a HAProxyTemplateConfig CRD from a YAML file, compile its templates, and execute embedded validation tests. The `-f`/`--file` flag SHALL be required. Optional flags SHALL include: `--test` (run a specific test by name), `--verbose` (show content preview for failed assertions, first 200 characters), `--dump-rendered` (dump all rendered content: haproxy.cfg, maps, files, certs), `--trace-templates` (show template execution trace, top-level only), `--debug-filters` (show filter operation debugging), `--profile-includes` (show include timing statistics, top 20 slowest), `--workers` (parallel test workers, 0 = auto-detect CPUs, 1 = sequential), and `-o`/`--output` (output format: `summary`, `json`, or `yaml`). The `haproxy` binary is discovered from `PATH` (no `--haproxy-binary` flag); version selection is done by running the matching per-version controller image.
+The `haptic-controller validate` command SHALL load HAProxyTemplateConfigs from YAML files, compile their templates, and execute embedded validation tests. The `-f`/`--file` flag SHALL be required, SHALL be repeatable, and each file MAY contain several YAML documents; every HAProxyTemplateConfig across all files SHALL be merged in order using the same merge the controller performs. `--dump-merged` SHALL print the merged spec and exit without running tests. Optional flags SHALL include: `--test` (run a specific test by name), `--verbose` (show content preview for failed assertions, first 200 characters), `--dump-rendered` (dump all rendered content: haproxy.cfg, maps, files, certs), `--trace-templates` (show template execution trace, top-level only), `--debug-filters` (show filter operation debugging), `--profile-includes` (show include timing statistics, top 20 slowest), `--workers` (parallel test workers, 0 = auto-detect CPUs, 1 = sequential), and `-o`/`--output` (output format: `summary`, `json`, or `yaml`). The `haproxy` binary is discovered from `PATH` (no `--haproxy-binary` flag); version selection is done by running the matching per-version controller image.
 
 #### Scenario: Required file flag
 
@@ -85,7 +85,7 @@ THEN the command SHALL print a table of the top 20 slowest included templates wi
 
 ### Requirement: Validate Command Config Loading
 
-The validate command SHALL accept both full Kubernetes resource YAML (with `apiVersion`, `kind`, `metadata`) and spec-only YAML. Full resource YAML SHALL be decoded using the Kubernetes codec factory. Spec-only YAML SHALL be decoded as a raw `HAProxyTemplateConfigSpec`. File paths SHALL be cleaned with `filepath.Clean` before reading.
+The validate command SHALL accept both full Kubernetes resource YAML (with `apiVersion`, `kind`, `metadata`) and spec-only YAML. Spec-only YAML SHALL be accepted only for a single file holding a single document, since merge order is meaningful only between identifiable configs. Full resource YAML SHALL be decoded using the Kubernetes codec factory. Spec-only YAML SHALL be decoded as a raw `HAProxyTemplateConfigSpec`. File paths SHALL be cleaned with `filepath.Clean` before reading.
 
 #### Scenario: Full Kubernetes resource YAML loaded
 

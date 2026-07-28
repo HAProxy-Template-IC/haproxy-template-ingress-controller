@@ -44,37 +44,44 @@ import (
 // resource versions of the underlying Secrets, so the iteration startup
 // can wire bootstrap-version filtering for ConfigChangeHandler.
 type InitialConfigBundle struct {
-	Config             *coreconfig.Config
-	CRD                *v1alpha1.HAProxyTemplateConfig
-	Credentials        *coreconfig.Credentials
+	Config      *coreconfig.Config
+	CRD         *v1alpha1.HAProxyTemplateConfig
+	Credentials *coreconfig.Credentials
+	// ConfigVersion identifies the whole merged set, not just the primary
+	// config — see conversion.CompositeVersion. The bootstrap guard compares
+	// it for equality, so it has to change when ANY member changes.
+	ConfigVersion      string
 	CredentialsVersion string
 }
 
 func fetchAndValidateInitialConfig(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdName string,
+	crdNames []string,
 	secretName string,
 	crdGVR schema.GroupVersionResource,
 	secretGVR schema.GroupVersionResource,
 	logger *slog.Logger,
 ) (*InitialConfigBundle, error) {
-	logger.Info("Fetching initial CRD and credentials", "crd_name", crdName)
+	logger.Info("Fetching initial CRDs and credentials", "crd_names", crdNames)
 
-	var crdResource *unstructured.Unstructured
+	crdResources := make([]*unstructured.Unstructured, len(crdNames))
 	var secretResource *unstructured.Unstructured
 
 	g, gCtx := errgroup.WithContext(ctx)
 
-	// Fetch HAProxyTemplateConfig CRD
-	g.Go(func() error {
-		var err error
-		crdResource, err = k8sClient.GetResource(gCtx, crdGVR, crdName)
-		if err != nil {
-			return fmt.Errorf("fetching HAProxyTemplateConfig %q: %w", crdName, err)
-		}
-		return nil
-	})
+	// Fetch every HAProxyTemplateConfig. Order is the merge order, so each
+	// fetch writes its own slot rather than appending.
+	for i, crdName := range crdNames {
+		g.Go(func() error {
+			resource, err := k8sClient.GetResource(gCtx, crdGVR, crdName)
+			if err != nil {
+				return fmt.Errorf("fetching HAProxyTemplateConfig %q: %w", crdName, err)
+			}
+			crdResources[i] = resource
+			return nil
+		})
+	}
 
 	// Fetch Secret (credentials)
 	g.Go(func() error {
@@ -93,6 +100,12 @@ func fetchAndValidateInitialConfig(
 
 	// Parse initial configuration
 	logger.Info("Parsing initial configuration and credentials")
+
+	crdResource, overrides, err := conversion.MergeSpecs(crdResources)
+	if err != nil {
+		return nil, fmt.Errorf("merging initial HAProxyTemplateConfigs: %w", err)
+	}
+	logSnippetOverrides(overrides, logger)
 
 	cfg, crd, err := conversion.ParseCRD(crdResource)
 	if err != nil {
@@ -115,14 +128,17 @@ func fetchAndValidateInitialConfig(
 		return nil, fmt.Errorf("initial credentials validation failed: %w", err)
 	}
 
+	configVersion := conversion.CompositeVersion(crdResources)
+
 	logger.Info("Initial configuration validated successfully",
-		"crd_version", crdResource.GetResourceVersion(),
+		"config_version", configVersion,
 		"secret_version", secretResource.GetResourceVersion())
 
 	bundle := &InitialConfigBundle{
 		Config:             cfg,
 		CRD:                crd,
 		Credentials:        creds,
+		ConfigVersion:      configVersion,
 		CredentialsVersion: secretResource.GetResourceVersion(),
 	}
 	return bundle, nil
@@ -198,15 +214,17 @@ func reportLoadGateFailure(ctx context.Context, k8sClient *client.Client, crd *v
 	configchange.ReportConfigLoadFailure(ctx, crdClient, crd, failures, logger)
 }
 
-// waitForInitialConfig polls for the HAProxyTemplateConfig until it exists.
-// This handles the race condition during fresh installs where the controller pod
-// may start before the HAProxyTemplateConfig CR is fully available in the API server.
+// waitForInitialConfig polls until EVERY configured HAProxyTemplateConfig
+// exists. This handles the race condition during fresh installs where the
+// controller pod may start before the resources are available in the API
+// server — and with a merged set, a partial set is just as unusable as none,
+// since the libraries the operator config overrides may not be there yet.
 //
-// Returns nil when config is found, or ctx.Err() if context is cancelled.
+// Returns nil when all are found, or ctx.Err() if context is cancelled.
 func waitForInitialConfig(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdName string,
+	crdNames []string,
 	crdGVR schema.GroupVersionResource,
 	state *configState,
 	logger *slog.Logger,
@@ -215,14 +233,14 @@ func waitForInitialConfig(
 	state.SetWaiting("waiting for HAProxyTemplateConfig")
 
 	// Try immediately first
-	exists, _ := checkConfigExists(ctx, k8sClient, crdGVR, crdName)
-	if exists {
-		logger.Info("HAProxyTemplateConfig found", "name", crdName)
+	missing, _ := missingConfigs(ctx, k8sClient, crdGVR, crdNames)
+	if len(missing) == 0 {
+		logger.Info("HAProxyTemplateConfigs found", "names", crdNames)
 		return nil
 	}
 
-	logger.Info("Waiting for HAProxyTemplateConfig to become available",
-		"name", crdName,
+	logger.Info("Waiting for HAProxyTemplateConfigs to become available",
+		"missing", missing,
 		"poll_interval", ConfigPollInterval)
 
 	ticker := time.NewTicker(ConfigPollInterval)
@@ -233,20 +251,37 @@ func waitForInitialConfig(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			exists, err := checkConfigExists(ctx, k8sClient, crdGVR, crdName)
+			missing, err := missingConfigs(ctx, k8sClient, crdGVR, crdNames)
 			if err != nil {
 				// Log at debug level - transient errors during polling are expected
-				logger.Debug("Error checking for HAProxyTemplateConfig", "error", err)
+				logger.Debug("Error checking for HAProxyTemplateConfigs", "error", err)
 				continue
 			}
-			if exists {
-				logger.Info("HAProxyTemplateConfig found", "name", crdName)
+			if len(missing) == 0 {
+				logger.Info("HAProxyTemplateConfigs found", "names", crdNames)
 				return nil
 			}
-			logger.Debug("HAProxyTemplateConfig not yet available, continuing to wait",
-				"name", crdName)
+			logger.Debug("HAProxyTemplateConfigs not yet available, continuing to wait",
+				"missing", missing)
 		}
 	}
+}
+
+// missingConfigs returns the names that do not exist yet, in the given order.
+// A non-NotFound error aborts the check — the answer would be unreliable and
+// the caller retries anyway.
+func missingConfigs(ctx context.Context, k8sClient *client.Client, gvr schema.GroupVersionResource, names []string) ([]string, error) {
+	var missing []string
+	for _, name := range names {
+		exists, err := checkConfigExists(ctx, k8sClient, gvr, name)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			missing = append(missing, name)
+		}
+	}
+	return missing, nil
 }
 
 // checkConfigExists checks if the HAProxyTemplateConfig resource exists.
@@ -260,6 +295,31 @@ func checkConfigExists(ctx context.Context, k8sClient *client.Client, gvr schema
 		return false, err
 	}
 	return true, nil
+}
+
+// primaryConfigName is the config that represents the whole merged set: the
+// last one, which by convention is the operator's own rather than a bundled
+// library's. It owns the identity derived from the set — the published
+// HAProxyCfg's name and the object that carries validation status — so a
+// single-config install behaves exactly as it did before configs could be
+// merged.
+func primaryConfigName(crdNames []string) string {
+	if len(crdNames) == 0 {
+		return ""
+	}
+	return crdNames[len(crdNames)-1]
+}
+
+// logSnippetOverrides reports each templateSnippets name that more than one
+// config defines. An operator overriding a bundled snippet is the documented
+// escape hatch; two libraries colliding is a bug that used to resolve silently.
+func logSnippetOverrides(overrides []conversion.SnippetOverride, logger *slog.Logger) {
+	for _, override := range overrides {
+		logger.Info("Template snippet overridden by a later config",
+			"snippet", override.Name,
+			"overridden_from", override.PreviousSource,
+			"defined_by", override.WinningSource)
+	}
 }
 
 // finalizeConfigLoad marks config as loaded for health checks and records

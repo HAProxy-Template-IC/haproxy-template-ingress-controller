@@ -4,6 +4,8 @@
 
 Admission webhook that validates Kubernetes resources (HAProxyTemplateConfig and watched resources) by performing dry-run rendering and HAProxy syntax validation before admitting changes to the cluster.
 
+For a HAProxyTemplateConfig the webhook SHALL validate the MERGED result — the prospective object substituted into the controller's configured set — not the object in isolation, which since ADR-0014 is generally incomplete on its own. An object the controller does not merge SHALL be validated standalone, as before. A merge failure SHALL admit with a warning, deferring to the load gate.
+
 ## Requirements
 
 ### Requirement: Webhook Server

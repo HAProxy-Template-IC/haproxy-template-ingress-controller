@@ -41,7 +41,7 @@
 #       spoaHub:
 #         enabled: true   # auto-enabled when spoaHub.enabled is truthy
 
-# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 # Loaded when explicitly enabled OR when haptic.spoaHub.enabled (helper) is truthy
 # (any plugin under spoaHub.plugins.* enabled, or spoaHub.enabled=true).
 _helm_load:

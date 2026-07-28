@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -26,6 +27,7 @@ import (
 	"k8s.io/client-go/restmapper"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -41,6 +43,7 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // WebhookAdmissionTimeouts contains the controller-side deadlines for the two
@@ -169,6 +172,7 @@ func createDryRunValidator(
 	wiring *reconciliationWiring,
 	pluggableValidator *pluggablevalidator.Manager,
 	k8sClient *client.Client,
+	crdNames []string,
 	runningConfigVersion string,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
@@ -264,6 +268,11 @@ func createDryRunValidator(
 		EffectiveResolver: func(ctx context.Context, c *coreconfig.Config) (*coreconfig.Config, error) {
 			effective, _, err := resolveEffectiveConfig(ctx, c, k8sClient, logger)
 			return effective, err
+		},
+		// Judge what the controller would actually load: the prospective
+		// object substituted into the merged set, not the object alone.
+		MergeWithSiblings: func(ctx context.Context, incoming *unstructured.Unstructured) (*unstructured.Unstructured, bool, error) {
+			return mergeWithSiblingConfigs(ctx, k8sClient, crdNames, incoming)
 		},
 		// The chart app version of the controller's currently-running config
 		// (its app.kubernetes.io/version label). When a prospective config's
@@ -390,4 +399,48 @@ func setupReconciliation(
 		"correlation_id", initialReconciliation.CorrelationID())
 
 	return wiring, nil
+}
+
+// mergeWithSiblingConfigs substitutes the prospective object for its namesake
+// in the controller's configured set and merges, yielding the config the
+// controller would load if the apply went through.
+//
+// Returns managed=false when the object is not one this controller merges;
+// there is then nothing meaningful to judge it against.
+func mergeWithSiblingConfigs(
+	ctx context.Context,
+	k8sClient *client.Client,
+	crdNames []string,
+	incoming *unstructured.Unstructured,
+) (*unstructured.Unstructured, bool, error) {
+	if !slices.Contains(crdNames, incoming.GetName()) {
+		return nil, false, nil
+	}
+
+	// Concurrent, like fetchAndValidateInitialConfig: this runs inside the
+	// admission timeout, so N-1 serial round-trips would spend the budget the
+	// strict render needs, and the cost grows with every library added. Each
+	// fetch writes its own slot because the slice order IS the merge order.
+	sources := make([]*unstructured.Unstructured, len(crdNames))
+	g, gCtx := errgroup.WithContext(ctx)
+	for i, name := range crdNames {
+		if name == incoming.GetName() {
+			sources[i] = incoming
+			continue
+		}
+		g.Go(func() error {
+			sibling, err := k8sClient.GetResource(gCtx, crdGVR, name)
+			if err != nil {
+				return fmt.Errorf("fetching sibling HAProxyTemplateConfig %q: %w", name, err)
+			}
+			sources[i] = sibling
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, true, err
+	}
+
+	merged, _, err := conversion.MergeSpecs(sources)
+	return merged, true, err
 }

@@ -1,17 +1,24 @@
 {{/*
-Library merging — the chart-time loader for charts/haptic/libraries/*.yaml.
+Library loading — the chart-time loader for charts/haptic/libraries/*.yaml.
 
 Each library file declares its loading rules in a top-level `_helm_load:` block
 (enable predicate, optional injects, optional unsets). The loader iterates a
-fixed ordered list of library files (the merge order is a system property and
-lives here, not in the library files). For each library it: parses YAML,
-evaluates `enable`, applies injects (each gated by optional `when`), applies
-unsets, strips `_helm_load`, applies `haptic.filterTests` universally (no-op for
-libraries with no `_helm_skip_test`), and `mustMergeOverwrite`s into the
-accumulator. User-provided `controller.config.*` overrides are merged last.
+fixed ordered list of library files (the order is a system property and lives
+here, not in the library files). For each library it: parses YAML, evaluates
+`enable`, applies injects (each gated by optional `when`), applies unsets,
+strips `_helm_load`, applies `haptic.filterTests` universally (no-op for
+libraries with no `_helm_skip_test`), and strips Scriggo comments.
+
+The loader does NOT merge the libraries together. Each one is rendered as its
+own HAProxyTemplateConfig and the controller merges the set at startup, in the
+order it is handed via `CRD_NAME`, with the operator's own config last. That
+keeps one merge implementation instead of two that can drift, and it keeps each
+object clear of etcd's ~1.5 MiB per-object ceiling, which the single merged
+config had reached. See ADR-0014.
 
 Schema for `_helm_load:` is documented in charts/CLAUDE.md. See ADR-0002
-(docs/adr/0002-decentralized-helm-library-loader.md) for the design rationale.
+(docs/adr/0002-decentralized-helm-library-loader.md) for the design rationale
+of the decentralized load rules, which this preserves.
 */}}
 
 {{/*
@@ -154,47 +161,119 @@ Returns: empty (mutates obj by side effect)
 {{- end }}
 
 {{/*
-Deep merge template libraries.
+Ordered list of library sources. THE merge order — the controller replays it
+verbatim from the `CRD_NAME` list, so this list is the single authority for
+precedence and every consumer derives from it rather than restating it.
 
-Each entry in `$libraryFiles` is either:
+Each entry is a core path under the parent's libraries/ (base, ssl, ingress —
+always present) or "subchart:<name>" — a conditional subchart whose library
+YAML the parent reads via .Subcharts.<name>.Files. A disabled subchart is
+pruned from the release Secret, so .Subcharts.<name> is absent and the entry
+is skipped. A subchart with a single library.yaml is read directly; one with
+an _index.yaml is a split-library (fragments merged in lexicographic order,
+same as the old split-dir convention).
+
+vector.yaml is last on purpose: it contributes only its own `files:` entry
+(the vector config) and reads the settings the chart projects into
+extraContext, so it depends on every earlier library's port/feature decisions
+and nothing depends on it.
+*/}}
+{{- define "haptic.libraryFiles" -}}
+- libraries/base.yaml
+- libraries/ssl.yaml
+- libraries/ingress.yaml
+- subchart:gateway
+- libraries/ingress-annotations-compat.yaml
+- subchart:haptic-annotations
+- subchart:haproxytech
+- subchart:haproxy-ingress
+- subchart:nginx-ingress
+- libraries/spoa-hub/
+- libraries/vector.yaml
+{{- end }}
+
+{{/*
+Short name for a library source path, used as the suffix of its
+HAProxyTemplateConfig object. Deliberately carries no ordering index: order
+lives in the `CRD_NAME` list, so inserting a library never renames an existing
+object.
+Args: the source path.
+*/}}
+{{- define "haptic.librarySlug" -}}
+{{- . | trimPrefix "subchart:" | trimPrefix "libraries/" | trimSuffix "/" | trimSuffix ".yaml" }}
+{{- end }}
+
+{{/*
+The load rules of one library source, as YAML, or "" when the source is absent
+(a pruned subchart). Reads only the load-rule authority — the flat file, or
+_index.yaml / library.yaml for a directory or subchart — never the fragments,
+so callers that just need the enable predicate don't pay for parsing a whole
+split library.
+Args (list): [source path, root context]
+*/}}
+{{- define "haptic.libraryLoadRules" -}}
+{{- $file := index . 0 }}
+{{- $context := index . 1 }}
+{{- if hasPrefix "subchart:" $file }}
+  {{- $sub := index $context.Subcharts (trimPrefix "subchart:" $file) }}
+  {{- if $sub }}
+    {{- (($sub.Files.Get "_index.yaml" | fromYaml)._helm_load | default (($sub.Files.Get "library.yaml" | fromYaml)._helm_load)) | toYaml }}
+  {{- end }}
+{{- else if hasSuffix "/" $file }}
+  {{- ($context.Files.Get (printf "%s_index.yaml" $file) | fromYaml)._helm_load | toYaml }}
+{{- else }}
+  {{- ($context.Files.Get $file | fromYaml)._helm_load | toYaml }}
+{{- end }}
+{{- end }}
+
+{{/*
+Names of the enabled libraries' HAProxyTemplateConfig objects, in merge order,
+as a YAML list. The controller is handed this list plus the operator's own
+config name; a config it is not told about is not merged.
+
+Evaluates the same `_helm_load.enable` predicates haptic.prepareLibraries does,
+against the same source list, but without reading fragments. The two agreeing
+is pinned by a chart unit test rather than by construction, because Helm has no
+way to share one evaluation across template files.
+Args: root context.
+*/}}
+{{- define "haptic.libraryConfigNames" -}}
+{{- $context := . }}
+{{- $configName := $context.Values.controller.configName }}
+{{- range $file := (include "haptic.libraryFiles" $context | fromYamlArray) }}
+  {{- $rules := include "haptic.libraryLoadRules" (list $file $context) | fromYaml }}
+  {{- if $rules }}
+    {{- if eq (tpl ($rules.enable | default "true") $context | trim) "true" }}
+- {{ printf "%s-%s" $configName (include "haptic.librarySlug" $file) }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Load every enabled template library and return them prepared but NOT merged, as
+`libraries: [{name, config}, ...]` in merge order. Each `config` is a complete
+HAProxyTemplateConfig spec fragment ready to be rendered as its own object.
+
+Each source is either:
   - A flat-file path like "libraries/base.yaml" (the original convention).
-  - A directory path ending in "/" like "libraries/gateway/" — a "split
+  - A directory path ending in "/" like "libraries/spoa-hub/" — a "split
     library" whose contents are spread across multiple fragment files.
     `_index.yaml` carries the load rules (`_helm_load`); fragments at the
-    same level (and one level deep) merge into the library accumulator
-    in lexicographic order before any inject / unset / strip / merge
-    happens. Fragments must NOT carry their own `_helm_load` — the
-    convention is `_index.yaml`-owns-load-rules, fragments-own-content.
-    See ADR-0008.
+    same level (and one level deep) merge into the library accumulator in
+    lexicographic order before any inject / unset / strip happens. Fragments
+    must NOT carry their own `_helm_load` — the convention is
+    `_index.yaml`-owns-load-rules, fragments-own-content. See ADR-0008.
+  - "subchart:<name>" — the same two shapes, read from a conditional subchart.
+
+Fragments within one split library are still merged here with
+`mustMergeOverwrite`; only merging ACROSS libraries moved to the controller.
+Args: root context.
 */}}
-{{- define "haptic.mergeLibraries" -}}
-{{- $merged := dict }}
-{{- $migrationCoverage := list }}
+{{- define "haptic.prepareLibraries" -}}
+{{- $prepared := list }}
 {{- $context := . }}
-{{- /* Each entry is a core path under the parent's libraries/ (base, ssl,
-       ingress — always present) or "subchart:<name>" — a conditional subchart
-       whose library YAML the parent reads via .Subcharts.<name>.Files. A
-       disabled subchart is pruned from the release Secret, so .Subcharts.<name>
-       is absent and the entry is skipped. A subchart with a single library.yaml
-       is read directly; one with an _index.yaml is a split-library (fragments
-       merged in lexicographic order, same as the old split-dir convention). */ -}}
-{{- $libraryFiles := list
-    "libraries/base.yaml"
-    "libraries/ssl.yaml"
-    "libraries/ingress.yaml"
-    "subchart:gateway"
-    "libraries/ingress-annotations-compat.yaml"
-    "subchart:haptic-annotations"
-    "subchart:haproxytech"
-    "subchart:haproxy-ingress"
-    "subchart:nginx-ingress"
-    "libraries/spoa-hub/"
-    "libraries/vector.yaml"
-}}
-{{- /* vector.yaml is last on purpose: it contributes only its own `files:` entry
-       (the vector config) and reads the settings the chart projects into
-       extraContext, so it depends on every earlier library's port/feature
-       decisions and nothing depends on it. */}}
+{{- $libraryFiles := include "haptic.libraryFiles" $context | fromYamlArray }}
 {{- range $file := $libraryFiles }}
   {{- $library := dict }}
   {{- $skip := false }}
@@ -265,7 +344,12 @@ Each entry in `$libraryFiles` is either:
     {{- $library = $context.Files.Get $file | fromYaml }}
   {{- end }}
   {{- $loadHints := $library._helm_load | default dict }}
-  {{- if eq (tpl ($loadHints.enable | default "true") $context | trim) "true" }}
+  {{- /* $skip covers a pruned subchart, which yields no library at all. It has
+         to gate the branch explicitly: an absent `_helm_load` defaults `enable`
+         to "true", so without it a pruned subchart would render as an empty
+         object — harmless when everything merged into one accumulator, a bogus
+         config now that each library is its own object. */ -}}
+  {{- if and (not $skip) (eq (tpl ($loadHints.enable | default "true") $context | trim) "true") }}
     {{- range $inject := $loadHints.inject | default list }}
       {{- if eq (tpl ($inject.when | default "true") $context | trim) "true" }}
         {{- if hasKey $inject "from" }}
@@ -286,86 +370,86 @@ Each entry in `$libraryFiles` is either:
         {{- include "haptic.unsetNested" (list $library $unsetItem.path) }}
       {{- end }}
     {{- end }}
-    {{- $_ := unset $library "_helm_load" }}
     {{- $library = include "haptic.filterTests" (list $library $context) | fromYaml }}
-    {{- /* migrationCoverage is a LIST of per-source declarations, one entry
-           per contributing library. mustMergeOverwrite would REPLACE the
-           accumulated list with the current library's, so pull it out and
-           concat instead — every enabled library's declaration survives;
-           a disabled library (enable=false or pruned subchart) contributes
-           nothing. */ -}}
-    {{- with $library.migrationCoverage }}
-      {{- $migrationCoverage = concat $migrationCoverage . }}
-      {{- $_ := unset $library "migrationCoverage" }}
+    {{- /* Every underscore-prefixed top-level key is chart-time-only and must
+           not reach a rendered object: `_helm_load` (load rules) and ssl.yaml's
+           `_test_tls_*` YAML-anchor scratch values. The CRD declares no such
+           property, so an object carrying one would be rejected. Previously
+           they were dropped implicitly, by the emitter forwarding an explicit
+           key allow-list out of the merged accumulator. */ -}}
+    {{- range $key, $_ := $library }}
+      {{- if hasPrefix "_" $key }}
+        {{- $_ := unset $library $key }}
+      {{- end }}
     {{- end }}
-    {{- $merged = mustMergeOverwrite $merged $library }}
+    {{- include "haptic.stripSnippetComments" $library }}
+    {{- $prepared = append $prepared (dict "name" (include "haptic.librarySlug" $file) "config" $library) }}
   {{- end }}
 {{- end }}
-
-{{- /* Merge user-provided config from values.yaml (highest priority).
-       Only the keys with library-overlapping shape are forwarded; other
-       controller.config.* fields (routing, dataplane, …) are consumed
-       directly by other templates. */ -}}
-{{- $userConfig := dict }}
-{{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "haproxyConfig" "validationTests" }}
-  {{- with index $context.Values.controller.config $key }}
-    {{- $_ := set $userConfig $key . }}
-  {{- end }}
-{{- end }}
-{{- $merged = mustMergeOverwrite $merged $userConfig }}
-
-{{- /* Operator-declared migrationCoverage (controller.config.migrationCoverage)
-       is APPENDED after the library entries — an operator shipping a custom
-       annotation library can declare its coverage without erasing the bundled
-       libraries' declarations. */ -}}
-{{- with $context.Values.controller.config.migrationCoverage }}
-  {{- $migrationCoverage = concat $migrationCoverage . }}
-{{- end }}
-{{- if $migrationCoverage }}
-  {{- $_ := set $merged "migrationCoverage" $migrationCoverage }}
+{{- dict "libraries" $prepared | toYaml }}
 {{- end }}
 
-{{- /* Strip Scriggo-template comments from templateSnippets in the merged
-       output. Comments document each snippet for chart authors but
-       contribute nothing to the rendered HAProxy config — Scriggo strips
-       them at template-render time. Their unstripped source still ships
-       in the deployed HAProxyTemplateConfig CR, where it's pure overhead.
-       The chart's growth has pushed the rendered CR past the 1 MiB
-       Kubernetes Secret hard-cap that Helm's release storage hits, so
-       the rendered CR has to shrink. Library source files are
-       unchanged — chart authors still see verbose inline documentation.
+{{/*
+Every watched resource the install ends up with, as YAML — the union across all
+enabled libraries plus the operator's own `controller.config.watchedResources`,
+with the operator winning. Retains the Helm-only `statusPatch` field, which the
+CR emitter strips but RBAC needs.
 
-       Three patterns, in order:
+Callers are the templates that must reason about the whole watch set rather
+than one library's: the ClusterRole (one get/list/watch rule per resource, plus
+a status/patch rule per `statusPatch: true`) and the ValidatingWebhookConfiguration
+(one rule per `enableValidationWebhook: true`).
+Args: root context.
+*/}}
+{{- define "haptic.watchedResourcesUnion" -}}
+{{- $union := dict }}
+{{- range $library := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
+  {{- $union = mustMergeOverwrite $union (deepCopy ($library.config.watchedResources | default dict)) }}
+{{- end }}
+{{- $union = mustMergeOverwrite $union (deepCopy (.Values.controller.config.watchedResources | default dict)) }}
+{{- $union | toYaml }}
+{{- end }}
 
-         1. Leading {#- ... -#} block at the very start of the template
-            (top-of-snippet doc header). Anchored on \A.
+{{/*
+Strip Scriggo-template comments from a library's templateSnippets, in place.
 
-         2. Stand-alone {# ... #} block on its own line (mid-template
-            documentation). Required to be on its own line so we don't
-            remove inline `{#- something -#}` whitespace-control markers
-            that share a line with rendered content.
+Comments document each snippet for chart authors but contribute nothing to the
+rendered HAProxy config — Scriggo strips them at template-render time. Their
+unstripped source would still ship in the deployed HAProxyTemplateConfig, where
+it is pure overhead against two size ceilings (etcd's ~1.5 MiB per object and
+the 1 MiB Helm release Secret). Library source files are unchanged — chart
+authors still see verbose inline documentation.
 
-         3. Stand-alone Go-style `// ...` line comments inside Scriggo
-            template directives. These appear inside {%- ... -%} or
-            {%% ... %%} blocks where Scriggo accepts Go syntax. Same
-            stand-alone-line constraint to avoid touching // chars that
-            might appear in rendered text (URLs, config values).
+Three patterns, in order:
 
-       All three patterns require their match to occupy a whole line
-       (preceded by \n + whitespace, followed by \n) so removing the
-       line collapses the source without changing the surrounding
-       formatting. */ -}}
+  1. Leading {#- ... -#} block at the very start of the template
+     (top-of-snippet doc header). Anchored on \A.
+
+  2. Stand-alone {# ... #} block on its own line (mid-template
+     documentation). Required to be on its own line so we don't remove
+     inline `{#- something -#}` whitespace-control markers that share a
+     line with rendered content.
+
+  3. Stand-alone Go-style `// ...` line comments inside Scriggo template
+     directives. These appear inside {%- ... -%} or {%% ... %%} blocks
+     where Scriggo accepts Go syntax. Same stand-alone-line constraint to
+     avoid touching // chars that might appear in rendered text (URLs,
+     config values).
+
+All three patterns require their match to occupy a whole line (preceded by \n +
+whitespace, followed by \n) so removing the line collapses the source without
+changing the surrounding formatting.
+Args: the library dict (mutated in place).
+*/}}
+{{- define "haptic.stripSnippetComments" -}}
 {{- $leadingDocComment := "(?s)\\A\\s*\\{#.*?#\\}\\s*\\n?" }}
 {{- $standaloneBlockComment := "(?ms)^[ \\t]*\\{#.*?#\\}[ \\t]*\\n" }}
 {{- $standaloneGoComment := "(?m)^[ \\t]*//[^\\n]*\\n" }}
-{{- range $name, $snippet := ($merged.templateSnippets | default dict) }}
+{{- range $name, $snippet := (.templateSnippets | default dict) }}
   {{- $tpl := $snippet.template | default "" }}
   {{- $tpl = regexReplaceAll $leadingDocComment $tpl "" }}
   {{- $tpl = regexReplaceAll $standaloneBlockComment $tpl "" }}
   {{- $tpl = regexReplaceAll $standaloneGoComment $tpl "" }}
   {{- $_ := set $snippet "template" $tpl }}
 {{- end }}
-
-{{- /* Return merged config as YAML */ -}}
-{{- $merged | toYaml }}
 {{- end }}

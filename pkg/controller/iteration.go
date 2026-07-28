@@ -82,15 +82,16 @@ func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *corec
 func waitAndLoadInitialConfig(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdName, secretName string,
+	crdNames []string,
+	secretName string,
 	state *configState,
 	logger *slog.Logger,
 ) (*InitialConfigBundle, error) {
-	if err := waitForInitialConfig(ctx, k8sClient, crdName, crdGVR, state, logger); err != nil {
+	if err := waitForInitialConfig(ctx, k8sClient, crdNames, crdGVR, state, logger); err != nil {
 		return nil, err
 	}
 	return fetchAndValidateInitialConfig(
-		ctx, k8sClient, crdName, secretName,
+		ctx, k8sClient, crdNames, secretName,
 		crdGVR, secretGVR, logger,
 	)
 }
@@ -113,7 +114,7 @@ func waitAndLoadInitialConfig(
 func runIteration(
 	ctx context.Context,
 	k8sClient *client.Client,
-	crdName string,
+	crdNames []string,
 	secretName string,
 	webhookCertDir string,
 	webhookAdmissionTimeouts WebhookAdmissionTimeouts,
@@ -134,7 +135,7 @@ func runIteration(
 	// The type bootstrapper is also reused by the step-2.5 startup validationTests
 	// gate below, so it's hoisted to a local rather than constructed inline.
 	typeBootstrapper := newIterationTypeBootstrapper(k8sClient, logger)
-	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, logger)
+	setup := setupComponents(ctx, infra.IntrospectionRegistry, typeBootstrapper, crdNames, logger)
 	defer setup.Cancel()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
@@ -152,7 +153,7 @@ func runIteration(
 
 	// 1+2. Wait for the HAProxyTemplateConfig to exist (fresh-install race),
 	// then fetch and validate it together with the credentials Secret.
-	bundle, err := waitAndLoadInitialConfig(ctx, k8sClient, crdName, secretName, state, logger)
+	bundle, err := waitAndLoadInitialConfig(ctx, k8sClient, crdNames, secretName, state, logger)
 	if err != nil {
 		return err
 	}
@@ -188,7 +189,7 @@ func runIteration(
 	// rejection via `kubectl get/describe` rather than only in this crash-looping
 	// pod's logs) and then returns the error — the gate stays fail-closed.
 	if err := validateInitialConfigValidationTests(ctx, cfg, crd, k8sClient, typeBootstrapper, logger); err != nil {
-		return fmt.Errorf("initial HAProxyTemplateConfig %q failed validationTests on load: %w", crdName, err)
+		return fmt.Errorf("initial HAProxyTemplateConfig %v failed validationTests on load: %w", crdNames, err)
 	}
 
 	// Mark config as loaded and record initial CRD/Secret versions so the
@@ -196,7 +197,7 @@ func runIteration(
 	// Later events with different versions still flow through
 	// configChangeCh and trigger iteration restart — that's how
 	// credentials rotation reaches the controller.
-	finalizeConfigLoad(state, setup, crd.GetResourceVersion(), bundle.CredentialsVersion)
+	finalizeConfigLoad(state, setup, bundle.ConfigVersion, bundle.CredentialsVersion)
 
 	// 3. Setup resource watchers
 	resourceWatcher, err := setupResourceWatchers(setup, cfg, k8sClient, logger)
@@ -210,14 +211,14 @@ func runIteration(
 
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(
-		setup, k8sClient, crdName, secretName,
+		setup, k8sClient, crdNames, secretName,
 		crdGVR, secretGVR, logger,
 	); err != nil {
 		return err
 	}
 
 	// 4.5. Setup CurrentConfigStore for slot-aware server assignment
-	currentConfigStore, err := setupCurrentConfigStore(setup, k8sClient, crdName, haproxyCfgGVR, logger)
+	currentConfigStore, err := setupCurrentConfigStore(setup, k8sClient, primaryConfigName(crdNames), haproxyCfgGVR, logger)
 	if err != nil {
 		return err
 	}
@@ -274,7 +275,7 @@ func runIteration(
 	// (prospective config from a different chart version than the one this pod
 	// runs) and defer template compile/render failures to the target controller's
 	// load gate rather than hard-denying. Inlined to keep runIteration ≤50 statements.
-	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, k8sClient, crd.GetLabels()[webhook.AppVersionLabel], logger)
+	dryrunValidator, configValidator, err := createDryRunValidator(cfg, setup.Bus, storeProvider, wiring, pluggableMgr, k8sClient, crdNames, crd.GetLabels()[webhook.AppVersionLabel], logger)
 	if err != nil {
 		return fmt.Errorf("creating webhook validators: %w", err)
 	}

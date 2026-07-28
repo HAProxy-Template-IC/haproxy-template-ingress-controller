@@ -15,15 +15,19 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -33,17 +37,20 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 )
 
 var (
-	validateConfigFile      string
+	validateConfigFiles     []string
 	validateTestName        string
 	validateOutputFormat    string
 	validateVerbose         bool
@@ -51,6 +58,7 @@ var (
 	validateTraceTemplates  bool
 	validateDebugFilters    bool
 	validateProfileIncludes bool
+	validateDumpMerged      bool
 	validateWorkers         int
 	// validateSchemaDir is the kubeconform-style schema directory the
 	// offline type-bootstrap reads from. Required for typed-access in
@@ -99,7 +107,9 @@ Example usage:
 }
 
 func init() {
-	validateCmd.Flags().StringVarP(&validateConfigFile, "file", "f", "", "Path to HAProxyTemplateConfig YAML file (required)")
+	validateCmd.Flags().StringArrayVarP(&validateConfigFiles, "file", "f", nil,
+		"Path to a HAProxyTemplateConfig YAML file (required). Repeatable, and each file may hold several documents; "+
+			"all of them are merged in order, later wins — the same merge the controller performs over its CRD_NAME list.")
 	validateCmd.Flags().StringVar(&validateTestName, "test", "", "Run specific test by name (optional)")
 	validateCmd.Flags().StringVarP(&validateOutputFormat, "output", "o", "summary", "Output format: summary, json, yaml")
 	validateCmd.Flags().BoolVar(&validateVerbose, "verbose", false, "Show rendered content preview for failed assertions")
@@ -108,6 +118,9 @@ func init() {
 	validateCmd.Flags().BoolVar(&validateDebugFilters, "debug-filters", false, "Show filter operation debugging (sort comparisons, etc.)")
 	validateCmd.Flags().BoolVar(&validateProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
 	validateCmd.Flags().IntVar(&validateWorkers, "workers", 0, "Number of parallel test workers (0=auto-detect CPUs, 1=sequential)")
+	validateCmd.Flags().BoolVar(&validateDumpMerged, "dump-merged", false,
+		"Print the merged spec as YAML and exit, without running any test. Shows exactly what the controller "+
+			"assembles from its CRD_NAME list.")
 	// --schema-dir / HAPTIC_SCHEMA_DIR — kubeconform-style local
 	// schema directory. Accepts full CRD YAMLs (the wire form
 	// `kubectl get crd X -o yaml` produces) or bare OpenAPI v3
@@ -135,6 +148,10 @@ func runValidate(_ *cobra.Command, _ []string) error {
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
+
+	if validateDumpMerged {
+		return dumpMergedSpec()
+	}
 
 	// Setup validation environment
 	setup, err := setupValidation(logger)
@@ -188,9 +205,21 @@ type ValidationSetup struct {
 // setupValidation loads config, creates engine, and sets up validation paths.
 func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 	// Load HAProxyTemplateConfig from file
-	configSpec, err := loadConfigFromFile(validateConfigFile)
+	configSpec, err := loadConfigFromFiles(validateConfigFiles)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
+	}
+
+	// The same structural gate the controller applies on load. Several of these
+	// requirements can no longer live in the CRD schema (a single object of a
+	// merged set is legitimately incomplete), so checking here is what keeps
+	// `validate` an honest pre-apply gate.
+	structural, err := conversion.ConvertSpec(configSpec)
+	if err != nil {
+		return nil, fmt.Errorf("converting config: %w", err)
+	}
+	if err := coreconfig.ValidateMergedCompleteness(structural); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	// Load the schema directory once; it doubles as the offline availability
@@ -559,18 +588,121 @@ func outputIncludeProfile(results *testrunner.TestResults) {
 	printIncludeProfile(stats)
 }
 
-// loadConfigFromFile loads a HAProxyTemplateConfig from a YAML file.
-func loadConfigFromFile(filePath string) (*v1alpha1.HAProxyTemplateConfigSpec, error) {
-	// Clean the file path to prevent path traversal attacks
-	cleanPath := filepath.Clean(filePath)
-
-	// Read file
-	data, err := os.ReadFile(cleanPath)
+// loadConfigFromFiles loads every HAProxyTemplateConfig document across the
+// given files — in file order, and within a file in document order — and
+// merges them the way the controller does at startup.
+//
+// A single file holding a single document is the common case and still accepts
+// a bare spec (no apiVersion/kind), which is how hand-written fixtures are
+// written. Anything beyond that must be complete objects, because merge order
+// and precedence are only meaningful between identifiable configs.
+func loadConfigFromFiles(filePaths []string) (*v1alpha1.HAProxyTemplateConfigSpec, error) {
+	merged, bareSpec, err := mergeConfigFiles(filePaths)
 	if err != nil {
-		return nil, fmt.Errorf("reading file: %w", err)
+		return nil, err
+	}
+	if bareSpec != nil {
+		return bareSpec, nil
 	}
 
-	return parseConfigSpec(data)
+	config := &v1alpha1.HAProxyTemplateConfig{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(merged.Object, config); err != nil {
+		return nil, fmt.Errorf("converting merged config: %w", err)
+	}
+	return &config.Spec, nil
+}
+
+// mergeConfigFiles reads every HAProxyTemplateConfig document across the given
+// files and merges them. Exactly one of the two results is non-nil: the merged
+// object, or — for a lone file holding no identifiable object — the bare spec
+// it parsed instead.
+func mergeConfigFiles(filePaths []string) (*unstructured.Unstructured, *v1alpha1.HAProxyTemplateConfigSpec, error) {
+	var sources []*unstructured.Unstructured
+	for _, filePath := range filePaths {
+		// Clean the file path to prevent path traversal attacks
+		cleanPath := filepath.Clean(filePath)
+
+		data, err := os.ReadFile(cleanPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading file: %w", err)
+		}
+
+		documents, err := splitConfigDocuments(data)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading %s: %w", filePath, err)
+		}
+
+		if len(documents) == 0 && len(filePaths) == 1 {
+			spec, err := parseConfigSpec(data)
+			return nil, spec, err
+		}
+		sources = append(sources, documents...)
+	}
+
+	if len(sources) == 0 {
+		return nil, nil, fmt.Errorf("no HAProxyTemplateConfig documents in %s", strings.Join(filePaths, ", "))
+	}
+
+	merged, _, err := conversion.MergeSpecs(sources)
+	if err != nil {
+		return nil, nil, err
+	}
+	return merged, nil, nil
+}
+
+// dumpMergedSpec prints the merged spec and returns. It is the only way to see
+// what a set of configs actually assembles into without a cluster, so it is
+// also what pins the controller's merge against the chart's rendering.
+//
+// It prints the merge result verbatim rather than round-tripping through the
+// typed spec: the typed form adds zero values for every field the YAML omits
+// (`logging: {}`, `extraContext: null`), which would drown any real difference.
+func dumpMergedSpec() error {
+	merged, bareSpec, err := mergeConfigFiles(validateConfigFiles)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	var payload any = bareSpec
+	if merged != nil {
+		payload = merged.Object["spec"]
+	}
+	out, err := yaml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshalling merged spec: %w", err)
+	}
+	fmt.Print(string(out))
+	return nil
+}
+
+// splitConfigDocuments returns the HAProxyTemplateConfig documents in a YAML
+// stream, in order. Non-HAProxyTemplateConfig documents are skipped, so the
+// raw output of `helm template` can be passed straight through.
+func splitConfigDocuments(data []byte) ([]*unstructured.Unstructured, error) {
+	var documents []*unstructured.Unstructured
+	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(data)))
+	for {
+		chunk, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			return documents, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(bytes.TrimSpace(chunk)) == 0 {
+			continue
+		}
+
+		object := map[string]any{}
+		if err := yaml.Unmarshal(chunk, &object); err != nil {
+			return nil, err
+		}
+		document := &unstructured.Unstructured{Object: object}
+		if document.GetKind() != "HAProxyTemplateConfig" {
+			continue
+		}
+		documents = append(documents, document)
+	}
 }
 
 // parseConfigSpec decodes HAProxyTemplateConfig YAML — either the full

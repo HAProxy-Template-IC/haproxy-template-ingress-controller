@@ -2,7 +2,13 @@
 
 ## Status
 
-Accepted.
+Accepted. **Partly superseded by ADR-0014**: the decentralized `_helm_load`
+loader described here is unchanged and remains the convention, but the chart no
+longer merges the libraries into one object. `haptic.mergeLibraries` is now
+`haptic.prepareLibraries`, which returns the libraries prepared but separate;
+each is rendered as its own `HAProxyTemplateConfig` and the controller merges the
+set. Read the loader pipeline below as ending at "strip `_helm_load`" rather than
+at `mustMergeOverwrite`.
 
 ## Context
 

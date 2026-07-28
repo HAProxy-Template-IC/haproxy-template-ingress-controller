@@ -25,15 +25,27 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
 )
 
+// templateConfigGVR is the input config CRD `config view --input` reads.
+var templateConfigGVR = schema.GroupVersionResource{
+	Group:    "haproxy-haptic.org",
+	Version:  "v1alpha1",
+	Resource: "haproxytemplateconfigs",
+}
+
 var (
-	configCRDName    string
+	configCRDNames   []string
 	configKubeconfig string
 	configNamespace  string
+	configShowInput  bool
 )
 
 // configCmd is the parent command for config operations.
@@ -86,8 +98,12 @@ Examples:
 }
 
 func init() {
-	configViewCmd.Flags().StringVar(&configCRDName, "crd-name", "",
-		"Name of the HAProxyTemplateConfig CRD (env: CRD_NAME)")
+	configViewCmd.Flags().StringSliceVar(&configCRDNames, "crd-name", nil,
+		"Name of a HAProxyTemplateConfig. Repeatable or comma-separated (env: CRD_NAME); the last one is the "+
+			"primary, whose name the published HAProxyCfg is derived from.")
+	configViewCmd.Flags().BoolVar(&configShowInput, "input", false,
+		"Print the merged INPUT config the controller assembles from every --crd-name, instead of the rendered "+
+			"HAProxy output. No single object holds the whole input once the chart splits it per template library.")
 	configViewCmd.Flags().StringVar(&configKubeconfig, "kubeconfig", "",
 		"Path to kubeconfig file (for out-of-cluster usage)")
 	configViewCmd.Flags().StringVar(&configNamespace, "namespace", "",
@@ -99,11 +115,11 @@ func init() {
 
 func runConfigView(_ *cobra.Command, _ []string) error {
 	// Configuration priority: CLI flags > Environment variables > Defaults
-	if configCRDName == "" {
-		configCRDName = os.Getenv("CRD_NAME")
+	if len(configCRDNames) == 0 {
+		configCRDNames = splitConfigNames(os.Getenv("CRD_NAME"))
 	}
-	if configCRDName == "" {
-		configCRDName = defaultCRDName
+	if len(configCRDNames) == 0 {
+		configCRDNames = []string{defaultCRDName}
 	}
 
 	// Create Kubernetes client
@@ -129,12 +145,18 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 		return errors.New("namespace not specified and could not be auto-detected (use --namespace flag)")
 	}
 
-	// Compute the HAProxyCfg resource name from the template config name
-	runtimeConfigName := configpublisher.GenerateRuntimeConfigName(configCRDName)
+	// The last name is the primary — it owns the identity derived from the
+	// whole merged set, including the published HAProxyCfg's name.
+	primaryName := configCRDNames[len(configCRDNames)-1]
+	runtimeConfigName := configpublisher.GenerateRuntimeConfigName(primaryName)
 
 	// Create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	if configShowInput {
+		return printMergedInputConfig(ctx, k8sClient, namespace, configCRDNames)
+	}
 
 	// Fetch the HAProxyCfg resource
 	haproxyCfg, err := crdClient.HaproxyTemplateICV1alpha1().
@@ -157,5 +179,38 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 	// Output to stdout
 	fmt.Print(content)
 
+	return nil
+}
+
+// printMergedInputConfig fetches every configured HAProxyTemplateConfig and
+// prints the merged spec — the input the controller assembles, as opposed to
+// the rendered HAProxy output `config view` shows by default.
+//
+// Splitting the config across one object per template library means no single
+// object shows the whole picture any more; this is how an operator gets it back.
+func printMergedInputConfig(ctx context.Context, k8sClient *client.Client, namespace string, names []string) error {
+	sources := make([]*unstructured.Unstructured, 0, len(names))
+	for _, name := range names {
+		source, err := k8sClient.DynamicClient().Resource(templateConfigGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("getting HAProxyTemplateConfig %s/%s: %w", namespace, name, err)
+		}
+		sources = append(sources, source)
+	}
+
+	merged, overrides, err := conversion.MergeSpecs(sources)
+	if err != nil {
+		return fmt.Errorf("merging HAProxyTemplateConfigs: %w", err)
+	}
+	for _, override := range overrides {
+		fmt.Fprintf(os.Stderr, "# snippet %q from %s is overridden by %s\n",
+			override.Name, override.PreviousSource, override.WinningSource)
+	}
+
+	out, err := yaml.Marshal(merged.Object["spec"])
+	if err != nil {
+		return fmt.Errorf("marshalling merged spec: %w", err)
+	}
+	fmt.Print(string(out))
 	return nil
 }

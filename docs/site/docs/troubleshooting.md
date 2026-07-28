@@ -100,7 +100,7 @@ kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.i
 
 | Cause | Check | Solution |
 |-------|-------|----------|
-| Missing HAProxyTemplateConfig | `kubectl get haproxytemplateconfig` | Reinstall Helm chart |
+| Missing HAProxyTemplateConfig | `kubectl get haproxytemplateconfig` — a Helm install creates one per enabled template library plus your own config; the controller waits for **all the** names in the Deployment's `CRD_NAME` before it starts | Reinstall Helm chart |
 | Invalid credentials Secret | `kubectl get secret -n haptic haptic-credentials -o jsonpath='{.data}'` (Helm names it `<release>-credentials`) | Recreate secret with correct keys |
 | RBAC permissions | `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<ns>:<sa>` | Verify ClusterRole/ClusterRoleBinding |
 
@@ -470,8 +470,9 @@ kubectl get deployment -n haptic haptic-controller -o jsonpath='{.spec.template.
 # Controller logs
 kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=500 > controller-logs.txt
 
-# Configuration
-kubectl get haproxytemplateconfig -n haptic haptic-config -o yaml > config.yaml
+# Configuration — every object, plus the merged result the controller assembles
+kubectl get haproxytemplateconfig -n haptic -o yaml > config-objects.yaml
+haptic-controller config view --input -n haptic > config-merged.yaml
 
 # HAProxy config (sanitize sensitive data!)
 kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.cfg

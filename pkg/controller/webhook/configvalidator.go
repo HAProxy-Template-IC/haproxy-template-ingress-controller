@@ -108,6 +108,7 @@ type ConfigValidator struct {
 	typedResourceTypes   map[string]reflect.Type
 	bootstrap            SchemaBootstrapper
 	effectiveResolver    func(ctx context.Context, cfg *coreconfig.Config) (*coreconfig.Config, error)
+	mergeWithSiblings    func(ctx context.Context, incoming *unstructured.Unstructured) (*unstructured.Unstructured, bool, error)
 	runningConfigVersion string
 }
 
@@ -173,6 +174,21 @@ type ConfigValidatorConfig struct {
 	// config as-is.
 	EffectiveResolver func(ctx context.Context, cfg *coreconfig.Config) (*coreconfig.Config, error)
 
+	// MergeWithSiblings (optional) substitutes the prospective object into the
+	// controller's configured set and returns the merge — what the controller
+	// would actually load if this apply went through. Without it, admission
+	// would judge one object of a merged set in isolation: a library object
+	// alone has no podSelector and every apply to it would be denied, while an
+	// operator object alone would be missing every library it overrides.
+	//
+	// `managed` is false when the object is not one this controller merges. Such
+	// an object is then validated standalone — the pre-merge behaviour, and the
+	// right frame for a self-contained hand-written config that some other
+	// controller reads. Kept as a function so this package stays free of
+	// Kubernetes; production wires the iteration's client, unit tests leave it
+	// nil and validate the object as-is.
+	MergeWithSiblings func(ctx context.Context, incoming *unstructured.Unstructured) (merged *unstructured.Unstructured, managed bool, err error)
+
 	// RunningConfigVersion is the AppVersionLabel value on the controller's
 	// currently-loaded HAProxyTemplateConfig CR — i.e. the chart app version of
 	// the running deployment. The webhook compares it against the SAME label on
@@ -219,7 +235,85 @@ func NewConfigValidator(cfg *ConfigValidatorConfig) *ConfigValidator {
 		typedResourceTypes:   cfg.TypedResourceTypes,
 		bootstrap:            cfg.Bootstrap,
 		effectiveResolver:    cfg.EffectiveResolver,
+		mergeWithSiblings:    cfg.MergeWithSiblings,
 		runningConfigVersion: cfg.RunningConfigVersion,
+	}
+}
+
+// admittedObject narrows the admission payload to the unstructured object every
+// step below expects.
+func admittedObject(object any) (*unstructured.Unstructured, error) {
+	u, ok := object.(*unstructured.Unstructured)
+	if !ok {
+		return nil, fmt.Errorf("expected *unstructured.Unstructured, got %T", object)
+	}
+	return u, nil
+}
+
+// resolveEffective transforms the prospective config into the EFFECTIVE one —
+// the load gate strips requires/requiresFields-unsatisfied snippets and tests
+// against live resource availability before compiling, and admission must judge
+// the same config the controller would actually load (issue #79). It must run
+// BEFORE resolveSchemas so typebootstrap probes only resolved-version resources.
+//
+// A non-nil second result means admission should stop and admit with those
+// warnings. On resolver error we admit rather than compile the raw config
+// (which would reproduce the bug) or deny (which would block operator applies
+// on transient apiserver blips): the load gate still enforces deterministically,
+// matching this webhook's safe-to-be-absent posture.
+func (v *ConfigValidator) resolveEffective(
+	ctx context.Context,
+	cfg *coreconfig.Config,
+	namespace, name string,
+) (effective *coreconfig.Config, admitWith []string) {
+	if v.effectiveResolver == nil {
+		return cfg, nil
+	}
+
+	resolved, err := v.effectiveResolver(ctx, cfg)
+	if err != nil {
+		v.logger.Warn("Effective-config resolution failed at admission; admitting (load gate still enforces)",
+			"namespace", namespace, "name", name, "error", err)
+		return nil, []string{fmt.Sprintf(
+			"effective-config resolution failed at admission: %v — validation skipped; the controller's load gate will still enforce this config", err)}
+	}
+	return resolved, nil
+}
+
+// mergeForAdmission substitutes the prospective object into the controller's
+// configured set, so admission judges what the controller would actually load.
+//
+// An object the controller does NOT merge is returned unchanged and validated
+// standalone — the pre-merge behaviour, and the right frame for a self-contained
+// config this controller does not assemble.
+//
+// A non-nil second result means admission should stop here and admit with those
+// warnings. That happens only when the merge could not be performed: same
+// posture as effective-config resolution, because a transient apiserver failure
+// must not block an operator's recovery apply and the load gate still enforces
+// deterministically.
+func (v *ConfigValidator) mergeForAdmission(
+	ctx context.Context,
+	namespace, name string,
+	incoming *unstructured.Unstructured,
+) (subject *unstructured.Unstructured, admitWith []string) {
+	if v.mergeWithSiblings == nil {
+		return incoming, nil
+	}
+
+	merged, managed, err := v.mergeWithSiblings(ctx, incoming)
+	switch {
+	case err != nil:
+		v.logger.Warn("Merging with sibling configs failed at admission; admitting (load gate still enforces)",
+			"namespace", namespace, "name", name, "error", err)
+		return nil, []string{fmt.Sprintf(
+			"merging with the controller's other HAProxyTemplateConfigs failed at admission: %v — validation skipped; the controller's load gate will still enforce this config", err)}
+	case !managed:
+		v.logger.Debug("Validating a HAProxyTemplateConfig this controller does not merge on its own",
+			"namespace", namespace, "name", name)
+		return incoming, nil
+	default:
+		return merged, nil
 	}
 }
 
@@ -275,39 +369,38 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 		return true, "", nil
 	}
 
-	u, ok := object.(*unstructured.Unstructured)
-	if !ok {
-		return false, fmt.Sprintf("expected *unstructured.Unstructured, got %T", object), nil
+	u, err := admittedObject(object)
+	if err != nil {
+		return false, err.Error(), nil
 	}
 
 	// Version-skew signal for deferTemplateFailureOnSkew: the prospective
 	// config's stamped version vs the running config's (both AppVersionLabel).
 	crVersion := u.GetLabels()[AppVersionLabel]
 
+	// Judge the merged result, not this object alone — see MergeWithSiblings.
+	merged, skip := v.mergeForAdmission(ctx, namespace, name, u)
+	if skip != nil {
+		return true, "", skip
+	}
+	u = merged
+
 	cfg, _, err := conversion.ParseCRD(u)
 	if err != nil {
 		return false, fmt.Sprintf("parsing HAProxyTemplateConfig: %v", err), nil
 	}
 
-	// Resolve the EFFECTIVE config first — the load gate strips
-	// requires/requiresFields-unsatisfied snippets and tests against live
-	// resource availability before compiling, and admission must judge the
-	// same config the controller would actually load (issue #79). Must run
-	// BEFORE resolveSchemas so typebootstrap probes only resolved-version
-	// resources. On resolver error, admit with a warning rather than compile
-	// the raw config (which would reproduce the bug) or deny (which would
-	// block operator applies on transient apiserver blips): the load gate
-	// still deterministically enforces the config, matching this webhook's
-	// safe-to-be-absent posture.
-	if v.effectiveResolver != nil {
-		effective, resolveErr := v.effectiveResolver(ctx, cfg)
-		if resolveErr != nil {
-			v.logger.Warn("Effective-config resolution failed at admission; admitting (load gate still enforces)",
-				"namespace", namespace, "name", name, "error", resolveErr)
-			return true, "", []string{fmt.Sprintf(
-				"effective-config resolution failed at admission: %v — validation skipped; the controller's load gate will still enforce this config", resolveErr)}
-		}
-		cfg = effective
+	// Structural gate on the MERGED config. The CRD schema cannot carry these
+	// requirements any more — a single object of a merged set is legitimately
+	// incomplete — so without this the only thing standing between an operator
+	// and a crash-looping controller would be the load gate itself.
+	if err := coreconfig.ValidateMergedCompleteness(cfg); err != nil {
+		return false, fmt.Sprintf("invalid HAProxyTemplateConfig: %v", err), nil
+	}
+
+	cfg, skipResolve := v.resolveEffective(ctx, cfg, namespace, name)
+	if skipResolve != nil {
+		return true, "", skipResolve
 	}
 
 	// Resolve the typed-resource declarations + reflect.Types this admission

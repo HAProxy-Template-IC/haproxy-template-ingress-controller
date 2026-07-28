@@ -1,7 +1,5 @@
 {{- if .Values.controller.rbac.create }}
-{{- /* Merge watched resources from libraries */ -}}
-{{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-{{- $allWatchedResources := merge ($mergedLibraries.watchedResources | default dict) (.Values.controller.config.watchedResources | default dict) }}
+{{- $allWatchedResources := include "haptic.watchedResourcesUnion" . | fromYaml }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
