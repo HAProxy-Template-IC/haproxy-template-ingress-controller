@@ -360,19 +360,44 @@ verify_haproxy_configs_warning_free() {
     ok "haproxy -c is clean on all ${#pods[@]} HAProxy replicas"
 }
 
-# admit_config_dry_run routes one HAProxyTemplateConfig through the webhook with
-# a server-side dry-run replace and echoes the output, or dies.
-#
-# Re-get inside a retry: the controller writes status
-# (observedGeneration/Validated) between our get and replace, bumping
-# resourceVersion, so a stale replace 409s with "object has been modified".
-# Retry only that optimistic-concurrency conflict — any other error is a genuine
-# admission failure and must fail immediately.
-admit_config_dry_run() {
-    local name="$1" output rc=0 attempt
+verify_config_admission_warning_free() {
+    # The companion object carrying the suite. Checked explicitly: without it the
+    # only symptom is the config's Validated condition going false later (the
+    # load gate refusing on requireValidationTests), which says nothing about
+    # WHY. A missing companion object should name itself.
+    local tests_objects=()
+    mapfile -t tests_objects < <(
+        kubectl get haproxyvalidationtests -n "$NAMESPACE" \
+            -l "app.kubernetes.io/instance=${RELEASE_NAME}" \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+    )
+    if [[ ${#tests_objects[@]} -eq 0 ]]; then
+        die "No HAProxyValidationTests object was applied — the config selects one and requireValidationTests is set, so the controller will refuse to load" 10
+    fi
+    info "Found companion tests object: ${tests_objects[0]}"
+
+    info "Checking the default HAProxyTemplateConfig through admission (warnings are fatal)..."
+
+    local configs=()
+    mapfile -t configs < <(
+        kubectl get haproxytemplateconfigs -n "$NAMESPACE" \
+            -l "app.kubernetes.io/instance=${RELEASE_NAME}" \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+    )
+    if [[ ${#configs[@]} -ne 1 ]]; then
+        die "Expected exactly one default HAProxyTemplateConfig, found ${#configs[@]}" 10
+    fi
+
+    # A server-side dry-run replace routes the config through the webhook.
+    # Re-get inside a retry: the controller writes status
+    # (observedGeneration/Validated) between our get and replace, bumping
+    # resourceVersion, so a stale replace 409s with "object has been modified".
+    # Retry only that optimistic-concurrency conflict — any other error is a
+    # genuine admission failure and must fail immediately.
+    local output rc=0 attempt
     for attempt in 1 2 3 4 5; do
         rc=0
-        output=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" -o json \
+        output=$(kubectl get haproxytemplateconfig "${configs[0]}" -n "$NAMESPACE" -o json \
             | kubectl replace --dry-run=server -f - 2>&1) || rc=$?
         if [[ $rc -ne 0 ]] && grep -q 'please apply your changes to the latest version' <<< "$output"; then
             sleep 1
@@ -381,51 +406,10 @@ admit_config_dry_run() {
         break
     done
     if [[ $rc -ne 0 ]]; then
-        error "HAProxyTemplateConfig $name server-side dry-run failed (exit $rc):"
+        error "HAProxyTemplateConfig server-side dry-run failed (exit $rc):"
         printf '%s\n' "$output" >&2
-        die "Default HAProxyTemplateConfig $name failed admission" 10
+        die "Default HAProxyTemplateConfig failed admission" 10
     fi
-    printf '%s' "$output"
-}
-
-verify_config_admission_warning_free() {
-    info "Checking the default HAProxyTemplateConfigs through admission (warnings are fatal)..."
-
-    # The chart renders one config per enabled template library plus one for the
-    # operator's own controller.config, and the controller merges the set
-    # (ADR-0014). Every one goes through admission: for a library config the
-    # webhook substitutes it into the set and validates the MERGE, so this also
-    # exercises the sibling-merge path a single-object check never would.
-    local configs=()
-    mapfile -t configs < <(
-        kubectl get haproxytemplateconfigs -n "$NAMESPACE" \
-            -l "app.kubernetes.io/instance=${RELEASE_NAME}" \
-            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
-    )
-    if [[ ${#configs[@]} -eq 0 ]]; then
-        die "Expected at least one default HAProxyTemplateConfig, found none" 10
-    fi
-
-    # The operator's own config is the one the controller merges LAST, so it
-    # carries the identity derived from the whole set — including the validation
-    # status the load-gate assertion below reads. Identified by the label the
-    # emitter stamps, not by name arithmetic.
-    local operator_configs=()
-    mapfile -t operator_configs < <(
-        kubectl get haproxytemplateconfigs -n "$NAMESPACE" \
-            -l "app.kubernetes.io/instance=${RELEASE_NAME},app.kubernetes.io/component=operator-config" \
-            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
-    )
-    if [[ ${#operator_configs[@]} -ne 1 ]]; then
-        die "Expected exactly one operator-config HAProxyTemplateConfig, found ${#operator_configs[@]}" 10
-    fi
-    info "Found ${#configs[@]} config objects; operator config is ${operator_configs[0]}"
-
-    local output="" config
-    for config in "${configs[@]}"; do
-        output+=$(admit_config_dry_run "$config")
-        output+=$'\n'
-    done
     # One warning is the DESIGNED degradation, not a defect: Kubernetes caps a
     # webhook's timeoutSeconds at 30 and the controller reserves one second to
     # return a structured response, so the admission budget has a hard 29s
@@ -445,7 +429,7 @@ verify_config_admission_warning_free() {
         die "Default HAProxyTemplateConfig was not fully validated at admission" 10
     fi
 
-    ok "All ${#configs[@]} default HAProxyTemplateConfigs pass admission without unexpected warnings"
+    ok "Default HAProxyTemplateConfig passes admission without unexpected warnings"
 
     # The authoritative gate. The controller runs the same suite on load and
     # crash-loops rather than serve a config whose own tests fail, so
@@ -458,7 +442,7 @@ verify_config_admission_warning_free() {
     # + ~100ms per test, plus bootstrap and engine compile), so any fixed poll
     # window here would silently go stale as libraries add tests — the exact
     # drift that produced the budget bug this assertion exists to catch.
-    local name="${operator_configs[0]}" gen observed status reason
+    local name="${configs[0]}" gen observed status reason
     gen=$(kubectl get haproxytemplateconfig "$name" -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
     if ! kubectl wait --for=condition=Validated "haproxytemplateconfig/$name" \
         -n "$NAMESPACE" --timeout="${TIMEOUT}s" >/dev/null 2>&1; then
