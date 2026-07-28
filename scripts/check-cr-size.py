@@ -45,17 +45,26 @@ import sys
 # etcd's default --max-request-bytes, which the apiserver enforces per object.
 LIMIT = 1_572_864
 # Gate well below the hard limit: crossing it breaks `helm install` outright, so
-# the useful signal is "a library is getting too big", not "it just broke". With
-# one object per template library the worst case is ~35%, so this leaves room
-# for a library to double before anyone has to think about it again.
-THRESHOLD = int(os.environ.get("CR_SIZE_THRESHOLD", "1100000"))
+# the useful signal is "this is getting too big", not "it just broke".
+#
+# Expressed as a fraction of the real limit rather than a bare byte count. A
+# fixed number silently changes meaning when the thing being measured changes —
+# and it did: the config object no longer carries its validationTests, so a
+# threshold calibrated for an object that held everything would now fire on a
+# profile with 30% of etcd still free. CR_SIZE_THRESHOLD still overrides, in
+# bytes, for a one-off investigation.
+THRESHOLD_FRACTION = 0.70
+THRESHOLD = int(os.environ.get("CR_SIZE_THRESHOLD", str(int(LIMIT * THRESHOLD_FRACTION))))
 # Gateway library is gated on a Capabilities.APIVersions check; declare the CRDs
 # so it renders (worst case). Mirrors check-chart-release-size.py.
 API_VERSIONS = [
     "--api-versions=gateway.networking.k8s.io/v1/GatewayClass",
     "--api-versions=gateway.networking.k8s.io/v1/TCPRoute",
 ]
-KIND = "HAProxyTemplateConfig"
+# Both kinds are measured. They are separate etcd objects with separate budgets,
+# so reporting only the config would hide a tests object growing toward the same
+# limit.
+KINDS = ("HAProxyTemplateConfig", "HAProxyValidationTests")
 
 
 def run(cmd, stdin=None):
@@ -79,34 +88,37 @@ def main():
     # -o=json -I=0 emits one compact JSON document per line: compact because
     # that is what etcd stores, one per line so each object can be measured
     # separately.
-    documents = run(
-        ["yq", "-o=json", "-I=0", f'select(.kind == "{KIND}")'], stdin=manifest
-    )
+    selector = " or ".join(f'.kind == "{k}"' for k in KINDS)
+    documents = run(["yq", "-o=json", "-I=0", f"select({selector})"], stdin=manifest)
 
     objects = []
     for line in documents.decode().splitlines():
         line = line.strip()
         if line:
-            objects.append((json.loads(line)["metadata"]["name"], len(line)))
+            obj = json.loads(line)
+            objects.append((obj["kind"], obj["metadata"]["name"], len(line)))
 
     if not objects:
-        sys.exit(f"no {KIND} objects rendered — check the helm arguments")
+        sys.exit(f"no {' or '.join(KINDS)} objects rendered — check the helm arguments")
 
     label = " ".join(helm_args) or "(chart defaults)"
-    print(f"[{label}] {len(objects)} {KIND} object(s), limit {LIMIT:,}, gate {THRESHOLD:,}")
-    for name, size in sorted(objects, key=lambda o: -o[1]):
+    print(
+        f"[{label}] {len(objects)} object(s), limit {LIMIT:,}, "
+        f"gate {THRESHOLD:,} ({THRESHOLD_FRACTION:.0%} of limit)"
+    )
+    for kind, name, size in sorted(objects, key=lambda o: -o[2]):
         marker = "  ✗" if size > THRESHOLD else "   "
-        print(f"{marker} {name:<48} {size:>9,}  {size * 100 / LIMIT:5.1f}% of limit")
+        print(f"{marker} {kind}/{name:<40} {size:>9,}  {size * 100 / LIMIT:5.1f}% of limit")
 
-    biggest_name, biggest = max(objects, key=lambda o: o[1])
+    biggest_kind, biggest_name, biggest = max(objects, key=lambda o: o[2])
     if biggest > THRESHOLD:
         sys.exit(
-            f"\n{biggest_name} is {biggest:,} bytes, over the {THRESHOLD:,} gate "
+            f"\n{biggest_kind}/{biggest_name} is {biggest:,} bytes, over the {THRESHOLD:,} gate "
             f"({biggest * 100 / LIMIT:.1f}% of etcd's {LIMIT:,} per-object limit).\n"
             "Split the library that grew, or move content into a new one — raising the "
             "gate only postpones an install failure that has no workaround."
         )
-    print(f"  ✓ OK (largest: {biggest_name}, {biggest * 100 / LIMIT:.1f}% of the limit)")
+    print(f"  ✓ OK (largest: {biggest_kind}/{biggest_name}, {biggest * 100 / LIMIT:.1f}% of the limit)")
 
 
 if __name__ == "__main__":
