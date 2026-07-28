@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+#
+# The companion object carrying the configuration's validationTests. It is a
+# separate suite rather than cases inside library_loader_test.yaml because that
+# suite pins a documentSelector against the config object.
+suite: validation tests object
+templates:
+  - haproxyvalidationtests.yaml
+tests:
+  - it: should carry the library suites
+    asserts:
+      - isKind:
+          of: HAProxyValidationTests
+      - exists:
+          path: spec.validationTests
+
+  # The requires annotation gates this test on the optional TCPRoute CRD, so it
+  # has to travel with the test rather than stay behind on the config.
+  - it: should keep each test's requires annotation
+    asserts:
+      - contains:
+          path: spec.validationTests.test-tcproute-basic-l4-forward.requires
+          content: tcproutes
+
+  - it: should be scoped to the release so two installs do not share a suite
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME

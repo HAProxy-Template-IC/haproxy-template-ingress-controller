@@ -91,12 +91,8 @@ spec:
                 fieldRef:
                   fieldPath: {{ $env.field }}
             {{- end }}
-            {{- /* Every enabled template library's config, in merge order, with
-                   the operator's own config last so it wins. The controller
-                   merges exactly this list; a config it is not named here is
-                   ignored. */}}
             - name: CRD_NAME
-              value: {{ append (include "haptic.libraryConfigNames" . | fromYamlArray) $controller.configName | join "," | quote }}
+              value: {{ $controller.configName | quote }}
             - name: SECRET_NAME
               value: {{ include "haptic.dataplane.credentialsSecretName" . }}
             - name: WEBHOOK_SERVICE_NAME

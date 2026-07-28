@@ -2,6 +2,7 @@
 suite: shared Varnish cache tier
 templates:
   - haproxytemplateconfig.yaml
+  - haproxyvalidationtests.yaml
   - haproxy-networkpolicy.yaml
   - role.yaml
   - varnish-networkpolicy.yaml
@@ -25,9 +26,6 @@ tests:
 
   - it: should surface HAProxy-owned cache balancing from the canonical path
     template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
     set:
       cache.varnish.enabled: true
       cache.haproxy.hashBalanceFactor: 175
@@ -174,9 +172,6 @@ tests:
 
   - it: should expose the dedicated backend-fetch port + origin Service to extraContext
     template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
     set:
       cache.varnish.enabled: true
     asserts:
@@ -216,9 +211,6 @@ tests:
 
   - it: should surface the default Varnish disruption budget in extraContext
     template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
     set:
       cache.varnish.enabled: true
     asserts:
@@ -231,9 +223,6 @@ tests:
 
   - it: should allow disabling the Varnish disruption budget
     template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config
     set:
       cache.varnish.enabled: true
       cache.varnish.podDisruptionBudget.enabled: false
@@ -242,13 +231,8 @@ tests:
           path: spec.templatingSettings.extraContext.cache.varnish.podDisruptionBudget.enabled
           value: false
 
-  # The test is declared by the haptic-annotations library, so it lands in that
-  # library's config — not the operator's.
   - it: should omit the combined cache and rate-limit validation when cache is disabled
-    template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config-haptic-annotations
+    template: haproxyvalidationtests.yaml
     set:
       rateLimit.shared.enabled: true
     asserts:
@@ -256,10 +240,7 @@ tests:
           path: spec.validationTests.test-haptic-cache-shared-rate-limit-loopback
 
   - it: should include the combined cache and rate-limit validation when both are enabled
-    template: haproxytemplateconfig.yaml
-    documentSelector:
-      path: metadata.name
-      value: haptic-config-haptic-annotations
+    template: haproxyvalidationtests.yaml
     set:
       cache.varnish.enabled: true
       rateLimit.shared.enabled: true
