@@ -927,3 +927,73 @@ validationTests:
         target: "status:gateway-conformance-infra/gateway-tlsroute-mixed-termination-not-supported:rendered"
         pattern: '"supportedKinds":\[\]'
         expected: "2"
+
+  test-proxy-protocol-passthrough-binds-on-ssl-tcp:
+    requires: [gateways, tlsroutes]
+    description: >-
+      With a TLS-Passthrough listener on the chart-static HTTPS port, `frontend
+      ssl-tcp` owns that port and `frontend https` is fed over a unix socket.
+      The PROXY-protocol bind must follow the port onto ssl-tcp: terminating it
+      on `frontend https` instead would take passthrough SNIs out of the
+      SNI-routing path without any error.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      proxyProtocol:
+        enabled: true
+        httpPort: 8081
+        httpsPort: 8444
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                hostname: "*.example.com"
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute
+            hostnames:
+              - abc.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend ssl-tcp$.*?^\s+bind \*:8444 accept-proxy$'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8444 accept-proxy ssl'

@@ -335,8 +335,9 @@ In addition to the snippet-based extension points below, libraries may declare f
 | `features-*` | Feature registration (SSL, TLS certs) | gateway, haproxytech, ingress, ssl |
 | `backends-*` | Backend definitions | gateway, ingress, ssl |
 | `frontends-*` | Additional frontends (HTTPS, TCP) | ssl |
-| `http-bind-extra-*` | Additional HTTP-frontend `bind *:<port>` directives (Gateway HTTP listener ports) | gateway |
-| `https-bind-extra-*` | Additional HTTPS-frontend `bind *:<port> ssl crt-list ...` directives (Gateway HTTPS listener ports) | gateway |
+| `http-bind-extra-*` | Additional HTTP-frontend `bind *:<port>` directives (Gateway HTTP listener ports, the PROXY-protocol port) | base, gateway |
+| `https-bind-extra-*` | Additional HTTPS-frontend `bind *:<port> ssl crt-list ...` directives (Gateway HTTPS listener ports, the PROXY-protocol port) | gateway, ssl |
+| `ssl-tcp-bind-extra-*` | Additional `frontend ssl-tcp` binds. Only rendered when TLS-Passthrough puts the HTTPS port on the SNI-routing frontend instead of `frontend https` — use it for anything that must attach to the wire connection | ssl |
 | `frontend-routing-listener-port-*` | Per-listener-port frontend routing logic (Gateway listener ports) | gateway |
 | `frontend-extra-*` | Early frontend directives after bind (options, captures, ACLs) | (user) |
 | `frontend-matchers-advanced-*` | Advanced route matching (method, headers) | gateway |
@@ -688,6 +689,32 @@ validationTests:
 **Test Execution:**
 
 Tests run against the **merged configuration**, so they can validate cross-library interactions.
+
+**An absence assertion MUST pin its own opt-in.** A test's `extraContext` deep-merges *over the operator's*, so a `not_contains` that relies on a chart default holds only until someone enables that feature — and the load gate turns the resulting failure into a controller crash-loop on a config CI called green. Pin the toggle explicitly:
+
+```yaml
+test-my-feature-disabled:
+  extraContext:
+    myFeature:
+      enabled: false        # NOT inherited from values.yaml — state it
+  assertions:
+    - type: not_contains
+      target: haproxy.cfg
+      pattern: 'the directive myFeature emits'
+```
+
+Two rules follow, and both are load-bearing:
+
+- **Scope the pattern.** A whole-config `not_contains` fails on any unrelated line that happens to match. See "Absence assertions need scoping" — the pattern must name the frontend, backend, or bind it is really about.
+- **Give every new opt-in a profile in `scripts/test-templates.sh`** that renders with it ON and runs the **whole** test set (the PROXY-protocol profile is the model). The named-test profiles above it catch a feature's own tests; only a full pass catches an *unrelated* test that the opt-in breaks. That is the exact failure this rule exists to prevent.
+
+Before bumping a chart an operator already runs, validate against **their** values, not the defaults:
+
+```bash
+helm template <release> charts/haptic -f /path/to/their/values.yaml \
+  | yq 'select(.kind == "HAProxyTemplateConfig")' > /tmp/cfg.yaml
+./bin/haptic-controller validate -f /tmp/cfg.yaml --schema-dir tests/schemas
+```
 
 ## Common Patterns
 

@@ -2,6 +2,7 @@
 {{- $np := $haproxy.networkPolicy }}
 {{- if and $haproxy.enabled $np.enabled }}
 {{- $ports := $haproxy.ports }}
+{{- $proxyProtocol := include "haptic.proxyProtocol" . | fromYaml }}
 {{- $name := include "haptic.name" . }}
 {{- /*
   Validate configuration to prevent deny-all scenarios
@@ -46,6 +47,12 @@ spec:
           protocol: TCP
         - port: {{ $ports.https }}
           protocol: TCP
+        {{- if $proxyProtocol.enabled }}
+        - port: {{ int $proxyProtocol.httpPort }}
+          protocol: TCP
+        - port: {{ int $proxyProtocol.httpsPort }}
+          protocol: TCP
+        {{- end }}
       from:
         {{- with $np.allowedSources }}
         {{- toYaml . | nindent 8 }}

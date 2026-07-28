@@ -26,6 +26,66 @@
 {{- if and $otlpEndpoint (not .Values.vector.enabled) }}
   {{- fail (printf "controller.config.templatingSettings.extraContext.tracing.otlp.endpoint is set (%s) but vector.enabled is false. Spans are built from access-log records inside the vector sidecar, so nothing would export them and traces would silently never appear. Set vector.enabled=true, or remove the endpoint to keep propagation-only tracing (HAProxy still sets traceparent so your backends join the trace)." $otlpEndpoint) }}
 {{- end }}
+{{- /* PROXY-protocol binds. Validated in HELM rather than at render time because
+       the port numbers drive chart-side wiring too (Service ports, container
+       ports, NetworkPolicy) — a bad value has to fail the install, not the load
+       gate. */ -}}
+{{- $configuredProxyProtocol := dig "proxyProtocol" dict $configuredExtraContext }}
+{{- if $configuredProxyProtocol }}
+  {{- if not (kindIs "map" $configuredProxyProtocol) }}
+    {{- fail "controller.config.templatingSettings.extraContext.proxyProtocol must be a map." }}
+  {{- end }}
+  {{- range $field := keys $configuredProxyProtocol }}
+    {{- if not (has $field (list "enabled" "httpPort" "httpsPort")) }}
+      {{- fail (printf "controller.config.templatingSettings.extraContext.proxyProtocol contains unknown field %q. Valid fields: enabled, httpPort, httpsPort." $field) }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $proxyProtocol := include "haptic.proxyProtocol" . | fromYaml }}
+{{- if not (kindIs "bool" $proxyProtocol.enabled) }}
+  {{- fail "controller.config.templatingSettings.extraContext.proxyProtocol.enabled must be a boolean." }}
+{{- end }}
+{{- if $proxyProtocol.enabled }}
+  {{- range $field := list "httpPort" "httpsPort" }}
+    {{- $port := int (index $proxyProtocol $field) }}
+    {{- if or (lt $port 1) (gt $port 65535) }}
+      {{- fail (printf "controller.config.templatingSettings.extraContext.proxyProtocol.%s must be a port between 1 and 65535, got %v." $field (index $proxyProtocol $field)) }}
+    {{- end }}
+  {{- end }}
+  {{- if eq (int $proxyProtocol.httpPort) (int $proxyProtocol.httpsPort) }}
+    {{- fail (printf "controller.config.templatingSettings.extraContext.proxyProtocol.httpPort and .httpsPort are both %d. They are separate HAProxy binds and must differ." (int $proxyProtocol.httpPort)) }}
+  {{- end }}
+  {{- $takenPorts := dict
+      (toString (int .Values.haproxy.ports.http)) "haproxy.ports.http"
+      (toString (int .Values.haproxy.ports.https)) "haproxy.ports.https"
+      (toString (int .Values.haproxy.ports.stats)) "haproxy.ports.stats"
+      (toString (int .Values.haproxy.ports.dataplane)) "haproxy.ports.dataplane" }}
+  {{- /* Operator-declared Service ports share the port and name space with the
+         two entries the chart appends. A duplicate name is silently dropped by
+         the Service template's name dedupe, and a duplicate number renders a
+         Service the API server rejects — both worse than an install error. */ -}}
+  {{- $takenNames := dict }}
+  {{- range $entry := (dig "service" "extraPorts" list .Values.haproxy) }}
+    {{- $entryPort := int (dig "port" 0 $entry) }}
+    {{- if gt $entryPort 0 }}
+      {{- $_ := set $takenPorts (toString $entryPort) "haproxy.service.extraPorts" }}
+    {{- end }}
+    {{- with (dig "name" "" $entry) }}
+      {{- $_ := set $takenNames (toString .) "haproxy.service.extraPorts" }}
+    {{- end }}
+  {{- end }}
+  {{- range $field := list "httpPort" "httpsPort" }}
+    {{- $port := toString (int (index $proxyProtocol $field)) }}
+    {{- if hasKey $takenPorts $port }}
+      {{- fail (printf "controller.config.templatingSettings.extraContext.proxyProtocol.%s (%s) collides with %s. The PROXY-protocol binds are additional listeners on the same pod; give them a free port." $field $port (index $takenPorts $port)) }}
+    {{- end }}
+  {{- end }}
+  {{- range $name := list "proxy-http" "proxy-https" }}
+    {{- if hasKey $takenNames $name }}
+      {{- fail (printf "haproxy.service.extraPorts declares a port named %q, which the PROXY-protocol listeners also use. Rename your entry, or disable controller.config.templatingSettings.extraContext.proxyProtocol." $name) }}
+    {{- end }}
+  {{- end }}
+{{- end }}
 {{- $apiGatewaySettings := dict }}
 {{- if hasKey $configuredExtraContext "apiGateway" }}
   {{- if not (kindIs "map" $configuredExtraContext.apiGateway) }}
@@ -342,8 +402,11 @@ spec:
            HAProxy/controller listener — otherwise HAProxy fails to bind at
            runtime with a confusing error instead of a clear Helm failure. */ -}}
     {{- $reserved := list (int .Values.haproxy.ports.http) (int .Values.haproxy.ports.https) (int .Values.haproxy.ports.stats) (int .Values.haproxy.ports.dataplane) (int .Values.controller.ports.healthz) (int .Values.controller.ports.metrics) }}
+    {{- if $proxyProtocol.enabled }}
+      {{- $reserved = append (append $reserved (int $proxyProtocol.httpPort)) (int $proxyProtocol.httpsPort) }}
+    {{- end }}
     {{- if has $lp $reserved }}
-      {{- fail (printf "cache.varnish.loopbackPort %d collides with an existing HAProxy/controller port (http/https/stats/dataplane/healthz/metrics); choose a free port for the dedicated Varnish backend-fetch frontend." $lp) }}
+      {{- fail (printf "cache.varnish.loopbackPort %d collides with an existing HAProxy/controller port (http/https/stats/dataplane/healthz/metrics/proxy-protocol); choose a free port for the dedicated Varnish backend-fetch frontend." $lp) }}
     {{- end }}
   {{- end }}
   {{- $_ := set $varnish "serviceName" (include "haptic.varnish.cacheName" .) }}
@@ -865,6 +928,13 @@ spec:
         {{- $defaultPorts = append $defaultPorts $portDict }}
       {{- end }}
     {{- end }}
+  {{- end }}
+  {{- /* PROXY-protocol listeners are additional ports on the same pods, so they
+         ride the same Service. targetPort is the container-port NAME, matching
+         the http/https/stats entries above. */ -}}
+  {{- if $proxyProtocol.enabled }}
+    {{- $defaultPorts = append $defaultPorts (dict "name" "proxy-http" "port" (int $proxyProtocol.httpPort) "targetPort" "proxy-http" "protocol" "TCP") }}
+    {{- $defaultPorts = append $defaultPorts (dict "name" "proxy-https" "port" (int $proxyProtocol.httpsPort) "targetPort" "proxy-https" "protocol" "TCP") }}
   {{- end }}
   {{- $allPorts := concat $defaultPorts ($svc.extraPorts | default list) }}
   {{- $haproxyService := dict

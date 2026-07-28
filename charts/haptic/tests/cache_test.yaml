@@ -212,7 +212,7 @@ tests:
       cache.varnish.loopbackPort: 8404
     asserts:
       - failedTemplate:
-          errorMessage: "cache.varnish.loopbackPort 8404 collides with an existing HAProxy/controller port (http/https/stats/dataplane/healthz/metrics); choose a free port for the dedicated Varnish backend-fetch frontend."
+          errorMessage: "cache.varnish.loopbackPort 8404 collides with an existing HAProxy/controller port (http/https/stats/dataplane/healthz/metrics/proxy-protocol); choose a free port for the dedicated Varnish backend-fetch frontend."
 
   - it: should surface the default Varnish disruption budget in extraContext
     template: haproxytemplateconfig.yaml

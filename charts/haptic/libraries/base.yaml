@@ -2137,6 +2137,17 @@ templateSnippets:
       {#- Renders global-top-* snippets (e.g., userlist sections from haproxytech.yaml) -#}
       {{- render_glob "global-top-*" -}}
 
+  # A second HTTP bind requiring a PROXY header, for HAProxy behind an L4 load
+  # balancer. Its own port, not `accept-proxy` on httpPort: HAProxy has no
+  # "PROXY optional" bind, so that would drop every header-less connection.
+  # Lands on the mode-tcp frontend, whose loopback send-proxy-v2 then carries
+  # the real client into http_frontend.
+  http-bind-extra-010-proxy-protocol:
+    template: |
+      {%- if tostring(extraContext | dig("proxyProtocol", "enabled") | fallback(false)) == "true" %}
+      bind *:{{ toint(extraContext | dig("proxyProtocol", "httpPort") | fallback(8081)) }} accept-proxy
+      {%- end -%}
+
 # ============================================================================
 # Map Files
 # ============================================================================
@@ -4012,3 +4023,81 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "HAProxy 3.4 rejects a UNIX ring server"
+
+  test-proxy-protocol-http-bind:
+    description: >-
+      extraContext.proxyProtocol.enabled adds a second HTTP bind requiring a
+      PROXY header. The plain httpPort bind must survive: a bind with
+      accept-proxy drops connections that arrive without the header, so
+      replacing the port instead of adding one would cut off direct,
+      in-cluster and NodePort access.
+    extraContext:
+      proxyProtocol:
+        enabled: true
+        httpPort: 8081
+        httpsPort: 8444
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend http-tcp$.*?^\s+bind \*:80$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^frontend http-tcp$.*?^\s+bind \*:8081 accept-proxy$'
+
+  test-proxy-protocol-http-bind-disabled:
+    description: >-
+      Negative control for test-proxy-protocol-http-bind. Sets enabled=false
+      explicitly rather than leaning on the chart default: per-test extraContext
+      deep-merges into the operator's, so an operator who turns proxyProtocol on
+      would otherwise fail this test and crash-loop on the load gate. The
+      pattern is scoped to `bind *:<port> accept-proxy` because the h1/h2c
+      loopback frontends always carry accept-proxy on their unix sockets.
+    extraContext:
+      proxyProtocol:
+        enabled: false
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bind \*:[0-9]+ accept-proxy'

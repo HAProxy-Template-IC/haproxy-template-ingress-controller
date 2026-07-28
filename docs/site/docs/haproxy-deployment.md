@@ -68,6 +68,56 @@ haproxy:
   enabled: false
 ```
 
+### PROXY protocol
+
+Behind a layer-4 load balancer — an edge HAProxy, a cloud network load balancer,
+a firewall that port-forwards and rewrites the source address — HAProxy sees the
+load balancer as the client. Every request then logs the same `client_ip`,
+IP-keyed rate limiting shares one bucket across the internet, and the WAF and any
+IP-based access control list see a single client.
+
+The load balancer fixes this by adding a PROXY protocol header that carries the
+original address. Enable the matching listeners:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        proxyProtocol:
+          enabled: true
+          httpPort: 8081
+          httpsPort: 8444
+```
+
+That adds two binds, adds them to the HAProxy Service and the NetworkPolicy, and
+leaves `haproxy.ports.http` / `haproxy.ports.https` exactly as they were. Point
+the balancer at the new ports:
+
+```haproxy
+# On the upstream load balancer
+server k8s-https 10.0.0.50:8444 send-proxy-v2
+```
+
+Requests arriving on the PROXY ports carry the real client through the access
+log's `client_ip`, `src`-keyed rate limiting, the WAF, and IP access control
+lists. Terminated HTTPS on `httpsPort` uses the same certificates, ciphers, and
+protocol negotiation as the plain HTTPS bind; with TLS-Passthrough configured,
+`httpsPort` attaches to the SNI-routing frontend instead so passthrough hosts
+keep working.
+
+!!! warning "Send the header, or the connection is dropped"
+    HAProxy has no "PROXY header optional" mode. A connection reaching
+    `httpPort` or `httpsPort` without the header is rejected, so only the
+    upstream balancer may target these ports. Everything else — direct access,
+    in-cluster clients, NodePort traffic, probes — keeps using the regular
+    `haproxy.ports.http` / `haproxy.ports.https`, which is why these are
+    additional ports rather than a flag on the existing ones.
+
+This is separate from the
+[`haproxy-haptic.org/proxy-protocol`](libraries/haptic-annotations.md)
+annotation, which makes HAProxy *send* a PROXY header to a backend.
+
 ### Full HAProxy Service reference
 
 ```yaml

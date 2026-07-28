@@ -10,6 +10,7 @@
 {{- $dataplaneConfig := .Values.controller.config.dataplane }}
 {{- $podSpec := $haproxy.podSpec }}
 {{- $ports := $haproxy.ports }}
+{{- $proxyProtocol := include "haptic.proxyProtocol" . | fromYaml }}
 {{- $dataplane := $haproxy.dataplane }}
 {{- $selectorLabels := include "haptic.selectorLabels" . }}
 apiVersion: apps/v1
@@ -183,6 +184,14 @@ spec:
             {{- range $name := list "http" "https" "stats" }}
             - name: {{ $name }}
               containerPort: {{ index $ports $name }}
+              protocol: TCP
+            {{- end }}
+            {{- if $proxyProtocol.enabled }}
+            - name: proxy-http
+              containerPort: {{ int $proxyProtocol.httpPort }}
+              protocol: TCP
+            - name: proxy-https
+              containerPort: {{ int $proxyProtocol.httpsPort }}
               protocol: TCP
             {{- end }}
           volumeMounts:

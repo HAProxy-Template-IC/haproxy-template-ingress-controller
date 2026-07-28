@@ -249,6 +249,16 @@ governance:
 |-----------|------|---------|-------------|
 | `controller.config.templatingSettings.extraContext.routing.regexMatchOrder` | string | `default` | Path matching order: `default` (Exact > Regex > Prefix-exact > Prefix) or `last` (Exact > Prefix-exact > Prefix > Regex, performance-first) |
 
+## PROXY protocol
+
+For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deployment.md#proxy-protocol).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `controller.config.templatingSettings.extraContext.proxyProtocol.enabled` | bool | `false` | Add HTTP and HTTPS binds that require a PROXY protocol header, so `client_ip`, `src`-keyed rate limiting, the WAF, and IP ACLs see the real client instead of the balancer. Adds the ports to the HAProxy Service, the container ports, and the NetworkPolicy |
+| `controller.config.templatingSettings.extraContext.proxyProtocol.httpPort` | int | `8081` | PROXY-protocol HTTP port. Additional to `haproxy.ports.http`, which stays open and header-free — a connection reaching this port without the header is dropped, so only the balancer may target it |
+| `controller.config.templatingSettings.extraContext.proxyProtocol.httpsPort` | int | `8444` | PROXY-protocol HTTPS port, using the same certificates, ciphers, and protocol negotiation as `haproxy.ports.https`. With TLS-Passthrough configured it attaches to the SNI-routing frontend instead |
+
 ## Default SSL certificate
 
 | Parameter | Type | Default | Description |
