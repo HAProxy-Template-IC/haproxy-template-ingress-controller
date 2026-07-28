@@ -39,7 +39,49 @@ The test for the exception: *could an operator plausibly swap this resource out 
 
 **Corollary on the chart side.** Resource-specific behaviour lives in resource-specific libraries (`ingress.yaml`, `gateway/*.yaml`, `haproxytech.yaml`, etc.), never in `base.yaml`. Vendor annotation libraries (`haproxy-ingress/`, `nginx-ingress/`, etc.) follow the same pattern. See `charts/CLAUDE.md` for the chart-side version.
 
-## Comments (RULE #2)
+## Validation Is Never Traded Away (RULE #2)
+
+**Sacrificing validation to make an operation succeed is ALWAYS out of the question.**
+Not to unblock an upgrade, not to turn a red pipeline green, not to ship on time. The
+validation surface — the bundled `validationTests`, the admission webhook, the startup
+load gate, the CRD schemas — *is* the product's guarantee that a config change cannot
+break an operator's fleet. Remove a piece of it and HAPTIC still runs; it just stops
+being trustworthy, which is the only reason to run it.
+
+**None of these are fixes. They are the bug, relocated:**
+
+- Narrowing a webhook's `objectSelector`, `rules`, or `namespaceSelector` so the
+  objects that fail it stop being checked.
+- Deleting, skipping, or `_helm_skip_test`-ing a validationTest that went red.
+- Relaxing a CRD's `required:` list so a malformed object is storable.
+- Widening an assertion, a timeout, or a tolerance until the failure stops reproducing.
+- Turning a check off "only for a window" / "only during migration" with nothing
+  stronger standing in its place.
+
+**A gate that blocks a legitimate operation is reporting a design defect.** It is doing
+its job. The defect is upstream of it — in the object model, the apply order, the
+version contract — and that is what you fix. "The gate is in the way" is never the
+finding; it is the symptom you were given to chase.
+
+**Validation may be *moved* only when the move is strictly stronger.** Earlier, atomic,
+and over the complete unit that is actually meaningful beats late, partial, and
+per-fragment. Moving a set-level check to *before* the first object is mutated is an
+improvement; deleting a per-object check because the set-level one "probably covers it"
+is not. State the delta explicitly and show it is positive — if you cannot, the answer
+is no.
+
+**Cost is not an argument.** A slower, uglier, larger design that keeps the guarantee
+beats an elegant one that loses it. Extra CRDs, extra hooks, extra CI minutes and a
+bigger diff are all cheaper than one operator discovering at 03:00 that the gate they
+relied on was quietly narrowed.
+
+Provenance: on 2026-07-28 a pre-split → post-split `helm upgrade` failed because the
+running (old) webhook validated the new per-library config objects standalone. The
+first proposal was an `objectSelector` excluding those objects from admission forever —
+trading a permanent guarantee for one command's exit code. Rejected: the object model
+was wrong, and that is what got fixed.
+
+## Comments (RULE #3)
 
 **The default is no comment.** A comment is a liability: it rots and it is re-read on
 every visit.

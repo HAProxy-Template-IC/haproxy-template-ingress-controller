@@ -1,0 +1,377 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: haproxyvalidationtests.haproxy-haptic.org
+spec:
+  group: haproxy-haptic.org
+  names:
+    kind: HAProxyValidationTests
+    listKind: HAProxyValidationTestsList
+    plural: haproxyvalidationtests
+    shortNames:
+    - htpltests
+    singular: haproxyvalidationtests
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.testCount
+      name: Tests
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          HAProxyValidationTests carries validation tests for an HAProxyTemplateConfig
+          that selects it.
+
+          Tests live in their own object because they dominate the configuration's size
+          — measured at 36% of the merged spec, and the difference between a profile
+          that fits etcd's per-object limit and one that does not — while being needed
+          only when the configuration is validated, never when it is rendered.
+
+          This is not a chart-private mechanism. An operator who disables every bundled
+          template library and writes their own configuration authors these objects the
+          same way the chart does, and may equally keep tests inline on the config's
+          `spec.validationTests`. Both sources are unioned; neither is privileged.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HAProxyValidationTestsSpec defines a set of validation tests.
+            properties:
+              validationTests:
+                additionalProperties:
+                  description: |-
+                    ValidationTest defines a validation test with fixtures and assertions.
+
+                    The test name is provided by the map key in ValidationTests.
+                  properties:
+                    assertions:
+                      description: |-
+                        Assertions defines the validation checks to perform.
+
+                        Optional in the schema, required in practice: config.ValidateStructure
+                        rejects a merged config whose test declares none. The schema cannot
+                        express it because the reserved `_global` entry is a shared baseline
+                        rather than a test — the runner never executes its assertions — and
+                        several template libraries each contribute part of it, so each of their
+                        objects carries an incomplete `_global` that only becomes whole after
+                        the merge.
+                      items:
+                        description: ValidationAssertion defines a single validation
+                          check.
+                        properties:
+                          description:
+                            description: Description explains what this assertion
+                              validates.
+                            type: string
+                          expected:
+                            description: Expected is the expected value for equals
+                              assertions.
+                            type: string
+                          jsonpath:
+                            description: JSONPath is the JSONPath expression for jsonpath
+                              assertions.
+                            type: string
+                          pattern:
+                            description: Pattern is the regex pattern for contains/not_contains
+                              assertions.
+                            type: string
+                          patterns:
+                            description: |-
+                              Patterns is a list of regex patterns for match_order assertions.
+                              The patterns must appear in the target in the order specified.
+                            items:
+                              type: string
+                            type: array
+                          target:
+                            description: |-
+                              Target specifies what to validate.
+
+                              Format depends on assertion type:
+                                - haproxy_valid: not used
+                                - contains/not_contains/equals: "haproxy.cfg", "map:<name>", "file:<name>", "cert:<name>"
+                                - jsonpath: the resource to query
+                            type: string
+                          type:
+                            description: |-
+                              Type is the assertion type.
+
+                              Supported types:
+                                - haproxy_valid: Validates that generated HAProxy config is syntactically valid
+                                - contains: Checks if target contains pattern (regex)
+                                - not_contains: Checks if target does not contain pattern (regex)
+                                - equals: Checks if target equals expected value
+                                - jsonpath: Evaluates JSONPath expression against target
+                                - match_count: Counts how many times pattern matches in target (regex)
+                                - match_order: Validates that patterns appear in specified order
+                                - deterministic: Verifies that rendering twice produces identical output
+                            enum:
+                            - haproxy_valid
+                            - contains
+                            - not_contains
+                            - equals
+                            - jsonpath
+                            - match_count
+                            - match_order
+                            - deterministic
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type: array
+                    currentConfig:
+                      description: |-
+                        CurrentConfig contains the raw HAProxy configuration from a previous deployment.
+
+                        This is used for testing slot-aware server assignment during rolling deployments.
+                        When provided, templates can access currentConfig to preserve server slot ordering.
+                        The content is parsed using the HAProxy config parser before being passed to templates.
+
+                        Example:
+                          currentConfig: |
+                            backend my-backend
+                                server srv1 10.0.0.1:8080
+                                server srv2 10.0.0.2:8080
+                      type: string
+                    currentFiles:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        CurrentFiles are the currently-deployed general auxiliary files
+                        (filename → content), exposed to templates under `currentFiles`. Used to
+                        test templates that read their own prior output — e.g. self-rotating TLS
+                        session-ticket keys inspecting the current key file's embedded date marker.
+                      type: object
+                    description:
+                      description: Description explains what this test validates.
+                      type: string
+                    extraContext:
+                      description: |-
+                        ExtraContext provides custom variables that override the global extraContext for this test.
+
+                        This allows testing template behavior with different extraContext values without
+                        modifying the global configuration.
+
+                        Example:
+                          extraContext:
+                            sanitize_auth_realm: true
+                            debug: true
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    fixtures:
+                      additionalProperties:
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        type: array
+                      description: |-
+                        Fixtures defines the Kubernetes resources to use for this test.
+
+                        Keys are resource type names (matching WatchedResources keys).
+                        Values are arrays of resources as raw JSON.
+
+                        Example:
+                          ingresses:
+                            - apiVersion: networking.k8s.io/v1
+                              kind: Ingress
+                              metadata:
+                                name: test-ingress
+
+                        Optional per object so several libraries can each contribute part of the
+                        shared `_global` baseline; see Assertions.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    httpResources:
+                      description: |-
+                        HTTPResources defines mock HTTP content for this test.
+
+                        These fixtures are used when templates call http.Fetch() to provide
+                        pre-defined content without making actual HTTP requests.
+
+                        Example:
+                          httpResources:
+                            - url: http://blocklist.example.com/list.txt
+                              content: |
+                                blocked-value-1
+                                blocked-value-2
+                      items:
+                        description: |-
+                          HTTPResourceFixture defines mock HTTP content for validation tests.
+
+                          When templates call http.Fetch() for the specified URL, the pre-defined
+                          content is returned instead of making an actual HTTP request.
+                        properties:
+                          content:
+                            description: |-
+                              Content is the mock response body to return.
+
+                              This content is returned when http.Fetch() is called with the
+                              matching URL during test execution.
+                            type: string
+                          url:
+                            description: |-
+                              URL is the HTTP URL to mock.
+
+                              When http.Fetch() is called with this URL during test execution,
+                              the Content field is returned instead of fetching from the network.
+                            minLength: 1
+                            type: string
+                        required:
+                        - content
+                        - url
+                        type: object
+                      type: array
+                    minHAProxyVersion:
+                      description: |-
+                        MinHAProxyVersion specifies the minimum HAProxy version required to run this test.
+
+                        When set, the test is skipped if the local HAProxy version is below this threshold.
+                        This is useful for tests that use HAProxy features only available in newer versions
+                        (e.g., shm-stats-file requires HAProxy 3.3+).
+
+                        Format: "major.minor" (e.g., "3.3")
+                      type: string
+                    requires:
+                      description: |-
+                        Requires lists watched-resource names this test depends on. When an
+                        optional watched resource has no served candidate version, every test
+                        requiring it is stripped from the effective config at load time.
+                        Each entry must name a key of watchedResources.
+                      items:
+                        type: string
+                      type: array
+                    requiresFields:
+                      description: |-
+                        RequiresFields lists schema field paths this test depends on, each in
+                        the form "<watchedResourceKey>.<field.path>" (e.g.
+                        "httproutes.spec.rules.filters.cors"). When any referenced field is
+                        absent from the resolved schema generation of its watched resource,
+                        the test is stripped from the effective config at load time. This
+                        covers clusters that serve the resource at the same API version as
+                        newer releases but with an older schema generation lacking the field.
+                        The first dot-segment of each entry must name a key of
+                        watchedResources.
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                description: |-
+                  ValidationTests maps test name to its definition, with exactly the shape
+                  and semantics of HAProxyTemplateConfigSpec.ValidationTests — the same
+                  suite runner executes both, so a test can be moved between the two
+                  without edits.
+
+                  A name may appear in only one source. Two sources defining the same test
+                  is an error rather than a silent last-writer-wins, because the losing
+                  definition would be an assertion its author believes is running.
+
+                  The reserved `_global` entry is the exception: several sources
+                  legitimately contribute part of it, and its fixtures are unioned.
+                type: object
+            type: object
+          status:
+            description: HAProxyValidationTestsStatus reports what the controller
+              made of this object.
+            properties:
+              conditions:
+                description: |-
+                  Conditions follows the standard Kubernetes condition contract. `Accepted`
+                  is False when this object was discovered but could not be used — a name
+                  collision, or a config that selects it refusing to load.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: ObservedGeneration is the spec generation this status
+                  describes.
+                format: int64
+                type: integer
+              testCount:
+                description: |-
+                  TestCount is the number of tests this object contributed to the suite the
+                  controller last ran. It is not len(spec.validationTests): a test whose
+                  name collides with another source contributes nothing, and this is how an
+                  operator sees that without reading logs.
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

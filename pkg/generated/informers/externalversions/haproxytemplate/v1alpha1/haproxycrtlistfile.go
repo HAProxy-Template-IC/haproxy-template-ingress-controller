@@ -24,9 +24,9 @@ import (
 	versioned "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	internalinterfaces "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions/internalinterfaces"
 	haproxytemplatev1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/generated/listers/haproxytemplate/v1alpha1"
-
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -48,48 +48,61 @@ type hAProxyCRTListFileInformer struct {
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
 func NewHAProxyCRTListFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredHAProxyCRTListFileInformer(client, namespace, resyncPeriod, indexers, nil)
+	return NewHAProxyCRTListFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
 }
 
 // NewFilteredHAProxyCRTListFileInformer constructs a new informer for HAProxyCRTListFile type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
 func NewFilteredHAProxyCRTListFileInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
-			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+	return NewHAProxyCRTListFileInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewHAProxyCRTListFileInformerWithOptions constructs a new informer for HAProxyCRTListFile type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewHAProxyCRTListFileInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	gvr := schema.GroupVersionResource{Group: "haproxy-haptic.org", Version: "v1alpha1", Resource: "haproxycrtlistfiles"}
+	identifier := options.InformerName.WithResource(gvr)
+	tweakListOptions := options.TweakListOptions
+	return cache.NewSharedIndexInformerWithOptions(
+		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
+			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).List(context.Background(), options)
+				return client.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).List(context.Background(), opts)
 			},
-			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).Watch(context.Background(), options)
+				return client.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).Watch(context.Background(), opts)
 			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).List(ctx, options)
+				return client.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).List(ctx, opts)
 			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).Watch(ctx, options)
+				return client.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).Watch(ctx, opts)
 			},
-		},
+		}, client),
 		&apishaproxytemplatev1alpha1.HAProxyCRTListFile{},
-		resyncPeriod,
-		indexers,
+		cache.SharedIndexInformerOptions{
+			ResyncPeriod: options.ResyncPeriod,
+			Indexers:     options.Indexers,
+			Identifier:   identifier,
+		},
 	)
 }
 
 func (f *hAProxyCRTListFileInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredHAProxyCRTListFileInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+	return NewHAProxyCRTListFileInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *hAProxyCRTListFileInformer) Informer() cache.SharedIndexInformer {

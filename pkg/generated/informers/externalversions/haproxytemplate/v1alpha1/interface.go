@@ -22,16 +22,18 @@ import (
 
 // Interface provides access to all the informers in this group version.
 type Interface interface {
-	// HAProxyCfgs returns a HAProxyCfgInformer.
-	HAProxyCfgs() HAProxyCfgInformer
 	// HAProxyCRTListFiles returns a HAProxyCRTListFileInformer.
 	HAProxyCRTListFiles() HAProxyCRTListFileInformer
+	// HAProxyCfgs returns a HAProxyCfgInformer.
+	HAProxyCfgs() HAProxyCfgInformer
 	// HAProxyGeneralFiles returns a HAProxyGeneralFileInformer.
 	HAProxyGeneralFiles() HAProxyGeneralFileInformer
 	// HAProxyMapFiles returns a HAProxyMapFileInformer.
 	HAProxyMapFiles() HAProxyMapFileInformer
 	// HAProxyTemplateConfigs returns a HAProxyTemplateConfigInformer.
 	HAProxyTemplateConfigs() HAProxyTemplateConfigInformer
+	// HAProxyValidationTestses returns a HAProxyValidationTestsInformer.
+	HAProxyValidationTestses() HAProxyValidationTestsInformer
 }
 
 type version struct {
@@ -45,14 +47,14 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
-// HAProxyCfgs returns a HAProxyCfgInformer.
-func (v *version) HAProxyCfgs() HAProxyCfgInformer {
-	return &hAProxyCfgInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
-}
-
 // HAProxyCRTListFiles returns a HAProxyCRTListFileInformer.
 func (v *version) HAProxyCRTListFiles() HAProxyCRTListFileInformer {
 	return &hAProxyCRTListFileInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// HAProxyCfgs returns a HAProxyCfgInformer.
+func (v *version) HAProxyCfgs() HAProxyCfgInformer {
+	return &hAProxyCfgInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // HAProxyGeneralFiles returns a HAProxyGeneralFileInformer.
@@ -68,4 +70,9 @@ func (v *version) HAProxyMapFiles() HAProxyMapFileInformer {
 // HAProxyTemplateConfigs returns a HAProxyTemplateConfigInformer.
 func (v *version) HAProxyTemplateConfigs() HAProxyTemplateConfigInformer {
 	return &hAProxyTemplateConfigInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// HAProxyValidationTestses returns a HAProxyValidationTestsInformer.
+func (v *version) HAProxyValidationTestses() HAProxyValidationTestsInformer {
+	return &hAProxyValidationTestsInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

@@ -20,7 +20,6 @@ import (
 	fmt "fmt"
 
 	v1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -51,12 +50,18 @@ func (f *genericInformer) Lister() cache.GenericLister {
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
 	// Group=haproxy-haptic.org, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithResource("haproxycrtlistfiles"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.HaproxyTemplateIC().V1alpha1().HAProxyCRTListFiles().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("haproxycfgs"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.HaproxyTemplateIC().V1alpha1().HAProxyCfgs().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("haproxygeneralfiles"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.HaproxyTemplateIC().V1alpha1().HAProxyGeneralFiles().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("haproxymapfiles"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.HaproxyTemplateIC().V1alpha1().HAProxyMapFiles().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("haproxytemplateconfigs"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.HaproxyTemplateIC().V1alpha1().HAProxyTemplateConfigs().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("haproxyvalidationtestses"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.HaproxyTemplateIC().V1alpha1().HAProxyValidationTestses().Informer()}, nil
 
 	}
 
