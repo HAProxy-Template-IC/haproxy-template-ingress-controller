@@ -136,7 +136,7 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 			-kubernetes-version $(KUBE_VERSION) \
 			-schema-location default \
 			-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-			-skip haproxy-haptic.org/v1alpha1/HAProxyTemplateConfig,haproxy-haptic.org/v1alpha1/HAProxyConfig,haproxy-haptic.org/v1alpha1/HAProxyMapFile \
+			-skip haproxy-haptic.org/v1alpha1/HAProxyTemplateConfig,haproxy-haptic.org/v1alpha1/HAProxyValidationTests,haproxy-haptic.org/v1alpha1/HAProxyConfig,haproxy-haptic.org/v1alpha1/HAProxyMapFile \
 			-summary
 	@echo ""
 	@echo "Checking release-Secret size..."
@@ -163,7 +163,7 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 			-kubernetes-version $(KUBE_VERSION) \
 			-schema-location default \
 			-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-			-skip haproxy-haptic.org/v1alpha1/HAProxyTemplateConfig,haproxy-haptic.org/v1alpha1/HAProxyConfig,haproxy-haptic.org/v1alpha1/HAProxyMapFile \
+			-skip haproxy-haptic.org/v1alpha1/HAProxyTemplateConfig,haproxy-haptic.org/v1alpha1/HAProxyValidationTests,haproxy-haptic.org/v1alpha1/HAProxyConfig,haproxy-haptic.org/v1alpha1/HAProxyMapFile \
 			-summary
 	@echo ""
 	@echo "Checking release-Secret size..."
