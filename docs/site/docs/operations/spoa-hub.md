@@ -22,7 +22,7 @@ Some plugins auto-enable with the template library that consumes them — each p
 - **mirror** follows `controller.templateLibraries.gateway.enabled`,
 - **rate-limit** follows `rateLimit.shared.enabled`.
 
-The gateway library is on by default and auto-enables the `mirror` plugin, so a default install already runs the hub with `mirror`. The `coraza` plugin auto-enables when you turn on the opt-in haproxy-ingress or nginx-ingress annotation library, and `external-auth` when you turn on nginx-ingress; `fingerprinting`, `maxmind`, `otel`, and `sso-auth` stay off until you enable them.
+The gateway library is on by default and auto-enables the `mirror` plugin, so a default install already runs the hub with `mirror`. The `coraza` plugin auto-enables when you turn on the opt-in haproxy-ingress or nginx-ingress annotation library, and `external-auth` when you turn on nginx-ingress; `fingerprinting`, `maxmind`, and `sso-auth` stay off until you enable them.
 
 Adding an inline policy, a trusted ConfigMap reference, or a default policy auto-enables Coraza; no redundant policy enable flag is required. All template behavior—dispatch, policy catalogs, permissions, body contracts, and custom-rule bounds—shares the structured `extraContext.waf` tree documented in the [native annotation reference](../libraries/haptic-annotations.md#reusable-waf-policies). Coraza execution belongs only to `spoaHub.plugins.coraza`: `timeoutMs`, `maxConcurrency`, `maxQueue`, directives, and plugin parameters have no feature-level aliases.
 
@@ -43,7 +43,6 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 | `fingerprinting`  | `v0.3.0`   |
 | `maxmind`         | `v0.4.0`          |
 | `mirror`          | `v0.6.0`           |
-| `otel`            | `v0.5.0`             |
 | `rate-limit`      | `v0.2.0`       |
 | `sso-auth`        | `v0.3.0`         |
 

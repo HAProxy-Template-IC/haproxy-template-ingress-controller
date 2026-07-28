@@ -41,7 +41,6 @@ ${BEGIN_MARK}
 | \`fingerprinting\`  | \`${SPOA_PLUGIN_FINGERPRINTING_VERSION}\`   |
 | \`maxmind\`         | \`${SPOA_PLUGIN_MAXMIND_VERSION}\`          |
 | \`mirror\`          | \`${SPOA_PLUGIN_MIRROR_VERSION}\`           |
-| \`otel\`            | \`${SPOA_PLUGIN_OTEL_VERSION}\`             |
 | \`rate-limit\`      | \`${SPOA_PLUGIN_RATE_LIMIT_VERSION}\`       |
 | \`sso-auth\`        | \`${SPOA_PLUGIN_SSO_AUTH_VERSION}\`         |
 

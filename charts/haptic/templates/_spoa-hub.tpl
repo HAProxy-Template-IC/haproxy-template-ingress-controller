@@ -224,6 +224,16 @@ objects such as resources/securityContext; the apiserver owns those schemas.
 {{- range $name, $plugin := $plugins -}}
   {{- if not (regexMatch "^[a-z][a-z0-9-]*$" $name) -}}{{- fail (printf "spoaHub.plugins key %q must contain lowercase letters, digits, and hyphens and start with a letter." $name) -}}{{- end -}}
   {{- if not (kindIs "map" $plugin) -}}{{- fail (printf "spoaHub.plugins.%s must be a map." $name) -}}{{- end -}}
+  {{- /* Migration guard, not a general name allowlist — a custom hub image may
+         legitimately ship plugins this chart has never heard of. Without it a
+         values block left over from before the otel plugin was removed renders
+         happily and writes a plugin the bundled image no longer contains into
+         config.toml, so the hub fails to load it at RUNTIME instead of the
+         install failing with a reason. Drop this guard once upgrades from
+         pre-removal versions are no longer a concern. */ -}}
+  {{- if eq $name "otel" -}}
+    {{- fail "spoaHub.plugins.otel was removed: the bundled hub image no longer ships the otel plugin, and a leftover block would be written into config.toml for a plugin that cannot be loaded. Remove the block. Distributed tracing no longer needs it — HAProxy mints and propagates W3C trace context itself and the Vector sidecar derives OTLP spans from the access log (controller.config.templatingSettings.extraContext.tracing)." -}}
+  {{- end -}}
   {{- $normalizedName := regexReplaceAll "-" $name "_" -}}
   {{- if hasKey $normalizedNames $normalizedName -}}{{- fail (printf "spoaHub plugin names %q and %q both normalize to %q; choose distinct names." (index $normalizedNames $normalizedName) $name $normalizedName) -}}{{- end -}}
   {{- $_ := set $normalizedNames $normalizedName $name -}}

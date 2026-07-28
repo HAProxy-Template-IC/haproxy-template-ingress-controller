@@ -711,6 +711,14 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         "Managed Valkey Helm guard: reject invalid image pull policy" \
         "rateLimit.shared.managedStore.imagePullPolicy must be one of: Always, IfNotPresent, Never." \
         --set-string rateLimit.shared.managedStore.imagePullPolicy=Sometimes
+    # A values block left over from before the otel plugin was removed must fail
+    # the render, not reach config.toml and fail when the hub tries to load a
+    # plugin the image no longer ships.
+    run_helm_failure_guard \
+        "SPOA Hub Helm guard: reject a leftover otel plugin block" \
+        "spoaHub.plugins.otel was removed" \
+        --set spoaHub.plugins.otel.enabled=true \
+        --set spoaHub.plugins.otel.timeoutMs=50
     run_helm_failure_guard \
         "SPOA Hub Helm guard: reject zero HAProxy processing margin" \
         "spoaHub.haproxy.timeoutProcessingMarginMs must be between 1 and 60000 milliseconds." \
