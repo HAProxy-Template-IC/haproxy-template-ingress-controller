@@ -1,31 +1,17 @@
-# Ingress Template Library
-#
-# Provides Kubernetes networking.k8s.io/v1 Ingress support.
-# Features: path matching (Exact, Prefix), TLS certificates, backend generation.
-
-# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.ingress.enabled }}'
   inject:
     - path: watchedResources.ingresses.fieldSelector
       value: 'spec.ingressClassName={{ .Values.ingressClass.name }}'
 
-# Library-declared extraContext defaults (merged at lowest precedence; an
-# operator override via controller.config.templatingSettings.extraContext wins).
+# Lowest precedence: controller.config.templatingSettings.extraContext overrides these.
 templatingSettings:
   extraContext:
-    # Serve every Ingress over HTTPS on the chart's https port using the default
-    # certificate, even without spec.tls (features-100-ingress-bind). Set to
-    # false to keep Ingress plaintext-only until a host opts in via spec.tls.
-    # Has no effect when the default certificate is disabled
-    # (defaultSSLCertificate.enabled=false) — there is no cert to bind then.
+    # Serve Ingress over HTTPS without spec.tls; no-op without a default certificate.
     ingressDefaultHTTPS: true
-    # Redirect all HTTPS-served Ingress hosts from HTTP to HTTPS
-    # (features-105-ingress-ssl-redirect). Opt-in; per-host vendor `ssl-redirect`
-    # annotations still work independently. Only redirects hosts actually served
-    # over HTTPS (default-HTTPS bind on, or the Ingress has spec.tls).
+    # Only hosts actually served over HTTPS (default bind on, or spec.tls) redirect.
     ingressDefaultSSLRedirect: false
-    # HTTP status code for the redirect above: one of 301, 302, 303, 307, 308.
+    # One of 301, 302, 303, 307, 308.
     ingressDefaultSSLRedirectCode: "308"
 
 watchedResources:
@@ -35,7 +21,6 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
     statusPatch: true
-    # fieldSelector: injected by Helm from ingressClass.name
   services:
     apiVersion: v1
     resources: services
@@ -44,57 +29,20 @@ watchedResources:
     apiVersion: discovery.k8s.io/v1
     resources: endpointslices
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
-    # "0" = no per-watcher debounce: the reconciler fires on every
-    # EndpointSlice change so a pod-IP rotation reaches HAProxy inside the
-    # kubelet Ready→SIGTERM window. The reconciler-level refractory still
-    # batches across resource kinds.
+    # No debounce: a pod-IP rotation must reach HAProxy inside the kubelet Ready→SIGTERM window.
     debounceInterval: "0"
 
 templateSnippets:
-  # ============================================================================
-  # Feature Registration
-  # ============================================================================
 
   features-100-ingress-bind:
     template: |
-      {#-
-        Ingress contribution to the chart-static bind decision.
-
-        * Any Ingress sets bindHTTPDefault — Ingress always serves
-          plaintext on the chart's http port, so the http_frontend
-          must bind there.
-        * By default any Ingress ALSO sets bindHTTPSDefault, so the
-          chart's https port terminates TLS with the default
-          certificate and the Ingress is reachable over both HTTP and
-          HTTPS out of the box — no spec.tls required. Two conditions
-          gate this default-on HTTPS:
-            - extraContext.ingressDefaultHTTPS (bool, default true).
-              Set it false to keep Ingress plaintext-only until a
-              spec.tls entry opts a host into HTTPS.
-            - a default certificate must be configured — the chart
-              surfaces defaultSSLCertificate.enabled as
-              extraContext.default_ssl_cert_name. With the default cert
-              disabled the chart is HTTP-only and there is no cert to
-              bind, so the https port stays closed.
-          An Ingress WITH spec.tls sets bindHTTPSDefault regardless of
-          the toggle — its own cert terminates TLS.
-
-        All flags also set the corresponding needHTTPFrontend /
-        needHTTPSFrontend so the surrounding frontend block renders,
-        plus needHTTPSTermination so the terminating https frontend
-        claims unmatched SNIs (rather than the ssl-tcp passthrough
-        frontend rejecting them). Resource libraries other than ingress
-        contribute to the same flags from their own
-        features-100-*-bind / -tls snippets; first writer wins is fine
-        because all flags are booleans.
-      -#}
+      {#- needHTTPSTermination makes the terminating https frontend claim unmatched
+          SNIs instead of the ssl-tcp passthrough frontend rejecting them. -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var tlsDefault bool = extraContext | dig("ingressDefaultHTTPS") | fallback(true) %}
       {%- var haveDefaultCert = tostring(extraContext | dig("tls", "defaultCertificate", "name") | fallback("")) != "" %}
       {%- var httpsByDefault = tlsDefault && haveDefaultCert %}
-      {#- Stash the default-HTTPS decision so features-105-ingress-ssl-redirect
-          reuses the exact same gate (an Ingress host is only redirected to
-          HTTPS when it is actually served over HTTPS). -#}
+      {#- features-105-ingress-ssl-redirect reuses this gate. -#}
       {%- gf["ingressHTTPSByDefault"] = httpsByDefault %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%%
@@ -110,7 +58,6 @@ templateSnippets:
 
   features-100-ingress-tls:
     template: |
-      {#- Registers TLS certificates from Ingress spec.tls with SSL infrastructure -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%%
@@ -125,13 +72,11 @@ templateSnippets:
             if secretName == "" {
               continue
             }
-            // Unique key for this secret (namespace + name)
             var namespace = ingress.Metadata.Namespace
             if !first_seen("ingress_tls", namespace, secretName) {
               continue
             }
 
-            // Fetch Secret and extract cert+key
             var secret = resources.secrets.GetSingle(namespace, secretName)
             if secret == nil {
               continue
@@ -142,34 +87,23 @@ templateSnippets:
               continue
             }
 
-            // Combine cert and key into single PEM (HAProxy format).
-            // Pipe form discards the b64decode error return, matching the
-            // pre-typing behaviour.
+            // HAProxy wants cert+key in one PEM; the pipe form drops b64decode's error.
             var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
 
-            // Register certificate file dynamically using file_registry
-            // The filename is sanitized by PathResolver (dots replaced with underscores, etc.)
             var certFilename = namespace + "_" + secretName + ".pem"
             var certPath, certRegErr = fileRegistry.Register("cert", certFilename, combinedPem)
             if certRegErr != nil {
               fail("failed to register certificate " + certFilename + ": " + tostring(certRegErr))
             }
 
-            // Extract the sanitized filename from the returned path
-            // This is needed because HAProxy client-native sanitizes filenames for storage
+            // client-native sanitizes filenames on disk; the crt-list must match the real name.
             var sanitizedFilename = basename(certPath)
 
-            // Register with SSL infrastructure for crt-list generation
-            // Use sanitized_filename to ensure crt-list matches the actual file on disk
             var tlsCert = map[string]any{
               "secret_namespace": namespace,
               "secret_name": secretName,
-              {#- toSlice() normalises the typed []string from
-                  Ingress.Spec.Tls[i].Hosts into []any so downstream
-                  ssl.yaml consumers (which assert .([]any) on a
-                  polymorphic tlsCertificates slice) don't trip on
-                  the typed-slice shape. No `| fallback([]any{})` —
-                  scriggoToSlice already returns []any{} for nil input. -#}
+              {#- ssl.yaml asserts .([]any) on tlsCertificates entries, which a typed
+                  []string would panic on. toSlice() returns []any{} for nil. -#}
               "sni_patterns": tls.Hosts | toSlice(),
               "sanitized_filename": sanitizedFilename,
             }
@@ -180,32 +114,6 @@ templateSnippets:
 
   features-105-ingress-ssl-redirect:
     template: |
-      {#-
-        Global HTTP→HTTPS redirect for Ingress (opt-in).
-
-        When extraContext.ingressDefaultSSLRedirect is true, every Ingress host
-        that is served over HTTPS is registered into gf["sslRedirectHosts"], so
-        the SSL library's features-160-ssl-redirect-map + frontend-filters-050
-        emit the shared `http-request redirect scheme https` rule for it. This
-        is the global counterpart to the per-host vendor `ssl-redirect`
-        annotations, which keep working and are additive.
-
-        A host is only redirected when it is actually reachable over HTTPS,
-        decided per host: either the default-HTTPS bind is on
-        (gf["ingressHTTPSByDefault"], set by features-100-ingress-bind from
-        ingressDefaultHTTPS + the default cert), which serves every host, or the
-        host carries its own certificate (it appears in a spec.tls[].hosts entry).
-        A bare host on a partly-TLS Ingress is therefore not redirected, so the
-        redirect never points a client at a port it isn't served on.
-
-        extraContext knobs:
-          - ingressDefaultSSLRedirect     (bool, default false) — turn it on.
-          - ingressDefaultSSLRedirectCode (default "308") — HTTP status code;
-            one of 301, 302, 303, 307, 308.
-
-        The global toggle redirects all HTTPS-served Ingress hosts. For per-host
-        control, leave it off and use the vendor `ssl-redirect` annotations.
-      -#}
       {%- var redirectAll bool = extraContext | dig("ingressDefaultSSLRedirect") | fallback(false) %}
       {%- if redirectAll %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
@@ -215,11 +123,8 @@ templateSnippets:
         {%- end %}
         {%- var httpsByDefault bool = gf | dig("ingressHTTPSByDefault") | fallback(false) %}
         {%- for _, ingress := range resources.ingresses.List() %}
-          {#- HTTPS availability is per-host: with the default-HTTPS bind on,
-              every host is served; otherwise only the hosts that carry their
-              own certificate (listed in a spec.tls[].hosts) are. Gate each host
-              on that, so a bare host on a partly-TLS Ingress is never redirected
-              to a port it isn't served on. -#}
+          {#- Gate per host: a bare host on a partly-TLS Ingress must not be
+              redirected to a port it isn't served on. -#}
           {%- var tlsHosts = map[string]bool{} %}
           {%- for _, tls := range ingress.Spec.Tls %}
             {%- for _, h := range tls.Hosts %}
@@ -238,22 +143,9 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
-  # ============================================================================
-  # Host Key Normalisation
-  # ============================================================================
-  #
-  # The util-host-key snippet (macro MapKeyForHost) moved to base.yaml
-  # ("Ingress Helpers" section) so gateway/ and the vendor annotation libraries
-  # can import it without the ingress library being enabled. Importers are
-  # unchanged: `{% import "util-host-key" for MapKeyForHost %}`.
-
-  # ============================================================================
-  # Backend Generation
-  # ============================================================================
 
   util-backend-name-ingress:
     template: |
-      {#- Generates backend name: <ns>_<ingress>_svc_<svc>_<port-name> (matches production format) -#}
       {% macro BackendNameIngress(ingress *resources.ingresses.T, path any) string %}{%%
         var namespace = ingress.Metadata.Namespace
         var name = ingress.Metadata.Name
@@ -261,7 +153,6 @@ templateSnippets:
         var portName = tostring(path | dig("backend", "service", "port", "name") | fallback(""))
         var portNumber = path | dig("backend", "service", "port", "number") | fallback(0)
 
-        // Resolve port number to port name via Service lookup when only number is specified
         if portName == "" && toint(portNumber) > 0 {
           var svc = resources.services.GetSingle(namespace, serviceName)
           if svc != nil {
@@ -274,7 +165,6 @@ templateSnippets:
           }
         }
 
-        // Fall back to port number if port name is not available
         var portIdentifier = portName
         if portIdentifier == "" {
           portIdentifier = tostring(portNumber)
@@ -285,24 +175,13 @@ templateSnippets:
 
   util-path-map-entry-ingress-shard:
     template: |
-      {#- Generates map entries for a slice of Ingress resources -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
 
       {% macro PathMapEntryIngressShard(ingresses []*resources.ingresses.T, pathTypes []string, suffix string) string %}
-        {#- Oldest-wins route ownership. When two Ingresses claim the same
-            host+path+slot, the older one (by creationTimestamp, tie-broken by
-            namespace/name) owns the route and the newer one's entry is dropped,
-            so the emitted map file has no duplicate keys and routing is
-            deterministic — an Ingress that was there first keeps its route when
-            a later one collides (matches ingress-nginx). Ingresses registered in
-            gf["coLocatedIngresses"] (nginx canary Ingresses, which overlay a
-            use_backend split onto their main's route instead of claiming a base
-            route) are excluded, so the main owns the route alone. gf is
-            populated during the haproxy.cfg render, which runs before this
-            aux-file render (renderer/service.go), so the exclusion is in place.
-            Recomputed per shard call (each shard needs the global owner view);
-            the computation is cheap string/map work. -#}
+        {#- HAProxy maps hold one entry per key, so colliding host+path+slot claims
+            resolve to one owner. gf["coLocatedIngresses"] is filled by the preceding
+            haproxy.cfg render. Recomputed per shard: each needs the global view. -#}
         {%%
           var owner = map[string]string{}
           var ownerTs = map[string]string{}
@@ -324,10 +203,8 @@ templateSnippets:
                   if oslot == "ImplementationSpecific" {
                     oslot = "Prefix"
                   }
-                  // Prefix "/foo" and "/foo/" render into the SAME map keys
-                  // (the emit stage strips the trailing slash for the Prefix
-                  // slot), so they must share an owner key. Exact is
-                  // character-exact and keeps its trailing slash.
+                  // The emit stage strips the trailing slash for Prefix, so /foo and
+                  // /foo/ share an owner key. Exact matches character-wise; slash kept.
                   var opath = path.Path
                   if oslot != "Exact" && len(opath) > 1 && hasSuffix(opath, "/") {
                     opath = opath[:len(opath)-1]
@@ -338,20 +215,14 @@ templateSnippets:
                   if !seen {
                     take = true
                   } else if ownerIsCanary[okey] && !isCanary {
-                    // A non-canary (main) Ingress always beats a canary
-                    // incumbent: the canary only overlays a split, the main
-                    // owns the base route.
+                    // A canary only overlays a split; the main owns the base route.
                     take = true
                   } else if ownerIsCanary[okey] == isCanary {
-                    // Same class (main vs main, or canary vs canary): oldest
-                    // wins, tie-broken by namespace/name.
                     if ts < ownerTs[okey] || (ts == ownerTs[okey] && oid < curId) {
                       take = true
                     }
                   }
-                  // A canary never displaces a non-canary owner: when both a
-                  // main and a canary claim the route the main wins, but a
-                  // canary with no main still owns (and serves) its own route.
+                  // A canary with no main still owns (and serves) its own route.
                   if take {
                     owner[okey] = oid
                     ownerTs[okey] = ts
@@ -365,9 +236,6 @@ templateSnippets:
         {%- for _, ingress := range ingresses -%}
           {%- var id = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name -%}
           {%- var matchCount = 0 -%}
-          {#- Count only paths this Ingress OWNS for the given pathType(s); a
-              path lost to an older Ingress on the same host+path is neither
-              counted nor emitted below. -#}
           {%- for _, rule := range ingress.Spec.Rules -%}
             {%- for _, path := range rule.Http.Paths -%}
               {%- if path.Path != "" -%}
@@ -381,18 +249,9 @@ templateSnippets:
                     {%- if cwinner == id -%}
                       {%- matchCount = matchCount + 1 -%}
                     {%- else -%}
-                      {#- This Ingress lost this route to an older Ingress
-                          (oldest-wins). Emit a RouteConflict Warning on the
-                          loser so operators see it via `kubectl describe
-                          ingress` / events — unless the loser is a co-located
-                          Ingress (nginx canary) that intentionally shares its
-                          main's route (losing is by design). recordEvent uses
-                          the same context access as statusPatch, so it is safe
-                          in the sharded `go` render; the EventCollector dedups
-                          the repeat from the pfxexact + prefix map passes. This
-                          runs in the count loop (before the matchCount gate) so
-                          it fires even for an Ingress that owns none of its
-                          routes. -#}
+                      {#- recordEvent is shard-safe; EventCollector dedups the pfxexact
+                          and prefix passes. Kept in the count loop, before the matchCount
+                          gate, so it fires for an Ingress that owns no route at all. -#}
                       {%%
                         var loserCoLocated = false
                         if coLocated != nil {
@@ -428,14 +287,9 @@ templateSnippets:
                       {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
                       {%- var actualSuffix = suffix -%}
                       {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
-                      {#- For pfxexact (Prefix-boundary check, suffix=""), strip the
-                         trailing slash so /foo/ Prefix's boundary entry is /foo
-                         and request /foo hits it. For Exact (also suffix=""),
-                         DO NOT strip — K8s spec says Exact is character-wise
-                         exact, so /foo/ must NOT match request /foo (upstream
-                         conformance scenario: "An Ingress with a trailing
-                         slashes in an exact path rule should not match
-                         requests without a trailing slash"). -#}
+                      {#- pfxexact strips the trailing slash so /foo/ Prefix's boundary
+                         entry is /foo. Exact must NOT strip: K8s conformance requires an
+                         Exact /foo/ to reject request /foo. -#}
                       {%- if path.PathType != "Exact" && suffix == "" && len(pathStr) > 1 && hasSuffix(pathStr, "/") -%}{%- pathStr = pathStr[:len(pathStr)-1] -%}{%- end -%}
       {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
                     {%- end -%}
@@ -447,13 +301,9 @@ templateSnippets:
         {%- end %}
       {% end %}
 
-  # ============================================================================
-  # Map File Generation (Sharded)
-  # ============================================================================
 
   util-sharded-path-map-entry-ingress:
     template: |
-      {#- Wraps PathMapEntryIngressShard with parallel sharding logic -#}
       {%- import "util-path-map-entry-ingress-shard" for PathMapEntryIngressShard -%}
       {%- import "util-macros" for CalculateShardCount -%}
       {% macro ShardedPathMapEntryIngress(pathTypes []string, suffix string) string %}
@@ -468,13 +318,9 @@ templateSnippets:
       {%- end -%}
       {% end %}
 
-  # ============================================================================
-  # Backend Generation
-  # ============================================================================
 
   util-generate-backends-ingress:
     template: |
-      {#- Generates backend sections for a list of Ingresses -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
@@ -505,12 +351,6 @@ templateSnippets:
               {%- end -%}
             {%- end -%}
           {%- end -%}
-          {#- spec.defaultBackend — per K8s spec, handles requests that don't
-             match any rule path. Emits its own backend pool through the same
-             first_seen dedup so a default backend pointing at the same
-             service+port as a rule backend doesn't produce a duplicate
-             `backend` stanza. The synthesized path lets BackendNameIngress
-             produce a stable, ingress-scoped backend name. -#}
           {%- var dbSvcName = ingress.Spec.DefaultBackend.Service.Name -%}
           {%- if dbSvcName != "" -%}
             {%- var path = map[string]any{"backend": ingress.Spec.DefaultBackend} -%}
@@ -535,7 +375,6 @@ templateSnippets:
 
   util-sharded-backends-ingress:
     template: |
-      {#- Sharded backend generator for Ingress resources -#}
       {%- import "util-generate-backends-ingress" for GenerateIngressBackends -%}
       {%- import "util-macros" for CalculateShardCount -%}
       {% macro ShardedIngressBackends(ingresses []*resources.ingresses.T) string %}
@@ -551,7 +390,6 @@ templateSnippets:
 
   backends-500-ingress:
     template: |
-      {#- Generates HAProxy backend sections for all Ingress resources -#}
       {%- import "util-sharded-backends-ingress" for ShardedIngressBackends -%}
       {%- var allIngresses = resources.ingresses.List() -%}
       {%- if len(allIngresses) > 0 %}
@@ -560,7 +398,6 @@ templateSnippets:
       {%- end -%}
   util-generate-host-map-ingress:
     template: |
-      {#- Macro to generate host map entries for Ingress resources -#}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- macro GenerateIngressHostMap(ingresses []*resources.ingresses.T) -%}
       {%- for _, ingress := range ingresses -%}
@@ -578,7 +415,6 @@ templateSnippets:
 
   util-sharded-host-map-ingress:
     template: |
-      {#- Sharded host map generator for Ingress resources -#}
       {%- import "util-generate-host-map-ingress" for GenerateIngressHostMap -%}
       {%- import "util-macros" for CalculateShardCount -%}
       {%- macro ShardedIngressHostMap(ingresses []*resources.ingresses.T) -%}
@@ -594,7 +430,6 @@ templateSnippets:
 
   map-host-500-ingress:
     template: |
-      {#- Generate host map entries for Ingress resources (wildcards converted to suffix form) -#}
       {%- import "util-sharded-host-map-ingress" for ShardedIngressHostMap %}
       {%- var allIngresses = resources.ingresses.List() %}
       {%- if len(allIngresses) > 0 %}
@@ -604,93 +439,34 @@ templateSnippets:
 
   map-path-exact-500-ingress:
     template: |
-      {#-
-        Ingress Exact Path Map Entries
-
-        Purpose: Generates path-exact.map entries for Ingress exact path matching.
-
-        Extension Point: map-path-exact-* (priority 500)
-
-        Matches: Ingress paths with pathType: Exact
-      -#}
       {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-path-exact-ingress
       {{ ShardedPathMapEntryIngress([]string{"Exact"}, "") }}
 
   map-pfxexact-500-ingress:
     template: |
-      {#-
-        Ingress Prefix-Exact Path Map Entries
-
-        Purpose: Generates path-prefix-exact.map entries for exact prefix boundary matching.
-
-        Extension Point: map-pfxexact-* (priority 500)
-
-        Matches: Ingress paths with pathType: Prefix or ImplementationSpecific
-        Note: No trailing slash - matches exact path for prefix boundary check.
-      -#}
       {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-pfxexact-ingress
       {{ ShardedPathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "") }}
 
   map-path-prefix-500-ingress:
     template: |
-      {#-
-        Ingress Prefix Path Map Entries
-
-        Purpose: Generates path-prefix.map entries for prefix path matching.
-
-        Extension Point: map-path-prefix-* (priority 500)
-
-        Matches: Ingress paths with pathType: Prefix or ImplementationSpecific
-        Note: Adds trailing slash for HAProxy map_beg matching.
-      -#}
       {%- import "util-sharded-path-map-entry-ingress" for ShardedPathMapEntryIngress -%}
       # ingress/map-path-prefix-ingress
       {{ ShardedPathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "/") }}
 
   map-path-prefix-501-ingress-default:
     template: |
-      {#- spec.defaultBackend catch-all entries per K8s Ingress spec
-         ("defaultBackend handles requests that don't match any rule").
-         The map_beg longest-prefix-match in path-prefix.map naturally
-         picks the most-specific rule entry first, falling through to
-         these catch-alls when no rule path matched.
-
-         The hostKey for each entry determines what the catch-all
-         applies to:
-           - "" (rules-less Ingress, OR rule with no host):
-                emits "/" — catches every host that didn't match a
-                more-specific entry (the K8s "all traffic to default"
-                semantics for rules-less; for hostless rules it matches
-                the same all-hosts intent).
-           - "<host>" (rule with a host):
-                emits "<host>/" — catches requests to that host that
-                didn't match any of the Ingress's rule paths.
-         (Wildcard hosts already had their `*` stripped by
-         MapKeyForHost, so `*.foo.com` becomes `.foo.com` which is the
-         same form host.map uses.)
-
-         Dedup per host: HAProxy maps keep only one entry per duplicate
-         key, so two Ingresses both claiming the same host's catch-all
-         would conflict. We sort all candidate (hostKey, ingress) pairs
-         by creationTimestamp desc, then use first_seen per hostKey to
-         pick the newest Ingress per host. The "newest wins" semantic
-         (a) matches what operators expect when they roll out a new
-         default and (b) avoids a stale-Ingress race during scenario
-         churn — a first-by-list-order pick would land on a being-
-         deleted backend whose pods are already gone, producing 503s
-         on the new scenario's traffic (originally confirmed in
-         GitLab MR !955 pipeline 2529981548 for the rules-less case;
-         the same logic applies per host now). -#}
+      {#- map_beg longest-prefix match picks the most-specific rule entry first, so
+         these catch-alls only fire when no rule path matched. NEWEST wins per host
+         (rule routes are oldest-wins): a being-deleted Ingress would otherwise keep
+         the catch-all and serve 503s. -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-host-key" for MapKeyForHost -%}
       {%- var candidates = []any{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {#- dig() handles "defaultBackend absent" (returns nil) vs
-            "present but with no service" (returns the struct, then
-            inner dig() returns nil on absent service). Typed access
-            alone can't observe these cases. -#}
+        {#- dig() distinguishes an absent defaultBackend from one with no service;
+            typed access can observe neither. -#}
         {%- if dig(ingress, "spec", "defaultBackend") != nil && dig(ingress, "spec", "defaultBackend", "service") != nil -%}
           {%- var ts = ingress.Metadata.CreationTimestamp -%}
           {%- var rules = ingress.Spec.Rules -%}
@@ -709,14 +485,8 @@ templateSnippets:
         {%- for _, cand := range sorted -%}
           {%- var hostKey = tostring(cand["hostKey"]) -%}
           {%- if first_seen("ingress_default_host", hostKey) -%}
-            {#- Explicit type assertion: cand is map[string]any so
-                cand["ingress"] is statically `any`; without the
-                `.(*resources.ingresses.T)` cast, BackendNameIngress's
-                typed parameter would force Scriggo into an implicit
-                `any → *T` conversion at the call site that empirically
-                broke TestIngressAuthHeadersFail on MR !1010 (bisect-
-                confirmed). The explicit assertion takes the standard
-                Scriggo emit path instead. -#}
+            {#- Scriggo miscompiles the implicit any → *T conversion at a typed macro
+                parameter; the explicit assertion takes the standard emit path. -#}
             {%- var ingress = cand["ingress"].(*resources.ingresses.T) -%}
             {%- var path = map[string]any{"backend": ingress.Spec.DefaultBackend} %}
       # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} (defaultBackend → "{{ hostKey }}/")
@@ -725,24 +495,10 @@ templateSnippets:
         {%- end -%}
       {%- end %}
 
-  # ============================================================================
-  # Status Patch Registration
-  # ============================================================================
 
   util-generate-ingress-status-patches:
     template: |
-      {#-
-        Generate Ingress Status Patches
-
-        For each Ingress, registers a status patch with:
-          - deployed: LoadBalancer addresses from address discovery
-          - deployFailed: Empty LoadBalancer addresses
-
-        Parameters:
-          ingresses: Slice of Ingress resources to process
-
-        Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
-      -#}
+      {#- statusPatch is mutex-guarded, so this is safe under the sharded go render. -#}
       {% macro GenerateIngressStatusPatches(ingresses []*resources.ingresses.T) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var addresses = gf["addresses"] %}
@@ -771,12 +527,6 @@ templateSnippets:
 
   util-sharded-ingress-status-patches:
     template: |
-      {#-
-        Sharded Ingress Status Patches
-
-        Wraps GenerateIngressStatusPatches with automatic parallel sharding.
-        Uses the same pattern as ShardedIngressBackends.
-      -#}
       {%- import "util-generate-ingress-status-patches" for GenerateIngressStatusPatches -%}
       {%- import "util-macros" for CalculateShardCount -%}
       {% macro ShardedIngressStatusPatches(ingresses []*resources.ingresses.T) %}
@@ -792,17 +542,7 @@ templateSnippets:
 
   status-patches-200-ingress:
     template: |
-      {#-
-        Ingress Status Patch Registration
-
-        Extension Point: status-patches-* (priority 200)
-
-        Registers status patches for all Ingress resources with LoadBalancer
-        addresses from address discovery. Skips if no addresses are available.
-
-        Dependencies:
-          - features-075-address-discovery (provides gf["addresses"])
-      -#}
+      {#- gf["addresses"] comes from features-075-address-discovery. -#}
       {%- import "util-sharded-ingress-status-patches" for ShardedIngressStatusPatches -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- if gf["addresses"] != nil %}
@@ -813,38 +553,11 @@ templateSnippets:
       {%- end %}
 
 k8sResources:
-  # Warning Events for Ingresses whose by-name backend reference rendered
-  # placeholder-only slots because the Service is absent (issue #66).
-  #
-  # networking.k8s.io/v1 Ingress status has no conditions field (only
-  # loadBalancer), so — unlike Gateway API routes, which get
-  # ResolvedRefs=False/BackendNotFound on their parent status — there is no
-  # status surface to carry "your backend Service doesn't exist". Without a
-  # signal, a permanent Service-name typo is indistinguishable from a
-  # propagation race and serves 503 silently forever (the degraded render is
-  # deliberate, see util-service-port-resolution). A core/v1 Event on the
-  # Ingress is the operator-visible surface: it shows up in
-  # `kubectl describe ingress` and `kubectl get events`.
-  #
-  # Mechanics:
-  #   - BackendServers (base.yaml, step 5b) records every by-name reference
-  #     that ended up placeholder-only under a shared
-  #     "degradedBackendRef:<ns>/<service>/<portName>" key during the
-  #     haproxy.cfg render. k8sResources templates render strictly after the
-  #     config render, so the keys are complete when this template runs.
-  #   - This template walks the watched Ingresses, probes each by-name
-  #     backend reference against those keys, and emits one Event per
-  #     affected Ingress (one message listing all of its degraded refs).
-  #   - The Event's name is deterministic, so the resource applier SSAs the
-  #     same object every cycle and orphan-prunes it as soon as the Service
-  #     appears (brief propagation races thus produce a short-lived Event
-  #     that cleans itself up — no flapping conditions).
-  #   - The apiserver expires Events after --event-ttl (default 1h).
-  #     lastTimestamp is therefore bucketed to 20-minute steps: while the
-  #     degradation persists, any reconcile in a new bucket changes the
-  #     payload, which re-applies the Event and refreshes its TTL — without
-  #     churning the applier on every render. metadata.creationTimestamp
-  #     carries the first-observed time for free.
+  # Ingress status has no conditions field, so a Warning Event is the only
+  # operator-visible surface for a by-name backend left with placeholder-only
+  # slots. Its degradedBackendRef:<ns>/<svc>/<port> keys are written by
+  # BackendServers (base.yaml) during the haproxy.cfg render, which precedes
+  # every k8sResources render.
   ingress-degraded-backend-events:
     template: |
       {%%
@@ -856,9 +569,7 @@ k8sResources:
             continue
           }
 
-          // Collect this Ingress's by-name service-port references that the
-          // config render recorded as degraded. Spec walk mirrors
-          // GenerateIngressBackends: every rule path plus defaultBackend.
+          // Spec walk must mirror GenerateIngressBackends: rule paths plus defaultBackend.
           var degraded = []any{}
           var seen = map[string]bool{}
           var refs = []any{}
@@ -895,19 +606,16 @@ k8sResources:
             continue
           }
 
-          // Deterministic per-Ingress Event name, bounded to the 253-char
-          // limit (Ingress names may themselves be up to 253 chars).
+          // Bounded to 253 chars; an Ingress name alone may already reach it.
           var evName = name + ".backend-unresolved"
           if len(evName) > 253 {
-            // Hash-only overflow name: a byte-truncated prefix can end on a
-            // '.' separator, making the next label start with '-' (invalid
-            // DNS-1123) and failing every SSA of the Event thereafter.
+            // Hash-only, not truncated: a byte-truncated prefix can end on '.', making
+            // the next label start with '-' (invalid DNS-1123) and failing every SSA.
             evName = "backend-unresolved-" + sha256(name)[:32]
           }
 
-          // 20-minute lastTimestamp bucket: stable within a bucket (no
-          // apply churn), changes across buckets (refreshes the apiserver's
-          // event TTL while the degradation persists).
+          // 20-minute bucket: stable within a bucket (no apply churn), changes
+          // across buckets to refresh the apiserver's event TTL (--event-ttl, 1h).
           var bucket = now().UTC().Unix() / 1200 * 1200
           var lastSeen = unixTime(bucket, 0).UTC().Format("2006-01-02T15:04:05Z07:00")
 
@@ -1038,7 +746,6 @@ validationTests:
         target: map:path-prefix-exact.map
         pattern: "example.com/app BACKEND:default_multi-port_svc_api-svc_http"
 
-      # Map Formatting Tests - Ensure proper line separation
       - type: not_contains
         target: map:host.map
         pattern: "hosts\\)\\S"
@@ -1074,7 +781,6 @@ validationTests:
             name: example-tls
             namespace: default
           data:
-            # Test certificate (base64-encoded)
             tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
             tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
       ingresses:
@@ -1314,7 +1020,6 @@ validationTests:
               - port: 80
                 targetPort: 8080
       endpoints:
-        # After rolling deployment: pod 10.0.0.2 removed, pod 10.0.0.3 added
         - apiVersion: discovery.k8s.io/v1
           kind: EndpointSlice
           metadata:
@@ -1494,28 +1199,16 @@ validationTests:
               kubernetes.io/service-name: cond-svc
           addressType: IPv4
           endpoints:
-            # Healthy steady-state pod — must appear.
             - addresses: ["10.0.0.1"]
               conditions: {ready: true, serving: true, terminating: false}
               targetRef: {kind: Pod, name: cond-pod-ready}
-            # New pod with sandbox up but container not yet listening
-            # (kubelet has added it to the slice as not-ready). MUST NOT
-            # appear — including it puts a dead IP in the backend until
-            # the readiness probe finally flips Ready=true.
             - addresses: ["10.0.0.2"]
               conditions: {ready: false, serving: false, terminating: false}
               targetRef: {kind: Pod, name: cond-pod-starting}
-            # Old pod after SIGTERM: kubelet keeps the entry in the slice
-            # for the grace window but flags it terminating. MUST NOT
-            # appear — most apps stop accepting new connections on
-            # SIGTERM, so HAProxy dispatching to this pod produces
-            # connection-refused 503s.
             - addresses: ["10.0.0.3"]
               conditions: {ready: false, serving: false, terminating: true}
               targetRef: {kind: Pod, name: cond-pod-terminating}
-            # Endpoint with no conditions block at all — per the
-            # EndpointSlice spec, nil Ready is treated as Ready=true (the
-            # producer didn't fill it in). MUST appear.
+            # Absent conditions means Ready=true per the EndpointSlice spec.
             - addresses: ["10.0.0.4"]
               targetRef: {kind: Pod, name: cond-pod-noconds}
           ports:
@@ -1884,25 +1577,19 @@ validationTests:
         target: map:path-prefix.map
         pattern: "bar.example.com/echo/ BACKEND:default_wildcard-host_svc_foo-bar-com_http"
 
-      # Only unroutable placeholder slots — nothing to route to yet.
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 192\\.0\\.2\\.1:1 .*disabled"
 
-      # The unresolved port must never leak into a server line as ":0".
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_[0-9]+ \\S+:0"
 
-      # Operator visibility (issue #66): the placeholder-only degradation
-      # emits exactly one Warning Event on the owning Ingress.
       - type: match_count
         target: "k8s:ingress-degraded-backend-events"
         pattern: "kind: Event"
         expected: "1"
-      # lastTimestamp carries a (bucketed) RFC3339 value so kubectl's
-      # LAST SEEN column works and re-applies refresh the apiserver's
-      # event TTL while the degradation persists.
+      # Bucketed RFC3339: drives kubectl's LAST SEEN and refreshes the event TTL.
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: 'lastTimestamp: .?2[0-9]{3}-[0-9]{2}-[0-9]{2}T'
@@ -1915,16 +1602,14 @@ validationTests:
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "name: wildcard-host\\.backend-unresolved"
-      # involvedObject carries the Ingress identity including uid — kubectl
-      # describe matches events by involvedObject.uid field selector.
+      # kubectl describe matches events by the involvedObject.uid field selector.
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "kind: Ingress"
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "uid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-      # Message names the unresolvable Service (token-only pattern so the
-      # assertion is independent of the YAML marshaller's scalar quoting).
+      # Token-only pattern: independent of the YAML marshaller's scalar quoting.
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "default/foo-bar-com"
@@ -2003,12 +1688,10 @@ validationTests:
     assertions:
       - type: haproxy_valid
 
-      # Slice carries port "http" → real server despite the missing Service.
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10\\.0\\.0\\.9:8080 .*enabled"
 
-      # Slice lacks port "http" → endpoint skipped, placeholder slots only.
       - type: not_contains
         target: haproxy.cfg
         pattern: "10\\.0\\.0\\.10"
@@ -2017,11 +1700,9 @@ validationTests:
         target: haproxy.cfg
         pattern: "server SRV_[0-9]+ \\S+:0"
 
-      # svc-slow rendered placeholder-only → Warning Event names it.
       - type: contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "default/svc-slow"
-      # svc-fast resolved real servers through its slice → no false alarm.
       - type: not_contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "default/svc-fast"
@@ -2148,7 +1829,6 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_by-name-resolved_svc_healthy-svc_http"
-      # No Event object at all — neither shape is a by-name degradation.
       - type: not_contains
         target: "k8s:ingress-degraded-backend-events"
         pattern: "kind: Event"

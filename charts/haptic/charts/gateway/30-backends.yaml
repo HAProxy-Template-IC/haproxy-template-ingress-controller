@@ -2,14 +2,6 @@ templateSnippets:
   util-generate-httproute-backends-gateway:
     requires: [gateways, httproutes]
     template: |
-      {#- Generate backends for HTTPRoute resources.
-          Typed sibling of the original polymorphic
-          GenerateGatewayBackends. Deduplicates backends across all
-          routes using first_seen.
-
-          Parameters:
-            routes: typed slice of HTTPRoute resources
-            dedupCategory: first_seen category name -#}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- macro GenerateHTTPRouteBackends(routes []*resources.httproutes.T, dedupCategory string) -%}
@@ -21,15 +13,9 @@ templateSnippets:
       {%- var backendRefs = rule.BackendRefs -%}
       {%- if len(backendRefs) > 0 %}
       {%- for _, backendRef := range backendRefs -%}
-      {#- Skip backendRefs the chart can't realise as a HAProxy backend.
-          Per Gateway API spec, only core/v1 Service refs are routable;
-          anything else (custom kind, wrong group) results in
-          ResolvedRefs=False/InvalidKind on the route. The backend
-          rendering below would otherwise silently use the ref's `name`
-          field (which can collide with a real Service of the same
-          name) and incorrectly route traffic. The route-matcher path
-          below detects all-invalid rules and routes them to
-          gw-invalid-backend (HTTP 500) instead. -#}
+      {#- Only core/v1 Service refs are routable; another kind would silently
+          match a same-named Service. Rules whose refs are all invalid are
+          routed to gw-invalid-backend (500) by the frontend matcher. -#}
       {%- var refGroup = backendRef.Group -%}
       {%- var refKind = backendRef.Kind -%}
       {%- if refKind == "" %}{%- refKind = "Service" %}{%- end -%}
@@ -39,14 +25,8 @@ templateSnippets:
       {%- var backendName = backendRef.Name -%}
       {%- var backendPort = toint(backendRef.Port) -%}
       {%- if backendPort == 0 %}{%- backendPort = 80 %}{%- end -%}
-      {#- backendRef.namespace defaults to the route's namespace (per
-          Gateway API spec). For cross-namespace backendRefs, the
-          target Service + EndpointSlice live in the ref's namespace,
-          so endpoint resolution must look there — not in routeNs.
-          Conformance test HTTPRouteReferenceGrant sets up a
-          cross-namespace HTTPRoute → Service ref permitted by RG;
-          previously the chart resolved endpoints in routeNs which
-          turned up nothing and HAProxy returned 503 / no server. -#}
+      {#- Cross-namespace ref: the Service and its EndpointSlices live in
+          backendNs, so endpoint resolution below must use it, not routeNs. -#}
       {%- var backendNs = backendRef.Namespace -%}
       {%- if backendNs == "" %}{%- backendNs = routeNs %}{%- end -%}
       {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
@@ -55,12 +35,8 @@ templateSnippets:
       {%- var protoFlag = "" -%}
       {%- var routeTypeLabel = "HTTPRoute" -%}
       {%- var beKey = BackendNameGateway(route, backend) -%}
-      {#- Per Gateway API spec, when the target Service port declares
-          appProtocol (kubernetes.io/h2c, kubernetes.io/ws[s]), the data
-          plane MUST honour that protocol. HAProxy's `proto` directive on
-          default-server gives us h2c; WebSocket flows through native HTTP
-          handling without any directive. We look up the Service by
-          (namespace, name) and find the port matching backendRef.port. -#}
+      {#- A Service port with appProtocol kubernetes.io/h2c needs `proto h2`;
+          ws/wss need no directive (native HTTP handling covers them). -#}
       {%- var resolvedProtoFlag = protoFlag -%}
       {%- if protoFlag == "" -%}
         {%- var svc = resources.services.GetSingle(backendNs, tostring(backendName)) -%}
@@ -74,33 +50,10 @@ templateSnippets:
           {%- end -%}
         {%- end -%}
       {%- end -%}
-      {#- BackendTLSPolicy lookup: per Gateway API spec, when a
-          BackendTLSPolicy in the same namespace targets this Service
-          (optionally pinned to a sectionName matching the port name),
-          the data plane MUST connect to the backend over TLS, validate
-          the server cert against the policy's CA bundle, and use
-          policy.validation.hostname for SNI + cert hostname check.
-          We resolve the policy's CA refs to a single PEM blob and
-          stash it via fileRegistry; the default-server line below picks
-          up the resulting `ssl ca-file ... verify required sni ...`. -#}
       {%- var btlsCaPath = "" -%}
       {%- var btlsHostname = "" -%}
-      {#- btlsVerifyHost is the value passed to HAProxy `verifyhost`.
-          Per Gateway API spec (BackendTLSPolicy validation), when
-          `subjectAltNames` is set the served cert must carry at least
-          one SAN matching one of the listed entries, and `hostname`
-          is then used ONLY for SNI / cert selection — not for the cert
-          identity check. So SNI continues to come from `hostname`,
-          but verifyhost comes from the first Hostname-type SAN when
-          SANs are present (falling back to `hostname` when no SANs are
-          declared, matching the pre-SAN behaviour). -#}
       {%- var btlsVerifyHost = "" -%}
       {%- var btlsBroken = false -%}
-      {#- gw client-cert: per Gateway API spec, when the route's parent
-          Gateway carries `spec.tls.backend.clientCertificateRef`, the
-          backend connection MUST present that cert. Resolve once per
-          backend so the default-server line below can emit
-          `crt <path>` alongside any BackendTLSPolicy-driven options. -#}
       {%- var gwClientCertPath = "" -%}
       {%%
         var portNameForBackend = ""
@@ -114,9 +67,8 @@ templateSnippets:
             }
           }
         }
-        // Untyped via the backendtlspolicies contrib seam: typed access
-        // here would strip ALL gateway backends on clusters without the
-        // BackendTLSPolicy CRD (Gateway API < v1.4 standard).
+        // Untyped: typed access would strip ALL gateway backends on clusters
+        // without the BackendTLSPolicy CRD (Gateway API < v1.4 standard).
         var btpSeamRaw = shared.Get("backendtlspoliciesUntyped")
         var btpAll = []any{}
         if btpSeamRaw != nil {
@@ -145,7 +97,7 @@ templateSnippets:
             if trSec != "" && trSec != portNameForBackend {
               continue
             }
-            // Conflict tiebreak — earliest creationTimestamp wins.
+            // Tiebreak: earliest creationTimestamp, then namespace/name.
             var polTs = dig_string(pol, "", "metadata", "creationTimestamp")
             var polKey = polNs + "/" + dig_string(pol, "", "metadata", "name")
             if winningPolicy == nil {
@@ -167,12 +119,9 @@ templateSnippets:
         if winningPolicy != nil {
           var validation any = dig(winningPolicy, "spec", "validation")
           btlsHostname = dig_string(validation, "", "hostname")
-          // Default verifyhost to hostname (pre-SAN behaviour). When
-          // subjectAltNames carries a Hostname-type entry, that entry
-          // drives the cert-identity check instead. HAProxy `verifyhost`
-          // is single-valued, so we take the FIRST Hostname SAN; a
-          // multi-Hostname OR-list and URI-type SANs are deferred (no
-          // HAProxy verifyhost equivalent — see the snippet comment).
+          // verifyhost takes the FIRST Hostname SAN if any, else hostname
+          // (HAProxy verifyhost is single-valued; SAN OR-lists / URI SANs
+          // have no equivalent). hostname keeps driving SNI.
           btlsVerifyHost = dig_string(validation, "", "hostname")
           for _, san := range dig(validation, "subjectAltNames") | toSlice() {
             if dig_string(san, "", "type") == "Hostname" && dig_string(san, "", "hostname") != "" {
@@ -196,12 +145,8 @@ templateSnippets:
               } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
                 var sec = resources.secrets.GetSingle(tostring(backendNs), refName)
                 if sec != nil {
-                  // sec is typed *resources.secrets.T from the bundled
-                  // core/v1 Secret schema — sec.Data is map[string]string
-                  // directly (typegen materialises K8s Secret.data as
-                  // string-to-string per the OpenAPI shape). The previous
-                  // `.(map[string]any)` assertion was a leftover from
-                  // the untyped era.
+                  // sec.Data is map[string]string (typegen); a
+                  // .(map[string]any) assertion panics on it.
                   var dataMap = sec.Data
                   var caCrt, ok = dataMap["ca.crt"]
                   var b64 = ""
@@ -227,10 +172,8 @@ templateSnippets:
             var caBundle = join(caBundleParts, "\n")
             var policyName = dig_string(winningPolicy, "", "metadata", "name")
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
-            {#- "ca-file": delivered as a general file (same disk path) but
-                flagged so a content-only trust-bundle rotation applies via the
-                runtime API (add ssl ca-file) with no reload on v3.2+ — backend
-                mTLS / SPIFFE bundles rotate every few hours. -#}
+            {#- Type "ca-file" (not "file"): same path, but a content-only
+                rotation then applies via the runtime API, no reload on 3.2+. -#}
             var resolvedPath, fileErr = fileRegistry.Register("ca-file", caFilename, caBundle)
             if fileErr == nil {
               btlsCaPath = resolvedPath
@@ -238,19 +181,12 @@ templateSnippets:
           } else if wkca == "System" {
             btlsCaPath = "@system-ca"
           }
-          // Per Gateway API spec, when a BackendTLSPolicy targets a
-          // backend but its caCertificateRefs all fail to resolve (and
-          // no System wellKnownCACertificates fallback), the policy is
-          // *invalid* and the backend MUST not be reachable — clients
-          // must see 5xx, not be silently downgraded to plaintext.
-          // Conformance: BackendTLSPolicyInvalidCACertificateRef.
+          // An unresolvable CA makes the policy invalid: fail closed (503
+          // below), never downgrade the backend connection to plaintext.
           if btlsCaPath == "" {
             btlsBroken = true
           }
         }
-        // Resolve gateway client cert ref via the route's parentRefs.
-        // Walk the route's parents in declaration order and pick the
-        // first one with a working clientCertificateRef.
         for _, parentRef := range route.Spec.ParentRefs {
           if gwClientCertPath != "" {
             break
@@ -272,10 +208,6 @@ templateSnippets:
           // Dig-only: spec.tls newer than the oldest resolvable Gateway schema.
           var ccRef = dig(gw, "spec", "tls", "backend", "clientCertificateRef")
           if dig_string(ccRef, "", "name") == "" {
-            // Optional struct fields default to the zero value;
-            // an empty Name is the clearest "no ref configured"
-            // signal. (Same proxy used by ingress.yaml's
-            // defaultBackend block.)
             continue
           }
           var refGroup = dig_string(ccRef, "", "group")
@@ -291,8 +223,6 @@ templateSnippets:
           if sec == nil {
             continue
           }
-          // sec is typed *resources.secrets.T — sec.Data is
-          // map[string]string directly (no assertion needed).
           var dataMap = sec.Data
           var crtB64, ok1 = dataMap["tls.crt"]
           var keyB64, ok2 = dataMap["tls.key"]
@@ -306,17 +236,9 @@ templateSnippets:
           }
           var combined = crtPem + "\n" + keyPem
           var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
-          {#- Register the bundle as type "cert" so the file lands under
-              the chart's SSL dir (`ssl/`). HAProxy's `crt-base ssl`
-              will prepend `ssl/` to the emitted relative path on the
-              `crt` directive — so we emit JUST the filename (without
-              the `ssl/` prefix that fileRegistry returns) and let
-              crt-base re-add it. Closes the GatewayBackendClient
-              CertificateFeature webhook admission failure ("unable to
-              stat SSL certificate from file 'ssl/general/gw-clientcert-
-              ...'"): the previous "file" registration produced
-              `general/<fname>` which crt-base turned into the
-              non-existent `ssl/general/<fname>`. -#}
+          {#- Type "cert" lands the file under ssl/, and HAProxy's
+              `crt-base ssl` prepends ssl/ again — so emit the bare filename,
+              not the path fileRegistry returns. -#}
           var _, fErr = fileRegistry.Register("cert", fname, combined)
           if fErr == nil {
             gwClientCertPath = fname
@@ -338,27 +260,10 @@ templateSnippets:
           # to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/
           http-request return status 503
       {%- end %}
-      {#- HTTPRoute retry (spec.rules[].retry — experimental, GEP-1731).
-          Maps to backend-scoped `retries <attempts>` + `retry-on
-          <codes>`. Unlike per-rule timeouts (which use the gateable
-          `set-timeout server`), `retries`/`retry-on` are NOT
-          conditional directives, so they cannot be scoped per
-          gw_rule_id. The chart dedups one backend per (route, service,
-          port); when several rules share the backend we take the FIRST
-          rule (by rule index) whose backendRefs reference this
-          (backendName, backendPort) and carry a retry block. The retry
-          config of a later rule sharing the same backend is dropped —
-          mirroring how a single HAProxy backend can carry only one
-          retries/retry-on directive set.
-
-          Mappable:  attempts -> `retries N`; codes -> `retry-on <c>...`
-                     (HAProxy accepts bare status tokens like 503).
-          Defaults:  no codes -> spec-mandated retriable 5xx
-                     (500 502 503 504, all MUST-support per GEP-1731).
-          DEFERRED:  retry.backoff (exponential/min-wait backoff) — HAProxy
-                     has no per-retry backoff knob; emitting nothing here
-                     keeps the directive set valid. Only emit for
-                     HTTPRoute (protoFlag == ""), not GRPCRoute. -#}
+      {#- Rule-level retry (GEP-1731). `retries`/`retry-on` are not conditional
+          directives, so they can't be scoped per gw_rule_id: with several rules
+          sharing this deduplicated backend, the first one carrying a retry block
+          wins. retry.backoff has no HAProxy equivalent and is dropped. -#}
       {%- if protoFlag == "" %}
         {%- var retryAttempts = 0 %}
         {%- var retryCodes = "" %}
@@ -372,12 +277,8 @@ templateSnippets:
               {%- end %}
             {%- end %}
             {%- if rlReferencesBackend %}
-              {#- `retry` is an Experimental-channel HTTPRoute field (GEP-1731):
-                  it is absent from the Standard-channel HTTPRoute CRD, so the
-                  typed rule struct has no Retry field on a Standard install and
-                  `rl.Retry` would not compile. Access via dig() — it returns nil
-                  when the field is absent (no Standard route can carry it), and
-                  the value when the Experimental schema is present. -#}
+              {#- dig(): `retry` is Experimental-channel only, so `rl.Retry`
+                  doesn't compile against the Standard-channel CRD. -#}
               {%- var rt = dig(rl, "retry") %}
               {%- var attempts = toint(dig(rt, "attempts")) %}
               {%- if attempts > 0 %}
@@ -401,28 +302,11 @@ templateSnippets:
           retry-on {{ retryCodes }}
         {%- end %}
       {%- end %}
-      {#- GEP-1619 session persistence (type Cookie / unset).
-          A rule's spec.sessionPersistence maps to HAProxy cookie-insert
-          persistence on the backend(s) the rule references. Backends are
-          deduplicated per (route, service, port), so we look across ALL
-          rules of this route for the FIRST one that both (a) declares
-          sessionPersistence of type Cookie (or unset → Cookie) and (b)
-          references this (service, port) backend, then emit the cookie
-          directive once at backend scope.
-
-          Note: HAProxy cookie persistence is PER-POD (the dynamic cookie
-          encodes the chosen server). That is the correct GEP-1619 mapping
-          — the persistent session pins a client to one backend pod.
-
-          `dynamic-cookie-key` seeds HAProxy's per-server cookie hash so
-          the cookie value can't be guessed/forged and stays stable across
-          reloads; we derive it from the backend key (sha256) so each
-          backend gets a distinct, deterministic seed.
-
-          Type: Header persistence is NOT implemented (it would require a
-          stick-table keyed on the named request header, which HAProxy
-          can't drive from a dynamically-named header the way GEP-1619
-          intends); such rules fall through with no cookie emitted. -#}
+      {#- GEP-1619 session persistence. Backends are deduplicated per
+          (route, service, port), so the first rule declaring Cookie persistence
+          for this backend wins. dynamic-cookie-key is seeded from beKey:
+          stable across reloads, unforgeable. type: Header is not implemented
+          (no stick-table key for a dynamically-named header). -#}
       {%- var spCookieEmitted = false %}
       {%- for _, rl := range route.Spec.Rules %}
         {%- if !spCookieEmitted %}
@@ -430,7 +314,6 @@ templateSnippets:
           {%- if sp != nil %}
             {%- var spType = tostring(dig(sp, "type") | fallback("Cookie")) %}
             {%- if spType == "Cookie" %}
-              {#- Does this rule reference the current (service, port) backend? -#}
               {%- var refsThis = false %}
               {%- for _, bRef := range rl.BackendRefs %}
                 {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) %}
@@ -454,17 +337,14 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end %}
-      {#- Per-rule HTTPRoute timeouts: applied here in the backend
-          (HAProxy doesn't allow `set-timeout server` in the frontend
-          section, since no backend is bound at frontend phase). The
-          matched rule's id is stashed in txn.gw_rule_id by the
-          frontend matcher; we gate set-timeout on it. Only emit for
-          HTTPRoute (protoFlag == ""), not GRPCRoute. -#}
+      {#- HAProxy rejects `set-timeout server` in a frontend (no backend bound
+          yet), so per-rule timeouts land here, gated on the txn.gw_rule_id the
+          frontend matcher set. HTTPRoute only. -#}
       {%- if protoFlag == "" %}
         {%- var ruleIdxLocal = 0 %}
         {%- for _, rl := range route.Spec.Rules %}
           {#- Dig-only: rules[].timeouts is newer than the oldest schema
-              generation the httproutes candidate list can resolve. -#}
+              generation the httproutes candidate list resolves. -#}
           {%- var rlReq = dig_string(rl, "", "timeouts", "request") %}
           {%- var rlBeReq = dig_string(rl, "", "timeouts", "backendRequest") %}
           {%- var tval = rlReq %}
@@ -475,25 +355,9 @@ templateSnippets:
           {%- end %}
           {%- ruleIdxLocal = ruleIdxLocal + 1 %}
         {%- end %}
-        {#- Per-backendRef RequestHeaderModifier
-            (SupportHTTPRouteBackendRequestHeaderModification).
-
-            Multiple rules of the same HTTPRoute can reference the
-            same (service, port) backend with DIFFERENT filter sets —
-            the upstream `HTTPRouteBackendRequestHeaderModifier`
-            conformance fixture has five rules (`/set`, `/add`,
-            `/remove`, `/multiple`, `/case-insensitivity`) all
-            pointing at `infra-backend-v1:8080` with distinct header
-            modifications. The chart deduplicates the backend block
-            (one HAProxy `backend` per `(route, service, port)`), so
-            the filter directives MUST be gated by `gw_rule_id` to
-            keep them rule-scoped — emitting them unconditionally
-            would cross-bleed.
-
-            Walk every rule of the route, find each rule's matching
-            backendRef, and emit its filters with an `if { var(txn.
-            gw_rule_id) -m str <ruleRouteId> }` guard that the
-            frontend matcher already populated. -#}
+        {#- One backend serves every rule that references this (service, port),
+            so per-backendRef filters must be gated on txn.gw_rule_id or they
+            cross-bleed between rules. -#}
         {%- var ruleIdxBe = 0 %}
         {%- for _, rl := range route.Spec.Rules %}
           {%- for _, bRef := range rl.BackendRefs %}
@@ -531,14 +395,6 @@ templateSnippets:
   util-generate-grpcroute-backends-gateway:
     requires: [gateways, grpcroutes]
     template: |
-      {#- Generate backends for GRPCRoute resources.
-          Typed sibling of the original polymorphic
-          GenerateGatewayBackends. Deduplicates backends across all
-          routes using first_seen.
-
-          Parameters:
-            routes: typed slice of GRPCRoute resources
-            dedupCategory: first_seen category name -#}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- macro GenerateGRPCRouteBackends(routes []*resources.grpcroutes.T, dedupCategory string) -%}
@@ -550,15 +406,9 @@ templateSnippets:
       {%- var backendRefs = rule.BackendRefs -%}
       {%- if len(backendRefs) > 0 %}
       {%- for _, backendRef := range backendRefs -%}
-      {#- Skip backendRefs the chart can't realise as a HAProxy backend.
-          Per Gateway API spec, only core/v1 Service refs are routable;
-          anything else (custom kind, wrong group) results in
-          ResolvedRefs=False/InvalidKind on the route. The backend
-          rendering below would otherwise silently use the ref's `name`
-          field (which can collide with a real Service of the same
-          name) and incorrectly route traffic. The route-matcher path
-          below detects all-invalid rules and routes them to
-          gw-invalid-backend (HTTP 500) instead. -#}
+      {#- Only core/v1 Service refs are routable; another kind would silently
+          match a same-named Service. Rules whose refs are all invalid are
+          routed to gw-invalid-backend (500) by the frontend matcher. -#}
       {%- var refGroup = backendRef.Group -%}
       {%- var refKind = backendRef.Kind -%}
       {%- if refKind == "" %}{%- refKind = "Service" %}{%- end -%}
@@ -568,14 +418,8 @@ templateSnippets:
       {%- var backendName = backendRef.Name -%}
       {%- var backendPort = toint(backendRef.Port) -%}
       {%- if backendPort == 0 %}{%- backendPort = 80 %}{%- end -%}
-      {#- backendRef.namespace defaults to the route's namespace (per
-          Gateway API spec). For cross-namespace backendRefs, the
-          target Service + EndpointSlice live in the ref's namespace,
-          so endpoint resolution must look there — not in routeNs.
-          Conformance test HTTPRouteReferenceGrant sets up a
-          cross-namespace HTTPRoute → Service ref permitted by RG;
-          previously the chart resolved endpoints in routeNs which
-          turned up nothing and HAProxy returned 503 / no server. -#}
+      {#- Cross-namespace ref: the Service and its EndpointSlices live in
+          backendNs, so endpoint resolution below must use it, not routeNs. -#}
       {%- var backendNs = backendRef.Namespace -%}
       {%- if backendNs == "" %}{%- backendNs = routeNs %}{%- end -%}
       {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
@@ -584,46 +428,16 @@ templateSnippets:
       {%- var protoFlag = "h2" -%}
       {%- var routeTypeLabel = "GRPCRoute" -%}
       {%- var beKey = BackendNameGateway(route, backend) -%}
-      {#- Per Gateway API spec, when the target Service port declares
-          appProtocol (kubernetes.io/h2c, kubernetes.io/ws[s]), the data
-          plane MUST honour that protocol. HAProxy's `proto` directive on
-          default-server gives us h2c; WebSocket flows through native HTTP
-          handling without any directive. We look up the Service by
-          (namespace, name) and find the port matching backendRef.port. -#}
       {%- var resolvedProtoFlag = protoFlag -%}
-      {#- BackendTLSPolicy lookup: per Gateway API spec, when a
-          BackendTLSPolicy in the same namespace targets this Service
-          (optionally pinned to a sectionName matching the port name),
-          the data plane MUST connect to the backend over TLS, validate
-          the server cert against the policy's CA bundle, and use
-          policy.validation.hostname for SNI + cert hostname check.
-          We resolve the policy's CA refs to a single PEM blob and
-          stash it via fileRegistry; the default-server line below picks
-          up the resulting `ssl ca-file ... verify required sni ...`. -#}
       {%- var btlsCaPath = "" -%}
       {%- var btlsHostname = "" -%}
-      {#- btlsVerifyHost is the value passed to HAProxy `verifyhost`.
-          Per Gateway API spec (BackendTLSPolicy validation), when
-          `subjectAltNames` is set the served cert must carry at least
-          one SAN matching one of the listed entries, and `hostname`
-          is then used ONLY for SNI / cert selection — not for the cert
-          identity check. So SNI continues to come from `hostname`,
-          but verifyhost comes from the first Hostname-type SAN when
-          SANs are present (falling back to `hostname` when no SANs are
-          declared, matching the pre-SAN behaviour). -#}
       {%- var btlsVerifyHost = "" -%}
       {%- var btlsBroken = false -%}
-      {#- gw client-cert: per Gateway API spec, when the route's parent
-          Gateway carries `spec.tls.backend.clientCertificateRef`, the
-          backend connection MUST present that cert. Resolve once per
-          backend so the default-server line below can emit
-          `crt <path>` alongside any BackendTLSPolicy-driven options. -#}
       {%- var gwClientCertPath = "" -%}
       {%%
         var portNameForBackend = ""
-        // Untyped via the backendtlspolicies contrib seam: typed access
-        // here would strip ALL gateway backends on clusters without the
-        // BackendTLSPolicy CRD (Gateway API < v1.4 standard).
+        // Untyped: typed access would strip ALL gateway backends on clusters
+        // without the BackendTLSPolicy CRD (Gateway API < v1.4 standard).
         var btpSeamRaw = shared.Get("backendtlspoliciesUntyped")
         var btpAll = []any{}
         if btpSeamRaw != nil {
@@ -652,7 +466,7 @@ templateSnippets:
             if trSec != "" && trSec != portNameForBackend {
               continue
             }
-            // Conflict tiebreak — earliest creationTimestamp wins.
+            // Tiebreak: earliest creationTimestamp, then namespace/name.
             var polTs = dig_string(pol, "", "metadata", "creationTimestamp")
             var polKey = polNs + "/" + dig_string(pol, "", "metadata", "name")
             if winningPolicy == nil {
@@ -674,12 +488,9 @@ templateSnippets:
         if winningPolicy != nil {
           var validation any = dig(winningPolicy, "spec", "validation")
           btlsHostname = dig_string(validation, "", "hostname")
-          // Default verifyhost to hostname (pre-SAN behaviour). When
-          // subjectAltNames carries a Hostname-type entry, that entry
-          // drives the cert-identity check instead. HAProxy `verifyhost`
-          // is single-valued, so we take the FIRST Hostname SAN; a
-          // multi-Hostname OR-list and URI-type SANs are deferred (no
-          // HAProxy verifyhost equivalent — see the snippet comment).
+          // verifyhost takes the FIRST Hostname SAN if any, else hostname
+          // (HAProxy verifyhost is single-valued; SAN OR-lists / URI SANs
+          // have no equivalent). hostname keeps driving SNI.
           btlsVerifyHost = dig_string(validation, "", "hostname")
           for _, san := range dig(validation, "subjectAltNames") | toSlice() {
             if dig_string(san, "", "type") == "Hostname" && dig_string(san, "", "hostname") != "" {
@@ -703,12 +514,8 @@ templateSnippets:
               } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
                 var sec = resources.secrets.GetSingle(tostring(backendNs), refName)
                 if sec != nil {
-                  // sec is typed *resources.secrets.T from the bundled
-                  // core/v1 Secret schema — sec.Data is map[string]string
-                  // directly (typegen materialises K8s Secret.data as
-                  // string-to-string per the OpenAPI shape). The previous
-                  // `.(map[string]any)` assertion was a leftover from
-                  // the untyped era.
+                  // sec.Data is map[string]string (typegen); a
+                  // .(map[string]any) assertion panics on it.
                   var dataMap = sec.Data
                   var caCrt, ok = dataMap["ca.crt"]
                   var b64 = ""
@@ -734,10 +541,8 @@ templateSnippets:
             var caBundle = join(caBundleParts, "\n")
             var policyName = dig_string(winningPolicy, "", "metadata", "name")
             var caFilename = "btls-" + tostring(backendNs) + "-" + policyName + ".crt"
-            {#- "ca-file": delivered as a general file (same disk path) but
-                flagged so a content-only trust-bundle rotation applies via the
-                runtime API (add ssl ca-file) with no reload on v3.2+ — backend
-                mTLS / SPIFFE bundles rotate every few hours. -#}
+            {#- Type "ca-file" (not "file"): same path, but a content-only
+                rotation then applies via the runtime API, no reload on 3.2+. -#}
             var resolvedPath, fileErr = fileRegistry.Register("ca-file", caFilename, caBundle)
             if fileErr == nil {
               btlsCaPath = resolvedPath
@@ -745,19 +550,12 @@ templateSnippets:
           } else if wkca == "System" {
             btlsCaPath = "@system-ca"
           }
-          // Per Gateway API spec, when a BackendTLSPolicy targets a
-          // backend but its caCertificateRefs all fail to resolve (and
-          // no System wellKnownCACertificates fallback), the policy is
-          // *invalid* and the backend MUST not be reachable — clients
-          // must see 5xx, not be silently downgraded to plaintext.
-          // Conformance: BackendTLSPolicyInvalidCACertificateRef.
+          // An unresolvable CA makes the policy invalid: fail closed (503
+          // below), never downgrade the backend connection to plaintext.
           if btlsCaPath == "" {
             btlsBroken = true
           }
         }
-        // Resolve gateway client cert ref via the route's parentRefs.
-        // Walk the route's parents in declaration order and pick the
-        // first one with a working clientCertificateRef.
         for _, parentRef := range route.Spec.ParentRefs {
           if gwClientCertPath != "" {
             break
@@ -779,10 +577,6 @@ templateSnippets:
           // Dig-only: spec.tls newer than the oldest resolvable Gateway schema.
           var ccRef = dig(gw, "spec", "tls", "backend", "clientCertificateRef")
           if dig_string(ccRef, "", "name") == "" {
-            // Optional struct fields default to the zero value;
-            // an empty Name is the clearest "no ref configured"
-            // signal. (Same proxy used by ingress.yaml's
-            // defaultBackend block.)
             continue
           }
           var refGroup = dig_string(ccRef, "", "group")
@@ -798,8 +592,6 @@ templateSnippets:
           if sec == nil {
             continue
           }
-          // sec is typed *resources.secrets.T — sec.Data is
-          // map[string]string directly (no assertion needed).
           var dataMap = sec.Data
           var crtB64, ok1 = dataMap["tls.crt"]
           var keyB64, ok2 = dataMap["tls.key"]
@@ -813,17 +605,9 @@ templateSnippets:
           }
           var combined = crtPem + "\n" + keyPem
           var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
-          {#- Register the bundle as type "cert" so the file lands under
-              the chart's SSL dir (`ssl/`). HAProxy's `crt-base ssl`
-              will prepend `ssl/` to the emitted relative path on the
-              `crt` directive — so we emit JUST the filename (without
-              the `ssl/` prefix that fileRegistry returns) and let
-              crt-base re-add it. Closes the GatewayBackendClient
-              CertificateFeature webhook admission failure ("unable to
-              stat SSL certificate from file 'ssl/general/gw-clientcert-
-              ...'"): the previous "file" registration produced
-              `general/<fname>` which crt-base turned into the
-              non-existent `ssl/general/<fname>`. -#}
+          {#- Type "cert" lands the file under ssl/, and HAProxy's
+              `crt-base ssl` prepends ssl/ again — so emit the bare filename,
+              not the path fileRegistry returns. -#}
           var _, fErr = fileRegistry.Register("cert", fname, combined)
           if fErr == nil {
             gwClientCertPath = fname
@@ -845,13 +629,8 @@ templateSnippets:
           # to plaintext would defeat the policy. See https://haproxy-haptic.org/docs/latest/libraries/gateway/
           http-request return status 503
       {%- end %}
-      {#- GEP-1619 session persistence (type Cookie / unset) — see the
-          HTTPRoute backend block above for the full rationale. Backends
-          are deduplicated per (route, service, port); find the first rule
-          that declares Cookie sessionPersistence AND references this
-          (service, port) backend, then emit one backend-scoped cookie
-          directive. Per-pod cookie-insert affinity is the correct
-          GEP-1619 mapping. type: Header is not implemented. -#}
+      {#- GEP-1619 session persistence — rationale in the HTTPRoute backend
+          above; the first Cookie rule referencing this backend wins. -#}
       {%- var spCookieEmitted = false %}
       {%- for _, rl := range route.Spec.Rules %}
         {%- if !spCookieEmitted %}
@@ -893,15 +672,7 @@ templateSnippets:
   util-sharded-gateway-backends:
     requires: [gateways, grpcroutes, httproutes]
     template: |
-      {#-
-        Per-Kind typed sharded Gateway backend wrappers.
-
-        Each wrapper inlines the sharding logic and calls its
-        Kind-specific Generate macro directly with the typed slice.
-        Sharding is auto-calculated:
-          clamp(resourceCount / 300, 1, 2 * GOMAXPROCS).
-        Deduplication via first_seen() is thread-safe (sync.Map).
-      -#}
+      {#- first_seen() dedup is thread-safe, so shards render in parallel. -#}
       {%- import "util-generate-httproute-backends-gateway" for GenerateHTTPRouteBackends -%}
       {%- import "util-generate-grpcroute-backends-gateway" for GenerateGRPCRouteBackends -%}
       {%- import "util-macros" for CalculateShardCount -%}
@@ -931,11 +702,9 @@ templateSnippets:
   backends-500-gateway:
     requires: [gateways, grpcroutes, httproutes, referencegrants]
     template: |
-      {#- Generate backend definitions from HTTPRoute and GRPCRoute resources -#}
       {%- import "util-sharded-gateway-backends" for ShardedHTTPRouteBackends, ShardedGRPCRouteBackends -%}
-      {#- Pre-cache gateway analysis during haproxy.cfg render (sequential).
-          This ensures the cache is populated BEFORE map files render in parallel,
-          preventing race conditions on the shared map. -#}
+      {#- Populate the analysis cache here (sequential) before the map files
+          render in parallel and race on it. -#}
       {{- render "util-gateway-analysis" -}}
       # gateway/backends-gateway
       {{ ShardedHTTPRouteBackends(resources.httproutes.List(), "gatewayBackends_http") }}
@@ -943,21 +712,10 @@ templateSnippets:
 
   backends-501-gateway-invalid:
     template: |
-      {#-
-        Sink backend for HTTPRoute rules where every backendRef is
-        invalid (unsupported kind, non-core group). Per Gateway API
-        spec, requests matching such a rule must receive HTTP 500.
-
-        The chart's frontend-matchers-advanced-900-path-match snippet
-        routes such rules' traffic here (qualifier
-        "BACKEND:gw-invalid-backend") rather than to a real Service-
-        backed backend whose `name` happened to collide with the
-        invalid ref's `name` field.
-
-        Always rendered (even when no Gateway API resources exist) so
-        the BACKEND qualifier always resolves; HAProxy refuses to load
-        a config that references a non-existent backend.
-      -#}
+      {#- Sink for rules whose backendRefs are all invalid; the frontend
+          matcher sends them here (qualifier BACKEND:gw-invalid-backend).
+          Always rendered — HAProxy refuses a config that references a
+          backend that doesn't exist. -#}
       # gateway/backends-501-gateway-invalid
       backend gw-invalid-backend
           guid be:gw-invalid-backend
@@ -966,33 +724,14 @@ templateSnippets:
   backends-501-gateway-ssl-passthrough:
     requires: [gateways, httproutes, tlsroutes]
     template: |
-      {#-
-        Gateway API SSL Passthrough Backends
-
-        Purpose:
-          TCP backends for SSL passthrough from Gateway API resources.
-          Forwards encrypted traffic directly to pods without SSL termination.
-          Uses util-gateway-ssl-passthrough for cached analysis.
-
-        Generated HAProxy Config:
-          backend ssl-passthrough-<namespace>-<name>
-            mode tcp
-            server SRV_1 <pod-ip>:<pod-port> check
-      -#}
-      {#- Get cached SSL passthrough analysis (runs once, shared across all renders) #}
       {%- import "util-backend-servers" for BackendServers -%}
       {{ render "util-gateway-ssl-passthrough" }}
 
       {%- var sslPassthroughData = shared.Get("gateway_ssl_passthrough").(map[string]any) %}
       {%- var sslBackends []any = sslPassthroughData["backends"] %}
       {%- for _, backendInfo := range sslBackends %}
-        {#- Skip entries flagged invalid by Pass 2 (failed
-            ResolvedRefs gate). They keep their slot in the
-            passthrough list so the SNI consumers (ssl-tcp,
-            frontends-600-gateway-tls-listener) can register the
-            claimed SNI as "claimed but unrouteable" and reject
-            inbound connections. Emitting a backend block here
-            would point at a non-existent Service. -#}
+        {#- Invalid entries keep their slot so the SNI consumers can claim the
+            SNI as unrouteable; a backend here would point at a missing Service. -#}
         {%- if tostring(backendInfo | dig("invalid") | fallback("false")) == "true" %}
           {%- continue %}
         {%- end %}
@@ -1000,16 +739,10 @@ templateSnippets:
         {%- var biRoute = backendInfo["route"] %}
         {%- var biName = backendInfo["name"] %}
         {%- var biRouteType = backendInfo["route_type"] %}
-        {#- Dedup by backend name so multi-rule TLSRoutes (one entry per
-            intersected SNI, possibly several entries per rule) emit
-            exactly one `backend gtw_tls_...` block per (route, ruleIdx). -#}
+        {#- One list entry per intersected SNI, so dedup to emit one backend
+            per (route, ruleIdx). -#}
         {%- if first_seen("gateway_ssl_passthrough_backends", tostring(biName)) %}
           {%- if biRouteType == "httproute" %}
-            {#- Get the actual HTTPRoute resource to extract service
-                details. Flatten via `[*]`: outer rule loop only
-                accessed rule.BackendRefs; the `if !generated`
-                re-check at the rule level is no longer needed since
-                the inner break exits the (single) desugared loop. -#}
             {%- var route = resources.httproutes.GetSingle(biNamespace, biRoute) %}
             {%- var generated = false %}
             {%- if route != nil %}
@@ -1029,8 +762,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- else if biRouteType == "tlsroute" %}
-            {#- TLSRoute: emit one TCP backend per rule. Use the rule
-                index from the entry to find the right backendRef. -#}
             {%- var route = resources.tlsroutes.GetSingle(biNamespace, biRoute) %}
             {%- if route != nil %}
               {%- var ruleIdx = toint(backendInfo["rule_idx"]) %}

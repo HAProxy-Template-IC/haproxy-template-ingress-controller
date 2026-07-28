@@ -1,8 +1,3 @@
-# HAProxyTech Annotations Library
-#
-# Provides haproxy.org/* annotation support for Ingress resources.
-# Gateway API uses filters instead - see docs/libraries/gateway.md.
-
 # Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.haproxytech.enabled }}'
@@ -14,14 +9,8 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
 
 templateSnippets:
-  # ============================================================================
-  # Annotation Helpers
-  # ============================================================================
   util-haproxytech-ssl-passthrough:
     template: |
-      {#- Caches SSL passthrough backends from haproxy.org/ssl-passthrough annotations.
-          Build logic lives in ingress-annotations-compat.yaml's BuildAnnotationSSLPassthrough macro;
-          this snippet only owns the per-library cache key and naming-convention parameters. -#}
       {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
       {%%
         var _, _ = shared.ComputeIfAbsent("haproxytech_sslPassthrough", func() any {
@@ -34,13 +23,8 @@ templateSnippets:
         })
       %%}
 
-  # ============================================================================
-  # Frontend Filters - Applied before backend selection
-  # ============================================================================
-
   frontend-filters-100-haproxytech-basic-headers:
     template: |
-      {#- HAProxy forwarded-for option (frontend-level, output once if any ingress enables it) -#}
       {%- var forwardforEnabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -48,9 +32,7 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var value = ingress.Metadata.Annotations["haproxy.org/forwarded-for"] %}
           {%- if value != "" && value != "true" && value != "false" %}
-            {#- Security-adjacent: silently skipping this would drop `option forwardfor`,
-                letting a spoofable X-Forwarded-For reach the backend — so hard-fail
-                even on reconcile rather than warn-and-skip. -#}
+            {#- fail(), not WebhookRejectOrWarn: skipping drops `option forwardfor` and lets a spoofed X-Forwarded-For reach the backend. -#}
             {{- fail("Invalid value '" + value + "' for annotation 'haproxy.org/forwarded-for' on Ingress '" + key + "'. Valid values: 'true', 'false'") -}}
           {%- end %}
           {%- if value == "true" %}{%- forwardforEnabled = true %}{%- end %}
@@ -62,11 +44,6 @@ templateSnippets:
 
   frontend-filters-200-haproxytech-access-control:
     template: |
-      {#- HAProxy IP allow-list/deny-list via the shared ingress-annotations-compat
-          scaffold. Upstream haproxytech spells these `allow-list`/`deny-list`;
-          `whitelist`/`blacklist` are the deprecated aliases. Honour the canonical
-          key per Ingress, falling back to the deprecated alias only when the
-          canonical key is absent. -#}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var allowKey = "haproxy.org/allow-list" %}
@@ -86,15 +63,8 @@ templateSnippets:
 
   frontend-filters-300-haproxytech-cors:
     template: |
-      {#- HAProxy CORS — mirrors the upstream HAProxy Kubernetes Ingress
-          Controller (pkg/annotations/ingress/resSetCORS.go): capture the request
-          Origin into a txn var, emit the Access-Control-* headers via
-          http-after-response so they apply to backend responses AND the synthetic
-          preflight response, regex-match and echo the request Origin for a
-          non-wildcard allow-list, and — when cors-respond-to-options is "true" —
-          answer the OPTIONS preflight itself with a 204. Defaults track the
-          upstream controller: origin / methods / headers "*", credentials off,
-          max-age 5 (seconds). -#}
+      {#- Mirrors upstream haproxytech/kubernetes-ingress pkg/annotations/ingress/resSetCORS.go.
+          http-after-response, not http-response: the headers must also reach the synthetic preflight 204. -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -123,9 +93,6 @@ templateSnippets:
               {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "CORS configuration error on Ingress '" + key + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}{%- continue %}
             {%- end %}
               {%- var cond = HostMatchCondition(hosts) %}
-              {#- Wildcard: allow any origin, echo "*". Non-wildcard: regex-match the
-                  request Origin against the annotation and echo the matched value —
-                  exactly like the upstream controller's `-m reg` + %[var] approach. -#}
               {%- var originHdr = origin %}
               {%- var originAcl = "{ var(txn.cors_origin) -m found }" %}
               {%- if origin != "*" %}
@@ -154,48 +121,18 @@ templateSnippets:
 
   features-100-haproxytech-ssl-redirect:
     template: |
-      {#-
-        HAProxy SSL Redirect Host Registration
-
-        Purpose: Populates sslRedirectHosts shared state from Ingress annotations.
-
-        Extension Point: features-* (priority 100 - runs after SSL initialization)
-
-        Annotations:
-          - haproxy.org/ssl-redirect: "true" or "false" (per-Ingress override)
-          - haproxy.org/ssl-redirect-code: redirect status code (default: "302")
-          - haproxy.org/ssl-redirect-port: when set, the redirect targets this
-            explicit https port via frontend-filters-055-haproxytech-ssl-redirect-port
-            instead of the shared scheme-redirect map; such hosts are intentionally
-            NOT registered here to avoid a double redirect.
-
-        Behavior:
-          - Annotation "true" → redirect
-          - Annotation "false" → no redirect
-          - Annotation absent + extraContext.ssl_redirect_default == "true" → redirect
-          - Annotation absent + no default → no redirect
-
-        Dependencies:
-          - features-050-ssl-initialization (provides sslRedirectHosts array)
-
-        Consumed By:
-          - features-160-ssl-redirect-map (generates map files from collected hosts)
-      -#}
+      {#- gf["sslRedirectHosts"] is initialised by ssl.yaml's features-050-ssl-initialization
+          and consumed by features-160-ssl-redirect-map. -#}
 
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- var sslRedirectDefault = extraContext | dig_string("", "ssl_redirect_default") -%}
-      {#- Iterates unconditionally (no cross-render first_seen): features-* renders
-          once, so each ingress is visited once anyway, and features-160-ssl-redirect-map
-          dedups hosts locally. Gating registration on first_seen re-exposes the
-          cross-render cache leak that features-160 was rewritten to avoid (a leaked
-          key would skip registration, silently dropping the redirect for that render). -#}
+      {#- Don't gate registration on first_seen: a leaked cross-render key would skip it and
+          silently drop the redirect. features-160-ssl-redirect-map dedups hosts. -#}
       {%- for _, ingress := range resources.ingresses.List() %}
           {%- var sslRedirect = ingress.Metadata.Annotations["haproxy.org/ssl-redirect"] %}
           {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && sslRedirectDefault == "true") %}
-          {#- ssl-redirect-port targets an explicit port via a dedicated frontend-filter
-              ('frontend-filters-055-haproxytech-ssl-redirect-port'). Those hosts must NOT
-              be registered into the shared sslRedirectHosts map or ssl.yaml's
-              scheme-redirect would also fire for them (double redirect). -#}
+          {#- ssl-redirect-port hosts must NOT enter sslRedirectHosts: frontend-filters-055
+              already redirects them, and ssl.yaml's scheme-redirect would double it. -#}
           {%- var redirectPort = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-port"] %}
           {%- if shouldRedirect && redirectPort == "" %}
             {%- var code = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-code"] %}
@@ -211,29 +148,9 @@ templateSnippets:
 
   frontend-filters-055-haproxytech-ssl-redirect-port:
     template: |
-      {#-
-        HAProxy SSL Redirect to an explicit port (haproxy.org/ssl-redirect-port).
-
-        Extension Point: frontend-filters-* (priority 055 - runs alongside ssl.yaml's
-        frontend-filters-050-ssl-redirect). Hosts handled here are intentionally
-        excluded from the shared sslRedirectHosts map by
-        features-100-haproxytech-ssl-redirect, so only this port-targeted redirect
-        fires for them.
-
-        Rewrites the request to https on the explicit port, preserving the original
-        request URI. The Host header is read (field(1,:) strips any existing port)
-        but never set here — this is a terminal redirect, so it does not corrupt
-        host-based routing.
-
-        Annotations:
-          - haproxy.org/ssl-redirect: must be "true" (or ssl_redirect_default)
-          - haproxy.org/ssl-redirect-port: explicit https port
-          - haproxy.org/ssl-redirect-code: redirect status code (default "302")
-      -#}
-      {#- Per-code host→port maps (single-vendor): the redirect location interpolates
-          the port from ssl-redirect-port-<code>.map, so changing a port is a map-only,
-          reload-free update. First-writer-wins per host; hosts sorted for deterministic
-          map output. -#}
+      {#- hdr(host),field(1,:) strips any port already in the Host header. The port comes from
+          ssl-redirect-port-<code>.map, so changing it is a reload-free map update.
+          features-100 keeps these hosts out of ssl.yaml's scheme-redirect map (no double redirect). -#}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var sslRedirectDefault = extraContext | dig_string("", "ssl_redirect_default") -%}
       {%- var portByCode = map[string]map[string]string{} -%}
@@ -277,19 +194,8 @@ templateSnippets:
 
   features-130-haproxytech-request-redirect:
     template: |
-      {#-
-        haproxy.org/request-redirect — host registration into the shared host-keyed
-        redirect map. base.yaml's frontend-filters-060-redirect-location emits the
-        rule from redirect-loc-<code>.map, so adding/changing a host redirect is a
-        map-only, reload-free update (replaces the per-ingress inline-ACL redirect).
-
-        Annotations:
-          - haproxy.org/request-redirect: "<url>"
-          - haproxy.org/request-redirect-code: "301|302|303|307|308" (default 302)
-      -#}
-      {#- Iterates unconditionally (no cross-render first_seen): features-* renders
-          once, and features-170-redirect-location-map dedups hosts locally so the
-          map and rule emitter stay in lockstep under churn. -#}
+      {#- base.yaml's frontend-filters-060-redirect-location emits the rule from redirect-loc-<code>.map,
+          so a redirect change is a reload-free map update. No first_seen gate — features-170 dedups hosts. -#}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -316,7 +222,6 @@ templateSnippets:
 
   frontend-filters-500-haproxytech-logging:
     template: |
-      {#- HAProxy request capture and source IP detection -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -347,14 +252,8 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
-  # ============================================================================
-  # Global Top-Level Sections
-  # ============================================================================
-
   global-top-500-haproxytech-ingress-auth:
     template: |
-      {#- HAProxy userlist generation for basic authentication -#}
-      {#- Uses per-secret userlist naming for deduplication (improves validation performance) -#}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -366,7 +265,6 @@ templateSnippets:
         {%- if authType == "basic-auth" %}
           {%- var authSecret = ingress.Metadata.Annotations["haproxy.org/auth-secret"] %}
           {%- if authSecret != "" %}
-            {#- Parse secret reference (supports "ns/name" or just "name") -#}
             {%- var secretNs = ns %}
             {%- var secretName = authSecret %}
             {%- if strings_contains(authSecret, "/") %}
@@ -374,31 +272,15 @@ templateSnippets:
               {%- secretNs = parts[0] %}
               {%- secretName = parts[1] %}
             {%- end %}
-            {#- Userlist name is per-secret for deduplication -#}
             {%- var userlistName = "auth_" + secretNs + "_" + secretName %}
             {%- if first_seen("haproxytech_userlist", userlistName) %}
-              {#-
-                If the referenced Secret isn't in the controller's cache yet (e.g.
-                the informer hasn't observed a freshly-created Secret, or the
-                Secret was already cascade-deleted but the Ingress still lingers
-                in cache), the matching backend snippet skips the http_auth ACL
-                ref so the rendered config stays internally consistent. Skip
-                emitting the userlist for the same reason. The next render (after
-                the cache catches up) will produce the full auth setup.
-
-                Routed through shared.ComputeIfAbsent so the matching http_auth
-                snippet observes the same Secret presence/absence — stores are
-                live during render and two direct GetSingle calls can see
-                different states.
-              -#}
+              {#- Absent Secret: skip the userlist — backend-directives-500 skips its http_auth ref on the
+                  same condition. Shared via ComputeIfAbsent: stores are live, so two GetSingle calls can disagree. -#}
               {%- var secretAny, _ = shared.ComputeIfAbsent("haproxytech_auth_secret:" + secretNs + "/" + secretName, func() any {
                 return resources.secrets.GetSingle(secretNs, secretName)
               }) %}
-              {#- Assert to the typed pointer BEFORE the nil check. GetSingle returns a
-                  typed *resources.secrets.T — a typed-nil when the Secret is absent —
-                  and boxing that through the closure's `any` yields a NON-nil interface,
-                  so `secretAny != nil` would pass for an absent Secret and the `.Data`
-                  access below would dereference a nil pointer. -#}
+              {#- Assert to the typed pointer before the nil check: boxing GetSingle's typed-nil through
+                  `any` yields a non-nil interface, so the `.Data` access below would panic. -#}
               {%- var secret, _ = secretAny.(*resources.secrets.T) %}
               {%- if secret != nil %}
       # haproxytech/global-top-haproxytech-ingress-auth
@@ -419,13 +301,8 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  # ============================================================================
-  # Backend Directives - Applied per-backend (requires ingress in context)
-  # ============================================================================
-
   backend-directives-100-haproxytech-pod-maxconn:
     template: |
-      {#- HAProxy pod-maxconn (divided by HAProxy pod count) -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -436,7 +313,6 @@ templateSnippets:
           {%- if val <= 0 %}
             {{- fail("Invalid value '" + podMaxconn + "' for annotation 'haproxy.org/pod-maxconn' on Ingress '" + key + "'. Must be a positive integer.") -}}
           {%- end %}
-          {#- Count only Running+Ready pods (not Pending, SysctlForbidden, etc.) -#}
           {%- var haproxyPodCount = 0 %}
           {%- if controller != nil %}
             {%- var pods = controller.haproxy_pods %}
@@ -453,7 +329,7 @@ templateSnippets:
             {%- end %}
           {%- end %}
           {%- if haproxyPodCount > 0 %}
-            {#- Quantize to next power of 2 to avoid reload cascades on scaling -#}
+            {#- Power of 2, not the raw pod count: otherwise every scale event rewrites maxconn and reloads. -#}
             {%- var effectiveCount = 1 %}
             {%- for effectiveCount < haproxyPodCount %}
               {%- effectiveCount = effectiveCount * 2 %}
@@ -472,7 +348,6 @@ templateSnippets:
 
   backend-directives-100-haproxytech-timeouts:
     template: |
-      {#- HAProxy backend timeouts (server, connect, queue, tunnel, check) -#}
       {%- if ingress != nil %}
         {%- var tServer = ingress.Metadata.Annotations["haproxy.org/timeout-server"] %}
         {%- var tConnect = ingress.Metadata.Annotations["haproxy.org/timeout-connect"] %}
@@ -499,16 +374,13 @@ templateSnippets:
 
   backend-directives-150-haproxytech-load-balance:
     template: |
-      {#- HAProxy load balancing algorithm -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
         {%- var lb = ingress.Metadata.Annotations["haproxy.org/load-balance"] %}
         {%- if lb != "" %}
-          {#- Exact match algorithms -#}
           {%- var exactValid = []string{"roundrobin", "static-rr", "leastconn", "first", "source", "random"} %}
-          {#- Prefix match algorithms (support parameters like hdr(name), uri whole, url_param(name), rdp-cookie(name)) -#}
           {%- var prefixValid = []string{"uri", "url_param", "hdr", "rdp-cookie"} %}
           {%- var isValid = false %}
           {%- for _, v := range exactValid %}{%- if lb == v %}{%- isValid = true %}{%- end %}{%- end %}
@@ -527,7 +399,6 @@ templateSnippets:
 
   backend-directives-200-haproxytech-health-checks:
     template: |
-      {#- HAProxy health check toggle -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -537,9 +408,7 @@ templateSnippets:
           {%- if check != "true" && check != "false" %}
             {{- fail("Invalid value '" + check + "' for annotation 'haproxy.org/check' on Ingress '" + key + "'. Valid values: 'true', 'false'") -}}
           {%- end %}
-          {#- check=false disables health checks. ingress.yaml emits
-              `default-server <checkDirective>` (default "check"); set it to
-              "no-check" so the backend's servers are not health-checked. -#}
+          {#- ingress.yaml emits `default-server <checkDirective>`, defaulting to "check". -#}
           {%- if check == "false" %}
             {%- serverOpts["checkDirective"] = "no-check" %}
           {%- end %}
@@ -548,7 +417,6 @@ templateSnippets:
 
   backend-directives-210-haproxytech-advanced-health-checks:
     template: |
-      {#- HAProxy advanced health check configuration -#}
       {%- if ingress != nil %}
         {%- var checkHttp = ingress.Metadata.Annotations["haproxy.org/check-http"] %}
         {%- var checkInterval = ingress.Metadata.Annotations["haproxy.org/check-interval"] %}
@@ -560,10 +428,7 @@ templateSnippets:
       option httpchk GET {{ checkHttp }}
           {%- end %}
         {%- end %}
-        {#- check-interval sets `inter <duration>` on default-server (the check
-            interval). Skipped when checks are disabled via haproxy.org/check=false
-            (no-check makes inter meaningless). The 200-health-checks snippet runs
-            first, so checkDirective is already set when we read it here. -#}
+        {#- 200-health-checks already ran, so checkDirective is set; inter is meaningless under no-check. -#}
         {%- if checkInterval != "" && (serverOpts | dig("checkDirective") | fallback("check") | tostring()) != "no-check" %}
           {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "inter " + checkInterval) %}
         {%- end %}
@@ -572,13 +437,6 @@ templateSnippets:
   backend-directives-250-haproxytech-rate-limiting:
     template: |
       {%- import "util-validate-cidr-list" for ValidateCidrList -%}
-      {#- HAProxy rate limiting.
-          Annotations:
-            - haproxy.org/rate-limit-requests: deny threshold (enables the feature)
-            - haproxy.org/rate-limit-period: stick-table window (default "1s")
-            - haproxy.org/rate-limit-size: stick-table size (default "100k")
-            - haproxy.org/rate-limit-status-code: deny status (default "403")
-            - haproxy.org/rate-limit-whitelist: comma-separated CIDRs never denied -#}
       {%- if ingress != nil %}
         {%- var rateReq = ingress.Metadata.Annotations["haproxy.org/rate-limit-requests"] %}
         {%- if rateReq != "" %}
@@ -588,9 +446,6 @@ templateSnippets:
           {%- if size == "" %}{%- size = "100k" %}{%- end %}
           {%- var status = ingress.Metadata.Annotations["haproxy.org/rate-limit-status-code"] %}
           {%- if status == "" %}{%- status = "403" %}{%- end %}
-          {#- rate-limit-whitelist: comma-separated CIDRs never subject to the deny.
-              Appended as a trailing negated src guard so the deny only fires for
-              non-whitelisted sources, mirroring haproxy-ingress' limit-whitelist. -#}
           {%- var whitelist = ingress.Metadata.Annotations["haproxy.org/rate-limit-whitelist"] %}
           {%- var guard = "" %}
           {%- if whitelist != "" %}
@@ -600,11 +455,7 @@ templateSnippets:
             {%- end %}
           {%- end %}
       # haproxytech/backend-directives-haproxytech-rate-limiting
-      {#- `peers localinstance` (base.yaml global-top-050-peers) replicates the -#}
-      {#- per-source counter from the old worker to the new one on reload, so a -#}
-      {#- client's accumulated rate survives config churn instead of resetting -#}
-      {#- to zero and handing every client a fresh budget. Local-only: stays -#}
-      {#- per-pod, matching haproxytech/kubernetes-ingress. -#}
+      {#- `peers localinstance` (base.yaml global-top-050-peers) hands the per-source counter to the new worker on reload, so a reload doesn't reset every client's budget. -#}
       stick-table type ip size {{ size }} expire {{ period }} store http_req_rate({{ period }}) peers localinstance
       http-request track-sc0 src
       http-request set-var(txn.denied_by) str(rate_limit_local) if { sc_http_req_rate(0) gt {{ rateReq }} }{{ guard }}
@@ -614,13 +465,9 @@ templateSnippets:
 
   map-reqhdr-host-250-haproxytech:
     template: |
-      {#- HAProxy set-host relocated to reqhdr-host.map (Strategy 1): emits
-          `<backend_name> <host>` consumed by base.yaml's resource-agnostic
-          frontend-filters-260-request-set-host rule, instead of a per-backend
-          `http-request set-header Host`. Shares the "map-reqhdr-host" first_seen
-          namespace with the nginx upstream-vhost emitter so a backend reached by
-          both annotations gets exactly one (deterministic, this snippet wins on
-          its lower numeric prefix). -#}
+      {#- Emits `<backend> <host>` for base.yaml's frontend-filters-260-request-set-host — a reload-free
+          alternative to a per-backend set-header Host. The "map-reqhdr-host" first_seen namespace is shared
+          with nginx's upstream-vhost emitter; the lower numeric prefix wins when both hit one backend. -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -640,7 +487,6 @@ templateSnippets:
 
   backend-directives-300-haproxytech-header-manipulation:
     template: |
-      {#- HAProxy request/response header manipulation -#}
       {%- if ingress != nil %}
         {%- var reqHeaders = ingress.Metadata.Annotations["haproxy.org/request-set-header"] %}
         {%- var respHeaders = ingress.Metadata.Annotations["haproxy.org/response-set-header"] %}
@@ -668,7 +514,6 @@ templateSnippets:
 
   backend-directives-350-haproxytech-path-rewrite:
     template: |
-      {#- HAProxy path rewrite -#}
       {%- if ingress != nil %}
         {%- var rewrite = ingress.Metadata.Annotations["haproxy.org/path-rewrite"] %}
         {%- if rewrite != "" %}
@@ -685,7 +530,6 @@ templateSnippets:
 
   backend-directives-400-haproxytech-session-persistence:
     template: |
-      {#- HAProxy dynamic cookie persistence -#}
       {%- if ingress != nil %}
         {%- var cookie = ingress.Metadata.Annotations["haproxy.org/cookie-persistence"] %}
         {%- if cookie != "" %}
@@ -696,7 +540,6 @@ templateSnippets:
 
   backend-directives-401-haproxytech-session-persistence-no-dynamic:
     template: |
-      {#- HAProxy static cookie persistence -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -714,8 +557,6 @@ templateSnippets:
 
   backend-directives-500-haproxytech-ingress-auth:
     template: |
-      {#- HAProxy basic authentication backend directive -#}
-      {#- Uses per-secret userlist naming for deduplication -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -728,13 +569,9 @@ templateSnippets:
           {%- var authSecret = ingress.Metadata.Annotations["haproxy.org/auth-secret"] %}
           {%- var authRealm = ingress.Metadata.Annotations["haproxy.org/auth-realm"] %}
           {%- if authRealm == "" %}{%- authRealm = "Protected-Content" %}{%- end %}
-          {#- The DataPlane API realm field forbids spaces (^[^\s]+$). Like the
-              upstream HAProxy Kubernetes Ingress Controller, silently replace
-              spaces with dashes rather than failing the render, so an Ingress
-              with a spaced realm that works upstream also works here. -#}
+          {#- The DataPlane API realm field forbids spaces (^[^\s]+$); upstream dashes them too, so don't fail. -#}
           {%- authRealm = replace(authRealm, " ", "-") %}
           {%- if authSecret != "" %}
-            {#- Parse secret reference (supports "ns/name" or just "name") -#}
             {%- var secretNs = ns %}
             {%- var secretName = authSecret %}
             {%- if strings_contains(authSecret, "/") %}
@@ -742,29 +579,15 @@ templateSnippets:
               {%- secretNs = parts[0] %}
               {%- secretName = parts[1] %}
             {%- end %}
-            {#- Userlist name is per-secret for deduplication -#}
             {%- var userlistName = "auth_" + secretNs + "_" + secretName %}
-            {#-
-              Skip the http_auth ACL ref when the referenced Secret isn't in
-              the controller's cache (informer not yet caught up, or the Secret
-              was just cascade-deleted while the Ingress still lingers). The
-              global-top userlist snippet skips its userlist on the same
-              condition so the rendered config stays self-consistent — HAProxy
-              never sees a dangling http_auth(...) reference.
-
-              Routed through shared.ComputeIfAbsent so the userlist snippet
-              observes the same Secret presence/absence — stores are live
-              during render and two direct GetSingle calls can see different
-              states.
-            -#}
+            {#- Absent Secret: skip the http_auth ref — global-top-500 skips its userlist on the same
+                condition, so HAProxy never sees a dangling http_auth(). Shared via ComputeIfAbsent:
+                stores are live, so two GetSingle calls can disagree. -#}
             {%- var htAuthSecretAny, _ = shared.ComputeIfAbsent("haproxytech_auth_secret:" + secretNs + "/" + secretName, func() any {
               return resources.secrets.GetSingle(secretNs, secretName)
             }) %}
-            {#- Assert to the typed pointer before the nil check (see the userlist
-                snippet above): a boxed typed-nil *resources.secrets.T passes `!= nil`,
-                which would emit an http_auth ref to a userlist the (correctly-skipping)
-                userlist snippet never produced — `haproxy -c` then fails with
-                "unable to find userlist". -#}
+            {#- Assert to the typed pointer before the nil check: a boxed typed-nil passes `!= nil`, and the
+                ref would then point at a userlist global-top-500 skipped ("unable to find userlist"). -#}
             {%- var htAuthSecret, _ = htAuthSecretAny.(*resources.secrets.T) %}
             {%- if htAuthSecret != nil %}
       # haproxytech/backend-directives-haproxytech-ingress-auth
@@ -777,13 +600,11 @@ templateSnippets:
 
   backend-directives-900-haproxytech-advanced:
     template: |
-      {#- HAProxy advanced backend configuration -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
 
-        {#- send-proxy-protocol -#}
         {%- var sendProxy = ingress.Metadata.Annotations["haproxy.org/send-proxy-protocol"] %}
         {%- if sendProxy != "" %}
           {%- if sendProxy == "proxy" || sendProxy == "proxy-v1" %}
@@ -797,19 +618,16 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- server-ssl -#}
         {%- var serverSsl = ingress.Metadata.Annotations["haproxy.org/server-ssl"] %}
         {%- if serverSsl == "true" %}
           {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl alpn h2,http/1.1 verify none") %}
         {%- end %}
 
-        {#- server-proto -#}
         {%- var serverProto = ingress.Metadata.Annotations["haproxy.org/server-proto"] %}
         {%- if serverProto != "" %}
           {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto " + serverProto) %}
         {%- end %}
 
-        {#- server-ca: CA certificate for backend verification -#}
         {%- var serverCa = ingress.Metadata.Annotations["haproxy.org/server-ca"] %}
         {%- if serverCa != "" %}
           {%- var caNs = ns %}
@@ -835,7 +653,6 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- server-crt: Client certificate for mTLS -#}
         {%- var serverCrt = ingress.Metadata.Annotations["haproxy.org/server-crt"] %}
         {%- if serverCrt != "" %}
           {%- var crtNs = ns %}
@@ -854,7 +671,7 @@ templateSnippets:
               {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
               {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
               {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
-              {#- Use just filename - HAProxy's crt-base directive resolves the full path -#}
+              {#- Bare filename, not the registry path: HAProxy resolves `crt` against crt-base. -#}
               {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtFilename) %}
             {%- else %}
             # Warning: Secret {{ crtNs }}/{{ crtName }} missing 'tls.crt' or 'tls.key' keys
@@ -864,7 +681,6 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- scale-server-slots -#}
         {%- var serverSlots = ingress.Metadata.Annotations["haproxy.org/scale-server-slots"] %}
         {%- if serverSlots != "" %}
           {%- var val = toint(serverSlots) %}
@@ -874,7 +690,6 @@ templateSnippets:
           {%- serverOpts["serverSlotsValue"] = val %}
         {%- end %}
 
-        {#- backend-config-snippet: Raw HAProxy backend directives -#}
         {%- var snippet = ingress.Metadata.Annotations["haproxy.org/backend-config-snippet"] %}
         {%- if snippet != "" %}
       # haproxytech/backend-config-snippet
@@ -882,13 +697,8 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  # ============================================================================
-  # Features and Backends
-  # ============================================================================
-
   features-100-haproxytech-ssl-passthrough:
     template: |
-      {#- Register SSL passthrough backends with global feature registry. -#}
       {{ render "util-haproxytech-ssl-passthrough" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
@@ -904,27 +714,14 @@ templateSnippets:
 
   backends-501-haproxytech-ssl-passthrough:
     template: |
-      {#- Generate SSL passthrough backends from Ingress resources -#}
       {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
       {{ render "util-haproxytech-ssl-passthrough" }}
       {{ RenderAnnotationSSLPassthroughBackends("haproxytech_sslPassthrough", "sslPassthrough_backend", "haproxytech") }}
 
-# ============================================================================
-# Validation Tests
-# ============================================================================
-
   log-fields-530-haproxytech-captured-headers:
     template: |-
-      {#-
-        Captured request headers (haproxy.org/request-capture) for the JSON
-        access log. Extension point: log-fields-* — see base.yaml's "Access log"
-        block for the contribution contract.
-
-        %hr is the positional capture list, and it is the only consumer of the
-        capture annotation: without it the annotation configures captures that
-        nothing reads. haptic-annotations contributes the identical item for the
-        native vocabulary; base deduplicates.
-      -#}
+      {#- %hr is the positional capture list — the only consumer of haproxy.org/request-capture.
+          haptic-annotations emits the identical item for the native vocabulary; base deduplicates. -#}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["haproxy.org/request-capture"] != "" %}
@@ -971,7 +768,6 @@ validationTests:
       - type: contains
         target: map:reqhdr-host.map
         pattern: "default_sethost-ing_svc_sethost-svc_80 internal.svc.local"
-      # Relocated out of the backend: no per-backend set-header Host directive.
       - type: not_contains
         target: haproxy.cfg
         pattern: "set-header Host 'internal.svc.local'"
@@ -1317,16 +1113,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-      # The annotation value is a regex that matches the request Origin; the
-      # Allow-Origin header echoes the matched origin (never the raw regex).
       - type: contains
         target: haproxy.cfg
         pattern: "var\\(txn\\.cors_origin\\) -m reg \\^https://"
       - type: contains
         target: haproxy.cfg
         pattern: "Access-Control-Allow-Origin '%\\[var\\(txn\\.cors_origin\\)\\]'"
-      # Headers are added via http-after-response (so they also reach a preflight
-      # response generated by HAProxy), not http-response.
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header Access-Control-Allow-Origin"
@@ -1360,12 +1152,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-      # Preflight is answered by HAProxy itself; the after-response headers apply
-      # to that synthetic 204, so no headers need to ride inline on the return.
       - type: contains
         target: haproxy.cfg
         pattern: "http-request return status 204 if .* METH_OPTIONS"
-      # A specific origin allows credentials (echoed origin, not "*").
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header Access-Control-Allow-Credentials 'true'"
@@ -2021,10 +1810,6 @@ validationTests:
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.42:80 "
 
-  # ==========================================================================
-  # Health check toggle (haproxy.org/check) and interval (haproxy.org/check-interval)
-  # ==========================================================================
-
   test-haproxytech-check-disable:
     description: haproxy.org/check=false disables health checks via default-server no-check
     fixtures:
@@ -2088,10 +1873,6 @@ validationTests:
         target: haproxy.cfg
         pattern: "default-server check inter 10s"
 
-  # ==========================================================================
-  # Scale server slots (haproxy.org/scale-server-slots)
-  # ==========================================================================
-
   test-haproxytech-scale-server-slots:
     description: haproxy.org/scale-server-slots overrides the pre-allocated slot count
     fixtures:
@@ -2125,29 +1906,16 @@ validationTests:
         target: haproxy.cfg
         pattern: "server SRV_6 "
 
-# ============================================================================
-# Migration Coverage
-# ============================================================================
-#
-# Machine-readable classification of every haproxy.org/* annotation this
-# library reads (plus known-unsupported ones), consumed by
-# `haptic-controller migrate-check` and by the generated annotation-support
-# tables in docs/site/docs/migrating.md. The source controller is
-# haproxytech/kubernetes-ingress.
-#
-# Status vocabulary: supported | different | dropped | fails (see the
-# nginx-ingress coverage file header and scripts/check-migration-coverage.sh
-# for the drift-pinning contract). NOTE: haproxytech/kubernetes-ingress also
-# reads many of these on Service and ConfigMap resources; HAPTIC only reads
-# Ingress annotations, so Service/ConfigMap-level configuration does not carry
-# over.
+# Consumed by `haptic-controller migrate-check` and the generated tables in
+# docs/site/docs/migrating.md; scripts/check-migration-coverage.sh pins drift.
+# Upstream haproxytech/kubernetes-ingress also reads many of these on Services and
+# ConfigMaps — HAPTIC reads Ingress annotations only, so those don't carry over.
 migrationCoverage:
   - source: haproxytech
     detect:
       ingressClasses: ["haproxy"]
       annotationPrefixes: ["haproxy.org/"]
     annotations:
-      # --- Timeouts ---
       haproxy.org/timeout-server:
         status: supported
         note: Mapped to HAProxy's timeout server.
@@ -2163,7 +1931,6 @@ migrationCoverage:
       haproxy.org/timeout-check:
         status: supported
         note: Mapped to HAProxy's timeout check.
-      # --- Load balancing / limits ---
       haproxy.org/load-balance:
         status: supported
         note: roundrobin, static-rr, leastconn, first, source and random, plus parameterized uri/url_param/hdr/rdp-cookie, are accepted; other values fail the render.
@@ -2171,7 +1938,6 @@ migrationCoverage:
         status: different
         note: Divided across the number of ready HAProxy pods (quantized to a power of two) rather than applied per-server verbatim; must be a positive integer.
         doc: annotation-support
-      # --- Health checks ---
       haproxy.org/check:
         status: supported
         note: '"true"/"false" toggle health checks; other values fail the render.'
@@ -2181,7 +1947,6 @@ migrationCoverage:
       haproxy.org/check-interval:
         status: supported
         note: Sets the check interval (inter); ignored when check is "false".
-      # --- Rate limiting ---
       haproxy.org/rate-limit-requests:
         status: supported
         note: Deny threshold that enables rate limiting; exceeding it returns the rate-limit-status-code.
@@ -2197,7 +1962,6 @@ migrationCoverage:
       haproxy.org/rate-limit-whitelist:
         status: supported
         note: Comma-separated CIDRs never rate-limited; invalid CIDRs fail the render.
-      # --- Redirects ---
       haproxy.org/ssl-redirect:
         status: supported
         note: '"true" redirects HTTP to HTTPS; the default can be flipped via extraContext.ssl_redirect_default.'
@@ -2214,7 +1978,6 @@ migrationCoverage:
         status: different
         note: Default 302; an invalid code fails the render.
         doc: annotation-support
-      # --- Headers / rewrite / logging ---
       haproxy.org/set-host:
         status: supported
         note: Overrides the upstream Host header via a reload-free map.
@@ -2237,7 +2000,6 @@ migrationCoverage:
       haproxy.org/request-capture-len:
         status: supported
         note: Capture length for request-capture (default 128).
-      # --- Session persistence ---
       haproxy.org/cookie-persistence:
         status: supported
         note: Dynamic cookie-based stickiness.
@@ -2245,7 +2007,6 @@ migrationCoverage:
         status: different
         note: Static (non-dynamic) cookie stickiness; setting it together with cookie-persistence fails the render.
         doc: annotation-support
-      # --- Basic authentication ---
       haproxy.org/auth-type:
         status: different
         note: Only "basic-auth" is supported; other values fail the render (note the value differs from ingress-nginx's "basic").
@@ -2258,7 +2019,6 @@ migrationCoverage:
         status: different
         note: Default "Protected-Content" (matching the upstream controller); spaces in the realm are replaced with dashes, as upstream does, since the DataPlane API forbids spaces.
         doc: annotation-support
-      # --- Backend TLS / server options ---
       haproxy.org/send-proxy-protocol:
         status: different
         note: proxy, proxy-v1, proxy-v2, proxy-v2-ssl and proxy-v2-ssl-cn map to the matching send-proxy flags; any other value is silently ignored.
@@ -2283,15 +2043,12 @@ migrationCoverage:
       haproxy.org/backend-config-snippet:
         status: supported
         note: Raw HAProxy directives injected into the backend section.
-      # --- SSL passthrough ---
       haproxy.org/ssl-passthrough:
         status: supported
         note: SNI-based TCP passthrough; HTTP-level annotations don't apply to passthrough hosts.
-      # --- forwarded-for ---
       haproxy.org/forwarded-for:
         status: supported
         note: '"true" enables option forwardfor; "false" disables it; other values fail the render.'
-      # --- Access control (canonical + deprecated aliases) ---
       haproxy.org/allow-list:
         status: different
         note: Host-scoped source-IP allowlist — only gates rules with an explicit host; invalid CIDRs fail the render.
@@ -2308,7 +2065,6 @@ migrationCoverage:
         status: different
         note: Deprecated alias of deny-list, honoured only when deny-list is absent; host-scoped.
         doc: annotation-support
-      # --- CORS (mirrors the upstream HAProxy Kubernetes Ingress Controller) ---
       haproxy.org/cors-enable:
         status: supported
         note: Emits the Access-Control-* headers via http-after-response (matching the upstream controller). By default OPTIONS preflights flow to the backend; set cors-respond-to-options "true" to have HAProxy answer them with a 204.
@@ -2334,7 +2090,6 @@ migrationCoverage:
       haproxy.org/cors-respond-to-options:
         status: supported
         note: When "true", HAProxy answers the CORS preflight (OPTIONS) with a 204 instead of forwarding it to the backend, matching the upstream controller.
-      # --- Not carried over ---
       haproxy.org/timeout-client:
         status: dropped
         note: A frontend-level timeout owned by HAPTIC's shared frontend, not settable per Ingress.

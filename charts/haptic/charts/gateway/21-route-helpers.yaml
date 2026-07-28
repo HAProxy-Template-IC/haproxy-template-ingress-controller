@@ -1,34 +1,14 @@
 templateSnippets:
   util-backend-name-gateway:
     template: |
-      {#- Macro to generate gateway backend name from route and backend info #}
       {%- macro BackendNameGateway(route any, backend any) string -%}
       gtw_{{ route | dig("metadata", "namespace") | fallback("") }}_{{ route | dig("metadata", "name") | fallback("") }}_{{ backend | dig("name") | fallback("") }}_{{ backend | dig("port") | fallback("") }}
       {%- end macro -%}
 
   util-resource-helpers:
     template: |
-      {#-
-        Resource metadata & key-building helpers.
-
-        Scriggo macros are text-typed, so every helper returns a string.
-        For numeric fields (listener.port) callers still wrap with toint().
-
-        Usage:
-          {%- import "util-resource-helpers" for
-                ResourceNamespace, ResourceName,
-                GatewayKey, ListenerKey,
-                ListenerProtocol, ListenerName, ListenerHostname,
-                ResolveCertRefKey -%}
-          var gwNs    = ResourceNamespace(gw)
-          var gwName  = ResourceName(gw)
-          var gwKey   = GatewayKey(gwNs, gwName)
-          var lProto  = ListenerProtocol(listener)
-          var lName   = ListenerName(listener)
-          var lHost   = ListenerHostname(listener)
-          var listKey = ListenerKey(gwNs, gwName, lName)
-          var certKey = ResolveCertRefKey(listener, gwNs)  // "" if no certRefs
-      -#}
+      {#- Scriggo macros are text-typed: every helper returns a string, so callers wrap
+          numeric fields (listener.port) in toint(). -#}
       {%- macro ResourceNamespace(r any) string -%}
       {{- dig(r, "metadata", "namespace") | fallback("") -}}
       {%- end macro -%}
@@ -49,11 +29,8 @@ templateSnippets:
       {{- dig(listener, "protocol") | fallback("") -}}
       {%- end macro -%}
 
-      {#- ListenerProtocolOr — like ListenerProtocol but with a caller-supplied
-          fallback for listeners that omit `protocol`. Use "HTTP" when the
-          enclosing logic treats a missing protocol as HTTP (matches the
-          Gateway API default), "" when missing should be distinguished from
-          any concrete value. -#}
+      {#- Gateway API defaults a missing protocol to HTTP; pass "" only when absent must stay
+          distinguishable from a concrete value. -#}
       {%- macro ListenerProtocolOr(listener any, defaultProto string) string -%}
       {{- dig(listener, "protocol") | fallback(defaultProto) -}}
       {%- end macro -%}
@@ -66,10 +43,6 @@ templateSnippets:
       {{- dig(listener, "hostname") | fallback("") -}}
       {%- end macro -%}
 
-      {#- ResolveCertRefKey — extract the first cert ref as "<crNs>/<crName>".
-          Returns "" when the listener has no tls.certificateRefs. Caller
-          decides whether to look the key up in the shared certBySecret cache
-          and what to do on a miss. -#}
       {%- macro ResolveCertRefKey(listener any, defaultNs string) string -%}
       {%- var certRefs = dig(listener, "tls", "certificateRefs") | toSlice() -%}
       {%- if len(certRefs) > 0 -%}
@@ -82,44 +55,15 @@ templateSnippets:
 
   util-route-condition:
     template: |
-      {#-
-        RouteIdCondition - Generates HAProxy condition to match a Gateway route by ID.
-
-        This is the standard pattern for filter processing: check if txn.gw_rule_id
-        matches the specific routeId set by the advanced matchers.
-
-        Usage:
-          {%- import "util-route-condition" for RouteIdCondition -%}
-          http-request set-header X-Custom 'value' if {{ RouteIdCondition(routeInfo | dig("routeId")) }}
-      -#}
+      {#- txn.gw_rule_id is set by frontend-matchers-advanced-500-gateway. -#}
       {%- macro RouteIdCondition(routeId string) string -%}
       { var(txn.gw_rule_id) -m str "{{ routeId }}" }
       {%- end macro -%}
 
   util-bounded-k8s-name:
     template: |
-      {#-
-        BoundedK8sName - Build a Kubernetes object name that fits inside the
-        RFC 1123 label limit (63 chars).
-
-        Format: <prefix>-<ns>-<name>[-<suffix>]
-
-        If the joined string is <=63 chars, it is returned verbatim.
-        Otherwise the <ns>-<name> middle is truncated to make room for an
-        8-char SHA-256 fingerprint of <ns>/<name>[/<suffix>] so distinct
-        inputs that collide after truncation still produce distinct names.
-
-        Used by the Gateway library to emit per-Gateway Services (marker for
-        spec.infrastructure metadata propagation; static-address LoadBalancer
-        Services for spec.addresses) whose natural names would exceed the
-        63-char Service-name limit when fed long Gateway / namespace strings
-        (the conformance suite's `gateway-with-infrastructure-metadata` in
-        `gateway-conformance-infra` is 65 chars before any IP suffix).
-
-        Usage:
-          {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
-          var svcName = BoundedK8sName("gw", nsStr, nameStr, "")
-      -#}
+      {#- 63 = the RFC 1123 label limit on K8s object names. Over-long inputs keep an 8-char hash of
+          the untruncated key so inputs that collide after truncation still get distinct names. -#}
       {%- macro BoundedK8sName(prefix string, ns string, name string, suffix string) string -%}
       {%- var middle = ns + "-" + name -%}
       {%- var joined = prefix + "-" + middle -%}
@@ -141,48 +85,15 @@ templateSnippets:
 
   util-condition-transition-time:
     template: |
-      {#-
-        Gateway-API-shaped wrappers around the resource-agnostic
-        `transitionTime(existingConditions, type, status)` helper. These
-        macros encode the Gateway-API spec's structure for where conditions
-        live (.status.conditions for Gateway/GatewayClass top-level,
-        .status.listeners[byName].conditions for Gateway listeners,
-        .status.parents[byIdx].conditions for HTTPRoute/GRPCRoute parents,
-        .status.ancestors[byRef].conditions for policy resources);
-        the Go-side filter knows nothing about these paths and just
-        compares the supplied conditions list to the proposed status,
-        keeping the templating layer resource-agnostic.
-
-        Why these macros exist at all: re-stamping lastTransitionTime on
-        every render is a metav1.Condition spec violation AND breaks the
-        status-applier checksum dedup, producing a self-feeding write loop
-        where each SSA write triggers a watch event that re-renders. The
-        generic helper preserves the existing timestamp when status is
-        unchanged — these macros just make sure the helper sees the right
-        conditions list.
-
-        Usage:
-          {%- import "util-condition-transition-time" for
-                TopLevelTransitionTime, ListenerTransitionTime,
-                RouteParentTransitionTime, AncestorTransitionTime -%}
-          {{ TopLevelTransitionTime(gateway, "Programmed", "True") }}
-          {{ ListenerTransitionTime(gateway, "https", "Programmed", "True") }}
-          {{ RouteParentTransitionTime(route, parentIdx, "Accepted", "True") }}
-          {{ AncestorTransitionTime(policy, ancestorRef, controllerName, "Accepted", "True") }}
-      -#}
+      {#- Gateway-API status paths live here, not in the resource-agnostic transitionTime() filter
+          (RULE #1). Re-stamping lastTransitionTime on an unchanged status breaks the
+          status-applier checksum dedup and self-feeds an SSA-write -> re-render loop. -#}
       {%- macro TopLevelTransitionTime(resource any, conditionType string, newStatus string) string -%}
       {{- transitionTime(dig(resource, "status", "conditions"), conditionType, newStatus) -}}
       {%- end macro -%}
 
-      {#-
-        Listener entries come in as typegen-built structs in production
-        (gateway.Status.Listeners is a typed slice when the Gateway is
-        typed) but as map[string]any in fixture-only test paths. A
-        `.(map[string]any)` assertion would panic on the typed shape —
-        use dig() which handles both via JSON-tag lookup on structs
-        and direct key lookup on maps. Same applies to RouteParentTransitionTime
-        below.
-      -#}
+      {#- dig(), not .(map[string]any): listener and parent entries are typed structs in production
+          and maps in fixture-only paths; the assertion panics on the typed shape. -#}
       {%- macro ListenerTransitionTime(gateway any, listenerName string, conditionType string, newStatus string) string -%}
       {%- var listeners = dig(gateway, "status", "listeners") | toSlice() -%}
       {%- var found []any = nil -%}
@@ -203,18 +114,9 @@ templateSnippets:
       {{- transitionTime(found, conditionType, newStatus) -}}
       {%- end macro -%}
 
-      {#-
-        Policy resources (BackendTLSPolicy, GEP-713 PolicyStatus) carry
-        conditions under .status.ancestors[].conditions, NOT
-        .status.parents. Matching is by identity (controllerName +
-        ancestorRef fields), not by index — the ancestors list read back
-        from the apiserver can interleave entries written by other
-        controllers, so a positional lookup against the freshly computed
-        list would pick the wrong entry (or none). ancestorRef fields are
-        compared against exactly the shape we previously wrote (namespace
-        omitted stays omitted → both sides fall back to ""), so a haptic
-        entry always re-matches itself.
-      -#}
+      {#- Match ancestors by identity, not index: the list read back from the apiserver interleaves
+          other controllers' entries. Refs compare in the exact shape we wrote them (an omitted
+          namespace stays ""), so our own entry always re-matches. -#}
       {%- macro AncestorTransitionTime(policy any, ancestorRef map[string]any, controllerName string, conditionType string, newStatus string) string -%}
       {%%
         var found []any = nil
@@ -247,27 +149,8 @@ templateSnippets:
 
   util-hostname-intersect-gateway:
     template: |
-      {#-
-        HostnamesIntersect — listener.hostname × route.spec.hostnames
-
-        Per Gateway API spec, an HTTPRoute attaches to a listener only when
-        the hostname sets intersect. Wildcard rules (per spec):
-          - Both empty → match (listener accepts everything, route claims everything)
-          - Listener empty, route any → match (route narrows the listener)
-          - Listener "*.example.com", route empty → match (route inherits listener)
-          - Exact ↔ exact: byte-equal
-          - Wildcard ↔ exact: route ends with `.<base>` where listener was `*.<base>`
-            and the prefix part has no further dots (one DNS label only)
-          - Wildcard ↔ wildcard: bases match, OR one base is a suffix of the other
-            with the gap covering exactly one DNS label
-
-        Returns true if any (listener-hostname, route-hostname) pair matches
-        — listener carries one hostname, route may carry several. A single
-        match is sufficient for attachment.
-      -#}
-      {#- Macros return "true" / "false" strings rather than bool because
-          Scriggo macros only allow text-format return types. Callers use
-          == "true" comparisons on the result. -#}
+      {#- Scriggo macros can only return text, so these return "true"/"false" strings; callers
+          compare == "true". -#}
       {%- macro HostnamesIntersect(listenerHostname string, routeHostnames []any) -%}
         {%- if listenerHostname == "" -%}
           true
@@ -286,9 +169,6 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
-      {#- HostnameSinglePairMatch — one listener hostname × one route hostname.
-          Returns "true" / "false" string. The match boolean is just
-          whether the intersection is non-empty. -#}
       {%- macro HostnameSinglePairMatch(lh string, rh string) -%}
         {%- if HostnameSinglePairIntersection(lh, rh) == "" -%}
           false
@@ -297,34 +177,9 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
-      {#- HostnameSinglePairIntersection — one listener hostname × one route
-          hostname. Returns the *effective* hostname per Gateway API
-          intersection rules:
-
-            - lh exact, rh exact, equal           → that exact hostname
-            - lh wildcard (*.X), rh exact (y.X)   → rh (the more specific exact)
-            - lh exact (y.X), rh wildcard (*.X)   → lh (the more specific exact)
-            - both wildcard, equal bases          → that wildcard
-            - both wildcard, one base nested      → the more specific wildcard
-            - else                                → "" (no intersection)
-
-          Returns "" when there is no intersection.
-
-          Wildcard semantics (Gateway API v1 spec, NOT RFC 1034):
-            "*.X" matches any host that ends with ".X" and has at
-            least one label before it. Both `foo.X` and
-            `multi.label.foo.X` match (wildcards match any number of
-            labels), but the bare `X` does not. -#}
-      {#- HostnameRank — coarse "specificity" rank for a Gateway listener
-          hostname. Higher rank = more specific. Used to determine which
-          listener on a Gateway most specifically claims a given host so
-          listener-isolation can drop a hostname from a less-specific
-          listener's effective set when a more-specific sibling owns it.
-            ""        → 0           (catch-all; lowest)
-            "*.X"     → 100 + len(X) (wildcard; tied to suffix length)
-            "X"       → 100000 + len(X) (exact; always beats any wildcard)
-          The 100/100000 jumps make rank-comparisons safe across the
-          three categories without needing tuple ordering. -#}
+      {#- Tier offsets keep exact (100000+) > wildcard (100+) > catch-all (0) totally ordered
+          without tuple comparison; within a tier the longer hostname wins. Used by listener
+          isolation to find the most specific listener claiming a host. -#}
       {%- macro HostnameRank(h string) -%}
         {%- if h == "" -%}
           0
@@ -335,6 +190,9 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
+      {#- Gateway API v1 wildcard semantics, NOT RFC 1034: "*.X" matches any host ending in ".X"
+          with at least one label before it, so multi.label.foo.X matches too; bare X does not.
+          Returns the more specific of the two hostnames, or "" when they don't intersect. -#}
       {%- macro HostnameSinglePairIntersection(lh string, rh string) -%}
         {%- if lh == rh -%}
           {{ lh }}
@@ -364,24 +222,8 @@ templateSnippets:
   util-reference-grant-permitted:
     requires: [referencegrants]
     template: |
-      {#-
-        ReferenceGrantPermitted — cross-namespace ref check.
-
-        Per Gateway API spec, a cross-namespace reference is permitted only
-        when there's a ReferenceGrant in the target namespace whose `from`
-        clause matches the source (group/kind/namespace) and whose `to`
-        clause matches the target (group/kind, optionally name). Same-
-        namespace refs are always permitted (no grant needed).
-
-        Returns "true" / "false" — Scriggo macro return-type constraint
-        (see HostnamesIntersect doc). Callers use `== "true"`.
-
-        Args:
-          fromGroup, fromKind, fromNs — the source resource (e.g. Gateway)
-          toGroup, toKind, toNs, toName — the target resource (Secret /
-          Service). toName is optional in the grant; matches any if grant
-          omits the name.
-      -#}
+      {#- Scriggo macros can only return text, so this returns "true"/"false"; callers compare
+          == "true". -#}
       {%- macro ReferenceGrantPermitted(
           fromGroup string, fromKind string, fromNs string,
           toGroup string, toKind string, toNs string, toName string) -%}
@@ -421,42 +263,12 @@ templateSnippets:
   util-gw-mtls-blocked:
     requires: [gateways]
     template: |
-      {#-
-        ComputeGwMtlsBlocked — populate the set of mTLS-blocked listener
-        names for a Gateway.
-
-        A listener is "blocked" when its applicable TLS-frontend
-        validation block (per-port override or default) has CA refs
-        that can't be resolved against the live store. Routes attached
-        to such listeners must not be served — otherwise the chart's
-        HTTPS frontend would happily route them via a SIBLING Gateway's
-        bind, closing the
-        GatewayFrontendInvalidDefaultClientCertificateValidation
-        conformance gap. The check matches the resolvability test
-        features-110-gateway-frontend-mtls performs but reads the live
-        resource stores rather than consuming pre-populated state, so
-        the route-analysis pass doesn't depend on
-        features-110-gateway-frontend-mtls having run first (it
-        doesn't, when map files render in their own context).
-
-        Memoizes per-Gateway via shared.ComputeIfAbsent — the walk runs
-        once per Gateway regardless of how many routes attach to it.
-
-        Usage:
-          {%- import "util-gw-mtls-blocked" for ComputeGwMtlsBlocked,
-                GetGwMtlsBlockedKey -%}
-          {{ ComputeGwMtlsBlocked(gw) }}
-          {%- var blockedAny, _ = shared.ComputeIfAbsent(
-                GetGwMtlsBlockedKey(gw),
-                func() any { return map[string]bool{} }) -%}
-          {%- var gwMtlsBlocked = blockedAny.(map[string]bool) %}
-
-        The double-ComputeIfAbsent at the call site is the chart's
-        established render-to-populate + getter-to-fetch idiom (see
-        util-gateway-analysis for the same pattern). The fetch
-        closure is a no-op for cached entries; the macro guarantees
-        the entry is present.
-      -#}
+      {#- Routes on a listener whose TLS validation CA refs don't resolve must not be served: the
+          chart's shared HTTPS frontend would otherwise route them via a SIBLING Gateway's bind
+          (conformance GatewayFrontendInvalidDefaultClientCertificateValidation). Reads the live
+          stores instead of features-110-gateway-frontend-mtls's state, so map-file renders don't
+          depend on that snippet having run. Callers inline the same key literal
+          (20-route-analysis.yaml); keep it in sync with GetGwMtlsBlockedKey. -#}
       {%- macro GetGwMtlsBlockedKey(gw *resources.gateways.T) string -%}
         gwMtlsBlocked:{{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}
       {%- end macro -%}
@@ -465,17 +277,14 @@ templateSnippets:
       {%%
         var _, _ = shared.ComputeIfAbsent("gwMtlsBlocked:"+gw.Metadata.Namespace+"/"+gw.Metadata.Name, func() any {
           var blocked = map[string]bool{}
-          // Outer presence check uses dig() to distinguish "TLS
-          // frontend block absent" (skip entirely) from "present
-          // but with all zero values" (process and potentially
-          // block listeners). Typed access alone can't observe
-          // absence — it always yields the struct's zero value.
+          // dig(), not typed access: typed access yields the zero struct, so it cannot tell an
+          // absent spec.tls.frontend from a present-but-empty one.
           if dig(gw, "spec", "tls", "frontend") == nil {
             return blocked
           }
           var gwNs = gw.Metadata.Namespace
-          // Dig-only: spec.tls is newer than the oldest schema generation
-          // the gateways candidate list can resolve.
+          // dig-only: spec.tls is newer than the oldest schema generation the gateways
+          // candidate list can resolve.
           var defaultValidation = dig(gw, "spec", "tls", "frontend", "default", "validation")
           var perPortValidations = map[int]any{}
           for _, pp := range dig(gw, "spec", "tls", "frontend", "perPort") | toSlice() {

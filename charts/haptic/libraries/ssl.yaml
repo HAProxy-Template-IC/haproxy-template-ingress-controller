@@ -1,36 +1,24 @@
-# SSL/TLS Infrastructure Library for HAPTIC
-# Contains SSL certificate management, HTTPS frontends, and SSL passthrough infrastructure
-# Must be loaded after base.yaml to access frontend-routing-logic and file registry
+# Must load after base.yaml: uses frontend-routing-logic and the file registry.
 
-# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.ssl.enabled }}'
 
-# Test certificate fixtures (YAML anchors for reuse across validation tests).
-# The default pair is ECDSA (EC PRIVATE KEY); the *_rsa pair is a 2048-bit RSA
-# cert/key, used by the dual-cert test to prove RSA+ECDSA on the same SNI.
+# The default pair is ECDSA, the *_rsa pair RSA — key type is invisible in base64.
 _test_tls_crt: &test_tls_crt LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
 _test_tls_key: &test_tls_key LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
 _test_tls_crt_rsa: &test_tls_crt_rsa LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDVENDQWZHZ0F3SUJBZ0lVQ3ZIL204UHQ3QTA4c0xDMFFieTlSeW1jcndBd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQjRYRFRJMk1EY3lNREUwTlRBd05Gb1hEVE0yTURjeApOekUwTlRBd05Gb3dGREVTTUJBR0ExVUVBd3dKYkc5allXeG9iM04wTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGCkFBT0NBUThBTUlJQkNnS0NBUUVBeVpyZExKbmFnZkNOZDljRmRvMi85Wm9VVkdVam9sNHBuTzdPU1lTUTcxVEcKMDBVd3lLL21VT3V4TnVIZnJmNTVPU1kzTWI4cmlUM1BBRTUwSm1HaXFEOWNyTFFjTlE0RSt4TnRoUGc2a1dXUQpwUThRSktmT1JCLzN2b0hKa1RqR1k4WlRVaHd5UU9OSk9XeVdmK3ZsZFdEMGNCLytCUzQ3a0U3Q3lnTjNyNENoCjZHU0kxRXZBM0Y5S3hURTBRb3VXemNBU2ZoQjlLczlsMGt2c2lHaGo1YlZEVEtSUWo5Z2NORzdMcnlVMHJTN3QKVTdvVXhvc0xCRXFKNUdrNnVzOHN4NWJFc3oxem5KSnhyM3FGblBhSldNdU8wbEJPakk4US9GcXlOOU8vTTJQcAo3NHVSSDdhV1RxaUl4WjJDWkZKaDFEdUhhK2ozMFJRVWNMbEVrbGdrMndJREFRQUJvMU13VVRBZEJnTlZIUTRFCkZnUVVVa1RXeUtZSWZycVNJemhjTURVQ3JLS1M4MEV3SHdZRFZSMGpCQmd3Rm9BVVVrVFd5S1lJZnJxU0l6aGMKTURVQ3JLS1M4MEV3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBRTQzOAp2RE1yUE9zK2tXRFpMcStiUVA3WkNJTTFYam94Y1R4U0JqeDJoR3AzbmtpYWhsMXVPdlV5ZG5ySWw1V0s5cExGCmRtdHF4YWE5b3RNRjlqMFlSMVR5N1UzRk5DUDdReVFQUit5VHF5d2Z5d1hiNVV5clhQbDRxN01LRm5rbHNCVXAKakVIc0pPM1lyQnlDQmhjQ1JHUTY0a3Y1VmN0ajUzbkQrUklRaTBaTVQvdkNiQVk2REZjWFUyMWNwWCtVaU81NwpydkJoT1NHOVNJbkYzMGd1ZEJLQkN6T2g2NExNWWlnaHBZVVhpa29rM3BuNEhjSnBqR1lPcGFqZisxZnVHVEV6CnB2SlhpTEtXakVlUnVRM0h5K296ZU15Ti85U3VKMnVGY0hFWDNlLzlQVndKbWg3YmVDdTJxUG9LNklWL0NNck4KYjNIYzdTYStMRnQ1UUFIbm9RPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
 _test_tls_key_rsa: &test_tls_key_rsa LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktrd2dnU2xBZ0VBQW9JQkFRREptdDBzbWRxQjhJMTMKMXdWMmpiLzFtaFJVWlNPaVhpbWM3czVKaEpEdlZNYlRSVERJcitaUTY3RTI0ZCt0L25rNUpqY3h2eXVKUGM4QQpUblFtWWFLb1AxeXN0QncxRGdUN0UyMkUrRHFSWlpDbER4QWtwODVFSC9lK2djbVJPTVpqeGxOU0hESkE0MGs1CmJKWi82K1YxWVBSd0gvNEZManVRVHNMS0EzZXZnS0hvWklqVVM4RGNYMHJGTVRSQ2k1Yk53QkorRUgwcXoyWFMKUyt5SWFHUGx0VU5NcEZDUDJCdzBic3V2SlRTdEx1MVR1aFRHaXdzRVNvbmthVHE2enl6SGxzU3pQWE9ja25Hdgplb1djOW9sWXk0N1NVRTZNanhEOFdySTMwNzh6WStudmk1RWZ0cFpPcUlqRm5ZSmtVbUhVTzRkcjZQZlJGQlJ3CnVVU1NXQ1RiQWdNQkFBRUNnZ0VBSUtFVzhQUUp3SVFkY1dyMHNHWnF6aVpjNmZmZ2w1UGo2a2xnUzlmUDJWeUEKUFl0eVJOanJUdWVHckJwTXFJMktNeXl6UERMenFlZStEQSttanR1NGhzQ1NrRVVxVjQvb1VIYXBnQjdvNDhWcgpicnVNWWxKaWVQWXZrNzdQejlnL2k4QjZsY3lJZWFZUG9PS3BUUlR4ODFoNDEzam1GUktSZzE2citpUXJoOVRnCi9ZUVhIUUs1OUJDSjZza3h1TklQWHdvRGRxT0FYVHNIR1ZkRXJUSWt5Wk1WNmNrdGdKUlprU1dnVm5YamRPZzAKM2xDZ0JwWHNCcUVhbFcvVGNwM1JVbXYweEY2anA0cmNvaTNzSmJ6RER3RW55TU1FMnRaWm5mSTl1ZDBsS2VQTQpHYU1VUGt0RUh2dVVuMmZCWkxMWEFlSWJmeTZrTy9DTStybXVTbGNIc1FLQmdRRDZSRHVydURLUkJib3hidjYwCmZoaEpFZnh5L0tVY1FNQ1BUVkpDMWl6M0ZBaVpsWCtONHdvMENGNVl6VWQ2RjZmTGJXSGltSjJHTk5LaEN6TjcKdE9IMFFVUVVaVytHc0xpcXB0V3NCbVh4NkQzajJwOWltTzZTTDg4NDBrYXpkaTlYbUVVeit1RmxwdWZrdGh0MQpSZUdvTVl3V2JnQUU5bXEvYS9sUkhEcUtLUUtCZ1FET09UMVcwZldqQ2pXazJuUlR2cW5Mdld1UkFrREJqcXhpCklhekszdUxmeCtjaFd4RDhwelZrOENnUXN2RTFNZUh2Q09UWXV1Q2oyOTdqZEF6ZFFPNHAzblVUbG1TRy9xbmQKZ0tFNHlPbWhhYjM5d0tzRWtxWEZHTnoyUHBta3h6OFlRVzJvbExYYVVZQk9kRDBIclhWd1JaSFh1a0dXSXpkcQp0Wkl3eitQZll3S0JnUURsQ05iM0kxNmJtL3MzVEZZclJvN2hLR1c1c2Y5RTZQbVE2L2xSazRLWktDdHFxd2VPCkNXOElDWFNXbmw5QW5DK0NtM3NPamc3emlKb09xaHFXcHdaMnE5Z3JObDJualVtalc0V0dwbUJieitmOEE5TUQKditQdHczVklraUFFRXkvbVlVTkwrOWlWVi9jM04zWFBrSUdnbEorWTAxaVBNaGlsVUtKZG1aRDFhUUtCZ1FDSQoxVWdTL0h0dE5CQUdFNEZPTTl0OE9YSlBKRnlOVWJxbDNreEZ6QUJqbGNPUnlWZ0xISE44UnpGK2F3MUxTNDdyClNVNTNWQUJNR1U3YVF4MXFEWFE1eWNhTE9hWDRRSys3TG1kTFExeHA0cnpTeTIxdU9sUE41TUp3alhicTg5MjAKblcxQ2gzSG1xMTlrTHhKenJxK1cwRUtHRHFzSUVOUHJkUkRNWEpTSm13S0JnUURwelpzSitWS0d2cTJtenM2TQpUbHpQMXBTemdpV0NyMjE5eDBqK0hmTm9sRkZtaEtETW1KVHp6RXNwck9GaFFOdXBEREJhUEFBWHNJSTRUc1hpClVHelkzWDdaQldFd0I2UWxxdTVGYW9SK0xTelpSSDhQbS9IdkdJd2ZCVEtpMEFMWElONDdlYmNleWpWNVQrNEcKV2tFUnBwdGJlN2QyOXZGNFNCNW4zQzBkR0E9PQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==
 
-# Watch secrets for SSL certificate loading
 watchedResources:
   secrets:
     apiVersion: v1
     resources: secrets
     indexBy: ["metadata.namespace", "metadata.name"]
 
-# Library-declared extraContext defaults (lowest precedence; an operator overrides
-# any of these via controller.config.templatingSettings.extraContext). HSTS is a
-# TLS concern, so its global knobs live here; features-085-ssl-hsts-global reads them.
+# Lowest precedence: controller.config.templatingSettings.extraContext overrides these.
 templatingSettings:
   extraContext:
-    # Send Strict-Transport-Security on every TLS response (all hosts), matching
-    # ingress-nginx's global `hsts: true` default. Off by default; a per-Ingress
-    # hsts annotation still overrides the value for its hosts. HSTS only takes
-    # effect over HTTPS — pair it with an HTTP→HTTPS redirect (the rendered config
-    # emits a warning when HSTS is on but no redirect is configured).
+    # HSTS is a global default; a per-Ingress hsts annotation overrides it for its hosts.
     tls:
       hsts:
         enabled: false
@@ -38,103 +26,50 @@ templatingSettings:
         includeSubdomains: false
         preload: false
 
-      # Fleet-wide TLS session resumption. Off by default; when on, every
-      # HAProxy pod shares one self-rotating session-ticket key (STEK) so a
-      # ticket issued by any pod resumes on any other (TLS 1.2 and 1.3). The
-      # library emits the shared key file and the bind `tls-ticket-keys` option.
       sessionTickets:
         enabled: false
 
-      # TLS cipher / protocol policy applied to EVERY SSL bind via
-      # global ssl-default-bind-* (see global-settings-410-ssl-ciphers).
-      # These sub-keys sit beside `hsts` under the single `tls` block; override
-      # any of them through controller.config.templatingSettings.extraContext.tls.*
-      # (Helm deep-merges, so overriding one key keeps the sibling defaults).
-      #
-      # Inclusive-by-default and CERT-AGNOSTIC: `ciphers` is a single forward-
-      # secret superset spanning ECDSA (ECDHE-ECDSA-*), RSA (ECDHE-RSA-*), and
-      # DHE (DHE-RSA-*). HAProxy offers only the suites it has a matching
-      # certificate for, so the SAME list serves an RSA-only, ECDSA-only, or
-      # dual (RSA+ECDSA) deployment with no per-cert-type config.
-      #
-      # To reach pre-2014 appliances that only do static-RSA key exchange,
-      # append RSA-kx suites to `ciphers` (e.g. AES128-GCM-SHA256:AES256-SHA)
-      # and lower `minVersion` — those clients lose forward secrecy, modern
-      # clients keep it via server cipher ordering. Set a value to "" to omit
-      # the directive and fall back to HAProxy's built-in default.
-      # TLS 1.2 ciphers (ssl-default-bind-ciphers) — all forward-secret.
-      # This default string is mirrored in the cipher-policy examples in
-      # docs/site/docs/ssl-certificates.md (the test-ssl-global-cipher-policy-*
-      # assertions also pin its head/tail) — change all copies together.
+      # Applied to every SSL bind; "" omits a directive (HAProxy built-in default).
+      # `ciphers` is one forward-secret superset over ECDSA/RSA/DHE — HAProxy offers
+      # only suites it holds a certificate for, so one list fits RSA-only, ECDSA-only
+      # and dual deployments. Mirrored in docs/site/docs/ssl-certificates.md and
+      # pinned by test-ssl-global-cipher-policy-*; change all copies together.
       ciphers: "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA"
-      # TLS 1.3 cipher suites (ssl-default-bind-ciphersuites).
       ciphersuites: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
-      # Minimum protocol version (ssl-default-bind-options ssl-min-ver).
-      # TLSv1.2 is the safe floor; lower to TLSv1.0 only for legacy clients.
       minVersion: "TLSv1.2"
 
 templateSnippets:
-  # SSL bind options utility - used by both HTTPS frontend and SSL passthrough
-  # Uses crt-list for certificate management with per-certificate OCSP configuration
   util-ssl-bind-options:
     template: >-
       {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1{% if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
 
-  # Parameterised counterpart of `util-ssl-bind-options` — emits the
-  # same `ssl crt-list <path> alpn h2,http/1.1` suffix but reads the
-  # crt-list filename from the caller. Used by phase 4 of the
-  # per-Gateway-IP refactor (`https-bind-extra-*` snippet) to give
-  # each (Gateway, listener) bind its own crt-list (different SSL
-  # configs without bind-line collision). The macro form keeps the
-  # chart-static path on the simpler bare snippet above so that
-  # call site stays a one-liner.
+  # Macro twin of util-ssl-bind-options for per-(Gateway, listener) crt-lists; the
+  # bare snippet above stays so the chart-static call site remains a one-liner.
   util-ssl-bind-options-for-crtlist:
     template: |
       {%- macro SSLBindOptionsForCrtlist(crtlistFilename string) string -%}
         {{- " " -}}ssl crt-list {{ pathResolver.GetPath(crtlistFilename, "crt-list") }} alpn h2,http/1.1{% if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %} tls-ticket-keys {{ pathResolver.GetPath("tls-ticket-keys", "file") }}{% end %}
       {%- end -%}
 
-  # One 80-byte TLS session-ticket key (STEK), base64. The first 8 bytes hold a
-  # YYYYMMDD marker inside HAProxy's 16-byte key-NAME field (a public identifier,
-  # not secret); bytes 8..80 are crypto-random, so the AES-256 (16..48) and
-  # HMAC-SHA-256 (48..80) halves are full-entropy. The marker lets the rotator
-  # tell how old a key is without a comment line (HAProxy rejects those).
+  # 80 bytes: an 8-byte YYYYMMDD marker inside HAProxy's public 16-byte key-NAME
+  # field, then 72 crypto-random bytes (AES-256 + HMAC halves stay full-entropy).
+  # The marker dates the key because HAProxy rejects comment lines in this file.
   util-ticket-key:
     template: |
       {%- macro NewTicketKey(dateStr string) string -%}
         {{- base64(dateStr + randBytes(72)) -}}
       {%- end -%}
 
-  # Global TLS cipher / protocol policy. Rendered into the `global` section
-  # (base.yaml's global-settings render_glob picks up global-settings-* from
-  # every loaded library) so it lands right after global-settings-400-ssl.
   global-settings-410-ssl-ciphers:
     template: |
-      {#-
-        Global TLS cipher / protocol policy — applies to EVERY SSL bind via
-        ssl-default-bind-*. Rendered from extraContext.tls (defaults declared
-        in this library's templatingSettings.extraContext; Helm deep-merges an
-        operator's partial override with those defaults).
-
-        Cert-agnostic by construction: `tls.ciphers` is a forward-secret
-        superset spanning ECDSA (ECDHE-ECDSA-*), RSA (ECDHE-RSA-*), and DHE
-        (DHE-RSA-*). HAProxy only offers the suites it holds a matching
-        certificate for, so one list serves an RSA-only, ECDSA-only, or dual
-        (RSA+ECDSA) deployment identically. Per-listener Gateway TLS options
-        (gateway/92-listener-tls-options) still override per bind.
-
-        Any empty value omits its directive (falls back to HAProxy's built-in
-        default). See docs: libraries/ssl for dual-cert / cert-manager setup.
-      -#}
+      {#- Per-listener Gateway TLS options (gateway/92-listener-tls-options) still
+          override these per bind. -#}
       {%- var ciphers = tostring(extraContext | dig("tls", "ciphers") | fallback("")) -%}
       {%- var ciphersuites = tostring(extraContext | dig("tls", "ciphersuites") | fallback("")) -%}
       {%- var minVer = tostring(extraContext | dig("tls", "minVersion") | fallback("")) -%}
-      {#- Config-injection guard: these strings render verbatim into the global
-          section, so each must stay within the cipher/version charset
-          (letters, digits, and : _ + . -), which blocks newlines/control
-          chars. Report the offending KEY rather than echoing the raw value —
-          a value that failed the charset check may carry the very characters
-          we're guarding against, and the error surfaces in logs/Events. -#}
+      {#- These render verbatim into the global section. The error names the KEY, never
+          the value: a value that failed the charset check may carry the very control
+          characters the guard exists to keep out of logs and Events. -#}
       {%- if ciphers != "" && regex_search(ciphers, "[^A-Za-z0-9:._+-]") -%}
         {{ fail("Invalid extraContext.tls.ciphers: only cipher characters (A-Z a-z 0-9 : _ + . -) are allowed — config-injection guard.") }}
       {%- end -%}
@@ -156,33 +91,9 @@ templateSnippets:
 
   util-crtlist-line:
     template: |
-      {#- Build a single crt-list line.
-
-            <certFilename> [ocsp-update on[ ca-file <ca> verify <mode>]]\
-                          [ <sniSuffix>]
-
-          Inputs:
-            certFilename   The cert file as stored on disk (sanitized
-                           filename from features-100-{ingress,gateway}-tls).
-            mtlsCfg        Optional `map[string]any{"ca_path": …,
-                           "verify_mode": …}` — either nil (no client-
-                           cert validation) or a resolved validation
-                           block. The bracketed clause is emitted only
-                           when both fields are non-empty.
-            sniSuffix      Space-joined SNI patterns (shared chart-static
-                           crt-list groups multiple SNIs per line) OR a
-                           single listener hostname (per-listener
-                           crt-list scopes one cert to one hostname).
-                           Empty string for catchall — no trailing SNI
-                           filter is appended.
-
-          NOTE: `ca-ignore-err all crt-ignore-err all` (the
-          AllowInsecureFallback lift) is BIND-scope, not crt-list-
-          scope — HAProxy rejects the keywords inside a crt-list line.
-          Phase 4's per-Gateway bind reads `gatewayListenerMTLSConfig`
-          directly and adds the flags to its `bind *:<podPort>`
-          directive; this macro does NOT emit them.
-      -#}
+      {#- Never add `ca-ignore-err all` / `crt-ignore-err all` here: they are
+          bind-scope and HAProxy rejects them inside a crt-list line (the
+          per-Gateway bind emits them instead). Empty sniSuffix = catchall. -#}
       {%- macro CrtListLine(certFilename string, mtlsCfg any, sniSuffix string) string %}
         {%- var opts = "ocsp-update on" %}
         {%- if mtlsCfg != nil %}
@@ -202,23 +113,10 @@ templateSnippets:
 
   log-fields-200-tls:
     template: |-
-      {#-
-        TLS handshake facts for the JSON access log.
-
-        Extension point: log-fields-* (band 200, "security"). See base.yaml's
-        "Access log" block for the contribution contract.
-
-        Registered when this install terminates TLS anywhere — a per-INSTALL
-        gate, not per-frontend, and deliberately so: the assembled format string
-        is shared by every HTTP frontend, which is exactly what keeps the JSON
-        schema stable. On the plain-HTTP frontend the ssl_fc_* fetches render "".
-        An HTTP-only install contributes nothing and pays no bytes at all.
-
-        The fetches are connection-scoped, so they are available at log time.
-        Cipher is deliberately omitted: the global ssl-default-bind-ciphers
-        policy makes it near-constant fleet-wide, while the question operators
-        actually ask ("who is still on an old protocol?") is tls_version.
-      -#}
+      {#- Gated per INSTALL, not per frontend: one format string is shared by every
+          HTTP frontend, so a per-frontend gate would break the single JSON schema
+          (ssl_fc_* render "" on plain HTTP). Cipher omitted — the global
+          ssl-default-bind-ciphers policy makes it near-constant fleet-wide. -#}
       {%- var gfRaw = shared.Get("globalFeatures") -%}
       {%- if gfRaw != nil && tostring(gfRaw.(map[string]any) | dig("needHTTPSFrontend")) == "true" %}
       %(tls_version)[ssl_fc_protocol]
@@ -227,49 +125,18 @@ templateSnippets:
 
   log-fields-205-tls-resumption:
     template: |-
-      {#-
-        TLS session resumption for the JSON access log.
-
-        Gated on the session-ticket feature: the resumption *rate* is the whole
-        point of enabling tls-ticket-keys, and no metric exposes it. Typed :bool
-        because ssl_fc_is_resumed always resolves (false on a fresh handshake and
-        on plain HTTP), so the JSON value is a real boolean rather than "".
-      -#}
+      {#- Typed :bool is safe only because ssl_fc_is_resumed always resolves (false on
+          a fresh handshake and on plain HTTP); an unresolved fetch would render ""
+          into a boolean slot. No metric exposes the resumption rate. -#}
       {%- if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) %}
       %(tls_resumed:bool)[ssl_fc_is_resumed]
       {%- end %}
 
   features-050-ssl-initialization:
     template: |
-      {#-
-        SSL Infrastructure Initialization
-
-        Purpose: Initializes data structures for SSL feature registration.
-
-        Extension Point: features-* (priority 050 - runs first)
-
-        Provides (in shared.globalFeatures):
-          - sslPassthroughBackends: Array for SSL passthrough backend registrations
-          - tlsCertificates: Array for TLS certificate registrations
-          - sslRedirectHosts: Array for SSL redirect host registrations
-
-        Dependencies: None (this initializes the infrastructure)
-
-        Used By:
-          - features-100-gateway-ssl-passthrough
-          - features-100-gateway-tls
-          - features-100-ingress-tls
-          - features-100-haproxytech-ssl-passthrough
-          - features-100-haproxytech-ssl-redirect
-      -#}
-
-      {# Initialize SSL data structures atomically - ComputeIfAbsent ensures this runs exactly once.
-         Only keys that ssl.yaml itself owns (produces or consumes) are seeded
-         here. Keys owned end-to-end by another library (e.g. the gateway
-         library's mtlsBlockedListeners / gatewayListenerMTLSConfig, populated
-         and read entirely within gateway/*) self-seed in their producing
-         snippet — ssl.yaml is Level 1 and must not know about Level 2+
-         shared-state keys. #}
+      {# Seed only keys ssl.yaml owns. Keys owned end-to-end by a Level 2+ library
+         (gateway's mtlsBlockedListeners, gatewayListenerMTLSConfig) self-seed in
+         their producing snippet — ssl.yaml must not know about them. #}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any {
         return map[string]any{
           "sslPassthroughBackends":      []any{},
@@ -282,7 +149,7 @@ templateSnippets:
           "needHTTPSFrontend":           false,
         }
       }) -%}
-      {# Ensure fields exist (in case globalFeatures was created elsewhere without these fields) #}
+      {# globalFeatures may have been created by another library without these keys. #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- if gf["sslPassthroughBackends"] == nil -%}
         {%- gf["sslPassthroughBackends"] = []any{} -%}
@@ -296,26 +163,11 @@ templateSnippets:
       {%- if gf["clientCertVerifyHosts"] == nil -%}
         {%- gf["clientCertVerifyHosts"] = map[string]any{} -%}
       {%- end -%}
-      {#- Bind-decision flags: each resource library's features-100-* phase
-          OR's its contribution into these. Reading happens later in
-          base.yaml's http_frontend block and ssl.yaml's https / ssl-tcp
-          frontends to decide whether to emit the chart-static
-          `bind *:httpPort` / `bind *:httpsPort` line and whether to
-          render the surrounding frontend block at all.
-
-          * bindHTTPDefault — emit `bind *:httpPort` in http_frontend
-          * bindHTTPSDefault — emit `bind *:httpsPort` in https/ssl-tcp
-          * needHTTPFrontend — render http_frontend block
-          * needHTTPSFrontend — render https / ssl-tcp frontend blocks
-
-          The bind-default flag is narrower than need-frontend: a Gateway
-          HTTP listener at port 9090 (non-default) sets needHTTPFrontend
-          (so http-bind-extra-* gets a frontend to attach to) but does
-          NOT set bindHTTPDefault (the chart's default port stays
-          unbound). For HTTPS, listeners with successfully-resolved
-          certs at httpsPort set bindHTTPSDefault — listeners that fail
-          cert validation (e.g. NoValidCACertificate) deliberately do
-          not, so HAProxy doesn't answer handshakes for them. -#}
+      {#- Each resource library's features-100-* ORs into these. bindHTTP(S)Default is
+          narrower than needHTTP(S)Frontend: a listener on a non-default port needs the
+          frontend but leaves the chart-static bind off, and a listener whose cert
+          failed validation deliberately leaves bindHTTPSDefault false so HAProxy never
+          answers its handshakes. -#}
       {%- if gf["bindHTTPDefault"] == nil -%}
         {%- gf["bindHTTPDefault"] = false -%}
       {%- end -%}
@@ -331,35 +183,8 @@ templateSnippets:
 
   features-085-ssl-hsts-global:
     template: |
-      {#-
-        Global HSTS (opt-in)
-
-        Purpose: When extraContext.hstsEnabled is true, emit the
-        Strict-Transport-Security header on *every* TLS response, matching
-        ingress-nginx's global `hsts: true` default. Per-Ingress HSTS annotations
-        still win for their hosts — the per-host response-header rule in
-        frontend-filters-080-hsts runs after the global one, and set-header
-        replaces, so a host-specific value overrides this default.
-
-        Resource-agnostic: registers a single global value; it references no
-        specific resource kind.
-
-        Extension Point: features-* (priority 085 — after ssl init 050, before
-        the resource TLS phase 100).
-
-        Provides (in gf["hstsGlobalValue"]): the default Strict-Transport-Security
-        value, or unset when disabled.
-
-        extraContext knobs (safe opt-in default is OFF):
-          - hstsEnabled            (bool, default false) — turn the global header on
-          - hstsMaxAge             (default "31536000", one year)
-          - hstsIncludeSubdomains  (bool, default false)
-          - hstsPreload            (bool, default false)
-
-        Used By: frontend-filters-080-hsts (emits the shared response-header rule
-        and, when no HTTP→HTTPS redirect is configured, a warning that HSTS is
-        only effective over HTTPS).
-      -#}
+      {#- Global default only: frontend-filters-080-hsts emits the per-host rule after
+          this one and set-header replaces, so a per-Ingress annotation still wins. -#}
       {%- var enabled bool = extraContext | dig("tls", "hsts", "enabled") | fallback(false) -%}
       {%- if enabled -%}
         {%- var maxAge = extraContext | dig("tls", "hsts", "maxAge") | fallback("31536000") | tostring() -%}
@@ -375,37 +200,13 @@ templateSnippets:
   features-110-ssl-ticket-keys:
     template: |
       {%- import "util-ticket-key" for NewTicketKey -%}
-      {#-
-        Self-rotating TLS session-ticket keys (STEK).
-
-        When session tickets are enabled (extraContext.tls.sessionTickets.enabled),
-        emit a `tls-ticket-keys` general file with THREE 80-byte keys (base64, one
-        per line). The
-        controller pushes the identical file to every HAProxy pod, so a ticket
-        sealed by one pod resumes on any other — for BOTH TLS 1.2 and 1.3.
-
-        Rotation is self-contained, no seed secret and no controller timer: each
-        key carries a YYYYMMDD marker in its (public) name bytes; bytes 8..80 are
-        crypto-random. We read the CURRENT deployed file back from the render
-        context (currentFiles, populated like currentConfig) and check the newest
-        key's marker:
-          - marker == today  → re-emit the current file UNCHANGED (deterministic,
-                               so no spurious reload)
-          - marker <  today  → drop the oldest key, keep the other two, append one
-                               fresh key stamped today (one hitless reload; the
-                               3-key window keeps yesterday's tickets resumable)
-          - no current file  → seed three fresh keys
-        randBytes (crypto/rand, non-deterministic) is called ONLY on the
-        rotate/seed paths, so steady-state renders stay byte-identical.
-
-        Resource-agnostic: the key file is HAPTIC's own operational material, not
-        a watched routing resource.
-
-        Extension Point: features-* (priority 110, after ssl init 050).
-      -#}
+      {#- One shared key file per fleet, so a ticket sealed by any pod resumes on any
+          other. Rotation reads the deployed file back from currentFiles and keys off
+          the newest key's date marker; randBytes must stay on the seed/rotate paths
+          only, or every render differs and reloads HAProxy. The 3-key window keeps
+          yesterday's tickets resumable. -#}
       {%- if extraContext | dig("tls", "sessionTickets", "enabled") | fallback(false) -%}
-        {#- Today's YYYYMMDD marker. extraContext.tls.sessionTicketsToday pins it
-            for deterministic validation tests; production uses the wall clock. -#}
+        {#- sessionTicketsToday pins the marker for tests; production uses the clock. -#}
         {%- var today = tostring(extraContext | dig("tls", "sessionTicketsToday") | fallback(now().UTC().Format("20060102"))) -%}
         {%- var cur = tostring(currentFiles["tls-ticket-keys"] | fallback("")) -%}
         {%- var lines = []any{} -%}
@@ -418,7 +219,6 @@ templateSnippets:
         {%- end -%}
         {%- var out = []any{} -%}
         {%- if len(lines) < 3 -%}
-          {#- first deploy (or malformed/short file) → seed three fresh keys -#}
           {%- out = []any{NewTicketKey(today), NewTicketKey(today), NewTicketKey(today)} -%}
         {%- else -%}
           {%- var newest = tostring(lines[len(lines)-1]) -%}
@@ -426,10 +226,8 @@ templateSnippets:
           {%- var marker = "" -%}
           {%- if len(decoded) >= 8 -%}{%- marker = decoded[:8] -%}{%- end -%}
           {%- if marker == today -%}
-            {#- already rotated today → keep the current file verbatim -#}
             {%- out = lines -%}
           {%- else -%}
-            {#- a day (or more) passed → slide the 3-key window forward -#}
             {%- out = []any{lines[len(lines)-2], lines[len(lines)-1], NewTicketKey(today)} -%}
           {%- end -%}
         {%- end -%}
@@ -440,40 +238,11 @@ templateSnippets:
 
   features-140-ssl-passthrough-binds:
     template: |
-      {#-
-        SSL Passthrough Bind Decision
-
-        Runs at priority 140 — after features-100-* (resource libraries
-        register their passthrough backends via the
-        `sslPassthroughBackends` shared list ssl.yaml owns) and before
-        features-150-ssl-crtlist.
-
-        sslPassthroughBackends carries an entry per listener that wants
-        TLS-passthrough. frontends-500-ssl-tcp (in ssl.yaml) binds
-        `*:httpsPort` and routes by SNI; we treat any passthrough backend
-        as evidence we need the chart-static httpsPort bind on that
-        frontend (and the corresponding loopback-fed `https` frontend on
-        the unix socket). frontends-500-ssl-tcp itself gates further on
-        `len(passthroughBackends) > 0`, so this lights up both flags
-        consistently with that gate.
-
-        Lives here (Level 1) rather than in gateway/haproxy-ingress/
-        nginx-ingress (Level 2 / Level 3) because `sslPassthroughBackends`
-        is ssl.yaml's shared state and the consumer (ssl-tcp frontend)
-        is ssl.yaml's too — the bind decision belongs next to both. A
-        chart with annotation-driven ssl-passthrough but no Gateway API
-        previously saw `bindHTTPSDefault` stay false and the ssl-tcp
-        frontend silently skipped.
-
-        Note: TLS-Passthrough alone does NOT set `needHTTPSTermination` —
-        a port that hosts only TLS listeners and no HTTPS terminating
-        listeners must reject SNIs that no route claims (closes the
-        upstream `TLSRouteHostnameIntersection` "should not reach
-        backend", `TLSRouteInvalidBackendRefNonexistent`, and
-        `TLSRouteInvalidBackendRefUnknownKind` conformance subtests
-        where the test expects a TCP RST, not the 404 the chart would
-        otherwise serve via the ssl-loopback fall-through).
-      -#}
+      {#- Lives here, not in gateway/: an annotation-driven passthrough with no Gateway
+          API left bindHTTPSDefault false and silently skipped the ssl-tcp frontend.
+          Passthrough deliberately does NOT set needHTTPSTermination — a port with only
+          TLS listeners must RST unclaimed SNIs, not serve the 404 the ssl-loopback
+          fall-through would give. -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%%
         if len(gf["sslPassthroughBackends"].([]any)) > 0 {
@@ -485,49 +254,14 @@ templateSnippets:
   features-150-ssl-crtlist:
     template: |
       {%- import "util-crtlist-line" for CrtListLine -%}
-      {#-
-        SSL CRT-List Generation
-
-        Purpose: Generates HAProxy crt-list file from registered TLS certificates.
-
-        Extension Point: features-* (priority 150 - runs after certificate registration)
-
-        Dependencies:
-          - features-050-ssl-initialization
-          - features-100-*-tls snippets (register certificates)
-
-        Output:
-          - certificate-list.txt crt-list file via fileRegistry.Register()
-
-        Format: <cert-path> [ssl-options] [sni-filter ...]
-        See: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/#5.1-crt-list
-      -#}
-
       {%- var gf = shared.Get("globalFeatures") -%}
-      {#- The default cert MUST be the first line of the crt-list. HAProxy
-          uses the first entry as the implicit default for unmatched SNIs
-          (and for clients that don't send SNI), and inherits THAT line's
-          options — including `verify`. If a per-host auth-tls-secret line
-          (verify required) ends up first instead, every unmatched-SNI
-          handshake demands a client cert and fails with
-          PEER_DID_NOT_RETURN_A_CERTIFICATE.
-
-          Default-cert selection order:
-            1. A Gateway HTTPS listener with no hostname registered as
-               is_gateway_default — the spec says "no hostname = any
-               hostname", which makes that listener's cert the right
-               default for unmatched SNIs.
-            2. The chart-level default.pem (the admin's default cert,
-               loaded from values.yaml's default_ssl_cert_* secret).
-          Without (1), tests like HTTPRouteHTTPSListener whose client
-          trusts only the Gateway's specific cert reject the handshake
-          for any unconfigured hostname (HAProxy presents default.pem,
-          which is signed by a different CA).
-
-          When multiple Gateway listeners qualify (rare; conformance
-          tests one at a time), the first one in iteration order wins.
-          Map iteration is non-deterministic; we lexically sort by
-          (namespace, name) so the choice is reproducible across renders. -#}
+      {#- The default cert MUST be the crt-list's FIRST line: HAProxy uses that entry
+          for unmatched/absent SNI and inherits ITS options, so a per-host
+          `verify required` line landing first makes every unmatched handshake demand
+          a client cert (PEER_DID_NOT_RETURN_A_CERTIFICATE). A Gateway listener with
+          no hostname outranks the chart default ("no hostname = any hostname", and its
+          client may trust only that cert's CA); ties sort by ns/name because map
+          iteration order would otherwise change the choice between renders. -#}
       {%- var clientCertVerifyHosts = coalesce(gf["clientCertVerifyHosts"], map[string]any{}).(map[string]any) -%}
       {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) -%}
 
@@ -540,7 +274,6 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
       {%- if len(gatewayDefaultCandidates) > 0 -%}
-        {#- Pick deterministically: sort by ns/name. -#}
         {%- var keyMap = map[string]map[string]any{} -%}
         {%- var keys = []any{} -%}
         {%- for _, tc := range gatewayDefaultCandidates -%}
@@ -553,30 +286,14 @@ templateSnippets:
         {%- var winner = keyMap[tostring(sortedKeys[0])] -%}
         {%- defaultCertFilename = tostring(winner["sanitized_filename"] | fallback(tostring(winner["secret_namespace"]) + "_" + tostring(winner["secret_name"]) + ".pem")) -%}
       {%- end -%}
-      {#- The default cert line covers TLS handshakes whose SNI doesn't
-          match any specific SNI line below. If a Gateway listener with
-          no hostname registered client-cert validation, that intent
-          lands in clientCertVerifyHosts["*"] (gateway.yaml's mTLS pass
-          uses "*" as the wildcard-SNI key). Apply that config to the
-          default line so port-N TLS handshakes whose SNI doesn't match
-          any per-listener hostname still get the right CA + verify
-          mode — closes the conformance gap where port 443 (no
-          listener hostname, default frontend validation) was answering
-          handshakes without client-cert verification. -#}
+      {#- gateway.yaml records a no-hostname listener's client-cert config under the
+          wildcard key "*"; the default line must carry it or unmatched-SNI handshakes
+          are answered without client-cert verification. -#}
       {%- var defaultCfg = clientCertVerifyHosts["*"] -%}
-      {#- Optional ECDSA companion for the default cert. When
-          defaultSSLCertificate.ecdsaSecretName is set (surfaced as
-          extraContext.tls.defaultCertificate.ecdsaName) and no Gateway listener
-          has claimed the default slot, register that secret and emit a SECOND
-          default crt-list line. HAProxy then serves ECDSA to modern clients and
-          the primary (RSA) cert to the rest on the no-SNI / unmatched-SNI path.
-          CRITICAL: both default lines must use the "*" SNI filter, NOT the
-          historical empty suffix — with two empty-SNI default lines HAProxy
-          keeps only the first as the implicit default and the RSA fallback
-          silently breaks for no-SNI clients (verified against HAProxy 3.4).
-          The ECDSA line is emitted first so modern clients get it by
-          precedence. Only applies to the chart default cert, not a Gateway
-          no-hostname listener default (those carry dual via certificateRefs). -#}
+      {#- Both default lines must carry the "*" SNI filter, never the single-cert empty
+          suffix: with two empty-SNI lines HAProxy keeps only the first as the implicit
+          default and the RSA fallback silently breaks for no-SNI clients (HAProxy 3.4).
+          ECDSA is emitted first so modern clients get it by precedence. -#}
       {%- var ecdsaDefaultName = tostring(extraContext | dig("tls", "defaultCertificate", "ecdsaName") | fallback("")) -%}
       {%- var ecdsaDefaultFilename = "" -%}
       {%- if ecdsaDefaultName != "" && len(gatewayDefaultCandidates) == 0 -%}
@@ -602,22 +319,15 @@ templateSnippets:
         {%- crtlistLines = []any{CrtListLine(defaultCertFilename, defaultCfg, "")} -%}
       {%- end -%}
 
-      {# Generate entries for each registered TLS certificate.
-         Per-host client-cert verification (driven by the ingress
-         libraries' auth-tls-secret machinery) means the SNIs covered
-         by a single cert may need different per-line ssl-options
-         in the crt-list. We therefore group each cert's SNIs by
-         their (ca_path, verify_mode) tuple and emit one crt-list
-         line per group — the same cert can appear multiple times
-         in a crt-list with different options, which is supported. #}
+      {# SNIs under one cert may need different per-line ssl-options (per-host
+         auth-tls-secret), so group by (ca_path, verify_mode): HAProxy accepts the
+         same cert on several crt-list lines with different options. #}
       {%- for _, tlsCert := range tlsCerts -%}
         {%- var tc any = tlsCert -%}
-        {# Use sanitized_filename from the registration (set by ingress.yaml/gateway.yaml) #}
-        {# This ensures the crt-list references the actual filename on disk after HAProxy sanitization #}
         {%- var certFilename = tc | dig("sanitized_filename") | fallback(tostring(tc | dig("secret_namespace")) + "_" + tostring(tc | dig("secret_name")) + ".pem") -%}
         {%- var snis []any = coalesce(tc | dig("sni_patterns"), []any{}).([]any) -%}
 
-        {# Group SNIs by client-cert verify config. Empty key = no verify. #}
+        {# Empty group key = no client-cert verify. #}
         {%- var snisByConfig = map[string][]any{} -%}
         {%- var configForKey = map[string]any{} -%}
         {%- for _, sni := range snis -%}
@@ -634,11 +344,8 @@ templateSnippets:
           {%- snisByConfig[key] = append(snisByConfig[key], sni) -%}
         {%- end -%}
 
-        {# Emit one crt-list line per (config) group. Sort by key for
-           deterministic output — Scriggo map iteration order is not
-           guaranteed stable across renders, and a reordered crt-list
-           triggers a HAProxy reload even when the underlying inputs
-           are identical. #}
+        {# Sort the group keys: map iteration order is unstable across renders, and a
+           reordered crt-list reloads HAProxy even when the inputs are identical. #}
         {%- var keyList = []any{} -%}
         {%- for k := range snisByConfig -%}
           {%- keyList = append(keyList, k) -%}
@@ -656,46 +363,22 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-      {# Register the crt-list file with file_registry #}
-      {# Add trailing newline to satisfy HAProxy's parser #}
+      {# Trailing newline required by HAProxy's parser. #}
       {%- var crtlistContent = (crtlistLines | toStringSlice() | join("\n")) + "\n" -%}
       {%- var _, crtListErr = fileRegistry.Register("crt-list", "certificate-list.txt", crtlistContent) -%}
       {%- if crtListErr != nil -%}{{ fail("failed to register crt-list: " + tostring(crtListErr)) }}{%- end -%}
 
   features-160-ssl-redirect-map:
     template: |
-      {#-
-        SSL Redirect Map Generation
-
-        Purpose: Generates HAProxy map files for SSL redirect host lookups.
-
-        Extension Point: features-* (priority 160 - runs after certificate registration)
-
-        Dependencies:
-          - features-050-ssl-initialization
-          - features-100-*-ssl-redirect snippets (register redirect hosts)
-
-        Output:
-          - ssl-redirect-<code>.map files via fileRegistry.Register()
-          - One map file per distinct redirect code (e.g., ssl-redirect-302.map)
-
-        Map Format: <host> 1 (value is a presence marker for -m found)
-      -#}
+      {#- Map value 1 is a presence marker for `-m found`. -#}
 
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var redirectHosts []any = coalesce(gf["sslRedirectHosts"], []any{}) -%}
 
-      {#-
-        Group hosts by redirect code. Deduplicate per code via a presence set
-        rather than the cross-render `first_seen` cache: under high resource
-        churn the cache occasionally leaked between renders inside a single
-        deployment cycle, leading to features-160 emitting an empty map while
-        frontend-filters-050-ssl-redirect (which has no first_seen check) still
-        emitted the redirect rule referencing the same map. The two snippets
-        must register and reference maps in lockstep, so this deduplication
-        stays local to this snippet and matches the rule emitter exactly: any
-        host present in `redirectHosts` results in a map entry for its code.
-      -#}
+      {#- Deduplicate with a local presence set, never `first_seen`: its cross-render
+          cache leaked between renders and emitted an empty map while
+          frontend-filters-050-ssl-redirect still referenced it. Map registration here
+          and the rule there must stay in lockstep. -#}
       {%- var hostsByCode = map[string][]any{} -%}
       {%- var seenByCode = map[string]map[string]bool{} -%}
       {%- for _, entry := range redirectHosts -%}
@@ -712,7 +395,6 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
-      {# Generate one map file per redirect code #}
       {%- for code, hosts := range hostsByCode -%}
         {%- var lines = []any{} -%}
         {%- for _, host := range hosts -%}
@@ -726,63 +408,27 @@ templateSnippets:
 
   frontend-filters-050-ssl-redirect:
     template: |
-      {#-
-        SSL Redirect Rules
-
-        Purpose: Emits HAProxy redirect rules using map-based host lookups.
-
-        Extension Point: frontend-filters-* (priority 050 - runs early)
-
-        Dependencies:
-          - features-160-ssl-redirect-map (generates map files)
-
-        Output:
-          - One http-request redirect rule per distinct redirect code
-      -#}
-
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var redirectHosts []any = coalesce(gf["sslRedirectHosts"], []any{}) -%}
 
-      {# Determine distinct redirect codes from registered hosts #}
       {%- var codes = map[string]bool{} -%}
       {%- for _, entry := range redirectHosts -%}
         {%- var e any = entry -%}
         {%- codes[tostring(e | dig("code"))] = true -%}
       {%- end -%}
 
-      {# Emit one redirect rule per code #}
       {%- for code := range codes %}
       # ssl/frontend-filters-ssl-redirect (code {{ code }})
       http-request redirect scheme https code {{ code }} if !{ ssl_fc } { var(txn.host),map_str({{ pathResolver.GetPath("ssl-redirect-" + code + ".map", "map") }}) -m found }
       {%- end %}
 
-  # Global OCSP configuration - enables automatic OCSP stapling for all SSL certificates
   frontends-500-ssl-tcp:
     template: |
-      {#-
-        SSL Passthrough TCP Frontend
-
-        Purpose: TCP frontend for SNI-based SSL passthrough routing.
-
-        Extension Point: frontends-* (priority 500)
-
-        Conditional: Only generated when sslPassthroughBackends is non-empty.
-
-        Architecture:
-          - Extracts SNI from TLS ClientHello
-          - Routes to passthrough backends based on SNI match
-          - Falls back to ssl-loopback backend for SSL termination
-
-        Dependencies:
-          - features-050-ssl-initialization
-          - features-100-*-ssl-passthrough snippets
-      -#}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var gfMap = gf.(map[string]any) -%}
       {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
       {%- var bindHTTPSDefault = tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
       {%- if len(passthroughBackends) > 0 && bindHTTPSDefault -%}
-      {# TCP frontend extracts SNI and routes to passthrough backends or loopback #}
       # ssl/frontends-ssl-tcp
 
       frontend ssl-tcp
@@ -793,72 +439,15 @@ templateSnippets:
           # Extract SNI for routing decisions (wait up to 5s for client hello)
           tcp-request inspect-delay 5s
 
-          {#- Reject contract for TLS-Passthrough listeners.
-
-              Per Gateway-API spec, a TLS-Passthrough listener with
-              hostname H claims SNIs matching H. A TLSRoute attached
-              to that listener narrows further (route hostnames ∩
-              listener hostname). For a connection whose SNI
-                * matches a TLSRoute's effective SNI → routed to its
-                  backend (the use_backend block below)
-                * matches the listener's hostname pattern but NO
-                  TLSRoute's effective SNI → MUST be rejected (no
-                  route claims it; Gateway-API "should not reach
-                  backend" contract)
-                * matches NO listener pattern → falls through (an
-                  HTTPS-terminating listener may legitimately accept
-                  it; the chart cannot tell from req_ssl_sni alone
-                  whether a different mechanism wants the SNI)
-
-              This produces two ACLs:
-                * `route_sni`     — req_ssl_sni in the use_backend
-                                    allowlist (per-route effective SNI)
-                * `listener_sni`  — req_ssl_sni in any TLS-Passthrough
-                                    listener's hostname pattern
-
-              Reject when listener_sni && !route_sni. The reject must
-              precede `tcp-request content accept` because accept
-              terminates the tcp-request content phase, so a later
-              reject would never fire.
-
-              Closes the upstream `TLSRouteHostnameIntersection`
-              "should not reach backend" subtests, plus
-              `TLSRouteInvalidBackendRefNonexistent` /
-              `TLSRouteInvalidBackendRefUnknownKind` (an unresolvable-
-              backend route is filtered at Pass 2's ResolvedRefs gate
-              so the route's effective SNI never enters route_sni; the
-              listener_hostname stays in listener_sni so its claimed
-              SNIs hit the reject path). -#}
-          {#- Per-Gateway routing isolation. The chart shares one bind
-              across every TLSRoute attached to port httpsPort, but the
-              Gateway-API spec requires per-Gateway listener-claim
-              semantics: a Gateway whose listener pattern matches the
-              inbound SNI must reject the connection if no route under
-              THAT Gateway claims it, even if a sibling Gateway on the
-              same port has routes that would accept the SNI under a
-              wider pattern. Without this isolation, the upstream
-              `TLSRouteHostnameIntersection` "should not reach backend"
-              sub-tests fail when 4 Gateways with different listener-
-              hostname patterns share port 443 (route SNI patterns
-              from one Gateway would pass through another Gateway's
-              listener filter).
-
-              Bucket entries by (gw_namespace, gw_name) and emit per-
-              Gateway listener_sni / route_sni / invalid_sni ACL +
-              reject rules. Each Gateway X gets a sanitized ACL prefix
-              `gw_<ns>_<name>` (dashes/dots/colons → underscores) and a
-              reject rule of the form
-                tcp-request content reject if <gwX>_listener_sni !<gwX>_route_sni
-              for non-empty listeners, OR
-                tcp-request content reject if !<gwX>_route_sni
-              for empty (catch-all) listeners. Entries flagged invalid
-              get their own per-Gateway invalid_sni ACL + unconditional
-              reject (so the route's claimed SNI gets a TCP RST instead
-              of a use_backend pointing at a non-existent Service).
-
-              Ingress-level passthroughBackends (Pass 1, no Gateway
-              identity) are NOT subject to the reject — they keep
-              their existing fall-through behaviour. -#}
+          {#- SNI claim contract: reject when a TLS-Passthrough listener's hostname
+              pattern matches but no TLSRoute under THAT Gateway claims the SNI; an SNI
+              matching no listener pattern falls through, since an HTTPS-terminating
+              listener may legitimately want it. The ACLs and rejects are per-Gateway
+              because one bind is shared by every Gateway on this port and a sibling
+              Gateway's wider pattern must not rescue an SNI this one doesn't claim.
+              The rejects MUST precede `tcp-request content accept` — accept ends the
+              tcp-request content phase, so a later reject never fires. Ingress-level
+              entries carry no Gateway identity and keep their fall-through. -#}
           {%%
             var byGateway = map[string]any{}
             var gwOrder = []any{}
@@ -907,7 +496,6 @@ templateSnippets:
                 validPassthroughCount = validPassthroughCount + 1
               }
             }
-            // Stable per-Gateway emission order: sort by gwKey.
             var gwOrderSorted = sort_strings(gwOrder)
           %%}
           {%- for _, gwKey := range gwOrderSorted %}
@@ -917,7 +505,6 @@ templateSnippets:
             {%- var hasEmptyListener = gi["hasEmptyListener"].(bool) %}
             {%- var routeSNIs = gi["routeSNIs"].(map[string]bool) %}
             {%- var invalidSNIs = gi["invalidSNIs"].(map[string]bool) %}
-            {#- Collect sorted lists for deterministic output. -#}
             {%%
               var lpRaw = []any{}
               for k := range listenerPatterns {
@@ -968,20 +555,14 @@ templateSnippets:
             {%- var routeSNIs = gi["routeSNIs"].(map[string]bool) %}
             {%- var invalidSNIs = gi["invalidSNIs"].(map[string]bool) %}
             {%- if hasEmptyListener %}
-              {#- Empty listener: claims every SNI. Reject any SNI not
-                  claimed by a valid route under THIS Gateway. When all
-                  routes are invalid, route_sni ACL is undefined, so we
-                  reject the per-route invalid_sni patterns explicitly
-                  (still scoped to this Gateway's claimed SNIs — other
-                  SNIs aren't this Gateway's concern). -#}
+              {#- An empty listener claims every SNI. With no valid route the route_sni
+                  ACL is never defined, so reject the invalid_sni patterns instead. -#}
               {%- if len(routeSNIs) > 0 %}
           tcp-request content reject if !{{ aclSan }}_route_sni
               {%- else if len(invalidSNIs) > 0 %}
           tcp-request content reject if {{ aclSan }}_invalid_sni
               {%- end %}
             {%- else %}
-              {#- Non-empty listener: reject if listener pattern matches
-                  but no route under this Gateway claims the SNI. -#}
               {%- if len(routeSNIs) > 0 %}
           tcp-request content reject if {{ aclSan }}_listener_sni !{{ aclSan }}_route_sni
               {%- else if len(listenerPatterns) > 0 %}
@@ -994,16 +575,10 @@ templateSnippets:
           # Route to passthrough backends by SNI: wildcard *.host → `-m end .host` (single-label
           # subdomain only, not bare host), exact → `-m str`. See
           # https://haproxy-haptic.org/docs/latest/libraries/ssl/#ssl-passthrough
-          {# Filter to Passthrough-mode entries only — the
-             gateway-ssl-passthrough builder now also emits Terminate
-             entries (consumed by frontends-600-gateway-tls-listener for
-             the per-port mode-tcp frontends with TLS termination).
-             Ingress entries don't carry `mode`, so an empty/missing
-             value defaults to Passthrough behaviour for back-compat.
-             Also skip entries flagged `invalid` — their backend block
-             was suppressed (Pass 2 ResolvedRefs gate failure), so
-             routing the SNI here would point at a non-existent
-             backend. The reject ACLs above already cover them. #}
+          {# Passthrough-mode only: the gateway builder also emits Terminate entries
+             (consumed by frontends-600-gateway-tls-listener), and Ingress entries carry
+             no `mode` at all. An `invalid` entry's backend block was suppressed, so
+             routing its SNI here would point at nothing; the rejects above cover it. #}
           {% for _, backend := range passthroughBackends -%}
           {%- var b any = backend %}
           {%- var bMode = tostring(b | dig("mode") | fallback("Passthrough")) %}
@@ -1029,20 +604,6 @@ templateSnippets:
 
   backends-500-ssl-loopback:
     template: |
-      {#-
-        SSL Loopback Backend
-
-        Purpose: Bridges TCP frontend to HTTPS frontend via Unix socket.
-
-        Extension Point: backends-* (priority 500)
-
-        Conditional: Only generated when sslPassthroughBackends is non-empty.
-
-        Architecture:
-          - TCP mode backend
-          - Forwards to unix@/etc/haproxy/ssl-frontend.sock with PROXY protocol
-          - Enables HTTPS frontend to receive connections from TCP frontend
-      -#}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
       {%- if len(passthroughBackends) > 0 -%}
@@ -1057,44 +618,14 @@ templateSnippets:
 
   frontends-500-https:
     template: |
-      {#-
-        HTTPS Frontend with SSL Termination
-
-        Purpose: HTTPS frontend that terminates SSL and routes to backends.
-
-        Extension Point: frontends-* (priority 500)
-
-        Binding Modes:
-          - With SSL passthrough: Binds to Unix socket (receives from ssl-loopback)
-          - Without SSL passthrough: Binds directly to HTTPS port
-
-        Dependencies:
-          - util-ssl-bind-options (SSL bind configuration)
-          - frontend-routing-logic (from base.yaml)
-          - features-150-ssl-crtlist (certificate list)
-      -#}
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var gfMap = gf.(map[string]any) -%}
       {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
       {%- var needHTTPSFrontend = tostring(gfMap | dig("needHTTPSFrontend")) == "true" -%}
       {%- var bindHTTPSDefault = tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
-      {#- The https frontend renders only when at least one resource
-          actually wants TLS termination — Ingress with spec.tls,
-          Gateway/ListenerSet HTTPS or TLS listener (any port), or
-          SSL passthrough backends (which need a unix-socket
-          loopback target). Without it we'd emit an HAProxy frontend
-          with no binds (validation error) any time the chart is
-          installed without a TLS-terminating resource.
-
-          The chart-static `bind *:httpsPort` itself is gated by
-          bindHTTPSDefault, which is set ONLY when at least one
-          listener with a successfully-resolved cert (or any
-          passthrough backend) wants traffic on that port. A
-          listener with NoValidCACertificate at port 443 leaves
-          bindHTTPSDefault=false, so HAProxy doesn't answer
-          handshakes for it — closes the conformance bug
-          GatewayFrontendInvalidDefaultClientCertificateValidation
-          relies on. -#}
+      {#- Gated because a frontend with no bind is an HAProxy validation error: render
+          only when something terminates TLS (Ingress spec.tls, a Gateway HTTPS/TLS
+          listener on any port, or passthrough needing the unix-socket loopback). -#}
       {%- if needHTTPSFrontend -%}
       # ssl/frontends-https
 
@@ -1107,20 +638,12 @@ templateSnippets:
       {%- else if bindHTTPSDefault %}
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}{{ render "util-ssl-bind-options" }}
       {%- end %}
-          {# Extension point for additional HTTPS bind directives (Gateway HTTPS listener ports, etc.). #}
-          {# Sibling to http-bind-extra-* in base.yaml; resource libraries emit one bind per #}
-          {# non-default Gateway HTTPS listener port using the same SSL options as the chart-static bind. #}
           {{- render_glob "https-bind-extra-*" | indent(2, true) }}
 
-          {# Extension point for early frontend directives (options, captures, ACLs) #}
-          {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
           {{- render_glob "frontend-extra-*" | indent(2, true) }}
 
-          {# Reuse frontend routing logic from base.yaml #}
           {{ render "frontend-routing-logic" | indent(2, true) }}
 
-          {# Extension point for frontend request/response filters #}
-          {# Runs AFTER routing decisions, BEFORE backend selection #}
           {{- render_glob "frontend-filters-*" | indent(2, true) }}
 
           # Use backend from txn.backend_name (set by qualifier logic)
@@ -1130,28 +653,12 @@ templateSnippets:
           default_backend default_backend
       {%- end -%}
 
-# SSL certificate files
-#
-# NOTE: Dynamic TLS certificate file generation
-# ============================================
-# TLS certificates are automatically generated using file_registry.Register() by resource
-# libraries (ingress.yaml, gateway.yaml) when processing Ingress spec.tls and Gateway TLS
-# configurations. No pre-declaration is needed - any TLS Secret referenced in these resources
-# will be automatically converted to a certificate file.
-#
-# The crt-list file below references these certificates using the naming pattern:
-#   {namespace}_{secretname}.pem
-#
-# Only the default certificate (fallback for SNI mismatch) needs to be defined here.
-# All other certificates are registered dynamically at template rendering time.
+# Only the default cert is declared here; resource libraries register every other
+# TLS Secret at render time via fileRegistry as {namespace}_{secretname}.pem.
 
 sslCertificates:
-  # Default SSL certificate (fallback for SNI mismatch)
   default.pem:
     template: |
-      {# Default SSL certificate for HTTPS frontend #}
-      {# Loads certificate from TLS Secret (configurable via values.yaml) #}
-      {# Secret name and namespace come from templatingSettings.extraContext #}
       {%- var certNamespace = extraContext | dig("tls", "defaultCertificate", "namespace") | fallback("haptic") -%}
       {%- var certName = extraContext | dig("tls", "defaultCertificate", "name") | fallback("default-ssl-cert") -%}
       {%- var secret = resources.secrets.GetSingle(certNamespace, certName) -%}
@@ -1166,50 +673,29 @@ sslCertificates:
       {{- b64decode(crtB64) -}}
       {{- b64decode(keyB64) -}}
 
-# Validation tests for SSL functionality
 validationTests:
   _global:
     description: Global SSL test fixtures
-    # Isolated default-certificate baseline for the WHOLE suite. validationTests
-    # render against synthetic fixture stores, so they must not depend on the
-    # operator's real defaultSSLCertificate.secretName / .ecdsaSecretName — those
-    # names only exist live in the cluster, never in a fixture. The deployment's
-    # production extraContext (real names) is the lowest merge layer; this
-    # _global pin overrides it with the synthetic default-ssl-cert (matching the
-    # fixture below), and any per-test extraContext overrides this in turn. So a
-    # test that doesn't touch the default cert always resolves default-ssl-cert
-    # @ haptic, whatever the operator configured — no release-namespace or
-    # secret-name coupling, and no Helm-side fixture rewrite. ecdsaName is empty
-    # here (single default line); the dual-default path is covered by
-    # test-ssl-dual-default-cert, which pins its own ecdsaName + ECDSA fixture.
+    # Pins the whole suite to the synthetic fixture cert: the operator's real
+    # defaultSSLCertificate names exist only in the cluster, never in a fixture, and
+    # their production extraContext is the lowest merge layer. Per-test extraContext
+    # still overrides this.
     extraContext:
       tls:
         defaultCertificate:
           name: default-ssl-cert
           namespace: haptic
           ecdsaName: ""
-        # Session tickets pinned OFF for the whole suite, for the same reason the
-        # default certificate is pinned above: a synthetic test must resolve the
-        # _global baseline, never the operator's real setting. With it ON, the SSL
-        # library emits a tls-ticket-keys file whose key material is freshly
-        # crypto-random on EVERY render, which
-        #   (a) makes the `deterministic` assertion unsatisfiable, and
-        #   (b) appends `tls-ticket-keys <file>` to every HTTPS bind, breaking the
-        #       end-anchored bind-shape assertions in the gateway tests.
-        # Both become a controller crash-loop at the load gate — observed on a live
-        # cluster that had set tls.sessionTickets.enabled: true, where the tests
-        # pass under chart defaults (feature off) and fail only for the operator.
-        # test-ssl-session-tickets-seed opts back IN explicitly (with its own
-        # pinned date), so the feature itself stays covered.
+        # Pinned OFF for the same reason: with it on, the STEK file is freshly
+        # crypto-random every render (no `deterministic` assertion can hold) and every
+        # HTTPS bind gains tls-ticket-keys (breaking end-anchored bind assertions in
+        # the gateway tests) — a load-gate crash-loop for any operator who enabled it.
+        # test-ssl-session-tickets-seed opts back in explicitly.
         sessionTickets:
           enabled: false
     fixtures:
       secrets:
-        # Default SSL certificate, required by every test that renders a full
-        # config (the default.pem template loads it). Name + namespace match the
-        # _global extraContext pin above (default-ssl-cert @ haptic); the release
-        # namespace and the operator's real secret name are irrelevant to the
-        # test — that decoupling is the whole point of the pin.
+        # Name + namespace must match the _global extraContext pin above.
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
@@ -1219,11 +705,8 @@ validationTests:
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
-        # Shared TLS cert for per-test TLS fixtures in the `default` namespace,
-        # merged into every test via _global. A test whose spec.tls /
-        # certificateRefs points at Secret `shared-tls` (namespace default) need
-        # NOT inline its own copy of the cert — this deduplicates the identical
-        # cert/key that was otherwise copy-pasted across the suite.
+        # Merged into every test: a fixture referencing `shared-tls` in namespace
+        # default needs no cert of its own.
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
@@ -1236,18 +719,14 @@ validationTests:
 
   test-ssl-certificate-loading:
     description: Verify default SSL certificate is loaded correctly
-    fixtures: {}  # Uses _global fixtures
+    fixtures: {}
     assertions:
       - type: haproxy_valid
 
   test-ssl-https-frontend-basic:
     description: Verify HTTPS frontend is generated with correct bind options
     fixtures:
-      # Trigger the chart's HTTPS frontend by declaring an Ingress with
-      # spec.tls. After the bind-derivation refactor (chart-static
-      # frontends are gated on listener state), an empty fixture would
-      # leave the chart with nothing terminating SSL — and therefore no
-      # `frontend https` rendered.
+      # Without a TLS-terminating resource nothing renders `frontend https`.
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1325,7 +804,6 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'set-header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" if \{ ssl_fc \}'
-      # No ssl-redirect annotation → the effectiveness warning is emitted.
       - type: contains
         target: haproxy.cfg
         pattern: "HSTS is enabled globally but no HTTP"
@@ -1364,9 +842,6 @@ validationTests:
   test-ssl-crtlist-basic:
     description: Verify crt-list file is generated with OCSP configuration
     fixtures:
-      # Trigger the chart's HTTPS frontend (and its `ssl crt-list ...`
-      # bind option) — see comment on test-ssl-https-frontend-basic for
-      # why the bind-derivation refactor needs an explicit trigger here.
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1408,8 +883,6 @@ validationTests:
     description: SSL certificate with dots in secret name must use sanitized filename
     fixtures:
       secrets:
-        # Default SSL certificate (required by HTTPS frontend)
-        # Uses haproxy-haptic namespace (Helm default release namespace)
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
@@ -1419,8 +892,6 @@ validationTests:
           data:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
-        # TLS secret with dots in the name - this is valid in Kubernetes
-        # (secret names allow alphanumeric, '-', and '.')
         - apiVersion: v1
           kind: Secret
           type: kubernetes.io/tls
@@ -1492,7 +963,7 @@ validationTests:
 
   test-ssl-global-cipher-policy-default:
     description: Global TLS policy renders ssl-default-bind-ciphers / -ciphersuites and ssl-min-ver from the extraContext.tls defaults (a forward-secret superset spanning ECDSA, RSA, and DHE families)
-    fixtures: {}  # Uses _global default cert; global section renders unconditionally
+    fixtures: {}
     assertions:
       - type: haproxy_valid
       - type: contains
@@ -1515,15 +986,12 @@ validationTests:
     fixtures: {}
     assertions:
       - type: haproxy_valid
-      # custom cipher list override renders
       - type: contains
         target: haproxy.cfg
         pattern: 'ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256'
-      # lowered protocol floor renders
       - type: contains
         target: haproxy.cfg
         pattern: 'ssl-default-bind-options ssl-min-ver TLSv1\.0'
-      # empty ciphersuites omits the directive entirely (HAProxy default)
       - type: not_contains
         target: haproxy.cfg
         pattern: 'ssl-default-bind-ciphersuites'
@@ -1595,7 +1063,6 @@ validationTests:
                           port:
                             number: 80
     assertions:
-      # HAProxy accepts two certs of different key types on the same SNI
       - type: haproxy_valid
       - type: contains
         target: crt-list:certificate-list.txt
@@ -1639,17 +1106,13 @@ validationTests:
             tls.crt: *test_tls_crt
             tls.key: *test_tls_key
     assertions:
-      # HAProxy accepts two "*" default certs of different key types
       - type: haproxy_valid
-      # ECDSA companion default line, "*" filter
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'default_default-ecdsa-cert\.pem \[ocsp-update on\] \*'
-      # primary default line switches to the "*" filter too
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'default\.pem \[ocsp-update on\] \*'
-      # ECDSA precedes the primary (modern clients get ECDSA by order)
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'default_default-ecdsa-cert\.pem \[ocsp-update on\] \*\ndefault\.pem \[ocsp-update on\] \*'
@@ -1679,11 +1142,9 @@ validationTests:
             tls.key: *test_tls_key_rsa
     assertions:
       - type: haproxy_valid
-      # the single default line is present
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'default\.pem \[ocsp-update on\]'
-      # and it is NOT the dual "*" form (opt-in only)
       - type: not_contains
         target: crt-list:certificate-list.txt
         pattern: 'default\.pem \[ocsp-update on\] \*'
@@ -1723,7 +1184,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'bind \*:443 ssl crt-list \S+ alpn h2,http/1\.1 tls-ticket-keys \S*general/tls-ticket-keys'
-      # three keys, each stamped with today's marker (base64 prefix of "20260721")
+      # MjAyNjA3Mj is the base64 prefix of "20260721".
       - type: match_count
         target: file:tls-ticket-keys
         pattern: 'MjAyNjA3Mj'
@@ -1766,13 +1227,10 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-      # unchanged: re-rendering yields byte-identical output (no rotation, no reload)
       - type: deterministic
-      # the exact newest key is preserved verbatim
       - type: contains
         target: file:tls-ticket-keys
         pattern: 'MjAyNjA3MjGrtAkIIsCl'
-      # still exactly the three today-stamped keys (none dropped or added)
       - type: match_count
         target: file:tls-ticket-keys
         pattern: 'MjAyNjA3Mj'
@@ -1815,23 +1273,19 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-      # oldest key (line 1) dropped
       - type: not_contains
         target: file:tls-ticket-keys
         pattern: 'MjAyMDAxMDEBk'
-      # two older keys carried over (lines 2 and 3)
       - type: contains
         target: file:tls-ticket-keys
         pattern: 'MjAyMDAxMDE6V2yKRZF8'
       - type: contains
         target: file:tls-ticket-keys
         pattern: 'MjAyMDAxMDEULATG7B3W'
-      # exactly two old-marked keys remain
       - type: match_count
         target: file:tls-ticket-keys
         pattern: 'MjAyMDAxMDE'
         expected: "2"
-      # one fresh key stamped today was appended
       - type: match_count
         target: file:tls-ticket-keys
         pattern: 'MjAyNjA3Mj'

@@ -1,120 +1,29 @@
-# Ingress Annotations Compatibility Scaffold Library
-#
-# Provides shared HAProxy output macros consumed by the three Ingress vendor
-# annotation libraries (haproxytech.yaml, haproxy-ingress.yaml,
-# nginx-ingress.yaml). Sits at hierarchy level 2.5 — loaded after the
-# resource libraries (ingress, gateway) and before the vendor annotation
-# libraries.
-#
-# Scope: Ingress only. Every macro here either walks
-# `resources.ingresses.List()` itself or takes a typed
-# `*resources.ingresses.T` parameter — that's correct for the three vendor
-# libraries that all process the Ingress resource (each owns a different
-# annotation namespace: `haproxy.org/*`, `haproxy-ingress.github.io/*`,
-# `nginx.ingress.kubernetes.io/*`). A vendor library operating on a
-# non-Ingress CRD (HTTPRoute, GRPCRoute, custom CRD) does NOT use these
-# macros — it writes its own. The earlier framing as a generic "annotation
-# compatibility scaffold" was misleading: nothing made it generic in
-# practice, and pretending otherwise blocked typed Ingress access here.
-#
-# Rationale and design: see docs/adr/0003-annotation-compat-scaffold-level-2-5.md
-# (the ADR predates this rename; the scaffold pattern it describes still
-# applies — only the scope is now made explicit).
-#
-# Knowledge hierarchy:
-#   Level 0:   base
-#   Level 1:   ssl
-#   Level 2:   ingress, gateway
-#   Level 2.5: ingress-annotations-compat   <- this library
-#   Level 3:   haproxytech, haproxy-ingress, nginx-ingress
+# Ingress-only macros shared by the three vendor annotation libraries
+# (haproxytech, haproxy-ingress, nginx-ingress). Loaded at level 2.5 — after
+# ingress/gateway, before those libraries. A vendor library for a non-Ingress
+# CRD writes its own. See docs/adr/0003-annotation-compat-scaffold-level-2-5.md
 
-# Chart-time loading rules (consumed by haptic.prepareLibraries; stripped from output).
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}'
 
-# Library-declared extraContext defaults (merged at LOWEST precedence — an
-# operator override via controller.config.templatingSettings.extraContext.governance.*
-# wins). Org-wide policy guardrails: cluster admins declare generic,
-# JSONPath-driven rules that namespace teams cannot omit. Disabled by default.
-# Enforcement is chart-side render logic over watched resources (no Kubernetes
-# resources are created), so this correctly lives under extraContext rather than
-# a root-level values block. See features-960-governance for the enforcement.
-#
-# Each rule targets a watched resource by name and either INJECTS a default when
-# a value is absent or VALIDATES the value when present:
-#
-#   governance:
-#     enabled: true
-#     exemptNamespaces: [kube-system]
-#     rules:
-#       # inject a default rate-limit, clamp anything above the ceiling
-#       - resource: ingresses
-#         path: metadata.annotations['haproxy-haptic.org/rate-limit-requests']
-#         default: "1000"
-#         min: 1
-#         max: 10000
-#         onViolation: clamp        # reject | clamp (default reject)
-#         enforcement: reject       # reject | audit  (default reject)
-#       # require a WAF policy annotation on every HTTPRoute (cross-resource)
-#       - resource: httproutes
-#         path: metadata.annotations['haproxy-haptic.org/waf-policy']
-#         required: true
-#         enforcement: audit
-#       # require TLS (spec.tls OR a chart default cert / default HTTPS satisfies it)
-#       - resource: ingresses
-#         satisfiedBy: tls
-#       # require at least one auth mechanism
-#       - resource: ingresses
-#         anyOf:
-#           - metadata.annotations['haproxy-haptic.org/api-key-secret']
-#           - metadata.annotations['haproxy-haptic.org/jwt-secret']
-#           - metadata.annotations['haproxy-haptic.org/auth-url']
-#
-# Rule fields: resource (required), path, default, required, min, max, allowed
-# (enum list), pattern (regex), anyOf (list of paths — one must be present),
-# satisfiedBy: tls, onViolation (reject|clamp), enforcement (reject|audit),
-# message (custom text). A `default` may only target a concrete path (dotted
-# keys, ['bracket'] keys, [n] indices) — filtered/wildcard paths are validate-only.
+# Governance rule shape and worked examples:
+# docs/site/docs/operations/governance.md (enforced by features-960-governance).
 templatingSettings:
   extraContext:
     governance:
-      # Master switch. When false the guard is a no-op.
       enabled: false
-      # Namespaces skipped entirely (infra/system namespaces).
       exemptNamespaces: []
-      # Admin-declared rules (empty by default; see the header for the shape).
       rules: []
 
 templateSnippets:
 
-  # renderMode-aware rejection primitive. Reject a misconfigured watched
-  # resource loudly under the admission webhook (so the API server denies a
-  # proposed bad change) but only warn — via a Kubernetes Event — during a live
-  # reconcile or the daemon load gate, so one already-present bad resource can't
-  # abort the whole config render and brick the fleet. Used everywhere a
-  # per-resource validation would otherwise `fail()` on state that may already
-  # exist in the cluster.
   util-webhook-reject-or-warn:
     template: |-
       {#-
-        Macro: WebhookRejectOrWarn(resource, reason, message)
-
-        On the admission webhook (renderMode == "admission") this fail()s with
-        `message`, so the API server denies the proposed resource. On any other
-        render (live reconcile, load gate, playground) it records a Warning Event
-        (reason `reason`) against `resource` and returns nothing, so the render
-        proceeds.
-
-        CALLER CONTRACT — the warn path returns and the render CONTINUES, so the
+        CALLER CONTRACT: the warn path returns and the render CONTINUES, so the
         caller MUST skip the offending resource's own output right after calling
-        this (`{% continue %}` in a per-resource loop, or stop emitting in a
-        macro). Otherwise it would emit config built from the rejected input —
-        which for an injection guard means emitting the very value it rejected.
-        In admission mode fail() aborts first, so the skip only ever runs on the
-        lenient paths.
-
-        `resource` is any watched-resource value (typed pointer, map, or
-        unstructured); its identity is read off it by recordEvent.
+        this ({% continue %} in a per-resource loop, or stop emitting in a macro)
+        — otherwise it emits config built from the value it just rejected.
       -#}
       {%- macro WebhookRejectOrWarn(resource any, reason string, message string) -%}
         {%- if renderMode == "admission" -%}
@@ -124,37 +33,13 @@ templateSnippets:
         {%- end -%}
       {%- end macro -%}
 
-  # SSL Passthrough — shared macro. Each protocol library calls into this
-  # to feed its own ComputeIfAbsent cache slot; the build logic is shared,
-  # the cache slot is per-library.
-
   util-build-annotation-ssl-passthrough:
     template: |
       {#-
-        Macro: BuildAnnotationSSLPassthrough(sslData, annotationKey, namePrefix, firstSeenKey)
-
-        Populates sslData["backends"] with one entry per (host, ingress) pair
-        where the ingress carries a truthy annotationKey value AND has a
-        well-formed first path with a service backend. Deduplicates hosts via
-        first_seen(firstSeenKey, host).
-
-        Service info (svcName/svcPort/svcPortName) is captured here at scan
-        time rather than re-fetched by the consumer's `backends-*-
-        ssl-passthrough` snippet. A second GetSingle() lookup in the consumer
-        could disagree with the use_backend pass under concurrent ingress
-        deletion — same iteration of resources.ingresses.List() avoids that
-        race. Pinned by TestIngressAnnotations/nginx-ssl-passthrough.
-
-        Backend entry shape (must stay identical across libraries):
-          {
-            "name":        namePrefix + ns + "-" + name,
-            "sni":         host,
-            "namespace":   ns,
-            "ingress":     name,
-            "svcName":     <first path's service name>,
-            "svcPort":     <first path's service port (int)>,
-            "svcPortName": <first path's service port name (string, "" if unnamed)>,
-          }
+        Service info is captured during this scan instead of being re-fetched by
+        the consumer: a second GetSingle() could disagree with the use_backend
+        pass under concurrent Ingress deletion. The backend entry shape must stay
+        identical across the libraries that read sslData["backends"].
       -#}
       {%- import "util-service-port-resolution" for ResolveServicePort %}
       {%- macro BuildAnnotationSSLPassthrough(sslData map[string]any, annotationKey string, namePrefix string, firstSeenKey string) %}
@@ -163,18 +48,11 @@ templateSnippets:
           {%- if passthrough == "true" %}
             {%- var ns = ingress.Metadata.Namespace %}
             {%- var name = ingress.Metadata.Name %}
-            {#- Find the first usable path's service to pair with each
-                host. The same service is used for every host on this
-                ingress (matches the prior consumer's "first path wins"
-                semantics; passthrough by SNI doesn't route by path). -#}
+            {#- Passthrough routes by SNI, not by path, so the first usable
+                path's service serves every host on this ingress. -#}
             {%- var svcName = "" %}
             {%- var svcPort = 0 %}
             {%- var svcPortName = "" %}
-            {#- First-service-found scan. The outer rule loop's body
-                uses only path-level fields — flatten via `[*]`. The
-                literal-desugar `break` exits the (single) loop on
-                the first hit, faster than the original "no-op once
-                svcName is set" pattern. -#}
             {%- for _, path := range ingress.Spec.Rules[*].Http.Paths %}
               {%- var n = path.Backend.Service.Name %}
               {%- if n != "" %}
@@ -202,14 +80,6 @@ templateSnippets:
 
   util-render-annotation-ssl-passthrough-backends:
     template: |
-      {#-
-        Macro: RenderAnnotationSSLPassthroughBackends(cacheKey, firstSeenKey, commentLabel)
-
-        Renders one `backend <name> mode tcp` block per entry in
-        sslData["backends"] (built earlier by BuildAnnotationSSLPassthrough),
-        deduped per (ns/ingress) via the supplied firstSeenKey. No-op when
-        the cache slot is empty.
-      -#}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- macro RenderAnnotationSSLPassthroughBackends(cacheKey string, firstSeenKey string, commentLabel string) %}
         {%- var rawVal, _ = shared.ComputeIfAbsent(cacheKey, func() any { return nil }) %}
@@ -237,16 +107,10 @@ templateSnippets:
   util-register-annotation-hsts:
     template: |
       {#-
-        Macro: RegisterAnnotationHSTS(
-          ingress, enabledAnn, maxAgeAnn, subdomainsAnn, preloadAnn, defaultMaxAge
-        )
-
-        Reads the HSTS annotation set off the ingress and registers each host's
-        Strict-Transport-Security value into the shared gf["hstsHosts"]. base.yaml
-        features-190-hsts-map builds hsts.map (host→value) and
-        frontend-filters-080-hsts emits the single shared response-header rule, so
-        changing an HSTS value is a map-only, reload-free update. No-op when the
-        enabledAnn is not "true" or the ingress has no hosts.
+        Registers each host's Strict-Transport-Security value into
+        gf["hstsHosts"]; base.yaml's features-190-hsts-map and
+        frontend-filters-080-hsts turn it into one map-driven response-header
+        rule, so changing a value stays a reload-free map update.
       -#}
       {%- macro RegisterAnnotationHSTS(ingress *resources.ingresses.T, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string) %}
         {%- if ingress.Metadata.Annotations[enabledAnn] == "true" %}
@@ -270,31 +134,10 @@ templateSnippets:
   util-emit-annotation-cors:
     template: |
       {#-
-        Macro: EmitAnnotationCORS(
-          ingress, prefix, enabledAnn, defaultMaxAge, commentLabel
-        )
-
-        Mirrors ingress-nginx: cors-allow-origin is a comma-separated
-        allow-list (single-level "*." subdomain wildcards allowed) matched
-        against the request Origin; the matched origin is echoed back and a
-        Vary: Origin header is added for non-wildcard lists. A lone "*" (or
-        unset) allows any origin and echoes the literal "*". CORS headers are
-        emitted via http-after-response so they also apply to the synthetic
-        preflight 204 that answers OPTIONS. Scoped to the ingress's hosts.
-
-        Args:
-          prefix        — annotation key prefix (e.g.
-                          "haproxy-ingress.github.io" or
-                          "nginx.ingress.kubernetes.io")
-          enabledAnn    — full annotation key that gates emission
-                          (e.g. "<prefix>/cors-enable" or "<prefix>/enable-cors";
-                          libraries differ on the suffix)
-          defaultMaxAge — default value for the Max-Age header when
-                          the cors-max-age annotation is unset
-
-        haproxytech CORS is structurally different (http-request capture /
-        set-header, validates origin=*+credentials=true conflict) and lives
-        in haproxytech.yaml directly — does NOT use this macro.
+        Mirrors ingress-nginx: cors-allow-origin is a comma-separated allow-list
+        (single-level "*." wildcards allowed) matched against the request Origin;
+        a lone "*" or unset allows any origin. haproxytech CORS is structurally
+        different and lives in haproxytech's own library — it does NOT call this.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- macro EmitAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
@@ -319,11 +162,6 @@ templateSnippets:
             {%- var maxAge = ingress.Metadata.Annotations[prefix + "/cors-max-age"] %}
             {%- if maxAge == "" %}{%- maxAge = defaultMaxAge %}{%- end %}
             {%- var cond = HostMatchCondition(hosts) %}
-            {#- Classify the comma-separated cors-allow-origin allow-list into an
-                exact-match set (-m str) and single-level "*." wildcards compiled
-                to anchored regexes (-m reg), matching ingress-nginx. A lone "*"
-                (or unset) allows any origin and echoes the literal "*"; otherwise
-                the matched request Origin is echoed back. -#}
             {%- var allowAny = false %}
             {%- var exact = []string{} %}
             {%- var regexes = []string{} %}
@@ -344,10 +182,8 @@ templateSnippets:
             {%- var originHdr = "%[var(txn.cors_origin)]" %}
             {%- if allowAny %}{%- originHdr = "*" %}{%- end %}
       # {{ commentLabel }} ({{ key }})
-      {#- Capture the request Origin, then match it against the allow-list ACL.
-          CORS headers ride on http-after-response so they apply to backend
-          responses AND the synthetic preflight 204 (http-response would be
-          dropped for the return). Vary: Origin is added for non-wildcard lists. -#}
+      {#- CORS headers ride on http-after-response so they also cover the
+          synthetic preflight 204; http-response is dropped for a return. -#}
       http-request set-var(txn.cors_origin) req.hdr(Origin) if {{ cond }}
             {%- if allowAny %}
       acl {{ aclName }} var(txn.cors_origin) -m found
@@ -379,26 +215,10 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
-  # (util-emit-annotation-ssl-redirect / EmitAnnotationSSLRedirect removed: the
-  # haproxy-ingress and nginx ssl-redirect snippets now register hosts into the
-  # shared gf["sslRedirectHosts"] map in the features phase, like haproxytech, so
-  # ssl.yaml emits the single map-based redirect rule. No inline-ACL emitter needed.)
-
-  # aclPrefix is per-library (haproxytech / hi / ni) — validation tests
-  # assert on the resulting ACL names, so they must remain distinct.
+  # aclPrefix must stay distinct per library — validation tests assert on the
+  # resulting ACL names.
   util-emit-annotation-access-control:
     template: |
-      {#-
-        Macro: EmitAnnotationAccessControl(
-          ingress, allowAnnotation, denyAnnotation, aclPrefix,
-          allowCommentFmt, denyCommentFmt
-        )
-
-        Reads the allowlist/denylist annotations and emits the CIDR ACL plus
-        the gating http-request deny rule, scoped to the ingress's hosts.
-        Comment format strings may contain {KEY} (replaced by "<ns>/<name>").
-        No-op when the ingress has no hosts or neither annotation is set.
-      -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- import "util-validate-cidr-list" for ValidateCidrList %}
       {%- macro EmitAnnotationAccessControl(ingress *resources.ingresses.T, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) %}
@@ -427,25 +247,13 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
-  # Security: operator-controlled CIDR-list annotations are interpolated into
-  # HAProxy `src` ACLs. Without validation a value bearing a newline/space could
-  # smuggle arbitrary HAProxy directives into the rendered config (config
-  # injection — the injected directive passes `haproxy -c` and deploys). Every
-  # site that interpolates a comma-separated CIDR annotation MUST route it
-  # through ValidateCidrList first.
+  # Every comma-separated CIDR annotation interpolated into an HAProxy `src` ACL
+  # MUST go through ValidateCidrList: a value carrying a newline would smuggle a
+  # second directive into the config and still pass `haproxy -c`.
   util-validate-cidr-list:
     template: |
-      {#-
-        Macro: ValidateCidrList(raw, annotation, key) string
-
-        Splits a comma-separated IP/CIDR annotation value, validates each token
-        against a strict IPv4/IPv6(/mask) charset regex, and returns the
-        space-joined list ready to interpolate after `src`. fail()s the whole
-        render on any token containing characters outside the IP/CIDR set
-        (whitespace, newlines, `{`, `;`, letters, …) — this is the guard against
-        config injection. Malformed-but-charset-clean values (e.g. 999.0.0.0/8)
-        are left for `haproxy -c` to reject; the regex only blocks injection.
-      -#}
+      {#- Charset guard only: malformed-but-clean values (999.0.0.0/8) are left
+          for `haproxy -c` to reject. -#}
       {%- macro ValidateCidrList(rawList string, annotation string, key string) %}
         {%- var out = []string{} %}
         {%- for _, c := range split(rawList, ",") %}
@@ -460,21 +268,10 @@ templateSnippets:
         {{- join(out, " ") -}}
       {%- end macro %}
 
-  # Security: a single annotation value interpolated onto an HAProxy config line
-  # (a header value, SNI/verifyhost host, cipher string, cookie domain/path, …)
-  # must not carry a control character — a newline would split the line and
-  # smuggle a second directive into the rendered config (config injection that
-  # passes `haproxy -c`). ValidateConfigValue rejects control characters (and,
-  # when allowSpaces is false, embedded spaces that would break a single-token
-  # field) and returns the value unchanged.
+  # A control character in an interpolated annotation value would split the
+  # config line and smuggle a second directive past `haproxy -c`.
   util-validate-config-value:
     template: |
-      {#-
-        Macro: ValidateConfigValue(value, annotation, key, allowSpaces) string
-        Rejects control characters (newlines/tabs/CR) always; rejects spaces when
-        allowSpaces is false. fail()s the render on violation; otherwise returns
-        the value verbatim for safe interpolation onto a config line.
-      -#}
       {%- macro ValidateConfigValue(value string, annotation string, key string, allowSpaces bool) %}
         {%- if regex_search(value, "[[:cntrl:]]") %}
           {{- fail("Invalid value for annotation '" + annotation + "' on Ingress '" + key + "': must not contain control characters (newlines/tabs) — config-injection guard.") -}}
@@ -485,50 +282,10 @@ templateSnippets:
         {{- value -}}
       {%- end macro %}
 
-  # WAF governance — shared resolution. The HAPTIC-native policy engine
-  # (haptic-annotations) and the nginx-ingress / haproxy-ingress compat
-  # shims all decide "is WAF governance active, and what may an Ingress
-  # author do" from extraContext.waf. One macro owns that decision so the
-  # compat surfaces cannot drift from the native policy engine.
+  # One macro owns the "is WAF governance active, and what may an Ingress author
+  # do" verdict, so the compat shims cannot drift from the native policy engine.
   util-waf-governance:
     template: |
-      {#-
-        Macro: WafGovernance(gov)
-
-        Populates `gov` with the administrator's WAF governance state from
-        extraContext.waf. Governance activates when a reusable policy
-        catalog is configured (inline policies, trusted configMapRefs, or a
-        defaultPolicy), when dispatch.mode is "default-on", or when
-        namespaced self-service authoring (policies.selfService.enabled) is
-        on. While governance is off every Ingress permission stays
-        permissive (upstream compatibility behavior); once it is on,
-        permissions come from extraContext.waf.ingressPermissions with
-        deny-by-default for everything except allowPolicySelection.
-
-        Self-service keys written to gov (all always set):
-          selfServiceEnabled                  bool
-          selfServiceConfigMapName            string (default "waf-policies")
-          selfServiceKey                      string (default "policies.yaml")
-          selfServiceAllowSecLang             bool (default false)
-          selfServiceMaxPoliciesPerNamespace  int (bounded 1..64, default 4)
-          selfServiceMaxTotalPolicies         int (bounded 1..1024, default 64)
-
-        Keys written to gov (all always set):
-          governanceEnabled        bool
-          policyCatalogConfigured  bool
-          defaultPolicy            string ("" when unset)
-          dispatchMode             string
-          allowPolicySelection     bool (default true under governance)
-          allowEnforcementOverride bool (default false under governance)
-          allowWafDisable          bool (default false under governance)
-          allowCustomRules         bool (default false under governance)
-          allowRawHAProxyConfig    bool (default false under governance)
-          maxCustomRuleIngresses       int (bounded 1..1024, default 32)
-          maxCustomRuleBytesPerIngress int (bounded 1..1048576, default 16384)
-
-        Resolution is memoized per render (shared.ComputeIfAbsent), so the
-        three consuming libraries share one computation and one verdict.
-      -#}
       {%- macro WafGovernance(gov map[string]any) %}
       {%%
         var resolvedAny, _ = shared.ComputeIfAbsent("wafGovernance", func() any {
@@ -589,10 +346,8 @@ templateSnippets:
           var defaultPolicy = policies | dig("defaultPolicy") | fallback("") | tostring()
           var dispatchMode = waf | dig("dispatch", "mode") | fallback("opt-in") | tostring()
           var policyCatalogConfigured = len(inlinePolicies) > 0 || len(policyRefs) > 0 || defaultPolicy != ""
-          // Ingress permissions protect any administrator-owned WAF
-          // baseline: a reusable policy catalog, global default-on dispatch,
-          // or enabled namespaced self-service authoring. Plain opt-in
-          // compatibility mode retains upstream behavior.
+          // Permissions bind only once an admin owns a WAF baseline; plain
+          // opt-in mode keeps upstream compatibility behavior.
           var governanceEnabled = policyCatalogConfigured || dispatchMode == "default-on" || selfServiceEnabled
 
           var ingressPermissionsAny = waf | dig("ingressPermissions")
@@ -613,10 +368,8 @@ templateSnippets:
           }
           var permission = func(field string, governedDefault bool) bool {
             if !governanceEnabled { return true }
-            // Handle absence explicitly: fallback treats boolean false as a
-            // zero value, which would otherwise turn an explicit denial back
-            // into the permissive default. The field types were validated
-            // above, so preserve the boolean directly.
+            // fallback() would treat an explicit false as absent and flip a
+            // denial back to the permissive default.
             var valueAny, isSet = ingressPermissions[field]
             if isSet { return valueAny.(bool) }
             return governedDefault
@@ -670,24 +423,10 @@ templateSnippets:
       %%}
       {%- end macro %}
 
-  # Cross-family feature-collision guard. Rejects an Ingress that configures
-  # the SAME feature through annotations from two different families (e.g.
-  # `haproxy-haptic.org/waf-policy` AND `haproxy-ingress.github.io/waf`), even when the
-  # values don't conflict — the effective result would otherwise be
-  # order-dependent (which family's map row / snippet wins). Distinct features
-  # across families are fine (WAF from one family + CORS from another; two
-  # different timeout parameters), so the registry is keyed by canonical
-  # feature/parameter, not a coarse category: every WAF annotation maps to one
-  # `WAF` entry, but each timeout type is its own entry.
-  #
-  # Runs once per config as a features-* side-effect snippet (output discarded).
-  # Enforcement is renderMode-aware: on the admission webhook's dry-run render
-  # (renderMode == "admission") a conflict fail()s, so the API server denies the
-  # proposed Ingress; on the live reconcile render and the daemon load gate it
-  # records a Warning Event on the Ingress and proceeds, so one already-present
-  # conflicting Ingress can't abort the whole config render and brick the fleet.
-  # Only ENABLED families count — a disabled library's annotations are inert —
-  # via extraContext.annotationLibraries, injected by
+  # Rejects an Ingress that configures the SAME feature through two annotation
+  # families: the effective result would be order-dependent. Keyed by canonical
+  # feature/parameter, so distinct features (and distinct timeouts) across
+  # families stay legal. extraContext.annotationLibraries is injected by
   # templates/haproxytemplateconfig.yaml from controller.templateLibraries.*.enabled.
   features-950-annotation-family-feature-conflict:
     template: |-
@@ -701,11 +440,9 @@ templateSnippets:
         // Deterministic iteration order → stable fail() messages.
         var familyOrder = []string{"haptic", "haproxyIngress", "haproxytech", "nginx"}
 
-        // Canonical feature/parameter → family → annotation-key suffixes.
-        // ≥2 enabled families each carrying ≥1 key for the SAME entry on one
-        // Ingress is rejected. Listing a key a family doesn't actually use is
-        // harmless (it simply never matches); the correctness requirement is
-        // that every key sits under the feature it truly configures.
+        // Canonical feature/parameter → family → annotation-key suffixes. A key
+        // listed under a family that doesn't use it is harmless; a key filed
+        // under the wrong feature is not.
         var registry = []map[string]any{
           {"name": "WAF", "families": map[string][]string{
             "haptic":         {"waf-mode", "waf-policy"},
@@ -784,8 +521,8 @@ templateSnippets:
             "haproxytech": {"set-host"},
             "nginx":       {"upstream-vhost"},
           }},
-          // Timeouts are per-parameter: mixing families across DIFFERENT timeout
-          // types is fine; only the same timeout from two families collides.
+          // One entry per timeout parameter: only the same timeout from two
+          // families collides.
           {"name": "connect timeout", "families": map[string][]string{
             "haptic":         {"timeout-connect"},
             "haproxyIngress": {"timeout-connect"},
@@ -821,9 +558,8 @@ templateSnippets:
             "haptic":      {"timeout-check"},
             "haproxytech": {"timeout-check"},
           }},
-          // Single-family timeouts (haproxytech `timeout-client`, nginx
-          // `proxy-send-timeout`) have no cross-family counterpart, so no
-          // collision entry is needed until a second family exposes them.
+          // haproxytech timeout-client and nginx proxy-send-timeout have no
+          // cross-family counterpart yet, so no entry.
         }
 
         var enabled = extraContext | dig("annotationLibraries") | fallback(map[string]any{})
@@ -833,7 +569,6 @@ templateSnippets:
             enabledCount++
           }
         }
-        // Cross-family collision is impossible with fewer than two active families.
         if enabledCount >= 2 {
           for _, ingress := range resources.ingresses.List() {
             var anns = ingress.Metadata.Annotations
@@ -865,14 +600,9 @@ templateSnippets:
               }
               if len(hitFamilies) >= 2 {
                 var msg = "Ingress " + ingress.Metadata.Namespace + "/" + ingress.Metadata.Name + " configures the " + entry["name"].(string) + " feature through annotations from multiple families (" + join(hitDetail, "; ") + "). Configure each feature through a single annotation family: mixing families for one feature is rejected even when the values agree, because the effective configuration is order-dependent."
-                // Explicit fail-on-webhook / warn-on-reconcile split (see the
-                // `renderMode` global). "admission" is a webhook dry-run of a
-                // PROPOSED change: fail() so the API server denies it and a new
-                // cross-family conflict never lands. Any other mode ("reconcile",
-                // the load gate) is the live config of ALREADY-present state:
-                // fail() there would abort the whole haproxy.cfg render over one
-                // bad Ingress and brick the fleet, so instead record a Warning
-                // Event on the offending Ingress and let the render proceed.
+                // "admission" is a dry-run of a PROPOSED change, so deny it;
+                // other modes render already-present state, where fail() would
+                // abort the whole config and brick the fleet.
                 if renderMode == "admission" {
                   fail(msg)
                 } else {
@@ -884,36 +614,12 @@ templateSnippets:
         }
       %%}
 
-  # Org-wide policy guardrails — generic, JSONPath-rule-driven. Runs once per
-  # render (features-* side effect). When extraContext.governance.enabled is
-  # true, each admin-declared rule is applied to every item of its target
-  # watched resource (outside governance.exemptNamespaces):
-  #   - absent value + rule.default set -> INJECT the default (jsonpathSet)
-  #   - present value                   -> VALIDATE (required / min / max /
-  #                                        allowed / pattern / anyOf / satisfiedBy)
-  # See the extraContext.governance defaults at the top of this library for the
-  # rule shape.
-  #
-  # Generic across ANY watched resource (Ingress, HTTPRoute, user CRDs) via the
-  # resource() / jsonpathGet / jsonpathSet engine helpers — no per-annotation or
-  # per-resource hand-coding. This snippet lives in the Ingress-annotations
-  # library only because that is where the governance config bag is declared; it
-  # reads no Ingress-specific fields itself (satisfiedBy: tls checks a generic
-  # spec.tls path plus the chart's TLS defaults).
+  # Applies the admin-declared rules to every item of their target watched
+  # resource. Generic over ANY watched resource via resource() / jsonpathGet /
+  # jsonpathSet — it reads no Ingress-specific field and lives in this library
+  # only because the governance config bag is declared here.
   features-960-governance:
     template: |-
-      {#-
-        Enforcement is admissionSubject-scoped so a pre-existing violator never
-        wedges an unrelated admission:
-          - reject + the offending resource IS the admission subject -> fail()
-            (the API server denies the new/edited resource).
-          - otherwise (audit mode, a live reconcile, or another resource's
-            admission) -> a GovernanceViolation Warning Event; the route keeps
-            serving. Governance blocks NEW violations and surfaces existing ones;
-            it never breaks already-serving traffic. An injected default flows
-            into the same render (memoized resource wrapping), so downstream
-            snippets emit config for the injected value.
-      -#}
       {%%
         var gov = extraContext | dig("governance") | fallback(map[string]any{})
         if tostring(gov | dig("enabled") | fallback("false")) == "true" {
@@ -921,16 +627,14 @@ templateSnippets:
           for _, n := range toSlice(gov | dig("exemptNamespaces") | fallback([]any{})) {
             exempt[tostring(n)] = true
           }
-          // Chart-wide TLS escape hatch for satisfiedBy: tls — when default-HTTPS
-          // is on, every route terminates TLS (on the default certificate that
-          // backs it), so the rule is satisfied without per-resource spec.tls.
+          // Chart-wide default HTTPS terminates TLS for every route, so
+          // satisfiedBy: tls passes without per-resource spec.tls.
           var defaultHTTPS = tostring(extraContext | dig("ingressDefaultHTTPS") | fallback("false")) == "true"
 
           var rulesAny = toSlice(gov | dig("rules") | fallback([]any{}))
 
-          // --- Validate every rule up-front. This is global config validation
-          // (not per-resource), so fail() is correct — a typo would otherwise
-          // silently drop enforcement. ---
+          // Rule validation is global config validation, not per-resource, so
+          // fail() is right: a typo would otherwise silently drop enforcement.
           var isConcretePath = func(p string) bool {
             return p != "" && !regex_search(p, "[*?@]")
           }
@@ -959,7 +663,6 @@ templateSnippets:
             }
           }
 
-          // --- Group rules by target resource so metadata is read once/item. ---
           var byResource = map[string][]any{}
           for _, ruleAny := range rulesAny {
             var rule = ruleAny.(map[string]any)
@@ -978,8 +681,8 @@ templateSnippets:
               var subjNs = tostring(admissionSubject | dig("namespace") | fallback(""))
               var subjName = tostring(admissionSubject | dig("name") | fallback(""))
               var underAdmission = renderMode == "admission" && subjStore == res && subjNs == ns && subjName == name
-              // violate() is admissionSubject-scoped: fail() only for a reject
-              // rule on the offending resource's own admission; otherwise warn.
+              // Scoped to the admission subject: a pre-existing violator must
+              // never wedge an unrelated resource's admission.
               var violate = func(enf string, custom string, detail string) {
                 var m = custom
                 if m == "" { m = detail }
@@ -996,7 +699,6 @@ templateSnippets:
                 var custom = tostring(fallback(rule["message"], ""))
                 var path = tostring(fallback(rule["path"], ""))
 
-                // satisfiedBy: tls — generic spec.tls path OR chart default HTTPS.
                 if tostring(fallback(rule["satisfiedBy"], "")) == "tls" {
                   var tlsv = jsonpathGet(item, "spec.tls")
                   var hasTLS = tlsv != nil && len(toSlice(tlsv)) > 0
@@ -1006,7 +708,6 @@ templateSnippets:
                   continue
                 }
 
-                // anyOf — at least one of the listed paths must be present.
                 var anyOf = toSlice(rule["anyOf"])
                 if len(anyOf) > 0 {
                   var anyPresent = false
@@ -1021,15 +722,13 @@ templateSnippets:
 
                 if path == "" { continue }
 
-                // INJECT: absent value + a configured default -> write it in place
-                // so downstream snippets in this render observe it.
                 var v = jsonpathGet(item, path)
+                // Injected in place so later snippets in this render see it.
                 if !present(v) && rule["default"] != nil {
                   jsonpathSet(item, path, rule["default"])
                   v = rule["default"]
                 }
 
-                // VALIDATE.
                 if tostring(fallback(rule["required"], "false")) == "true" && !present(v) {
                   violate(enf, custom, "must set " + path)
                   continue
@@ -1037,7 +736,6 @@ templateSnippets:
                 if !present(v) { continue }
                 var vs = strip(tostring(v))
 
-                // numeric bounds (with optional clamp)
                 if rule["min"] != nil || rule["max"] != nil {
                   if !regex_search(vs, "^[0-9]+$") {
                     violate(enf, custom, path + "=" + vs + " must be a non-negative integer")
@@ -1060,7 +758,6 @@ templateSnippets:
                   }
                 }
 
-                // allowed enum
                 var allowed = toSlice(rule["allowed"])
                 if len(allowed) > 0 {
                   var inSet = false
@@ -1073,7 +770,6 @@ templateSnippets:
                   }
                 }
 
-                // regex pattern
                 var pattern = tostring(fallback(rule["pattern"], ""))
                 if pattern != "" && !regex_search(vs, pattern) {
                   violate(enf, custom, path + "=" + vs + " does not match required pattern " + pattern)
@@ -1085,39 +781,20 @@ templateSnippets:
         }
       %%}
 
-# Cross-family feature-collision guard tests. Each test drives the validator via
-# extraContext.annotationLibraries (which families are "enabled") independently
-# of which vendor libraries are actually merged, so the guard's gating logic is
-# exercised in isolation. Uses plugin-free features (CORS, timeouts,
-# backend-protocol) so no test depends on a SPOA plugin being present.
+# The conflict tests drive the guard via extraContext.annotationLibraries, so its
+# gating logic is exercised regardless of which vendor libraries are merged; they
+# use plugin-free features so none depends on a SPOA plugin.
 validationTests:
-  # Pin governance OFF in the shared _global baseline so an operator who enables
-  # governance in production does NOT leak it into the bundled synthetic tests.
-  # Without this, a global rule (e.g. "every Ingress must set a waf-policy")
-  # emits GovernanceViolation events on the fixtures of unrelated tests — those
-  # asserting on events (test-ingress-host-path-conflict-oldest-wins) then fail,
-  # and because the daemon runs validationTests on config load, the operator's
-  # config is rejected at the load gate. The _global extraContext folds OVER the
-  # production extraContext (production ← _global ← per-test), so this disables
-  # governance for every test; the governance-specific tests below re-enable it
-  # via their own per-test extraContext. Deep-merges with the ssl.yaml / base.yaml
-  # _global stanzas (distinct keys). See validationtests-isolated-from-real-config.
+  # Pin governance OFF for the bundled tests: an operator's production rules
+  # would otherwise emit GovernanceViolation events on unrelated tests' fixtures
+  # and — because the daemon runs validationTests at the load gate — get their
+  # config rejected. The governance tests below re-enable it per-test.
   _global:
     extraContext:
       governance:
         enabled: false
         rules: []
 
-  # --- Org-wide policy guardrails (features-960-governance, generic engine) ---
-  # Each rule INJECTS a default when a value is absent or VALIDATES it when
-  # present. Enforcement is admissionSubject-scoped: a reject rule fail()s ONLY
-  # the offending resource's own admission; everything else warns and keeps
-  # serving.
-
-  # END-TO-END INJECTION PROOF: governance injects a default rate-limit-rps on an
-  # Ingress that omits it; the real rate-limiting consumer (24-rate-limiting)
-  # then emits its config for the injected value — proving a governance write is
-  # observed by a downstream snippet within the same render (memoized wrapping).
   test-governance-inject-reaches-consumer:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
     description: An injected default rate-limit annotation reaches the rate-limiting consumer.
@@ -1142,13 +819,10 @@ validationTests:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
       - type: haproxy_valid
-      # The injected rps=100 reaches the consumer, which emits its stick-table
-      # (default period 1s / size 100k) and tracker in the ingress's backend.
       - { type: contains, target: haproxy.cfg, pattern: 'backend default_inject-rps_svc_echo_80' }
       - { type: contains, target: haproxy.cfg, pattern: 'stick-table type ip size 100k expire 1s store http_req_rate' }
       - { type: contains, target: haproxy.cfg, pattern: 'http-request track-sc0 src' }
 
-  # A configured default that itself satisfies the rule's bounds injects cleanly.
   test-governance-inject-then-validate-pass:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
     description: An injected default within min/max validates without a violation.
@@ -1178,8 +852,6 @@ validationTests:
       - { type: contains, target: haproxy.cfg, pattern: 'backend default_inject-ok_svc_echo_80' }
       - { type: contains, target: haproxy.cfg, pattern: 'stick-table type ip size 100k expire 1s store http_req_rate' }
 
-  # CLAMP: an out-of-bounds present value is rewritten to the cap, and the
-  # consumer emits the clamped value — never the original.
   test-governance-clamp-rewrites:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
     description: An over-limit value is clamped and the consumer emits the cap, not the original.
@@ -1208,16 +880,11 @@ validationTests:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
       - type: haproxy_valid
-      # The clamped value (50) is what the consumer emits; the original never appears.
-      # Both assertions name the consumer position. A bare `not_contains: 8888`
-      # would also match the validation harness's own temp path
-      # (`default-path origin /tmp/haproxy-validate-<random>/...`, which lands in
-      # the asserted haproxy.cfg), so it failed roughly once in a few thousand
-      # runs — whenever that random number happened to contain 8888.
+      # Assert the consumer's own line, not a bare "8888": the harness's random
+      # temp path lands in haproxy.cfg and may contain the number.
       - { type: contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 50' }
       - { type: not_contains, target: haproxy.cfg, pattern: 'sc_http_req_rate\(0\) gt 8888' }
 
-  # REJECT on a bound violation aborts only the offending resource's admission.
   test-governance-min-max-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A value above max is rejected at the offending resource's own admission.
@@ -1248,7 +915,6 @@ validationTests:
     assertions:
       - { type: contains, target: rendering_error, pattern: 'must be within the configured bounds' }
 
-  # REQUIRED absent value is rejected at the offending resource's own admission.
   test-governance-required-absent-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A required-but-absent value is rejected at the offending resource's own admission.
@@ -1275,8 +941,6 @@ validationTests:
     assertions:
       - { type: contains, target: rendering_error, pattern: "must set metadata.labels" }
 
-  # AUDIT enforcement only warns — a violating resource is admitted even under
-  # the webhook.
   test-governance-audit-warns-not-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: An audit rule only warns; a violating resource is admitted under the webhook.
@@ -1304,7 +968,6 @@ validationTests:
     assertions:
       - { type: haproxy_valid }
 
-  # EXEMPT namespace: a violating resource in an exempt namespace is never checked.
   test-governance-exempt-namespace:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A resource in an exempt namespace is never checked, even under admission.
@@ -1332,8 +995,6 @@ validationTests:
     assertions:
       - { type: haproxy_valid }
 
-  # ADMISSION-SCOPING: during one resource's admission, a DIFFERENT pre-existing
-  # violator only warns — it never wedges the unrelated admission.
   test-governance-non-subject-violator-not-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A pre-existing violator warns during another resource's admission — no wedge.
@@ -1370,7 +1031,6 @@ validationTests:
     assertions:
       - { type: haproxy_valid }
 
-  # anyOf: at least one of the listed paths must be present.
   test-governance-anyof-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A resource missing every anyOf path is rejected at its own admission.
@@ -1425,7 +1085,6 @@ validationTests:
     assertions:
       - { type: haproxy_valid }
 
-  # satisfiedBy: tls — spec.tls absent AND no chart TLS default -> reject.
   test-governance-satisfiedby-tls-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A no-TLS Ingress is rejected when TLS is required and no chart default terminates TLS.
@@ -1452,8 +1111,6 @@ validationTests:
     assertions:
       - { type: contains, target: rendering_error, pattern: 'must terminate TLS' }
 
-  # satisfiedBy: tls — the chart-wide default HTTPS (the chart's default) satisfies
-  # the TLS requirement even without spec.tls on the Ingress.
   test-governance-satisfiedby-tls-default-https:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: Chart-wide default HTTPS satisfies the TLS requirement without spec.tls.
@@ -1480,7 +1137,6 @@ validationTests:
     assertions:
       - { type: haproxy_valid }
 
-  # allowed enum — a value outside the set is rejected.
   test-governance-allowed-enum-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A value not in the allowed enum is rejected at its own admission.
@@ -1507,7 +1163,6 @@ validationTests:
     assertions:
       - { type: contains, target: rendering_error, pattern: 'is not one of the allowed values' }
 
-  # regex pattern — a value that fails the pattern is rejected.
   test-governance-pattern-reject:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: A value that fails the required regex pattern is rejected at its own admission.
@@ -1534,8 +1189,6 @@ validationTests:
     assertions:
       - { type: contains, target: rendering_error, pattern: 'does not match required pattern' }
 
-  # CROSS-RESOURCE: a rule targeting httproutes proves the engine is generic
-  # across watched resources, not Ingress-only.
   test-governance-httproutes-cross-resource:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.gateway.enabled) }}true{{ end }}'
     requires: [httproutes]
@@ -1561,7 +1214,6 @@ validationTests:
     assertions:
       - { type: contains, target: rendering_error, pattern: "must set metadata.annotations" }
 
-  # --- Config validation (global errors) ---
   test-governance-invalid-enforcement-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
     description: An invalid enforcement value is a loud global config error.
@@ -1852,10 +1504,7 @@ validationTests:
       - type: haproxy_valid
 
   test-annotation-family-conflict-waf-rejected:
-    # The concrete case this guard was created for: a leftover vendor WAF
-    # annotation must not silently coexist with (and reorder) the native WAF
-    # policy. Needs the coraza plugin so neither family's own WAF processing
-    # fails first; the vendor/native ingress libraries auto-enable it.
+    # Needs the coraza plugin so neither family's own WAF processing fails first.
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.haproxyIngress.enabled) (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
     description: Under the admission webhook, an Ingress with both haproxy-haptic.org/waf-policy and haproxy-ingress.github.io/waf is rejected — the deny-vs-detect downgrade this guard prevents.
     extraContext:
@@ -1937,9 +1586,7 @@ validationTests:
                       pathType: Prefix
                       backend: { service: { name: app, port: { number: 80 } } }
     assertions:
-      # The render succeeds (no fail()) despite the conflict.
       - type: haproxy_valid
-      # A Warning Event is recorded against the offending Ingress instead.
       - type: contains
         target: events
         pattern: "Warning AnnotationFamilyConflict networking.k8s.io/v1 Ingress default/mixed-cors:"
@@ -1979,11 +1626,8 @@ validationTests:
                       pathType: Prefix
                       backend: { service: { name: app, port: { number: 80 } } }
     assertions:
-      # The guard warns instead of failing: no conflict fail() reached the
-      # render error. (haproxy_valid is intentionally not asserted here — with
-      # both native and haproxytech merged, the same timeout may be emitted
-      # twice; that double-emit is a separate concern from the guard's
-      # warn-vs-fail behaviour under test.)
+      # haproxy_valid is deliberately not asserted: with both families merged the
+      # same timeout may be emitted twice — a separate concern from warn-vs-fail.
       - type: not_contains
         target: rendering_error
         pattern: "configures the server \\(read\\) timeout feature through annotations from multiple families"

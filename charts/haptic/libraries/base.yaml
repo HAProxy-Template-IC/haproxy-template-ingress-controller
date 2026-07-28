@@ -388,6 +388,46 @@ templateSnippets:
         and place it BEFORE any `http-request return` / `deny` rule, or the
         set-var lines never run for short-circuited requests.
       -#}
+      {#- Off by default: writes `traceparent` onto every upstream request. -#}
+      {%- var tracingRaw = extraContext | dig("tracing", "enabled") -%}
+      {%- var tracingOn = false -%}
+      {%- if tracingRaw != nil -%}
+        {%- var tb, tok = tracingRaw.(bool) -%}
+        {%- if !tok -%}
+          {{- fail("controller.config.templatingSettings.extraContext.tracing.enabled must be a boolean, got '" + tostring(tracingRaw) + "'. A quoted 'false' is truthy here and would silently enable trace propagation.") -}}
+        {%- end -%}
+        {%- tracingOn = tb -%}
+      {%- end -%}
+      {%- var sampleRate = 100 -%}
+      {%- var rateRaw = extraContext | dig("tracing", "sampleRate") -%}
+      {%- if rateRaw != nil -%}
+        {%- sampleRate = toint(rateRaw) -%}
+        {%- if sampleRate < 0 || sampleRate > 100 -%}
+          {{- fail("controller.config.templatingSettings.extraContext.tracing.sampleRate must be a whole percentage between 0 and 100, got '" + tostring(rateRaw) + "'. It applies only when HAPTIC is the trace root; an inbound traceparent's decision is always honoured.") -}}
+        {%- end -%}
+      {%- end -%}
+      {#- Cross-key guards (needs vector, needs enabled) live in Helm: a
+          validationTest may pin either key, and failing here trips the load gate. -#}
+      {%- var otlpEndpoint = extraContext | dig_string("", "tracing", "otlp", "endpoint") -%}
+      {%- if otlpEndpoint != "" -%}
+        {%- if !hasPrefix(otlpEndpoint, "http://") && !hasPrefix(otlpEndpoint, "https://") -%}
+          {{- fail("controller.config.templatingSettings.extraContext.tracing.otlp.endpoint must be an absolute http:// or https:// URL of an OTLP/HTTP traces collector, got '" + otlpEndpoint + "'. Example: http://tempo.observability.svc.cluster.local:4318/v1/traces") -}}
+        {%- end -%}
+        {#- The endpoint lands in the vector config as a YAML scalar, so a '#'
+            or a quote later in the URL would truncate or break the emitted
+            document — a silently wrong destination, not a loud failure. -#}
+        {%- if regex_search(otlpEndpoint, "[^A-Za-z0-9:/?&=._~%@+,;()\\[\\]-]") -%}
+          {{- fail("controller.config.templatingSettings.extraContext.tracing.otlp.endpoint may only contain URL characters (A-Za-z0-9 and :/?&=._~%@+,;()[]-), got '" + otlpEndpoint + "'. It is emitted into the vector config, where a quote, '#' or whitespace would corrupt the document.") -}}
+        {%- end -%}
+      {%- end -%}
+      {#- serviceName is spliced into a JSON string literal in the OTLP payload
+          prefix (vector.yaml's otlp_traces sink). A quote or backslash there
+          makes every exported batch invalid JSON, and the only symptom is that
+          spans stop arriving — so bound it here rather than escaping at use. -#}
+      {%- var otlpService = extraContext | dig_string("haptic", "tracing", "otlp", "serviceName") -%}
+      {%- if regex_search(otlpService, "[^A-Za-z0-9._-]") -%}
+        {{- fail("controller.config.templatingSettings.extraContext.tracing.otlp.serviceName may only contain A-Za-z0-9, '.', '_' and '-', got '" + otlpService + "'. It is embedded in a JSON string literal in the OTLP payload, where a quote or backslash would make every exported batch invalid.") -}}
+      {%- end -%}
       {%- var fieldsRaw = extraContext | dig("accessLog", "fields") -%}
       {%- var fields = map[string]any{} -%}
       {%- if fieldsRaw != nil -%}
@@ -400,14 +440,38 @@ templateSnippets:
       {%- var lines = []string{} -%}
       {%- var items = []string{} -%}
       {%- var seen = map[string]string{} -%}
-      {#- W3C Trace Context (https://www.w3.org/TR/trace-context/) is what
-          OpenTelemetry propagates, so an inbound trace-id is the join key
-          between this log line and a distributed trace. The ACL pins the full
-          traceparent grammar so a junk or oversized header contributes nothing
-          instead of eating the log-line budget. HAPTIC deliberately does not
-          synthesize a traceparent when the client sends none: a root span no
-          exporter ever emits produces broken traces downstream. -#}
-      {%- lines = append(lines, "http-request set-var(txn.trace_id) req.hdr(traceparent),field(2,-) if { req.hdr(traceparent) -m reg ^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$ }") -%}
+      {#- Full grammar pinned so a junk header contributes nothing.
+          https://www.w3.org/TR/trace-context/ -#}
+      {%- var tpGrammar = "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$" -%}
+      {%- if !tracingOn -%}
+        {#- Correlation only. A traceparent we invent but never export would orphan
+            every downstream span. -#}
+        {%- lines = append(lines, "http-request set-var(txn.trace_id) req.hdr(traceparent),field(2,-) if { req.hdr(traceparent) -m reg " + tpGrammar + " }") -%}
+      {%- else -%}
+        {#- Adopt an inbound traceparent: same trace, its span is our parent. -#}
+        {%- lines = append(lines, "acl haptic_has_traceparent req.hdr(traceparent) -m reg " + tpGrammar) -%}
+        {%- lines = append(lines, "http-request set-var(txn.trace_id) req.hdr(traceparent),field(2,-) if haptic_has_traceparent") -%}
+        {%- lines = append(lines, "http-request set-var(txn.parent_span_id) req.hdr(traceparent),field(3,-) if haptic_has_traceparent") -%}
+        {%- lines = append(lines, "http-request set-var(txn.trace_flags) req.hdr(traceparent),field(4,-) if haptic_has_traceparent") -%}
+        {#- Groups 1,2,5 only: 3/4 carry fixed nibbles, and the variant nibble lands
+            on byte 8, which TraceIdRatioBased reads — a constant there samples 0%
+            at ratios <=0.5 in every downstream SDK. -#}
+        {%- lines = append(lines, "http-request set-var-fmt(txn.trace_id) %[uuid(4),field(1,-)]%[uuid(4),field(2,-)]%[uuid(4),field(5,-)]%[uuid(4),field(1,-)] if !haptic_has_traceparent") -%}
+        {#- Two rules: HAProxy takes one condition clause per rule. -#}
+        {%- if sampleRate >= 100 -%}
+          {%- lines = append(lines, "http-request set-var(txn.trace_flags) str(01) if !haptic_has_traceparent") -%}
+        {%- else if sampleRate <= 0 -%}
+          {%- lines = append(lines, "http-request set-var(txn.trace_flags) str(00) if !haptic_has_traceparent") -%}
+        {%- else -%}
+          {%- lines = append(lines, "http-request set-var(txn.trace_flags) str(01) if !haptic_has_traceparent { rand(100) lt " + tostring(sampleRate) + " }") -%}
+          {%- lines = append(lines, "http-request set-var(txn.trace_flags) str(00) if !haptic_has_traceparent !{ var(txn.trace_flags) -m found }") -%}
+        {%- end -%}
+        {#- Our own span id is always fresh, adopted parent or not. -#}
+        {%- lines = append(lines, "http-request set-var-fmt(txn.span_id) %[uuid(4),field(5,-)]%[uuid(4),field(2,-)]") -%}
+        {#- Propagate. An unsampled trace is still propagated with flags 00 so
+            downstream honours the same decision instead of re-deciding. -#}
+        {%- lines = append(lines, "http-request set-header traceparent 00-%[var(txn.trace_id)]-%[var(txn.span_id)]-%[var(txn.trace_flags)]") -%}
+      {%- end -%}
       {#- Library-contributed items. Inserting a separator before every item
           means a snippet that forgot its leading newline cannot fuse its first
           item onto the previous snippet's last one; collapsing all whitespace
@@ -596,6 +660,13 @@ templateSnippets:
       %(ts)[accept_date(ms),ms_utime(%Y-%m-%dT%H:%M:%S.%3NZ)]
       %(req_id)ID
       %(trace_id)[var(txn.trace_id)]
+      {#- Gated on a GLOBAL value, never on which frontend renders: the field
+          set must stay identical across frontends. -#}
+      {%- if (extraContext | dig("tracing", "enabled")) == true %}
+      %(span_id)[var(txn.span_id)]
+      %(parent_span_id)[var(txn.parent_span_id)]
+      %(trace_flags)[var(txn.trace_flags)]
+      {%- end %}
       %(client_ip)ci
       %(frontend)f
       %(backend)b
@@ -3005,11 +3076,115 @@ validationTests:
   # Access log (structured JSON)
   # ==========================================================================
 
+  test-tracing-off-by-default-adopts-only:
+    description: >-
+      With tracing off an inbound trace id is adopted for log correlation, but
+      nothing is minted and no traceparent is written upstream
+    fixtures: {}
+    # Pinned, not inherited. A per-test extraContext deep-merges over the
+    # deployment's, so without this the test would assert the off-shape against an
+    # operator who enabled tracing — failing the LOAD GATE and crash-looping the
+    # controller on a perfectly good config.
+    extraContext:
+      tracing:
+        enabled: false
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.trace_id\) req\.hdr\(traceparent\),field\(2,-\) if \{ req\.hdr\(traceparent\) -m reg '
+        description: Correlation-only extraction, exactly as it shipped before tracing existed
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'set-header traceparent'
+        description: >-
+          Nothing is propagated by default. A traceparent HAPTIC invents but never
+          exports makes every downstream span a child of a parent the backend has
+          never seen
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '%\(span_id\)'
+        description: The span fields are absent, not empty, when nothing mints them
+
+  test-tracing-enabled-mints-and-propagates:
+    description: tracing.enabled mints W3C-valid ids, honours an inbound parent, and propagates
+    fixtures: {}
+    extraContext:
+      tracing:
+        enabled: true
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'acl haptic_has_traceparent req\.hdr\(traceparent\) -m reg \^\[0-9a-f\]\{2\}-\[0-9a-f\]\{32\}-\[0-9a-f\]\{16\}-\[0-9a-f\]\{2\}\$'
+        description: The full grammar is pinned, so a junk header cannot be adopted
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.parent_span_id\) req\.hdr\(traceparent\),field\(3,-\) if haptic_has_traceparent'
+        description: An inbound span becomes OUR parent — the child case, not just the root case
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-header traceparent 00-%\[var\(txn\.trace_id\)\]-%\[var\(txn\.span_id\)\]-%\[var\(txn\.trace_flags\)\]'
+        description: Propagated so the backend joins the trace, with no SPOA hop involved
+      # THE REGRESSION GUARD. Building the id from a whole UUID pins byte 8 to the
+      # variant nibble, and every TraceIdRatioBased sampler reads the low 8 bytes —
+      # driving sampling to 0% at any ratio <= 0.5, in EVERY downstream service.
+      # Only UUID groups 1, 2 and 5 are free of fixed bits.
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var-fmt\(txn\.trace_id\) %\[uuid\(4\),field\(1,-\)\]%\[uuid\(4\),field\(2,-\)\]%\[uuid\(4\),field\(5,-\)\]%\[uuid\(4\),field\(1,-\)\]'
+        description: Minted only from fully-random UUID groups
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'uuid\([47]\),regsub'
+        description: >-
+          The whole-UUID form must never appear — byte 8 would be a constant and
+          ratio sampling would silently drop to 0% everywhere downstream
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(span_id\)\[var\(txn\.span_id\)\]'
+        description: The span fields join the log record, which is what makes it exportable
+
+  test-tracing-enabled-must-be-boolean:
+    description: A quoted "false" would silently enable propagation
+    fixtures: {}
+    extraContext: { tracing: { enabled: "false" } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'tracing.enabled must be a boolean' }
+
+  test-tracing-otlp-service-name-charset:
+    description: A quote in serviceName would make every exported OTLP batch invalid JSON
+    fixtures: {}
+    extraContext: { tracing: { enabled: true, otlp: { serviceName: 'ha"ptic' } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'serviceName may only contain' }
+
+  test-tracing-otlp-endpoint-charset:
+    description: A '#' in the endpoint would truncate the emitted vector config
+    fixtures: {}
+    extraContext: { tracing: { enabled: true, otlp: { endpoint: 'http://tempo:4318/v1/traces#frag ment' } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'endpoint may only contain URL characters' }
+
+  test-tracing-sample-rate-out-of-range:
+    description: A percentage outside 0-100 is rejected
+    fixtures: {}
+    extraContext: { tracing: { enabled: true, sampleRate: 150 } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'sampleRate must be a whole percentage' }
+
   test-access-log-core-fields:
     description: >-
       Every HTTP frontend emits the core JSON field set, the log target drops the
       syslog prefix so records are parseable as-is, and no log-time-illegal
       sample expression reaches a log-format.
+    # Pinned off: one assertion below asserts the correlation-only trace_id
+    # extraction, which is the tracing-DISABLED form. Inherited, it would fail for
+    # any operator who enabled tracing — and a failing validationTest fails the
+    # load gate, which crash-loops the controller.
+    extraContext:
+      tracing:
+        enabled: false
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1

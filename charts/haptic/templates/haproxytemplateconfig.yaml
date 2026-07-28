@@ -9,6 +9,23 @@
 {{- if hasKey $controller "rateLimit" }}{{- fail "controller.rateLimit has moved to the top-level rateLimit tree; use rateLimit.shared instead." }}{{- end }}
 {{- if hasKey $controller "defaultSSLCertificate" }}{{- fail "controller.defaultSSLCertificate has moved to the top-level defaultSSLCertificate tree." }}{{- end }}
 {{- $configuredExtraContext := dig "templatingSettings" "extraContext" dict ($controller.config | default dict) }}
+{{- /* Trace export needs the vector sidecar: spans are built from access-log
+       records inside vector, so an OTLP endpoint without it exports nothing and
+       traces would silently never appear.
+
+       This lives in HELM, not in the Scriggo render, on purpose. A validationTest
+       may legitimately set `extraContext.vector: null` to exercise the
+       sidecar-less path, so the same check at render time would fail the LOAD
+       GATE on a good config and crash-loop the controller. Here it is an install
+       error instead: loud, immediate, and impossible to hit at runtime. */ -}}
+{{- $tracingCtx := dig "tracing" dict $configuredExtraContext }}
+{{- $otlpEndpoint := dig "otlp" "endpoint" "" $tracingCtx }}
+{{- if and $otlpEndpoint (not (dig "enabled" false $tracingCtx)) }}
+  {{- fail (printf "controller.config.templatingSettings.extraContext.tracing.otlp.endpoint is set (%s) but tracing.enabled is false, so no trace ids are minted and there would be nothing to export. Set tracing.enabled=true." $otlpEndpoint) }}
+{{- end }}
+{{- if and $otlpEndpoint (not .Values.vector.enabled) }}
+  {{- fail (printf "controller.config.templatingSettings.extraContext.tracing.otlp.endpoint is set (%s) but vector.enabled is false. Spans are built from access-log records inside the vector sidecar, so nothing would export them and traces would silently never appear. Set vector.enabled=true, or remove the endpoint to keep propagation-only tracing (HAProxy still sets traceparent so your backends join the trace)." $otlpEndpoint) }}
+{{- end }}
 {{- $apiGatewaySettings := dict }}
 {{- if hasKey $configuredExtraContext "apiGateway" }}
   {{- if not (kindIs "map" $configuredExtraContext.apiGateway) }}

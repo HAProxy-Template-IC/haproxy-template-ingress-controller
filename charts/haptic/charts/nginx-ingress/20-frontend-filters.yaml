@@ -1,35 +1,11 @@
-# nginx-ingress library — frontend-filters-* annotation handlers.
-# access-control, ssl-redirect, hsts, cors, custom-headers, app-root,
-# permanent/temporal-redirect, canary, mtls-error.
 templateSnippets:
-  # ============================================================================
-  # Frontend Filters
-  # ============================================================================
-
   frontend-filters-700-nginx-ingress-access-control:
     template: |
-      {#-
-        Nginx Ingress Access Control Annotations
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#whitelist-source-range
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/whitelist-source-range: "CIDR,CIDR,..." (optional)
-          - nginx.ingress.kubernetes.io/denylist-source-range: "CIDR,CIDR,..." (optional)
-
-        Generated HAProxy Config:
-          acl <name> src <cidrs>
-          http-request deny if <host-match> !<acl>    (for allowlist)
-          http-request deny if <host-match> <acl>     (for denylist)
-      -#}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {#- Under satisfy=any the standalone whitelist deny would block a
-            non-allow-listed IP before auth could rescue it, so suppress just
-            the allow-list arm (pass an empty allow-annotation name) while
-            keeping the deny-list arm intact. backend-directives-765 emits the
-            combined IP-or-auth gate for these Ingresses instead. -#}
+        {#- Under satisfy=any the allow-list deny would block an IP that auth could still
+            rescue, so drop that arm; backend-directives-765 emits the combined gate. -#}
         {%- var allowAnn = "nginx.ingress.kubernetes.io/whitelist-source-range" -%}
         {%- if SatisfyAnyMode(ingress) != "" -%}{%- allowAnn = "" -%}{%- end -%}
         {{ EmitAnnotationAccessControl(ingress,
@@ -40,35 +16,12 @@ templateSnippets:
             "nginx-ingress/denylist-source-range ({KEY})") }}
       {%- end -%}
 
-  # SSL redirect relocated to features-105-nginx-ingress-ssl-redirect: it now
-  # registers hosts into the shared gf["sslRedirectHosts"] map (ssl.yaml emits the
-  # rule from ssl-redirect-<code>.map), so adding/removing a redirected host is a
-  # map-only, reload-free update instead of a per-ingress inline-ACL redirect.
-  # HSTS relocated to features-155-nginx-ingress-hsts: it registers host→value into
-  # the shared gf["hstsHosts"]; base.yaml builds hsts.map and emits the single shared
-  # response-header rule (frontend-filters-080-hsts), a map-only reload-free update.
+  # ssl-redirect and hsts live in features-105/-155: they register hosts into gf maps
+  # that ssl.yaml/base.yaml emit one shared map-driven rule from — don't move them back
+  # to per-ingress inline ACLs here, that costs a reload per host change.
 
   frontend-filters-730-nginx-ingress-cors:
     template: |
-      {#-
-        Nginx Ingress CORS Annotations
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#enable-cors
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/enable-cors: "true|false" (required to enable)
-          - nginx.ingress.kubernetes.io/cors-allow-origin: "<origin>" (default: *)
-          - nginx.ingress.kubernetes.io/cors-allow-methods: "<methods>" (default: GET, PUT, POST, DELETE, PATCH, OPTIONS)
-          - nginx.ingress.kubernetes.io/cors-allow-headers: "<headers>" (default: DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization)
-          - nginx.ingress.kubernetes.io/cors-allow-credentials: "true|false" (optional)
-          - nginx.ingress.kubernetes.io/cors-max-age: "<seconds>" (default: 1728000)
-          - nginx.ingress.kubernetes.io/cors-expose-headers: "<headers>" (optional)
-
-        Generated HAProxy Config:
-          http-response add-header Access-Control-Allow-Origin <origin> if <host-match>
-          http-response add-header Access-Control-Allow-Methods <methods> if <host-match> METH_OPTIONS
-          ... (other CORS headers)
-      -#}
       {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {{ EmitAnnotationCORS(ingress,
@@ -80,21 +33,6 @@ templateSnippets:
 
   frontend-filters-740-nginx-ingress-custom-headers:
     template: |
-      {#-
-        Nginx Ingress Custom Headers
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-headers
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/custom-request-headers: "name:value|name:value|..."
-          - nginx.ingress.kubernetes.io/custom-response-headers: "name:value|name:value|..."
-
-        Format: Pipe-separated list of header:value pairs.
-
-        Generated HAProxy Config:
-          http-request set-header <name> <value> if <host-match>
-          http-response set-header <name> <value> if <host-match>
-      -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -138,44 +76,14 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
-  # app-root relocated to features-145-nginx-ingress-app-root: it registers
-  # host→path into the shared gf["appRootHosts"]; base.yaml builds app-root.map
-  # and emits the gated rule (frontend-filters-065-app-root), so changing an
-  # app-root is a map-only, reload-free update.
-
-  # permanent-redirect / temporal-redirect relocated to
-  # features-140-nginx-ingress-redirects: they register hosts into the shared
-  # host-keyed redirect map (base.yaml emits the rule from redirect-loc-<code>.map),
-  # so adding/changing a host redirect is a map-only, reload-free update instead of
-  # a per-ingress inline-ACL redirect.
+  # app-root and permanent/temporal-redirect live in features-145/-140: they register
+  # hosts into gf maps that base.yaml emits one shared map-driven rule from — don't
+  # move them back to per-ingress inline ACLs here, that costs a reload per change.
 
   frontend-filters-775-nginx-ingress-from-to-www-redirect:
     template: |
-      {#-
-        Nginx Ingress From-to-WWW Redirect
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#redirect-fromto-www
-
-        Annotation: nginx.ingress.kubernetes.io/from-to-www-redirect: "true"
-
-        Redirects between the apex host and its www. counterpart with a 301:
-          - host `example.com`     -> `www.example.com`
-          - host `www.example.com` -> `example.com`
-
-        Emitted in the HTTP frontend (post-routing, pre-backend) as a true
-        client redirect — it sets the Location header via `redirect prefix`,
-        never the Host header, so request routing is not corrupted. The
-        original request path is preserved by `redirect prefix`, and the
-        request scheme is preserved by gating on `ssl_fc` (two rules per host).
-
-        Generated HAProxy Config (per matching host):
-          http-request redirect prefix https://<target> code 301 if { var(txn.host) -m str <source> } { ssl_fc }
-          http-request redirect prefix http://<target> code 301 if { var(txn.host) -m str <source> } !{ ssl_fc }
-      -#}
-      {#- Build srcHost→targetHost into from-to-www.map (single-vendor), then emit
-          two shared scheme-split rules reading it — so changing the set of hosts is
-          a map-only, reload-free update. First-writer-wins per host; hosts sorted
-          for deterministic map output. -#}
+      {#- `redirect prefix` only sets Location; never rewrite the Host header instead,
+          that corrupts routing. Map indirection keeps host changes reload-free. -#}
       {%- var pairByHost = map[string]string{} -%}
       {%- var seen = map[string]bool{} -%}
       {%- var hostKeys = []any{} -%}
@@ -208,29 +116,8 @@ templateSnippets:
 
   frontend-filters-780-nginx-ingress-canary:
     template: |
-      {#-
-        Nginx Ingress Canary Annotations
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#canary
-
-        Annotations (on canary Ingress, with canary: "true"):
-          - nginx.ingress.kubernetes.io/canary: "true" (required)
-          - nginx.ingress.kubernetes.io/canary-by-header: "<header-name>" (optional)
-          - nginx.ingress.kubernetes.io/canary-by-header-value: "<value>" (optional, default: "always")
-          - nginx.ingress.kubernetes.io/canary-by-header-pattern: "<regex>" (optional)
-          - nginx.ingress.kubernetes.io/canary-by-cookie: "<cookie-name>" (optional)
-          - nginx.ingress.kubernetes.io/canary-weight: "<0-100>" (optional)
-
-        Priority order: header > cookie > weight
-
-        The canary Ingress must share a host with a non-canary (main) Ingress.
-        use_backend rules are generated in the frontend for the matching host.
-
-        Generated HAProxy Config:
-          use_backend <canary-backend> if { req.hdr(<header>) -m str <value> } <host-match>
-          use_backend <canary-backend> if { req.cook(<cookie>) -m str always } <host-match>
-          use_backend <canary-backend> if { rand(100) lt <weight> } <host-match>
-      -#}
+      {#- HAProxy takes the first matching use_backend, so emission order is the
+          documented canary precedence: header > cookie > weight. -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -239,7 +126,6 @@ templateSnippets:
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
           {%- var key = ns + "/" + name %}
-            {#- Extract hosts and find the first backend name from this canary ingress -#}
             {%- var hosts = []string{} %}
             {%- var canaryBackend = "" %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -283,25 +169,8 @@ templateSnippets:
 
   frontend-filters-790-nginx-ingress-mtls-error:
     template: |
-      {#-
-        Nginx Ingress mTLS Error Page and Certificate Passthrough
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#client-certificate-authentication
-
-        Annotations:
-          - nginx.ingress.kubernetes.io/auth-tls-error-page: "<url>" (optional)
-          - nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true|false" (optional)
-
-        Generated HAProxy Config:
-          http-request set-header ssl-client-cert %[ssl_c_der,base64] if <host-match>
-          http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if <host-match>
-
-        The auth-tls-error-page redirect is relocated to
-        features-150-nginx-ingress-mtls-error (registers host→URL into the shared
-        gf["mtlsErrorHosts"]; base.yaml emits the ssl_c_verify-gated rule from
-        mtls-error.map — a map-only, reload-free update). This snippet keeps only
-        the per-vendor cert-passthrough set-headers.
-      -#}
+      {#- auth-tls-error-page lives in features-150 (map-driven, reload-free); only
+          cert passthrough belongs here. -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress.Metadata.Namespace %}
@@ -321,13 +190,8 @@ templateSnippets:
           {%- end %}
       {%- end -%}
 
-  # nginx mirror-target needs the full request body buffered before the SPOE
-  # mirror notification fires (else PUT/POST bodies arrive empty at the plugin)
-  # — mirrors gateway/frontend-filters-091-gateway-mirror-buffer. Also the
-  # plugin-enabled guard: with the spoa-hub mirror plugin disabled there is no
-  # mirror-group to fire (frontend-filters-950-spoa-hub-mirror-fire is gated on
-  # the plugin), so a mirror-target annotation would silently do nothing —
-  # fail() with an actionable message.
+  # The SPOE mirror notification fires before the request body would arrive, so
+  # without buffering the plugin mirrors PUT/POST with an empty body.
   frontend-filters-093-nginx-ingress-mirror-buffer:
     template: |
       {%- var hasMirror = false %}
@@ -350,20 +214,13 @@ templateSnippets:
           {{- fail("Ingress " + firstKey + " sets 'nginx.ingress.kubernetes.io/mirror-target' but the spoaHub mirror plugin is not enabled. Either enable spoaHub.plugins.mirror or remove the annotation.") -}}
         {%- end %}
         {%- var mirrorWait = extraContext | dig_string("10s", "requestBuffering", "waitTimeout") %}
-      {#- Gated on Content-Length, not frontend-wide `option http-buffer-request`:
-          one mirrored Ingress turns this on for the whole shared frontend, and
-          unconditional buffering deadlocks any gRPC or streaming route there
-          until the wait expires and the client gets a 408 the backend never saw.
-          Nothing that streams can declare a Content-Length. Trade-off: a chunked
-          request body is no longer mirrored.
-
-          The map check honours a route's `request-buffering: off` opt-out, and is
-          why this sits in frontend-filters-* rather than the earlier
-          frontend-extra-* phase: txn.backend_name is only set by
-          frontend-routing-logic, which runs between the two. Without it a single
-          mirrored Ingress would silently re-buffer every opted-out route on the
-          same frontend. Map default `on` (not the fleet setting) because
-          mirroring needs the body even where fleet buffering is off. #}
+      {#- Content-Length-gated, not frontend-wide `option http-buffer-request`: one
+          mirrored Ingress would buffer the whole shared frontend and stall every
+          gRPC/streaming route on it into a 408. Trade-off: chunked bodies are not
+          mirrored. The map check honours a route's `request-buffering: off`, and
+          needs txn.backend_name — set by frontend-routing-logic, which is why this
+          is a frontend-filters-* and not the earlier frontend-extra-*. Map default
+          `on`, not the fleet setting: mirroring needs the body regardless. #}
       # nginx-ingress/mirror-buffer: buffer the request body so it reaches the mirror plugin
         {%- var rbMap, _ = pathResolver.GetPath("request-buffering.map", "map") %}
       http-request wait-for-body time {{ mirrorWait }} if { req.hdr(content-length) -m found } !{ var(txn.backend_name),map({{ rbMap }},on) -m str off }
@@ -374,42 +231,19 @@ templateSnippets:
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
-      {#-
-        Nginx Ingress mirror-target — fire-and-forget request mirroring via the
-        spoa-hub mirror plugin (the same machinery the Gateway RequestMirror
-        filter uses). Mirroring applies to all of the Ingress's hosts/paths.
-
-        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#mirror
-
-        Only `mirror-target` is honoured. `mirror-host` (the plugin forces the
-        mirrored Host to the target authority) and `mirror-request-body: off`
-        (the plugin always forwards the buffered body) require a mirror-plugin
-        change and are NOT supported.
-
-        mirror-target is an nginx URL template (scheme://host[:port]$request_uri);
-        only the authority (host:port) is used as the plugin's target — the
-        plugin re-attaches the live request path/query. Default port 80 (http) /
-        443 (https).
-
-        Each mirror-target Ingress appends one `scheme|host:port|timeout_ms|retries`
-        entry to the per-request txn.gw_mirror_targets list, gated by its host.
-        Several Ingresses sharing a host each append their entry and the single
-        mirror NOTIFY fans out to all of them — no per-Ingress SPOE slot, so adding
-        a mirror-target changes only the frontend, never spoe.conf or the hub TOML.
-        The single mirror-group is fired once by frontend-filters-950-spoa-hub-mirror-fire.
-        Mirroring is host-scoped: a host-less Ingress is rejected.
-
-        Generated HAProxy Config (per mirror-target Ingress):
-          http-request set-var(txn.gw_mirror_targets) str(<scheme>|<host:port>|<ms>|<n>;),concat(,txn.gw_mirror_targets,) if <host-match>
-      -#}
+      {#- Only `mirror-target` is honoured: the plugin forces the mirrored Host to the
+          target authority and always forwards the buffered body, so `mirror-host` and
+          `mirror-request-body: off` cannot be supported without a plugin change. Only
+          the authority is used — the plugin re-attaches the live path/query.
+          Entries accumulate in the per-request txn.gw_mirror_targets list that the
+          single NOTIFY in frontend-filters-950-spoa-hub-mirror-fire fans out, so a new
+          target touches neither spoe.conf nor the hub TOML. -#}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var mt = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/mirror-target"] %}
         {%- if mt != "" %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
           {%- var key = ns + "/" + name %}
-          {#- Host gate (mirroring is host-scoped). A mirror-target Ingress with no
-              host can't be gated, so reject it rather than buffer-without-mirror. -#}
           {%- var hosts = []string{} %}
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
@@ -417,9 +251,8 @@ templateSnippets:
           {%- if len(hosts) == 0 %}
             {{- WebhookRejectOrWarn(ingress, "InvalidAnnotationValue", "Ingress '" + key + "' sets 'nginx.ingress.kubernetes.io/mirror-target' but defines no host; host-less / default-backend mirroring is not supported. Add a host to the Ingress rule.") -}}{%- continue %}
           {%- end %}
-          {#- Parse scheme + authority. The value is scheme://host[:port] followed
-              by an nginx path/variable (e.g. $request_uri) appended with no '/'
-              separator, so the authority ends at the first '/' or '$'. -#}
+          {#- nginx appends the path/variable (e.g. $request_uri) with no '/' separator,
+              so the authority ends at the first '/' or '$'. -#}
           {%- var scheme = "http" %}
           {%- var rest = mt %}
           {%- if hasPrefix(mt, "https://") %}
@@ -440,7 +273,7 @@ templateSnippets:
           {%- if !regex_search(authority, "^[A-Za-z0-9._-]+:[0-9]{1,5}$") %}
             {{- fail("Invalid value '" + mt + "' for annotation 'nginx.ingress.kubernetes.io/mirror-target' on Ingress '" + key + "'. Expected scheme://host[:port][/path]; could not derive a host:port authority (got '" + authority + "').") -}}
           {%- end %}
-          {#- Bound the port to 1-65535 (the charset regex alone accepts :0 and :99999). -#}
+          {#- The charset regex above still accepts :0 and :99999. -#}
           {%- var portNum = toint(authority[index(authority, ":")+1:]) %}
           {%- if portNum < 1 || portNum > 65535 %}
             {{- fail("Invalid port '" + tostring(portNum) + "' in 'nginx.ingress.kubernetes.io/mirror-target' on Ingress '" + key + "'. Port must be 1-65535.") -}}
@@ -456,15 +289,9 @@ templateSnippets:
       {%- end %}
   log-fields-730-nginx-ingress-mtls:
     template: |-
-      {#-
-        Client-certificate identity and verification result for the JSON access
-        log, gated on this library's mTLS annotations. Extension point:
-        log-fields-* — see base.yaml's "Access log" block.
-
-        Identical to the haptic-annotations and haproxy-ingress contributions;
-        base deduplicates identical items, so several annotation libraries can be
-        enabled at once.
-      -#}
+      {#- Byte-identical to the haptic-annotations and haproxy-ingress log-fields
+          contributions on purpose: base deduplicates identical items, so several
+          annotation libraries can be enabled at once. -#}
       {%- var enabled = false %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- if ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] != "" || ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] == "true" %}
