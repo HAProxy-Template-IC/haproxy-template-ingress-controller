@@ -181,3 +181,10 @@ type ServerConfig struct {
 	// Default: 10s
 	WriteTimeout time.Duration
 }
+
+// ValidateConfigPath is the versioned admission path for HAProxyTemplateConfig.
+//
+// A controller older than the contract it encodes does not serve it, so the API
+// server's call 404s and failurePolicy:Ignore skips the check instead of taking
+// that controller's (wrong) denial. See the registration in server.go.
+const ValidateConfigPath = "/validate/config/v1"

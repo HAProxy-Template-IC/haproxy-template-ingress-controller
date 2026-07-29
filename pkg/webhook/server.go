@@ -172,6 +172,22 @@ func (s *Server) RegisterValidator(gvk string, fn ValidationFunc) {
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(s.config.Path, s.handleValidation)
+	// The same handler under a versioned path. The chart points the
+	// HAProxyTemplateConfig rule here so that a controller too old to understand
+	// a new config DENIES nothing: it does not serve this path, returns 404, and
+	// failurePolicy:Ignore turns that into "skipped" rather than "rejected".
+	//
+	// That distinction is the whole point. An old webhook does not fail to
+	// answer — it answers WRONGLY, denying a configuration the new controller
+	// validates and runs correctly seconds later. Preferring no answer to a
+	// wrong one is what makes an upgrade possible at all; the config is still
+	// validated, by the new controller's own load gate.
+	//
+	// Bump this suffix whenever the config's validation contract changes in a
+	// way an older controller would misjudge.
+	if s.config.Path != ValidateConfigPath {
+		mux.HandleFunc(ValidateConfigPath, s.handleValidation)
+	}
 	mux.HandleFunc("/healthz", s.handleHealthz)
 
 	addr := fmt.Sprintf("%s:%d", s.config.BindAddress, s.config.Port)

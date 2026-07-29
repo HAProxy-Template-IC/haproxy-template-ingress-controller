@@ -116,7 +116,13 @@ webhooks:
       service:
         namespace: {{ $ns }}
         name: {{ $webhookSvcName }}
-        path: /validate
+        # Versioned deliberately. A controller too old to understand this
+        # config does not serve this path, so the call 404s and
+        # failurePolicy:Ignore skips it — instead of that controller denying a
+        # configuration the new one validates and runs correctly. Without this,
+        # every upgrade is hostage to the OLD version's ability to compile the
+        # NEW version's templates.
+        path: /validate/config/v1
     rules:
       - apiGroups:
           - haproxy-haptic.org

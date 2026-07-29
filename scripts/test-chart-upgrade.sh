@@ -1,7 +1,21 @@
 #!/usr/bin/env bash
-# Prove that `helm upgrade` from the last released chart to this working tree
-# succeeds, and that a rejected upgrade leaves the live configuration exactly as
+# Prove that `helm upgrade` from the last released chart to this working tree is
+# ACCEPTED, and that a rejected upgrade leaves the live configuration exactly as
 # it was.
+#
+# Scope, deliberately narrow: the risk this covers is the OLD controller's
+# admission webhook judging the NEW chart's content, plus helm/helmfile
+# completing. That is what broke twice — per-library fragments denied
+# standalone, and `helm diff` failing on a CRD its own pre-upgrade hook had not
+# installed yet.
+#
+# It does NOT wait for the fleet to converge. The webhook serves as soon as the
+# controller pod is Ready, which needs neither a rendered config nor a healthy
+# data plane — observed directly: the baseline controller sat 2/2 and denied an
+# upgrade while HAProxy was still on its bootstrap stub. Demanding convergence
+# only drags in every runtime dependency (a default-ssl-cert Secret, Gateway API
+# CRDs, …), and each prop makes the cluster less like the one an operator has.
+# Convergence is what tests/e2e is for.
 #
 # This suite owns its own kind cluster. It cannot share the e2e cluster: it
 # installs a *released* chart first, whose pre-upgrade hook applies that
@@ -56,13 +70,27 @@ specs=sorted((i["metadata"]["name"], json.dumps(i.get("spec",{}),sort_keys=True)
 print(hashlib.sha256(json.dumps(specs).encode()).hexdigest())'
 }
 
+# Selected by NAME, not by label. The component label is on the pods, not the
+# Deployment, so a label-selected `get deploy` returns nothing and the wait
+# reports "never became ready" while every replica is plainly Ready — which is
+# exactly what this suite did before, sending me after a phantom product bug.
+deploy_ready() {
+  k get deploy -o json 2>/dev/null | python3 -c '
+import json,sys
+want = sys.argv[1]
+for d in json.load(sys.stdin).get("items", []):
+    if d["metadata"]["name"].endswith(want):
+        spec = d["spec"].get("replicas", 0)
+        got = d.get("status", {}).get("readyReplicas", 0)
+        print("ready" if spec and got == spec else "waiting")
+        sys.exit(0)
+print("absent")' "$1"
+}
+
 wait_controller_ready() {
-  local deadline=$((SECONDS + ${1:-300}))
+  local deadline=$((SECONDS + ${2:-300}))
   while [ $SECONDS -lt $deadline ]; do
-    local want got
-    want=$(k get deploy -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].spec.replicas}' 2>/dev/null || echo "")
-    got=$(k get deploy -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].status.readyReplicas}' 2>/dev/null || echo 0)
-    if [ -n "$want" ] && [ "${got:-0}" = "$want" ]; then return 0; fi
+    [ "$(deploy_ready controller)" = "ready" ] && return 0
     sleep 5
   done
   k get pods
@@ -90,34 +118,49 @@ kind load docker-image haptic:test --name "$CLUSTER" >/dev/null
 
 # ------------------------------------------------- phase 1: released baseline
 
-# The released chart enables the gateway library unconditionally (its _helm_load
-# predicate is values-only, with no .Capabilities guard), and that library's
-# typed-access templates do not compile unless the Gateway API schemas are
-# resolvable. Without these CRDs the baseline install never converges — HAProxy
-# is left serving a stub — so the upgrade under test could never start.
-# Installing them here keeps this suite testing the UPGRADE. The bare-cluster
-# case is a separate defect with its own test; do not paper over it here.
-GATEWAY_API_VERSION="${GATEWAY_API_VERSION:-v1.2.1}"
-info "installing Gateway API $GATEWAY_API_VERSION (baseline requires it to converge)"
-kubectl --context "$CTX" apply -f \
-  "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml" \
-  >/dev/null 2>&1 || fail "could not install Gateway API CRDs"
-kubectl --context "$CTX" wait --for=condition=Established \
-  crd/gatewayclasses.gateway.networking.k8s.io \
-  crd/gateways.gateway.networking.k8s.io \
-  crd/httproutes.gateway.networking.k8s.io --timeout=120s >/dev/null \
-  || fail "Gateway API CRDs did not establish"
-
 info "installing baseline chart $BASELINE (the version operators upgrade FROM)"
+# No --wait: HAProxy's readiness probe only passes once the controller has
+# pushed it a config, and --wait blocks on every pod at once, so it deadlocks on
+# its own precondition. The e2e harness omits it for the same reason. Readiness
+# is polled below instead, which is also what makes the assertion meaningful.
 helm install "$RELEASE" "$OCI" --version "$BASELINE" \
   --kube-context "$CTX" --namespace "$NS" --create-namespace \
-  --wait --timeout 15m >/dev/null || fail "baseline install failed"
+  --timeout 15m >/dev/null || fail "baseline install failed"
 
-wait_controller_ready 300 || fail "baseline controller never became ready"
+wait_controller_ready controller 420 || fail "baseline controller never became ready"
 BASELINE_FP="$(config_fingerprint)"
 info "baseline healthy, config fingerprint ${BASELINE_FP:0:12}"
 
 # ------------------------------------------------- phase 2: the real upgrade
+
+# `helm diff` runs BEFORE helm's pre-upgrade hooks, so a chart that introduces a
+# new CRD *and* a resource of that kind in one version fails here while plain
+# `helm upgrade` succeeds — the hook has not installed the CRD yet. That is the
+# path helmfile and most GitOps flows take, and it is how a real upgrade broke
+# after this suite passed.
+# Installed rather than skipped when absent: a leg that quietly disappears when a
+# plugin is missing is worth nothing — this one exists precisely because the
+# defect it catches got past a suite that looked green.
+if ! helm plugin list 2>/dev/null | grep -q '^diff'; then
+  info "installing the helm-diff plugin"
+  helm plugin install --verify=false https://github.com/databus23/helm-diff >/dev/null 2>&1 \
+    || fail "could not install helm-diff; this suite must exercise the diff path, not skip it"
+fi
+
+if helm plugin list 2>/dev/null | grep -q '^diff'; then
+  info "diffing the upgrade (the path helmfile takes, before any hook has run)"
+  if ! helm diff upgrade "$RELEASE" "$CHART" \
+        --kube-context "$CTX" --namespace "$NS" \
+        --set controller.image.repository=haptic \
+        --set controller.image.tag=test \
+        --set "haproxyVersion=$HAPROXY_VERSION" \
+        --dry-run=server > "$WORK/diff.log" 2>&1; then
+    echo "--- helm diff output ---"; tail -20 "$WORK/diff.log"
+    fail "helm diff failed before the upgrade: a GitOps flow would stop here even though helm upgrade alone would succeed"
+  fi
+else
+  fail "helm-diff is still unavailable after install; refusing to skip the diff leg"
+fi
 
 info "upgrading to the working tree chart"
 if ! helm upgrade "$RELEASE" "$CHART" \
@@ -133,7 +176,7 @@ fi
 status=$(helm --kube-context "$CTX" -n "$NS" status "$RELEASE" -o json | python3 -c 'import json,sys;print(json.load(sys.stdin)["info"]["status"])')
 [ "$status" = "deployed" ] || fail "release status is '$status', expected 'deployed'"
 
-wait_controller_ready 420 || fail "controller not ready after upgrade"
+wait_controller_ready controller 420 || fail "controller not ready after upgrade"
 
 # The controller must consider the config it loaded valid. A crash-loop or a
 # Validated=False here means the upgrade shipped a config the load gate rejects.
@@ -196,6 +239,6 @@ POST_FP="$(config_fingerprint)"
 [ "$PRE_FP" = "$POST_FP" ] \
   || fail "a rejected upgrade mutated the live config (${PRE_FP:0:12} -> ${POST_FP:0:12}); it must be a no-op"
 
-wait_controller_ready 180 || fail "controller unhealthy after the rejected upgrade"
+wait_controller_ready controller 180 || fail "controller unhealthy after the rejected upgrade"
 
 info "ALL CHECKS PASSED"
