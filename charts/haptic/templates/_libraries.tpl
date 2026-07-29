@@ -1,4 +1,30 @@
 {{/*
+haptic.companionTestsEnabled — whether validationTests go to the companion
+HAProxyValidationTests object or stay inline on the config.
+
+Both templates MUST agree: if only one side flips, the tests are either dropped
+from both objects (a suite that silently runs nothing) or emitted twice.
+
+Inline is the fallback, never "no tests". The gate exists because `helm diff
+--dry-run=server` runs BEFORE helm's pre-upgrade hooks, so on the upgrade that
+first introduces the kind the apply-crds hook has not run yet and the diff
+cannot resolve it — "no matches for kind HAProxyValidationTests". Rendering
+inline that one time keeps the upgrade working; the hook installs the CRD during
+it, and the next apply moves the tests out.
+
+IsInstall is part of the condition because on a FRESH install .Capabilities does
+NOT see a CRD the chart itself ships in crds/ (measured: false on install, true
+on the next apply) — but Helm applies crds/ before the manifests, so emitting
+the companion is safe there. Without this an all-vendors fresh install would
+render every test inline and exceed etcd's per-object limit.
+*/}}
+{{- define "haptic.companionTestsEnabled" -}}
+{{- if or .Release.IsInstall (.Capabilities.APIVersions.Has "haproxy-haptic.org/v1alpha1/HAProxyValidationTests") -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
 haptic.libraryShapedKeys — the config keys a template library and an operator may
 BOTH contribute.
 

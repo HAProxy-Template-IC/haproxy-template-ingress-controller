@@ -115,6 +115,7 @@ func runApplyCRDs(cmd *cobra.Command, _ []string) error {
 	}
 
 	ctx := cmd.Context()
+	retargetConfigWebhook(ctx, k8sClient.DynamicClient(), logger)
 	for _, crd := range crds {
 		if err := applyCRD(ctx, k8sClient.DynamicClient(), crd); err != nil {
 			return fmt.Errorf("applying CRD %q: %w", crd.GetName(), err)
@@ -205,4 +206,99 @@ func applyCRD(ctx context.Context, dyn dynamic.Interface, crd *unstructured.Unst
 
 func isYAMLFile(name string) bool {
 	return strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
+}
+
+// vwcGVR is HAPTIC's own webhook configuration — the operational-identity
+// exception, like crdGVR above.
+var vwcGVR = schema.GroupVersionResource{
+	Group:    "admissionregistration.k8s.io",
+	Version:  "v1",
+	Resource: "validatingwebhookconfigurations",
+}
+
+// configWebhookPath is the versioned admission path for HAProxyTemplateConfig.
+// Kept in step with pkg/webhook.ValidateConfigPath.
+const configWebhookPath = "/validate/config/v1"
+
+// retargetConfigWebhook moves any live HAProxyTemplateConfig webhook onto the
+// versioned path before the release's own objects are applied.
+//
+// Helm does not guarantee that the updated ValidatingWebhookConfiguration is
+// applied before the HAProxyTemplateConfig it governs — measured: the config
+// went first, so the OLD webhook was still live and denied it. The old
+// controller cannot compile the new chart's templates, so its answer is wrong
+// rather than merely late; moving the path makes the API server's call 404
+// against it, and failurePolicy:Ignore skips the check instead of taking that
+// denial. The new controller then validates the config properly at its own
+// fail-closed load gate.
+//
+// Idempotent, and silent when there is nothing to move: a fresh install has no
+// webhook configuration yet.
+//
+// Best-effort on purpose, so no failure here returns an error. Every way this
+// can fail degrades to the behaviour that existed before it — the old webhook
+// keeps fronting the config — whereas aborting would turn a webhook we merely
+// could not reach into an upgrade the operator cannot run at all. That matters
+// most in the case this exists to serve: recovering a fleet that is already
+// broken.
+func retargetConfigWebhook(ctx context.Context, dyn dynamic.Interface, logger *slog.Logger) {
+	list, err := dyn.Resource(vwcGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		logger.Info("Cannot list ValidatingWebhookConfigurations; leaving the config webhook where it is", "error", err)
+		return
+	}
+
+	for i := range list.Items {
+		item := list.Items[i]
+		changed, err := retargetHooksIn(&item)
+		if err != nil {
+			logger.Info("Cannot read webhooks; leaving this configuration alone",
+				"webhookConfiguration", item.GetName(), "error", err)
+			continue
+		}
+		if !changed {
+			continue
+		}
+		if _, err := dyn.Resource(vwcGVR).Update(ctx, &item, metav1.UpdateOptions{}); err != nil {
+			logger.Info("Cannot retarget config webhook; leaving it where it is",
+				"webhookConfiguration", item.GetName(), "error", err)
+			continue
+		}
+		logger.Info("Retargeted config webhook to the versioned path",
+			"webhookConfiguration", item.GetName(), "path", configWebhookPath)
+	}
+}
+
+// retargetHooksIn rewrites the path of every HAProxyTemplateConfig webhook in
+// one configuration, reporting whether anything changed.
+func retargetHooksIn(item *unstructured.Unstructured) (bool, error) {
+	hooks, found, _ := unstructured.NestedSlice(item.Object, "webhooks")
+	if !found {
+		return false, nil
+	}
+
+	changed := false
+	for j := range hooks {
+		hook, ok := hooks[j].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _, _ := unstructured.NestedString(hook, "name")
+		path, _, _ := unstructured.NestedString(hook, "clientConfig", "service", "path")
+		if !strings.HasPrefix(name, "haproxytemplateconfig.") || path == configWebhookPath {
+			continue
+		}
+		if err := unstructured.SetNestedField(hook, configWebhookPath, "clientConfig", "service", "path"); err != nil {
+			return false, fmt.Errorf("retargeting %s: %w", name, err)
+		}
+		hooks[j] = hook
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := unstructured.SetNestedSlice(item.Object, hooks, "webhooks"); err != nil {
+		return false, fmt.Errorf("updating %s: %w", item.GetName(), err)
+	}
+	return true, nil
 }

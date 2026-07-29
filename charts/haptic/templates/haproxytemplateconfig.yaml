@@ -1187,9 +1187,12 @@ spec:
          haproxyvalidationtests.yaml): ~36% of the spec, needed only when the
          configuration is VALIDATED, never when it is rendered. The controller
          runs the union of both sources, so an inline suite still works. */ -}}
+  {{- $companion := include "haptic.companionTestsEnabled" . }}
   {{- $tests := $config.validationTests | default dict }}
+  {{- if $companion }}
   {{- $_ := unset $config "validationTests" }}
-  {{- if $tests }}
+  {{- end }}
+  {{- if and $companion $tests }}
   {{- /* Scoped to this release: an empty selector matches every tests object in
          the namespace, so two HAPTIC releases sharing one would each run the
          other's suite. */ -}}

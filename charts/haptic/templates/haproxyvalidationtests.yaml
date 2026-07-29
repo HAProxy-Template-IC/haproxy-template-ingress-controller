@@ -57,7 +57,7 @@ several chart test suites address it by document index.
     {{- $tests = $vt }}
   {{- end }}
 
-{{- if $tests }}
+{{- if and $tests (include "haptic.companionTestsEnabled" .) }}
 apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyValidationTests
 metadata:
