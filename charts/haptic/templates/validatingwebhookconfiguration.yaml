@@ -1,5 +1,8 @@
 {{- $webhook := .Values.controller.webhook }}
 {{- $cm := $webhook.certManager }}
+{{- /* A dict so the existing `$cm.enabled` reads keep working, with the value
+       widened to "cert-manager is active", which includes an inherited setup. */ -}}
+{{- $cm = dict "enabled" (include "haptic.webhook.certManagerActive" .) }}
 {{- if $webhook.enabled }}
 {{- /*
   The validating webhook fronts the same render pipeline the controller runs

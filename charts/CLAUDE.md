@@ -2,6 +2,45 @@
 
 Development context for working with the HAProxy Template Ingress Controller Helm chart.
 
+## Upgrades: no can-kicking (RULE)
+
+**A fix for an upgrade path must be exercised by a test that keeps running after
+the next release.** A migration that only the *current* newest-release upgrade
+happens to hit is not fixed — it is deferred, and it becomes a special case in
+the product that nothing runs.
+
+The trap is specific and easy to walk into: `scripts/test-chart-upgrade.sh`
+baselines on published releases, so pinning it to "the newest stable release"
+retires the previous path's only test the day a new version ships. The
+cert-manager Secret adoption in `templates/crd-upgrade-hook.yaml` exists for
+0.1.0; had the guard tested only the newest baseline, releasing 0.2.0 would have
+left that code in the chart with zero coverage, and the next person to touch the
+webhook cert would have had no way to know it mattered. The guard therefore
+iterates **every** published stable release, oldest first.
+
+**What this rules out:**
+
+- A version-specific migration whose only test is "upgrade from the newest
+  release", when that newest release is about to move.
+- "We'll drop the compatibility shim in the next major" with nothing pinning the
+  date or failing when it is missed.
+- A conditional keyed on a version or a cluster state that no suite ever puts
+  the code into.
+- Fixing the render for `helm upgrade` only, when `helm template`, `--dry-run`
+  and GitOps server-side renders take a different path — `lookup` is empty in
+  all three, so a `lookup`-based fix silently does not apply where most
+  operators actually upgrade. Put the migration somewhere render-independent (a
+  pre-upgrade hook) instead.
+
+**When a migration is genuinely temporary**, say so where it is defined: name
+the release that introduced it, the condition under which it becomes dead, and
+the test that would fail if it were removed early. "Delete after 1.0" with no
+failing test is a comment, not a plan.
+
+Cost is not an argument here either — every published release the guard replays
+is another ~20 minutes of CI, and that is cheaper than one operator discovering
+their upgrade path was dropped two releases ago.
+
 ## Chart Architecture
 
 ### Library Loading and Merging

@@ -27,6 +27,9 @@ KEEP=false
 fail() { echo "FAIL: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
 
+# shellcheck source=scripts/lib/cluster.sh
+. "$REPO/scripts/lib/cluster.sh"
+
 cleanup() {
   local rc=$?
   if [ "$KEEP" = false ]; then kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
@@ -47,8 +50,7 @@ HAPROXY_VERSION="${HAPROXY_VERSION:-$(sed -n 's/^haproxyVersion: *"\?\([0-9.]*\)
 [ -n "$HAPROXY_VERSION" ] || fail "cannot determine haproxyVersion"
 
 info "cluster $CLUSTER (deliberately WITHOUT Gateway API)"
-kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
-kind create cluster --name "$CLUSTER" >/dev/null
+kind_create_cluster "$CLUSTER" || fail "could not create the kind cluster"
 kubectl --context "$CTX" wait --for=condition=Ready node --all --timeout=180s >/dev/null
 
 # The premise of this test. If something ever installs Gateway API into this
@@ -108,11 +110,7 @@ grep -qE '^frontend ' <<<"$cfg" \
 lines=$(printf '%s\n' "$cfg" | wc -l)
 info "haproxy.cfg is a real render ($lines lines)"
 
-validated=$(k get haproxytemplateconfig -o json 2>/dev/null | python3 -c 'import json,sys
-items=json.load(sys.stdin).get("items",[])
-c=[c for i in items for c in i.get("status",{}).get("conditions",[]) if c["type"]=="Validated"]
-print(c[0]["status"] if c else "MISSING")')
-[ "$validated" = "True" ] || fail "config condition Validated=$validated (expected True)"
+validated=$(wait_config_validated 180) || fail "config condition Validated=$validated (expected True)"
 
 restarts=$(k get pods -l app.kubernetes.io/component=controller \
   -o jsonpath='{range .items[*]}{.status.containerStatuses[*].restartCount}{"\n"}{end}' 2>/dev/null \

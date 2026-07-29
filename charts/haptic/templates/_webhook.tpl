@@ -19,8 +19,36 @@ serving certificate (see values.yaml `controller.webhook`):
 haptic.webhook.selfSigned returns "true" when the chart should generate the
 self-signed webhook certificate itself (mode 2 above), empty otherwise.
 */}}
+{{/*
+haptic.webhook.certManagerActive returns "true" when cert-manager should own the
+webhook serving certificate: either the operator asked for it, or a cert-manager
+managed Secret is ALREADY there.
+
+The second case is an upgrade from a chart version that provisioned this Secret
+through cert-manager (0.1.0 did). Helm refuses to adopt a resource it does not
+own, so rendering our own Secret over it fails the whole upgrade with "invalid
+ownership metadata" — the operator's upgrade dies on a resource they never
+touched. Taking it over is worse than it looks: Helm and cert-manager would then
+both write the same Secret. Staying in cert-manager mode keeps the setup they
+already run, including rotation.
+*/}}
+{{- define "haptic.webhook.certManagerActive" -}}
+{{- if .Values.controller.webhook.certManager.enabled -}}
+true
+{{- else -}}
+  {{- $existing := lookup "v1" "Secret" .Release.Namespace (include "haptic.webhook.secretName" .) -}}
+  {{- if and $existing $existing.metadata -}}
+    {{- $labels := $existing.metadata.labels | default dict -}}
+    {{- $anns := $existing.metadata.annotations | default dict -}}
+    {{- if or (hasKey $labels "controller.cert-manager.io/fao") (hasKey $anns "cert-manager.io/certificate-name") -}}
+true
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "haptic.webhook.selfSigned" -}}
-{{- if and .Values.controller.webhook.enabled (not .Values.controller.webhook.certManager.enabled) (not .Values.controller.webhook.caBundle) -}}
+{{- if and .Values.controller.webhook.enabled (not (include "haptic.webhook.certManagerActive" .)) (not .Values.controller.webhook.caBundle) -}}
 true
 {{- end -}}
 {{- end -}}

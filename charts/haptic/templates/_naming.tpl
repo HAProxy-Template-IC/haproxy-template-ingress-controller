@@ -162,8 +162,24 @@ controller reads via WEBHOOK_CERT_DIR).
 Centralising this here keeps those references aligned when an
 operator sets controller.webhook.secretName.
 */}}
+{{/*
+The default deliberately does NOT end in `-webhook-cert`: chart 0.1.0 used that
+name for a Secret it provisioned through cert-manager, so the object carries
+cert-manager's metadata and none of Helm's. Rendering our own Secret over it
+fails the whole upgrade with "invalid ownership metadata" before a single
+resource is applied.
+
+That cannot be repaired from inside the chart. Helm validates ownership BEFORE
+it runs pre-upgrade hooks (measured: without the metadata the hook Job is never
+created), and a template-side `lookup` is empty under `helm template`,
+`--dry-run` and GitOps server-side renders — the paths most operators upgrade
+through. Not colliding in the first place is the only fix that holds everywhere.
+
+The 0.1.0 Secret is left behind, unreferenced; its Certificate goes with the
+release. An operator who pins controller.webhook.secretName keeps their name.
+*/}}
 {{- define "haptic.webhook.secretName" -}}
-{{- .Values.controller.webhook.secretName | default (printf "%s-webhook-cert" (include "haptic.fullname" .)) -}}
+{{- .Values.controller.webhook.secretName | default (printf "%s-webhook-tls" (include "haptic.fullname" .)) -}}
 {{- end -}}
 
 {{/*

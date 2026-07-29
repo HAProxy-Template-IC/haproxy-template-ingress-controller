@@ -2122,10 +2122,15 @@ templateSnippets:
           pod IP falls through to the frontend's 404).
 
           `extraContext.vector` is present only when the sidecar is enabled, so its
-          presence is the switch. -#}
+          presence is the switch — but an explicit `vector.enabled: false` also
+          turns it off, and that is the form a validationTest must use.
+          `vector: null` no longer works: per-test extraContext deep-merges into
+          the global one, so a null leaf does not clear the operator's subtree
+          the way a wholesale replacement used to. -#}
       {#- Parenthesised: the pipe binds looser than `!=`, so the unparenthesised
           form pipes extraContext into the comparison and fails to compile. -#}
-      {%- var vectorOn = (extraContext | dig("vector")) != nil -%}
+      {%- var vecCfg = extraContext | dig("vector") -%}
+      {%- var vectorOn = vecCfg != nil && (vecCfg | dig("enabled") | fallback(true)) == true -%}
       {%- if vectorOn %}
       http-request use-service prometheus-exporter if { path /metrics } { dst 127.0.0.0/8 }
       {%- else %}
@@ -2840,12 +2845,17 @@ validationTests:
       Status frontend exposes the Prometheus exporter on /metrics, reachable from
       any address when no vector sidecar fronts it.
     fixtures: {}
-    # extraContext.vector absent = sidecar disabled. Pinned rather than inherited
-    # so this keeps covering the unconditional form even though the chart now
-    # ships vector.enabled=true; the loopback-gated form has its own test in the
-    # vector library.
+    # Pinned rather than inherited so this keeps covering the unconditional form
+    # even though the chart now ships vector.enabled=true; the loopback-gated
+    # form has its own test in the vector library.
+    #
+    # `enabled: false`, never `vector: null`: per-test extraContext deep-merges
+    # into the global one, so a null leaf leaves the operator's sidecar enabled.
+    # The load gate is fail-closed, so getting this wrong crash-loops the
+    # controller rather than showing a red test.
     extraContext:
-      vector: null
+      vector:
+        enabled: false
     assertions:
       - type: haproxy_valid
       - type: contains

@@ -30,8 +30,10 @@ import (
 )
 
 // webhookSecretName is the Secret the chart mounts into the controller pod.
-// Naming follows the chart convention: <release>-webhook-cert.
-const webhookSecretName = HelmReleaseName + "-webhook-cert"
+// Naming follows the chart convention: <release>-webhook-tls. NOT -webhook-cert:
+// that name belongs to chart 0.1.0, which provisioned it through cert-manager,
+// and reusing it made every upgrade from that release fail on Helm ownership.
+const webhookSecretName = HelmReleaseName + "-webhook-tls"
 
 // webhookServiceName is the in-cluster Service the webhook listens on.
 // Used to populate the server certificate's DNS SANs.
