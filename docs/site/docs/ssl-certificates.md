@@ -377,7 +377,7 @@ controller:
 Rotate the self-signed certificate by deleting its Secret and re-running the upgrade:
 
 ```bash
-kubectl delete secret <release>-webhook-cert -n haptic
+kubectl delete secret <release>-webhook-tls -n haptic
 helm upgrade <release> oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --reuse-values
 ```
 

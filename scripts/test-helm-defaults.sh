@@ -648,11 +648,11 @@ verify_certificates() {
     # Certificate to wait for. Verify the Secret carries a CA and that the caBundle
     # was actually wired (the crux of the zero-dependency default).
     info "Checking Webhook TLS Secret (chart self-signed)..."
-    if ! kubectl get secret "${RELEASE_NAME}-webhook-cert" -n "$NAMESPACE" -o jsonpath='{.type}' | grep -q "kubernetes.io/tls"; then
-        die "TLS secret '${RELEASE_NAME}-webhook-cert' not found or wrong type" 5
+    if ! kubectl get secret "${RELEASE_NAME}-webhook-tls" -n "$NAMESPACE" -o jsonpath='{.type}' | grep -q "kubernetes.io/tls"; then
+        die "TLS secret '${RELEASE_NAME}-webhook-tls' not found or wrong type" 5
     fi
-    if [[ -z "$(kubectl get secret "${RELEASE_NAME}-webhook-cert" -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)" ]]; then
-        die "Webhook TLS secret '${RELEASE_NAME}-webhook-cert' missing ca.crt" 5
+    if [[ -z "$(kubectl get secret "${RELEASE_NAME}-webhook-tls" -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)" ]]; then
+        die "Webhook TLS secret '${RELEASE_NAME}-webhook-tls' missing ca.crt" 5
     fi
 
     info "Checking ValidatingWebhookConfiguration caBundle is wired..."

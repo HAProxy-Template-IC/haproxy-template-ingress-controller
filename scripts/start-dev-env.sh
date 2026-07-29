@@ -473,7 +473,7 @@ verify_cluster_context() {
 
 setup_webhook_certificates() {
     local webhook_enabled
-    local secret_name="${HELM_RELEASE_NAME}-webhook-cert"
+    local secret_name="${HELM_RELEASE_NAME}-webhook-tls"
     local certs_dir="/tmp/haproxy-webhook-certs"
 
     # Check if webhook is enabled in values
