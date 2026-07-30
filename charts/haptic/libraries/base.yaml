@@ -18,6 +18,11 @@ _helm_load:
       when: '{{- with .Values.controller.config.templatingSettings.extraContext.routing -}}{{- if eq .regexMatchOrder "last" }}true{{ end -}}{{- end -}}'
   unset:
     - templateSnippets.frontend-routing-logic-regex-last
+    # Tracing plumbing: absent from the config entirely unless tracing is on.
+    - path: templateSnippets.util-route-key
+      when: '{{- if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end -}}'
+    - path: templateSnippets.log-fields-110-tracing
+      when: '{{- if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end -}}'
 #   - Composable macros: import and extend utility functions
 #
 # SSL/TLS infrastructure is in ssl.yaml (loaded separately when needed)
@@ -665,35 +670,6 @@ templateSnippets:
       %(ts)[accept_date(us),us_utime(%Y-%m-%dT%H:%M:%S.%6NZ)]
       %(req_id)ID
       %(trace_id)[var(txn.trace_id)]
-      {#- Gated on a GLOBAL value, never on which frontend renders: the field
-          set must stay identical across frontends. -#}
-      {%- if (extraContext | dig("tracing", "enabled")) == true %}
-      %(span_id)[var(txn.span_id)]
-      %(parent_span_id)[var(txn.parent_span_id)]
-      %(trace_flags)[var(txn.trace_flags)]
-      {#- The span the BACKEND adopts as its parent, so a reconstructed upstream
-          span sits between us and it rather than beside it. -#}
-      %(upstream_span_id)[var(txn.upstream_span_id)]
-      {#- Th and Ti exist only to anchor the spans. `ts` is accept_date — the
-          CONNECTION accept — while every duration below is request-scoped, so a
-          span anchored at `ts` starts one TLS handshake (plus keep-alive idle)
-          too early and can end before the backend it waited on. Request receipt
-          is accept_date + Th + Ti; the phases then follow HAProxy's fixed order.
-          Both read -1 when the phase did not happen (plaintext, first request on
-          a connection), which the span builder treats as zero. -#}
-      %(handshake_time_ms:sint)Th
-      %(idle_time_ms:sint)Ti
-      {#- Td is the response-payload transfer. Without it the upstream call looks
-          like it ends at the response HEADERS (%Tr), so a backend's own span
-          overruns ours for any response with a body. -#}
-      %(transfer_time_ms:sint)Td
-      {#- Exact transaction end, epoch microseconds: the log line is emitted when
-          the response completes, so `date` at log time IS that instant. req+Ta
-          closes early by whatever Ta's whole-ms truncation dropped (0.824ms
-          measured). Raw integer, not a formatted stamp — the span builder wants
-          a number, and parsing one back would cost a parse per record. -#}
-      %(te_us:sint)[date(0,us)]
-      {%- end %}
       %(client_ip)ci
       %(frontend)f
       %(backend)b
@@ -764,9 +740,69 @@ templateSnippets:
       # listener-port catch-all (:port keys) when no host matched
       http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
+  log-fields-110-tracing:
+    template: |-
+      {#- Tracing-only access-log fields, in their own snippet so
+          _helm_load.unset can drop them from the config when tracing is off.
+          The `if` is the real gate: unset runs at Helm time, and a per-test or
+          per-render extraContext can still turn tracing on afterwards.
+
+          Gated on a GLOBAL value, never on which frontend renders: the field
+          set must stay identical across frontends. -#}
+      {%- if (extraContext | dig("tracing", "enabled")) == true %}
+      %(span_id)[var(txn.span_id)]
+      %(parent_span_id)[var(txn.parent_span_id)]
+      %(trace_flags)[var(txn.trace_flags)]
+      {#- The span the BACKEND adopts as its parent, so a reconstructed upstream
+          span sits between us and it rather than beside it. -#}
+      %(upstream_span_id)[var(txn.upstream_span_id)]
+      {#- Th is the CLIENT side: TCP accept + PROXY protocol + client TLS, and
+          only on a connection's first request. Nothing to do with the backend.
+          Th and Ti exist only to anchor the spans. `ts` is accept_date — the
+          CONNECTION accept — while every duration below is request-scoped, so a
+          span anchored at `ts` starts one TLS handshake (plus keep-alive idle)
+          too early and can end before the backend it waited on. Request receipt
+          is accept_date + Th + Ti; the phases then follow HAProxy's fixed order.
+          Both read -1 when the phase did not happen (plaintext, first request on
+          a connection), which the span builder treats as zero. -#}
+      %(handshake_time_ms:sint)Th
+      %(idle_time_ms:sint)Ti
+      {#- Td is the response-payload transfer. Without it the upstream call looks
+          like it ends at the response HEADERS (%Tr), so a backend's own span
+          overruns ours for any response with a body. -#}
+      %(transfer_time_ms:sint)Td
+      {#- The map ENTRY that matched, for http.route — see util-route-key. -#}
+      %(route)[var(txn.route)]
+      {#- Exact transaction end, epoch microseconds: the log line is emitted when
+          the response completes, so `date` at log time IS that instant. req+Ta
+          closes early by whatever Ta's whole-ms truncation dropped (0.824ms
+          measured). Raw integer, not a formatted stamp — the span builder wants
+          a number, and parsing one back would cost a parse per record. -#}
+      %(te_us:sint)[date(0,us)]
+      {%- end %}
+
+  util-route-key:
+    template: |-
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      {#- http.route: the map ENTRY that matched — the template an operator
+          wrote, not the request path. `_key` returns the key rather than the
+          value and takes no default, so each step guards on not-yet-found; the
+          leading host is stripped to leave the path template alone.
+
+          Its own snippet so _helm_load.unset can drop it entirely when tracing
+          is off: it repeats the lookup cascade and a prefix map is a list, so a
+          deployment that does not trace should carry neither the cost nor the
+          config. util-routing-suffix renders it with `default ""`. -#}
+      {%- if (extraContext | dig("tracing", "enabled")) != true %}{% return %}{% end %}
+      {%- var rk = []any{[]string{"path-exact.map", "map_str_key"}, []string{"path-regex.map", "map_reg_key"}, []string{"path-prefix-exact.map", "map_str_key"}, []string{"path-prefix.map", "map_beg_key"}} %}
+      {%- for i, e := range rk %}{%- var m = e.([]string) %}
+      http-request set-var(txn.route) var(txn.host_match),concat(,txn.path,),{{ m[1] }}({{ mapPath(m[0]) }}),regsub(^[^/]*,) if { var(txn.path_match) -m found }{% if i > 0 %} !{ var(txn.route) -m found }{% end %}
+      {%- end %}
+
   util-routing-suffix:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      {{ render "util-route-key" default "" }}
       # qualifier = field 1 of path_match (BACKEND | MULTIBACKEND)
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
       {#- Advanced matchers (method/header/query) may rewrite path_match; re-parse
@@ -3155,6 +3191,7 @@ validationTests:
         description: The span fields are absent, not empty, when nothing mints them
 
   test-tracing-enabled-mints-and-propagates:
+    _helm_skip_test: '{{ if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end }}'
     description: tracing.enabled mints W3C-valid ids, honours an inbound parent, and propagates
     fixtures: {}
     extraContext:
