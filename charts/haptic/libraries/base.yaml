@@ -468,9 +468,14 @@ templateSnippets:
         {%- end -%}
         {#- Our own span id is always fresh, adopted parent or not. -#}
         {%- lines = append(lines, "http-request set-var-fmt(txn.span_id) %[uuid(4),field(5,-)]%[uuid(4),field(2,-)]") -%}
+        {#- A second id for the span that actually calls the backend. The
+            backend must parent to THAT, not to this frontend's span, or its
+            span lands beside our upstream span instead of inside it — and the
+            shape would differ depending on whether a caller sent traceparent. -#}
+        {%- lines = append(lines, "http-request set-var-fmt(txn.upstream_span_id) %[uuid(4),field(2,-)]%[uuid(4),field(5,-)]") -%}
         {#- Propagate. An unsampled trace is still propagated with flags 00 so
             downstream honours the same decision instead of re-deciding. -#}
-        {%- lines = append(lines, "http-request set-header traceparent 00-%[var(txn.trace_id)]-%[var(txn.span_id)]-%[var(txn.trace_flags)]") -%}
+        {%- lines = append(lines, "http-request set-header traceparent 00-%[var(txn.trace_id)]-%[var(txn.upstream_span_id)]-%[var(txn.trace_flags)]") -%}
       {%- end -%}
       {#- Library-contributed items. Inserting a separator before every item
           means a snippet that forgot its leading newline cannot fuse its first
@@ -666,6 +671,18 @@ templateSnippets:
       %(span_id)[var(txn.span_id)]
       %(parent_span_id)[var(txn.parent_span_id)]
       %(trace_flags)[var(txn.trace_flags)]
+      {#- The span the BACKEND adopts as its parent, so a reconstructed upstream
+          span sits between us and it rather than beside it. -#}
+      %(upstream_span_id)[var(txn.upstream_span_id)]
+      {#- Th and Ti exist only to anchor the spans. `ts` is accept_date — the
+          CONNECTION accept — while every duration below is request-scoped, so a
+          span anchored at `ts` starts one TLS handshake (plus keep-alive idle)
+          too early and can end before the backend it waited on. Request receipt
+          is accept_date + Th + Ti; the phases then follow HAProxy's fixed order.
+          Both read -1 when the phase did not happen (plaintext, first request on
+          a connection), which the span builder treats as zero. -#}
+      %(handshake_time_ms:sint)Th
+      %(idle_time_ms:sint)Ti
       {%- end %}
       %(client_ip)ci
       %(frontend)f
@@ -3145,8 +3162,19 @@ validationTests:
         description: An inbound span becomes OUR parent — the child case, not just the root case
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-header traceparent 00-%\[var\(txn\.trace_id\)\]-%\[var\(txn\.span_id\)\]-%\[var\(txn\.trace_flags\)\]'
-        description: Propagated so the backend joins the trace, with no SPOA hop involved
+        pattern: 'http-request set-header traceparent 00-%\[var\(txn\.trace_id\)\]-%\[var\(txn\.upstream_span_id\)\]-%\[var\(txn\.trace_flags\)\]'
+        description: The backend adopts the UPSTREAM span, so its span nests inside ours instead of beside it
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var-fmt\(txn\.upstream_span_id\)'
+        description: A second id exists for the span that calls the backend
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'traceparent 00-%\[var\(txn\.trace_id\)\]-%\[var\(txn\.span_id\)\]'
+        description: >-
+          Propagating THIS frontend's span id would make the backend a sibling of
+          our upstream span, and would give requests that arrive with a
+          traceparent a different tree shape than those without
       # THE REGRESSION GUARD. Building the id from a whole UUID pins byte 8 to the
       # variant nibble, and every TraceIdRatioBased sampler reads the low 8 bytes —
       # driving sampling to 0% at any ratio <= 0.5, in EVERY downstream service.
