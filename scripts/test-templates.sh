@@ -861,6 +861,8 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     if ! helm template "$CHART_DIR" \
         --namespace default \
         $HAPROXY_VERSION_ARG \
+        --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+        --set controller.templateLibraries.gateway.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
         --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
         | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \

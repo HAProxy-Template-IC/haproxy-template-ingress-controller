@@ -21,7 +21,6 @@ test-backendtlspolicy-san-hostname-drives-verifyhost
 test-backendtlspolicy-status-transition-time-preserved
 test-gateway-backend-client-cert-shape
 test-gateway-bind-per-gateway-shape
-test-gatewayclass-status-transition-time-preserved
 test-gateway-crtlist-per-listener-shapes
 test-gateway-frontend-client-cert-default-line-verify
 test-gateway-frontend-client-cert-insecure-fallback-default-line
@@ -60,6 +59,7 @@ test-gateway-status-listeners-typed-shape
 test-gateway-status-patches
 test-gateway-status-per-gateway-address
 test-gateway-typed-access-smoke
+test-gatewayclass-status-transition-time-preserved
 test-governance-httproutes-cross-resource
 test-grpcroute-duplicate-backend-different-ports
 test-grpcroute-h2c-on-port-80
@@ -102,6 +102,7 @@ test-httproute-request-mirror-static-spoe-config
 test-httproute-request-redirect
 test-httproute-request-redirect-default-port-omission
 test-httproute-response-header-modifier
+test-httproute-route-key-shapes
 test-httproute-same-path-matcher-precedence
 test-httproute-same-route-conflicts
 test-httproute-single-backend
@@ -109,10 +110,10 @@ test-httproute-status-backend-not-found
 test-httproute-status-patches
 test-httproute-url-rewrite
 test-httproute-weight-default
-test-httproute-weighted-with-matchers
 test-httproute-weight-no-matches
 test-httproute-weight-two-backends
 test-httproute-weight-zero-explicit-excludes
+test-httproute-weighted-with-matchers
 test-k8s-haproxy-service-gateway-listener-ports
 test-listenerset-allowed-different-namespace-denied
 test-listenerset-allowed-namespace-selector
