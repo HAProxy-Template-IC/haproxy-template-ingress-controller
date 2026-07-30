@@ -84,6 +84,12 @@ cases = {
     "aborted": dict(base, resource="case/aborted", connect_time_ms=0, response_time_ms=-1,
                     transfer_time_ms=-1, total_time_ms=-1, status=-1, backend="be",
                     server="s1", te_us=0, request_time_ms=2, queue_time_ms=1),
+    # A matched route: the span name and http.route must come from the route
+    # TEMPLATE, not the URI path. Named "/routed" so the batch-matching tag
+    # resolves the same way as the bracketed-fallback cases.
+    "routed": dict(base, resource="case/routed", route="/routed", connect_time_ms=1,
+                   response_time_ms=3, transfer_time_ms=0, total_time_ms=5, status=200,
+                   backend="be", server="s1", path="/routed/deep/uri"),
     "unsampled": dict(base, resource="case/unsampled", connect_time_ms=1, response_time_ms=3, transfer_time_ms=0,
                       total_time_ms=5, status=200, backend="be", server="s1",
                       trace_flags="00"),
@@ -118,7 +124,7 @@ for b in batches:
     srv = [s for s in b if s["kind"] == 2]
     if not srv:
         continue
-    tag = srv[0]["name"].split(" ", 1)[-1]          # "GET case/body" -> "case/body"
+    tag = srv[0]["name"].split(" ", 1)[-1].strip("[]")   # "GET [case/body]" -> "case/body"
     got[tag.split("/", 1)[-1]] = b
 unknown = set(got) - set(names)
 if unknown:
@@ -146,11 +152,16 @@ for case in ("body", "504"):
     if len(up) != 1: errs.append(f"{case}: expected 1 upstream span, got {len(up)}"); continue
     s0, s1 = int(srv[0]["startTimeUnixNano"]), int(srv[0]["endTimeUnixNano"])
     u0, u1 = int(up[0]["startTimeUnixNano"]), int(up[0]["endTimeUnixNano"])
-    # THE regression assertion: the upstream span ends exactly where the server
-    # span ends. Summing Tc+Tr instead closes at the response headers.
-    if u1 != s1:
-        errs.append(f"{case}: upstream ends {(s1-u1)/1e6:+.2f}ms before the server span "
-                    f"(must be equal: both close at the exact transaction end, not at Tc+Tr)")
+    # The upstream span covers Tc+Tr+Td — HAProxy's own accounting for the
+    # upstream leg — capped by the transaction end. It must NOT run to the
+    # transaction end when the timers say the leg was shorter: that end includes
+    # writing the response to the CLIENT, which is not upstream time.
+    at_up = {a["key"]: list(a["value"].values())[0] for a in up[0]["attributes"]}
+    legs = sum(int(at_up.get(f"haproxy.time.{k}_ms", 0)) for k in ("connect", "response", "transfer"))
+    expect = min(u0 + legs * 1_000_000, s1)
+    if u1 != expect:
+        errs.append(f"{case}: upstream ends at {u1}, expected {expect} "
+                    f"(Tc+Tr+Td = {legs}ms from its start, capped at the server end)")
     if not (s0 <= u0 and u1 <= s1):
         errs.append(f"{case}: upstream span is not enclosed by the server span")
     if up[0].get("parentSpanId") != srv[0]["spanId"]:
@@ -165,6 +176,33 @@ for case in ("body", "504"):
     if s1 != TE_NS:
         errs.append(f"{case}: span end is not the exact te_us instant (end={s1}) — "
                     f"req+Ta truncation is back")
+
+# http.route and the span name. Unbounded-cardinality names (the URI path) are
+# what semconv forbids, so this pins both the routed and the fallback shape.
+srv = one("routed", 2)
+if len(srv) != 1:
+    errs.append(f"routed: expected 1 SERVER span, got {len(srv)}")
+else:
+    at = {a["key"]: list(a["value"].values())[0] for a in srv[0]["attributes"]}
+    if srv[0]["name"] != "GET /routed":
+        errs.append(f"routed: span name is {srv[0]['name']!r}, expected 'GET /routed'")
+    if at.get("http.route") != "/routed":
+        errs.append(f"routed: http.route is {at.get('http.route')!r}, expected '/routed'")
+    if at.get("url.path") != "/routed/deep/uri":
+        errs.append("routed: url.path must still carry the full request path")
+    up = one("routed", 3)
+    if up and up[0]["name"] != "Server session [be]":
+        errs.append(f"routed: upstream span name is {up[0]['name']!r}, expected 'Server session [be]'")
+
+# No route matched: the name falls back to the bracketed owning resource, and
+# http.route must be ABSENT rather than present-and-empty.
+srv = one("body", 2)
+if len(srv) == 1:
+    at = {a["key"]: list(a["value"].values())[0] for a in srv[0]["attributes"]}
+    if srv[0]["name"] != "GET [case/body]":
+        errs.append(f"body: span name is {srv[0]['name']!r}, expected 'GET [case/body]'")
+    if "http.route" in at:
+        errs.append("body: http.route is present with no route matched — empty attributes must be dropped")
 
 # The fallback: with te_us absent the end must come from req+Ta, and must NOT
 # silently be the exact instant (which would mean the branch never ran).

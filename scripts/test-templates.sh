@@ -848,6 +848,39 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     fi
 fi
 
+# Tracing opt-in profile. Runs the WHOLE test set with tracing on, for the same
+# reason as the PROXY-protocol profile above, plus one specific to tracing: the
+# fields and the route lookup are removed at HELM time when the opt-in is off
+# (_helm_load.unset), so a per-test extraContext cannot switch them back on.
+# Tests that assert on them are therefore _helm_skip_test-ed in the default
+# render and only execute here. Without this profile they would never run.
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    TRACING_CONFIG=$(mktemp /tmp/haptic-tracing-config-XXXXXX.yaml)
+    trap 'rm -f "$TEMP_CONFIG" "$RATE_LIMIT_CONFIG" "$PROXY_PROTOCOL_CONFIG" "$TRACING_CONFIG"' EXIT
+    echo -e "${YELLOW}Rendering tracing profile...${NC}" >&2
+    if ! helm template "$CHART_DIR" \
+        --namespace default \
+        $HAPROXY_VERSION_ARG \
+        --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
+        --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
+        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+        > "$TRACING_CONFIG"; then
+        echo -e "${RED}Error: Failed to render tracing Helm profile${NC}" >&2
+        exit 1
+    fi
+    # The skipped-by-default tests must actually be present here, or this
+    # profile would pass by running nothing.
+    if ! grep -q "test-tracing-enabled-mints-and-propagates" "$TRACING_CONFIG"; then
+        echo -e "${RED}Tracing profile: the tracing tests are absent — this profile would test nothing${NC}" >&2
+        FULL_RC=1
+    fi
+    echo -e "${YELLOW}Tracing profile: full validation pass...${NC}" >&2
+    if ! "$CONTROLLER_BIN" validate --file "$TRACING_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@"; then
+        echo -e "${RED}Tracing profile: tests that pass with the opt-in OFF must also pass with it ON${NC}" >&2
+        FULL_RC=1
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # Degraded Gateway API profiles (skipped when a single --test is requested or
 # a custom schema dir is in play). For each committed old-release CRD bundle

@@ -403,6 +403,27 @@ if helm upgrade "$RELEASE" "$WORK/broken-chart" \
       --timeout 10m > "$WORK/broken.log" 2>&1; then
   echo "--- helm output (the upgrade that should have been denied) ---"; cat "$WORK/broken.log"
   echo "--- webhook endpoints ---"; k get endpointslices -o wide
+  # Did the config actually change? If the fingerprint is unmoved, helm reported
+  # success without mutating the config and the gate DID hold — the assertion is
+  # then wrong, not the product.
+  echo "--- config fingerprint: before=${PRE_FP:0:12} after=$(config_fingerprint | cut -c1-12) ---"
+  echo "--- is the corruption actually in the live config? ---"
+  k get haproxytemplateconfig -o json 2>/dev/null \
+    | grep -c 'var x = ' || echo "  0 (the broken template never landed)"
+  # What the webhook said. Nothing at all means it was never consulted; an error
+  # means failurePolicy:Ignore admitted it.
+  #
+  # `configvalidator` is in the pattern deliberately: three paths admit BEFORE
+  # the template is ever compiled — companion-test resolution, sibling merge and
+  # effective-config resolution all admit-with-warning on error — and every one
+  # of them logs under component=configvalidator, not =webhook. Grepping only
+  # for the webhook would print nothing on exactly the failures worth seeing.
+  echo "--- controller admission decisions (last 20) ---"
+  for cp in $(k get pods -l app.kubernetes.io/component=controller -o name 2>/dev/null); do
+    k logs "$cp" -c controller --tail=800 2>/dev/null \
+      | grep -iE "component=(webhook|configvalidator)|admission|admitting|could not resolve|version-skewed" \
+      | tail -20 | sed "s|^|  ${cp#pod/}: |"
+  done
   fail "an upgrade carrying an uncompilable template was ACCEPTED — the gate did not hold"
 fi
 info "rejected, as required"
