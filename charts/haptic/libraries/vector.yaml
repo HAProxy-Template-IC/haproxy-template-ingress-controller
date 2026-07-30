@@ -476,6 +476,8 @@ templateSnippets:
               # behind it comes from the connection destination.
               pod = string(o.server_pod) ?? ""
               if pod != "" { upstream_attrs = push(upstream_attrs, {"key":"k8s.pod.name","value":{"stringValue": pod}}) }
+              kns = string(o.namespace) ?? ""
+              if kns != "" { upstream_attrs = push(upstream_attrs, {"key":"k8s.namespace.name","value":{"stringValue": kns}}) }
               ksvc = string(o.service) ?? ""
               if ksvc != "" { upstream_attrs = push(upstream_attrs, {"key":"k8s.service.name","value":{"stringValue": ksvc}}) }
               if tc >= 0 {

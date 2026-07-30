@@ -75,7 +75,7 @@ base = {"ts": "2026-07-30T09:00:00.123456Z", "req_id": "r", "trace_id": "a"*32,
         # te_us: the exact end in epoch microseconds. ts is ...00.123456, so
         # this is deliberately NOT ts + Th+Ti+Ta — it carries the sub-millisecond
         # detail Ta's truncation drops, which is the whole point of the field.
-        "te_us": 1785402000176900, "server_pod": "echo-abc-123", "service": "default/echo"}   # `resource` per case identifies the batch
+        "te_us": 1785402000176900, "server_pod": "echo-abc-123", "service": "echo", "namespace": "default"}   # `resource` per case identifies the batch
 cases = {
     # The regression case: a 40ms response body. Tc+Tr would close at 6ms.
     "body":  dict(base, path="/p/body", resource="case/body", connect_time_ms=1, response_time_ms=3, transfer_time_ms=40,
@@ -262,6 +262,7 @@ CLIENT_ONLY = {"haproxy.time.client_handshake_ms", "haproxy.time.idle_ms",
                "haproxy.time.request_ms", "tls.protocol.version", "tls.resumed",
                "haproxy.frontend"}
 UPSTREAM_ONLY = {"haproxy.server", "haproxy.retries", "haproxy.time.queue_ms",
+                 "k8s.pod.name", "k8s.service.name", "k8s.namespace.name",
                  "haproxy.time.connect_ms", "haproxy.time.response_ms",
                  "haproxy.time.transfer_ms"}
 for case in ("body", "routed"):
@@ -287,8 +288,13 @@ for case in ("body", "routed"):
         errs.append(f"{case}: the upstream span must carry the backend pod name")
     if "k8s.pod.name" in skeys:
         errs.append(f"{case}: the pod name describes the upstream leg, not the SERVER span")
-    if "k8s.service.name" not in ukeys:
-        errs.append(f"{case}: the upstream span must name the Service it called")
+    # semconv: bare names, namespace separate. "default/echo" in either would
+    # be a namespace-qualified value the convention does not use.
+    at_up = {a["key"]: list(a["value"].values())[0] for a in up[0]["attributes"]}
+    if at_up.get("k8s.service.name") != "echo":
+        errs.append(f"{case}: k8s.service.name is {at_up.get('k8s.service.name')!r}, expected the bare 'echo'")
+    if at_up.get("k8s.namespace.name") != "default":
+        errs.append(f"{case}: k8s.namespace.name is {at_up.get('k8s.namespace.name')!r}, expected 'default'")
     if "k8s.service.name" in skeys:
         errs.append(f"{case}: the Service describes the upstream leg, not the SERVER span")
     if "haproxy.time.request_ms" not in skeys:
