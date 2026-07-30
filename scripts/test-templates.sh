@@ -331,6 +331,30 @@ missing = [b.split("\n", 1)[0].strip() for b in fes if "log-format " not in b]
 if missing:
     print("frontends without a log-format: " + ", ".join(missing), file=sys.stderr)
     sys.exit(1)
+# Trace-id capture must precede every rule that can end the request. HAProxy
+# stops evaluating http-request rules at a deny/return/tarpit/reject, so a
+# set-var placed after one never runs for exactly the short-circuited requests
+# traces are for: WAF denies, rate-limit 429s, redirects, fixed responses. The
+# span builder aborts on an empty trace_id, so the symptom is a silently missing
+# span, not an error — and it would falsify the coverage claim in values.yaml.
+# Ordering cannot be expressed as a validationTest: Go RE2 has no lookahead.
+#
+# http-request only, deliberately. `tcp-request ... reject` / `silent-drop` also
+# short-circuit, but they fire before the request is parsed, so there is no HTTP
+# transaction to trace and no access-log record to build a span from — a missing
+# span there is correct. Including them would also make the check useless: tcp-
+# request rules always precede http-request rules within a frontend, so every
+# frontend carrying any L4 reject would be flagged.
+STOP = re.compile(r"^\s+http-request\s+(deny|return|tarpit|reject|silent-drop)\b", re.M)
+TRACE = re.compile(r"^\s+http-request\s+set-var(-fmt)?\(txn\.trace_id\)", re.M)
+late = []
+for b in fes:
+    t, x = TRACE.search(b), STOP.search(b)
+    if x and (t is None or t.start() > x.start()):
+        late.append(b.split("\n", 1)[0].strip())
+if late:
+    print("trace_id captured after a request-ending rule in: " + ", ".join(late), file=sys.stderr)
+    sys.exit(1)
 print("checked %d frontends" % len(fes), file=sys.stderr)
 ' "$COVERAGE_DUMP"; then
             echo -e "${RED}Error: a rendered frontend has no log-format (render: ${COVERAGE_TEST}).${NC}" >&2

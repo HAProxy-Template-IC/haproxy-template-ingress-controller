@@ -672,8 +672,8 @@ controller:
         # `trace_id` field, so records can be joined to a trace someone else is
         # collecting. Nothing is minted and nothing is propagated.
         #
-        # With it ON, HAProxy owns trace identity entirely — no SPOA sidecar is
-        # involved, so this works with the hub disabled:
+        # With it ON, HAProxy owns trace identity entirely, so this works with the
+        # spoa-hub disabled (the hub has no part in tracing and no otel plugin):
         #   - a valid inbound traceparent is adopted (same trace, its span becomes
         #     the parent, its sampling decision is honoured),
         #   - otherwise a W3C-valid trace id and span id are minted,
