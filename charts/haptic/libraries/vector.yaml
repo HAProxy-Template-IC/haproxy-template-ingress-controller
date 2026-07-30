@@ -224,12 +224,18 @@ files:
             st = to_int(o.status) ?? 0
             route = string(o.route) ?? ""
             meth = string(o.method) ?? ""
-            span_name = meth + " [" + (string(o.resource) ?? "") + "]"
+            res = string(o.resource) ?? ""
+            # route is the whole matched key, host included: the NAME keeps the
+            # host (a deliberate semconv deviation), http.route is the path.
+            rt = replace(route, r'^[^/]*', "")
+            # Bare method when neither exists; "GET []" is not a name.
+            span_name = meth
+            if res != "" { span_name = meth + " [" + res + "]" }
             if route != "" { span_name = meth + " " + route }
             attrs = [
               {"key":"http.request.method","value":{"stringValue": string(o.method) ?? ""}},
               {"key":"url.path","value":{"stringValue": string(o.path) ?? ""}},
-              {"key":"http.route","value":{"stringValue": route}},
+              {"key":"http.route","value":{"stringValue": rt}},
               {"key":"server.address","value":{"stringValue": string(o.host) ?? ""}},
               {"key":"http.response.status_code","value":{"intValue": to_string(st)}},
               {"key":"client.address","value":{"stringValue": string(o.client_ip) ?? ""}},
@@ -268,15 +274,10 @@ files:
             if pid != "" { server_span = set!(server_span, ["parentSpanId"], pid) }
             if st >= 500 { server_span = set!(server_span, ["status"], {"code": 2}) }
             spans = [server_span]
-            # CLIENT span for the upstream call — the official filter's
-            # "Server session". It carries upstream_span_id because that is what
-            # HAProxy propagated in traceparent, so the backend's own span nests
-            # inside this one rather than beside it.
-            #
-            # Absent when no backend was contacted: Tc/Tr read -1 for a WAF deny,
-            # a rate-limit 429, a redirect, an errorfile or a fixed response. The
-            # SERVER span still exists for those, which is the coverage a
-            # log-derived pipeline has and a response-rule one does not.
+            # CLIENT span for the upstream call. It carries upstream_span_id —
+            # what HAProxy propagated — so the backend's span nests inside it.
+            # Absent when no backend was contacted (Tc/Tr are -1 for a deny, a
+            # 429, a redirect, an errorfile); the SERVER span still covers those.
             usid = string(o.upstream_span_id) ?? ""
             if usid != "" && (tc >= 0 || trs >= 0) {
               tdd = to_int(o.transfer_time_ms) ?? -1
@@ -286,14 +287,11 @@ files:
               if ctr < 0 { ctr = 0 }
               ctd = tdd
               if ctd < 0 { ctd = 0 }
-              # Ends with the SERVER span, at the exact end above — NOT at Tc+Tr,
-              # which stops at the response headers and excluded the body.
-              # A -1 timer means the phase never ran: attribute omitted, not 0.
-              # Comments stay outside the object literal: VRL rejects them inside.
-              # Tc+Tr+Td, not the transaction end: that end includes writing the
-              # response to the CLIENT, which is not upstream time.
-              # "Server session" is the official filter's stage name; the
-              # backend says which upstream, and its cardinality is bounded.
+              # Tc+Tr+Td, not the transaction end: that end includes the write
+              # to the CLIENT. Tc+Tr alone stops at the response headers and
+              # excluded the body. A -1 timer means the phase never ran, so the
+              # attribute is omitted rather than 0. VRL rejects comments inside
+              # an object literal, hence these sit out here.
               be = string(o.backend) ?? ""
               up_name = "Server session"
               if be != "" { up_name = "Server session [" + be + "]" }

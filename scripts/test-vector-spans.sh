@@ -58,7 +58,7 @@ base = {"ts": "2026-07-30T09:00:00.123456Z", "req_id": "r", "trace_id": "a"*32,
         "span_id": "b"*16, "upstream_span_id": "c"*16, "parent_span_id": "",
         "trace_flags": "01", "handshake_time_ms": 5, "idle_time_ms": 0,
         "request_time_ms": 2, "queue_time_ms": 0, "retries": 0, "method": "GET",
-        "path": "/x", "host": "h", "client_ip": "1.2.3.4", "term": "----",
+        "path": "/p/unset", "host": "h", "client_ip": "1.2.3.4", "term": "----",
         "denied_by": "",
         # te_us: the exact end in epoch microseconds. ts is ...00.123456, so
         # this is deliberately NOT ts + Th+Ti+Ta — it carries the sub-millisecond
@@ -66,31 +66,36 @@ base = {"ts": "2026-07-30T09:00:00.123456Z", "req_id": "r", "trace_id": "a"*32,
         "te_us": 1785402000176900}   # `resource` per case identifies the batch
 cases = {
     # The regression case: a 40ms response body. Tc+Tr would close at 6ms.
-    "body":  dict(base, resource="case/body", connect_time_ms=1, response_time_ms=3, transfer_time_ms=40,
+    "body":  dict(base, path="/p/body", resource="case/body", connect_time_ms=1, response_time_ms=3, transfer_time_ms=40,
                   total_time_ms=46, status=200, backend="be", server="s1"),
-    "504":   dict(base, resource="case/504", connect_time_ms=1, response_time_ms=-1, transfer_time_ms=-1,
+    "504":   dict(base, path="/p/504", resource="case/504", connect_time_ms=1, response_time_ms=-1, transfer_time_ms=-1,
                   total_time_ms=30, status=504, backend="be", server="s1", term="sH--"),
-    "deny":  dict(base, resource="case/deny", connect_time_ms=-1, response_time_ms=-1, transfer_time_ms=-1,
+    "deny":  dict(base, path="/p/deny", resource="case/deny", connect_time_ms=-1, response_time_ms=-1, transfer_time_ms=-1,
                   total_time_ms=5, status=403, backend="", server="",
                   denied_by="waf:942100", term="PR--"),
     # te_us=0 is the rollout window: vector has the new transform while HAProxy
     # still emits the previous log-format, so the req+Ta fallback is a real path.
-    "no_te": dict(base, resource="case/no_te", connect_time_ms=1, response_time_ms=3,
+    "no_te": dict(base, path="/p/no_te", resource="case/no_te", connect_time_ms=1, response_time_ms=3,
                   transfer_time_ms=0, total_time_ms=5, status=200, backend="be",
                   server="s1", te_us=0),
     # Ta=-1 (aborted transaction) clamps to 0, and with te_us absent the end
     # lands at req_ns while TR+Tw pushes the upstream start past it — the
     # negative-duration span this guards against.
-    "aborted": dict(base, resource="case/aborted", connect_time_ms=0, response_time_ms=-1,
+    "aborted": dict(base, path="/p/aborted", resource="case/aborted", connect_time_ms=0, response_time_ms=-1,
                     transfer_time_ms=-1, total_time_ms=-1, status=-1, backend="be",
                     server="s1", te_us=0, request_time_ms=2, queue_time_ms=1),
-    # A matched route: the span name and http.route must come from the route
-    # TEMPLATE, not the URI path. Named "/routed" so the batch-matching tag
-    # resolves the same way as the bracketed-fallback cases.
-    "routed": dict(base, resource="case/routed", route="/routed", connect_time_ms=1,
+    # A matched route: name and http.route come from the route TEMPLATE, not
+    # the deeper URI path. The name keeps the host, http.route does not.
+    "routed": dict(base, path="/p/routed/deep/uri", resource="case/routed", route="h.example/p/routed/*", connect_time_ms=1,
                    response_time_ms=3, transfer_time_ms=0, total_time_ms=5, status=200,
-                   backend="be", server="s1", path="/routed/deep/uri"),
-    "unsampled": dict(base, resource="case/unsampled", connect_time_ms=1, response_time_ms=3, transfer_time_ms=0,
+                   backend="be", server="s1"),
+    # No route and no owning resource: a 404 to the default backend, which is
+    # the bulk of internet-facing traffic. semconv wants the bare method here;
+    # bracketing an empty resource named 34 of 40 live spans "GET []".
+    "notarget": dict(base, path="/p/notarget", resource="", connect_time_ms=1,
+                     response_time_ms=3, transfer_time_ms=0, total_time_ms=5,
+                     status=404, backend="default_backend", server="<NOSRV>"),
+    "unsampled": dict(base, path="/p/unsampled", resource="case/unsampled", connect_time_ms=1, response_time_ms=3, transfer_time_ms=0,
                       total_time_ms=5, status=200, backend="be", server="s1",
                       trace_flags="00"),
 }
@@ -124,8 +129,10 @@ for b in batches:
     srv = [s for s in b if s["kind"] == 2]
     if not srv:
         continue
-    tag = srv[0]["name"].split(" ", 1)[-1].strip("[]")   # "GET [case/body]" -> "case/body"
-    got[tag.split("/", 1)[-1]] = b
+    at = {a["key"]: list(a["value"].values())[0] for a in srv[0]["attributes"]}
+    parts = (at.get("url.path") or "").split("/")        # "/p/body" -> ["", "p", "body"]
+    if len(parts) > 2:
+        got[parts[2]] = b
 unknown = set(got) - set(names)
 if unknown:
     sys.exit(f"unrecognised case tags in output: {sorted(unknown)}")
@@ -184,11 +191,13 @@ if len(srv) != 1:
     errs.append(f"routed: expected 1 SERVER span, got {len(srv)}")
 else:
     at = {a["key"]: list(a["value"].values())[0] for a in srv[0]["attributes"]}
-    if srv[0]["name"] != "GET /routed":
-        errs.append(f"routed: span name is {srv[0]['name']!r}, expected 'GET /routed'")
-    if at.get("http.route") != "/routed":
-        errs.append(f"routed: http.route is {at.get('http.route')!r}, expected '/routed'")
-    if at.get("url.path") != "/routed/deep/uri":
+    if srv[0]["name"] != "GET h.example/p/routed/*":
+        errs.append(f"routed: span name is {srv[0]['name']!r}, expected 'GET h.example/p/routed/*'")
+    # The host belongs to the NAME only: http.route is the path part alone, or
+    # the attribute stops being the semconv route template.
+    if at.get("http.route") != "/p/routed/*":
+        errs.append(f"routed: http.route is {at.get('http.route')!r}, expected '/p/routed/*'")
+    if at.get("url.path") != "/p/routed/deep/uri":
         errs.append("routed: url.path must still carry the full request path")
     up = one("routed", 3)
     if up and up[0]["name"] != "Server session [be]":
@@ -203,6 +212,18 @@ if len(srv) == 1:
         errs.append(f"body: span name is {srv[0]['name']!r}, expected 'GET [case/body]'")
     if "http.route" in at:
         errs.append("body: http.route is present with no route matched — empty attributes must be dropped")
+
+# No route, no resource: the name is the bare method. Not "GET []", and not
+# "GET " with a trailing space.
+srv = one("notarget", 2)
+if len(srv) != 1:
+    errs.append(f"notarget: expected 1 SERVER span, got {len(srv)}")
+else:
+    at = {a["key"]: list(a["value"].values())[0] for a in srv[0]["attributes"]}
+    if srv[0]["name"] != "GET":
+        errs.append(f"notarget: span name is {srv[0]['name']!r}, expected 'GET'")
+    if "http.route" in at:
+        errs.append("notarget: http.route must be absent when nothing matched")
 
 # The fallback: with te_us absent the end must come from req+Ta, and must NOT
 # silently be the exact instant (which would mean the branch never ran).

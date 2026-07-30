@@ -784,19 +784,21 @@ templateSnippets:
   util-route-key:
     template: |-
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      {#- http.route: the map ENTRY that matched — the template an operator
-          wrote, not the request path. `_key` returns the key rather than the
-          value and takes no default, so each step guards on not-yet-found; the
-          leading host is stripped to leave the path template alone.
+      {#- The map ENTRY that matched — the template an operator wrote, not the
+          request path. `_key` returns the key rather than the value and takes
+          no default, so each step guards on not-yet-found. The host stays in
+          (the span name uses it; the OTel http.route attribute is the path part
+          alone). A prefix match is marked `*`: prefix keys already end in `/`
+          and boundary keys never do, so both render `/api/*`.
 
           Its own snippet so _helm_load.unset can drop it entirely when tracing
           is off: it repeats the lookup cascade and a prefix map is a list, so a
           deployment that does not trace should carry neither the cost nor the
           config. util-routing-suffix renders it with `default ""`. -#}
       {%- if (extraContext | dig("tracing", "enabled")) != true %}{% return %}{% end %}
-      {%- var rk = []any{[]string{"path-exact.map", "map_str_key"}, []string{"path-regex.map", "map_reg_key"}, []string{"path-prefix-exact.map", "map_str_key"}, []string{"path-prefix.map", "map_beg_key"}} %}
+      {%- var rk = []any{[]string{"path-exact.map", "map_str_key", ""}, []string{"path-regex.map", "map_reg_key", ""}, []string{"path-prefix-exact.map", "map_str_key", ",concat(/*)"}, []string{"path-prefix.map", "map_beg_key", ",concat(*)"}} %}
       {%- for i, e := range rk %}{%- var m = e.([]string) %}
-      http-request set-var(txn.route) var(txn.host_match),concat(,txn.path,),{{ m[1] }}({{ mapPath(m[0]) }}),regsub(^[^/]*,) if { var(txn.path_match) -m found }{% if i > 0 %} !{ var(txn.route) -m found }{% end %}
+      http-request set-var(txn.route) var(txn.host_match),concat(,txn.path,),{{ m[1] }}({{ mapPath(m[0]) }}){{ m[2] }} if { var(txn.path_match) -m found }{% if i > 0 %} !{ var(txn.route) -m found }{% end %}
       {%- end %}
 
   util-routing-suffix:
@@ -3189,6 +3191,52 @@ validationTests:
         target: haproxy.cfg
         pattern: '%\(span_id\)'
         description: The span fields are absent, not empty, when nothing mints them
+
+  test-tracing-route-key-marks-prefix-matches:
+    _helm_skip_test: '{{ if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end }}'
+    description: http.route is the matched map key, with prefix matches marked
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: rt }
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+                    - path: /exact
+                      pathType: Exact
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    extraContext:
+      tracing:
+        enabled: true
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'map_beg_key\([^)]*path-prefix\.map\),concat\(\*\)'
+        description: A prefix match is marked, so /api reads as /api/* rather than as an exact route
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'map_str_key\([^)]*path-prefix-exact\.map\),concat\(/\*\)'
+        description: >-
+          The boundary half of the same prefix rule gets the slash the prefix key
+          already carries, so both halves of one rule render one route
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'map_str_key\([^)]*path-exact\.map\),concat'
+        description: An exact route is never marked as a prefix
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'regsub\(\^\[\^/\]\*,\)'
+        description: >-
+          The host stays in the captured key — the span name uses it and the
+          vector transform strips it back off for the http.route attribute
 
   test-tracing-enabled-mints-and-propagates:
     _helm_skip_test: '{{ if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end }}'
