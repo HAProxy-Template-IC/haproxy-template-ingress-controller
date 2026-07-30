@@ -343,7 +343,8 @@ templateSnippets:
                   {%- var backendKey = BackendNameIngress(ingress, path) %}
       backend {{ backendKey }}
           guid {{ make_guid("be", backendKey) }}
-          http-request set-var(txn.service) str({{ ns }}/{{ svcName }})
+          http-request set-var(txn.namespace) str({{ ns }})
+          http-request set-var(txn.service) str({{ svcName }})
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
         default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
@@ -365,7 +366,8 @@ templateSnippets:
               {%- var backendKey = BackendNameIngress(ingress, path) %}
       backend {{ backendKey }}
           guid {{ make_guid("be", backendKey) }}
-          http-request set-var(txn.service) str({{ ns }}/{{ dbSvcName }})
+          http-request set-var(txn.namespace) str({{ ns }})
+          http-request set-var(txn.service) str({{ dbSvcName }})
               {%- var serverOpts = map[string]any{"flags": []any{}} -%}
               {{- render_glob "backend-directives-*" inherit_context | indent(2, true) }}
         default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}

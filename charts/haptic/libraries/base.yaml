@@ -635,10 +635,16 @@ templateSnippets:
 
   log-fields-106-service:
     template: |-
-      {#- The Service is set by the backend that was chosen, which is where it is
-          known. Deriving it from the backend NAME would make the log depend on a
+      {#- Set by the backend that was chosen, which is where they are known.
+          Deriving them from the backend NAME would make the log depend on a
           generated identifier that libraries are free to change. Empty when
-          HAProxy answered the request itself, so the field drops out. -#}
+          HAProxy answered the request itself, so the fields drop out.
+
+          Bare names with the namespace separate, as OTel semconv and ECS both
+          have it — and so `service` and `server_pod` read the same way. This is
+          the SERVICE's namespace, which a cross-namespace route makes different
+          from the routing resource's; `resource` keeps its own ns/name. -#}
+      %(namespace)[var(txn.namespace)]
       %(service)[var(txn.service)]
 
   log-fields-105-server-pod:
@@ -3261,7 +3267,13 @@ validationTests:
         description: The pod name lives in map CONTENT, which the orchestrator applies over the runtime API
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+http-request set-var\(txn\.service\) str\(default/echo\)$'
+        pattern: '(?m)^\s+http-request set-var\(txn\.namespace\) str\(default\)$'
+        description: >-
+          Namespace and Service are separate bare values, as OTel semconv and ECS
+          both have them — and so `service` reads like `server_pod`
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+http-request set-var\(txn\.service\) str\(echo\)$'
         description: >-
           The backend states its own Service. Deriving it from the backend NAME
           would make the log depend on a generated identifier that any library is
