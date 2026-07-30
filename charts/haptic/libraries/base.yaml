@@ -600,7 +600,7 @@ templateSnippets:
         the line that preceded `option tcplog`, and delete that line.
       -#}
       {%- var items = []string{
-            "%(ts)[accept_date(ms),ms_utime(%Y-%m-%dT%H:%M:%S.%3NZ)]",
+            "%(ts)[accept_date(us),us_utime(%Y-%m-%dT%H:%M:%S.%6NZ)]",
             "%(client_ip)ci",
             "%(frontend)f",
             "%(backend)b",
@@ -662,7 +662,7 @@ templateSnippets:
         and queues stay 0 without an opt-in maxconn), %r (duplicates
         method/path/http_version and carries the query), and %CC/%CS cookies.
       -#}
-      %(ts)[accept_date(ms),ms_utime(%Y-%m-%dT%H:%M:%S.%3NZ)]
+      %(ts)[accept_date(us),us_utime(%Y-%m-%dT%H:%M:%S.%6NZ)]
       %(req_id)ID
       %(trace_id)[var(txn.trace_id)]
       {#- Gated on a GLOBAL value, never on which frontend renders: the field
@@ -683,6 +683,10 @@ templateSnippets:
           a connection), which the span builder treats as zero. -#}
       %(handshake_time_ms:sint)Th
       %(idle_time_ms:sint)Ti
+      {#- Td is the response-payload transfer. Without it the upstream call looks
+          like it ends at the response HEADERS (%Tr), so a backend's own span
+          overruns ours for any response with a body. -#}
+      %(transfer_time_ms:sint)Td
       {%- end %}
       %(client_ip)ci
       %(frontend)f
@@ -3267,9 +3271,13 @@ validationTests:
         description: Typed so `status` is a JSON number rather than a string.
       - type: contains
         target: haproxy.cfg
-        pattern: '%\(ts\)\[accept_date\(ms\),ms_utime\(%Y-%m-%dT%H:%M:%S\.%3NZ\)\]'
+        pattern: '%\(ts\)\[accept_date\(us\),us_utime\(%Y-%m-%dT%H:%M:%S\.%6NZ\)\]'
         description: >-
           `format raw` drops the syslog timestamp, so the record carries its own.
+          Microseconds, not milliseconds: this timestamp anchors the derived
+          trace spans, and every HAProxy timer is already whole milliseconds, so
+          a millisecond anchor threw away the only sub-millisecond precision
+          available.
       - type: contains
         target: haproxy.cfg
         pattern: '%\(resource\)\[var\(txn\.resource_id\)\]'

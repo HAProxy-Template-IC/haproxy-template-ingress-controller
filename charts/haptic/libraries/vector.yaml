@@ -284,20 +284,24 @@ files:
               if ctc < 0 { ctc = 0 }
               ctr = trs
               if ctr < 0 { ctr = 0 }
-              # A -1 timer means the phase never happened, so its attribute is
-              # OMITTED rather than reported as 0ms. Tc>=0 with Tr==-1 is the 504
-              # case — we connected and the backend never answered — the most
-              # interesting upstream failure there is, so the span must still
-              # exist; it just must not claim a 0ms response.
+              # Ends with the SERVER span: Ta-(TR+Tw) is Tc+Tr+Td per HAProxy's
+              # own identity (config.txt 8.4). %Tr alone stops at the response
+              # HEADERS, so summing Tc+Tr ended the span before the body. Breaks
+              # if `option logasap` is ever set — Ta then excludes Td.
               #
-              # These lines sit outside the object literal below on purpose: VRL
-              # does not accept a comment inside one.
+              # A -1 timer means the phase never ran, so its attribute is omitted
+              # rather than reported as 0ms (Tc>=0 with Tr==-1 is the 504 case).
+              # Comments stay outside the object literal: VRL rejects them inside.
               upstream_attrs = [{"key":"haproxy.backend","value":{"stringValue": string(o.backend) ?? ""}}]
               if tc >= 0 {
                 upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.connect_ms","value":{"intValue": to_string(tc)}})
               }
               if trs >= 0 {
                 upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.response_ms","value":{"intValue": to_string(trs)}})
+              }
+              tdd = to_int(o.transfer_time_ms) ?? -1
+              if tdd >= 0 {
+                upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.transfer_ms","value":{"intValue": to_string(tdd)}})
               }
               upstream_span = {
                 "traceId": tid,
@@ -306,7 +310,7 @@ files:
                 "name": "Server session",
                 "kind": 3,
                 "startTimeUnixNano": to_string(srv_ns),
-                "endTimeUnixNano": to_string(srv_ns + (ctc + ctr) * ms),
+                "endTimeUnixNano": to_string(req_ns + ta * ms),
                 "attributes": upstream_attrs
               }
               spans = push(spans, upstream_span)
