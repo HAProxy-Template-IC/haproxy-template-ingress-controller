@@ -224,6 +224,8 @@ lossy
 LTS
 Matchers
 matchers
+MaxMind
+maxmind
 metacharacter
 metacharacters
 MetalLB
