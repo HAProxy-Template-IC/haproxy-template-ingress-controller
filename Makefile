@@ -146,6 +146,7 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 	@echo ""
 	@echo "Checking per-object config size..."
 	@$(MAKE) --no-print-directory cr-size-check
+	@$(MAKE) --no-print-directory vector-config-check
 	@echo ""
 	@echo "All chart linting passed!"
 
@@ -173,6 +174,7 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 	@echo ""
 	@echo "Checking per-object config size..."
 	@$(MAKE) --no-print-directory cr-size-check
+	@$(MAKE) --no-print-directory vector-config-check
 	@echo ""
 	@echo "All chart linting passed!"
 
@@ -190,6 +192,15 @@ chart-size-check: ## Estimate the Helm release-Secret size; fail if it nears the
 	@python3 scripts/check-chart-release-size.py charts/haptic \
 		--set controller.templateLibraries.nginxIngress.enabled=true \
 		--set controller.templateLibraries.spoaHub.enabled=true
+
+vector-config-check: build ## Assert the chart renders a vector.yaml that vector can load
+	@# Regex assertions and the span harness both look at fragments; neither
+	@# notices the document as a whole stopped being YAML. A block scalar that
+	@# ends early makes vector keep its bootstrap config, so its readiness probe
+	@# never passes and the rollout wedges with every offline gate green.
+	@# Needs the controller: the check renders chart templates through the engine
+	@# and parses the result, which nothing outside the engine can produce.
+	@bash scripts/check-vector-config.sh
 
 cr-size-check: ## Check each rendered HAProxyTemplateConfig against etcd's ~1.5 MiB per-object limit
 	@# The OTHER size ceiling, independent of the release Secret: etcd refuses a
