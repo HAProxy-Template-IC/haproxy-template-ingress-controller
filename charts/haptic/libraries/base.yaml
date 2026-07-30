@@ -687,6 +687,12 @@ templateSnippets:
           like it ends at the response HEADERS (%Tr), so a backend's own span
           overruns ours for any response with a body. -#}
       %(transfer_time_ms:sint)Td
+      {#- Exact transaction end, epoch microseconds: the log line is emitted when
+          the response completes, so `date` at log time IS that instant. req+Ta
+          closes early by whatever Ta's whole-ms truncation dropped (0.824ms
+          measured). Raw integer, not a formatted stamp — the span builder wants
+          a number, and parsing one back would cost a parse per record. -#}
+      %(te_us:sint)[date(0,us)]
       {%- end %}
       %(client_ip)ci
       %(frontend)f

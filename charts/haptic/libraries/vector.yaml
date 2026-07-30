@@ -221,7 +221,14 @@ files:
             accept_ns = to_unix_timestamp(parse_timestamp(string(o.ts) ?? "", "%Y-%m-%dT%H:%M:%S%.fZ") ?? now(), unit: "nanoseconds")
             ms = 1000000
             req_ns = accept_ns + (th + ti) * ms
+            # te_us carries no whole-ms truncation; req+Ta is the fallback.
+            te_us = to_int(o.te_us) ?? 0
+            end_ns = req_ns + ta * ms
+            if te_us > 0 { end_ns = te_us * 1000 }
+            if end_ns < req_ns { end_ns = req_ns }
             srv_ns = req_ns + (trq + tw) * ms
+            # No negative-duration span: reachable when Ta is -1 (aborted).
+            if end_ns < srv_ns { end_ns = srv_ns }
             st = to_int(o.status) ?? 0
             attrs = [
               {"key":"http.request.method","value":{"stringValue": string(o.method) ?? ""}},
@@ -235,11 +242,8 @@ files:
               {"key":"haptic.resource","value":{"stringValue": string(o.resource) ?? ""}},
               {"key":"haptic.request_id","value":{"stringValue": string(o.req_id) ?? ""}},
               {"key":"haptic.denied_by","value":{"stringValue": string(o.denied_by) ?? ""}},
-              # Phase timings stay ATTRIBUTES rather than child spans: a
-              # log-derived pipeline has no intra-request event times, so nesting
-              # them would present derived offsets as measurements. The TLS
-              # handshake is here for the same reason AND because it precedes the
-              # request span — a child cannot start before its parent.
+              # Attributes, not child spans: no intra-request event times exist,
+              # and the handshake precedes the request span anyway.
               {"key":"haproxy.time.handshake_ms","value":{"intValue": to_string(th)}},
               {"key":"haproxy.time.request_ms","value":{"intValue": to_string(trq)}},
               {"key":"haproxy.time.queue_ms","value":{"intValue": to_string(tw)}},
@@ -261,7 +265,7 @@ files:
               "name": (string(o.method) ?? "") + " " + (string(o.resource) ?? ""),
               "kind": 2,
               "startTimeUnixNano": to_string(req_ns),
-              "endTimeUnixNano": to_string(req_ns + ta * ms),
+              "endTimeUnixNano": to_string(end_ns),
               "attributes": attrs
             }
             # OTLP: parentSpanId must be ABSENT on a root span, not empty.
@@ -284,13 +288,9 @@ files:
               if ctc < 0 { ctc = 0 }
               ctr = trs
               if ctr < 0 { ctr = 0 }
-              # Ends with the SERVER span: Ta-(TR+Tw) is Tc+Tr+Td per HAProxy's
-              # own identity (config.txt 8.4). %Tr alone stops at the response
-              # HEADERS, so summing Tc+Tr ended the span before the body. Breaks
-              # if `option logasap` is ever set — Ta then excludes Td.
-              #
-              # A -1 timer means the phase never ran, so its attribute is omitted
-              # rather than reported as 0ms (Tc>=0 with Tr==-1 is the 504 case).
+              # Ends with the SERVER span, at the exact end above — NOT at Tc+Tr,
+              # which stops at the response headers and excluded the body.
+              # A -1 timer means the phase never ran: attribute omitted, not 0.
               # Comments stay outside the object literal: VRL rejects them inside.
               upstream_attrs = [{"key":"haproxy.backend","value":{"stringValue": string(o.backend) ?? ""}}]
               if tc >= 0 {
@@ -310,7 +310,7 @@ files:
                 "name": "Server session",
                 "kind": 3,
                 "startTimeUnixNano": to_string(srv_ns),
-                "endTimeUnixNano": to_string(req_ns + ta * ms),
+                "endTimeUnixNano": to_string(end_ns),
                 "attributes": upstream_attrs
               }
               spans = push(spans, upstream_span)

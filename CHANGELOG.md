@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed a trace span with a negative duration when HAProxy logs `Ta = -1` for an aborted transaction: the end clamped to the request start while the queue and request-receive timers pushed the upstream span's start past it. Most OTLP consumers reject or mis-render such a span.
+- Trace spans now end at the transaction's exact end (`te_us`, epoch microseconds stamped when the log line is written) instead of `request + Ta`. Every HAProxy timer is whole milliseconds, so closing on `Ta` discarded up to 1ms — measured 0.824ms on a live trace, enough for an instrumented backend's span to overrun HAProxy's own.
 - Fixed the upstream trace span ending at the response headers rather than the last byte, so an instrumented backend's own span overran it — by ~40ms for a 40ms response body. `%Tr` covers only up to the complete response headers; the payload transfer is `%Td`. The span now ends where the request span ends, which is exact by HAProxy's own identity `Td = Ta - (TR+Tw+Tc+Tr)`, and `connect`/`response`/`transfer` remain available as attributes.
 - Fixed every HAPTIC span being anchored to the connection accept rather than the request, so a span started one TLS handshake (plus keep-alive idle) too early and could end before the backend it waited on — visible as a gap in the waterfall where the proxy's span finished before its upstream began.
 - Fixed docs advertising OpenTelemetry export as a `spoa-hub` plugin capability. That plugin was removed when tracing moved into HAProxy itself; the hub has no part in tracing.
