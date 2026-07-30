@@ -37,6 +37,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
+	"sigs.k8s.io/gateway-api/pkg/consts"
 	kindcluster "sigs.k8s.io/kind/pkg/cluster"
 	kindcmd "sigs.k8s.io/kind/pkg/cmd"
 
@@ -452,11 +453,12 @@ func installCRDs(ctx context.Context) (context.Context, error) {
 }
 
 // defaultGatewayAPIVersion is the Gateway API release whose standard-channel
-// CRDs the suite installs by default. Pinned to match
-// scripts/start-dev-env.sh and the sigs.k8s.io/gateway-api/conformance
-// module version in go.mod — the conformance suite refuses to run when CRDs
-// and suite disagree on bundle-version.
-const defaultGatewayAPIVersion = "v1.6.0"
+// CRDs the suite installs by default. Read from the module rather than pinned
+// by hand: it is the exact value the CRDs carry in their bundle-version
+// annotation, and the conformance suite refuses to start when that disagrees
+// with its own module version. A hand-written copy goes stale the moment
+// sigs.k8s.io/gateway-api is bumped in go.mod (job 15627486657).
+const defaultGatewayAPIVersion = consts.BundleVersion
 
 // installGatewayAPICRDs installs the upstream Gateway API standard-channel
 // CRDs (Gateway, HTTPRoute, GRPCRoute, etc.) so the chart's gateway library

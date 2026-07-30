@@ -419,8 +419,13 @@ ensure_cluster() {
 	# Install Gateway API CRDs if not already present
 	# This must happen before Helm install so .Capabilities.APIVersions.Has can detect them
 	if ! kubectl get crd gatewayclasses.gateway.networking.k8s.io >/dev/null 2>&1; then
-		log INFO "Installing Gateway API CRDs (standard channel v1.6.0)..."
-		kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml >/dev/null 2>&1
+		# Version comes from go.mod, never a literal here: a second copy goes stale
+		# the moment sigs.k8s.io/gateway-api is bumped, and the dev cluster then
+		# carries different CRDs than the e2e suite installs.
+		local gwapi_version
+		gwapi_version=$(go list -C "${REPO_ROOT}" -m -f '{{.Version}}' sigs.k8s.io/gateway-api)
+		log INFO "Installing Gateway API CRDs (standard channel ${gwapi_version})..."
+		kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${gwapi_version}/standard-install.yaml" >/dev/null 2>&1
 
 		# Wait for CRDs to be established
 		log INFO "Waiting for Gateway API CRDs to be established..."
