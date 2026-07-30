@@ -619,6 +619,37 @@ templateSnippets:
           } -%}
       {{- "\n  log-format \"%{+json}o " + join(items, " ") + "\"" -}}
 
+  map-pod-names-500-endpoints:
+    requires: [endpoints]
+    template: |
+      {%- for _, slice := range resources.endpoints.List() %}
+      {%- for _, ep := range slice.Endpoints %}
+      {%- var pod = ep.TargetRef.Name %}
+      {%- if pod != "" %}
+      {%- for _, addr := range ep.Addresses %}
+      {{ addr }} {{ pod }}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+
+  log-fields-106-service:
+    template: |-
+      {#- The Service is set by the backend that was chosen, which is where it is
+          known. Deriving it from the backend NAME would make the log depend on a
+          generated identifier that libraries are free to change. Empty when
+          HAProxy answered the request itself, so the field drops out. -#}
+      %(service)[var(txn.service)]
+
+  log-fields-105-server-pod:
+    template: |-
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      {#- bc_dst is the backend connection's destination — the pod actually
+          talked to, after runtime address updates. Empty when no backend was
+          contacted, and an unmatched lookup yields empty too, so the field
+          drops out rather than reading "-". -#}
+      %(server_pod)[bc_dst,map({{ mapPath("pod-names.map") }})]
+
   log-fields-100-core:
     template: |-
       {#-
@@ -2237,6 +2268,18 @@ maps:
       # a wildcard listener). See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
       {{ render_glob "map-hostregex-*" -}}
 
+  pod-names.map:
+    template: |
+      # Backend pod IP -> pod name, for the access log and the upstream span.
+      # HAProxy has no pod concept, and the chosen SERVER is a pre-allocated slot
+      # (SRV_1), so the name has to come from the connection's destination.
+      #
+      # This file always renders, header included: a map that exists only when
+      # pods exist would be CREATED on the first endpoint and DELETED with the
+      # last, and both force a reload. Content-only changes go over the runtime
+      # API instead, so pod churn never reloads HAProxy.
+      {{ render_glob "map-pod-names-*" -}}
+
   path-exact.map:
     template: |
       # Exact path matches (use with map() function)
@@ -2767,6 +2810,7 @@ validationTests:
           addressType: IPv4
           endpoints:
             - addresses: ["10.0.0.1"]
+              targetRef: { kind: Pod, name: echo-pod-1 }
           ports:
             - port: 8080
     assertions:
@@ -3191,6 +3235,60 @@ validationTests:
         target: haproxy.cfg
         pattern: '%\(span_id\)'
         description: The span fields are absent, not empty, when nothing mints them
+
+  test-server-pod-name-via-runtime-map:
+    requires: [endpoints]
+    description: The backend pod name reaches the log through a map, not through a config line
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: pn }
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pods.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:pod-names.map
+        pattern: '(?m)^10\.0\.0\.1 echo-pod-1$'
+        description: The pod name lives in map CONTENT, which the orchestrator applies over the runtime API
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+http-request set-var\(txn\.service\) str\(default/echo\)$'
+        description: >-
+          The backend states its own Service. Deriving it from the backend NAME
+          would make the log depend on a generated identifier that any library is
+          free to change
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(service\)\[var\(txn\.service\)\]'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '%\(server_pod\)\[bc_dst,map\('
+        description: >-
+          Resolved from the connection destination at log time. The chosen
+          server is a pre-allocated slot, so its name cannot identify the pod
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+server SRV_1 10\.0\.0\.1:8080 .*# Pod: echo-pod-1$'
+        description: >-
+          The slot keeps its generated name and the pod rides along as a trailing
+          comment. models.Server carries no comment field, so this text never
+          reaches the structured diff and cannot force a reload
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+server echo-pod-1'
+        description: >-
+          The pod must never BE the server name. That is a structural field, so
+          every pod replacement would diff as a config change and reload HAProxy
+          instead of taking the runtime address update
 
   test-tracing-route-key-marks-prefix-matches:
     _helm_skip_test: '{{ if not (dig "tracing" "enabled" false (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end }}'

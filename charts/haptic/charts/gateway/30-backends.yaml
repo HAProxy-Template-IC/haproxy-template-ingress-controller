@@ -248,6 +248,7 @@ templateSnippets:
       # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
+          http-request set-var(txn.service) str({{ backendNs }}/{{ backendName }})
         default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
       {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
       {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
@@ -617,6 +618,7 @@ templateSnippets:
       # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
+          http-request set-var(txn.service) str({{ backendNs }}/{{ backendName }})
         default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
       {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
       {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
