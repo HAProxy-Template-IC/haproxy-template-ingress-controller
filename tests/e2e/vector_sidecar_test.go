@@ -92,9 +92,13 @@ func apiProxyGet(ctx context.Context, pod string, port int, path string) (string
 // cluster can establish. The chart's validationTests prove the config renders;
 // they cannot prove that HAProxy's datagrams arrive, that the pushed config
 // actually reached the sidecar, or that the metrics restriction behaves both ways.
+//
+// Deliberately NOT t.Parallel(): the restart assess kills the vector container of
+// a SHARED HAProxy pod, and `kubectl logs` serves only the current instance — every
+// access-log record written before it becomes unreadable, so a concurrent test
+// waiting on one fails with "no JSON access-log record appeared within timeout"
+// (job 15625160454). Serial keeps every parallel test paused across the restart.
 func TestVectorSidecar(t *testing.T) {
-	t.Parallel()
-
 	var pod string
 
 	feature := features.New("Vector sidecar: log transport, merged metrics, loopback-only exporter").
