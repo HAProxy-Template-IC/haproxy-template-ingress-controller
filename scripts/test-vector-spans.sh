@@ -59,7 +59,11 @@ base = {"ts": "2026-07-30T09:00:00.123456Z", "req_id": "r", "trace_id": "a"*32,
         "trace_flags": "01", "handshake_time_ms": 5, "idle_time_ms": 0,
         "request_time_ms": 2, "queue_time_ms": 0, "retries": 0, "method": "GET",
         "path": "/x", "host": "h", "client_ip": "1.2.3.4", "term": "----",
-        "denied_by": ""}   # `resource` is set per case: it identifies the batch
+        "denied_by": "",
+        # te_us: the exact end in epoch microseconds. ts is ...00.123456, so
+        # this is deliberately NOT ts + Th+Ti+Ta — it carries the sub-millisecond
+        # detail Ta's truncation drops, which is the whole point of the field.
+        "te_us": 1785402000176900}   # `resource` per case identifies the batch
 cases = {
     # The regression case: a 40ms response body. Tc+Tr would close at 6ms.
     "body":  dict(base, resource="case/body", connect_time_ms=1, response_time_ms=3, transfer_time_ms=40,
@@ -69,6 +73,17 @@ cases = {
     "deny":  dict(base, resource="case/deny", connect_time_ms=-1, response_time_ms=-1, transfer_time_ms=-1,
                   total_time_ms=5, status=403, backend="", server="",
                   denied_by="waf:942100", term="PR--"),
+    # te_us=0 is the rollout window: vector has the new transform while HAProxy
+    # still emits the previous log-format, so the req+Ta fallback is a real path.
+    "no_te": dict(base, resource="case/no_te", connect_time_ms=1, response_time_ms=3,
+                  transfer_time_ms=0, total_time_ms=5, status=200, backend="be",
+                  server="s1", te_us=0),
+    # Ta=-1 (aborted transaction) clamps to 0, and with te_us absent the end
+    # lands at req_ns while TR+Tw pushes the upstream start past it — the
+    # negative-duration span this guards against.
+    "aborted": dict(base, resource="case/aborted", connect_time_ms=0, response_time_ms=-1,
+                    transfer_time_ms=-1, total_time_ms=-1, status=-1, backend="be",
+                    server="s1", te_us=0, request_time_ms=2, queue_time_ms=1),
     "unsampled": dict(base, resource="case/unsampled", connect_time_ms=1, response_time_ms=3, transfer_time_ms=0,
                       total_time_ms=5, status=200, backend="be", server="s1",
                       trace_flags="00"),
@@ -109,6 +124,10 @@ unknown = set(got) - set(names)
 if unknown:
     sys.exit(f"unrecognised case tags in output: {sorted(unknown)}")
 errs = []
+# ts = 2026-07-30T09:00:00.123456Z, Th=5, Ti=0 -> request start; Ta=5 for no_te.
+ACCEPT_NS = 1785402000123456000
+REQ_NS = ACCEPT_NS + 5 * 1_000_000
+TE_NS = 1785402000176900 * 1000
 
 def spans(case):
     return got.get(case, [])
@@ -131,7 +150,7 @@ for case in ("body", "504"):
     # span ends. Summing Tc+Tr instead closes at the response headers.
     if u1 != s1:
         errs.append(f"{case}: upstream ends {(s1-u1)/1e6:+.2f}ms before the server span "
-                    f"(must be equal — Ta-(TR+Tw) is Tc+Tr+Td)")
+                    f"(must be equal: both close at the exact transaction end, not at Tc+Tr)")
     if not (s0 <= u0 and u1 <= s1):
         errs.append(f"{case}: upstream span is not enclosed by the server span")
     if up[0].get("parentSpanId") != srv[0]["spanId"]:
@@ -141,6 +160,27 @@ for case in ("body", "504"):
     # Sub-millisecond anchor must survive: ts .123456 + Th 5ms.
     if s0 % 1_000_000 != 456_000:
         errs.append(f"{case}: microsecond precision lost from the anchor (start={s0})")
+    # The end must come from `te`, not from req+Ta: Ta is whole milliseconds and
+    # closing on it loses whatever the truncation discarded.
+    if s1 != TE_NS:
+        errs.append(f"{case}: span end is not the exact te_us instant (end={s1}) — "
+                    f"req+Ta truncation is back")
+
+# The fallback: with te_us absent the end must come from req+Ta, and must NOT
+# silently be the exact instant (which would mean the branch never ran).
+srv = one("no_te", 2)
+if len(srv) != 1:
+    errs.append(f"no_te: expected 1 SERVER span, got {len(srv)}")
+else:
+    s1 = int(srv[0]["endTimeUnixNano"])
+    expected = REQ_NS + 5 * 1_000_000
+    if s1 == TE_NS:
+        errs.append("no_te: end is the te_us instant — the fallback branch did not run")
+    elif s1 != expected:
+        errs.append(f"no_te: fallback end is {s1}, expected req+Ta = {expected}")
+    up = one("no_te", 3)
+    if len(up) == 1 and int(up[0]["endTimeUnixNano"]) != s1:
+        errs.append("no_te: upstream span must still close with the SERVER span under the fallback")
 
 # 40ms body: the span must actually cover it, not close at Tc+Tr = 4ms.
 if one("body", 3):
@@ -175,6 +215,16 @@ if one("body", 2):
     at = {a["key"] for a in one("body", 2)[0]["attributes"]}
     if "haptic.denied_by" in at:
         errs.append("body: empty haptic.denied_by was not filtered out")
+
+# Applies to every case: OTLP consumers reject or mis-render a span whose end
+# precedes its start, and it is the failure mode when two different measurement
+# paths (an exact stamp vs summed whole-ms timers) are combined.
+for case, batch in got.items():
+    for sp in batch:
+        s0, s1 = int(sp["startTimeUnixNano"]), int(sp["endTimeUnixNano"])
+        if s1 < s0:
+            errs.append(f"{case}: span {sp['name']!r} has a negative duration "
+                        f"({(s1-s0)/1e6:.3f}ms)")
 
 if errs:
     print("\n".join("  " + e for e in errs), file=sys.stderr)
