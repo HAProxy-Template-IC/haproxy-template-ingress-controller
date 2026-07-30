@@ -303,210 +303,210 @@ templateSnippets:
           the transform that builds them. vector.yaml keeps the
           `otlpEndpoint != ""` gate, which is the real one. -#}
         # Access-log records -> OTLP spans. Coverage is whatever HAProxy logs,
-              # which includes every response it generates itself. HAProxy already
-              # minted the ids and decided sampling: this stage only reshapes.
-              # Rationale: values.yaml extraContext.tracing.
-              spans:
-                type: remap
-                inputs: [haproxy_log]
-                # A record that is not a sampled access-log line is dropped from THIS
-                # path only — the stdout sink still gets every line, including HAProxy's
-                # process messages.
-                drop_on_abort: true
-                reroute_dropped: false
-                source: |
-                  m, merr = string(.message)
-                  if merr != null { abort }
-                  r, perr = parse_json(m)
-                  if perr != null { abort }
-                  o = object(r) ?? {}
-                  tid = string(o.trace_id) ?? ""
-                  sid = string(o.span_id) ?? ""
-                  if tid == "" || sid == "" { abort }
-                  # Honour the sampling decision HAProxy already took and propagated.
-                  # trace-flags is a BITFIELD, not an enum: W3C defines bit 0 as
-                  # sampled and reserves the rest, so an adopted "03" (sampled +
-                  # random-trace-id) is sampled. Test the bit, not the byte — VRL has
-                  # no % operator, hence mod().
-                  flags_int = parse_int(string(o.trace_flags) ?? "", 16) ?? 0
-                  if mod(flags_int, 2) != 1 { abort }
-                  # A timer reads -1 when its phase never happened. Clamp to 0 for
-                  # offsets; the -1 itself is the signal for whether a span exists.
-                  th = to_int(o.handshake_time_ms) ?? 0
-                  if th < 0 { th = 0 }
-                  ti = to_int(o.idle_time_ms) ?? 0
-                  if ti < 0 { ti = 0 }
-                  trq = to_int(o.request_time_ms) ?? 0
-                  if trq < 0 { trq = 0 }
-                  tw = to_int(o.queue_time_ms) ?? 0
-                  if tw < 0 { tw = 0 }
-                  tc = to_int(o.connect_time_ms) ?? -1
-                  trs = to_int(o.response_time_ms) ?? -1
-                  ta = to_int(o.total_time_ms) ?? 0
-                  if ta < 0 { ta = 0 }
-                  # `ts` is accept_date — the CONNECTION accept. Every timer below is
-                  # request-scoped, so anchoring a span at `ts` starts it one TLS
-                  # handshake plus keep-alive idle too early, and it can then end
-                  # before the backend it waited on. Request receipt is
-                  # accept + Th + Ti; the phases follow HAProxy's fixed order.
-                  accept_ns = to_unix_timestamp(parse_timestamp(string(o.ts) ?? "", "%Y-%m-%dT%H:%M:%S%.fZ") ?? now(), unit: "nanoseconds")
-                  ms = 1000000
-                  req_ns = accept_ns + (th + ti) * ms
-                  # te_us carries no whole-ms truncation; req+Ta is the fallback.
-                  te_us = to_int(o.te_us) ?? 0
-                  end_ns = req_ns + ta * ms
-                  if te_us > 0 { end_ns = te_us * 1000 }
-                  if end_ns < req_ns { end_ns = req_ns }
-                  srv_ns = req_ns + (trq + tw) * ms
-                  # No negative-duration span: reachable when Ta is -1 (aborted).
-                  if end_ns < srv_ns { end_ns = srv_ns }
-                  st = to_int(o.status) ?? 0
-                  route = string(o.route) ?? ""
-                  meth = string(o.method) ?? ""
-                  res = string(o.resource) ?? ""
-                  # route is the whole matched key, host included: the NAME keeps the
-                  # host (a deliberate semconv deviation), http.route is the path.
-                  rt = replace(route, r'^[^/]*', "")
-                  # Bare method when neither exists; "GET []" is not a name.
-                  span_name = meth
-                  if res != "" { span_name = meth + " [" + res + "]" }
-                  if route != "" { span_name = meth + " " + route }
-                  # Two loops, not a line per attribute: this template ships inside the
-                  # config CR, where a literal line costs ~3x a table entry. Empty values
-                  # are skipped, so no separate filter pass is needed.
-                  #
+        # which includes every response it generates itself. HAProxy already
+        # minted the ids and decided sampling: this stage only reshapes.
+        # Rationale: values.yaml extraContext.tracing.
+        spans:
+          type: remap
+          inputs: [haproxy_log]
+          # A record that is not a sampled access-log line is dropped from THIS
+          # path only — the stdout sink still gets every line, including HAProxy's
+          # process messages.
+          drop_on_abort: true
+          reroute_dropped: false
+          source: |
+            m, merr = string(.message)
+            if merr != null { abort }
+            r, perr = parse_json(m)
+            if perr != null { abort }
+            o = object(r) ?? {}
+            tid = string(o.trace_id) ?? ""
+            sid = string(o.span_id) ?? ""
+            if tid == "" || sid == "" { abort }
+            # Honour the sampling decision HAProxy already took and propagated.
+            # trace-flags is a BITFIELD, not an enum: W3C defines bit 0 as
+            # sampled and reserves the rest, so an adopted "03" (sampled +
+            # random-trace-id) is sampled. Test the bit, not the byte — VRL has
+            # no % operator, hence mod().
+            flags_int = parse_int(string(o.trace_flags) ?? "", 16) ?? 0
+            if mod(flags_int, 2) != 1 { abort }
+            # A timer reads -1 when its phase never happened. Clamp to 0 for
+            # offsets; the -1 itself is the signal for whether a span exists.
+            th = to_int(o.handshake_time_ms) ?? 0
+            if th < 0 { th = 0 }
+            ti = to_int(o.idle_time_ms) ?? 0
+            if ti < 0 { ti = 0 }
+            trq = to_int(o.request_time_ms) ?? 0
+            if trq < 0 { trq = 0 }
+            tw = to_int(o.queue_time_ms) ?? 0
+            if tw < 0 { tw = 0 }
+            tc = to_int(o.connect_time_ms) ?? -1
+            trs = to_int(o.response_time_ms) ?? -1
+            ta = to_int(o.total_time_ms) ?? 0
+            if ta < 0 { ta = 0 }
+            # `ts` is accept_date — the CONNECTION accept. Every timer below is
+            # request-scoped, so anchoring a span at `ts` starts it one TLS
+            # handshake plus keep-alive idle too early, and it can then end
+            # before the backend it waited on. Request receipt is
+            # accept + Th + Ti; the phases follow HAProxy's fixed order.
+            accept_ns = to_unix_timestamp(parse_timestamp(string(o.ts) ?? "", "%Y-%m-%dT%H:%M:%S%.fZ") ?? now(), unit: "nanoseconds")
+            ms = 1000000
+            req_ns = accept_ns + (th + ti) * ms
+            # te_us carries no whole-ms truncation; req+Ta is the fallback.
+            te_us = to_int(o.te_us) ?? 0
+            end_ns = req_ns + ta * ms
+            if te_us > 0 { end_ns = te_us * 1000 }
+            if end_ns < req_ns { end_ns = req_ns }
+            srv_ns = req_ns + (trq + tw) * ms
+            # No negative-duration span: reachable when Ta is -1 (aborted).
+            if end_ns < srv_ns { end_ns = srv_ns }
+            st = to_int(o.status) ?? 0
+            route = string(o.route) ?? ""
+            meth = string(o.method) ?? ""
+            res = string(o.resource) ?? ""
+            # route is the whole matched key, host included: the NAME keeps the
+            # host (a deliberate semconv deviation), http.route is the path.
+            rt = replace(route, r'^[^/]*', "")
+            # Bare method when neither exists; "GET []" is not a name.
+            span_name = meth
+            if res != "" { span_name = meth + " [" + res + "]" }
+            if route != "" { span_name = meth + " " + route }
+            # Two loops, not a line per attribute: this template ships inside the
+            # config CR, where a literal line costs ~3x a table entry. Empty values
+            # are skipped, so no separate filter pass is needed.
+            #
             # No client IP in either direction: client_ip (forwarded) and
             # client_ip_peer (raw TCP source) are personal data under GDPR, and a
             # trace is retained and shared far more widely than an access log.
             # Correlate via haptic.req_id, which the log line also carries.
             #
             # hl carries the HAPTIC-specific fields, whose attribute name is
-                  # `haptic.` + the ACCESS-LOG FIELD NAME. Keeping the two identical is
-                  # what lets you jump from a log line to the span attribute without a
-                  # translation table; sm holds the rest, where semconv dictates a name.
-                  hl = ["resource","req_id","denied_by","gw_route","cache","app_backend",
-                    "waf_action","waf_rule_id","waf_score","waf_rules_hit","waf_matched_var",
-                    "auth_status","rate_limit_allowed","rate_limit_remaining","schema_outcome",
-                    "mtls_cn","mtls_verify"]
-                  # A LIST, not an object: for_each over a VRL object has no
-                  # defined key order, so the attribute order in the OTLP payload
-                  # would vary run to run. "key|log_field" keeps it dense.
-                  sm = ["http.request.method|method","url.path|path","server.address|host",
-                    "tls.protocol.version|tls_version","tls.server_name|tls_sni",
-                    "user.id|consumer","haproxy.frontend|frontend","haproxy.backend|backend",
-                    "haproxy.term_state|term"]
-                  attrs = []
-                  for_each(hl) -> |_i, f| {
-                    v = string(get(o, [f]) ?? "") ?? ""
-                    if v != "" { attrs = push(attrs, {"key": "haptic." + f, "value": {"stringValue": v}}) }
-                  }
-                  for_each(sm) -> |_i, e| {
-                    kv = split(string!(e), "|")
-                    k = string!(kv[0])
-                    v = string(get(o, [string!(kv[1])]) ?? "") ?? ""
-                    if v != "" { attrs = push(attrs, {"key": k, "value": {"stringValue": v}}) }
-                  }
-                  # semconv wants "1.1"; HAProxy logs "HTTP/1.1".
-                  pv = replace(string(o.http_version) ?? "", "HTTP/", "")
-                  if pv != "" { attrs = push(attrs, {"key":"network.protocol.version","value":{"stringValue": pv}}) }
-                  if rt != "" { attrs = push(attrs, {"key":"http.route","value":{"stringValue": rt}}) }
-                  # Absent is not false, and not port 0: both would read as a real
-                  # measurement on a plaintext frontend.
-                  if exists(o.tls_resumed) { attrs = push(attrs, {"key":"tls.resumed","value":{"boolValue": to_bool(o.tls_resumed) ?? false}}) }
-                  if exists(o.listener_port) { attrs = push(attrs, {"key":"server.port","value":{"intValue": to_string(to_int(o.listener_port) ?? 0)}}) }
-                  if exists(o.bytes) { attrs = push(attrs, {"key":"http.response.body.size","value":{"intValue": to_string(to_int(o.bytes) ?? 0)}}) }
-                  # Attributes, not child spans: no intra-request event times exist,
-                  # and the handshake precedes the request span anyway.
-                  attrs = append(attrs, [
-                    {"key":"http.response.status_code","value":{"intValue": to_string(st)}},
-                    {"key":"haproxy.time.client_handshake_ms","value":{"intValue": to_string(th)}},
-                    {"key":"haproxy.time.idle_ms","value":{"intValue": to_string(ti)}},
-                    {"key":"haproxy.time.request_ms","value":{"intValue": to_string(trq)}}
-                  ])
-                  # semconv {method} {http.route}: the route template, never the URI
-                  # path (unbounded cardinality). Bracketed fallback = not a path.
-                  server_span = {
-                    "traceId": tid,
-                    "spanId": sid,
-                    "name": span_name,
-                    "kind": 2,
-                    "startTimeUnixNano": to_string(req_ns),
-                    "endTimeUnixNano": to_string(end_ns),
-                    "attributes": attrs
-                  }
-                  # OTLP: parentSpanId must be ABSENT on a root span, not empty.
-                  pid = string(o.parent_span_id) ?? ""
-                  if pid != "" { server_span = set!(server_span, ["parentSpanId"], pid) }
-                  if st >= 500 { server_span = set!(server_span, ["status"], {"code": 2}) }
-                  spans = [server_span]
-                  # CLIENT span for the upstream call. It carries upstream_span_id —
-                  # what HAProxy propagated — so the backend's span nests inside it.
-                  # Absent when no backend was contacted (Tc/Tr are -1 for a deny, a
-                  # 429, a redirect, an errorfile); the SERVER span still covers those.
-                  usid = string(o.upstream_span_id) ?? ""
-                  if usid != "" && (tc >= 0 || trs >= 0) {
-                    tdd = to_int(o.transfer_time_ms) ?? -1
-                    ctc = tc
-                    if ctc < 0 { ctc = 0 }
-                    ctr = trs
-                    if ctr < 0 { ctr = 0 }
-                    ctd = tdd
-                    if ctd < 0 { ctd = 0 }
-                    # Tc+Tr+Td, not the transaction end: that end includes the write
-                    # to the CLIENT. Tc+Tr alone stops at the response headers and
-                    # excluded the body. A -1 timer means the phase never ran, so the
-                    # attribute is omitted rather than 0. VRL rejects comments inside
-                    # an object literal, hence these sit out here.
-                    be = string(o.backend) ?? ""
-                    up_name = "Server session"
-                    if be != "" { up_name = "Server session [" + be + "]" }
-                    up_end_ns = srv_ns + (ctc + ctr + ctd) * ms
-                    if up_end_ns > end_ns { up_end_ns = end_ns }
-                    if up_end_ns < srv_ns { up_end_ns = srv_ns }
-                    # Upstream-leg properties only. The client-side timers (Th, Ti,
-                    # TR) stay on the SERVER span — they are over before this span
-                    # starts. Queue, retries and the chosen server describe reaching
-                    # THIS backend, not the transaction that waited for them.
-                    upstream_attrs = [{"key":"haproxy.backend","value":{"stringValue": string(o.backend) ?? ""}},
-                      {"key":"haproxy.time.queue_ms","value":{"intValue": to_string(tw)}},
-                      {"key":"haproxy.retries","value":{"intValue": to_string(to_int(o.retries) ?? 0)}}]
-                    sv = string(o.server) ?? ""
-                    if sv != "" { upstream_attrs = push(upstream_attrs, {"key":"haproxy.server","value":{"stringValue": sv}}) }
-                    # haproxy.server is the pre-allocated SLOT (SRV_1); the pod
-                    # behind it comes from the connection destination.
-                    pod = string(o.server_pod) ?? ""
-                    if pod != "" { upstream_attrs = push(upstream_attrs, {"key":"k8s.pod.name","value":{"stringValue": pod}}) }
-                    ksvc = string(o.service) ?? ""
-                    if ksvc != "" { upstream_attrs = push(upstream_attrs, {"key":"k8s.service.name","value":{"stringValue": ksvc}}) }
-                    if tc >= 0 {
-                      upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.connect_ms","value":{"intValue": to_string(tc)}})
-                    }
-                    if trs >= 0 {
-                      upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.response_ms","value":{"intValue": to_string(trs)}})
-                    }
-                    if tdd >= 0 {
-                      upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.transfer_ms","value":{"intValue": to_string(tdd)}})
-                    }
-                    upstream_span = {
-                      "traceId": tid,
-                      "spanId": usid,
-                      "parentSpanId": sid,
-                      "name": up_name,
-                      "kind": 3,
-                      "startTimeUnixNano": to_string(srv_ns),
-                      "endTimeUnixNano": to_string(up_end_ns),
-                      "attributes": upstream_attrs
-                    }
-                    spans = push(spans, upstream_span)
-                    # No "Wait for response" span (the official filter has one):
-                    # HAProxy mints two span ids, and this would need a third. Giving
-                    # it the upstream id makes it its own parent, and inventing an id
-                    # in the log pipeline adds a span carrying nothing that
-                    # haproxy.time.connect_ms / response_ms above do not already say.
-                  }
-                  # An array assigned to `.` fans out into one event per element, and
-                  # the sink batches them back into a single resourceSpans payload.
-                  . = spans
+            # `haptic.` + the ACCESS-LOG FIELD NAME. Keeping the two identical is
+            # what lets you jump from a log line to the span attribute without a
+            # translation table; sm holds the rest, where semconv dictates a name.
+            hl = ["resource","req_id","denied_by","gw_route","cache","app_backend",
+              "waf_action","waf_rule_id","waf_score","waf_rules_hit","waf_matched_var",
+              "auth_status","rate_limit_allowed","rate_limit_remaining","schema_outcome",
+              "mtls_cn","mtls_verify"]
+            # A LIST, not an object: for_each over a VRL object has no
+            # defined key order, so the attribute order in the OTLP payload
+            # would vary run to run. "key|log_field" keeps it dense.
+            sm = ["http.request.method|method","url.path|path","server.address|host",
+              "tls.protocol.version|tls_version","tls.server_name|tls_sni",
+              "user.id|consumer","haproxy.frontend|frontend","haproxy.backend|backend",
+              "haproxy.term_state|term"]
+            attrs = []
+            for_each(hl) -> |_i, f| {
+              v = string(get(o, [f]) ?? "") ?? ""
+              if v != "" { attrs = push(attrs, {"key": "haptic." + f, "value": {"stringValue": v}}) }
+            }
+            for_each(sm) -> |_i, e| {
+              kv = split(string!(e), "|")
+              k = string!(kv[0])
+              v = string(get(o, [string!(kv[1])]) ?? "") ?? ""
+              if v != "" { attrs = push(attrs, {"key": k, "value": {"stringValue": v}}) }
+            }
+            # semconv wants "1.1"; HAProxy logs "HTTP/1.1".
+            pv = replace(string(o.http_version) ?? "", "HTTP/", "")
+            if pv != "" { attrs = push(attrs, {"key":"network.protocol.version","value":{"stringValue": pv}}) }
+            if rt != "" { attrs = push(attrs, {"key":"http.route","value":{"stringValue": rt}}) }
+            # Absent is not false, and not port 0: both would read as a real
+            # measurement on a plaintext frontend.
+            if exists(o.tls_resumed) { attrs = push(attrs, {"key":"tls.resumed","value":{"boolValue": to_bool(o.tls_resumed) ?? false}}) }
+            if exists(o.listener_port) { attrs = push(attrs, {"key":"server.port","value":{"intValue": to_string(to_int(o.listener_port) ?? 0)}}) }
+            if exists(o.bytes) { attrs = push(attrs, {"key":"http.response.body.size","value":{"intValue": to_string(to_int(o.bytes) ?? 0)}}) }
+            # Attributes, not child spans: no intra-request event times exist,
+            # and the handshake precedes the request span anyway.
+            attrs = append(attrs, [
+              {"key":"http.response.status_code","value":{"intValue": to_string(st)}},
+              {"key":"haproxy.time.client_handshake_ms","value":{"intValue": to_string(th)}},
+              {"key":"haproxy.time.idle_ms","value":{"intValue": to_string(ti)}},
+              {"key":"haproxy.time.request_ms","value":{"intValue": to_string(trq)}}
+            ])
+            # semconv {method} {http.route}: the route template, never the URI
+            # path (unbounded cardinality). Bracketed fallback = not a path.
+            server_span = {
+              "traceId": tid,
+              "spanId": sid,
+              "name": span_name,
+              "kind": 2,
+              "startTimeUnixNano": to_string(req_ns),
+              "endTimeUnixNano": to_string(end_ns),
+              "attributes": attrs
+            }
+            # OTLP: parentSpanId must be ABSENT on a root span, not empty.
+            pid = string(o.parent_span_id) ?? ""
+            if pid != "" { server_span = set!(server_span, ["parentSpanId"], pid) }
+            if st >= 500 { server_span = set!(server_span, ["status"], {"code": 2}) }
+            spans = [server_span]
+            # CLIENT span for the upstream call. It carries upstream_span_id —
+            # what HAProxy propagated — so the backend's span nests inside it.
+            # Absent when no backend was contacted (Tc/Tr are -1 for a deny, a
+            # 429, a redirect, an errorfile); the SERVER span still covers those.
+            usid = string(o.upstream_span_id) ?? ""
+            if usid != "" && (tc >= 0 || trs >= 0) {
+              tdd = to_int(o.transfer_time_ms) ?? -1
+              ctc = tc
+              if ctc < 0 { ctc = 0 }
+              ctr = trs
+              if ctr < 0 { ctr = 0 }
+              ctd = tdd
+              if ctd < 0 { ctd = 0 }
+              # Tc+Tr+Td, not the transaction end: that end includes the write
+              # to the CLIENT. Tc+Tr alone stops at the response headers and
+              # excluded the body. A -1 timer means the phase never ran, so the
+              # attribute is omitted rather than 0. VRL rejects comments inside
+              # an object literal, hence these sit out here.
+              be = string(o.backend) ?? ""
+              up_name = "Server session"
+              if be != "" { up_name = "Server session [" + be + "]" }
+              up_end_ns = srv_ns + (ctc + ctr + ctd) * ms
+              if up_end_ns > end_ns { up_end_ns = end_ns }
+              if up_end_ns < srv_ns { up_end_ns = srv_ns }
+              # Upstream-leg properties only. The client-side timers (Th, Ti,
+              # TR) stay on the SERVER span — they are over before this span
+              # starts. Queue, retries and the chosen server describe reaching
+              # THIS backend, not the transaction that waited for them.
+              upstream_attrs = [{"key":"haproxy.backend","value":{"stringValue": string(o.backend) ?? ""}},
+                {"key":"haproxy.time.queue_ms","value":{"intValue": to_string(tw)}},
+                {"key":"haproxy.retries","value":{"intValue": to_string(to_int(o.retries) ?? 0)}}]
+              sv = string(o.server) ?? ""
+              if sv != "" { upstream_attrs = push(upstream_attrs, {"key":"haproxy.server","value":{"stringValue": sv}}) }
+              # haproxy.server is the pre-allocated SLOT (SRV_1); the pod
+              # behind it comes from the connection destination.
+              pod = string(o.server_pod) ?? ""
+              if pod != "" { upstream_attrs = push(upstream_attrs, {"key":"k8s.pod.name","value":{"stringValue": pod}}) }
+              ksvc = string(o.service) ?? ""
+              if ksvc != "" { upstream_attrs = push(upstream_attrs, {"key":"k8s.service.name","value":{"stringValue": ksvc}}) }
+              if tc >= 0 {
+                upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.connect_ms","value":{"intValue": to_string(tc)}})
+              }
+              if trs >= 0 {
+                upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.response_ms","value":{"intValue": to_string(trs)}})
+              }
+              if tdd >= 0 {
+                upstream_attrs = push(upstream_attrs, {"key":"haproxy.time.transfer_ms","value":{"intValue": to_string(tdd)}})
+              }
+              upstream_span = {
+                "traceId": tid,
+                "spanId": usid,
+                "parentSpanId": sid,
+                "name": up_name,
+                "kind": 3,
+                "startTimeUnixNano": to_string(srv_ns),
+                "endTimeUnixNano": to_string(up_end_ns),
+                "attributes": upstream_attrs
+              }
+              spans = push(spans, upstream_span)
+              # No "Wait for response" span (the official filter has one):
+              # HAProxy mints two span ids, and this would need a third. Giving
+              # it the upstream id makes it its own parent, and inventing an id
+              # in the log pipeline adds a span carrying nothing that
+              # haproxy.time.connect_ms / response_ms above do not already say.
+            }
+            # An array assigned to `.` fans out into one event per element, and
+            # the sink batches them back into a single resourceSpans payload.
+            . = spans
 
 validationTests:
   test-vector-config-rendered:
