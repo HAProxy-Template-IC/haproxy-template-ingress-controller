@@ -41,7 +41,10 @@ work = pathlib.Path(sys.argv[1])
 tpl = None
 for d in yaml.safe_load_all((work / "render.yaml").read_text()):
     if d and d.get("kind") == "HAProxyTemplateConfig":
-        tpl = d["spec"]["files"]["vector.yaml"]["template"]
+        # The transform lives in its own snippet so Helm can drop it from the
+        # config object when no OTLP endpoint is set; it is no longer inline in
+        # files/vector.yaml.
+        tpl = d["spec"]["templateSnippets"]["vector-span-transform"]["template"]
 if tpl is None:
     sys.exit("no HAProxyTemplateConfig in the render")
 try:
@@ -49,7 +52,15 @@ try:
     j = tpl.index(". = spans", i) + len(". = spans")
 except ValueError:
     sys.exit("span transform not found in the rendered vector.yaml — did the VRL move?")
-body = tpl[i:j].split("\n")
+# The slice is Scriggo template source. It only behaves as VRL because the
+# transform contains no template constructs; one `{%- ... %}` inside it and we
+# would be feeding vector something it can never parse, from a test that is
+# supposed to prove the opposite.
+region = tpl[i:j]
+if "{%" in region or "{#" in region or "{{" in region:
+    sys.exit("the span transform contains template constructs — this harness executes the "
+             "TEMPLATE, so the VRL must stay free of them (or switch to --dump-rendered)")
+body = region.split("\n")
 indent = min((len(l) - len(l.lstrip())) for l in body if l.strip())
 (work / "prog.vrl").write_text("\n".join(l[indent:] if len(l) > indent else l for l in body))
 
@@ -58,12 +69,13 @@ base = {"ts": "2026-07-30T09:00:00.123456Z", "req_id": "r", "trace_id": "a"*32,
         "span_id": "b"*16, "upstream_span_id": "c"*16, "parent_span_id": "",
         "trace_flags": "01", "handshake_time_ms": 5, "idle_time_ms": 0,
         "request_time_ms": 2, "queue_time_ms": 0, "retries": 0, "method": "GET",
-        "path": "/p/unset", "host": "h", "client_ip": "1.2.3.4", "term": "----",
+        "path": "/p/unset", "host": "h", "frontend": "fe_https",
+        "tls_version": "TLSv1.3", "tls_resumed": True, "client_ip": "1.2.3.4", "term": "----",
         "denied_by": "",
         # te_us: the exact end in epoch microseconds. ts is ...00.123456, so
         # this is deliberately NOT ts + Th+Ti+Ta — it carries the sub-millisecond
         # detail Ta's truncation drops, which is the whole point of the field.
-        "te_us": 1785402000176900}   # `resource` per case identifies the batch
+        "te_us": 1785402000176900, "server_pod": "echo-abc-123", "service": "default/echo"}   # `resource` per case identifies the batch
 cases = {
     # The regression case: a 40ms response body. Tc+Tr would close at 6ms.
     "body":  dict(base, path="/p/body", resource="case/body", connect_time_ms=1, response_time_ms=3, transfer_time_ms=40,
@@ -224,6 +236,63 @@ else:
         errs.append(f"notarget: span name is {srv[0]['name']!r}, expected 'GET'")
     if "http.route" in at:
         errs.append("notarget: http.route must be absent when nothing matched")
+
+# No client IP reaches a span. Both the forwarded address and the raw TCP peer
+# are personal data, and a trace travels further and lives longer than an access
+# log. The fixture's client_ip is 1.2.3.4, so this catches the value leaking
+# under ANY key, not just the two obvious ones.
+BANNED_KEYS = {"client.address", "network.peer.address", "client.socket.address",
+               "net.peer.ip", "http.client_ip"}
+for case, batch in got.items():
+    for sp in batch:
+        for a in sp.get("attributes", []):
+            if a["key"] in BANNED_KEYS:
+                errs.append(f"{case}: {a['key']} exports a client IP")
+            v = a.get("value", {}).get("stringValue")
+            if isinstance(v, str) and "1.2.3.4" in v:
+                errs.append(f"{case}: attribute {a['key']} leaks the client IP ({v})")
+
+# Attribute placement. A client-side timer on the upstream span (or an
+# upstream-leg one on the SERVER span) reads as a measurement of the wrong
+# thing, which is worse than omitting it.
+# denied_by is deliberately absent: a successful request has no denial, so
+# forcing one here to satisfy the non-vacuity guard below would be a fixture
+# that lies. The deny case asserts it separately.
+CLIENT_ONLY = {"haproxy.time.client_handshake_ms", "haproxy.time.idle_ms",
+               "haproxy.time.request_ms", "tls.protocol.version", "tls.resumed",
+               "haproxy.frontend"}
+UPSTREAM_ONLY = {"haproxy.server", "haproxy.retries", "haproxy.time.queue_ms",
+                 "haproxy.time.connect_ms", "haproxy.time.response_ms",
+                 "haproxy.time.transfer_ms"}
+for case in ("body", "routed"):
+    srv, up = one(case, 2), one(case, 3)
+    if len(srv) != 1 or len(up) != 1:
+        continue
+    skeys = {a["key"] for a in srv[0]["attributes"]}
+    ukeys = {a["key"] for a in up[0]["attributes"]}
+    for k in sorted(CLIENT_ONLY & ukeys):
+        errs.append(f"{case}: {k} is client-side but appears on the upstream span")
+    for k in sorted(UPSTREAM_ONLY & skeys):
+        errs.append(f"{case}: {k} describes the upstream leg but appears on the SERVER span")
+    # A placement rule for an attribute no fixture emits can never fail. Assert
+    # the inputs exist, so the checks above cannot quietly become decorative.
+    for k in sorted(CLIENT_ONLY - skeys):
+        errs.append(f"{case}: {k} is asserted client-side but no fixture emits it — the check is vacuous")
+    for k in sorted(UPSTREAM_ONLY - ukeys):
+        errs.append(f"{case}: {k} is asserted upstream but no fixture emits it — the check is vacuous")
+    if "haproxy.server" not in ukeys:
+        errs.append(f"{case}: the upstream span must name the server it called")
+    # The slot name (SRV_1) is not the pod; both belong on the upstream span.
+    if "k8s.pod.name" not in ukeys:
+        errs.append(f"{case}: the upstream span must carry the backend pod name")
+    if "k8s.pod.name" in skeys:
+        errs.append(f"{case}: the pod name describes the upstream leg, not the SERVER span")
+    if "k8s.service.name" not in ukeys:
+        errs.append(f"{case}: the upstream span must name the Service it called")
+    if "k8s.service.name" in skeys:
+        errs.append(f"{case}: the Service describes the upstream leg, not the SERVER span")
+    if "haproxy.time.request_ms" not in skeys:
+        errs.append(f"{case}: the SERVER span must keep the client-side request timer")
 
 # The fallback: with te_us absent the end must come from req+Ta, and must NOT
 # silently be the exact instant (which would mean the branch never ran).
