@@ -176,8 +176,20 @@ spec:
               chmod +x /etc/haproxy/reload.sh
               {{- $memReq := dig "requests" "memory" "" $haproxy.resources }}
               exec {{ $haproxyBin }} -dr -W -db{{ if $memReq }} -m {{ include "haptic.memoryToMB" $memReq }}{{ end }} -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
-          {{- with $haproxy.extraEnv }}
           env:
+            # Which pod served the request. HAProxy reads these once into
+            # proc-scoped variables, so the access log and the trace span can
+            # name the replica without a per-request lookup. Unset is safe:
+            # HAProxy renders an empty value and the field drops out.
+            - name: SELF_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SELF_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          {{- with $haproxy.extraEnv }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:

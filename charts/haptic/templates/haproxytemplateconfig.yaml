@@ -268,6 +268,29 @@ spec:
   {{- $_ := set $config.templatingSettings "extraContext" ($config.templatingSettings.extraContext | default dict) }}
   {{- $extraContext := $config.templatingSettings.extraContext }}
 
+  {{- /* Which HAPTIC emitted a span. Several deployments per cluster — one for
+         internal traffic and one for external, or one per tenant — otherwise all
+         report service.name=haptic and are indistinguishable in the trace
+         backend. These become OTLP RESOURCE attributes, which describe the
+         emitter, so they are derived from the release rather than configured.
+         An operator value always wins; k8s.cluster.name has no default because
+         Kubernetes exposes no cluster name to a pod. */ -}}
+  {{- if dig "tracing" "otlp" "endpoint" "" $extraContext }}
+    {{- $tr := (dig "tracing" dict $extraContext) }}
+    {{- $otlp := (dig "otlp" dict $tr) }}
+    {{- if not (dig "serviceNamespace" "" $otlp) }}
+      {{- $_ := set $otlp "serviceNamespace" .Release.Namespace }}
+    {{- end }}
+    {{- if not (dig "serviceVersion" "" $otlp) }}
+      {{- $_ := set $otlp "serviceVersion" (.Chart.AppVersion | toString) }}
+    {{- end }}
+    {{- if not (dig "deploymentName" "" $otlp) }}
+      {{- $_ := set $otlp "deploymentName" (include "haptic.haproxyFullname" .) }}
+    {{- end }}
+    {{- $_ := set $tr "otlp" $otlp }}
+    {{- $_ := set $extraContext "tracing" $tr }}
+  {{- end }}
+
   {{- /* Which Ingress annotation families are active, for the cross-family
          feature-collision validator in the ingress-annotations-compat
          library. A disabled family's annotations are inert, so the validator

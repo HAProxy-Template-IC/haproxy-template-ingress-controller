@@ -42,6 +42,20 @@ files:
           deployment's tracing setup. Empty = no span pipeline. -#}
       {%- var otlpEndpoint = extraContext | dig_string("", "tracing", "otlp", "endpoint") -%}
       {%- var otlpService = extraContext | dig_string("haptic", "tracing", "otlp", "serviceName") -%}
+      {#- Resource attributes describe the EMITTER, so they identify this HAPTIC:
+          several per cluster (internal vs external, or one per tenant) would
+          otherwise all report service.name=haptic. Chart-derived, except the
+          cluster name — Kubernetes exposes none to a pod. Each is omitted when
+          empty rather than sent blank. -#}
+      {%- var resAttrs = []string{} -%}
+      {%- var addRes = func(k string, v string) { if v != "" { resAttrs = append(resAttrs, "{\"key\":\"" + k + "\",\"value\":{\"stringValue\":\"" + v + "\"}}") } } -%}
+      {%- addRes("service.name", otlpService) -%}
+      {%- addRes("service.namespace", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceNamespace"))) -%}
+      {%- addRes("service.version", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceVersion"))) -%}
+      {%- addRes("k8s.namespace.name", tostring(extraContext | dig_string("", "tracing", "otlp", "serviceNamespace"))) -%}
+      {%- addRes("k8s.deployment.name", tostring(extraContext | dig_string("", "tracing", "otlp", "deploymentName"))) -%}
+      {%- addRes("k8s.cluster.name", tostring(extraContext | dig_string("", "tracing", "otlp", "clusterName"))) -%}
+      {%- var resJSON = join(resAttrs, ",") -%}
       {#- Scriggo's `if` treats any non-empty string as truthy, so a CR with the
           string "false" would ENABLE this. No isbool(); fallback() is nil-only. -#}
       {%- var omitEmptyRaw = vec | dig("omitEmptyLogFields") -%}
@@ -268,7 +282,7 @@ files:
           method: post
           encoding:
             codec: json
-          payload_prefix: '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"{{ otlpService }}"}}]},"scopeSpans":[{"scope":{"name":"haptic"},"spans":'
+          payload_prefix: '{"resourceSpans":[{"resource":{"attributes":[{{ resJSON }}]},"scopeSpans":[{"scope":{"name":"haptic"},"spans":'
           payload_suffix: '}]}]}'
           request:
             headers:
@@ -387,14 +401,15 @@ templateSnippets:
             hl = ["resource","req_id","denied_by","gw_route","cache","app_backend",
               "waf_action","waf_rule_id","waf_score","waf_rules_hit","waf_matched_var",
               "auth_status","rate_limit_allowed","rate_limit_remaining","schema_outcome",
-              "mtls_cn","mtls_verify"]
+              "instance_pod","instance_node"]
             # A LIST, not an object: for_each over a VRL object has no
             # defined key order, so the attribute order in the OTLP payload
             # would vary run to run. "key|log_field" keeps it dense.
             sm = ["http.request.method|method","url.path|path","server.address|host",
               "tls.protocol.version|tls_version","tls.server_name|tls_sni",
               "user.id|consumer","haproxy.frontend|frontend","haproxy.backend|backend",
-              "haproxy.term_state|term"]
+              "haproxy.term_state|term","haproxy.mtls_verify|mtls_verify",
+              "tls.client.subject|mtls_cn","network.local.address|destination_ip"]
             attrs = []
             for_each(hl) -> |_i, f| {
               v = string(get(o, [f]) ?? "") ?? ""
@@ -619,6 +634,22 @@ validationTests:
       - type: contains
         target: file:vector.yaml
         pattern: 'uri: "http://tempo:4318/v1/traces"'
+      - type: contains
+        target: file:vector.yaml
+        pattern: '"key":"service\.namespace","value":\{"stringValue":"default"\}'
+        description: >-
+          Resource attributes identify WHICH HAPTIC emitted the span. Without
+          them several deployments in one cluster all report service.name=haptic
+          and are indistinguishable in the trace backend
+      - type: contains
+        target: file:vector.yaml
+        pattern: '"key":"k8s\.deployment\.name","value":\{"stringValue":"[^"]+-haproxy"\}'
+      - type: not_contains
+        target: file:vector.yaml
+        pattern: '"key":"k8s\.cluster\.name"'
+        description: >-
+          Omitted, not blank, when unset: Kubernetes exposes no cluster name to a
+          pod, so there is nothing to default it to
       - type: contains
         target: file:vector.yaml
         pattern: 'inputs: \[spans\]'
