@@ -67,6 +67,11 @@ const (
 	// keeping one second of response margin makes 29 seconds the hard maximum.
 	MaximumAdmissionTimeout = 29 * time.Second
 
+	// unregisteredGVKLabel stands in for the real GVK on the metric emitted
+	// when an AdmissionReview arrives for a kind no validator backs. Deliberately
+	// not a valid GVK string, so it cannot collide with a real one.
+	unregisteredGVKLabel = "<unregistered>"
+
 	// webhookResponseGrace keeps the HTTP server's write deadline beyond the
 	// longest validator deadline. The API server's own timeout remains the
 	// authoritative outer bound; this only prevents net/http from cutting off a
@@ -263,6 +268,8 @@ func (c *Component) Start(ctx context.Context) error {
 		KeyPEM:       c.config.KeyPEM,
 		ReadTimeout:  timeouts.HTTPServerTimeout,
 		WriteTimeout: c.serverWriteTimeout(),
+
+		OnUnregisteredGVK: c.reportUnregisteredGVK,
 	})
 	if err != nil {
 		return fmt.Errorf("creating webhook server: %w", err)
@@ -596,7 +603,7 @@ func (c *Component) createConfigValidator() webhook.ValidationFunc {
 			c.metrics.RecordWebhookValidation(HAProxyTemplateConfigGVK, resultStr)
 		}
 
-		c.logger.Log(context.Background(), admissionLogLevel(allowed, len(warnings)), "HAProxyTemplateConfig validation completed",
+		c.logger.Log(context.Background(), configAdmissionLogLevel(), "HAProxyTemplateConfig validation completed",
 			"operation", valCtx.Operation,
 			"namespace", valCtx.Namespace,
 			"name", valCtx.Name,
@@ -634,15 +641,53 @@ func (c *Component) validateBasicStructure(object any) error {
 	return nil
 }
 
+// reportUnregisteredGVK records an AdmissionReview the API server routed here
+// for a kind no validator backs. It is admitted unchecked — nothing registered
+// can judge it — so the only defence is that it is loud: a rule in the
+// ValidatingWebhookConfiguration whose validator failed to register (a
+// RESTMapper miss, a kind dropped from watchedResources) leaves the gate open
+// for that kind, and silence would make it indistinguishable from a clean pass.
+func (c *Component) reportUnregisteredGVK(gvk string) {
+	c.logger.Warn("Admission request for a kind with no registered validator; admitted unchecked",
+		"gvk", gvk)
+	if c.metrics != nil {
+		// The gvk is read off the AdmissionReview, and the listener does not
+		// require client certificates — anything that can reach the Service can
+		// invent one. A Prometheus label value keeps its series forever, so the
+		// counter carries a fixed sentinel and the real gvk stays in the log
+		// line above, where volume is bounded by retention rather than memory.
+		c.metrics.RecordWebhookValidation(unregisteredGVKLabel, "unregistered")
+	}
+}
+
 // admissionLogLevel returns slog.LevelDebug for a clean allow (admitted with
 // no warnings) so steady-state successful admissions don't spam the log at
 // INFO, and slog.LevelInfo for denials or warning-bearing admissions — the
 // cases an operator actually wants to see. Mirrors the commentator's
 // "demote to DEBUG when nothing notable happened" rule (see
 // pkg/controller/commentator/log_levels.go).
+//
+// Only for watched resources, which arrive at cluster traffic rates. The
+// HAProxyTemplateConfig gate logs unconditionally at INFO — see
+// configAdmissionLogLevel.
 func admissionLogLevel(allowed bool, warnings int) slog.Level {
 	if allowed && warnings == 0 {
 		return slog.LevelDebug
 	}
+	return slog.LevelInfo
+}
+
+// configAdmissionLogLevel is slog.LevelInfo for every HAProxyTemplateConfig
+// admission decision, including a clean allow.
+//
+// Demoting clean allows to DEBUG here made the gate's verdicts indistinguishable
+// from it never being consulted: at the default INFO level, "admitted cleanly"
+// and "the API server could not reach the webhook, so failurePolicy:Ignore
+// admitted it" both appear as no log line at all. That ambiguity is what left
+// the intermittent test-chart-upgrade phase-3 failure unattributable (#110).
+//
+// Costs nothing: this gate fires on the operator's own config objects, not on
+// cluster traffic — a handful of decisions per `helm upgrade`.
+func configAdmissionLogLevel() slog.Level {
 	return slog.LevelInfo
 }

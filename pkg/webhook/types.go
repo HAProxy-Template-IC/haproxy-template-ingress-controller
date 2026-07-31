@@ -180,6 +180,14 @@ type ServerConfig struct {
 	// WriteTimeout is the maximum duration before timing out writes of the response.
 	// Default: 10s
 	WriteTimeout time.Duration
+
+	// OnUnregisteredGVK, when set, is called for an AdmissionReview whose GVK
+	// has no registered validator. Such a request is still admitted — nothing
+	// is registered that could judge it — but it means the API server is
+	// routing a rule that no validator backs, so the gate is open for that
+	// kind. Reporting is the caller's (a logger and a counter live there);
+	// what matters here is that the path is never silent.
+	OnUnregisteredGVK func(gvk string)
 }
 
 // ValidateConfigPath is the versioned admission path for HAProxyTemplateConfig.

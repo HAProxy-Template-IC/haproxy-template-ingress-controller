@@ -942,3 +942,92 @@ func TestServer_ConcurrentValidation(t *testing.T) {
 	assert.Equal(t, numRequests, validationCount)
 	mu.Unlock()
 }
+
+// TestServer_HandleValidation_UnregisteredGVKIsReported pins that admitting an
+// object no validator backs is never silent. The API server only routes what
+// its rules select, so a request arriving with no validator means the rules and
+// the registrations have diverged and the gate is open for that kind — which
+// must be reportable, not indistinguishable from a clean pass.
+func TestServer_HandleValidation_UnregisteredGVKIsReported(t *testing.T) {
+	certPEM, keyPEM, err := generateTestCertificates()
+	require.NoError(t, err)
+
+	var reported []string
+	server, err := NewServer(&ServerConfig{
+		CertPEM:           certPEM,
+		KeyPEM:            keyPEM,
+		OnUnregisteredGVK: func(gvk string) { reported = append(reported, gvk) },
+	})
+	require.NoError(t, err)
+
+	server.RegisterValidator("networking.k8s.io/v1.Ingress",
+		func(*ValidationContext) (bool, string, []string, error) { return true, "", nil, nil })
+
+	review := &admissionv1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview"},
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "test-uid",
+			Kind:      metav1.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
+			Operation: admissionv1.Create,
+			Object: runtime.RawExtension{
+				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
+			},
+		},
+	}
+	reviewBytes, err := json.Marshal(review)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(reviewBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.handleValidation(w, req)
+
+	var responseReview admissionv1.AdmissionReview
+	require.NoError(t, json.NewDecoder(w.Result().Body).Decode(&responseReview))
+
+	assert.True(t, responseReview.Response.Allowed,
+		"nothing registered can judge it, so it is still admitted")
+	assert.Equal(t, []string{"v1.ConfigMap"}, reported,
+		"the unchecked admission must be reported with the GVK that had no validator")
+}
+
+// TestServer_HandleValidation_RegisteredGVKNotReported is the negative control:
+// a kind that IS validated must never be reported as an unchecked admission.
+func TestServer_HandleValidation_RegisteredGVKNotReported(t *testing.T) {
+	certPEM, keyPEM, err := generateTestCertificates()
+	require.NoError(t, err)
+
+	var reported []string
+	server, err := NewServer(&ServerConfig{
+		CertPEM:           certPEM,
+		KeyPEM:            keyPEM,
+		OnUnregisteredGVK: func(gvk string) { reported = append(reported, gvk) },
+	})
+	require.NoError(t, err)
+
+	server.RegisterValidator("v1.ConfigMap",
+		func(*ValidationContext) (bool, string, []string, error) { return true, "", nil, nil })
+
+	review := &admissionv1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview"},
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "test-uid",
+			Kind:      metav1.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
+			Operation: admissionv1.Create,
+			Object: runtime.RawExtension{
+				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
+			},
+		},
+	}
+	reviewBytes, err := json.Marshal(review)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(reviewBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.handleValidation(w, req)
+
+	assert.Empty(t, reported, "a validated kind is not an unchecked admission")
+}
