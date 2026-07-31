@@ -134,11 +134,20 @@ if [[ ! -x "$CONTROLLER_BIN" ]]; then
     exit 1
 fi
 
-# Check if controller binary is outdated
+# Refuse to run against a binary older than the source.
+#
+# A hard error rather than a warning because a stale binary does not fail
+# recognisably: an older `validate` cannot parse the current chart's output and
+# reports "no validation tests found in config", which reads like a chart bug
+# and sends you looking in the wrong place entirely. The warning this replaced
+# scrolled past in a few hundred lines of render output.
+#
+# CI is unaffected — `make validate-helm-libraries` depends on `build`.
 if find cmd/controller pkg go.mod go.sum VERSION -newer "$CONTROLLER_BIN" 2>/dev/null | grep -q .; then
-    warn "Controller binary may be outdated (source files modified since build)"
-    warn "Run 'make build' to rebuild the controller binary"
-    echo >&2  # Add blank line for readability
+    echo -e "${RED}Error: $CONTROLLER_BIN is older than the source tree${NC}" >&2
+    echo "Run 'make build', then re-run this script." >&2
+    echo "(A stale binary reports 'no validation tests found in config' instead of failing recognisably.)" >&2
+    exit 1
 fi
 
 # Check if helm is installed
