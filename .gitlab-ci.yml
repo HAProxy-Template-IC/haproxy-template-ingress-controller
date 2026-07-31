@@ -1659,8 +1659,11 @@ test-acceptance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> debug-logs/_suite/controller.log 2>&1 || true
         done
 
-        # Per-pod haproxy / dataplane / spoa-hub logs (current + previous
-        # for spoa-hub, which crashloops on config errors).
+        # Per-pod haproxy / dataplane / spoa-hub / vector logs (current +
+        # previous for spoa-hub and vector, which crashloop on config errors
+        # and on exceeding their memory limit respectively — and a crashlooping
+        # sidecar de-readies the whole pod, so its log is the one that explains
+        # an otherwise-inexplicable "connection refused" on the data path).
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> debug-logs/_suite/haproxy.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> debug-logs/_suite/haproxy.log 2>&1 || true
@@ -1672,6 +1675,12 @@ test-acceptance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub --previous >> debug-logs/_suite/spoa-hub.log 2>&1 || true
           echo "=== spoa-hub config.toml: $pod ===" >> debug-logs/_suite/spoa-hub-config.log
           kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c spoa-hub -- cat /etc/haproxy-spoa-hub/config.toml >> debug-logs/_suite/spoa-hub-config.log 2>&1 || true
+          echo "=== vector: $pod (current) ===" >> debug-logs/_suite/vector.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c vector >> debug-logs/_suite/vector.log 2>&1 || true
+          echo "=== vector: $pod (previous) ===" >> debug-logs/_suite/vector.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c vector --previous >> debug-logs/_suite/vector.log 2>&1 || true
+          echo "=== container states: $pod ===" >> debug-logs/_suite/container-states.log
+          kubectl -n ${CTRL_NAMESPACE} get pod "$pod" -o jsonpath='{range .status.containerStatuses[*]}{.name}{"\t ready="}{.ready}{"\t restarts="}{.restartCount}{"\t "}{.lastState}{"\n"}{end}' >> debug-logs/_suite/container-states.log 2>&1 || true
         done
 
         # Deployed haproxy.cfg + auxiliary files (SPOE pipeline + auth-url
@@ -1706,6 +1715,21 @@ test-acceptance:
         kubectl get pods -A -o wide > debug-logs/_suite/pods.log 2>&1 || true
         kubectl get events -A --sort-by=.lastTimestamp \
           > debug-logs/_suite/events.log 2>&1 || true
+
+        # Node memory + the kernel's own OOM verdict. A Kubernetes SystemOOM
+        # event names the victim, not the cause: the kernel kills the highest
+        # oom_score_adj, which is the container with the smallest memory
+        # *request* — not necessarily the one that grew. Only the kernel line
+        # distinguishes the two, and they need opposite fixes:
+        #   constraint=CONSTRAINT_MEMCG  -> that container exceeded its limit
+        #   constraint=CONSTRAINT_NONE   -> the node is out of memory, victim is collateral
+        kubectl describe nodes > debug-logs/_suite/nodes.log 2>&1 || true
+        kubectl top pods -A --containers > debug-logs/_suite/top-pods.log 2>&1 || true
+        for node in $(kind get nodes --name haptic-e2e 2>/dev/null); do
+          echo "=== $node ===" >> debug-logs/_suite/kernel-oom.log
+          docker exec "$node" sh -c 'dmesg -T 2>/dev/null | grep -iE "out of memory|oom-kill|oom_score|Killed process" | tail -100' \
+            >> debug-logs/_suite/kernel-oom.log 2>&1 || true
+        done
 
         # kube-apiserver log from the kind control-plane. Admission
         # webhook dispatch failures (apiserver → webhook POST) are only
