@@ -883,6 +883,34 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     fi
 fi
 
+# Non-default namespace. Every render above uses `--namespace default`, so an
+# assertion that pins a release-derived value — the namespace itself, the
+# fullname, anything from .Release — passes here and fails on every install that
+# is not in `default`. These tests run on the operator's own config through the
+# fail-closed load gate, so that is not a red test: it is a crash-looping
+# controller. This profile is what catches it; it shipped once.
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    NS_CONFIG=$(mktemp /tmp/haptic-ns-config-XXXXXX.yaml)
+    trap 'rm -f "$TEMP_CONFIG" "$RATE_LIMIT_CONFIG" "$PROXY_PROTOCOL_CONFIG" "$TRACING_CONFIG" "$NS_CONFIG"' EXIT
+    echo -e "${YELLOW}Rendering non-default-namespace profile...${NC}" >&2
+    if ! helm template "$CHART_DIR" \
+        --namespace haptic-ns-probe \
+        $HAPROXY_VERSION_ARG \
+        --set controller.config.templatingSettings.extraContext.tracing.enabled=true \
+        --set controller.config.templatingSettings.extraContext.tracing.otlp.endpoint=http://tempo:4318/v1/traces \
+        | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyValidationTests")' \
+        > "$NS_CONFIG"; then
+        echo -e "${RED}Error: Failed to render the non-default-namespace profile${NC}" >&2
+        exit 1
+    fi
+    echo -e "${YELLOW}Non-default namespace: full validation pass...${NC}" >&2
+    if ! "$CONTROLLER_BIN" validate --file "$NS_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@"; then
+        echo -e "${RED}Tests that pass in namespace 'default' must pass in any namespace — an assertion on a release-derived value crash-loops the controller everywhere else${NC}" >&2
+        FULL_RC=1
+    fi
+    rm -f "$NS_CONFIG"
+fi
+
 # ---------------------------------------------------------------------------
 # Degraded Gateway API profiles (skipped when a single --test is requested or
 # a custom schema dir is in play). For each committed old-release CRD bundle
