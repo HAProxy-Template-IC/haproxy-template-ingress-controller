@@ -46,6 +46,14 @@ func TestDeployFailureDowngradesPendingRuntimeRawLane(t *testing.T) {
 
 	_, _, structural := laneRenders(t)
 
+	// The fleet is already running the base config, so the partial apply in
+	// step 2 has an activated baseline to patch. Without it the scheduler is at
+	// cold start and correctly declines to apply anything (#112) — which is not
+	// the choreography this test is about.
+	s.schedulerMutex.Lock()
+	s.lastActivatedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+	s.schedulerMutex.Unlock()
+
 	// 1. Dispatch a structural render (cold start → structural). The loop
 	// publishes it, marks it in flight, and parks in awaitCompletion.
 	s.scheduleOrQueue(context.Background(), "structural-config", nil, structural, oneEndpoint(),

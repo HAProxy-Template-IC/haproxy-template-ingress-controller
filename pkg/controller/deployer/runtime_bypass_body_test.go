@@ -53,6 +53,13 @@ func (s *bodyRecordingSyncer) recorded(t *testing.T) (string, *dataplane.SyncOpt
 	return s.bodies[0], s.opts[0]
 }
 
+// pushed reports whether any bypass push happened at all.
+func (s *bodyRecordingSyncer) pushed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.bodies) > 0
+}
+
 // newBodyRecordingScheduler builds a scheduler whose bypass records pushes.
 func newBodyRecordingScheduler(t *testing.T) (*DeploymentScheduler, *bodyRecordingSyncer) {
 	t.Helper()
@@ -90,6 +97,7 @@ func TestScheduler_ApplyRuntimeSubset_BodyIsBaselinePlusRuntimePatch(t *testing.
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
 	s.lastDispatchedConfig = baselineRaw
+	s.lastActivatedConfig = baselineRaw
 	s.schedulerMutex.Unlock()
 
 	dep := &scheduledDeployment{
@@ -136,6 +144,7 @@ func TestScheduler_ApplyRuntimeSubset_SupersededProbe(t *testing.T) {
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
 	s.lastDispatchedConfig = baselineRaw
+	s.lastActivatedConfig = baselineRaw
 	s.state.pending = dep // dep is the current pending render
 	s.schedulerMutex.Unlock()
 
@@ -204,6 +213,7 @@ func TestScheduler_DispatchRuntimeRaw_BodyAndSupersededProbe(t *testing.T) {
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
 	s.lastDispatchedConfig = baselineRaw
+	s.lastActivatedConfig = baselineRaw
 	s.schedulerMutex.Unlock()
 
 	dep := &scheduledDeployment{
@@ -231,4 +241,81 @@ func TestScheduler_DispatchRuntimeRaw_BodyAndSupersededProbe(t *testing.T) {
 	defer s.schedulerMutex.Unlock()
 	assert.Equal(t, runtimeRaw, s.lastDispatchedConfig)
 	assert.Equal(t, runtime, s.lastDispatchedParsed)
+}
+
+// TestScheduler_ApplyRuntimeSubset_NeverPatchesUnlandedStructural pins #112:
+// during a structural deploy's flight, lastDispatchedConfig is the render being
+// deployed but NOT yet running. The partial apply must patch the last ACTIVATED
+// config instead — otherwise it writes the pending structural content to disk
+// under skip_reload, HAProxy never loads it, and the next sync's empty diff
+// reports success while the render stays parked.
+func TestScheduler_ApplyRuntimeSubset_NeverPatchesUnlandedStructural(t *testing.T) {
+	s, rec := newBodyRecordingScheduler(t)
+
+	activatedRaw := fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+
+	// A structural render is in flight: dispatched (so it is the lane-diff
+	// baseline) but not yet activated on any pod.
+	inFlightRaw := activatedRaw + laneStructuralExtra
+	inFlight := parseLaneConfig(t, inFlightRaw)
+
+	// The pending render adds a pod-IP rotation on top of the in-flight one.
+	pendingRaw := fmt.Sprintf(laneConfigBase, "10.0.0.2:8080") + laneStructuralExtra
+	pending := parseLaneConfig(t, pendingRaw)
+	updates, err := dataplane.ComputeRuntimeServerUpdates(inFlight, pending)
+	require.NoError(t, err)
+	require.Greater(t, updates.ServerOpCount(), 0)
+
+	s.schedulerMutex.Lock()
+	s.lastDispatchedParsed = inFlight
+	s.lastDispatchedConfig = inFlightRaw // dispatched, NOT landed
+	s.lastActivatedConfig = activatedRaw // what the pods are really running
+	s.schedulerMutex.Unlock()
+
+	s.applyRuntimeSubset(context.Background(), &scheduledDeployment{
+		config:         pendingRaw,
+		parsedConfig:   pending,
+		endpoints:      oneEndpoint(),
+		lane:           laneRuntimeRaw,
+		runtimeUpdates: updates,
+	})
+
+	body, _ := rec.recorded(t)
+	assert.Contains(t, body, "10.0.0.2:8080", "the runtime-eligible address change is still applied")
+	assert.NotContains(t, body, "api2",
+		"the in-flight structural render must not be written to disk under skip_reload (#112)")
+	assert.NotContains(t, body, "10.9.9.9",
+		"no server line of the unlanded backend may reach disk")
+}
+
+// TestScheduler_ApplyRuntimeSubset_DeclinesWithNothingActivated pins the
+// cold-start half of #112: with no config proven running there is nothing safe
+// to patch, so the apply must decline rather than fall back to the dispatched
+// render. The scheduled structural deploy carries the change instead.
+func TestScheduler_ApplyRuntimeSubset_DeclinesWithNothingActivated(t *testing.T) {
+	s, rec := newBodyRecordingScheduler(t)
+
+	dispatchedRaw := fmt.Sprintf(laneConfigBase, "10.0.0.1:8080") + laneStructuralExtra
+	dispatched := parseLaneConfig(t, dispatchedRaw)
+	pendingRaw := fmt.Sprintf(laneConfigBase, "10.0.0.2:8080") + laneStructuralExtra
+	pending := parseLaneConfig(t, pendingRaw)
+	updates, err := dataplane.ComputeRuntimeServerUpdates(dispatched, pending)
+	require.NoError(t, err)
+	require.Greater(t, updates.ServerOpCount(), 0)
+
+	s.schedulerMutex.Lock()
+	s.lastDispatchedParsed = dispatched
+	s.lastDispatchedConfig = dispatchedRaw
+	// lastActivatedConfig deliberately empty: nothing is proven running.
+	s.schedulerMutex.Unlock()
+
+	s.applyRuntimeSubset(context.Background(), &scheduledDeployment{
+		config:         pendingRaw,
+		parsedConfig:   pending,
+		endpoints:      oneEndpoint(),
+		lane:           laneRuntimeRaw,
+		runtimeUpdates: updates,
+	})
+
+	assert.False(t, rec.pushed(), "no bypass push may happen with nothing activated")
 }

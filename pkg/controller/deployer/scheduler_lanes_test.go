@@ -182,6 +182,14 @@ func TestSchedulerLanes_Case2_RuntimeSubsetAppliesDuringInFlightStructural(t *te
 
 	_, _, structural := laneRenders(t)
 
+	// The fleet is already running the base config. Without this the scheduler is
+	// at cold start, where nothing is activated and the partial apply correctly
+	// declines — patching the in-flight structural render instead is #112, and
+	// this test asserts below that it does not happen.
+	s.schedulerMutex.Lock()
+	s.lastActivatedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+	s.schedulerMutex.Unlock()
+
 	// Dispatch a structural render first. Cold start (nil baseline) → structural,
 	// which the loop publishes and marks in-flight (loop parks in awaitCompletion).
 	s.scheduleOrQueue(context.Background(), "structural-config", nil, structural, oneEndpoint(),
@@ -375,6 +383,7 @@ func TestSchedulerLanes_Case6_StructuralWithRuntimeSubset_AppliesPreInterval(t *
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
 	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+	s.lastActivatedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
 	s.state.lastDeploymentEndTime = time.Now()
 	s.schedulerMutex.Unlock()
 
@@ -424,6 +433,7 @@ func TestSchedulerLanes_Case7_MidIntervalRuntimeChange_AppliesResponsively(t *te
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
 	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+	s.lastActivatedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
 	s.state.lastDeploymentEndTime = time.Now()
 	s.schedulerMutex.Unlock()
 
@@ -489,6 +499,7 @@ func TestSchedulerLanes_Case8_StructuralWaitZero_AppliesRuntimeSubset(t *testing
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = baseline
 	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+	s.lastActivatedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
 	s.state.lastDeploymentEndTime = time.Now().Add(-2 * interval)
 	s.schedulerMutex.Unlock()
 
@@ -618,6 +629,7 @@ func TestSchedulerLanes_Case10_RuntimeRawDuringStructuralInterval_AppliesImmedia
 	s.schedulerMutex.Lock()
 	s.lastDispatchedParsed = structural
 	s.lastDispatchedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080") + laneStructuralExtra
+	s.lastActivatedConfig = fmt.Sprintf(laneConfigBase, "10.0.0.1:8080") + laneStructuralExtra
 	s.state.lastDeploymentEndTime = time.Now()
 	s.schedulerMutex.Unlock()
 

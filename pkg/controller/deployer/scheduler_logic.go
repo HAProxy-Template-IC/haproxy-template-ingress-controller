@@ -216,11 +216,11 @@ func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *sched
 	}
 
 	s.schedulerMutex.Lock()
-	baseline := s.lastDispatchedConfig
+	baseline := s.lastActivatedConfig
 	s.schedulerMutex.Unlock()
 	if baseline == "" {
-		// No dispatched baseline (cold start, or invalidated after a failed
-		// deploy): nothing activated exists to patch, and the pending is (or
+		// Nothing proven activated (cold start, or invalidated after a failed
+		// deploy): there is no running config to patch, and the pending is (or
 		// will be re-classified) structural — the scheduled deploy converges.
 		return
 	}
@@ -322,6 +322,10 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 		s.schedulerMutex.Lock()
 		s.lastDispatchedParsed = dep.parsedConfig
 		s.lastDispatchedConfig = dep.config
+		// This lane reloads nothing: the push body plus its runtime actions ARE
+		// the activation, so dispatched and activated coincide here. The
+		// structural lane advances activated only on completion.
+		s.lastActivatedConfig = dep.config
 		s.schedulerMutex.Unlock()
 
 		// A pure runtime-raw deploy reloads nothing, so this apply IS the complete
@@ -499,6 +503,10 @@ func (s *DeploymentScheduler) publishScheduled(dep *scheduledDeployment) {
 func (s *DeploymentScheduler) invalidateDispatchBaselineLocked() {
 	s.lastDispatchedParsed = nil
 	s.lastDispatchedConfig = ""
+	// The activated baseline goes with it: a deploy that did not land
+	// everywhere leaves at least one pod running something else, so there is no
+	// single config that is proven to be running (#112).
+	s.lastActivatedConfig = ""
 	if s.state.pending != nil {
 		s.state.pending.lane = laneStructural
 		s.state.pending.runtimeUpdates = nil
