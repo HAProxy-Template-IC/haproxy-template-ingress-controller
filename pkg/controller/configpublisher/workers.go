@@ -66,6 +66,21 @@ func (c *Component) discardCachedConfig(correlationID string) {
 // the latest buffered item when publishThrottle.FiredCh() signals.
 func (c *Component) publishWorker(ctx context.Context) {
 	for {
+		// Deploy-driven work first, always. A select picks uniformly at random
+		// among ready cases, so with validation publishes arriving continuously
+		// a deployed item can sit unread for seconds — measured 5.2s, with
+		// three validation publishes going out ahead of it. For exactly that
+		// long the CR contradicts itself: status.deployedToPods already
+		// advertises the checksum whose content spec has not published, so no
+		// reader can resolve it. flushPendingPublish already orders deploy work
+		// first (see below); this makes the channel-level order match.
+		select {
+		case work := <-c.deployedPublishWork:
+			c.processPublishWork(ctx, work)
+			continue
+		default:
+		}
+
 		select {
 		case work := <-c.publishWork:
 			c.processPublishWork(ctx, work)
