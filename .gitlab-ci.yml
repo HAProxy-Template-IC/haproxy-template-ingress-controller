@@ -517,13 +517,39 @@ validate-helm-libraries:
 #   PLATFORMS: Docker build platforms (e.g., "linux/amd64" or "linux/amd64,linux/arm64,linux/arm/v7")
 #   SNAPSHOT_TAG: Image tag prefix (e.g., "ci-${CI_PIPELINE_ID}" or "main-${CI_COMMIT_SHORT_SHA}")
 #   CREATE_DEFAULT_TAG: If "true", creates a default tag pointing to haproxy3.4
+# The snapshot version scheme, defined once. Two jobs must agree on it: the
+# chart published to the registry and the copy embedded in the controller
+# image. When they drift, the image reports a chart version it is not — and
+# `preflight`, which renders the embedded chart, validates a config that
+# differs from the deployed one (.Chart.AppVersion reaches the CR as the OTel
+# service.version, and defaults every image tag).
+.snapshot-version:
+  variables:
+    CHART_SNAPSHOT_VERSION: "0.0.0-main.g${CI_COMMIT_SHORT_SHA}"
+    CHART_SNAPSHOT_APPVERSION: "main-${CI_COMMIT_SHORT_SHA}"
+
 .snapshot-build-base:
   stage: build
   extends:
     - .goreleaser-base
+    - .snapshot-version
   tags:
     - saas-linux-2xlarge-amd64
   script:
+    # Stamp the chart BEFORE the image embeds it, with the same version the
+    # registry copy gets. Without this the image ships the source version
+    # (the next release's number), so nothing can tell which build its chart
+    # is — and it collides with that release once it actually ships.
+    - |
+      sed -i \
+        -e "s|^version:.*|version: ${CHART_SNAPSHOT_VERSION}|" \
+        -e "s|^appVersion:.*|appVersion: \"${CHART_SNAPSHOT_APPVERSION}\"|" \
+        charts/haptic/Chart.yaml
+      grep -q "^version: ${CHART_SNAPSHOT_VERSION}$" charts/haptic/Chart.yaml \
+        || { echo "chart version stamp did not apply"; exit 1; }
+      grep -q "^appVersion: \"${CHART_SNAPSHOT_APPVERSION}\"$" charts/haptic/Chart.yaml \
+        || { echo "chart appVersion stamp did not apply"; exit 1; }
+      echo "Embedded chart stamped: ${CHART_SNAPSHOT_VERSION} (app ${CHART_SNAPSHOT_APPVERSION})"
     # Build controller binary into binary-context/<TARGETPLATFORM>/haptic-controller —
     # the path the runtime stage of Dockerfile expects via --build-context binary=.
     - |
@@ -711,6 +737,7 @@ publish-main-snapshot:
 # Produces chart with version: 0.0.0-main.<short-sha>
 publish-chart-snapshot:
   stage: build
+  extends: .snapshot-version
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   needs:
     - compute-ci-image-tag
@@ -738,10 +765,9 @@ publish-chart-snapshot:
     - helm registry login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
     - |
-      SNAPSHOT_VERSION="0.0.0-main.g${CI_COMMIT_SHORT_SHA}"
-      helm package charts/haptic --version "$SNAPSHOT_VERSION" --app-version "main-${CI_COMMIT_SHORT_SHA}"
-      helm push haptic-${SNAPSHOT_VERSION}.tgz oci://${CI_REGISTRY}/haproxy-haptic/haptic/charts
-      echo "Published chart snapshot: haptic:${SNAPSHOT_VERSION}"
+      helm package charts/haptic --version "$CHART_SNAPSHOT_VERSION" --app-version "$CHART_SNAPSHOT_APPVERSION"
+      helm push haptic-${CHART_SNAPSHOT_VERSION}.tgz oci://${CI_REGISTRY}/haproxy-haptic/haptic/charts
+      echo "Published chart snapshot: haptic:${CHART_SNAPSHOT_VERSION}"
 
 # =============================================================================
 # Browser playground (WASM) bundle
