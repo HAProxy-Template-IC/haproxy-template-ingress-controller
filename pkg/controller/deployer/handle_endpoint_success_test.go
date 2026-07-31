@@ -221,3 +221,65 @@ func TestHandleEndpointSuccess_BackendDiffFieldsCapturedOnceFirstWriterWins(t *t
 			"later endpoint's partial/different diff clobber the first "+
 			"endpoint's authoritative value")
 }
+
+// TestHandleEndpointSuccess_PublishesRuntimeMapDivergence pins the reporting
+// half of the reload-free lane's health signal. A map that fails its
+// post-apply read-back costs the sync its runtime lane, but the sync still
+// SUCCEEDS (the reload fallback converges), so the report has to ride the
+// success path — publishing it only on failure would never fire.
+func TestHandleEndpointSuccess_PublishesRuntimeMapDivergence(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe("test-sub", 50)
+	bus.Start()
+	c := createTestDeployer(bus)
+
+	ep := &dataplane.Endpoint{
+		URL:          "http://10.0.0.1:5555",
+		PodName:      "haproxy-pod-1",
+		PodNamespace: "haptic",
+	}
+	syncResult := &dataplane.SyncResult{
+		ReloadTriggered:     true,
+		DivergedRuntimeMaps: []string{"pod-names.map"},
+		Details:             dataplane.DiffDetails{TotalOperations: 1},
+	}
+	state := &deploymentState{operationBreakdown: make(map[string]int)}
+
+	c.handleEndpointSuccess(
+		ep, syncResult, 250, "checksum-abc", false,
+		"rt-cfg-1", "haptic", "corr-1", state,
+	)
+
+	div := testutil.WaitForEvent[*events.RuntimeMapDivergenceEvent](
+		t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, div,
+		"RuntimeMapDivergenceEvent MUST be published — it is the only signal "+
+			"that endpoint churn has started reloading HAProxy")
+	assert.Equal(t, "pod-names.map", div.MapName)
+	assert.Equal(t, "haproxy-pod-1", div.PodName)
+}
+
+// A healthy sync must stay silent, or the counter measures nothing.
+func TestHandleEndpointSuccess_NoDivergenceEventWhenConverged(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe("test-sub", 50)
+	bus.Start()
+	c := createTestDeployer(bus)
+
+	ep := &dataplane.Endpoint{
+		URL:          "http://10.0.0.1:5555",
+		PodName:      "haproxy-pod-1",
+		PodNamespace: "haptic",
+	}
+	syncResult := &dataplane.SyncResult{Details: dataplane.DiffDetails{TotalOperations: 1}}
+	state := &deploymentState{operationBreakdown: make(map[string]int)}
+
+	c.handleEndpointSuccess(
+		ep, syncResult, 250, "checksum-abc", false,
+		"rt-cfg-1", "haptic", "corr-1", state,
+	)
+
+	// A converged sync must publish nothing, or the counter measures noise.
+	testutil.AssertNoEvent[*events.RuntimeMapDivergenceEvent](
+		t, eventChan, testutil.NoEventTimeout)
+}

@@ -360,6 +360,14 @@ func (c *Component) handleEndpointSuccess(
 		events.WithCorrelation(correlationID, correlationID),
 	))
 
+	// A runtime map that failed its read-back cost this sync the reload-free
+	// lane. The sync still SUCCEEDED (the reload fallback is convergent), so
+	// this rides the success path — without it the degradation is a WARN line
+	// nothing alerts on.
+	for _, mapName := range syncResult.DivergedRuntimeMaps {
+		c.EventBus().Publish(events.NewRuntimeMapDivergenceEvent(ep.PodName, mapName))
+	}
+
 	// Publish ConfigAppliedToPodEvent unconditionally, regardless of
 	// whether the sync did any HAProxy operations.
 	//

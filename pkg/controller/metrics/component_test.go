@@ -703,3 +703,42 @@ func TestComponent_InitialSyncSkipped(t *testing.T) {
 
 	cancel()
 }
+
+// TestComponent_RuntimeMapDivergence pins the counter that makes the
+// reload-free lane's degradation visible. Without it, a runtime map failing
+// its read-back — and so costing every endpoint change a HAProxy reload —
+// shows up only as a WARN log line, which is how it went unnoticed in
+// production.
+func TestComponent_RuntimeMapDivergence(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+	eventBus := busevents.NewEventBus(100)
+
+	component := New(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventBus.Start()
+	go component.Start(ctx)
+
+	eventBus.Publish(events.NewRuntimeMapDivergenceEvent("haproxy-0", "pod-names.map"))
+	eventBus.Publish(events.NewRuntimeMapDivergenceEvent("haproxy-1", "pod-names.map"))
+	eventBus.Publish(events.NewRuntimeMapDivergenceEvent("haproxy-0", "host.map"))
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Labelled by map: which map degrades is what an operator acts on, and
+	// the pod is deliberately not a label (one per HAProxy replica would
+	// multiply the series for no added signal).
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("pod-names.map")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("host.map")))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("never-seen.map")))
+
+	// The structural-divergence counter measures a different defect (issue
+	// #84, a concurrent writer clobbering an activated config) and must not
+	// move — conflating them is what sent me looking at the wrong metric.
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeployRuntimeDivergence))
+
+	cancel()
+}

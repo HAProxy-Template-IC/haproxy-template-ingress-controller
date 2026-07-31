@@ -84,6 +84,15 @@ type Metrics struct {
 	// means runtime-bypass pushes are racing structural deploys.
 	DeployRuntimeDivergence prometheus.Counter
 
+	// RuntimeMapDivergence counts runtime maps whose post-apply read-back
+	// still disagreed with the desired content, each costing that sync its
+	// reload-free lane (issue #48). Labelled by map because which one
+	// degrades is the actionable part. The reload fallback is convergent, so
+	// occasional counts during pod churn are expected; steady growth in
+	// STEADY STATE means endpoint changes are reloading HAProxy, defeating
+	// the runtime lane.
+	RuntimeMapDivergence *prometheus.CounterVec
+
 	// Validation metrics
 	ValidationTotal  prometheus.Counter
 	ValidationErrors prometheus.Counter
@@ -248,6 +257,13 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_deploy_runtime_divergence_total",
 			"Endpoints whose post-reload read-back found the on-disk config structurally diverged from the pushed body (a concurrent writer clobbered a just-activated config; the fast deploy retry self-heals it).",
+		),
+
+		RuntimeMapDivergence: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_runtime_map_divergence_total",
+			"Runtime maps whose post-apply read-back disagreed with the desired content, forcing a reload fallback and so losing the reload-free lane for that sync.",
+			[]string{"map"},
 		),
 
 		// Validation metrics
@@ -495,6 +511,12 @@ func (m *Metrics) RecordRuntimeFastPath(serverUpdates int, failed bool) {
 // body (issue #84).
 func (m *Metrics) RecordDeployRuntimeDivergence() {
 	m.DeployRuntimeDivergence.Inc()
+}
+
+// RecordRuntimeMapDivergence records one runtime map that failed its
+// post-apply read-back and so forced a reload fallback.
+func (m *Metrics) RecordRuntimeMapDivergence(mapName string) {
+	m.RuntimeMapDivergence.WithLabelValues(mapName).Inc()
 }
 
 // RecordValidation records a validation attempt.

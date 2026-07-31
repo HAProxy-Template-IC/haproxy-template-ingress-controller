@@ -258,20 +258,28 @@ func (o *orchestrator) applyChanges(
 // momentarily-404 read to settle, short enough to keep the runtime lane fast.
 const verifyRuntimeMapRecheckDelay = 200 * time.Millisecond
 
-// verifyRuntimeMaps read-backs each replaced runtime map and reports whether
-// any diverged from its desired content. A divergence is re-checked once
-// after verifyRuntimeMapRecheckDelay before it counts: a single stale/racy
-// read (or a transient 404 before the map loads) must not disrupt the
-// reload-free lane — only a PERSISTENT mismatch (the latching defect from
-// issue #48) makes the caller pay for the reload fallback. The returned
-// error is ctx cancellation only.
-func (o *orchestrator) verifyRuntimeMaps(ctx context.Context, mapUpdates []auxiliaryfiles.MapFile) (bool, error) {
+// verifyRuntimeMaps read-backs each replaced runtime map and returns the names
+// of ALL that diverged from their desired content (empty when all converged).
+// A divergence is re-checked once after verifyRuntimeMapRecheckDelay before it
+// counts: a single stale/racy read (or a transient 404 before the map loads)
+// must not disrupt the reload-free lane — only a PERSISTENT mismatch (the
+// latching defect from issue #48) makes the caller pay for the reload
+// fallback. The returned error is ctx cancellation only.
+//
+// Every map is checked even once one has diverged, although the outcome (one
+// reload) is already decided: stopping early would report whichever map came
+// first in slice order and hide the rest, so the operator chasing
+// haptic_runtime_map_divergence_total would see an arbitrary one of the
+// culprits. The extra reads are socket round-trips on a path that is about to
+// reload anyway.
+func (o *orchestrator) verifyRuntimeMaps(ctx context.Context, mapUpdates []auxiliaryfiles.MapFile) ([]string, error) {
+	var diverged []string
 	for _, m := range mapUpdates {
 		pending, err := o.client.VerifyRuntimeMap(ctx, m.GetIdentifier(), m.GetContent())
 		if err != nil || pending > 0 {
 			select {
 			case <-ctx.Done():
-				return false, ctx.Err()
+				return nil, ctx.Err()
 			case <-time.After(verifyRuntimeMapRecheckDelay):
 			}
 			pending, err = o.client.VerifyRuntimeMap(ctx, m.GetIdentifier(), m.GetContent())
@@ -279,10 +287,10 @@ func (o *orchestrator) verifyRuntimeMaps(ctx context.Context, mapUpdates []auxil
 		if err != nil || pending > 0 {
 			o.logger.Warn("Runtime map diverged from desired state after apply; falling back to reload",
 				"map", m.GetIdentifier(), "pending_ops", pending, "error", err)
-			return true, nil
+			diverged = append(diverged, m.GetIdentifier())
 		}
 	}
-	return false, nil
+	return diverged, nil
 }
 
 // applyRuntimeOnly applies all changes without a reload: runtime-eligible map
@@ -325,10 +333,16 @@ func (o *orchestrator) applyRuntimeOnly(
 	// content diff, never re-run ReplaceRuntimeMap, and only an unrelated
 	// reload heals routing. Falling back to a reload is always convergent —
 	// the new worker reads the file this deploy just wrote.
-	if diverged, err := o.verifyRuntimeMaps(ctx, mapUpdates); err != nil {
+	if divergedMaps, err := o.verifyRuntimeMaps(ctx, mapUpdates); err != nil {
 		return nil, err
-	} else if diverged {
-		return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, nil, auxDiffs, actions, version, opts, startTime)
+	} else if len(divergedMaps) > 0 {
+		// Stamp the maps on the result so the reload-free lane degrading is
+		// visible as a metric, not only as a log line.
+		res, rerr := o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, nil, auxDiffs, actions, version, opts, startTime)
+		if res != nil {
+			res.DivergedRuntimeMaps = append(res.DivergedRuntimeMaps, divergedMaps...)
+		}
+		return res, rerr
 	}
 	if len(certUpdates) > 0 {
 		pemByName := make(map[string]string, len(certUpdates))
