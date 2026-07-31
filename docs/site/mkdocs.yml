@@ -113,6 +113,7 @@ nav:
     - Governance guardrails: operations/governance.md
     - Networking: operations/networking.md
     - Performance: operations/performance.md
+    - Validate before deploying: operations/validate-before-deploy.md
     - Debugging: operations/debugging.md
     - Troubleshooting: troubleshooting.md
     - HAProxy Versions: operations/haproxy-versions.md

@@ -28,6 +28,8 @@ cmd/controller/
 ├── main.go                    # Cobra root command + init wiring (registers run, validate, benchmark, migrate-check)
 ├── run.go                     # `run` subcommand (controller daemon)
 ├── validate.go                # `validate` subcommand (CLI for embedded tests)
+├── preflight.go               # `preflight` subcommand (render the chart with operator values, then validate)
+├── schemasource.go            # schema access: directory, live cluster, or none (shared by validate/preflight/migrate-check)
 ├── benchmark.go               # `benchmark` subcommand entry point
 ├── benchmark_render.go        # benchmark: render-only path
 ├── benchmark_output.go        # benchmark output formatting
@@ -63,6 +65,45 @@ library. `--dump-merged` prints the merged spec and exits without running a test
 
 A lone file holding a single document still accepts a bare spec (no
 apiVersion/kind), the shape hand-written fixtures use.
+
+### `preflight` — Pre-deploy Gate (preflight.go)
+
+Renders the bundled chart with the operator's **own** values file(s) and runs
+the load gate over the result, so a bad configuration fails the pipeline instead
+of crash-looping the controller. Chart CI only ever proves the *defaults* work.
+
+Renders in-process through `renderChart` (shared with `migrate-check`), then
+reuses `validateAndReport` so `preflight` and `validate` cannot drift into
+checking different things.
+
+Schemas default to the **live cluster** (`--kubeconfig`, `$KUBECONFIG`, then
+in-cluster), unlike `validate`, which is dir-or-nothing. There is no
+no-schemas mode here: without schemas the render silently falls back to
+untyped access and would pass on a weaker check than the controller runs.
+`--schema-dir` switches it fully offline.
+
+`schemasource.go` holds the shared abstraction — `schemaSource` is a directory
+fetcher, a `liveCluster`, or the zero value (no schemas, the `validate`
+default). Its two methods are the only places the offline/live split is
+decided; `validate`, `preflight` and `migrate-check` all go through them.
+
+It also compiles what the render produces for the *other* processes in the
+fleet, which the load gate cannot judge: `vector validate` on `RenderedFiles`
+`vector.yaml`, and `varnishd -C` on every `*.vcl` in a rendered ConfigMap
+(`RenderedK8sResources`). Both run the real binaries in containers
+(`HAPTIC_CONTAINER_RUNTIME`, `HAPTIC_VECTOR_IMAGE`, `HAPTIC_VARNISH_IMAGE`);
+without a runtime they warn and skip, but an explicitly configured runtime that
+is missing is an error. `varnishd` resolves backend hostnames at compile time,
+so each `.host` in the VCL is pointed at loopback via `--add-host`.
+
+Negative-controlled against every failure class that motivated it, each
+discriminating (the same input passes when the defect is absent): a bogus
+`global` directive, a vector section indented past its siblings, a VCL symbol
+that regex assertions accept but `varnishd` rejects, and — the incident that
+prompted the command — a validationTest pinning `service.namespace` to
+`default`, which passes under `--namespace default` (what chart CI renders in)
+and fails under the namespace the operator actually deploys to. User docs:
+`docs/site/docs/operations/validate-before-deploy.md`.
 
 ### `benchmark` — Render Performance (benchmark*.go)
 

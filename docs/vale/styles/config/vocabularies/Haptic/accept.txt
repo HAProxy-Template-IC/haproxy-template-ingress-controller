@@ -204,6 +204,7 @@ Kata
 KEDA
 Keepalived
 keyless
+kubeconfig
 kubectl
 kubelet
 Kubernetes

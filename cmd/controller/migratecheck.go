@@ -24,13 +24,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/migratecheck"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -173,17 +170,16 @@ func executeMigrateCheck(ctx context.Context, opts *migrateCheckOptions, logger 
 	}
 
 	// --schema-dir switches schema access offline; without it, schemas
-	// come from the live cluster. The dir fetcher (nil in the live case)
-	// is reused by the type bootstrap below.
-	var dirFetcher *schemafetcher.DirFetcher
+	// come from the live cluster.
+	schemas := schemaSource{live: live}
 	if opts.schemaDir != "" {
-		dirFetcher, err = schemafetcher.NewDirFetcher(opts.schemaDir)
+		schemas, err = newDirSchemaSource(opts.schemaDir, logger)
 		if err != nil {
-			return nil, fmt.Errorf("loading schema directory %q: %w", opts.schemaDir, err)
+			return nil, err
 		}
 	}
 
-	if err := resolveSpecAgainstSchemas(ctx, spec, dirFetcher, live, logger); err != nil {
+	if _, err := schemas.resolveEffectiveSpec(ctx, spec, logger); err != nil {
 		return nil, err
 	}
 
@@ -204,7 +200,7 @@ func executeMigrateCheck(ctx context.Context, opts *migrateCheckOptions, logger 
 		return nil, err
 	}
 
-	checked, aggregateErr, err := renderIngresses(ctx, spec, dirFetcher, live, ingressKey, ingresses, logger)
+	checked, aggregateErr, err := renderIngresses(ctx, spec, schemas, ingressKey, ingresses, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -229,35 +225,6 @@ func acquireConfigSpec(opts *migrateCheckOptions) (*v1alpha1.HAProxyTemplateConf
 		return nil, err
 	}
 	return renderChartConfigSpec(chartDir)
-}
-
-// resolveSpecAgainstSchemas mirrors the controller's effective-config
-// resolution: apiVersions candidates resolve against the --schema-dir
-// contents (when dirFetcher is non-nil) or live discovery, and features
-// whose optional resources are absent get stripped.
-func resolveSpecAgainstSchemas(
-	ctx context.Context,
-	spec *v1alpha1.HAProxyTemplateConfigSpec,
-	dirFetcher *schemafetcher.DirFetcher,
-	live *liveCluster,
-	logger *slog.Logger,
-) error {
-	if dirFetcher != nil {
-		served, fieldServed := dirServedCheckers(dirFetcher)
-		if _, err := conversion.ResolveEffectiveSpec(spec, served, fieldServed, logger); err != nil {
-			return fmt.Errorf("resolving effective config: %w", err)
-		}
-		return nil
-	}
-
-	checker := controller.NewDiscoveryServedChecker(ctx, live.discovery(), live.fetcher, logger)
-	if _, err := conversion.ResolveEffectiveSpec(spec, checker.IsServed, checker.FieldServed, logger); err != nil {
-		return fmt.Errorf("resolving effective config: %w", err)
-	}
-	if terr := checker.TransientErr(); terr != nil {
-		return fmt.Errorf("resolving effective config against the cluster: %w", terr)
-	}
-	return nil
 }
 
 // findIngressResourceKey locates the watched-resource entry for Kubernetes
@@ -294,8 +261,7 @@ func collectIngresses(ctx context.Context, opts *migrateCheckOptions, live *live
 func renderIngresses(
 	ctx context.Context,
 	spec *v1alpha1.HAProxyTemplateConfigSpec,
-	dirFetcher *schemafetcher.DirFetcher,
-	live *liveCluster,
+	schemas schemaSource,
 	ingressKey string,
 	ingresses []*unstructured.Unstructured,
 	logger *slog.Logger,
@@ -305,12 +271,7 @@ func renderIngresses(
 		return nil, "", fmt.Errorf("converting config: %w", err)
 	}
 
-	var typedResult *typebootstrap.Result
-	if dirFetcher != nil || live == nil {
-		typedResult, err = runOfflineTypeBootstrap(spec, dirFetcher, logger)
-	} else {
-		typedResult, err = controller.RunTypeBootstrap(ctx, coreCfg, live.fetcher, live.discovery(), logger)
-	}
+	typedResult, err := schemas.typeBootstrap(ctx, spec, logger)
 	if err != nil {
 		return nil, "", fmt.Errorf("type bootstrap: %w", err)
 	}
