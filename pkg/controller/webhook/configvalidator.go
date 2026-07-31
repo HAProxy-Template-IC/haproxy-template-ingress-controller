@@ -399,13 +399,25 @@ func (v *ConfigValidator) ValidateDirect(ctx context.Context, gvk, namespace, na
 	}
 
 	// Before the completeness gate and the suite run, so admission judges the
-	// same tests the load gate will. A failure here admits with a warning
-	// rather than denying: at install time the config is applied before its
-	// companion objects exist, and the load gate is the authoritative check.
-	if warning := v.foldCompanionTests(ctx, cfg, crd, namespace, name); warning != nil {
-		return true, "", warning
-	}
+	// same tests the load gate will. A failure here warns rather than denying:
+	// at install time the config is applied before its companion objects exist,
+	// and the load gate is the authoritative check. It must NOT short-circuit —
+	// compilation depends on the merged spec and the effective config, not on
+	// the companion tests, so an uncompilable template still has to be denied.
+	companionWarning := v.foldCompanionTests(ctx, cfg, crd, namespace, name)
 
+	allowed, reason, warnings = v.validateResolved(ctx, cfg, crVersion, namespace, name, operation)
+	return allowed, reason, append(companionWarning, warnings...)
+}
+
+// validateResolved is ValidateDirect's tail: effective-config resolution,
+// template compilation, the strict render/`haproxy -c` pipeline, and the
+// validationTests suite.
+func (v *ConfigValidator) validateResolved(
+	ctx context.Context,
+	cfg *coreconfig.Config,
+	crVersion, namespace, name, operation string,
+) (allowed bool, reason string, warnings []string) {
 	cfg, skipResolve := v.resolveEffective(ctx, cfg, namespace, name)
 	if skipResolve != nil {
 		return true, "", skipResolve

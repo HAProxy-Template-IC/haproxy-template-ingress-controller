@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -133,5 +134,70 @@ func TestConfigValidator_ValidateDirect_EffectiveResolution(t *testing.T) {
 		assert.True(t, allowed, "resolver failure must fail open, got denial: %s", reason)
 		require.Len(t, warnings, 1)
 		assert.Contains(t, warnings[0], "load gate", "the warning must point at the enforcing gate")
+	})
+}
+
+// compilableTestConfigCRD is effectiveTestConfigCRD's counterpart with a
+// template that compiles — the install-ordering case a companion-test
+// resolution failure must still admit.
+func compilableTestConfigCRD() *unstructured.Unstructured {
+	u := effectiveTestConfigCRD()
+	spec, _ := u.Object["spec"].(map[string]any)
+	delete(spec, "templateSnippets")
+	spec["haproxyConfig"] = map[string]any{
+		"template": "global\n  daemon\n\ndefaults\n  mode http\n  timeout connect 5s\n  timeout client 30s\n  timeout server 30s\n",
+	}
+	return u
+}
+
+// TestConfigValidator_ValidateDirect_CompanionTestResolution pins issue #108:
+// a companion-test resolution failure must not skip template compilation. It
+// warns and keeps validating, so an uncompilable config is still denied
+// instead of reaching etcd and crash-looping the next controller on its
+// fail-closed load gate.
+func TestConfigValidator_ValidateDirect_CompanionTestResolution(t *testing.T) {
+	newValidator := func(resolveTests func(ctx context.Context, cfg *coreconfig.Config, crd *v1alpha1.HAProxyTemplateConfig) error) *ConfigValidator {
+		return NewConfigValidator(&ConfigValidatorConfig{
+			Logger: testutil.NewTestLogger(),
+			StrictValidator: validation.NewValidationService(&validation.ValidationServiceConfig{
+				Logger: testutil.NewTestLogger(),
+			}),
+			StoreProvider: stubProvider{},
+			ResolveTests:  resolveTests,
+		})
+	}
+
+	failingResolve := func(_ context.Context, _ *coreconfig.Config, _ *v1alpha1.HAProxyTemplateConfig) error {
+		return errors.New("HAProxyValidationTests list forbidden")
+	}
+
+	t.Run("resolution failure still denies an uncompilable config", func(t *testing.T) {
+		v := newValidator(failingResolve)
+		allowed, reason, warnings := v.ValidateDirect(context.Background(), HAProxyTemplateConfigGVK,
+			"haptic", "haptic-config", effectiveTestConfigCRD(), "UPDATE")
+
+		require.False(t, allowed, "an uncompilable config must be denied even when companion tests cannot be resolved")
+		assert.Contains(t, reason, "gw-smoke", "the denial must name the snippet that failed to compile")
+		require.Len(t, warnings, 1, "the resolution failure must still be reported")
+		assert.Contains(t, warnings[0], "HAProxyValidationTests", "the warning must name the unresolved companion tests")
+	})
+
+	t.Run("resolution failure admits a compilable config with a warning", func(t *testing.T) {
+		v := newValidator(failingResolve)
+		allowed, reason, warnings := v.ValidateDirect(context.Background(), HAProxyTemplateConfigGVK,
+			"haptic", "haptic-config", compilableTestConfigCRD(), "UPDATE")
+
+		assert.True(t, allowed, "install ordering must survive: companion objects may not exist yet, got denial: %s", reason)
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0], "load gate", "the warning must point at the enforcing gate")
+	})
+
+	t.Run("successful resolution attaches no warning", func(t *testing.T) {
+		v := newValidator(func(_ context.Context, _ *coreconfig.Config, _ *v1alpha1.HAProxyTemplateConfig) error { return nil })
+		allowed, reason, warnings := v.ValidateDirect(context.Background(), HAProxyTemplateConfigGVK,
+			"haptic", "haptic-config", compilableTestConfigCRD(), "UPDATE")
+
+		assert.True(t, allowed, "got denial: %s", reason)
+		assert.Empty(t, warnings)
 	})
 }
