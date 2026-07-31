@@ -113,7 +113,8 @@ func init() {
 	validateCmd.Flags().StringVar(&validateTestName, "test", "", "Run specific test by name (optional)")
 	validateCmd.Flags().StringVarP(&validateOutputFormat, "output", "o", "summary", "Output format: summary, json, yaml")
 	validateCmd.Flags().BoolVar(&validateVerbose, "verbose", false, "Show rendered content preview for failed assertions")
-	validateCmd.Flags().BoolVar(&validateDumpRendered, "dump-rendered", false, "Dump all rendered content (haproxy.cfg, maps, files)")
+	validateCmd.Flags().BoolVar(&validateDumpRendered, "dump-rendered", false,
+		"Dump all rendered content: haproxy.cfg, maps, general files, certificates, k8sResources and status patches")
 	validateCmd.Flags().BoolVar(&validateTraceTemplates, "trace-templates", false, "Show template execution trace (top-level only; use with --profile-includes for full call tree)")
 	validateCmd.Flags().BoolVar(&validateDebugFilters, "debug-filters", false, "Show filter operation debugging (sort comparisons, etc.)")
 	validateCmd.Flags().BoolVar(&validateProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
@@ -141,42 +142,55 @@ func init() {
 }
 
 func runValidate(_ *cobra.Command, _ []string) error {
-	ctx := context.Background()
+	logger := newValidateLogger()
+	if validateDumpMerged {
+		return dumpMergedSpec()
+	}
+	schemas, err := newDirSchemaSource(validateSchemaDir, logger)
+	if err != nil {
+		return err
+	}
+	_, err = validateAndReport(context.Background(), schemas, logger)
+	return err
+}
 
-	// Setup logging
+func newValidateLogger() *slog.Logger {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
+	return logger
+}
 
-	if validateDumpMerged {
-		return dumpMergedSpec()
-	}
-
+// validateAndReport runs the load gate over validateConfigFiles and prints the
+// report. It returns the results so callers can inspect what was rendered —
+// `preflight` hands the rendered sidecar and cache configurations to their own
+// compilers. Results are returned even when tests fail, alongside the error.
+func validateAndReport(ctx context.Context, schemas schemaSource, logger *slog.Logger) (*testrunner.TestResults, error) {
 	// Setup validation environment
-	setup, err := setupValidation(logger)
+	setup, err := setupValidation(ctx, schemas, logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer setup.Cleanup()
 
 	// Run tests
 	results, err := runValidationTests(ctx, setup.ConfigSpec, setup.Engine, setup.ValidationPaths, setup.Capabilities, setup.HAProxyVersion, setup.TypedResourceTypes, logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Output results and optional content
 	if err := outputResults(results, setup.Engine); err != nil {
-		return err
+		return results, err
 	}
 
 	// Exit with error code if tests failed
 	if !results.AllPassed() {
-		return fmt.Errorf("validation tests failed: %d/%d tests passed", results.PassedTests, results.TotalTests)
+		return results, fmt.Errorf("validation tests failed: %d/%d tests passed", results.PassedTests, results.TotalTests)
 	}
 
-	return nil
+	return results, nil
 }
 
 // ValidationSetup contains all components needed for validation test execution.
@@ -203,7 +217,7 @@ type ValidationSetup struct {
 }
 
 // setupValidation loads config, creates engine, and sets up validation paths.
-func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
+func setupValidation(ctx context.Context, schemas schemaSource, logger *slog.Logger) (*ValidationSetup, error) {
 	// Load HAProxyTemplateConfig from file
 	configSpec, err := loadConfigFromFiles(validateConfigFiles)
 	if err != nil {
@@ -222,32 +236,16 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Load the schema directory once; it doubles as the offline availability
-	// signal for effective-config resolution and as the typebootstrap schema
-	// source below.
-	var dirFetcher *schemafetcher.DirFetcher
-	if validateSchemaDir != "" {
-		dirFetcher, err = schemafetcher.NewDirFetcher(validateSchemaDir)
-		if err != nil {
-			return nil, fmt.Errorf("loading schema directory %q: %w", validateSchemaDir, err)
-		}
-		logger.Info("Offline type bootstrap: loaded schema directory",
-			"path", validateSchemaDir,
-			"schemas", dirFetcher.Len())
-	}
-
-	// Mirror the controller's effective-config resolution offline: resolve
-	// apiVersions candidate lists against the schema directory and strip
-	// features whose optional resources are absent from it, plus every
-	// validation test whose requiresFields names a field the resolved
-	// schema generation lacks. This is what makes degraded cluster
-	// profiles unit-testable — point --schema-dir at an old-release CRD
-	// bundle and the same code path strips the same features a live
-	// cluster of that vintage would.
-	served, fieldServed := dirServedCheckers(dirFetcher)
-	specResolution, err2 := conversion.ResolveEffectiveSpec(configSpec, served, fieldServed, logger)
-	if err2 != nil {
-		return nil, fmt.Errorf("resolving effective config: %w", err2)
+	// Mirror the controller's effective-config resolution: resolve apiVersions
+	// candidate lists against the schema source and strip features whose
+	// optional resources are absent from it, plus every validation test whose
+	// requiresFields names a field the resolved schema generation lacks. This
+	// is what makes degraded cluster profiles unit-testable — point
+	// --schema-dir at an old-release CRD bundle and the same code path strips
+	// the same features a live cluster of that vintage would.
+	specResolution, err := schemas.resolveEffectiveSpec(ctx, configSpec, logger)
+	if err != nil {
+		return nil, err
 	}
 	printStrippedTests(specResolution)
 
@@ -263,17 +261,15 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 		return nil, err
 	}
 
-	// Run the offline type-bootstrap pipeline (typebootstrap against the
-	// schemas in --schema-dir / HAPTIC_SCHEMA_DIR) so the engine is
-	// constructed with typed `gateways` etc. globals declared. Without
-	// --schema-dir, this returns an empty Result and chart templates
-	// that use the typed shape get a clear engine-compile-time error
-	// pointing at the missing global — surfacing offline-vs-production
-	// drift the validate CLI exists to catch.
-	typedResult, err := runOfflineTypeBootstrap(configSpec, dirFetcher, logger)
+	// Generate the typed resource structs so the engine is constructed with
+	// typed `gateways` etc. globals declared. With no schema source this
+	// returns an empty Result and chart templates that use the typed shape get
+	// a clear engine-compile-time error pointing at the missing global —
+	// surfacing offline-vs-production drift the validate CLI exists to catch.
+	typedResult, err := schemas.typeBootstrap(ctx, configSpec, logger)
 	if err != nil {
 		cleanupFunc()
-		return nil, fmt.Errorf("offline type bootstrap: %w", err)
+		return nil, fmt.Errorf("type bootstrap: %w", err)
 	}
 
 	// Create template engine with custom filters + typed declarations
@@ -543,6 +539,12 @@ func dumpRenderedContent(results *testrunner.TestResults) {
 		dumpRenderedNamedContent("Map Files", test.RenderedMaps)
 		dumpRenderedNamedContent("General Files", test.RenderedFiles)
 		dumpRenderedNamedContent("SSL Certificates", test.RenderedCerts)
+		// Everything the render produces, not just what HAProxy itself reads.
+		// k8sResources carry configuration for other processes — the Varnish VCL,
+		// the rate-limit store — which nothing outside the controller could
+		// otherwise see, let alone hand to `varnishd -C` before deploying.
+		dumpRenderedNamedContent("Kubernetes Resources", test.RenderedK8sResources)
+		dumpRenderedNamedContent("Status Patches", test.RenderedStatusPatches)
 	}
 }
 

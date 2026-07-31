@@ -44,6 +44,10 @@ const (
 	// configTemplateBasename is the chart template whose rendered output
 	// is the HAProxyTemplateConfig resource.
 	configTemplateBasename = "haproxytemplateconfig.yaml"
+
+	// defaultReleaseName is what the chart's own docs install as, and what
+	// resource names are derived from.
+	defaultReleaseName = "haptic"
 )
 
 // resolveChartDir picks the chart directory for the in-process render:
@@ -88,27 +92,14 @@ func renderChartConfigSpec(chartDir string) (*v1alpha1.HAProxyTemplateConfigSpec
 		return nil, fmt.Errorf("chart %s: unsupported chart apiVersion (got %T)", chartDir, chrt)
 	}
 
-	overrides := enableAllTemplateLibraries(c)
-
-	// Prune/keep conditional subcharts per the override values (all
-	// library conditions are true now, so every library subchart stays).
-	if err := chartv2util.ProcessDependencies(c, overrides); err != nil {
-		return nil, fmt.Errorf("processing chart dependencies: %w", err)
-	}
-
-	renderValues, err := commonutil.ToRenderValues(c, overrides, common.ReleaseOptions{
-		Name:      "haptic",
-		Namespace: "haptic",
+	rendered, err := renderChart(c, enableAllTemplateLibraries(c), common.ReleaseOptions{
+		Name:      defaultReleaseName,
+		Namespace: defaultReleaseName,
 		Revision:  1,
 		IsInstall: true,
 	}, nil)
 	if err != nil {
-		return nil, fmt.Errorf("composing chart values: %w", err)
-	}
-
-	rendered, err := engine.Render(c, renderValues)
-	if err != nil {
-		return nil, fmt.Errorf("rendering chart: %w", err)
+		return nil, err
 	}
 
 	for name, content := range rendered {
@@ -125,6 +116,31 @@ func renderChartConfigSpec(chartDir string) (*v1alpha1.HAProxyTemplateConfigSpec
 		return spec, nil
 	}
 	return nil, fmt.Errorf("chart %s renders no %s template", chartDir, configTemplateBasename)
+}
+
+// renderChart runs the chart's templates with the given overrides. Nil caps
+// means Helm's defaults. Template-only, like `helm template`: no cluster
+// access, so `lookup` returns empty.
+func renderChart(c *chartv2.Chart, overrides map[string]any, rel common.ReleaseOptions,
+	caps *common.Capabilities,
+) (map[string]string, error) {
+	// Prune/keep conditional subcharts per the override values.
+	if err := chartv2util.ProcessDependencies(c, overrides); err != nil {
+		return nil, fmt.Errorf("processing chart dependencies: %w", err)
+	}
+
+	renderValues, err := commonutil.ToRenderValues(c, overrides, rel, caps)
+	if err != nil {
+		return nil, fmt.Errorf("composing chart values: %w", err)
+	}
+
+	rendered, err := engine.Render(c, renderValues)
+	if err != nil {
+		// A chart `fail()` lands here: the values themselves are rejected,
+		// which is a finding rather than an internal error.
+		return nil, fmt.Errorf("the chart rejects these values: %w", err)
+	}
+	return rendered, nil
 }
 
 // enableAllTemplateLibraries builds the sparse values override that sets
