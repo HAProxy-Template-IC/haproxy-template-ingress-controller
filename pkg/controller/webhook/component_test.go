@@ -189,6 +189,7 @@ func TestComponent_New_WithMetrics(t *testing.T) {
 type mockMetricsRecorder struct {
 	requestsRecorded    int
 	validationsRecorded int
+	validationLabels    [][2]string
 }
 
 func (m *mockMetricsRecorder) RecordWebhookRequest(gvk, result string, durationSeconds float64) {
@@ -197,6 +198,50 @@ func (m *mockMetricsRecorder) RecordWebhookRequest(gvk, result string, durationS
 
 func (m *mockMetricsRecorder) RecordWebhookValidation(gvk, result string) {
 	m.validationsRecorded++
+	m.validationLabels = append(m.validationLabels, [2]string{gvk, result})
+}
+
+// An AdmissionReview for a kind no validator backs is admitted unchecked, so
+// the only defence is that it is reported. The gvk is read off the wire and the
+// listener does not require client certificates, so it must never reach a
+// Prometheus label: a label value keeps its series forever, and anything able
+// to reach the Service could mint an unbounded set of them.
+func TestComponent_reportUnregisteredGVK(t *testing.T) {
+	tests := []struct {
+		name string
+		gvk  string
+	}{
+		{name: "well-formed kind", gvk: "networking.k8s.io/v1.Ingress"},
+		{name: "attacker-controlled high-cardinality kind", gvk: "evil.example.com/v1.Kind-8f3a1c9d"},
+		{name: "empty kind", gvk: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metrics := &mockMetricsRecorder{}
+			component := New(testutil.NewTestLogger(), &Config{
+				CertPEM: []byte("test-cert"),
+				KeyPEM:  []byte("test-key"),
+			}, nil, metrics)
+
+			component.reportUnregisteredGVK(tt.gvk)
+
+			require.Len(t, metrics.validationLabels, 1)
+			assert.Equal(t, [2]string{unregisteredGVKLabel, "unregistered"}, metrics.validationLabels[0],
+				"the wire-supplied gvk must not become a metric label value")
+			assert.NotEqual(t, tt.gvk, metrics.validationLabels[0][0])
+		})
+	}
+}
+
+// A nil recorder must not panic — metrics are optional throughout this package.
+func TestComponent_reportUnregisteredGVK_NilMetrics(t *testing.T) {
+	component := New(testutil.NewTestLogger(), &Config{
+		CertPEM: []byte("test-cert"),
+		KeyPEM:  []byte("test-key"),
+	}, nil, nil)
+
+	assert.NotPanics(t, func() { component.reportUnregisteredGVK("v1.ConfigMap") })
 }
 
 func TestComponent_Start_MissingCertificate(t *testing.T) {

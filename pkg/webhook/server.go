@@ -286,7 +286,14 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 	s.mu.RUnlock()
 
 	if !exists {
-		// No validator registered, allow by default
+		// Nothing registered can judge this object, so it is admitted. But the
+		// API server only sends what its rules route here, so arriving with no
+		// validator means the rules and the registrations have diverged — the
+		// gate is open for this kind. Report it; never admit unchecked in
+		// silence.
+		if s.config.OnUnregisteredGVK != nil {
+			s.config.OnUnregisteredGVK(gvk)
+		}
 		return &admissionv1.AdmissionResponse{
 			Allowed: true,
 		}
