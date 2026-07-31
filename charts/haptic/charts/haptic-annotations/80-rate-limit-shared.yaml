@@ -260,6 +260,25 @@ k8sResources:
                       fi
                       sleep 1
                     done
+                    # A Sentinel that has just (re)started replays the bootstrap config
+                    # written below, which names {{ base }}-0 — so "the master is me" is
+                    # not proof, it is what a returning ex-primary is always told. Ask the
+                    # peers before believing it, or pod-0 reclaims the role after every
+                    # failover and the promotion is silently undone.
+                    if [ -z "$master_host" ] || [ "$master_host" = "$self" ]; then
+                      i=0
+                      while [ "$i" -lt "{{ replicas }}" ]; do
+                        peer="{{ base }}-${i}.{{ base }}.${POD_NAMESPACE}.svc.cluster.local"
+                        i=$((i + 1))
+                        if [ "$peer" = "$self" ]; then continue; fi
+                        if timeout 1 valkey-cli -h "$peer" -p "{{ port }}" info replication 2>/dev/null \
+                             | tr -d '\r' | grep -qx "role:master"; then
+                          master_host="$peer"
+                          master_port="{{ port }}"
+                          break
+                        fi
+                      done
+                    fi
                     if [ -n "$master_host" ] && [ -n "$master_port" ] && [ "$master_host" != "$self" ]; then
                       exec valkey-server \
                         --port "{{ port }}" \
@@ -271,6 +290,19 @@ k8sResources:
                         --maxmemory-policy "{{ maxMemoryPolicy }}" \
                         --replicaof "$master_host" "$master_port"
                     fi
+                    # Bootstrap only: no Sentinel knows a master and no peer claims to
+                    # be one, so someone has to start the cluster — Sentinel cannot,
+                    # since `sentinel monitor` needs a master to point at.
+                    #
+                    # RESIDUAL RISK, deliberate: from pod-0 alone, "first boot, peers
+                    # not up yet" and "partitioned away from peers that ARE up" look
+                    # identical. No local signal separates them — that is what a
+                    # partition means — so an isolated pod-0 promotes and runs beside
+                    # the real master until the partition heals and Sentinel demotes
+                    # one. Bounded on purpose: this store holds volatile rate-limit
+                    # counters, so the cost is per-side budgets for the duration, not
+                    # lost data. Anything stronger needs quorum, which by definition is
+                    # unavailable in the case that would need it.
                     if [ "$ordinal" = "0" ]; then
                       exec valkey-server \
                         --port "{{ port }}" \
@@ -324,6 +356,11 @@ k8sResources:
                 command: ["/bin/sh", "-ec"]
                 args:
                   - |
+                    # Written ONCE. Sentinel rewrites this file itself to record the
+                    # current master, and regenerating it on every start throws that away
+                    # — a restarted Sentinel would announce the original topology and
+                    # contradict its peers.
+                    if [ ! -s /sentinel/sentinel.conf ]; then
                     cat > /sentinel/sentinel.conf <<EOF
                     port {{ sentinelPort }}
                     bind 0.0.0.0
@@ -337,6 +374,7 @@ k8sResources:
                     sentinel failover-timeout {{ sentinelMaster }} {{ failoverTimeoutMs }}
                     sentinel parallel-syncs {{ sentinelMaster }} {{ parallelSyncs }}
                     EOF
+                    fi
                     exec valkey-sentinel /sentinel/sentinel.conf
                 env:
                   - name: POD_NAME

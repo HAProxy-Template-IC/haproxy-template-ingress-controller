@@ -625,6 +625,10 @@ validationTests:
         otlp:
           endpoint: http://tempo:4318/v1/traces
           serviceName: haptic-edge
+          # Pinned, not inherited: an operator who sets clusterName would
+          # otherwise fail the not_contains below — on load, which crash-loops
+          # the controller on a perfectly good config.
+          clusterName: ""
       vector: { socketPath: /run/vector/haproxy.sock, metricsPort: 9598, scrapeIntervalSecs: 15, haproxyStatsPort: 0, spoaHubMetricsPort: 0, dataDir: /var/lib/vector, excludeMetrics: [] }
     assertions:
       - type: haproxy_valid
@@ -636,11 +640,12 @@ validationTests:
         pattern: 'uri: "http://tempo:4318/v1/traces"'
       - type: contains
         target: file:vector.yaml
-        pattern: '"key":"service\.namespace","value":\{"stringValue":"default"\}'
+        pattern: '"key":"service\.namespace","value":\{"stringValue":"[^"]+"\}'
         description: >-
-          Resource attributes identify WHICH HAPTIC emitted the span. Without
-          them several deployments in one cluster all report service.name=haptic
-          and are indistinguishable in the trace backend
+          Resource attributes identify WHICH HAPTIC emitted the span. The VALUE
+          is the release namespace, so it must not be pinned: these tests run on
+          the operator's own config, where asserting "default" is a load-gate
+          failure for every install that is not in that namespace
       - type: contains
         target: file:vector.yaml
         pattern: '"key":"k8s\.deployment\.name","value":\{"stringValue":"[^"]+-haproxy"\}'
@@ -649,7 +654,9 @@ validationTests:
         pattern: '"key":"k8s\.cluster\.name"'
         description: >-
           Omitted, not blank, when unset: Kubernetes exposes no cluster name to a
-          pod, so there is nothing to default it to
+          pod, so there is nothing to default it to. Pinned empty in this test's
+          own extraContext above — an operator who sets clusterName must not fail
+          an assertion that it is absent
       - type: contains
         target: file:vector.yaml
         pattern: 'inputs: \[spans\]'
