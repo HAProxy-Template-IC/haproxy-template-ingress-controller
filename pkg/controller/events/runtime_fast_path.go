@@ -68,3 +68,31 @@ func NewDeployRuntimeDivergenceEvent(podName string) *DeployRuntimeDivergenceEve
 
 // EventType returns the event type identifier.
 func (e *DeployRuntimeDivergenceEvent) EventType() string { return EventTypeDeployRuntimeDivergence }
+
+// RuntimeMapDivergenceEvent reports one runtime map whose post-apply read-back
+// still disagreed with the desired content, costing that sync its reload-free
+// lane (issue #48). The reload fallback is convergent, so a single occurrence
+// is not a fault — but the metrics component counts it as
+// haptic_runtime_map_divergence_total, and steady growth means endpoint churn
+// is quietly reloading HAProxy, which is exactly the property the runtime lane
+// exists to protect. Without this counter the degradation is visible only as a
+// WARN line, which is how it went unnoticed.
+type RuntimeMapDivergenceEvent struct {
+	// PodName identifies the HAProxy pod whose runtime map diverged.
+	PodName string
+	// MapName is the map that diverged, e.g. "pod-names.map".
+	MapName string
+	timestamped
+}
+
+// NewRuntimeMapDivergenceEvent builds a RuntimeMapDivergenceEvent.
+func NewRuntimeMapDivergenceEvent(podName, mapName string) *RuntimeMapDivergenceEvent {
+	return &RuntimeMapDivergenceEvent{
+		PodName:     podName,
+		MapName:     mapName,
+		timestamped: newTimestamped(),
+	}
+}
+
+// EventType returns the event type identifier.
+func (e *RuntimeMapDivergenceEvent) EventType() string { return EventTypeRuntimeMapDivergence }

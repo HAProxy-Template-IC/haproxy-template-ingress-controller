@@ -81,6 +81,15 @@ type SyncResult struct {
 	// cache miss and re-fetch the pod's actual state.
 	PostSyncVersion int64
 
+	// DivergedRuntimeMaps names the runtime maps whose post-apply read-back
+	// still disagreed with the desired content, each of which cost this sync
+	// its reload-free lane (issue #48: the Dataplane API acknowledges runtime
+	// map mutations that never reached the worker). The reload fallback is
+	// convergent, so this is not an error — but steady growth means endpoint
+	// churn is quietly reloading HAProxy, which is the whole property the
+	// runtime lane exists to protect. Empty on every healthy sync.
+	DivergedRuntimeMaps []string
+
 	// PostSyncParsedConfig is the pod's actual configuration AFTER the sync
 	// completed, fetched and parsed from the dataplane API. Set only when
 	// AppliedOperations is non-empty AND the post-sync fetch+parse

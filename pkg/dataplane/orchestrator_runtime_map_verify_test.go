@@ -89,6 +89,18 @@ func deref(s *string) string {
 	return *s
 }
 
+// mapUpdatesForTest builds one pending content update per named map.
+func mapUpdatesForTest(names ...string) []auxiliaryfiles.MapFile {
+	updates := make([]auxiliaryfiles.MapFile, 0, len(names))
+	for _, n := range names {
+		updates = append(updates, auxiliaryfiles.MapFile{
+			Path:    n,
+			Content: "example.test:18666 example.test:18666\n",
+		})
+	}
+	return updates
+}
+
 // applyRuntimeOnlyForTest drives applyRuntimeOnly with one pending map
 // content update against the fake.
 func applyRuntimeOnlyForTest(t *testing.T, fake *runtimeMapFake) (*SyncResult, error) {
@@ -96,10 +108,7 @@ func applyRuntimeOnlyForTest(t *testing.T, fake *runtimeMapFake) (*SyncResult, e
 	orch, cleanup := createTestOrchestratorWithParser(t, fake.handler(), &mockConfigParser{})
 	t.Cleanup(cleanup)
 
-	mapUpdates := []auxiliaryfiles.MapFile{{
-		Path:    "host.map",
-		Content: "example.test:18666 example.test:18666\n",
-	}}
+	mapUpdates := mapUpdatesForTest("host.map")
 	return orch.applyRuntimeOnly(
 		context.Background(),
 		"global\n  daemon\n",
@@ -131,6 +140,10 @@ func TestApplyRuntimeOnly_MapVerifyMismatchFallsBackToReload(t *testing.T) {
 	assert.True(t, res.ReloadTriggered, "lost runtime map write must trigger the reload fallback")
 	assert.Equal(t, SyncModeReload, res.SyncMode)
 	assert.GreaterOrEqual(t, fake.forceReloads.Load(), int32(1), "a force_reload push must converge the worker from the on-disk file")
+	// The map that cost the reload must be named on the result: it is what
+	// the deployer turns into haptic_runtime_map_divergence_total, and
+	// without it the degradation is only a WARN line nothing alerts on.
+	assert.Equal(t, []string{"host.map"}, res.DivergedRuntimeMaps)
 }
 
 // TestApplyRuntimeOnly_MapVerifyConvergedStaysRuntime pins the good case: the
@@ -145,4 +158,39 @@ func TestApplyRuntimeOnly_MapVerifyConvergedStaysRuntime(t *testing.T) {
 	assert.False(t, res.ReloadTriggered, "converged runtime map apply must stay reload-free")
 	assert.Equal(t, SyncModeRuntime, res.SyncMode)
 	assert.Equal(t, int32(0), fake.forceReloads.Load(), "no force_reload push on the happy path")
+	assert.Empty(t, res.DivergedRuntimeMaps, "a converged apply must report no divergence")
+}
+
+// TestApplyRuntimeOnly_MapVerifyReportsEveryDivergedMap pins that the report
+// is complete, not just the first hit. The reload outcome is the same either
+// way, but haptic_runtime_map_divergence_total is what an operator uses to
+// find WHICH map is degrading the reload-free lane — reporting only the first
+// in slice order would point them at an arbitrary one of the culprits.
+func TestApplyRuntimeOnly_MapVerifyReportsEveryDivergedMap(t *testing.T) {
+	fake := &runtimeMapFake{entries: map[string]string{}, applyEntryWrites: false}
+
+	orch, cleanup := createTestOrchestratorWithParser(t, fake.handler(), &mockConfigParser{})
+	t.Cleanup(cleanup)
+
+	res, err := orch.applyRuntimeOnly(
+		context.Background(),
+		"global\n  daemon\n",
+		&comparator.ConfigDiff{},
+		nil, // runtimeOps
+		mapUpdatesForTest("host.map", "pod-names.map", "path-exact.map"),
+		nil, // certUpdates
+		nil, // caUpdates
+		&auxiliaryFileDiffs{},
+		"", // actions
+		1,  // version
+		DefaultSyncOptions(),
+		time.Now(),
+	)
+
+	require.NoError(t, err)
+	assert.True(t, res.ReloadTriggered)
+	assert.Equal(t,
+		[]string{"host.map", "pod-names.map", "path-exact.map"},
+		res.DivergedRuntimeMaps,
+		"every diverged map must be reported, not only the first")
 }
