@@ -476,6 +476,49 @@ Snippets use numeric prefixes (e.g., `backends-500-ingress`) to control executio
 }) %}
 ```
 
+## Naming access-log fields and span attributes (RULE)
+
+Three namespaces, in priority order. Apply the first that matches.
+
+**1. A semantic-convention name, if one exists.** OpenTelemetry wins over both
+prefixes below: `http.route`, `url.path`, `server.address`, `server.port`,
+`tls.protocol.version`, `tls.client.subject`, `network.local.address`,
+`network.protocol.version`, `k8s.pod.name`, `user.id`. Check the
+[registry](https://opentelemetry.io/docs/specs/semconv/registry/attributes/)
+before inventing a name — it covers more than people expect, including TLS
+client certificates and Kubernetes objects.
+
+**2. `haproxy.` when you need HAProxy's documentation to interpret the value.**
+`haproxy.term_state` (you cannot decode `----` without it), `haproxy.time.*`
+(`%Tr` stops at the response headers, `%Td` does not — a distinction that has
+already caused one bug), `haproxy.retries`, `haproxy.mtls_verify` (an
+`ssl_c_verify` result code), and `haproxy.backend` / `server` / `frontend`,
+whose strings HAPTIC generates but which denote objects in HAProxy's proxy
+model.
+
+**3. `haptic.` when you need HAPTIC's documentation.** `haptic.resource`,
+`haptic.req_id`, `haptic.denied_by`, `haptic.waf_*`, `haptic.rate_limit_*`,
+`haptic.schema_outcome`, `haptic.cache`, `haptic.gw_route`,
+`haptic.instance_pod`.
+
+**The test is whose docs you need, NOT whether plain HAProxy could produce the
+value.** That weaker test collapses, because nearly everything could:
+`haptic.req_id` is `%ID` from a stock `unique-id-format`, yet the contract you
+actually rely on — a UUIDv7, never embedding a client IP, adopted from an
+inbound header only when well-formed — is HAPTIC's, and HAProxy's manual says
+none of it.
+
+**A `haptic.` attribute is named `haptic.` + its exact access-log field name.**
+`waf_action` → `haptic.waf_action`. Keeping the two identical is what lets you
+move from a log line to a span attribute without a translation table. Rules 1
+and 2 do not follow this — those names are fixed by the specification and by
+HAProxy respectively, so the log keeps its own short name (`mtls_cn` →
+`tls.client.subject`, `destination_ip` → `network.local.address`).
+
+**Personal data does not go into spans at all.** No client IP, forwarded or
+peer: a trace is retained and shared far more widely than an access log.
+Correlate through `haptic.req_id`, which both carry.
+
 ## HAProxy File Path Requirements
 
 ### The `default-path origin` Directive

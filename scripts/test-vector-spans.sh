@@ -70,7 +70,8 @@ base = {"ts": "2026-07-30T09:00:00.123456Z", "req_id": "r", "trace_id": "a"*32,
         "trace_flags": "01", "handshake_time_ms": 5, "idle_time_ms": 0,
         "request_time_ms": 2, "queue_time_ms": 0, "retries": 0, "method": "GET",
         "path": "/p/unset", "host": "h", "frontend": "fe_https",
-        "tls_version": "TLSv1.3", "tls_resumed": True, "client_ip": "1.2.3.4", "term": "----",
+        "tls_version": "TLSv1.3", "tls_resumed": True,
+        "destination_ip": "10.0.0.9", "instance_pod": "hap-1", "mtls_verify": "0", "client_ip": "1.2.3.4", "term": "----",
         "denied_by": "",
         # te_us: the exact end in epoch microseconds. ts is ...00.123456, so
         # this is deliberately NOT ts + Th+Ti+Ta — it carries the sub-millisecond
@@ -260,7 +261,8 @@ for case, batch in got.items():
 # that lies. The deny case asserts it separately.
 CLIENT_ONLY = {"haproxy.time.client_handshake_ms", "haproxy.time.idle_ms",
                "haproxy.time.request_ms", "tls.protocol.version", "tls.resumed",
-               "haproxy.frontend"}
+               "haproxy.frontend", "network.local.address", "haproxy.mtls_verify",
+               "haptic.instance_pod"}
 UPSTREAM_ONLY = {"haproxy.server", "haproxy.retries", "haproxy.time.queue_ms",
                  "k8s.pod.name", "k8s.service.name", "k8s.namespace.name",
                  "haproxy.time.connect_ms", "haproxy.time.response_ms",

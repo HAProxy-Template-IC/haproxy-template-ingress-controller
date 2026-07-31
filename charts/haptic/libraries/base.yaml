@@ -430,6 +430,15 @@ templateSnippets:
           makes every exported batch invalid JSON, and the only symptom is that
           spans stop arriving — so bound it here rather than escaping at use. -#}
       {%- var otlpService = extraContext | dig_string("haptic", "tracing", "otlp", "serviceName") -%}
+      {#- Same for every other value spliced into that prefix. clusterName is
+          operator-supplied; the rest are chart-derived and safe in practice, but
+          one guard over all of them cannot go stale as values are added. -#}
+      {%- for _, f := range []string{"clusterName", "serviceNamespace", "serviceVersion", "deploymentName"} -%}
+        {%- var v = tostring(extraContext | dig_string("", "tracing", "otlp", f)) -%}
+        {%- if regex_search(v, "[^A-Za-z0-9._-]") -%}
+          {{- fail("controller.config.templatingSettings.extraContext.tracing.otlp." + f + " may only contain A-Za-z0-9, '.', '_' and '-', got '" + v + "'. It is embedded in a JSON string literal in the OTLP payload, where a quote or backslash would make every exported batch invalid — and the only symptom is that spans stop arriving.") -}}
+        {%- end -%}
+      {%- end -%}
       {%- if regex_search(otlpService, "[^A-Za-z0-9._-]") -%}
         {{- fail("controller.config.templatingSettings.extraContext.tracing.otlp.serviceName may only contain A-Za-z0-9, '.', '_' and '-', got '" + otlpService + "'. It is embedded in a JSON string literal in the OTLP payload, where a quote or backslash would make every exported batch invalid.") -}}
       {%- end -%}
@@ -707,6 +716,15 @@ templateSnippets:
       %(ts)[accept_date(us),us_utime(%Y-%m-%dT%H:%M:%S.%6NZ)]
       %(req_id)ID
       %(trace_id)[var(txn.trace_id)]
+      {#- The address the client connected TO — which VIP or entry point served
+          this. ECS calls it destination.ip; on the span it is
+          network.local.address. What it resolves to depends on how traffic
+          reaches the pod: the LoadBalancer VIP with MetalLB-style L2/BGP, the
+          node IP behind externalTrafficPolicy Local, the pod IP behind a
+          DNAT-ing cloud LB. -#}
+      %(destination_ip)[dst]
+      %(instance_pod)[var(proc.self_pod)]
+      %(instance_node)[var(proc.self_node)]
       %(client_ip)ci
       %(frontend)f
       %(backend)b
@@ -1579,6 +1597,15 @@ templateSnippets:
       {%- if shmEnabled && semver_gte(extraContext | dig("haproxyVersion") | fallback(""), "3.3") %}
       expose-experimental-directives
       {%- end %}
+
+  global-settings-090-instance:
+    template: |
+      {#- Read once at startup into proc-scoped variables: identity is fixed for
+          the process, so a per-request fetch would be waste. An unset variable
+          renders empty and omitEmptyLogFields drops the field, so a deployment
+          that does not set these is unaffected. -#}
+      set-var proc.self_pod str("$SELF_POD_NAME")
+      set-var proc.self_node str("$SELF_NODE_NAME")
 
   global-settings-100-logging:
     template: |
@@ -3405,6 +3432,15 @@ validationTests:
     extraContext: { tracing: { enabled: "false" } }
     assertions:
       - { type: contains, target: rendering_error, pattern: 'tracing.enabled must be a boolean' }
+
+  test-tracing-otlp-cluster-name-charset:
+    description: >-
+      Every value spliced into the OTLP resource block is bounded, not just
+      serviceName — a quote in any of them invalidates the whole batch
+    fixtures: {}
+    extraContext: { tracing: { enabled: true, otlp: { clusterName: 'prod"eu1' } } }
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'clusterName may only contain' }
 
   test-tracing-otlp-service-name-charset:
     description: A quote in serviceName would make every exported OTLP batch invalid JSON
