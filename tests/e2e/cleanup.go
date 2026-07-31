@@ -83,6 +83,34 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"logs", "-l", LabelSelectorHAProxy, "--all-containers", "--prefix", "--tail=50000")
 
+		// A sidecar that died and was restarted took its stdout with it: the
+		// current instance's log says nothing about why the previous one
+		// exited, and the pod is Ready again by dump time. Without --previous
+		// a restart is only visible as a number in `kubectl get pods`. This is
+		// what makes an OOMKill or a silent exit(0) attributable rather than
+		// merely observable — see the per-container state dump below for which
+		// container to look at.
+		dumpCommand(t, dumpDir, "haproxy-logs-previous.txt",
+			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"logs", "-l", LabelSelectorHAProxy, "--all-containers", "--prefix", "--previous", "--tail=50000")
+
+		// Per-container ready/restart/lastState. `reason` separates an OOMKill
+		// from a clean exit, and `exitCode` separates a crash from a graceful
+		// shutdown — the pod-level READY column shows neither.
+		dumpCommand(t, dumpDir, "haproxy-container-states.txt",
+			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+			"get", "pods", "-l", LabelSelectorHAProxy, "-o",
+			"jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{range .status.containerStatuses[*]}"+
+				"  {.name}{\"\\tready=\"}{.ready}{\"\\trestarts=\"}{.restartCount}"+
+				"{\"\\tlastState=\"}{.lastState}{\"\\n\"}{end}{end}")
+
+		// Node memory pressure and allocatable-vs-limits. A node-scoped
+		// SystemOOM kills the container with the highest oom_score_adj, which
+		// is not necessarily the one that grew — so a container's own limit
+		// cannot be read as the cause without this.
+		dumpCommand(t, dumpDir, "nodes.txt",
+			"kubectl", "--kubeconfig", kubeconfigPath, "describe", "nodes")
+
 		dumpCommand(t, dumpDir, "backend-fixtures-logs.txt",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", SharedFixturesNamespace,
 			"logs", "--all-containers", "--prefix", "--tail=200", "-l", "")
@@ -117,9 +145,11 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 		dumpCommand(t, dumpDir, "test-namespace-endpointslices.yaml",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", namespace,
 			"get", "endpointslices", "-o", "yaml")
+		// -A after the subcommand: --all-namespaces belongs to `get`, not to
+		// kubectl itself, so leading it makes kubectl read it as a plugin name.
 		dumpCommand(t, dumpDir, "all-endpointslices.yaml",
-			"kubectl", "--kubeconfig", kubeconfigPath, "-A",
-			"get", "endpointslices", "-o", "yaml")
+			"kubectl", "--kubeconfig", kubeconfigPath,
+			"get", "endpointslices", "-A", "-o", "yaml")
 
 		// HAProxy's view of every server slot — admin_state, operational_state,
 		// runtime_addr, runtime_port. Ground truth for "which SRV slot points
