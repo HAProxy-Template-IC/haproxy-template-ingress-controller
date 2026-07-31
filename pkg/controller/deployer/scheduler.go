@@ -199,6 +199,21 @@ type DeploymentScheduler struct {
 	lastDispatchedParsed *parser.StructuredConfig
 	lastDispatchedConfig string
 
+	// lastActivatedConfig is the raw config last proven to be RUNNING on the
+	// fleet — a structural deploy that completed with zero failures, or a
+	// runtime-raw apply, whose push body and runtime actions are themselves the
+	// activation. It is deliberately NOT the dispatched render: a structural
+	// dispatch advances lastDispatchedConfig BEFORE the deploy lands, so during
+	// the flight the two differ, and that window is exactly when
+	// applyRuntimeSubset runs.
+	//
+	// Patching the dispatched-but-unlanded render instead wrote the pending
+	// structural content to disk under skip_reload — content HAProxy never
+	// loaded — after which the next sync's empty diff reported success and the
+	// render was never activated (#112). Protected by schedulerMutex; written
+	// together with lastDispatchedConfig where both advance.
+	lastActivatedConfig string
+
 	// Cache for deployment optimization - skip if config unchanged
 	lastDeployedConfigHash string    // SHA-256 hash of last successfully deployed config
 	lastDeployedPodSetHash string    // Hash of pod endpoints for the last deployment

@@ -353,8 +353,17 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	// retry — classifies structural and full-syncs against the pods' real
 	// state (see invalidateDispatchBaselineLocked for the issue #76 incident
 	// this prevents).
-	if event.Total > 0 && event.Failed > 0 {
+	//
+	// A deploy that landed everywhere is the moment the dispatched render
+	// becomes the RUNNING one, so it is the only place the structural lane may
+	// advance the activated baseline. The deploy loop is blocked in
+	// awaitCompletion until this fires, so no newer dispatch can have
+	// overwritten lastDispatchedConfig in between (#112).
+	switch {
+	case event.Total > 0 && event.Failed > 0:
 		s.invalidateDispatchBaselineLocked()
+	case event.Total > 0:
+		s.lastActivatedConfig = s.lastDispatchedConfig
 	}
 	s.schedulerMutex.Unlock()
 
@@ -550,6 +559,7 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 	// whole config) and close the bypass's persistent clients.
 	s.lastDispatchedParsed = nil
 	s.lastDispatchedConfig = ""
+	s.lastActivatedConfig = ""
 	s.runtimeBypass.Close()
 
 	// Note: state.lastDeploymentEndTime is NOT cleared - this historical data is safe to keep
