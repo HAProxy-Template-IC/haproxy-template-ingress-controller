@@ -291,7 +291,7 @@ func runIteration(
 	leaderState := setupLeaderElection(setup, cfg, k8sClient, wiring, logger)
 
 	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
-	maybeSetupWebhook(cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, setup, k8sClient, dryrunValidator, configValidator, logger)
+	maybeSetupWebhook(ctx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, setup, k8sClient, dryrunValidator, configValidator, logger)
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
@@ -385,6 +385,8 @@ func handleConfigurationChange(
 // cert dir, the server can't bind the TLS listener regardless of what we'd
 // want to register.
 func maybeSetupWebhook(
+	procCtx context.Context,
+	infra *persistentInfra,
 	cfg *coreconfig.Config,
 	webhookCertDir string,
 	webhookAdmissionTimeouts WebhookAdmissionTimeouts,
@@ -404,5 +406,5 @@ func maybeSetupWebhook(
 		return
 	}
 	logger.Info("Stage 7: Setting up webhook validation")
-	setupWebhook(setup.IterCtx, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, configValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
+	setupWebhook(procCtx, setup.IterCtx, infra, cfg, webhookCertDir, webhookAdmissionTimeouts, webhookPort, k8sClient, dryrunValidator, configValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
 }

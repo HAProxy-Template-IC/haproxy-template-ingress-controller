@@ -37,14 +37,21 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+// webhookWriteTimeoutHeadroom pads the HTTPS write deadline past the slowest
+// admission path, so a validation that uses its full budget still gets its
+// response written instead of being cut off mid-body.
+const webhookWriteTimeoutHeadroom = 2 * time.Second
 
 // WebhookAdmissionTimeouts contains the controller-side deadlines for the two
 // admission paths. They are separate because watched resources are an
@@ -66,7 +73,9 @@ type WebhookAdmissionTimeouts struct {
 // The webhook component validates Kubernetes resources via admission webhook.
 // Certificates are expected to be mounted at /etc/webhook/certs/ (provided by Helm).
 func setupWebhook(
+	procCtx context.Context,
 	iterCtx context.Context,
+	infra *persistentInfra,
 	cfg *coreconfig.Config,
 	webhookCertDir string,
 	admissionTimeouts WebhookAdmissionTimeouts,
@@ -98,20 +107,44 @@ func setupWebhook(
 		memory.NewMemCacheClient(discoveryClient),
 	)
 
+	// Bind the admission listener once per PROCESS, not once per iteration.
+	// A component-owned listener closes on every config change, and the API
+	// server meanwhile admits unchecked under failurePolicy=Ignore (#110).
+	// The certificate is read from the mounted Secret directory per handshake,
+	// so cert-manager rotation is picked up without re-binding.
+	sharedServer, err := infra.EnsureWebhookServer(procCtx, &pkgwebhook.ServerConfig{
+		Port:         webhookPort,
+		Path:         webhook.DefaultWebhookPath,
+		CertDir:      webhookCertDir,
+		ReadTimeout:  timeouts.HTTPServerTimeout,
+		WriteTimeout: max(admissionTimeouts.Resource, admissionTimeouts.HAProxyTemplateConfig) + webhookWriteTimeoutHeadroom,
+	}, logger)
+	if err != nil {
+		// Match what startInErrGroup does for a component that fails to start:
+		// cancel the iteration. Continuing would run the controller with no
+		// admission gate at all, which is the failure this whole change exists
+		// to close — a bind error must not be quieter than the hole it leaves.
+		logger.Error("Webhook listener unavailable; cancelling the iteration rather than running ungated",
+			"error", err)
+		cancel()
+		return
+	}
+
 	// Create webhook component with DryRunValidator for direct validation (no scatter-gather).
-	// The TLS certificate is read from the mounted Secret directory
-	// (CertDir) and hot-reloaded on rotation without a restart.
+	// It adopts the shared listener above and installs this iteration's
+	// validator table onto it.
 	webhookComponent := webhook.New(
 		logger,
 		&webhook.Config{
 			Port:                     webhookPort,
-			Path:                     "/validate",
+			Path:                     webhook.DefaultWebhookPath,
 			Rules:                    rules,
 			CertDir:                  webhookCertDir,
 			DryRunValidator:          dryrunValidator, // Direct validation, nil = fail-open
 			ConfigValidator:          configValidator, // HAProxyTemplateConfig admission, nil = fail-open
 			ResourceAdmissionTimeout: admissionTimeouts.Resource,
 			ConfigAdmissionTimeout:   admissionTimeouts.HAProxyTemplateConfig,
+			Server:                   sharedServer,
 		},
 		mapper,
 		metricsRecorder,

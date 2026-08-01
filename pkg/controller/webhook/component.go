@@ -184,6 +184,21 @@ type Config struct {
 	// Default: 29s. A timed-out validation is admitted with a warning because
 	// the controller's load gate still enforces the prospective config.
 	ConfigAdmissionTimeout time.Duration
+
+	// Server, when set, is an already-bound webhook server this component
+	// ADOPTS instead of creating and owning one.
+	//
+	// The controller rebuilds every component on each config change, so a
+	// component-owned listener closes and re-binds on every reinitialization —
+	// a multi-second window in which the API server dials a dead port and, under
+	// failurePolicy=Ignore, admits the very config change that opened it (#110).
+	// Hoisting the listener to process lifetime and swapping only the validator
+	// table closes that window: an iteration installs its table and, on
+	// teardown, leaves the previous one serving until the next install.
+	//
+	// The adopting component MUST NOT shut this server down — it belongs to the
+	// caller, and stopping it is precisely the hole being fixed.
+	Server *webhook.Server
 }
 
 // New creates a new webhook component.
@@ -242,6 +257,14 @@ func (c *Component) Start(ctx context.Context) error {
 	c.logger.Info("Starting webhook component",
 		"port", c.config.Port,
 		"path", c.config.Path)
+
+	// Adoption is decided BEFORE the certificate check: the shared server was
+	// built with its own TLS material, so an adopting component carries none and
+	// would fail the check below — silently, because Start() returning early
+	// leaves Listening() open and every caller waiting on it blocks forever.
+	if c.config.Server != nil {
+		return c.startAdopted(ctx)
+	}
 
 	// Validate a certificate source is configured.
 	if c.config.CertDir == "" {
@@ -322,6 +345,38 @@ func (c *Component) Start(ctx context.Context) error {
 		c.serverCancel()
 		return nil
 	}
+}
+
+// startAdopted runs the component against a caller-owned, already-bound server.
+//
+// It installs this iteration's validator table and then does nothing until the
+// iteration ends — deliberately: the listener, its port and its TLS material
+// belong to the caller and outlive this component. Returning without stopping
+// the server is what keeps the admission gate answerable across a config
+// reinitialization; the previous table keeps serving until the next iteration
+// installs its own, so a request in the gap gets a verdict from slightly older
+// wiring rather than the silent admit an unreachable webhook produces.
+func (c *Component) startAdopted(ctx context.Context) error {
+	c.server = c.config.Server
+
+	// Point the unregistered-GVK reporter at THIS iteration's metrics recorder.
+	// The server outlives the recorder that was current when it was built.
+	c.server.SetOnUnregisteredGVK(c.reportUnregisteredGVK)
+
+	c.registerValidators()
+
+	// The caller bound the listener before handing it over, so readiness is
+	// already satisfied — the sequencer must not block waiting for a bind that
+	// happened in an earlier iteration.
+	close(c.listening)
+
+	c.logger.Info("Webhook validators installed on the persistent server",
+		"port", c.config.Port,
+		"path", c.config.Path)
+
+	<-ctx.Done()
+	c.logger.Info("Webhook component shutting down; leaving the shared listener bound")
+	return nil
 }
 
 func (c *Component) serverWriteTimeout() time.Duration {
