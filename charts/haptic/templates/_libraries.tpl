@@ -432,6 +432,35 @@ Each entry in `$libraryFiles` is either:
   {{- $_ := set $snippet "template" $tpl }}
 {{- end }}
 
+{{- /* The same strip for the OTHER template-bearing sections. They were left
+       out originally and their comments ship in the CR verbatim — measured at
+       2,273 B in `files` (13.3% of it) and 1,417 B in `k8sResources`.
+
+       Two patterns only, and NOT $standaloneGoComment:
+
+       - A whitespace-STRIPPING comment (`{#- … -#}`) removes the newline on
+         each side, so deleting its line leaves the preceding newline behind and
+         un-fuses output Scriggo had fused. Harmless in an HAProxy config, and
+         structural in a YAML `files` template such as the vector config. The
+         pattern below therefore matches only the NON-stripping `{# … #}` form,
+         where deleting the whole line is output-neutral.
+       - `//` is a Go comment only inside a `{%- … -%}` block; in a rendered
+         file it can be content. A line-based regex cannot tell the difference,
+         and these sections render arbitrary file formats. */ -}}
+{{- $safeBlockComment := "(?ms)^[ \\t]*\\{#[^-].*?[^-]#\\}[ \\t]*\\n" }}
+{{- range $section := list "files" "maps" "k8sResources" "sslCertificates" }}
+  {{- range $name, $entry := ($merged | dig $section dict) }}
+    {{- if kindIs "map" $entry }}
+      {{- $tpl := $entry.template | default "" }}
+      {{- if $tpl }}
+        {{- $tpl = regexReplaceAll $leadingDocComment $tpl "" }}
+        {{- $tpl = regexReplaceAll $safeBlockComment $tpl "" }}
+        {{- $_ := set $entry "template" $tpl }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+
 {{- /* Return merged config as YAML */ -}}
 {{- $merged | toYaml }}
 {{- end }}
