@@ -1031,3 +1031,91 @@ func TestServer_HandleValidation_RegisteredGVKNotReported(t *testing.T) {
 
 	assert.Empty(t, reported, "a validated kind is not an unchecked admission")
 }
+
+// TestServer_SetValidators_ReplacesTable pins the property RegisterValidator
+// cannot provide: a kind dropped from the new table stops being validated.
+// A caller that rebuilds its wiring (a controller re-reading its config) would
+// otherwise keep serving the old closure, which holds state it has discarded.
+func TestServer_SetValidators_ReplacesTable(t *testing.T) {
+	certPEM, keyPEM, err := generateTestCertificates()
+	require.NoError(t, err)
+
+	var unregistered []string
+	server, err := NewServer(&ServerConfig{
+		CertPEM:           certPEM,
+		KeyPEM:            keyPEM,
+		OnUnregisteredGVK: func(gvk string) { unregistered = append(unregistered, gvk) },
+	})
+	require.NoError(t, err)
+
+	var called []string
+	record := func(name string) ValidationFunc {
+		return func(*ValidationContext) (bool, string, []string, error) {
+			called = append(called, name)
+			return true, "", nil, nil
+		}
+	}
+
+	// First wiring validates ConfigMaps.
+	server.SetValidators(map[string]ValidationFunc{"v1.ConfigMap": record("first")})
+	sendConfigMapReview(t, server)
+	assert.Equal(t, []string{"first"}, called)
+	assert.Empty(t, unregistered)
+
+	// Rewiring to a table WITHOUT ConfigMap must drop it, not merge.
+	server.SetValidators(map[string]ValidationFunc{"networking.k8s.io/v1.Ingress": record("second")})
+	sendConfigMapReview(t, server)
+	assert.Equal(t, []string{"first"}, called,
+		"the dropped kind's old closure must not be called after the swap")
+	assert.Equal(t, []string{"v1.ConfigMap"}, unregistered,
+		"the dropped kind is now an unchecked admission and must be reported")
+}
+
+// TestServer_SetValidators_CopiesInput pins that the server does not alias the
+// caller's map — a caller that keeps building into its own map after the swap
+// must not mutate what the server is serving.
+func TestServer_SetValidators_CopiesInput(t *testing.T) {
+	certPEM, keyPEM, err := generateTestCertificates()
+	require.NoError(t, err)
+
+	var unregistered []string
+	server, err := NewServer(&ServerConfig{
+		CertPEM:           certPEM,
+		KeyPEM:            keyPEM,
+		OnUnregisteredGVK: func(gvk string) { unregistered = append(unregistered, gvk) },
+	})
+	require.NoError(t, err)
+
+	caller := map[string]ValidationFunc{
+		"v1.ConfigMap": func(*ValidationContext) (bool, string, []string, error) { return true, "", nil, nil },
+	}
+	server.SetValidators(caller)
+
+	delete(caller, "v1.ConfigMap")
+	caller["v1.Secret"] = func(*ValidationContext) (bool, string, []string, error) { return true, "", nil, nil }
+
+	sendConfigMapReview(t, server)
+	assert.Empty(t, unregistered, "the server's table must be unaffected by later caller mutations")
+}
+
+// sendConfigMapReview drives one ConfigMap AdmissionReview through the handler.
+func sendConfigMapReview(t *testing.T, server *Server) {
+	t.Helper()
+	review := &admissionv1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview"},
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "test-uid",
+			Kind:      metav1.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"},
+			Operation: admissionv1.Create,
+			Object: runtime.RawExtension{
+				Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"}}`),
+			},
+		},
+	}
+	body, err := json.Marshal(review)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/validate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	server.handleValidation(httptest.NewRecorder(), req)
+}
