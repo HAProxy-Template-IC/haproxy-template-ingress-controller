@@ -66,26 +66,44 @@ func (c *Component) discardCachedConfig(correlationID string) {
 // the latest buffered item when publishThrottle.FiredCh() signals.
 func (c *Component) publishWorker(ctx context.Context) {
 	for {
-		// Deploy-driven work first, always. A select picks uniformly at random
-		// among ready cases, so with validation publishes arriving continuously
-		// a deployed item can sit unread for seconds — measured 5.2s, with
-		// three validation publishes going out ahead of it. For exactly that
-		// long the CR contradicts itself: status.deployedToPods already
-		// advertises the checksum whose content spec has not published, so no
-		// reader can resolve it. flushPendingPublish already orders deploy work
-		// first (see below); this makes the channel-level order match.
-		select {
-		case work := <-c.deployedPublishWork:
-			c.processPublishWork(ctx, work)
-			continue
-		default:
+		// Deploy-driven work first, and drain ALL of it before touching
+		// validation work. A select picks uniformly at random among ready
+		// cases, so with validation publishes arriving continuously a deployed
+		// item could sit unread for seconds — measured 5.2s, with three
+		// validation publishes going out ahead of it. For exactly that long the
+		// CR contradicts itself: status.deployedToPods already advertises a
+		// checksum whose content spec has not published, so no reader can
+		// resolve it. flushPendingPublish already orders deploy work first (see
+		// below); this makes the queue-level order match.
+		// ...but ONLY while the throttle gate is open. Under a closed gate
+		// processPublishWork puts the item straight back at the front of the
+		// queue, so draining here would pop it again on the very next
+		// iteration: a tight loop with nothing to block on, pinning a core for
+		// the whole refractory window. That is precisely the burst this queue
+		// exists for (the first item closes the gate, the rest arrive during
+		// refractory), so it would fire in the common case, not a corner.
+		//
+		// Falling through to the select instead lets FiredCh drive
+		// flushPendingPublish, which drains deploy work first and re-arms
+		// itself while the queue is non-empty — same order, no spin. The
+		// ScheduleFlush below is what makes that safe: enqueueDeployed only
+		// signals deployedTrigger, so without it a queued item under a closed
+		// gate would have nothing left to wake it and would stall until an
+		// unrelated event arrived.
+		if c.publishThrottle.Available() {
+			if work := c.takeDeployed(); work != nil {
+				c.processPublishWork(ctx, work)
+				continue
+			}
+		} else if c.deployedQueueDepth() > 0 {
+			c.publishThrottle.ScheduleFlush()
 		}
 
 		select {
 		case work := <-c.publishWork:
 			c.processPublishWork(ctx, work)
-		case work := <-c.deployedPublishWork:
-			c.processPublishWork(ctx, work)
+		case <-c.deployedTrigger:
+			// Wake only; the drain at the top of the loop takes the item.
 		case <-c.publishThrottle.FiredCh():
 			c.flushPendingPublish(ctx)
 		case <-ctx.Done():
@@ -118,19 +136,22 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 	// closed, buffer the latest work and ask the throttle to wake us when
 	// the refractory expires.
 	if !c.publishThrottle.Available() {
+		// Deploy-driven work goes BACK on the deployed queue, at the front, so
+		// it keeps its place. A one-slot buffer here would undo the queue's
+		// whole guarantee: draining a burst closes the gate on the first
+		// publish, and every remaining deployed checksum would then overwrite
+		// that slot, leaving only the newest — exactly the drop this queue
+		// exists to prevent. Validation work keeps its latest-wins slot, which
+		// is correct for it: only the newest render matters there.
 		var superseded *publishWorkItem
-		c.pendingMu.Lock()
 		if work.deployDriven {
-			// Deploy-driven items use their own slot (newest-deployed wins) so a
-			// validation publish can't coalesce away a deployed checksum. The
-			// entry is inline (carried on the event), so there's no cached render
-			// to discard when overwriting.
-			c.pendingDeployedPublish = work
+			c.requeueDeployedFront(work)
 		} else {
+			c.pendingMu.Lock()
 			superseded = c.pendingPublish
 			c.pendingPublish = work
+			c.pendingMu.Unlock()
 		}
-		c.pendingMu.Unlock()
 
 		// Drop the superseded item's cached render AFTER releasing pendingMu:
 		// discardCachedConfig takes mu, and handleLostLeadership takes mu THEN
@@ -157,12 +178,19 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 
 // flushPendingPublish publishes the buffered work item (if any) when the throttle timer expires.
 func (c *Component) flushPendingPublish(ctx context.Context) {
+	deployWork := c.takeDeployed()
+
 	c.pendingMu.Lock()
-	deployWork := c.pendingDeployedPublish
-	c.pendingDeployedPublish = nil
 	work := c.pendingPublish
 	c.pendingPublish = nil
 	c.pendingMu.Unlock()
+
+	// One deployed item per throttle window: the rest stay queued and the
+	// worker's own drain picks them up as the gate reopens, so the interval is
+	// still honoured and nothing is discarded.
+	if deployWork != nil && c.deployedQueueDepth() > 0 {
+		c.publishThrottle.ScheduleFlush()
+	}
 
 	// Deploy-driven first: spec should reflect what's actually deployed, and the
 	// deployed checksum must become observable. When both slots carry the same
