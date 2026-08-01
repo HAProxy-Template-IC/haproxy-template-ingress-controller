@@ -251,6 +251,11 @@ metadata:
     {{- include "haptic.labels" . | nindent 4 }}
 spec:
   {{- $config := $controller.config | deepCopy }}
+  {{- /* controller.config seeds the CR spec wholesale, so a values key that is
+         NOT part of the CRD has to be dropped here or server-side apply rejects
+         the whole object ("field not declared in schema") and `helm upgrade`
+         fails. Chart-time-only switches belong in this list. */ -}}
+  {{- $_ := unset $config "includeMigrationCoverage" }}
   {{- with $config.credentialsSecretRef }}
     {{- $_ := set . "name" (.name | default (include "haptic.dataplane.credentialsSecretName" $)) }}
   {{- end }}

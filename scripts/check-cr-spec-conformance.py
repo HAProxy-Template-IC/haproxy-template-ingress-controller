@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Reject a rendered CR carrying a spec field its own CRD does not declare.
+
+`spec` is seeded from `controller.config` wholesale, so any values key added
+under it lands in the object. The apiserver applies these with server-side
+apply against a *typed* schema, so an undeclared field is not ignored — it
+fails the apply with "field not declared in schema" and takes `helm upgrade`
+down with it. That has shipped once.
+
+kubeconform cannot catch it: the chart's own CRDs are not in any public schema
+catalog, so `make lint-chart` skips exactly these kinds. This closes that gap
+by checking the rendered objects against the CRDs the chart itself ships.
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - environment guard
+    sys.exit(
+        "check-cr-spec-conformance.py needs PyYAML: pip install pyyaml "
+        "(the CI image gets it transitively today, which is not something to rely on)"
+    )
+
+
+def crd_spec_properties(crd_dir: Path) -> dict[str, set[str]]:
+    """kind -> the spec properties its CRD declares."""
+    declared: dict[str, set[str]] = {}
+    for path in sorted(crd_dir.glob("*.yaml")):
+        for doc in yaml.safe_load_all(path.read_text()):
+            if not doc or doc.get("kind") != "CustomResourceDefinition":
+                continue
+            kind = doc["spec"]["names"]["kind"]
+            for version in doc["spec"]["versions"]:
+                schema = version.get("schema", {}).get("openAPIV3Schema", {})
+                spec = schema.get("properties", {}).get("spec", {})
+                # A spec that accepts anything cannot leak; skip it rather than
+                # report every field as undeclared.
+                if spec.get("x-kubernetes-preserve-unknown-fields"):
+                    continue
+                declared.setdefault(kind, set()).update(spec.get("properties", {}))
+    return declared
+
+
+def render(chart: Path, extra: list[str]) -> list[dict]:
+    proc = subprocess.run(
+        ["helm", "template", str(chart), "--namespace", "haptic", *extra],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        # Surface helm's own message: a template error here is the operator's
+        # bug to fix, and a Python traceback hides it.
+        sys.exit(f"helm template failed ({proc.returncode}):\n{proc.stderr.strip()}")
+    return [d for d in yaml.safe_load_all(proc.stdout) if d]
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        sys.exit(f"usage: {Path(sys.argv[0]).name} <chart-dir> [helm template args...]")
+    chart = Path(sys.argv[1])
+    extra = sys.argv[2:]
+    declared = crd_spec_properties(chart / "crds")
+    if not declared:
+        print(f"no CRDs with a closed spec schema under {chart / 'crds'}", file=sys.stderr)
+        return 1
+
+    failures = []
+    checked = 0
+    for obj in render(chart, extra):
+        kind = obj.get("kind")
+        if kind not in declared or not isinstance(obj.get("spec"), dict):
+            continue
+        checked += 1
+        undeclared = sorted(set(obj["spec"]) - declared[kind])
+        if undeclared:
+            name = obj.get("metadata", {}).get("name", "<unnamed>")
+            failures.append((kind, name, undeclared))
+
+    for kind, name, fields in failures:
+        print(f"  ✗ {kind}/{name} carries spec fields its CRD does not declare:")
+        for f in fields:
+            print(f"      .spec.{f}")
+
+    if failures:
+        print()
+        print("Server-side apply rejects these outright, so `helm upgrade` fails for")
+        print("every operator. If the field is a chart-time-only switch, unset it from")
+        print("$config in templates/haproxytemplateconfig.yaml; if it is real API,")
+        print("add it to the Go type and regenerate the CRD.")
+        return 1
+
+    print(f"  ✓ OK ({checked} object(s) conform to the CRDs the chart ships)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
