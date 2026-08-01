@@ -186,6 +186,8 @@ tests:
   # the templates actually read is pinned by scripts/check-migration-coverage.sh.
   - it: should not emit migrationCoverage when no vendor annotation library is enabled
     set:
+      # Covers the loader's merge; the chart omits it by default (!1492).
+      controller.config.includeMigrationCoverage: true
       controller.templateLibraries.hapticAnnotations.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
       controller.templateLibraries.haproxyIngress.enabled: false
@@ -194,8 +196,21 @@ tests:
       - notExists:
           path: spec.migrationCoverage
 
+  - it: should omit migrationCoverage from the rendered config by default
+    # Pinned separately from the opt-in tests below: without this, reverting the
+    # default would leave every one of them green.
+    set:
+      controller.templateLibraries.nginxIngress.enabled: true
+      controller.templateLibraries.haproxyIngress.enabled: true
+      controller.templateLibraries.haproxytech.enabled: true
+    asserts:
+      - notExists:
+          path: spec.migrationCoverage
+
   - it: should contribute one migrationCoverage source per enabled library
     set:
+      # Covers the loader's merge; the chart omits it by default (!1492).
+      controller.config.includeMigrationCoverage: true
       controller.templateLibraries.hapticAnnotations.enabled: true
       controller.templateLibraries.nginxIngress.enabled: true
       controller.templateLibraries.haproxyIngress.enabled: true
@@ -207,6 +222,8 @@ tests:
 
   - it: should declare the ingress-nginx source shape when only nginx-ingress is enabled
     set:
+      # Covers the loader's merge; the chart omits it by default (!1492).
+      controller.config.includeMigrationCoverage: true
       controller.templateLibraries.hapticAnnotations.enabled: false
       controller.templateLibraries.nginxIngress.enabled: true
       controller.templateLibraries.haproxyIngress.enabled: false
@@ -235,6 +252,8 @@ tests:
 
   - it: should declare the haproxy-ingress source shape when only haproxy-ingress is enabled
     set:
+      # Covers the loader's merge; the chart omits it by default (!1492).
+      controller.config.includeMigrationCoverage: true
       controller.templateLibraries.hapticAnnotations.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
       controller.templateLibraries.haproxyIngress.enabled: true
@@ -252,6 +271,8 @@ tests:
 
   - it: should declare the haproxytech source shape when only haproxytech is enabled
     set:
+      # Covers the loader's merge; the chart omits it by default (!1492).
+      controller.config.includeMigrationCoverage: true
       controller.templateLibraries.hapticAnnotations.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
       controller.templateLibraries.haproxyIngress.enabled: false
@@ -275,6 +296,8 @@ tests:
 
   - it: should declare the haptic-annotations source shape when only haptic-annotations is enabled
     set:
+      # Covers the loader's merge; the chart omits it by default (!1492).
+      controller.config.includeMigrationCoverage: true
       controller.templateLibraries.hapticAnnotations.enabled: true
       controller.templateLibraries.nginxIngress.enabled: false
       controller.templateLibraries.haproxyIngress.enabled: false

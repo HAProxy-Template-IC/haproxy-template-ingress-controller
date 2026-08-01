@@ -42,6 +42,8 @@ render_config() {
     else sets+=(--set "controller.templateLibraries.$kv"); fi
   done
   [ "$apiver" = yes ] && av=(--api-versions=gateway.networking.k8s.io/v1/GatewayClass)
+  # The playground is the only consumer; the chart omits it by default (!1492).
+  sets+=(--set controller.config.includeMigrationCoverage=true)
   echo "==> $id config -> $OUT/presets/$id.config.yaml"
   # The chart renders one HAProxyTemplateConfig per enabled template library
   # (ADR-0014), but the playground shows and renders a single config. Merge the
