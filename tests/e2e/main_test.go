@@ -787,19 +787,17 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	//   - INFO logging: the profile's DEBUG level emits per-resource lines;
 	//     at 800+ resources the log volume itself would distort the timing
 	//     measurements, and production runs INFO.
-	//   - vector memory 2Gi: this tier renders 825 backends, and after ?no-maint
-	//     drops the empty slots vector still re-exports ~85k series (backends
-	//     are ~75% of that). The chart default is sized for a realistic fleet,
-	//     not for this one, so the tier budgets its own scale here for the same
-	//     reason it does for the controller above — the measurement being made
-	//     is convergence, not whether the sidecar fits its default cap.
+	//
+	// The sidecar is deliberately NOT given its own budget here: it runs on the
+	// chart default, so this tier is the one place that exercises what actually
+	// ships. Forcing it to 2Gi (as this did) meant no run anywhere validated the
+	// shipped cap, and issue #111 sat ambiguous for a day because a green
+	// nightly proved nothing about it.
 	if os.Getenv(scaleEnableEnv) == "1" {
 		args = append(args,
 			"--set", "controller.resources.limits.memory=2Gi",
 			"--set", "controller.logLevel=INFO",
 			"--set", "controller.config.logging.level=INFO",
-			"--set", "vector.resources.requests.memory=2Gi",
-			"--set", "vector.resources.limits.memory=2Gi",
 		)
 	}
 	cmd := exec.CommandContext(ctx, "helm", args...)
