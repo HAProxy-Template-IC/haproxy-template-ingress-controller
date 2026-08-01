@@ -256,7 +256,9 @@ files:
       <html><body><h1>503</h1></body></html>
 ```
 
-Set `reloadOnPush: false` when a sidecar owns the file and watches it itself — the bundled Vector and SPOA-hub configs both do. HAProxy never opens those, so the controller writes the new content and skips the reload. Keep the default for anything the HAProxy configuration references: only a reload makes that content take effect. Deleting a file reloads either way, because the running worker doesn't report `reloadOnPush` and the controller can't tell whether the config referenced it.
+Set `reloadOnPush: false` when a sidecar owns the file and watches it itself — the bundled Vector and SPOA-hub configs both do. HAProxy never opens those, so the controller writes the new content and skips the reload. Keep the default for anything the HAProxy configuration references: only a reload makes that content take effect.
+
+`reloadOnPush` governs writes. **Removing** a file reloads only when the rendered configuration, or a crt-list, still names it — that reference would otherwise dangle until some later change reloaded HAProxy and every worker failed to start. A sidecar-owned file is named nowhere, so removing it doesn't reload either.
 
 See [Templating — General Files](./templating.md#general-files).
 

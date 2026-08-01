@@ -28,6 +28,22 @@ type runtimeMapFake struct {
 	entries          map[string]string
 	applyEntryWrites bool
 	forceReloads     atomic.Int32
+	// storageDeletes records every DELETE against the storage endpoints, so a
+	// test can tell "the orchestrator skipped the reload" from "the
+	// orchestrator skipped the work".
+	storageDeletes []string
+}
+
+func (f *runtimeMapFake) recordStorageDelete(path string) {
+	f.mu.Lock()
+	f.storageDeletes = append(f.storageDeletes, path)
+	f.mu.Unlock()
+}
+
+func (f *runtimeMapFake) deletedPaths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.storageDeletes...)
 }
 
 func (f *runtimeMapFake) handler() http.HandlerFunc {
@@ -42,6 +58,9 @@ func (f *runtimeMapFake) handler() http.HandlerFunc {
 		case isEntries && r.Method == http.MethodPost:
 			f.addEntry(w, r)
 		case strings.Contains(r.URL.Path, "/runtime/maps/") && r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(r.URL.Path, "/storage/") && r.Method == http.MethodDelete:
+			f.recordStorageDelete(r.URL.Path)
 			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(r.URL.Path, "/configuration/raw") && r.Method == http.MethodPost:
 			if r.URL.Query().Get("force_reload") == "true" {
@@ -105,10 +124,16 @@ func mapUpdatesForTest(names ...string) []auxiliaryfiles.MapFile {
 // content update against the fake.
 func applyRuntimeOnlyForTest(t *testing.T, fake *runtimeMapFake) (*SyncResult, error) {
 	t.Helper()
+	return applyRuntimeOnlyWithAux(t, fake, mapUpdatesForTest("host.map"), &auxiliaryFileDiffs{})
+}
+
+// applyRuntimeOnlyWithAux drives applyRuntimeOnly with a caller-supplied
+// auxiliary diff, for the lane's non-map work.
+func applyRuntimeOnlyWithAux(t *testing.T, fake *runtimeMapFake, mapUpdates []auxiliaryfiles.MapFile, auxDiffs *auxiliaryFileDiffs) (*SyncResult, error) {
+	t.Helper()
 	orch, cleanup := createTestOrchestratorWithParser(t, fake.handler(), &mockConfigParser{})
 	t.Cleanup(cleanup)
 
-	mapUpdates := mapUpdatesForTest("host.map")
 	return orch.applyRuntimeOnly(
 		context.Background(),
 		"global\n  daemon\n",
@@ -117,12 +142,33 @@ func applyRuntimeOnlyForTest(t *testing.T, fake *runtimeMapFake) (*SyncResult, e
 		mapUpdates,
 		nil, // certUpdates
 		nil, // caUpdates
-		&auxiliaryFileDiffs{},
+		auxDiffs,
 		"", // actions
 		1,  // version
 		DefaultSyncOptions(),
 		time.Now(),
 	)
+}
+
+// Orphan deletes are deferred to the post-config phase on BOTH lanes, so the
+// reload-free lane has to perform them too. It previously did not, which was
+// invisible while every auxiliary delete forced the reload path — the moment an
+// unreferenced general-file delete became reload-free, the file would have
+// stayed on disk while the result already counted it deleted.
+func TestApplyRuntimeOnly_DeletesOrphanedGeneralFiles(t *testing.T) {
+	fake := &runtimeMapFake{entries: map[string]string{}, applyEntryWrites: true}
+
+	res, err := applyRuntimeOnlyWithAux(t, fake, nil, &auxiliaryFileDiffs{
+		fileDiff: &auxiliaryfiles.FileDiff{ToDelete: []string{"vector.yaml"}},
+	})
+
+	require.NoError(t, err)
+	assert.False(t, res.ReloadTriggered, "an unreferenced general-file delete must not reload")
+	assert.Equal(t, SyncModeRuntime, res.SyncMode)
+
+	deleted := fake.deletedPaths()
+	require.Len(t, deleted, 1, "the reload-free lane must still issue the delete it reports as applied")
+	assert.Contains(t, deleted[0], "vector.yaml")
 }
 
 // TestApplyRuntimeOnly_MapVerifyMismatchFallsBackToReload pins the issue #48

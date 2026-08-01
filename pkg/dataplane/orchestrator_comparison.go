@@ -375,6 +375,60 @@ type auxiliaryFileDiffs struct {
 	mapDiff     *auxiliaryfiles.MapFileDiff
 	crtlistDiff *auxiliaryfiles.CRTListDiff
 	hasChanges  bool
+
+	// references answers "would HAProxy notice this file disappearing?" for the
+	// deletes in this diff. The zero value answers yes to everything, so a path
+	// that doesn't set it keeps the conservative behaviour.
+	references fileReferences
+}
+
+// fileReferences searches the desired state for mentions of an auxiliary file
+// that is about to be deleted.
+//
+// Deleting a file the desired state still names leaves a dangling reference
+// that surfaces only at the NEXT reload — possibly hours later, when an
+// unrelated change makes every worker fail to start. That delete takes its
+// reload now, so the breakage is immediate and attributable. A file nothing
+// names — a sidecar's own config — has no such reference to dangle.
+//
+// crt-lists are searched alongside the configuration because they are the one
+// place HAPTIC names a general file from outside it: `ca-file <path>` on a
+// per-certificate line (see the chart's CrtListLine macro).
+//
+// This is deliberately NOT the mechanism behind reloadOnPush, which governs
+// writes. A missed reference here defers a reload that a later change will
+// perform anyway; a missed reference on a content update would serve stale
+// content silently and forever, so that case wants the operator's explicit
+// assertion rather than a search.
+type fileReferences struct {
+	config   string
+	crtLists []auxiliaryfiles.CRTListFile
+}
+
+// mentions reports whether the desired state names the file. An unset scanner
+// (no config) answers true: unknown means reload.
+//
+// A file's path is built from its identifier, so a substring test cannot miss a
+// real reference. A coincidental hit only costs one reload.
+func (r fileReferences) mentions(identifier string) bool {
+	if r.config == "" || strings.Contains(r.config, identifier) {
+		return true
+	}
+	for _, list := range r.crtLists {
+		if strings.Contains(list.Content, identifier) {
+			return true
+		}
+	}
+	return false
+}
+
+// newFileReferences builds the scanner from the state being deployed.
+func newFileReferences(desiredConfig string, desired *AuxiliaryFiles) fileReferences {
+	refs := fileReferences{config: desiredConfig}
+	if desired != nil {
+		refs.crtLists = desired.CRTListFiles
+	}
+	return refs
 }
 
 // anyDiffHasChanges returns true if any auxiliary file type has pending changes.
@@ -453,15 +507,18 @@ func (d *auxiliaryFileDiffs) runtimeEligibleAuxUpdates(caps Capabilities) (mapUp
 //     pre-config phase already did is the whole deploy. Honoured for creates
 //     too, since general-file CREATE returns 201 without reloading.
 //
-// Everything else — other content updates, creates, and every delete — forces a
-// reload. A delete carries the file as the live worker reports it, with no
-// reloadOnPush to consult.
+// A delete carries only the file's identifier — the live worker reports no
+// reloadOnPush — so it is decided by whether the desired state still names the
+// file (see fileReferences). Every other content update and create forces a
+// reload.
 func (d *auxiliaryFileDiffs) generalFileRuntimeUpdates(caps Capabilities) (caUpdates []auxiliaryfiles.GeneralFile, structural bool) {
 	if d.fileDiff == nil {
 		return nil, false
 	}
-	if len(d.fileDiff.ToDelete) > 0 {
-		structural = true
+	for _, id := range d.fileDiff.ToDelete {
+		if d.references.mentions(id) {
+			structural = true
+		}
 	}
 	for _, f := range d.fileDiff.ToCreate {
 		if f.ReloadsOnPush() {
@@ -518,6 +575,7 @@ func checksumMatchesLastDeployed(opts *SyncOptions) bool {
 func (o *orchestrator) checkForChanges(
 	ctx context.Context,
 	diff *comparator.ConfigDiff,
+	desiredConfig string,
 	auxFiles *AuxiliaryFiles,
 	opts *SyncOptions,
 ) (*auxiliaryFileDiffs, error) {
@@ -534,6 +592,7 @@ func (o *orchestrator) checkForChanges(
 	if err != nil {
 		return nil, err
 	}
+	auxDiffs.references = newFileReferences(desiredConfig, auxFiles)
 
 	hasAuxChanges := auxDiffs.anyDiffHasChanges()
 

@@ -169,9 +169,46 @@ func TestAuxiliaryFileDiffs_RuntimeEligibleAuxUpdates(t *testing.T) {
 			wantNeedsReload: true,
 		},
 		{
-			// The live worker reports no reloadOnPush, so a delete cannot prove
-			// the config never referenced the file.
-			name:            "sidecar general file delete still forces reload",
+			// A delete carries only the identifier, so reloadOnPush is gone by
+			// then; the desired state is searched for the name instead. Nothing
+			// names a sidecar's own config, so nothing dangles.
+			name: "delete of a file the desired state does not name: no reload",
+			in: &auxiliaryFileDiffs{
+				fileDiff:   &auxiliaryfiles.FileDiff{ToDelete: []string{"spoa-hub-config.toml"}},
+				references: newFileReferences("frontend fe\n  bind :80\n", nil),
+			},
+			caps: caps32,
+		},
+		{
+			name: "delete of a file the config still names forces reload",
+			in: &auxiliaryFileDiffs{
+				fileDiff:   &auxiliaryfiles.FileDiff{ToDelete: []string{"503.http"}},
+				references: newFileReferences("defaults\n  errorfile 503 general/503.http\n", nil),
+			},
+			caps:            caps32,
+			wantNeedsReload: true,
+		},
+		{
+			// `ca-file <path>` on a crt-list line is the one place HAPTIC names
+			// a general file outside haproxy.cfg. Searching the config alone
+			// would drop the reload and let the reference dangle.
+			name: "delete of a ca-file named only by a crt-list forces reload",
+			in: &auxiliaryFileDiffs{
+				fileDiff: &auxiliaryfiles.FileDiff{ToDelete: []string{"client-ca.pem"}},
+				references: newFileReferences("frontend fe\n  bind :80\n", &AuxiliaryFiles{
+					CRTListFiles: []auxiliaryfiles.CRTListFile{{
+						Path:    "certificate-list.txt",
+						Content: "tls.pem [ocsp-update on ca-file general/client-ca.pem verify required] *\n",
+					}},
+				}),
+			},
+			caps:            caps32,
+			wantNeedsReload: true,
+		},
+		{
+			// Zero value: no desired state to search, so every delete reloads.
+			// Keeps any path that forgets to populate it on the safe side.
+			name:            "delete with no reference scan forces reload",
 			in:              &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToDelete: []string{"spoa-hub-config.toml"}}},
 			caps:            caps32,
 			wantNeedsReload: true,
