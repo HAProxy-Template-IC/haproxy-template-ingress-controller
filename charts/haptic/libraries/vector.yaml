@@ -983,7 +983,10 @@ validationTests:
     extraContext:
       accessLog:
         targets:
-          - address: /run/vector/haproxy.sock
+          # Same key the chart's own default uses, so this overrides it rather
+          # than fanning out to a second identical target.
+          vector:
+            address: /run/vector/haproxy.sock
             format: raw
     assertions:
       - type: haproxy_valid

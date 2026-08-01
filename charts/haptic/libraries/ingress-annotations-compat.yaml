@@ -13,7 +13,9 @@ templatingSettings:
     governance:
       enabled: false
       exemptNamespaces: []
-      rules: []
+      # Keyed by rule name so an operator's own rules merge with, rather than
+      # replace, the ones the chart ships. Every entry must set `enabled`.
+      rules: {}
 
 templateSnippets:
 
@@ -302,9 +304,9 @@ templateSnippets:
           var inlinePolicies, inlinePoliciesOK = inlinePoliciesAny.(map[string]any)
           if !inlinePoliciesOK { fail("extraContext.waf.policies.inline must be a map.") }
           var policyRefsAny = policies | dig("configMapRefs")
-          if policyRefsAny == nil { policyRefsAny = []any{} }
-          var policyRefs, policyRefsOK = policyRefsAny.([]any)
-          if !policyRefsOK { fail("extraContext.waf.policies.configMapRefs must be a list.") }
+          if policyRefsAny == nil { policyRefsAny = map[string]any{} }
+          var policyRefs, policyRefsOK = policyRefsAny.(map[string]any)
+          if !policyRefsOK { fail("extraContext.waf.policies.configMapRefs must be a map.") }
           var selfServiceAny = policies | dig("selfService")
           if selfServiceAny == nil { selfServiceAny = map[string]any{} }
           var selfService, selfServiceOK = selfServiceAny.(map[string]any)
@@ -631,43 +633,52 @@ templateSnippets:
           // satisfiedBy: tls passes without per-resource spec.tls.
           var defaultHTTPS = tostring(extraContext | dig("ingressDefaultHTTPS") | fallback("false")) == "true"
 
-          var rulesAny = toSlice(gov | dig("rules") | fallback([]any{}))
+          // A map, not a list: Helm and mergo replace lists wholesale, so an
+          // operator adding one rule would silently drop every rule the chart
+          // ships. keys() is sorted, so application order stays deterministic.
+          var rulesMap, rulesOk = (gov | dig("rules") | fallback(map[string]any{})).(map[string]any)
+          if !rulesOk { fail("governance.rules must be a map of rule name to rule.") }
 
           // Rule validation is global config validation, not per-resource, so
           // fail() is right: a typo would otherwise silently drop enforcement.
+          // Disabled rules are validated too — a parked rule that no longer
+          // parses is a trap for whoever re-enables it.
           var isConcretePath = func(p string) bool {
             return p != "" && !regex_search(p, "[*?@]")
           }
-          for i, ruleAny := range rulesAny {
-            var rule, ok = ruleAny.(map[string]any)
-            if !ok { fail("governance.rules[" + tostring(i) + "] must be a map.") }
+          var byResource = map[string][]any{}
+          for _, rname := range keys(rulesMap) {
+            var rule, ok = rulesMap[rname].(map[string]any)
+            if !ok { fail("governance.rules." + rname + " must be a map.") }
             if tostring(fallback(rule["resource"], "")) == "" {
-              fail("governance.rules[" + tostring(i) + "].resource is required.")
+              fail("governance.rules." + rname + ".resource is required.")
             }
             var enf = tostring(fallback(rule["enforcement"], "reject"))
             if enf != "reject" && enf != "audit" {
-              fail("governance.rules[" + tostring(i) + "].enforcement must be \"reject\" or \"audit\", got \"" + enf + "\".")
+              fail("governance.rules." + rname + ".enforcement must be \"reject\" or \"audit\", got \"" + enf + "\".")
             }
             var onV = tostring(fallback(rule["onViolation"], "reject"))
             if onV != "reject" && onV != "clamp" {
-              fail("governance.rules[" + tostring(i) + "].onViolation must be \"reject\" or \"clamp\", got \"" + onV + "\".")
+              fail("governance.rules." + rname + ".onViolation must be \"reject\" or \"clamp\", got \"" + onV + "\".")
             }
             if rule["min"] != nil && rule["max"] != nil && toint(tostring(rule["min"])) > toint(tostring(rule["max"])) {
-              fail("governance.rules[" + tostring(i) + "].min must be <= max.")
+              fail("governance.rules." + rname + ".min must be <= max.")
             }
             if rule["default"] != nil {
               var path = tostring(fallback(rule["path"], ""))
               if !isConcretePath(path) {
-                fail("governance.rules[" + tostring(i) + "].default requires a concrete path (filtered/wildcard paths are validate-only).")
+                fail("governance.rules." + rname + ".default requires a concrete path (filtered/wildcard paths are validate-only).")
               }
             }
-          }
-
-          var byResource = map[string][]any{}
-          for _, ruleAny := range rulesAny {
-            var rule = ruleAny.(map[string]any)
-            var res = tostring(rule["resource"])
-            byResource[res] = append(byResource[res], ruleAny)
+            // Required, not defaulted: the chart ships rules of its own, so an
+            // entry missing the flag must fail rather than sit inert.
+            var en = tostring(fallback(rule["enabled"], ""))
+            if en != "true" && en != "false" {
+              fail("governance.rules." + rname + ".enabled is required and must be true or false.")
+            }
+            if en == "true" {
+              byResource[tostring(rule["resource"])] = append(byResource[tostring(rule["resource"])], rulesMap[rname])
+            }
           }
 
           var present = func(v any) bool { return v != nil && strip(tostring(v)) != "" }
@@ -793,7 +804,10 @@ validationTests:
     extraContext:
       governance:
         enabled: false
-        rules: []
+        # __replace__ clears the operator's rules outright. A plain {} would
+        # deep-merge and leave them in place, so `enabled: false` would be the
+        # only thing standing between a production rule set and these fixtures.
+        rules: { __replace__: true }
 
   test-governance-inject-reaches-consumer:
     _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
@@ -803,7 +817,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
             default: "100"
     fixtures:
@@ -831,7 +847,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
             default: "40"
             min: 1
@@ -860,7 +878,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
             max: 50
             onViolation: clamp
@@ -894,7 +914,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.labels['ratelimit']
             min: 1
             max: 100
@@ -924,7 +946,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.labels['tier']
             required: true
     fixtures:
@@ -950,7 +974,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.labels['tier']
             required: true
             enforcement: audit
@@ -978,7 +1004,9 @@ validationTests:
         enabled: true
         exemptNamespaces: [infra]
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.labels['tier']
             required: true
     fixtures:
@@ -1005,7 +1033,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             satisfiedBy: tls
     fixtures:
       ingresses:
@@ -1040,7 +1070,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             anyOf:
               - metadata.labels['team-a']
               - metadata.labels['team-b']
@@ -1067,7 +1099,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             anyOf:
               - metadata.labels['team-a']
               - metadata.labels['team-b']
@@ -1095,7 +1129,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             satisfiedBy: tls
     fixtures:
       ingresses:
@@ -1121,7 +1157,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             satisfiedBy: tls
     fixtures:
       ingresses:
@@ -1146,7 +1184,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.labels['tier']
             allowed: [gold, silver]
     fixtures:
@@ -1172,7 +1212,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.labels['code']
             pattern: '^[0-9]{3}$'
     fixtures:
@@ -1199,7 +1241,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: httproutes
+          main:
+            enabled: true
+            resource: httproutes
             path: metadata.annotations['haproxy-haptic.org/waf-policy']
             required: true
     fixtures:
@@ -1221,7 +1265,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: metadata.labels['tier']
             required: true
             enforcement: block
@@ -1237,7 +1283,7 @@ validationTests:
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
-      - { type: contains, target: rendering_error, pattern: 'enforcement must be' }
+      - { type: contains, target: rendering_error, pattern: 'governance\.rules\.main\.enforcement must be' }
 
   test-governance-default-on-wildcard-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
@@ -1246,7 +1292,9 @@ validationTests:
       governance:
         enabled: true
         rules:
-          - resource: ingresses
+          main:
+            enabled: true
+            resource: ingresses
             path: spec.rules[*].host
             default: "example.com"
     fixtures:
@@ -1261,7 +1309,71 @@ validationTests:
                 http:
                   paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
     assertions:
-      - { type: contains, target: rendering_error, pattern: 'concrete path' }
+      - { type: contains, target: rendering_error, pattern: 'governance\.rules\.main\.default requires a concrete path' }
+
+  test-governance-rule-missing-enabled-rejected:
+    _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'
+    description: A rule without `enabled` is refused rather than sitting inert.
+    extraContext:
+      governance:
+        enabled: true
+        rules:
+          no-flag:
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+            default: "100"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: any, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: any.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - { type: contains, target: rendering_error, pattern: 'governance\.rules\.no-flag\.enabled is required and must be true or false' }
+
+  test-governance-rules-merge-selectively:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: >-
+      Rules are keyed, so switching one off leaves its siblings applying. This is
+      the property a list cannot have — an operator adding a rule to a list would
+      replace every rule the chart ships.
+    extraContext:
+      renderMode: reconcile
+      governance:
+        enabled: true
+        rules:
+          switched-off:
+            enabled: false
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
+            default: "100"
+          still-on:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/load-balance']
+            default: leastconn
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: two-rules, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: two-rules.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: haproxy.cfg, pattern: 'backend default_two-rules_svc_echo_80' }
+      - { type: contains, target: haproxy.cfg, pattern: 'balance leastconn' }
+      # The disabled rule injected nothing, so the rate limiter never armed.
+      - { type: not_contains, target: haproxy.cfg, pattern: 'stick-table type ip size 100k expire 1s store http_req_rate' }
 
   test-annotation-family-conflict-cors-rejected:
     _helm_skip_test: '{{ if not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled }}true{{ end }}'

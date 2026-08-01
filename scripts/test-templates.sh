@@ -608,19 +608,19 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set-string 'controller.config.templatingSettings.extraContext.accessLog.fields.evil=str(a) if TRUE'
     run_helm_success_guard \
         "Access-log Helm guard: accept a buffered ring target for a log-shipper sidecar" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"accesslog","address":"127.0.0.1:6514","size":65536,"logProto":"legacy","connectTimeout":"5s","serverTimeout":"10s","serverOptions":"ssl verify none"}},{"address":"stdout"}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"ring":{"name":"accesslog","address":"127.0.0.1:6514","size":65536,"logProto":"legacy","connectTimeout":"5s","serverTimeout":"10s","serverOptions":"ssl verify none"}},"second":{"address":"stdout"}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject a target that sets both address and ring" \
         "sets both address and ring" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"stdout","ring":{"name":"r","address":"127.0.0.1:6514"}}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"address":"stdout","ring":{"name":"r","address":"127.0.0.1:6514"}}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject an unroutable log target address" \
         "is not a valid HAProxy log target" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"stdout local0 info"}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"address":"stdout local0 info"}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject injection through ring serverOptions" \
         "must not contain control characters or '#'" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"r","address":"127.0.0.1:6514","serverOptions":"ssl # x"}}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"ring":{"name":"r","address":"127.0.0.1:6514","serverOptions":"ssl # x"}}}'
     run_helm_success_guard \
         "Access-log Helm guard: accept opt-in suppression of successful requests" \
         --set controller.config.templatingSettings.extraContext.accessLog.suppress.successful=true
@@ -639,15 +639,15 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     run_helm_failure_guard \
         "Access-log Helm guard: reject a level that silently drops every record" \
         "silently drops every one of them" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"stdout","level":"notice"}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"address":"stdout","level":"notice"}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject a UNIX-socket ring server" \
         "HAProxy 3.4 rejects a UNIX ring server" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"r","address":"unix@/var/run/log.sock"}}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"ring":{"name":"r","address":"unix@/var/run/log.sock"}}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject a ring reference no target declares" \
         "points at a ring no target declares" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"ring@nowhere"}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"address":"ring@nowhere"}}'
     # Matched WAF request data must not be in the DEFAULT rendered log-format — it
     # echoes request payload fragments. Deliberately a repo-side check, not a
     # validationTest: operators are documented to opt in by contributing a
@@ -683,34 +683,34 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     echo -e "${GREEN}WAF-data guard: matched request data is not in the default log-format${NC}" >&2
     run_helm_success_guard \
         "Access-log Helm guard: accept a socket path whose name ends in digits" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"/var/run/log:99999"}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"address":"/var/run/log:99999"}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject an out-of-range port in a log target address" \
         "outside 1-65535" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"10.0.0.5:99999"}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"address":"10.0.0.5:99999"}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject an out-of-range port in a ring server address" \
         "outside 1-65535" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"r","address":"10.0.0.5:99999"}}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"ring":{"name":"r","address":"10.0.0.5:99999"}}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject a ring buffer too small for one record" \
         "too small for accessLog.maxLineBytes" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"r","address":"127.0.0.1:6514","size":4096}}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"main":{"ring":{"name":"r","address":"127.0.0.1:6514","size":4096}}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject two targets that render the same log line" \
         "would be logged twice" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"x","address":"127.0.0.1:6514"}},{"address":"ring@x"}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"a":{"ring":{"name":"x","address":"127.0.0.1:6514"}},"b":{"address":"ring@x"}}'
     run_helm_failure_guard \
-        "Access-log Helm guard: reject an empty target list" \
-        "is an empty list" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[]'
+        "Access-log Helm guard: reject an empty target map" \
+        "accessLog.targets is empty" \
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={}'
     run_helm_success_guard \
         "Access-log Helm guard: accept one address with distinct per-target settings" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"address":"stdout"},{"address":"stdout","facility":"local1"}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"plain":{"address":"stdout"},"local1":{"address":"stdout","facility":"local1"}}'
     run_helm_failure_guard \
         "Access-log Helm guard: reject two targets declaring the same ring name" \
         "declared by an earlier target" \
-        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"dup","address":"127.0.0.1:6514"}},{"ring":{"name":"dup","address":"127.0.0.1:6515"}}]'
+        --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets={"a":{"ring":{"name":"dup","address":"127.0.0.1:6514"}},"b":{"ring":{"name":"dup","address":"127.0.0.1:6515"}}}'
     run_helm_failure_guard \
         "Vector excludeMetrics guard: reject the pre-0.2.0 list format" \
         "must be a map of named exclusions" \
@@ -751,9 +751,9 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set-json 'controller.config.templatingSettings.extraContext.waf.policies.inline={"bad":{"allowedMethodz":["GET"]}}'
     run_helm_failure_guard \
         "WAF policy Helm guard: reject unknown ConfigMap reference fields" \
-        'waf.policies.configMapRefs[0] contains unknown field "namespce". Valid fields: namespace, name, key.' \
-        --set-string 'controller.config.templatingSettings.extraContext.waf.policies.configMapRefs[0].name=policies' \
-        --set-string 'controller.config.templatingSettings.extraContext.waf.policies.configMapRefs[0].namespce=security'
+        'waf.policies.configMapRefs.security contains unknown field "namespce". Valid fields: namespace, name, key.' \
+        --set-string 'controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.name=policies' \
+        --set-string 'controller.config.templatingSettings.extraContext.waf.policies.configMapRefs.security.namespce=security'
     run_helm_failure_guard \
         "Reusable-WAF Helm guard: immutable policy requires a default" \
         "waf.policies.defaultPolicy is required when waf.ingressPermissions.allowPolicySelection=false" \

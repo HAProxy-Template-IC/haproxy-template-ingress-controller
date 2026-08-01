@@ -1,6 +1,6 @@
 # Governance guardrails
 
-Enforce org-wide policy across the resources HAPTIC watches — require an annotation, inject a safe default, or validate a value — without hand-editing a single Ingress. Governance is off by default; you turn it on with a list of rules under `controller.config.templatingSettings.extraContext.governance`.
+Enforce org-wide policy across the resources HAPTIC watches — require an annotation, inject a safe default, or validate a value — without hand-editing a single Ingress. Governance is off by default; you turn it on with a map of named rules under `controller.config.templatingSettings.extraContext.governance`. Rules are keyed by a name you choose, so your rules merge with — rather than replace — any a template library ships, and you switch a single one off with `enabled: false`.
 
 This guide shows how to roll a guardrail out safely. For every rule field and its exact meaning, see [Policy guardrails (governance)](../reference.md#policy-guardrails-governance) in the Chart Values Reference.
 
@@ -38,7 +38,9 @@ controller:
         governance:
           enabled: true
           rules:
-            - resource: ingresses
+            ingress-waf-policy:
+              enabled: true
+              resource: ingresses
               path: metadata.annotations['haproxy-haptic.org/waf-policy']
               required: true
               enforcement: audit
@@ -83,7 +85,9 @@ controller:
         governance:
           enabled: true
           rules:
-            - resource: ingresses
+            ingress-waf-policy:
+              enabled: true
+              resource: ingresses
               path: metadata.annotations['haproxy-haptic.org/waf-policy']
               required: true
               enforcement: reject
@@ -139,7 +143,9 @@ controller:
         governance:
           enabled: true
           rules:
-            - resource: ingresses
+            ingress-waf-policy:
+              enabled: true
+              resource: ingresses
               path: metadata.annotations['haproxy-haptic.org/waf-policy']
               default: baseline-detect
 ```
@@ -158,7 +164,9 @@ controller:
         governance:
           enabled: true
           rules:
-            - resource: ingresses
+            ingress-tls:
+              enabled: true
+              resource: ingresses
               satisfiedBy: tls
               enforcement: audit
 ```
@@ -175,7 +183,9 @@ controller:
         governance:
           enabled: true
           rules:
-            - resource: ingresses
+            rate-limit-ceiling:
+              enabled: true
+              resource: ingresses
               path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
               max: 5000
               onViolation: clamp
@@ -194,7 +204,9 @@ controller:
           enabled: true
           exemptNamespaces: [kube-system, monitoring]
           rules:
-            - resource: ingresses
+            ingress-waf-policy:
+              enabled: true
+              resource: ingresses
               path: metadata.annotations['haproxy-haptic.org/waf-policy']
               required: true
               enforcement: reject
@@ -206,11 +218,33 @@ Rules are generic — set `resource` to any name in your `watchedResources`, not
 
 ```yaml
 rules:
-  - resource: httproutes
+  httproute-waf-policy:
+    enabled: true
+    resource: httproutes
     path: metadata.annotations['haproxy-haptic.org/waf-policy']
     required: true
     enforcement: audit
 ```
+
+## Switch off a single rule
+
+Rules are keyed, so setting one entry's `enabled` to `false` leaves the rest
+alone. This is how you disable a rule a template library ships without
+restating — or accidentally dropping — every other rule:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        governance:
+          rules:
+            ingress-tls:
+              enabled: false
+```
+
+`enabled` is required on every rule. An entry that omits it fails the render
+naming the rule, rather than sitting inert and enforcing nothing.
 
 ## See also
 

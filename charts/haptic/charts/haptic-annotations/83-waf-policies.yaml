@@ -144,9 +144,9 @@ templateSnippets:
           var inlinePolicies, inlinePoliciesOK = inlinePoliciesAny.(map[string]any)
           if !inlinePoliciesOK { fail("extraContext.waf.policies.inline must be a map of policy names to policy documents.") }
           var policyConfigMapRefsAny = policies | dig("configMapRefs")
-          if policyConfigMapRefsAny == nil { policyConfigMapRefsAny = []any{} }
-          var policyConfigMapRefs, policyConfigMapRefsOK = policyConfigMapRefsAny.([]any)
-          if !policyConfigMapRefsOK { fail("extraContext.waf.policies.configMapRefs must be a list of maps with namespace, name, and key fields.") }
+          if policyConfigMapRefsAny == nil { policyConfigMapRefsAny = map[string]any{} }
+          var policyConfigMapRefs, policyConfigMapRefsOK = policyConfigMapRefsAny.(map[string]any)
+          if !policyConfigMapRefsOK { fail("extraContext.waf.policies.configMapRefs must be a map of catalog name to a source with namespace, name, and key fields.") }
           var policyCatalogConfigured = len(inlinePolicies) > 0 || len(policyConfigMapRefs) > 0 || configuredDefaultPolicy != ""
           var defaultPolicy = configuredDefaultPolicy
           // Governance and Ingress-permission resolution — including
@@ -637,20 +637,23 @@ templateSnippets:
             }
           }
 
-          for _, rawSource := range policyConfigMapRefs {
-            var policyConfigMap, sourceOK = rawSource.(map[string]any)
+          {#- keys() is sorted, so catalogs register in a stable order and a
+              duplicate-name collision always names the same winner. -#}
+          for _, refName := range keys(policyConfigMapRefs) {
+            var refWhere = "extraContext.waf.policies.configMapRefs." + refName
+            var policyConfigMap, sourceOK = policyConfigMapRefs[refName].(map[string]any)
             if !sourceOK {
-              fail("extraContext.waf.policies.configMapRefs entries must be maps with namespace, name, and key fields.")
+              fail(refWhere + " must be a map with namespace, name, and key fields.")
             }
             for _, field := range keys(policyConfigMap) {
               if field != "namespace" && field != "name" && field != "key" {
-                fail("extraContext.waf.policies.configMapRefs entry contains unknown field '" + field + "'. Valid fields: namespace, name, key.")
+                fail(refWhere + " contains unknown field '" + field + "'. Valid fields: namespace, name, key.")
               }
             }
             for _, field := range []string{"namespace", "name", "key"} {
               if policyConfigMap[field] != nil {
                 var _, fieldOK = policyConfigMap[field].(string)
-                if !fieldOK { fail("extraContext.waf.policies.configMapRefs field '" + field + "' must be a string.") }
+                if !fieldOK { fail(refWhere + "." + field + " must be a string.") }
               }
             }
             var sourceNamespace = extraContext | dig("controllerNamespace") | fallback("") | tostring()
@@ -660,16 +663,16 @@ templateSnippets:
             var sourceKey = "policies.yaml"
             if policyConfigMap["key"] != nil { sourceKey = policyConfigMap["key"].(string) }
             if sourceNamespace == "" || sourceName == "" {
-              fail("extraContext.waf.policies.configMapRefs entries require a namespace and name (namespace defaults to the chart release namespace).")
+              fail(refWhere + " requires a namespace and name (namespace defaults to the chart release namespace).")
             }
             if !regex_search(sourceNamespace, "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$") {
-              fail("extraContext.waf.policies.configMapRefs namespace '" + sourceNamespace + "' is not a valid Kubernetes namespace.")
+              fail(refWhere + ".namespace '" + sourceNamespace + "' is not a valid Kubernetes namespace.")
             }
             if !regex_search(sourceName, "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$") {
-              fail("extraContext.waf.policies.configMapRefs name '" + sourceName + "' is not a valid ConfigMap name.")
+              fail(refWhere + ".name '" + sourceName + "' is not a valid ConfigMap name.")
             }
             if !regex_search(sourceKey, "^[-._A-Za-z0-9]+$") {
-              fail("extraContext.waf.policies.configMapRefs key '" + sourceKey + "' is not a valid ConfigMap data key.")
+              fail(refWhere + ".key '" + sourceKey + "' is not a valid ConfigMap data key.")
             }
             var sourceID = "ConfigMap " + sourceNamespace + "/" + sourceName + " key " + sourceKey
             var cm = resources.configmaps.GetSingle(sourceNamespace, sourceName)

@@ -167,7 +167,7 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 | `controller.config.templatingSettings.extraContext.waf.ingressPermissions.allowCustomRules` | bool | `false` | Permit arbitrary per-Ingress WAF rules through the nginx-compatible `modsecurity-snippet` annotation while Coraza governance is active; this grants WAF-policy-author capability |
 | `controller.config.templatingSettings.extraContext.waf.ingressPermissions.allowRawHAProxyConfig` | bool | `false` | Permit raw HAProxy annotations while Coraza governance is active. Enable only when every Ingress writer is trusted |
 | `controller.config.templatingSettings.extraContext.waf.policies.inline` | map | `{}` | Administrator-owned policies. Fields: `description`, `enforcement`, nested `requestBody.mode`/`maxBytes`, `allowedMethods`, `paranoiaLevel`, `anomalyThreshold`, `ruleExclusions`, and advanced `secLang` |
-| `controller.config.templatingSettings.extraContext.waf.policies.configMapRefs` | list | `[]` | Exact trusted `namespace`/`name`/`key` ConfigMap catalogs using the same policy schema |
+| `controller.config.templatingSettings.extraContext.waf.policies.configMapRefs` | map | `{}` | Trusted ConfigMap catalogs keyed by catalog name, each an exact `namespace`/`name`/`key` triple using the same policy schema. A map, like its sibling `inline`, so adding one catalog keeps the rest |
 | `controller.config.templatingSettings.extraContext.waf.policies.selfService.enabled` | bool | `false` | Namespaced self-service authoring: each namespace may define policies for its own Ingresses in its well-known catalog ConfigMap |
 | `controller.config.templatingSettings.extraContext.waf.policies.selfService.configMapName` | string | `waf-policies` | Well-known ConfigMap name discovered per namespace for self-service catalogs |
 | `controller.config.templatingSettings.extraContext.waf.policies.selfService.key` | string | `policies.yaml` | Data key inside each self-service catalog ConfigMap |
@@ -185,9 +185,10 @@ Template-side routing, policy catalogs, and Ingress-author permissions live in t
 
 Org-wide baselines that namespace teams can't omit. Configured entirely under
 `extraContext` (it creates no Kubernetes resources) and disabled by default. You
-declare a list of generic, JSONPath-driven `rules`; each rule targets a watched
-resource by name and, per matching resource, either **injects** a default when a
-value is absent or **validates** the value when present.
+declare a map of generic, JSONPath-driven `rules`, keyed by a name you choose;
+each rule targets a watched resource by name and, per matching resource, either
+**injects** a default when a value is absent or **validates** the value when
+present. Rules apply in sorted key order.
 
 For a step-by-step rollout — audit, fix, then enforce — see the
 [Governance guardrails how-to](operations/governance.md). This section is the
@@ -203,12 +204,13 @@ ever warns (a roll-out mode).
 |-----------|------|---------|-------------|
 | `…extraContext.governance.enabled` | bool | `false` | Master switch for the guardrails |
 | `…extraContext.governance.exemptNamespaces` | list | `[]` | Namespaces skipped entirely (infra/system) |
-| `…extraContext.governance.rules` | list | `[]` | Admin-declared rules (see the fields below) |
+| `…extraContext.governance.rules` | map | `{}` | Admin-declared rules keyed by rule name (see the fields below). A map, not a list, so your rules merge with — rather than replace — the ones the chart ships |
 
-Each entry of `rules` is an object:
+Each value of `rules` is an object:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `enabled` | bool | **Required.** `true` applies the rule, `false` switches it off. Required rather than defaulted, so a typo fails the render instead of leaving the rule silently inert |
 | `resource` | string | **Required.** Watched-resource name the rule targets (`ingresses`, `httproutes`, a custom CRD, …) |
 | `path` | string | Concrete JSONPath into the resource: dotted keys, `['bracket']` keys (for dots/slashes), `[n]` indices. For example, `metadata.annotations['haproxy-haptic.org/rate-limit-rps']` |
 | `default` | string | Inject this value when `path` is absent. Only a **concrete** `path` may carry a default (filtered/wildcard paths are validate-only) |
@@ -228,19 +230,35 @@ governance:
   exemptNamespaces: [kube-system]
   rules:
     # Inject a default per-source rate limit; clamp anything above the ceiling.
-    - resource: ingresses
+    rate-limit-floor:
+      enabled: true
+      resource: ingresses
       path: metadata.annotations['haproxy-haptic.org/rate-limit-rps']
       default: "100"
       max: 10000
       onViolation: clamp
     # Require a WAF policy annotation on every HTTPRoute (cross-resource).
-    - resource: httproutes
+    httproute-waf-policy:
+      enabled: true
+      resource: httproutes
       path: metadata.annotations['haproxy-haptic.org/waf-policy']
       required: true
       enforcement: audit
     # Require TLS (spec.tls or the chart-wide default HTTPS satisfies it).
-    - resource: ingresses
+    ingress-tls:
+      enabled: true
+      resource: ingresses
       satisfiedBy: tls
+```
+
+To switch off a single rule — including one a template library ships — set its
+`enabled` to `false`. You don't restate the others:
+
+```yaml
+governance:
+  rules:
+    ingress-tls:
+      enabled: false
 ```
 
 ## Routing behavior
@@ -339,7 +357,7 @@ For HAProxy behind a layer-4 load balancer. See [PROXY protocol](haproxy-deploym
 | `controller.config.templatingSettings.extraContext.tracing.otlp.serviceName` | string | `haptic` | `service.name` resource attribute reported for HAPTIC's own spans |
 | `controller.config.templatingSettings.extraContext.tracing.otlp.clusterName` | string | `""` | Cluster name reported as the `k8s.cluster.name` resource attribute on every exported span. No default: Kubernetes exposes no cluster name to a pod, so the attribute is omitted unless you set it. `service.namespace`, `service.version` and `k8s.deployment.name` need no setting — they come from the release, and identify which HAPTIC emitted a span when a cluster runs several |
 | `controller.config.templatingSettings.extraContext.accessLog.fields` | map | `{}` | Extra JSON access-log fields: field name → one HAProxy sample expression, captured at request time and logged as a string. Use `str(<value>)` for a constant label. Names must match `^[A-Za-z_][A-Za-z0-9_]{0,39}$` and must not collide with a built-in field; expressions must not contain whitespace, `#`, `"` or a backslash. See [Access logging](haproxy-deployment.md#access-logging) |
-| `controller.config.templatingSettings.extraContext.accessLog.targets` | list | `[{address: stdout}]` | Where access-log records go; one HAProxy `log` line per entry, so several entries fan out. Each entry takes `address` (`stdout`, `stderr`, `fd@<n>`, `<host>:<port>` (UDP), an absolute socket path or `ring@<name>`), `format` (defaults to `raw` for stdout/stderr, `rfc5424` otherwise), `facility`, `level` (`info` or `debug` — anything stricter drops every record), or a `ring` block (`name`, `address`, `size`, `logProto`, `connectTimeout`, `serverTimeout`, `serverOptions`) for a buffered TCP client that survives a collector restart. HAProxy's own process messages keep their own stdout target. See [Where the logs go](haproxy-deployment.md#where-the-logs-go) |
+| `controller.config.templatingSettings.extraContext.accessLog.targets` | map | `{stdout: {address: stdout}}` | Where access-log records go, keyed by a target name you choose; one HAProxy `log` line per entry, emitted in sorted key order, so several entries fan out. A map, not a list, so adding a target keeps the ones already configured. Each entry takes `address` (`stdout`, `stderr`, `fd@<n>`, `<host>:<port>` (UDP), an absolute socket path or `ring@<name>`), `format` (defaults to `raw` for stdout/stderr, `rfc5424` otherwise), `facility`, `level` (`info` or `debug` — anything stricter drops every record), or a `ring` block (`name`, `address`, `size`, `logProto`, `connectTimeout`, `serverTimeout`, `serverOptions`) for a buffered TCP client that survives a collector restart. HAProxy's own process messages keep their own stdout target. See [Where the logs go](haproxy-deployment.md#where-the-logs-go) |
 | `controller.config.templatingSettings.extraContext.accessLog.maxLineBytes` | int | `16384` | `log ... len <bytes>`. HAProxy truncates a longer record mid-byte, which makes it invalid JSON; raise it if custom fields or captured request headers push records past the limit (1024–65535) |
 | `controller.config.templatingSettings.extraContext.accessLog.suppress.successful` | bool | `false` | Opt-in: drop access-log records for 2xx/3xx requests that no gate denied. Denials, 4xx and 5xx are always kept. Off by default — retaining a full log is lawful under legitimate interest (GDPR Art. 6(1)(f)), and the successful requests either side of a failure are what make a customer's report diagnosable. A record is ~740 bytes, so ~700 MB per million requests if volume forces your hand. See [Access logging](haproxy-deployment.md#access-logging) |
 | `controller.config.templatingSettings.extraContext.annotationCompatibility.basicAuth.passwordHashValidation.regex` | string | `"^.*$"` | Regex every password hash in a basic-auth Secret must match (the `auth-secret` annotation handlers in the haproxytech and haproxy-ingress libraries). A non-matching hash fails the render with `passwordHashValidation.errorMessage`; the default accepts all hashes. Example restricting to MD5-crypt (apr1) hashes: `"^\$apr1\$"`. Go RE2 syntax — no lookaheads, so express the policy as the *allowed* format |

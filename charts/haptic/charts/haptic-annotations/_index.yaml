@@ -156,7 +156,7 @@ templatingSettings:
           maxSecLangBytes: "65536"
           maxRuleExclusions: "256"
         inline: {}
-        configMapRefs: []
+        configMapRefs: {}
         selfService:
           enabled: false
           configMapName: waf-policies
