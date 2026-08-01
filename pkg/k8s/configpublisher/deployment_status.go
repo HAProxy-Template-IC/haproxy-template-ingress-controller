@@ -101,12 +101,30 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 	podStatus.ObservedGeneration = p.specGenerationFor(
 		update.RuntimeConfigNamespace, update.RuntimeConfigName, podStatus.Checksum)
 	if podStatus.ObservedGeneration == 0 {
-		// Unknown must not REGRESS a pod that already had a generation: an
+		// The map only knows checksums this process published, and the
+		// deploy-driven publish coalesces: a render deployed while a newer one
+		// is already queued is never published, so its checksum is never
+		// recorded and every lookup for a pod sitting on it misses. Ask the
+		// live spec directly — an exact checksum match IS the generation, with
+		// no history required — and learn it, so the pod's next update and the
+		// backfill both hit.
+		if gen, ok := p.generationIfCurrentSpec(
+			ctx, update.RuntimeConfigNamespace, update.RuntimeConfigName, podStatus.Checksum); ok {
+			podStatus.ObservedGeneration = gen
+			p.learnSpecGeneration(update.RuntimeConfigNamespace, update.RuntimeConfigName, podStatus.Checksum, gen)
+		}
+	}
+	if podStatus.ObservedGeneration == 0 {
+		// Still unknown. Do not REGRESS a pod that already had a generation: an
 		// omitted field is deleted by this manager's forced SSA (the hazard the
 		// checksum handling above exists for), and backfill cannot repair it
 		// once the entry's checksum no longer matches the current spec. Re-emit
 		// the recorded value — it under-states (the pod is at least there),
 		// which reads as not-yet-converged and never as falsely converged.
+		//
+		// Sound, but only a LOWER BOUND: on its own it never rises, which is
+		// what pinned a pod at generation 83 while the spec ran to 87 and failed
+		// 15 tests at once. The current-spec probe above is what lets it rise.
 		if prev, ok := p.existingPodObservedGeneration(
 			ctx, update.RuntimeConfigNamespace, update.RuntimeConfigName, update.PodName); ok {
 			podStatus.ObservedGeneration = prev

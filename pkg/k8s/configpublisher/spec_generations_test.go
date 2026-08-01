@@ -25,10 +25,12 @@ import (
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
+	listersv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/generated/listers/haproxytemplate/v1alpha1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 )
 
 // TestSpecGenerations_RecordAndLookup covers the core correlation: a checksum
@@ -390,4 +392,159 @@ func TestBackfill_ReadsFreshStatusNotTheWriteSnapshot(t *testing.T) {
 	require.Len(t, got.Status.DeployedToPods, 1)
 	assert.Equal(t, int64(21), got.Status.DeployedToPods[0].ObservedGeneration,
 		"the backfill must repair the entry that exists NOW, not the one its stale snapshot showed")
+}
+
+// TestUpdateDeploymentStatus_UnpinsWhenTheChecksumWasNeverPublished is the
+// regression test for the pinning that failed 15 tests at once on main
+// (issue #126).
+//
+// The deploy-driven publish COALESCES: a render deployed while a newer one is
+// already queued never becomes a spec, so its checksum is never recorded. Every
+// lookup for a pod sitting on it misses, and preserve-on-unknown then re-emits
+// the last known generation forever — a pod pinned at 83 while the spec ran to
+// 87. Preservation is sound (a lower bound) but on its own it never RISES,
+// which is the whole defect: a confident wrong answer rather than an unknown.
+//
+// An exact match against the live spec's checksum is the generation, with no
+// history needed, so that is what lets the bound move again.
+func TestUpdateDeploymentStatus_UnpinsWhenTheChecksumWasNeverPublished(t *testing.T) {
+	ctx := context.Background()
+	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
+	publisher := NewWithListers(k8sfake.NewClientset(), crdClient, nil, testLogger())
+
+	_, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("uid-1"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "sum-old",
+	})
+	require.NoError(t, err)
+	name := "test-config-haproxycfg"
+
+	// The pod is recorded at a known generation.
+	publisher.specGens.record("default", name, "sum-old", 83)
+	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      name,
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		Checksum:               "sum-old",
+	}))
+
+	// The spec advances to a checksum the pod is ALSO now running, but which the
+	// publisher never recorded — the coalesced-publish case.
+	cur, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, name, metav1.GetOptions{})
+	require.NoError(t, err)
+	cur.Spec.Checksum = "sum-never-recorded"
+	cur.Generation = 87
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Update(ctx, cur, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.Zero(t, publisher.specGenerationFor("default", name, "sum-never-recorded"),
+		"premise: this checksum was never published, so the map cannot know it")
+
+	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      name,
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		Checksum:               "sum-never-recorded",
+	}))
+
+	got, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, got.Status.DeployedToPods, 1)
+	assert.Equal(t, int64(87), got.Status.DeployedToPods[0].ObservedGeneration,
+		"the pod must advance to the live spec's generation, not stay pinned at 83")
+
+	assert.Equal(t, int64(87), publisher.specGenerationFor("default", name, "sum-never-recorded"),
+		"and the pair is learned, so the next update and the backfill both hit")
+}
+
+// TestUpdateDeploymentStatus_DoesNotBorrowAnUnrelatedGeneration pins the other
+// side: the probe accepts ONLY an exact checksum match. A pod on some other
+// config must not be handed the live spec's generation — that would claim it
+// converged, the silent false positive this field must never produce.
+func TestUpdateDeploymentStatus_DoesNotBorrowAnUnrelatedGeneration(t *testing.T) {
+	ctx := context.Background()
+	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
+	publisher := NewWithListers(k8sfake.NewClientset(), crdClient, nil, testLogger())
+
+	_, err := publisher.PublishConfig(ctx, &PublishRequest{
+		TemplateConfigName:      "test-config",
+		TemplateConfigNamespace: "default",
+		TemplateConfigUID:       types.UID("uid-1"),
+		Config:                  "global\n  daemon\n",
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		Checksum:                "sum-live",
+	})
+	require.NoError(t, err)
+	name := "test-config-haproxycfg"
+
+	cur, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, name, metav1.GetOptions{})
+	require.NoError(t, err)
+	cur.Generation = 42
+	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Update(ctx, cur, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, &DeploymentStatusUpdate{
+		RuntimeConfigName:      name,
+		RuntimeConfigNamespace: "default",
+		PodName:                "haproxy-0",
+		Checksum:               "sum-something-else",
+	}))
+
+	got, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, got.Status.DeployedToPods, 1)
+	assert.Zero(t, got.Status.DeployedToPods[0].ObservedGeneration,
+		"a pod on a different config must stay unknown, never borrow the spec's generation")
+}
+
+// TestGenerationIfCurrentSpec_StaleListerFallsThroughToAPI pins that the lister
+// can CONFIRM but never DENY.
+//
+// The lister cache lags the spec write that just happened, so it can hold an
+// older checksum than the API. Treating that stale non-match as authoritative
+// declines the very probe that unpins a pod (#126) — and because the map miss
+// which triggered the probe is itself persistent, declining once means
+// declining until the cache happens to catch up. The API is asked whenever the
+// lister does not affirmatively match.
+func TestGenerationIfCurrentSpec_StaleListerFallsThroughToAPI(t *testing.T) {
+	ctx := context.Background()
+	crdClient := fake.NewSimpleClientset()
+
+	// API holds the CURRENT spec: checksum sum-new at generation 91.
+	_, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Create(ctx,
+		&haproxyv1alpha1.HAProxyCfg{
+			ObjectMeta: metav1.ObjectMeta{Name: "cfg", Namespace: "default", Generation: 91},
+			Spec:       haproxyv1alpha1.HAProxyCfgSpec{Checksum: "sum-new"},
+		}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// Lister holds a STALE copy: the previous checksum, at the previous generation.
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc,
+		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	require.NoError(t, indexer.Add(&haproxyv1alpha1.HAProxyCfg{
+		ObjectMeta: metav1.ObjectMeta{Name: "cfg", Namespace: "default", Generation: 90},
+		Spec:       haproxyv1alpha1.HAProxyCfgSpec{Checksum: "sum-old"},
+	}))
+
+	publisher := NewWithListers(k8sfake.NewClientset(), crdClient,
+		&Listers{HAProxyCfgs: listersv1alpha1.NewHAProxyCfgLister(indexer)}, testLogger())
+
+	gen, ok := publisher.generationIfCurrentSpec(ctx, "default", "cfg", "sum-new")
+	assert.True(t, ok, "a stale lister must not deny what the API can confirm")
+	assert.Equal(t, int64(91), gen)
+
+	// And a genuinely unrelated checksum is still refused, after both sources.
+	_, ok = publisher.generationIfCurrentSpec(ctx, "default", "cfg", "sum-unrelated")
+	assert.False(t, ok, "no source matches, so it stays unknown")
 }
