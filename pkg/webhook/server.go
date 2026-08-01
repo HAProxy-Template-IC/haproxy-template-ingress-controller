@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -154,6 +155,27 @@ func (s *Server) RegisterValidator(gvk string, fn ValidationFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.validators[gvk] = fn
+}
+
+// SetValidators REPLACES the whole validator table in one step.
+//
+// RegisterValidator only ever adds, so a caller that rebuilds its wiring —
+// a controller re-reading its config, say — cannot use it to drop a kind that
+// is no longer validated: the old closure would keep serving, holding state
+// the caller has already discarded. Replacing wholesale is what makes the
+// table match the caller's current intent exactly.
+//
+// The swap is atomic with respect to in-flight requests: validate() holds
+// RLock while it looks up and calls, so a request either sees the entire old
+// table or the entire new one, never a half-built mix. The map is copied, so
+// the caller may keep mutating theirs afterwards.
+func (s *Server) SetValidators(validators map[string]ValidationFunc) {
+	replacement := make(map[string]ValidationFunc, len(validators))
+	maps.Copy(replacement, validators)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.validators = replacement
 }
 
 // Start starts the HTTPS webhook server.

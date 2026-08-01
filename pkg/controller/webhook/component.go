@@ -369,12 +369,20 @@ func (c *Component) resolveKind(apiGroup, apiVersion, resource string) (string, 
 	return gvk.Kind, nil
 }
 
-// registerValidators registers validators for all configured webhook rules.
+// registerValidators installs the validator table for all configured webhook
+// rules.
 //
 // This is called automatically during Start() after the server is created.
 // It uses RESTMapper to resolve resource names to kinds.
+//
+// The table is built in full and installed in ONE SetValidators call rather
+// than registered kind by kind. Incremental registration can only ever add, so
+// it cannot express "this kind is no longer validated" — and it would leave the
+// server serving a half-built table for the duration of the loop, during which
+// a request for a not-yet-registered kind is admitted unchecked.
 func (c *Component) registerValidators() {
 	c.logger.Info("Registering validators")
+	validators := make(map[string]webhook.ValidationFunc)
 
 	// HAProxyTemplateConfig admission validator. Registered separately
 	// from the Rules-driven loop because HAProxyTemplateConfig is the
@@ -385,7 +393,7 @@ func (c *Component) registerValidators() {
 	if c.configValidator != nil {
 		c.logger.Debug("Registering HAProxyTemplateConfig validator",
 			"gvk", HAProxyTemplateConfigGVK)
-		c.server.RegisterValidator(HAProxyTemplateConfigGVK, c.createConfigValidator())
+		validators[HAProxyTemplateConfigGVK] = c.createConfigValidator()
 	}
 
 	// For each webhook rule, register a validator
@@ -415,10 +423,10 @@ func (c *Component) registerValidators() {
 			"kind", kind,
 			"resource", rule.Resource)
 
-		// Create resource validator
-		validator := c.createResourceValidator(gvk)
-		c.server.RegisterValidator(gvk, validator)
+		validators[gvk] = c.createResourceValidator(gvk)
 	}
+
+	c.server.SetValidators(validators)
 }
 
 // buildGVK constructs a GVK string from API group, version, and kind.
