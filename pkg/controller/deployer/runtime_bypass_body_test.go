@@ -33,6 +33,9 @@ type bodyRecordingSyncer struct {
 	mu     sync.Mutex
 	bodies []string
 	opts   []*dataplane.SyncOptions
+	// activated is echoed back as the result's ActivatedConfigChecksum, so tests
+	// can tell a proof the caller CLEARED from one the syncer never produced.
+	activated string
 }
 
 func (s *bodyRecordingSyncer) SyncRuntimeFast(_ context.Context, _ *dataplane.RuntimeServerUpdates, body string, opts *dataplane.SyncOptions) (*dataplane.SyncResult, error) {
@@ -40,7 +43,7 @@ func (s *bodyRecordingSyncer) SyncRuntimeFast(_ context.Context, _ *dataplane.Ru
 	defer s.mu.Unlock()
 	s.bodies = append(s.bodies, body)
 	s.opts = append(s.opts, opts)
-	return &dataplane.SyncResult{Success: true}, nil
+	return &dataplane.SyncResult{Success: true, ActivatedConfigChecksum: s.activated}, nil
 }
 
 func (s *bodyRecordingSyncer) Close() error { return nil }
@@ -318,4 +321,120 @@ func TestScheduler_ApplyRuntimeSubset_DeclinesWithNothingActivated(t *testing.T)
 	})
 
 	assert.False(t, rec.pushed(), "no bypass push may happen with nothing activated")
+}
+
+// TestScheduler_ApplyRuntimeSubset_InFlightPatchesDispatchedNotActivated pins the
+// mode-A half of issue #84, which the mode-B fix (patch the ACTIVATED config)
+// re-opened: while a structural deploy is in flight it has ALREADY written its
+// render to disk, so patching the older activated config pushes that render back
+// off disk under skip_reload. The deploy's own post-reload read-back then finds its
+// whole render missing and fails post_reload_divergence (observed in CI: 189
+// structural ops, 14 backends, on a deploy whose config was correct).
+//
+// The body must therefore patch the in-flight DISPATCHED config, leaving only a
+// runtime-eligible server difference on disk — which the read-back tolerates by
+// design. Because that body's structural half is on disk but loaded by no worker
+// until the in-flight reload lands, the apply must also CLEAR the activation proof
+// (mode B / issue #76): the next sync then force-reloads rather than trusting an
+// empty diff over parked content.
+func TestScheduler_ApplyRuntimeSubset_InFlightPatchesDispatchedNotActivated(t *testing.T) {
+	s, rec := newBodyRecordingScheduler(t)
+	rec.activated = "proof-from-syncer"
+
+	var mu sync.Mutex
+	proofs := []string{}
+	s.SetActivationRecorder(func(_, proof string) {
+		mu.Lock()
+		defer mu.Unlock()
+		proofs = append(proofs, proof)
+	})
+
+	// The fleet is running the plain base; the in-flight structural deploy has
+	// dispatched (and written) base+api2.
+	activatedRaw := fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+	dispatchedRaw := fmt.Sprintf(laneConfigBase, "10.0.0.1:8080") + laneStructuralExtra
+	dispatched := parseLaneConfig(t, dispatchedRaw)
+
+	// A pod then goes Ready: same structural shape as the in-flight render, only
+	// SRV_1's address differs — a purely runtime-eligible diff against it.
+	pendingRaw := fmt.Sprintf(laneConfigBase, "10.0.0.2:8080") + laneStructuralExtra
+	pending := parseLaneConfig(t, pendingRaw)
+	updates, err := dataplane.ComputeRuntimeServerUpdates(dispatched, pending)
+	require.NoError(t, err)
+	require.Greater(t, updates.ServerOpCount(), 0, "premise: the address change is runtime-eligible")
+	require.Equal(t, 0, updates.StructuralOpCount(), "premise: nothing structural vs the in-flight render")
+
+	s.schedulerMutex.Lock()
+	s.lastActivatedConfig = activatedRaw
+	s.lastDispatchedParsed = dispatched
+	s.lastDispatchedConfig = dispatchedRaw
+	s.state.deployInFlight = true
+	s.schedulerMutex.Unlock()
+
+	s.applyRuntimeSubset(context.Background(), &scheduledDeployment{
+		config:         pendingRaw,
+		parsedConfig:   pending,
+		endpoints:      oneEndpoint(),
+		lane:           laneRuntimeRaw,
+		runtimeUpdates: updates,
+	})
+
+	body, opts := rec.recorded(t)
+	assert.Contains(t, body, "api2",
+		"the in-flight deploy's structural content must stay on disk — patching the activated config rolls its write back (mode A)")
+	assert.Contains(t, body, "10.0.0.2:8080", "the runtime-eligible address change IS patched in")
+	assert.False(t, opts.RestampVersionHeader, "a partial apply must leave the config headerless")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, proofs, 1, "the apply records exactly one activation outcome")
+	assert.Empty(t, proofs[0],
+		"the body's structural half is parked unloaded until the in-flight reload lands, so it proves nothing (mode B)")
+}
+
+// TestScheduler_ApplyRuntimeSubset_NoDeployInFlightPatchesActivated pins the
+// complement: with no deploy in flight, disk holds the activated config, so that
+// is what gets patched — and the apply may record a real activation proof.
+func TestScheduler_ApplyRuntimeSubset_NoDeployInFlightPatchesActivated(t *testing.T) {
+	s, rec := newBodyRecordingScheduler(t)
+	rec.activated = "proof-from-syncer"
+
+	var mu sync.Mutex
+	proofs := []string{}
+	s.SetActivationRecorder(func(_, proof string) {
+		mu.Lock()
+		defer mu.Unlock()
+		proofs = append(proofs, proof)
+	})
+
+	baselineRaw := fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")
+	baseline := parseLaneConfig(t, baselineRaw)
+	pendingRaw := fmt.Sprintf(laneConfigBase, "10.0.0.2:8080")
+	pending := parseLaneConfig(t, pendingRaw)
+	updates, err := dataplane.ComputeRuntimeServerUpdates(baseline, pending)
+	require.NoError(t, err)
+
+	s.schedulerMutex.Lock()
+	s.lastActivatedConfig = baselineRaw
+	s.lastDispatchedParsed = baseline
+	s.lastDispatchedConfig = baselineRaw
+	s.state.deployInFlight = false
+	s.schedulerMutex.Unlock()
+
+	s.applyRuntimeSubset(context.Background(), &scheduledDeployment{
+		config:         pendingRaw,
+		parsedConfig:   pending,
+		endpoints:      oneEndpoint(),
+		lane:           laneRuntimeRaw,
+		runtimeUpdates: updates,
+	})
+
+	body, _ := rec.recorded(t)
+	assert.Contains(t, body, "10.0.0.2:8080")
+	assert.NotContains(t, body, "api2", "no structural content enters a body pushed over the activated config")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, proofs, 1)
+	assert.NotEmpty(t, proofs[0], "with disk == activated + runtime patch, the apply proves the running state")
 }

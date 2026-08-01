@@ -217,6 +217,17 @@ func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *sched
 
 	s.schedulerMutex.Lock()
 	baseline := s.lastActivatedConfig
+	// A structural deploy in flight has already written its render to disk. Patching
+	// the older ACTIVATED config would roll that write back — the deploy's read-back
+	// then sees its whole render missing and fails post_reload_divergence (issue #84
+	// mode A). Patch what it wrote instead, so the only on-disk difference is the
+	// runtime-eligible server line, which the read-back tolerates by design. This is
+	// also the config lastDispatchedParsed describes — the baseline runtimeUpdates
+	// was diffed against — so body and diff finally share one base.
+	inFlight := s.state.deployInFlight
+	if inFlight {
+		baseline = s.lastDispatchedConfig
+	}
 	s.schedulerMutex.Unlock()
 	if baseline == "" {
 		// Nothing proven activated (cold start, or invalidated after a failed
@@ -228,6 +239,11 @@ func (s *DeploymentScheduler) applyRuntimeSubset(ctx context.Context, dep *sched
 	s.runtimeBypass.applyRuntimeRaw(ctx, dep, bypassPush{
 		body:    dep.runtimeUpdates.BuildRuntimeBypassBody(baseline, dep.config),
 		partial: true,
+		// The structural half of this body is on disk but NOT loaded by any worker
+		// until the in-flight deploy's reload lands, so the push proves nothing about
+		// the running state. Recording it as activated is what let a later empty diff
+		// skip the reload over parked content (issue #76).
+		unproven: inFlight,
 		// Abandon retry storms once a newer render replaced this pending: its
 		// own apply (or the authoritative dispatch) carries fresher state.
 		superseded: func() bool {

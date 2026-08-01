@@ -61,8 +61,10 @@ type runtimeSyncer interface {
 // socket briefly down → connection refused / not found) onto the post-reload worker,
 // and the next structural deploy re-renders the body WITH the new address — so the
 // address is never permanently lost (config-driven; no server-state-file — ADR-0011).
-// Every failure here is swallowed to a debug log — the scheduled deploy converges the pod
-// regardless.
+// Overlapping an in-flight deploy is only safe because the caller patches that
+// deploy's OWN dispatched config (see applyRuntimeSubset) — patching the older
+// activated one rolls its disk write back (issue #84 mode A). Every failure here is
+// swallowed to a debug log — the scheduled deploy converges the pod regardless.
 //
 // Clients are persistent per endpoint (see clientFor): the dataplane client —
 // and the keep-alive HTTP connection underneath it — is opened once and reused
@@ -120,6 +122,12 @@ type bypassPush struct {
 	// push's retry-across-reload loop abandons when it returns true so a
 	// superseded body can't storm identical pushes across a reload window.
 	superseded func() bool
+	// unproven marks a body carrying structural content no worker has loaded yet
+	// (patched onto an in-flight deploy's dispatched config). The push says nothing
+	// about the running state, so a successful apply CLEARS the activation proof
+	// instead of recording one — the next sync must reload rather than trust an
+	// empty diff over parked content (issue #76).
+	unproven bool
 }
 
 // applyRuntimeRaw fans out one goroutine per endpoint to apply the runtime-raw
@@ -211,7 +219,11 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 		return
 	}
 	if result != nil {
-		b.noteActivation(ep.URL, result.ActivatedConfigChecksum)
+		proof := result.ActivatedConfigChecksum
+		if push.unproven {
+			proof = ""
+		}
+		b.noteActivation(ep.URL, proof)
 	}
 	ops := 0
 	if result != nil {
