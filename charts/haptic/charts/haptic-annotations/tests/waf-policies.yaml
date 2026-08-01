@@ -3,7 +3,7 @@
 # Every test is self-contained: it pins the exact extraContext.waf values its
 # fixtures and assertions depend on (per-test extraContext deep-merges into the
 # global context — map leaves win, list/scalar leaves replace — so a pinned
-# `configMapRefs: []` removes values-configured catalogs for that test while
+# `configMapRefs: { __replace__: true }` removes values-configured catalogs for that test while
 # sibling keys survive). The tests therefore run identically under any Helm
 # values, with one structural caveat: map-valued registries (policies.inline)
 # deep-merge, so deployment-defined sibling keys join the pinned ones. A test
@@ -37,7 +37,9 @@ validationTests:
           inline:
             __replace__: true
           configMapRefs:
-            - namespace: security
+            __replace__: true
+            security:
+              namespace: security
               name: haptic-waf-policies
               key: policies.yaml
     fixtures:
@@ -139,7 +141,7 @@ validationTests:
               requestBody:
                 mode: json
                 maxBytes: 2048
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -223,7 +225,7 @@ validationTests:
             headers-only:
               requestBody:
                 mode: none
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -263,7 +265,7 @@ validationTests:
             headers-only:
               requestBody:
                 mode: none
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -307,7 +309,7 @@ validationTests:
             headers-only:
               requestBody:
                 mode: none
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -369,7 +371,7 @@ validationTests:
             body-inspection:
               requestBody:
                 mode: any
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -431,7 +433,7 @@ validationTests:
                 maxBytes: 2048
               secLang: |
                 SecRuleRemoveById 999999
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -479,7 +481,7 @@ validationTests:
             # below is exact under any Helm values.
             __replace__: true
             approved-policy: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: false
     fixtures:
@@ -519,7 +521,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             approved-policy: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -565,7 +567,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -629,7 +631,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -706,7 +708,7 @@ validationTests:
               paranoiaLevel: 2
               anomalyThreshold:
                 inbound: 10
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -769,7 +771,7 @@ validationTests:
               crsSettings:
                 allowedRequestContentTypes: [application/x-git-upload-pack-request, application/x-git-receive-pack-request]
                 maxFileSize: 1048576
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -812,7 +814,7 @@ validationTests:
             bad-crs:
               crsSettings:
                 notATunable: 5
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures: {}
     assertions:
       - type: contains
@@ -831,7 +833,7 @@ validationTests:
             bad-crs:
               crsSettings:
                 allowedRequestContentTypes: ["not a type"]
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures: {}
     assertions:
       - type: contains
@@ -850,7 +852,7 @@ validationTests:
             bad-crs:
               crsSettings:
                 maxFileSize: 999999999
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures: {}
     assertions:
       - type: contains
@@ -886,7 +888,7 @@ validationTests:
               requestBody: { mode: none }
               crsSettings:
                 allowedRequestContentTypes: [application/json, application/x-git-upload-pack-request, application/x-git-upload-pack-request]
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -954,7 +956,7 @@ validationTests:
                 - rules: [913100]
                 - rules: [942150]
                   excludeTarget: "ARGS:query"
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1010,7 +1012,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
     fixtures:
@@ -1055,7 +1057,7 @@ validationTests:
             bad:
               ruleExclusions:
                 - rules: [949110]
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures: {}
     assertions:
       - type: contains
@@ -1075,7 +1077,7 @@ validationTests:
               ruleExclusions:
                 - rules: [942150]
                   excludeTarget: "ARGS:/^inject.*/"
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures: {}
     assertions:
       - type: contains
@@ -1112,7 +1114,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
     fixtures:
@@ -1154,7 +1156,7 @@ validationTests:
           inline:
             bad-methods:
               allowedMethods: ["get"]
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures: {}
     assertions:
       - type: contains
@@ -1172,7 +1174,7 @@ validationTests:
           inline:
             bad-paranoia:
               paranoiaLevel: 5
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures: {}
     assertions:
       - type: contains
@@ -1191,7 +1193,7 @@ validationTests:
             bad-threshold:
               anomalyThreshold:
                 sideways: 3
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures: {}
     assertions:
       - type: contains
@@ -1228,7 +1230,7 @@ validationTests:
           inline:
             tuned:
               allowedMethods: [GET, POST]
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1272,7 +1274,7 @@ validationTests:
           inline:
             tuned:
               allowedMethods: [GET, POST]
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1302,7 +1304,7 @@ validationTests:
               requestBody:
                 mode: none
                 maxBytes: 1024
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses: []
     assertions:
@@ -1339,7 +1341,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             approved-policy: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1380,7 +1382,7 @@ validationTests:
             maxBytesPerIngress: 256
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1424,7 +1426,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1470,7 +1472,7 @@ validationTests:
           inline:
             baseline:
               enforcement: deny
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1502,7 +1504,7 @@ validationTests:
           inline:
             baseline: {}
             alternate: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1534,7 +1536,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1566,7 +1568,7 @@ validationTests:
           defaultPolicy: baseline
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1596,7 +1598,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1633,7 +1635,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1664,7 +1666,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1698,7 +1700,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -1729,7 +1731,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
     fixtures:
@@ -1774,7 +1776,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
     fixtures:
@@ -1810,7 +1812,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
     fixtures:
@@ -1849,7 +1851,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           inline:
             approved-policy:
               requestBody:
@@ -1901,7 +1903,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
     fixtures:
@@ -1923,7 +1925,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
     fixtures:
@@ -1962,7 +1964,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
             allowSecLang: true
@@ -2006,7 +2008,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           inline:
             shared-name:
               requestBody:
@@ -2060,7 +2062,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
             limits:
@@ -2120,7 +2122,7 @@ validationTests:
           defaultEnforcement: deny
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
     fixtures:
@@ -2157,7 +2159,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: false
     fixtures:
@@ -2192,7 +2194,7 @@ validationTests:
       waf:
         policies:
           defaultPolicy: ""
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
           selfService:
             enabled: true
             limits:

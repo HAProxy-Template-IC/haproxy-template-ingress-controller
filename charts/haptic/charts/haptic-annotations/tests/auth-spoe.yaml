@@ -378,7 +378,7 @@ validationTests:
           defaultPolicy: ""
           inline:
             baseline: {}
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -431,7 +431,7 @@ validationTests:
             api-methods:
               enforcement: deny
               allowedMethods: [GET, POST, PUT, DELETE]
-          configMapRefs: []
+          configMapRefs: { __replace__: true }
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1

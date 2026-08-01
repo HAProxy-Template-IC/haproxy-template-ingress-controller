@@ -319,7 +319,8 @@ controller:
             allowRawHAProxyConfig: false
           policies:
             configMapRefs:
-              - namespace: security
+              security:
+                namespace: security
                 name: haptic-waf-policies
                 key: policies.yaml
 ```

@@ -188,6 +188,42 @@ If a knob's only job is to change what the templates render — a cipher list, a
 
 Test before hoisting a value to the root: *does anything other than a template read it?* If the answer is "no, a snippet reads it and that's all", it is misplaced — put it under `extraContext`.
 
+### An operator-settable `extraContext` key is never a list of entities (RULE)
+
+**Helm and mergo replace lists wholesale.** An operator who adds one entry to a list-valued key silently drops every entry the chart shipped — and finds out when the feature they never touched stops working. Use a **keyed map**: the key names the entry and appears in error messages instead of an index.
+
+```yaml
+# Wrong — the operator's rule replaces the chart's, silently.
+governance:
+  rules:
+    - resource: ingresses
+      path: metadata.annotations['x']
+
+# Right — the two merge; either side can be switched off alone.
+governance:
+  rules:
+    my-rule:
+      enabled: true
+      resource: ingresses
+      path: metadata.annotations['x']
+```
+
+**Add a per-entry `enabled` only when the chart itself ships entries** the operator may need to switch off (`governance.rules`, `vector.excludeMetrics`) — and then **require** it, so a typo fails the render instead of leaving the entry inert. When the chart ships an empty map, **presence is the enable**; a second flag creates exactly the inert-catalog trap `docs/site/docs/reference.md` rules out for `waf.policies.*` ("there is no second enable flag that can leave a configured catalog inert"). `accessLog.targets` and `waf.policies.configMapRefs` follow that shape; `waf.policies.inline` is the original.
+
+**Where the render wants an ordered list, resolve the map with sorted `keys()`** — chart-side in `haproxytemplateconfig.yaml`, or snippet-side. Map iteration is unordered, so without the sort the rendered config churns between renders and every downstream consumer sees a spurious change.
+
+**A map cannot express "empty" through a merge.** `{}` merged over a non-empty map is a no-op. Two consequences, both load-bearing:
+
+- A guard that rejects an *explicitly empty* value can only fire where the operator's input is read directly — in Helm, not in the render. Keep the render-side guard for the CR-direct path, but expect the Helm guard to be the one with test coverage.
+- A `validationTest` (or `_global`) that needs to CLEAR a map must use the runner's `__replace__: true` sentinel (`pkg/controller/testrunner/rendering.go`), not `{}`. `_global`'s `governance.rules` and the WAF tests' `configMapRefs` both depend on this — without it an operator's production entries leak into every bundled test and the load gate rejects their config.
+
+**Two exceptions stay lists:**
+
+- **Scalar-value lists**, where the list *is* the value: `governance.exemptNamespaces`, `waf.policies.inline.<n>.allowedMethods`, `crsSettings.allowedRequestContentTypes`, `spoaHub.haproxy.messages`, `haproxyService.loadBalancerSourceRanges`.
+- **Lists inside a document that must round-trip through a non-Helm source.** `waf.policies.inline.<n>.ruleExclusions` is authored identically in `values.yaml`, a trusted ConfigMap catalog and a self-service catalog; only the first is Helm-merged, so a keyed map buys nothing and costs parity.
+
+Chart-generated projections already fronted by a values.yaml keyed map (`vector.excludeMetrics`, `spoaHub.plugins`, `haproxyService.ports`) are already correct — the operator never edits the list.
+
 ### Split-library directories
 
 A library that has grown past comfortable one-file size may live as a directory of fragments instead of a single YAML file. The convention (see ADR-0008):

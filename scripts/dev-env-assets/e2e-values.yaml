@@ -183,7 +183,8 @@ controller:
             # TestMain creates this catalog in a separate namespace before Helm
             # install, exercising the security-team trust boundary.
             configMapRefs:
-              - namespace: security
+              security:
+                namespace: security
                 name: haptic-waf-policies
                 key: policies.yaml
             # Keep namespaced self-service authoring enabled in CI so the

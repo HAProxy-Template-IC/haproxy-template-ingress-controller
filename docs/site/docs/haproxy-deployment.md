@@ -318,7 +318,8 @@ controller:
       extraContext:
         accessLog:
           targets:
-            - ring:
+            shipper:                      # a name you choose; it keys the target
+              ring:
                 name: accesslog
                 address: 127.0.0.1:6514   # a log-shipper sidecar on loopback
 ```

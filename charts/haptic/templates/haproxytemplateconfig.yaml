@@ -389,7 +389,7 @@ spec:
       {{- fail "controller.config.templatingSettings.extraContext.accessLog must be a map." }}
     {{- end }}
     {{- if not (hasKey $accessLog "targets") }}
-      {{- $_ := set $accessLog "targets" (list (dict
+      {{- $_ := set $accessLog "targets" (dict "vector" (dict
             "address" .Values.vector.socketPath
             "format" "raw")) }}
     {{- end }}
@@ -818,45 +818,50 @@ spec:
     {{- if gt (len $policies) $maxPolicies }}
       {{- fail (printf "waf.policies.inline defines %d policies; the configured limit is %d." (len $policies) $maxPolicies) }}
     {{- end }}
-    {{- $configuredPolicyConfigMapRefs := list }}
+    {{- /* Keyed by catalog name, matching its sibling `inline`: Helm replaces a
+           list wholesale, so an operator adding one catalog would drop every one
+           the chart ships. Presence is the enable, again like `inline` — a
+           second flag could leave a configured catalog inert. */ -}}
+    {{- $configuredPolicyConfigMapRefs := dict }}
     {{- if hasKey $waf "configMapRefs" }}{{- $configuredPolicyConfigMapRefs = $waf.configMapRefs }}{{- end }}
-    {{- if not (kindIs "slice" $configuredPolicyConfigMapRefs) }}
-      {{- fail "waf.policies.configMapRefs must be a list of maps with namespace, name, and key fields." }}
+    {{- if not (kindIs "map" $configuredPolicyConfigMapRefs) }}
+      {{- fail "waf.policies.configMapRefs must be a map of catalog name to a source with namespace, name, and key fields." }}
     {{- end }}
-    {{- $policyConfigMapRefs := list }}
+    {{- $policyConfigMapRefs := dict }}
     {{- $seenPolicyConfigMapRefs := dict }}
-    {{- range $index, $source := $configuredPolicyConfigMapRefs }}
+    {{- range $refName := (keys $configuredPolicyConfigMapRefs | sortAlpha) }}
+      {{- $source := get $configuredPolicyConfigMapRefs $refName }}
       {{- if not (kindIs "map" $source) }}
-        {{- fail (printf "waf.policies.configMapRefs[%d] must be a map." $index) }}
+        {{- fail (printf "waf.policies.configMapRefs.%s must be a map." $refName) }}
       {{- end }}
       {{- range $field := keys $source }}
         {{- if not (has $field (list "namespace" "name" "key")) }}
-          {{- fail (printf "waf.policies.configMapRefs[%d] contains unknown field %q. Valid fields: namespace, name, key." $index $field) }}
+          {{- fail (printf "waf.policies.configMapRefs.%s contains unknown field %q. Valid fields: namespace, name, key." $refName $field) }}
         {{- end }}
       {{- end }}
       {{- range $field := list "namespace" "name" "key" }}
         {{- if and (hasKey $source $field) (not (kindIs "string" (index $source $field))) }}
-          {{- fail (printf "waf.policies.configMapRefs[%d].%s must be a string." $index $field) }}
+          {{- fail (printf "waf.policies.configMapRefs.%s.%s must be a string." $refName $field) }}
         {{- end }}
       {{- end }}
       {{- $namespace := ($source.namespace | default $.Release.Namespace | toString) }}
       {{- $name := ($source.name | default "" | toString) }}
       {{- $key := ($source.key | default "policies.yaml" | toString) }}
       {{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $namespace) }}
-        {{- fail (printf "waf.policies.configMapRefs[%d].namespace must be a valid Kubernetes namespace." $index) }}
+        {{- fail (printf "waf.policies.configMapRefs.%s.namespace must be a valid Kubernetes namespace." $refName) }}
       {{- end }}
       {{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $name) }}
-        {{- fail (printf "waf.policies.configMapRefs[%d].name must be a valid ConfigMap name." $index) }}
+        {{- fail (printf "waf.policies.configMapRefs.%s.name must be a valid ConfigMap name." $refName) }}
       {{- end }}
       {{- if not (regexMatch "^[-._A-Za-z0-9]+$" $key) }}
-        {{- fail (printf "waf.policies.configMapRefs[%d].key must be a valid ConfigMap data key." $index) }}
+        {{- fail (printf "waf.policies.configMapRefs.%s.key must be a valid ConfigMap data key." $refName) }}
       {{- end }}
       {{- $identity := printf "%s/%s:%s" $namespace $name $key }}
       {{- if hasKey $seenPolicyConfigMapRefs $identity }}
-        {{- fail (printf "waf.policies.configMapRefs contains duplicate source %s." $identity) }}
+        {{- fail (printf "waf.policies.configMapRefs.%s and .%s both point at %s. Two catalogs cannot share a source." (get $seenPolicyConfigMapRefs $identity) $refName $identity) }}
       {{- end }}
-      {{- $_ := set $seenPolicyConfigMapRefs $identity true }}
-      {{- $policyConfigMapRefs = append $policyConfigMapRefs (dict "namespace" $namespace "name" $name "key" $key) }}
+      {{- $_ := set $seenPolicyConfigMapRefs $identity $refName }}
+      {{- $_ := set $policyConfigMapRefs $refName (dict "namespace" $namespace "name" $name "key" $key) }}
     {{- end }}
     {{- $_ := set $waf "inline" $policies }}
     {{- $_ := set $waf "configMapRefs" $policyConfigMapRefs }}

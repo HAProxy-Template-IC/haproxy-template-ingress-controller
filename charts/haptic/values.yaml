@@ -1012,15 +1012,18 @@ controller:
             #     secLang: |
             #       SecRuleRemoveById 941320
             inline: {}
-            # Trusted cross-namespace policy catalogs. Sources never override
-            # each other; duplicate names fail. Protect these ConfigMaps with
-            # RBAC because their writers are WAF policy authors.
+            # Trusted cross-namespace policy catalogs, keyed by catalog name
+            # like `inline` above — Helm merges maps key by key, so adding one
+            # catalog keeps the rest. Sources never override each other;
+            # duplicate names fail. Protect these ConfigMaps with RBAC because
+            # their writers are WAF policy authors.
             #
             # configMapRefs:
-            #   - namespace: security
+            #   security:
+            #     namespace: security
             #     name: haptic-waf-policies
             #     key: policies.yaml
-            configMapRefs: []
+            configMapRefs: {}
             # Namespaced self-service policy authoring. When enabled, every
             # namespace may define WAF policies for ITS OWN Ingresses in a
             # ConfigMap named `configMapName` (data key `key`) in that
