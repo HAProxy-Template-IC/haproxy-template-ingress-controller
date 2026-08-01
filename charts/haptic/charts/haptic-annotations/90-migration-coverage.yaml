@@ -168,7 +168,7 @@ migrationCoverage:
         note: "Response compression algorithm (default gzip; deflate/raw-deflate). brotli/zstd fail loud — unavailable in the community HAProxy build."
       haproxy-haptic.org/compress-enable:
         status: supported
-        note: "\"true\" enables HAProxy-side response compression for the backend (`compression algo`/`type`)."
+        note: "\"true\" enables HAProxy-side response compression for the backend (`filter compression` + `compression algo`/`type`); \"false\" opts out. Injected as \"true\" when unset, so compression is on by default."
       haproxy-haptic.org/compress-types:
         status: supported
         note: "Comma-separated MIME types to compress (default a standard text/JSON/XML/SVG set)."

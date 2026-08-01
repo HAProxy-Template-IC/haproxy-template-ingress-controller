@@ -142,15 +142,73 @@ Two facts about bandwidth limits surprise people, so check them against what you
 
 ### Compression
 
-HAProxy-side response compression, per Ingress.
+HAProxy-side response compression, per Ingress. **On by default**: a bundled
+governance rule sets `compress-enable` on any Ingress that doesn't set it
+itself, so you get compression without annotating anything, and an Ingress that
+does set the annotation always keeps its own value.
+
+HAProxy compresses only responses the backend left uncompressed. It skips a
+response that already carries `Content-Encoding`, one whose `Cache-Control` says
+`no-transform`, a `multipart/*` body, a status other than 200/201/202/203, and
+anything the client didn't advertise support for in `Accept-Encoding`. It adds
+`Vary: Accept-Encoding` itself, so a shared cache in front stays correct.
 
 Compression runs before the bandwidth limiter, so a `download-bandwidth-limit` on a compressed route meters the compressed bytes that go on the wire, not the larger uncompressed response.
+
+!!! warning "Compressing HTTPS responses re-opens BREACH"
+
+    Compression is on by default, so read this before assuming it's safe for
+    every route you serve.
+
+    [BREACH](https://www.breachattack.com/) recovers a secret from an HTTPS
+    response by watching how its *compressed length* changes. It needs one page
+    to do three things at once: be served over TLS, contain a secret (a CSRF
+    token, a session identifier, an API key), and reflect attacker-controlled
+    input into the same response body. Given that, an attacker who can make the
+    victim's browser issue requests reads the secret out byte by byte, without
+    breaking TLS.
+
+    Compression is what makes the length vary, so turning it on is what exposes
+    the page. Most routes don't meet all three conditions — a JSON API that
+    reflects nothing, static assets, and anything unauthenticated are unaffected
+    — which is why on-by-default is the same choice nginx-ingress, Cloudflare and
+    most CDNs make.
+
+    For a route that *does* meet them, opt out:
+
+    ```yaml
+    metadata:
+      annotations:
+        haproxy-haptic.org/compress-enable: "false"
+    ```
+
+    Narrowing `compress-types` to exclude `text/html` also helps if the reflected
+    secret only ever appears in HTML. The durable fixes are application-side:
+    per-request CSRF tokens, or masking the token so its compressed length
+    doesn't correlate with its value.
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
 | `haproxy-haptic.org/compress-algorithm` | ✅ Supported | Compression algorithm (default `gzip`; `deflate`/`raw-deflate`). `brotli`/`zstd` fail the render — unavailable in the community HAProxy build. |
-| `haproxy-haptic.org/compress-enable` | ✅ Supported | The value `true` enables HAProxy-side response compression for the backend. |
+| `haproxy-haptic.org/compress-enable` | ✅ Supported | `true` compresses this backend's responses, `false` turns it off for this Ingress. Injected as `true` when unset — set it to `false` to opt out. |
 | `haproxy-haptic.org/compress-types` | ✅ Supported | Comma-separated MIME types to compress (default a standard text/JSON/XML/SVG set). |
+
+To turn compression off for the whole fleet rather than one Ingress, disable the
+rule that injects it:
+
+```yaml
+controller:
+  config:
+    templatingSettings:
+      extraContext:
+        governance:
+          rules:
+            haptic-compress-enable:
+              enabled: false
+```
+
+CPU cost and the two global limits that bound it are covered in
+[Response compression](../operations/performance.md#response-compression).
 
 ### Shared response cache
 

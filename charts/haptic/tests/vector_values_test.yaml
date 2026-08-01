@@ -170,7 +170,6 @@ tests:
             - ^haproxy_backend_agg_check_status$
             - ^haproxy_backend_agg_server_check_status$
             - ^haproxy_backend_http_cache_
-            - ^haproxy_backend_http_comp_
             - ^haproxy_(server_backup|backend_backup_servers)$
             - ^haproxy_(server|backend)_max_
       # haproxy_backend_agg_server_status is deliberately NOT excluded. With
@@ -180,6 +179,12 @@ tests:
       - notContains:
           path: spec.templatingSettings.extraContext.vector.excludeMetrics
           content: ^haproxy_backend_agg_server_status$
+      # backendHttpCompression ships DISABLED: response compression is on by
+      # default, so these series carry real traffic. Excluding them would make
+      # the one feature you cannot observe the one that is always on.
+      - notContains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetrics
+          content: ^haproxy_backend_http_comp_
       - equal:
           path: spec.templatingSettings.extraContext.vector.excludeMaintServerMetrics
           value: true
@@ -192,10 +197,10 @@ tests:
       # the whole exposition is already parsed into events).
       - lengthEqual:
           path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          count: 24
+          count: 20
       - contains:
           path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          content: haproxy_backend_http_comp_bytes_in_total
+          content: haproxy_backend_http_cache_hits_total
 
   - it: should let one exclusion be disabled without disturbing the others
     template: haproxytemplateconfig.yaml
@@ -203,18 +208,18 @@ tests:
       # The entire point of the map shape. Against the old list, turning one off
       # meant restating every other entry — and silently inheriting none of the
       # exclusions added in a later release.
-      vector.excludeMetrics.backendHttpCompression.enabled: false
+      vector.excludeMetrics.backendHttpCache.enabled: false
     asserts:
       - notContains:
           path: spec.templatingSettings.extraContext.vector.excludeMetrics
-          content: ^haproxy_backend_http_comp_
+          content: ^haproxy_backend_http_cache_
       - contains:
           path: spec.templatingSettings.extraContext.vector.excludeMetrics
-          content: ^haproxy_backend_http_cache_
-      # ...and its four families leave the source-side list with it.
+          content: ^haproxy_backend_agg_check_status$
+      # ...and its two families leave the source-side list with it.
       - lengthEqual:
           path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
-          count: 20
+          count: 18
 
   # Trace-export guards. Both live in HELM rather than in the Scriggo render, and
   # that placement is the point: a validationTest legitimately pins individual
