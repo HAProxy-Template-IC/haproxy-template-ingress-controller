@@ -147,6 +147,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		files[name] = config.GeneralFile{
 			Template:       crdFile.Template,
 			PostProcessing: convertPostProcessors(crdFile.PostProcessing),
+			ReloadOnPush:   crdFile.ReloadOnPush,
 		}
 	}
 

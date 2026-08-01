@@ -29,6 +29,8 @@ _helm_load:
 
 files:
   vector.yaml:
+    # HAProxy never opens this file — vector's own --watch-config applies it.
+    reloadOnPush: false
     template: |
       {%- var vec = extraContext | dig("vector") | fallback(map[string]any{}) -%}
       {%- var socketPath = vec | dig_string("/run/vector/haproxy.sock", "socketPath") -%}

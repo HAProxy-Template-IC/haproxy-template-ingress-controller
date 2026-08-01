@@ -1,0 +1,40 @@
+suite: general file reloadOnPush
+# A general file HAProxy never reads must not cost a reload when its content
+# changes. Only two files qualify — the vector config and the spoa-hub TOML,
+# both watched by their own sidecar — and both opt out in a different place:
+# vector through the CRD's files[].reloadOnPush, the hub through the 4th
+# argument to fileRegistry.Register. Pin both, and pin that an HAProxy-read
+# file did NOT come along for the ride.
+templates:
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should mark the vector config as sidecar-owned
+    template: haproxytemplateconfig.yaml
+    set:
+      vector.enabled: true
+    asserts:
+      - equal:
+          path: spec.files["vector.yaml"].reloadOnPush
+          value: false
+
+  - it: should leave HAProxy-read files reloading
+    template: haproxytemplateconfig.yaml
+    asserts:
+      # Absent, not `true`: the CRD default supplies it. An explicit value here
+      # would mean base.yaml started opting error pages in or out by hand.
+      - notExists:
+          path: spec.files["503.http"].reloadOnPush
+
+  - it: should register the spoa-hub TOML with reloadOnPush=false and spoe.conf without it
+    template: haproxytemplateconfig.yaml
+    set:
+      spoaHub.enabled: true
+    asserts:
+      - matchRegex:
+          path: spec.templateSnippets["features-spoa-hub"].template
+          pattern: 'Register\("file", "spoa-hub-config\.toml", hubConfig, false\)'
+      # spoe.conf is referenced by `filter spoe engine … config <path>`, so it
+      # keeps the default and must not grow a 4th argument.
+      - matchRegex:
+          path: spec.templateSnippets["features-spoa-hub"].template
+          pattern: 'Register\("file", "spoe\.conf", spoeContent\)'

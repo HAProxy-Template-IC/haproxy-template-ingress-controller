@@ -580,6 +580,28 @@ func TestConvertSpec_WithPostProcessors(t *testing.T) {
 	assert.Equal(t, "pem_format", cfg.SSLCertificates["default"].PostProcessing[0].Type)
 }
 
+// reloadOnPush decides whether a file push reloads HAProxy. Losing it in the
+// CRD → internal-config hop would silently reinstate the reload for every
+// sidecar-owned file, so pin both the explicit false and the absent default.
+func TestConvertSpec_FileReloadOnPush(t *testing.T) {
+	noReload := false
+	spec := v1alpha1.HAProxyTemplateConfigSpec{
+		CredentialsSecretRef: v1alpha1.SecretReference{Name: "haproxy-creds"},
+		PodSelector:          v1alpha1.PodSelector{MatchLabels: map[string]string{"app": "haproxy"}},
+		HAProxyConfig:        v1alpha1.HAProxyConfig{Template: "global"},
+		Files: map[string]v1alpha1.GeneralFile{
+			"vector.yaml": {Template: "sources: {}", ReloadOnPush: &noReload},
+			"503.http":    {Template: "HTTP/1.0 503"},
+		},
+	}
+
+	cfg, err := ConvertSpec(&spec)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Files["vector.yaml"].ReloadOnPush)
+	assert.False(t, *cfg.Files["vector.yaml"].ReloadOnPush)
+	assert.Nil(t, cfg.Files["503.http"].ReloadOnPush, "absent means the default (reload), not an explicit false")
+}
+
 func TestConvertSpec_ExtraContextError(t *testing.T) {
 	spec := v1alpha1.HAProxyTemplateConfigSpec{
 		CredentialsSecretRef: v1alpha1.SecretReference{

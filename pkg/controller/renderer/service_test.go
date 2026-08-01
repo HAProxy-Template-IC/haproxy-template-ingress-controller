@@ -343,6 +343,42 @@ func TestRenderService_Render_WithGeneralFiles(t *testing.T) {
 	assert.Equal(t, "errors/503.http", result.AuxiliaryFiles.GeneralFiles[0].Filename)
 	assert.Equal(t, "files/errors/503.http", result.AuxiliaryFiles.GeneralFiles[0].Path)
 	assert.Contains(t, result.AuxiliaryFiles.GeneralFiles[0].Content, "503 Service Unavailable")
+	assert.True(t, result.AuxiliaryFiles.GeneralFiles[0].ReloadsOnPush(), "an entry that omits reloadOnPush must keep reloading")
+}
+
+// A `files:` entry carrying reloadOnPush: false has to reach the deployer as
+// such — dropping it on the render hop would silently reinstate the reload.
+func TestRenderService_Render_GeneralFileReloadOnPushFalse(t *testing.T) {
+	noReload := false
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: "global\n    daemon\n"},
+		Files: map[string]config.GeneralFile{
+			"vector.yaml": {
+				Template:     "sources: {}\n",
+				ReloadOnPush: &noReload,
+			},
+		},
+		Dataplane: testDataplaneConfig(),
+	}
+
+	engine, err := templating.New(map[string]string{
+		"haproxy.cfg": cfg.HAProxyConfig.Template,
+		"vector.yaml": cfg.Files["vector.yaml"].Template,
+	}, nil)
+	require.NoError(t, err)
+
+	svc := NewRenderService(&RenderServiceConfig{
+		Engine:       engine,
+		Config:       cfg,
+		Logger:       slog.Default(),
+		Capabilities: defaultCapabilities(),
+	})
+
+	result, err := svc.Render(context.Background(), &mockStoreProvider{storeMap: map[string]stores.Store{}}, rendercontext.RenderModeReconcile)
+
+	require.NoError(t, err)
+	require.Len(t, result.AuxiliaryFiles.GeneralFiles, 1)
+	assert.False(t, result.AuxiliaryFiles.GeneralFiles[0].ReloadsOnPush())
 }
 
 func TestRenderService_Render_Error(t *testing.T) {

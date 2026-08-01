@@ -395,10 +395,12 @@ func (d *auxiliaryFileDiffs) anyDiffHasChanges() bool {
 //
 // The reload can be skipped only when auxNeedsReload is false: every auxiliary
 // change in the batch must be a content update to an already-existing map or
-// (on v3.2+) cert. File creation/deletion, a cert content update on <v3.2, and
-// any other auxiliary change (general files, CA files, crt-lists) remain
-// structural — consistent with the all-or-nothing runtime gate, where a single
-// non-runtime change makes a reload unavoidable and the runtime applies moot.
+// (on v3.2+) cert, a general file the config never reads (reloadOnPush=false),
+// or a ca-file rotation. Map/cert creation and deletion, a cert content update
+// on <v3.2, and any other auxiliary change (general files HAProxy reads,
+// SSLCaFiles, crt-lists) remain structural — consistent with the
+// all-or-nothing runtime gate, where a single non-runtime change makes a
+// reload unavoidable and the runtime applies moot.
 func (d *auxiliaryFileDiffs) runtimeEligibleAuxUpdates(caps Capabilities) (mapUpdates []auxiliaryfiles.MapFile, certUpdates []auxiliaryfiles.SSLCertificate, caUpdates []auxiliaryfiles.GeneralFile, auxNeedsReload bool) {
 	if d == nil {
 		return nil, nil, nil, false
@@ -410,7 +412,7 @@ func (d *auxiliaryFileDiffs) runtimeEligibleAuxUpdates(caps Capabilities) (mapUp
 	otherAuxChanged := (d.caFileDiff != nil && d.caFileDiff.HasChanges()) ||
 		(d.crtlistDiff != nil && d.crtlistDiff.HasChanges())
 
-	caUpdates, fileStructural := d.caFileRuntimeUpdates(caps)
+	caUpdates, fileStructural := d.generalFileRuntimeUpdates(caps)
 
 	// Maps: content updates to existing maps are runtime-eligible (v3.0+);
 	// creating or deleting a map file stays structural.
@@ -439,27 +441,61 @@ func (d *auxiliaryFileDiffs) runtimeEligibleAuxUpdates(caps Capabilities) (mapUp
 	return mapUpdates, certUpdates, caUpdates, otherAuxChanged || fileStructural || mapStructural || certStructural
 }
 
-// caFileRuntimeUpdates partitions the general-file diff: a CONTENT-only update
-// to a file flagged as a ca-file (an mTLS trust bundle referenced as
-// `ca-file <path>`) is runtime-eligible on v3.2+ — applied live via the runtime
-// add-entry endpoint. The same bytes are also written to disk (general storage,
-// skip_reload) so a later reload converges. Any other general-file change
-// (non-ca content, create, delete) or a ca-file update on <v3.2 forces a reload.
-func (d *auxiliaryFileDiffs) caFileRuntimeUpdates(caps Capabilities) (caUpdates []auxiliaryfiles.GeneralFile, structural bool) {
+// generalFileRuntimeUpdates partitions the general-file diff into the changes
+// that can reach the live worker without a reload and the ones that can't:
+//
+//   - A CONTENT-only update to a ca-file (an mTLS trust bundle referenced as
+//     `ca-file <path>`) is runtime-eligible on v3.2+ — applied live via the
+//     runtime add-entry endpoint. The same bytes are also written to disk
+//     (general storage, skip_reload) so a later reload converges.
+//   - A file with reloadOnPush=false is owned by a sidecar that watches it
+//     itself; HAProxy never opens it, so the skip_reload disk write the
+//     pre-config phase already did is the whole deploy. Honoured for creates
+//     too, since general-file CREATE returns 201 without reloading.
+//
+// Everything else — other content updates, creates, and every delete — forces a
+// reload. A delete carries the file as the live worker reports it, with no
+// reloadOnPush to consult.
+func (d *auxiliaryFileDiffs) generalFileRuntimeUpdates(caps Capabilities) (caUpdates []auxiliaryfiles.GeneralFile, structural bool) {
 	if d.fileDiff == nil {
 		return nil, false
 	}
-	if len(d.fileDiff.ToCreate) > 0 || len(d.fileDiff.ToDelete) > 0 {
+	if len(d.fileDiff.ToDelete) > 0 {
 		structural = true
 	}
+	for _, f := range d.fileDiff.ToCreate {
+		if f.ReloadsOnPush() {
+			structural = true
+		}
+	}
 	for _, f := range d.fileDiff.ToUpdate {
-		if f.IsCaFile && caps.SupportsSslCaFiles {
+		switch {
+		case f.IsCaFile && caps.SupportsSslCaFiles:
 			caUpdates = append(caUpdates, f)
-		} else {
+		case !f.ReloadsOnPush():
+		default:
 			structural = true
 		}
 	}
 	return caUpdates, structural
+}
+
+// reloadFreeGeneralFiles lists the general files this diff writes without a
+// reload because they carry reloadOnPush=false. The deploy path doesn't need
+// them broken out — generalFileRuntimeUpdates already excludes them from
+// `structural` — but the offline preview has to name them, or a sidecar-only
+// change reads as "nothing changed".
+func (d *auxiliaryFileDiffs) reloadFreeGeneralFiles() []auxiliaryfiles.GeneralFile {
+	if d == nil || d.fileDiff == nil {
+		return nil
+	}
+	var files []auxiliaryfiles.GeneralFile
+	for _, f := range append(append([]auxiliaryfiles.GeneralFile{}, d.fileDiff.ToCreate...), d.fileDiff.ToUpdate...) {
+		if !f.ReloadsOnPush() {
+			files = append(files, f)
+		}
+	}
+	return files
 }
 
 // checksumMatchesLastDeployed returns true if the content checksum matches the

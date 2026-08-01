@@ -246,6 +246,7 @@ General auxiliary file templates (error pages, etc.). Each key is a filename, re
 |-------|------|----------|---------|
 | `template` | string | Yes | — |
 | `postProcessing` | `[]PostProcessor` | No | — (see [`postProcessing`](#postprocessing-all-template-entries)) |
+| `reloadOnPush` | bool | No | `true` |
 
 ```yaml
 files:
@@ -254,6 +255,8 @@ files:
       HTTP/1.1 503 Service Unavailable
       <html><body><h1>503</h1></body></html>
 ```
+
+Set `reloadOnPush: false` when a sidecar owns the file and watches it itself — the bundled Vector and SPOA-hub configs both do. HAProxy never opens those, so the controller writes the new content and skips the reload. Keep the default for anything the HAProxy configuration references: only a reload makes that content take effect. Deleting a file reloads either way, because the running worker doesn't report `reloadOnPush` and the controller can't tell whether the config referenced it.
 
 See [Templating — General Files](./templating.md#general-files).
 

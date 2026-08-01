@@ -296,6 +296,23 @@ spec:
 
 </div>
 
+Changing a general file reloads HAProxy, because the running worker holds the old content. That's wrong for a file HAProxy never reads — a config for a sidecar that watches the file itself. Set `reloadOnPush: false` on the entry and the controller writes the new content without the reload:
+
+```yaml
+spec:
+  files:
+    vector.yaml:
+      reloadOnPush: false
+      template: |
+        sources: {}
+```
+
+Registering the file at render time takes the same flag as a fourth argument:
+
+```scriggo
+{%- var _, err = fileRegistry.Register("file", "spoa-hub-config.toml", content, false) %}
+```
+
 ### SSL certificates
 
 SSL/TLS certificate files are assembled from Kubernetes Secrets. Written to `spec.dataplane.sslCertsDir` (default `/etc/haproxy/ssl/`). This reads a TLS Secret and concatenates its certificate and key into one PEM — the **certs** tab shows the result.
