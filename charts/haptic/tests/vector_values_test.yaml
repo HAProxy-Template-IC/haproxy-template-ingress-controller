@@ -75,7 +75,9 @@ tests:
     template: haproxytemplateconfig.yaml
     set:
       vector.excludeMetrics:
-        - ^haproxy_((
+        broken:
+          enabled: true
+          pattern: ^haproxy_((
     asserts:
       # Regression guard on a real hole: this was written with sprig's plain
       # regexMatch, which does `match, _ := regexp.MatchString(...)` and DISCARDS
@@ -84,14 +86,30 @@ tests:
       - failedTemplate:
           errorPattern: 'error parsing regexp: missing closing \)'
 
-  - it: should reject an empty exclusion pattern
+  - it: should reject an enabled exclusion with no pattern
     template: haproxytemplateconfig.yaml
     set:
       vector.excludeMetrics:
-        - ""
+        empty:
+          enabled: true
+          pattern: ""
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.excludeMetrics contains an empty pattern. An empty regex matches every metric name and would drop the entire exposition.'
+          errorMessage: 'vector.excludeMetrics.empty is enabled but has no `pattern`.'
+
+  - it: should reject an exclusion entry that omits enabled
+    template: haproxytemplateconfig.yaml
+    set:
+      # An entry without the flag would pass every other check and then be skipped
+      # by the resolution loop — excluding nothing, silently. The operator who
+      # wrote it believes their exclusion is live, so this must be an error and
+      # not a default.
+      vector.excludeMetrics:
+        mine:
+          pattern: ^haproxy_x
+    asserts:
+      - failedTemplate:
+          errorPattern: 'vector\.excludeMetrics\.mine has no .enabled.'
 
   - it: should reject an exclusion pattern carrying a quote
     template: haproxytemplateconfig.yaml
@@ -99,18 +117,48 @@ tests:
       # Patterns are emitted inside a VRL r'...' literal, so a single quote breaks
       # out of it and corrupts the config vector is about to load.
       vector.excludeMetrics:
-        - "^haproxy_'"
+        quoted:
+          enabled: true
+          pattern: "^haproxy_'"
     asserts:
       - failedTemplate:
           errorMessage: 'vector.excludeMetrics pattern "^haproxy_''" contains a quote, backslash or newline. Patterns are embedded in a VRL r''...'' literal in the rendered config, so those characters would break vector''s config load and crash-loop the sidecar.'
 
-  - it: should reject excludeMetrics that is not a list
+  - it: should reject a families entry that its own pattern would not match
+    template: haproxytemplateconfig.yaml
+    set:
+      # families is passed to HAProxy as metrics=-<name> and pattern runs in vector.
+      # If a name isn't matched by its own pattern the two stages disagree: the
+      # family is dropped at the source while the filter that is supposed to be
+      # authoritative never mentions it.
+      vector.excludeMetrics:
+        drifted:
+          enabled: true
+          pattern: ^haproxy_x
+          families:
+            - haproxy_y
+    asserts:
+      - failedTemplate:
+          errorPattern: 'families entry "haproxy_y" does not match that entry''s own pattern'
+
+  - it: should reject excludeMetrics that is not a map
     template: haproxytemplateconfig.yaml
     set:
       vector.excludeMetrics: ^haproxy_server_max_
     asserts:
       - failedTemplate:
-          errorMessage: 'vector.excludeMetrics must be a list of regex strings.'
+          errorPattern: 'vector\.excludeMetrics must be a map of named exclusions'
+
+  - it: should reject the pre-0.2.0 list form with a message naming the replacement
+    template: haproxytemplateconfig.yaml
+    set:
+      # The shape an operator carries over from an older values.yaml. Helm would
+      # otherwise accept the list silently and the render would exclude nothing.
+      vector.excludeMetrics:
+        - ^haproxy_(server|backend)_max_
+    asserts:
+      - failedTemplate:
+          errorPattern: 'vector\.excludeMetrics must be a map of named exclusions'
 
   - it: should accept the shipped defaults and pass them to the render context
     template: haproxytemplateconfig.yaml
@@ -119,17 +167,54 @@ tests:
       - equal:
           path: spec.templatingSettings.extraContext.vector.excludeMetrics
           value:
+            - ^haproxy_backend_agg_check_status$
+            - ^haproxy_backend_agg_server_check_status$
+            - ^haproxy_backend_http_cache_
+            - ^haproxy_backend_http_comp_
+            - ^haproxy_(server_backup|backend_backup_servers)$
             - ^haproxy_(server|backend)_max_
-      # haproxy_backend_agg_* is deliberately NOT in this list. With
+      # haproxy_backend_agg_server_status is deliberately NOT excluded. With
       # excludeMaintServerMetrics on, agg_server_status{state="MAINT"} is the only
       # remaining free-slot census, so excluding it would remove the signal rather
       # than de-duplicate it. Pinned so it can't drift back in unnoticed.
       - notContains:
           path: spec.templatingSettings.extraContext.vector.excludeMetrics
-          content: ^haproxy_backend_agg_
+          content: ^haproxy_backend_agg_server_status$
       - equal:
           path: spec.templatingSettings.extraContext.vector.excludeMaintServerMetrics
           value: true
+
+  - it: should pass every excluded family to the source-side scrape list
+    template: haproxytemplateconfig.yaml
+    asserts:
+      # families is what becomes metrics=-<name> on the scrape URL, which is the
+      # half that actually cuts vector's peak RSS (the pattern filter runs after
+      # the whole exposition is already parsed into events).
+      - lengthEqual:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          count: 24
+      - contains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          content: haproxy_backend_http_comp_bytes_in_total
+
+  - it: should let one exclusion be disabled without disturbing the others
+    template: haproxytemplateconfig.yaml
+    set:
+      # The entire point of the map shape. Against the old list, turning one off
+      # meant restating every other entry — and silently inheriting none of the
+      # exclusions added in a later release.
+      vector.excludeMetrics.backendHttpCompression.enabled: false
+    asserts:
+      - notContains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetrics
+          content: ^haproxy_backend_http_comp_
+      - contains:
+          path: spec.templatingSettings.extraContext.vector.excludeMetrics
+          content: ^haproxy_backend_http_cache_
+      # ...and its four families leave the source-side list with it.
+      - lengthEqual:
+          path: spec.templatingSettings.extraContext.vector.excludeMetricFamilies
+          count: 20
 
   # Trace-export guards. Both live in HELM rather than in the Scriggo render, and
   # that placement is the point: a validationTest legitimately pins individual

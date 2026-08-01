@@ -2277,15 +2277,148 @@ vector:
   #
   # Patterns may not contain quotes, backslashes or newlines: they are embedded in
   # the rendered vector config, and an invalid one would crash-loop the sidecar.
+  #
+  # A MAP, keyed by name, not a list: Helm replaces a list wholesale, so turning
+  # one exclusion off would mean restating every other one and silently
+  # inheriting none of the defaults added later. Against a map you disable
+  # exactly what you mean to:
+  #
+  #     vector:
+  #       excludeMetrics:
+  #         backendHttpCompression:
+  #           enabled: false
+  #
+  # Add your own the same way. Both `pattern` and `enabled` are required: an entry
+  # without `enabled` is refused at render time rather than sitting inert and
+  # quietly excluding nothing. `families` is optional — see below for what it buys.
+  #
+  # The series counts below are measured on a real 825-backend / 8203-server
+  # fleet, after `noMaint`, where the exposition is 84,973 series and per-BACKEND
+  # families are ~75% of it (825 backends vs 283 live servers — backend count is
+  # the driver at scale, not server count).
   excludeMetrics:
-    - '^haproxy_(server|backend)_max_'
+    # Since-boot maxima and "max over the last 1024 connections". Not
+    # aggregatable across pods, never reset, and derivable from the raw series
+    # with max_over_time() / count by ().
+    serverBackendMax:
+      enabled: true
+      pattern: '^haproxy_(server|backend)_max_'
+      families:
+        - haproxy_backend_max_connect_time_seconds
+        - haproxy_backend_max_queue
+        - haproxy_backend_max_queue_time_seconds
+        - haproxy_backend_max_response_time_seconds
+        - haproxy_backend_max_session_rate
+        - haproxy_backend_max_sessions
+        - haproxy_backend_max_total_time_seconds
+        - haproxy_server_max_connect_time_seconds
+        - haproxy_server_max_queue
+        - haproxy_server_max_queue_time_seconds
+        - haproxy_server_max_response_time_seconds
+        - haproxy_server_max_session_rate
+        - haproxy_server_max_sessions
+        - haproxy_server_max_total_time_seconds
 
+    # -13,168 series (15.5%). LOSSLESS: summing haproxy_server_check_status by
+    # (proxy,state) reproduces this family exactly — verified across all 823
+    # populated backends x 16 states with zero mismatches, and 12,885 of the
+    # 13,168 series are structural zeros. Queries must use the sum form.
+    backendAggCheckStatus:
+      enabled: true
+      pattern: '^haproxy_backend_agg_check_status$'
+      families:
+        - haproxy_backend_agg_check_status
+
+    # -4,115 series (4.8%). Byte-identical to haproxy_backend_agg_server_status
+    # (which is KEPT — it is the free-slot census) on every (proxy,state) pair,
+    # because HAPTIC renders a uniform `default-server check`.
+    # Set enabled: false if you use the agent-check annotations — with an agent
+    # check the two families can diverge, and this one carries the distinction.
+    backendAggServerCheckStatus:
+      enabled: true
+      pattern: '^haproxy_backend_agg_server_check_status$'
+      families:
+        - haproxy_backend_agg_server_check_status
+
+    # -3,300 series (3.9%). Every one is zero unless HAProxy compression is on.
+    # Set enabled: false if you enable the compression annotations, otherwise
+    # those metrics are silently absent rather than zero.
+    backendHttpCompression:
+      enabled: true
+      pattern: '^haproxy_backend_http_comp_'
+      families:
+        - haproxy_backend_http_comp_bytes_bypassed_total
+        - haproxy_backend_http_comp_bytes_in_total
+        - haproxy_backend_http_comp_bytes_out_total
+        - haproxy_backend_http_comp_responses_total
+
+    # -1,650 series (1.9%). Every one is zero unless a template adds HAProxy's
+    # native `cache` section (the chart's caching annotations are a Varnish tier
+    # and do not emit these). Set enabled: false if you add one.
+    backendHttpCache:
+      enabled: true
+      pattern: '^haproxy_backend_http_cache_'
+      families:
+        - haproxy_backend_http_cache_hits_total
+        - haproxy_backend_http_cache_lookups_total
+
+    # -1,108 series (1.3%). HAPTIC renders no backup servers, so both are
+    # constant. Deliberately does NOT touch haproxy_backend_active_servers /
+    # haproxy_server_active: `active_servers == 0` is the standard "this backend
+    # has no live endpoint" alert.
+    backupTopology:
+      enabled: true
+      pattern: '^haproxy_(server_backup|backend_backup_servers)$'
+      families:
+        - haproxy_backend_backup_servers
+        - haproxy_server_backup
+
+  # Vector is NOT a small sidecar — budget it against the HAProxy container, not
+  # as a log shipper. Measured in production, with metric generation enabled it
+  # uses about as much memory as the HAProxy instance beside it, so this tracks
+  # `haproxy.resources` (1Gi) rather than a fixed small allowance.
+  #
+  # What drives it: vector re-exports what it scrapes, so its memory tracks the
+  # SERIES COUNT it holds between scrapes, not request volume. Measured on a
+  # real 825-backend / 8203-server config (HAProxy 3.4, counts reproduced
+  # independently): ~599k series raw, ~93k after `noMaint` drops the empty
+  # slots, ~85k as vector re-exports them. Per-object, after `noMaint`:
+  # 58 series per backend (+26 once it has a server), 82 per live server,
+  # 39 per frontend. Backends dominate — about 75% of the total.
+  #
+  # The previous 256Mi was sized from a scrape measurement alone (193 slots,
+  # 15,116 series, 1.67 MB) and is right for THAT fleet — roughly 4,940 series
+  # after `noMaint`. It does not survive a large one, which is how the sidecar
+  # came to be OOMKilled on the scale tier: kernel `constraint=CONSTRAINT_MEMCG`,
+  # anon-rss 258568kB, on a container whose death takes the pod out of the
+  # Service.
+  #
+  # 1Gi is the realistic-fleet default, matching HAProxy. It is NOT a universal
+  # answer: metric generation and the access-log source add load on top of the
+  # series count, and a fleet with many backends can need substantially more.
+  # Size it against your own exported series count, and prefer cutting
+  # cardinality (`noMaint`, `excludeMetrics`) over buying memory.
+  #
+  # Under-sizing this is an AVAILABILITY bug, not a metrics one: the container
+  # carries a readinessProbe, so when it dies the whole HAProxy pod goes NotReady
+  # and leaves the Service, and the data path black-holes while HAProxy itself is
+  # healthy and serving.
+  #
+  # requests = limits, matching the HAProxy container: a container that gates the
+  # pod's Service membership should not be the first one evicted under node
+  # pressure.
+  #
+  # Raise BOTH together with `haproxy.resources` for a larger fleet. The biggest
+  # lever in the other direction is cardinality — see `noMaint` and
+  # `excludeMetrics` above, and keep an eye on the label sets of any metrics you
+  # generate: a per-route metric labelled by status code AND termination state
+  # multiplies out to route_count x codes x states series.
   resources:
     requests:
       cpu: 50m
-      memory: 64Mi
+      memory: 1Gi
     limits:
-      memory: 256Mi
+      memory: 1Gi
 
   securityContext:
     allowPrivilegeEscalation: false
