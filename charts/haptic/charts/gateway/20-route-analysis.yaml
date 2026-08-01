@@ -390,26 +390,28 @@ templateSnippets:
         {{ result -}}
       {%- end macro -%}
 
-  util-analyze-routes:
-    requires: [gateways, grpcroutes, httproutes, referencegrants]
+  util-route-effective-hosts:
+    requires: [gateways, referencegrants]
     template: |
+      {#- Which hostnames a route actually serves, per resolved parentRef.
+
+          Identical for the HTTPRoute and GRPCRoute passes — it reads only the
+          namespace, the hostnames and the parentRefs — so both callers pass
+          those three and share this body instead of forking it.
+
+          effectiveHosts is filled IN PLACE (Scriggo maps are references).
+          The caller keeps the `len(effectiveHosts) == 0` check: a macro
+          cannot `continue` its caller's loop.
+
+          Precondition: the caller has rendered util-gateway-port-scope. Every
+          call site is inside AnalyzeRoutes, which renders it once up front;
+          rendering it here instead would emit its output once per route. -#}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
-      {%- import "util-resource-helpers" for ListenerName, ListenerProtocolOr, ListenerHostname %}
+      {%- import "util-resource-helpers" for ListenerProtocolOr, ListenerHostname %}
       {%- import "util-gw-mtls-blocked" for ComputeGwMtlsBlocked %}
-      {%- macro AnalyzeRoutes(result map[string]any) %}
-        {{ render "util-gateway-port-scope" -}}
-        {%- var allRoutes = []any{} %}
-
-        {%- for _, route := range resources.httproutes.List() %}
-          {#- Non-intersecting hostnames fall away by design: `wildcard.io` must
-              NOT route to a `*.wildcard.io` listener, so a route can legitimately
-              end up with no entries at all. -#}
-          {%- var routeHostnames = route.Spec.Hostnames %}
-          {%- var parentRefs = route.Spec.ParentRefs %}
-          {%- var effectiveHosts = map[string]bool{} %}
-          {%- var resolvedGwCount = 0 %}
-          {%- var routeNs = route.Metadata.Namespace %}
+      {%- macro RouteEffectiveHosts(routeNs string, routeHostnames []any, parentRefs []any, effectiveHosts map[string]bool) %}
+        {%- var resolvedGwCount = 0 %}
           {%- for _, parentRef := range parentRefs %}
             {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
             {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
@@ -592,6 +594,28 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
+      {%- end %}
+  util-analyze-routes:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |
+      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
+      {%- import "util-resource-helpers" for ListenerProtocolOr, ListenerHostname %}
+      {%- import "util-route-effective-hosts" for RouteEffectiveHosts %}
+      {%- import "util-gw-mtls-blocked" for ComputeGwMtlsBlocked %}
+      {%- macro AnalyzeRoutes(result map[string]any) %}
+        {{ render "util-gateway-port-scope" -}}
+        {%- var allRoutes = []any{} %}
+
+        {%- for _, route := range resources.httproutes.List() %}
+          {#- Non-intersecting hostnames fall away by design: `wildcard.io` must
+              NOT route to a `*.wildcard.io` listener, so a route can legitimately
+              end up with no entries at all. -#}
+          {%- var routeHostnames = route.Spec.Hostnames %}
+          {%- var parentRefs = route.Spec.ParentRefs %}
+          {%- var effectiveHosts = map[string]bool{} %}
+          {%- var routeNs = route.Metadata.Namespace %}
+          {{- RouteEffectiveHosts(routeNs, routeHostnames | toSlice(), parentRefs | toSlice(), effectiveHosts) -}}
           {%- if len(effectiveHosts) == 0 %}
             {%- continue %}
           {%- end %}
@@ -645,185 +669,8 @@ templateSnippets:
           {%- var routeHostnames = route.Spec.Hostnames %}
           {%- var parentRefs = route.Spec.ParentRefs %}
           {%- var effectiveHosts = map[string]bool{} %}
-          {%- var resolvedGwCount = 0 %}
           {%- var routeNs = route.Metadata.Namespace %}
-          {%- for _, parentRef := range parentRefs %}
-            {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
-            {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
-            {%- if prGroup == "gateway.networking.k8s.io" && prKind == "Gateway" %}
-              {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
-              {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
-              {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
-              {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
-              {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
-              {%- if gw != nil %}
-                {%- resolvedGwCount = resolvedGwCount + 1 %}
-                {#- Computed here, not read back from
-                    features-110-gateway-frontend-mtls: map files render in their
-                    own context, where that snippet has not run. A listener whose
-                    mTLS validation ref is unresolvable can't terminate TLS, and
-                    its routes must not serve via a sibling Gateway's bind. -#}
-                {{ ComputeGwMtlsBlocked(gw) }}
-                {%- var gwMtlsBlockedAny, _ = shared.ComputeIfAbsent(
-                      "gwMtlsBlocked:"+gwNs+"/"+gwName,
-                      func() any { return map[string]bool{} }) -%}
-                {%- var gwMtlsBlocked = gwMtlsBlockedAny.(map[string]bool) %}
-                {%- for _, listener := range gw.Spec.Listeners %}
-                  {%- var listenerName = listener.Name %}
-                  {%- if section == "" || section == listenerName %}
-                    {%- var listenerPort = toint(listener.Port) %}
-                    {%- if !gwMtlsBlocked[listenerName] && (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, gwNs), "true") %}
-                      {#- The Host header carries `:port` verbatim on non-default
-                          ports, so the host-map key must carry it too. -#}
-                      {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
-                      {%- var listenerHostname = ListenerHostname(listener) %}
-                      {#- Keys must match 40-maps-host exactly. Default-port
-                          hostname'd listeners keep the bare host key — base's
-                          wildcard cascade carries no port. -#}
-                      {%- var portSuffix = "" %}
-                      {%- if listenerPort > 0 %}
-                        {%- var portScope = shared.Get("gatewayPortScope").(map[string]any) %}
-                        {%- var scopePort = listenerPort %}
-                        {%- if val, ok := portScope[gwNs + "/" + gwName + ":" + tostring(listenerPort)]; ok %}
-                          {%- scopePort = toint(val) %}
-                        {%- end %}
-                        {%- var isNonDefault = (listenerProto == "HTTP" && listenerPort != 80) || ((listenerProto == "HTTPS" || listenerProto == "TLS") && listenerPort != 443) %}
-                        {%- if listenerHostname == "" || isNonDefault %}
-                          {%- portSuffix = ":" + tostring(scopePort) %}
-                        {%- end %}
-                      {%- end %}
-                      {#- Listener isolation (Gateway API): a more-specific
-                          sibling listener owns the host, so a catch-all
-                          listener must not claim it. -#}
-                      {%- var currentRank = toint(HostnameRank(listenerHostname)) %}
-                      {%- if len(routeHostnames) == 0 %}
-                        {%- effectiveHosts[listenerHostname + portSuffix] = true %}
-                      {%- else if listenerHostname == "" %}
-                        {%- for _, rh := range routeHostnames %}
-                          {%- var rhStr = tostring(rh) %}
-                          {%- var ownedBySibling = false %}
-                          {%- for _, sibling := range gw.Spec.Listeners %}
-                            {%- if !ownedBySibling %}
-                              {%- var sibName = sibling.Name %}
-                              {%- if sibName != listenerName %}
-                                {%- var sibHost = sibling.Hostname %}
-                                {%- if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank %}
-                                  {%- ownedBySibling = true %}
-                                {%- end %}
-                              {%- end %}
-                            {%- end %}
-                          {%- end %}
-                          {%- if !ownedBySibling %}
-                            {%- effectiveHosts[rhStr + portSuffix] = true %}
-                          {%- end %}
-                        {%- end %}
-                      {%- else %}
-                        {%- for _, rh := range routeHostnames %}
-                          {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
-                          {%- if inter != "" %}
-                            {#- A sibling only "covers" inter when
-                                intersect(sibling, inter) == inter exactly.
-                                HostnameSinglePairMatch is true on ANY overlap and
-                                wrongly drops the listener's own pattern. -#}
-                            {%- var ownedBySibling = false %}
-                            {%- for _, sibling := range gw.Spec.Listeners %}
-                              {%- if !ownedBySibling %}
-                                {%- var sibName = sibling.Name %}
-                                {%- if sibName != listenerName %}
-                                  {%- var sibHost = sibling.Hostname %}
-                                  {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > currentRank %}
-                                    {%- ownedBySibling = true %}
-                                  {%- end %}
-                                {%- end %}
-                              {%- end %}
-                            {%- end %}
-                            {%- if !ownedBySibling %}
-                              {%- effectiveHosts[inter + portSuffix] = true %}
-                            {%- end %}
-                          {%- end %}
-                        {%- end %}
-                      {%- end %}
-                    {%- end %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- else if prGroup == "gateway.networking.k8s.io" && prKind == "ListenerSet" %}
-              {%- var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
-              {%- var lsName = tostring(dig(parentRef, "name") | fallback("")) %}
-              {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
-              {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
-              {%- _ = render "util-listenersets-contrib" default "" -%}
-              {%- var lsData, _ = shared.Get("listenersetsUntyped").(map[string]any) %}
-              {%- var ls = lsData["byKey"] | dig(lsNs + "/" + lsName) %}
-              {%- if ls != nil %}
-                {%- var gwName = dig_string(ls, "", "spec", "parentRef", "name") %}
-                {%- var gwNs = dig_string(ls, "", "spec", "parentRef", "namespace") %}
-                {%- if gwNs == "" %}{%- gwNs = lsNs %}{%- end %}
-                {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
-                {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-                  {%- resolvedGwCount = resolvedGwCount + 1 %}
-                  {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
-                    {%- var listenerName = dig_string(listener, "", "name") %}
-                    {%- if section == "" || section == listenerName %}
-                      {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
-                      {#- The listener's owner is the LS, so listenerOwnerNs is
-                          lsNs — NOT the parent Gateway's namespace. -#}
-                      {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, lsNs), "true") %}
-                        {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
-                        {%- var portSuffix = "" %}
-                        {%- if listenerPort > 0 %}
-                          {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
-                            {%- portSuffix = ":" + tostring(listenerPort) %}
-                          {%- end %}
-                        {%- end %}
-                        {%- var listenerHostname = ListenerHostname(listener) %}
-                        {%- if len(routeHostnames) == 0 %}
-                          {%- effectiveHosts[listenerHostname + portSuffix] = true %}
-                        {%- else if listenerHostname == "" %}
-                          {%- for _, rh := range routeHostnames %}
-                            {%- effectiveHosts[tostring(rh) + portSuffix] = true %}
-                          {%- end %}
-                        {%- else %}
-                          {%- for _, rh := range routeHostnames %}
-                            {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
-                            {%- if inter != "" %}
-                              {#- Siblings come from the LS's own spec.listeners,
-                                  not the parent Gateway's. -#}
-                              {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
-                              {%- var lsOwnedBySibling = false %}
-                              {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
-                                {%- if !lsOwnedBySibling %}
-                                  {%- var sibName = dig_string(sibling, "", "name") %}
-                                  {%- if sibName != listenerName %}
-                                    {%- var sibHost = dig_string(sibling, "", "hostname") %}
-                                    {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > lsCurrentRank %}
-                                      {%- lsOwnedBySibling = true %}
-                                    {%- end %}
-                                  {%- end %}
-                                {%- end %}
-                              {%- end %}
-                              {%- if !lsOwnedBySibling %}
-                                {%- effectiveHosts[inter + portSuffix] = true %}
-                              {%- end %}
-                            {%- end %}
-                          {%- end %}
-                        {%- end %}
-                      {%- end %}
-                    {%- end %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-          {%- if resolvedGwCount == 0 %}
-            {%- if len(routeHostnames) == 0 %}
-              {%- effectiveHosts[""] = true %}
-            {%- else %}
-              {%- for _, rh := range routeHostnames %}
-                {%- effectiveHosts[tostring(rh)] = true %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
+          {{- RouteEffectiveHosts(routeNs, routeHostnames | toSlice(), parentRefs | toSlice(), effectiveHosts) -}}
           {%- if len(effectiveHosts) == 0 %}
             {%- continue %}
           {%- end %}
