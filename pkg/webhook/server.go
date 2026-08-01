@@ -60,9 +60,15 @@ func init() {
 // certificate is validated eagerly in NewServer so a malformed cert surfaces
 // there rather than at the first handshake.
 type Server struct {
-	config         ServerConfig
-	validators     map[string]ValidationFunc
-	mu             sync.RWMutex
+	config     ServerConfig
+	validators map[string]ValidationFunc
+	mu         sync.RWMutex
+	// onUnregisteredGVK is seeded from ServerConfig and swappable via
+	// SetOnUnregisteredGVK; guarded by mu alongside validators.
+	onUnregisteredGVK func(gvk string)
+	// boundAddr is the listener's actual address, resolved after net.Listen so
+	// a Port of 0 (tests) can be discovered instead of guessed. Guarded by mu.
+	boundAddr      string
 	httpServer     *http.Server
 	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 
@@ -105,10 +111,11 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	}
 
 	return &Server{
-		config:         *config,
-		validators:     make(map[string]ValidationFunc),
-		getCertificate: getCertificate,
-		listening:      make(chan struct{}),
+		config:            *config,
+		validators:        make(map[string]ValidationFunc),
+		onUnregisteredGVK: config.OnUnregisteredGVK,
+		getCertificate:    getCertificate,
+		listening:         make(chan struct{}),
 	}, nil
 }
 
@@ -169,6 +176,29 @@ func (s *Server) RegisterValidator(gvk string, fn ValidationFunc) {
 // RLock while it looks up and calls, so a request either sees the entire old
 // table or the entire new one, never a half-built mix. The map is copied, so
 // the caller may keep mutating theirs afterwards.
+// Addr returns the address the listener actually bound, or "" before it has.
+// Callers that configure Port 0 — tests, which must not fight over a fixed
+// port — read the kernel-assigned port from here once Listening() has closed.
+func (s *Server) Addr() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.boundAddr
+}
+
+// SetOnUnregisteredGVK REPLACES the unregistered-GVK reporter.
+//
+// A server that outlives the wiring which built its validator table (the
+// controller keeps one listener bound across config reinitializations, so an
+// admission request never meets a closed port) must be able to re-point this
+// callback at the current wiring's metrics recorder. It is read under the same
+// lock as the validator table, so it swaps atomically with respect to in-flight
+// requests.
+func (s *Server) SetOnUnregisteredGVK(fn func(gvk string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onUnregisteredGVK = fn
+}
+
 func (s *Server) SetValidators(validators map[string]ValidationFunc) {
 	replacement := make(map[string]ValidationFunc, len(validators))
 	maps.Copy(replacement, validators)
@@ -233,6 +263,9 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 	tlsListener := tls.NewListener(tcpListener, tlsConfig)
+	s.mu.Lock()
+	s.boundAddr = tcpListener.Addr().String()
+	s.mu.Unlock()
 	close(s.listening)
 
 	// Serve in a goroutine so Start() can still block on context
@@ -305,6 +338,7 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 
 	s.mu.RLock()
 	validator, exists := s.validators[gvk]
+	onUnregistered := s.onUnregisteredGVK
 	s.mu.RUnlock()
 
 	if !exists {
@@ -313,8 +347,8 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 		// validator means the rules and the registrations have diverged — the
 		// gate is open for this kind. Report it; never admit unchecked in
 		// silence.
-		if s.config.OnUnregisteredGVK != nil {
-			s.config.OnUnregisteredGVK(gvk)
+		if onUnregistered != nil {
+			onUnregistered(gvk)
 		}
 		return &admissionv1.AdmissionResponse{
 			Allowed: true,

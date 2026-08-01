@@ -29,6 +29,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +50,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
 const (
@@ -206,6 +208,20 @@ type persistentInfra struct {
 	serverStarted         bool // True after first iteration has started the server
 	metricsServerStarted  bool // True after first iteration has started the metrics server
 
+	// Admission listener. Held here for the same reason as the servers above —
+	// a per-iteration listener re-binds its port on every config change — but
+	// with a sharper consequence: while it is down the API server dials a dead
+	// port, and the chart's failurePolicy=Ignore turns that into a silent admit
+	// of the very config change that closed it (#110). Each iteration installs
+	// its validator table onto this one server; the previous table keeps
+	// serving until it does.
+	webhookMu     sync.Mutex
+	WebhookServer *pkgwebhook.Server
+	// webhookServerConfig is what the listener was actually built with, kept so
+	// a later iteration passing something different is reported rather than
+	// silently ignored.
+	webhookServerConfig *pkgwebhook.ServerConfig
+
 	// Reinitialization grace tracking. A VOLUNTARY iteration restart (config
 	// change, CRD change) tears down and rebuilds every component; during
 	// that window the per-iteration health state reports unhealthy even
@@ -230,6 +246,94 @@ type persistentInfra struct {
 // re-acquisition) while staying well below the fresh-pod startup budget the
 // liveness restart would fall back to.
 const ReinitGraceWindow = 90 * time.Second
+
+// EnsureWebhookServer returns the process-lifetime admission listener, creating
+// and starting it on the first call and returning the same server afterwards.
+//
+// It blocks until the listener has actually bound, so the caller may treat a
+// successful return as "admission requests are answerable" — the same contract
+// the per-iteration component used to provide via Listening(). Subsequent calls
+// return immediately: the socket is already up and only the validator table
+// changes between iterations.
+//
+// ctx MUST be the process context, never an iteration context; cancelling it
+// closes the listener for good.
+func (p *persistentInfra) EnsureWebhookServer(
+	ctx context.Context,
+	config *pkgwebhook.ServerConfig,
+	logger *slog.Logger,
+) (*pkgwebhook.Server, error) {
+	p.webhookMu.Lock()
+	defer p.webhookMu.Unlock()
+
+	if p.WebhookServer != nil {
+		// The bound listener wins — that is the whole point — but a caller whose
+		// config no longer matches it would otherwise be reading values the
+		// running server does not use. In practice every field here comes from a
+		// process-level CLI flag and cannot change without a restart, so a
+		// difference means a wiring bug, not a reconfiguration. Say so.
+		if diff := describeServerConfigDiff(p.webhookServerConfig, config); diff != "" {
+			logger.Warn("Webhook server config changed after the listener was bound; the bound listener keeps its original settings",
+				"differences", diff,
+				"note", "only the validator table changes across iterations")
+		}
+		return p.WebhookServer, nil
+	}
+
+	server, err := pkgwebhook.NewServer(config)
+	if err != nil {
+		return nil, fmt.Errorf("creating persistent webhook server: %w", err)
+	}
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		if err := server.Start(ctx); err != nil {
+			logger.Error("Persistent webhook server error", "error", err)
+			serverErrCh <- err
+		}
+	}()
+
+	select {
+	case <-server.Listening():
+	case err := <-serverErrCh:
+		return nil, fmt.Errorf("persistent webhook server failed before bind: %w", err)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	logger.Info("Persistent webhook listener bound; it now survives config reinitializations",
+		"port", config.Port, "path", config.Path)
+
+	p.WebhookServer = server
+	p.webhookServerConfig = config
+	return server, nil
+}
+
+// describeServerConfigDiff names the fields on which a later EnsureWebhookServer
+// call differs from the config the listener was built with, or "" when they
+// agree. Only the fields that change observable server behaviour are compared.
+func describeServerConfigDiff(bound, incoming *pkgwebhook.ServerConfig) string {
+	if bound == nil || incoming == nil {
+		return ""
+	}
+	var diffs []string
+	if bound.Port != incoming.Port {
+		diffs = append(diffs, fmt.Sprintf("port %d->%d", bound.Port, incoming.Port))
+	}
+	if bound.Path != incoming.Path {
+		diffs = append(diffs, fmt.Sprintf("path %q->%q", bound.Path, incoming.Path))
+	}
+	if bound.CertDir != incoming.CertDir {
+		diffs = append(diffs, fmt.Sprintf("certDir %q->%q", bound.CertDir, incoming.CertDir))
+	}
+	if bound.ReadTimeout != incoming.ReadTimeout {
+		diffs = append(diffs, fmt.Sprintf("readTimeout %s->%s", bound.ReadTimeout, incoming.ReadTimeout))
+	}
+	if bound.WriteTimeout != incoming.WriteTimeout {
+		diffs = append(diffs, fmt.Sprintf("writeTimeout %s->%s", bound.WriteTimeout, incoming.WriteTimeout))
+	}
+	return strings.Join(diffs, ", ")
+}
 
 // NoteIterationStart records the beginning of an iteration for reinit-grace
 // accounting.
