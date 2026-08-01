@@ -18,6 +18,8 @@ func TestAuxiliaryFileDiffs_RuntimeEligibleAuxUpdates(t *testing.T) {
 	certUpd := []auxiliaryfiles.SSLCertificate{{Path: "tls.pem", Content: "PEM"}}
 	caUpd := []auxiliaryfiles.GeneralFile{{Path: "general/ca.crt", Content: "CABUNDLE", IsCaFile: true}}
 	nonCaUpd := []auxiliaryfiles.GeneralFile{{Path: "general/500.http", Content: "body", IsCaFile: false}}
+	noReload := false
+	sidecarUpd := []auxiliaryfiles.GeneralFile{{Filename: "spoa-hub-config.toml", Path: "general/spoa-hub-config.toml", Content: "toml", ReloadOnPush: &noReload}}
 	caps32 := Capabilities{SupportsRuntimeSSLCerts: true, SupportsSslCaFiles: true}
 	caps31 := Capabilities{} // < v3.2: no runtime ssl certs / ca-files
 
@@ -139,6 +141,38 @@ func TestAuxiliaryFileDiffs_RuntimeEligibleAuxUpdates(t *testing.T) {
 		{
 			name:            "general file create forces reload",
 			in:              &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToCreate: []auxiliaryfiles.GeneralFile{{Filename: "x"}}}},
+			caps:            caps32,
+			wantNeedsReload: true,
+		},
+		{
+			// The spoa-hub TOML and the vector config: HAProxy never opens
+			// them, their sidecar watches the file itself. A reload here would
+			// respawn a worker for a file it doesn't read.
+			name: "sidecar general file content update: no reload",
+			in:   &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToUpdate: sidecarUpd}},
+			caps: caps32,
+		},
+		{
+			name: "sidecar general file create: no reload",
+			in:   &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToCreate: sidecarUpd}},
+			caps: caps32,
+		},
+		{
+			// reloadOnPush is per file, not per batch: one HAProxy-read file in
+			// the same push still reloads. The all-or-nothing runtime gate then
+			// makes the sidecar file's exemption moot for this deploy.
+			name: "sidecar file alongside an HAProxy-read file forces reload",
+			in: &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{
+				ToUpdate: append(append([]auxiliaryfiles.GeneralFile{}, sidecarUpd...), nonCaUpd...),
+			}},
+			caps:            caps32,
+			wantNeedsReload: true,
+		},
+		{
+			// The live worker reports no reloadOnPush, so a delete cannot prove
+			// the config never referenced the file.
+			name:            "sidecar general file delete still forces reload",
+			in:              &auxiliaryFileDiffs{fileDiff: &auxiliaryfiles.FileDiff{ToDelete: []string{"spoa-hub-config.toml"}}},
 			caps:            caps32,
 			wantNeedsReload: true,
 		},

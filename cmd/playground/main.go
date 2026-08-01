@@ -606,8 +606,11 @@ func reloadImpactToJS(imp *dataplane.ReloadImpact, pinned bool) map[string]any {
 	for _, c := range imp.CertUpdates {
 		add("certificate "+c+": content updated", false)
 	}
+	for _, f := range imp.ReloadFreeFileUpdates {
+		add("file "+f+": content updated — sidecar-owned, HAProxy not reloaded", false)
+	}
 
-	runtimeEligible := imp.ServerFieldUpdates + len(imp.MapUpdates) + len(imp.CertUpdates)
+	runtimeEligible := imp.ServerFieldUpdates + len(imp.MapUpdates) + len(imp.CertUpdates) + len(imp.ReloadFreeFileUpdates)
 	changed := imp.ConfigChanged || runtimeEligible > 0 || imp.AuxForcesReload
 	return map[string]any{
 		"pinned":          pinned,

@@ -299,6 +299,21 @@ spec:
                         - type
                         type: object
                       type: array
+                    reloadOnPush:
+                      default: true
+                      description: |-
+                        ReloadOnPush controls whether a content change to this file reloads HAProxy.
+
+                        Keep it true for anything HAProxy itself reads — error pages, ca-files,
+                        host-match lists — since only a reload makes the new content take effect.
+                        Set it to false for a file a sidecar owns and watches on its own (the
+                        spoa-hub TOML, the Vector config): HAProxy never opens those, so the
+                        reload buys nothing and only costs a worker respawn.
+
+                        Deleting the file reloads regardless: the live worker reports no
+                        reloadOnPush, so the controller cannot tell whether the config
+                        referenced it.
+                      type: boolean
                     template:
                       description: Template is the template for generating the file
                         content.

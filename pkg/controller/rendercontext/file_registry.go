@@ -45,10 +45,16 @@ type FileRegistry struct {
 
 // registeredFile tracks a dynamically-registered file.
 type registeredFile struct {
-	Type     string // "cert", "map", "file", "crt-list"
-	Filename string // Base filename
-	Content  string // File content
-	Path     string // Predicted full path
+	Type         string // "cert", "map", "file", "crt-list"
+	Filename     string // Base filename
+	Content      string // File content
+	Path         string // Predicted full path
+	ReloadOnPush *bool  // "file" only; nil means true
+}
+
+// reloadsOnPush resolves the optional flag: nil means true.
+func reloadsOnPush(flag *bool) bool {
+	return flag == nil || *flag
 }
 
 // NewFileRegistry creates a new FileRegistry with the given path resolver.
@@ -62,24 +68,30 @@ func NewFileRegistry(pathResolver *templating.PathResolver) *FileRegistry {
 }
 
 // Register registers a new auxiliary file to be created and returns its predicted path.
-// This method is called from templates as file_registry.Register(type, filename, content).
+// This method is called from templates as file_registry.Register(type, filename, content)
+// or file_registry.Register("file", filename, content, reloadOnPush).
 //
 // Parameters:
-//   - fileType: "cert", "map", "file", or "crt-list"
+//   - fileType: "cert", "map", "file", "crt-list", or "ca-file"
 //   - filename: Base filename (e.g., "ca.pem", "domains.map", "certificate-list.txt")
 //   - content: File content as a string
+//   - reloadOnPush: optional, "file" only. Defaults to true. Pass false for a
+//     file a sidecar owns and watches itself (the spoa-hub TOML), so a content
+//     change deploys without reloading HAProxy — see the CRD's
+//     files[].reloadOnPush.
 //
 // Returns:
 //   - Predicted absolute path where the file will be located
 //   - Error if validation fails or content conflict detected
 //
 // Conflict Detection:
-//   - If the same filename is registered multiple times with different content, returns error
-//   - If the same filename is registered with identical content, no error (idempotent)
+//   - If the same filename is registered multiple times with different content
+//     or a different reloadOnPush, returns error
+//   - If the same filename is registered identically, no error (idempotent)
 func (r *FileRegistry) Register(args ...any) (string, error) {
 	// Validate argument count
-	if len(args) != 3 {
-		return "", fmt.Errorf("file_registry.Register requires 3 arguments (type, filename, content), got %d", len(args))
+	if len(args) != 3 && len(args) != 4 {
+		return "", fmt.Errorf("file_registry.Register requires 3 arguments (type, filename, content) or 4 (…, reloadOnPush), got %d", len(args))
 	}
 
 	// Extract and validate file type
@@ -106,6 +118,21 @@ func (r *FileRegistry) Register(args ...any) (string, error) {
 		// Valid types
 	default:
 		return "", fmt.Errorf("file_registry.Register: invalid file type %q, must be \"cert\", \"map\", \"file\", \"crt-list\", or \"ca-file\"", fileType)
+	}
+
+	// Extract the optional reloadOnPush flag. Only "file" honours it: a cert,
+	// map, crt-list or ca-file already has its own reload rules and silently
+	// accepting the flag there would promise something the deployer ignores.
+	var reloadOnPush *bool
+	if len(args) == 4 {
+		flag, ok := args[3].(bool)
+		if !ok {
+			return "", fmt.Errorf("file_registry.Register: reloadOnPush must be a bool, got %T", args[3])
+		}
+		if fileType != "file" {
+			return "", fmt.Errorf("file_registry.Register: reloadOnPush applies to type \"file\" only, got %q", fileType)
+		}
+		reloadOnPush = &flag
 	}
 
 	// A "ca-file" (mTLS trust bundle, referenced as `ca-file <path>`) lives in the
@@ -144,6 +171,12 @@ func (r *FileRegistry) Register(args ...any) (string, error) {
 				fileType, filename, len(existing.Content), len(content),
 			)
 		}
+		if reloadsOnPush(existing.ReloadOnPush) != reloadsOnPush(reloadOnPush) {
+			return "", fmt.Errorf(
+				"file_registry.Register: reloadOnPush conflict for %s %q - already registered with reloadOnPush=%t",
+				fileType, filename, reloadsOnPush(existing.ReloadOnPush),
+			)
+		}
 
 		// Same content - idempotent, return existing path
 		return existing.Path, nil
@@ -151,10 +184,11 @@ func (r *FileRegistry) Register(args ...any) (string, error) {
 
 	// Register new file
 	r.registered[key] = registeredFile{
-		Type:     fileType,
-		Filename: filename,
-		Content:  content,
-		Path:     resolvedPath,
+		Type:         fileType,
+		Filename:     filename,
+		Content:      content,
+		Path:         resolvedPath,
+		ReloadOnPush: reloadOnPush,
 	}
 
 	return resolvedPath, nil
@@ -191,9 +225,10 @@ func (r *FileRegistry) GetFiles() *dataplane.AuxiliaryFiles {
 
 		case "file":
 			files.GeneralFiles = append(files.GeneralFiles, auxiliaryfiles.GeneralFile{
-				Filename: path.Base(reg.Path),
-				Path:     reg.Path,
-				Content:  reg.Content,
+				Filename:     path.Base(reg.Path),
+				Path:         reg.Path,
+				Content:      reg.Content,
+				ReloadOnPush: reg.ReloadOnPush,
 			})
 
 		case "ca-file":

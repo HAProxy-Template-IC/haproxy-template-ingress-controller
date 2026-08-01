@@ -142,6 +142,71 @@ func TestFileRegistry_Register_Conflict(t *testing.T) {
 	assert.Contains(t, err.Error(), "content conflict")
 }
 
+// The 4th argument marks a general file as sidecar-owned so a content change
+// deploys without reloading HAProxy. Omitting it must keep reloading — every
+// other registration in the chart depends on that default.
+func TestFileRegistry_Register_ReloadOnPush(t *testing.T) {
+	newRegistry := func() *FileRegistry {
+		return NewFileRegistry(&templating.PathResolver{
+			GeneralDir: "/etc/haproxy/general",
+			MapsDir:    "/etc/haproxy/maps",
+		})
+	}
+
+	t.Run("omitted defaults to reloading", func(t *testing.T) {
+		r := newRegistry()
+		_, err := r.Register("file", "500.http", "body")
+		require.NoError(t, err)
+		require.Len(t, r.GetFiles().GeneralFiles, 1)
+		assert.True(t, r.GetFiles().GeneralFiles[0].ReloadsOnPush())
+	})
+
+	t.Run("false marks the file sidecar-owned", func(t *testing.T) {
+		r := newRegistry()
+		_, err := r.Register("file", "spoa-hub-config.toml", "toml", false)
+		require.NoError(t, err)
+		require.Len(t, r.GetFiles().GeneralFiles, 1)
+		assert.False(t, r.GetFiles().GeneralFiles[0].ReloadsOnPush())
+	})
+
+	t.Run("true is accepted and reloads", func(t *testing.T) {
+		r := newRegistry()
+		_, err := r.Register("file", "500.http", "body", true)
+		require.NoError(t, err)
+		assert.True(t, r.GetFiles().GeneralFiles[0].ReloadsOnPush())
+	})
+
+	t.Run("re-registering with a different flag conflicts", func(t *testing.T) {
+		r := newRegistry()
+		_, err := r.Register("file", "x.toml", "same")
+		require.NoError(t, err)
+		_, err = r.Register("file", "x.toml", "same", false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reloadOnPush conflict")
+	})
+
+	t.Run("rejected on types with their own reload rules", func(t *testing.T) {
+		r := newRegistry()
+		_, err := r.Register("map", "hosts.map", "a b", false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `applies to type "file" only`)
+	})
+
+	t.Run("rejected when not a bool", func(t *testing.T) {
+		r := newRegistry()
+		_, err := r.Register("file", "x.toml", "body", "false")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be a bool")
+	})
+
+	t.Run("five arguments rejected", func(t *testing.T) {
+		r := newRegistry()
+		_, err := r.Register("file", "x.toml", "body", false, "extra")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires 3 arguments")
+	})
+}
+
 func TestFileRegistry_GetFiles(t *testing.T) {
 	pathResolver := &templating.PathResolver{
 		MapsDir:    "/etc/haproxy/maps",

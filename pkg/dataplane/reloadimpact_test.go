@@ -51,6 +51,9 @@ func TestComputeReloadImpact(t *testing.T) {
 	newMap := &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{Path: "host.map", Content: "a b\n"}, {Path: "n.map", Content: "x y\n"}}}
 	baseFile := &AuxiliaryFiles{GeneralFiles: []auxiliaryfiles.GeneralFile{{Filename: "500.http", Content: "a"}}}
 	updFile := &AuxiliaryFiles{GeneralFiles: []auxiliaryfiles.GeneralFile{{Filename: "500.http", Content: "b"}}}
+	noReload := false
+	baseSidecar := &AuxiliaryFiles{GeneralFiles: []auxiliaryfiles.GeneralFile{{Filename: "vector.yaml", Content: "a", ReloadOnPush: &noReload}}}
+	updSidecar := &AuxiliaryFiles{GeneralFiles: []auxiliaryfiles.GeneralFile{{Filename: "vector.yaml", Content: "b", ReloadOnPush: &noReload}}}
 
 	caps32, _ := ParseVersionString("3.2")
 	caps30, _ := ParseVersionString("3.0")
@@ -62,11 +65,14 @@ func TestComputeReloadImpact(t *testing.T) {
 		caps                    Capabilities
 		wantChanged, wantReload bool
 		wantRuntimeMaps         int
+		wantReloadFreeFiles     int
 	}{
 		{name: "no change", baseCfg: sc, desiredCfg: sc, caps: CapabilitiesFromVersion(caps32)},
 		{name: "map content update -> runtime", baseCfg: sc, desiredCfg: sc, baseAux: baseMap, desiredAux: updMap, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: false, wantRuntimeMaps: 1},
 		{name: "map create -> reload", baseCfg: sc, desiredCfg: sc, baseAux: baseMap, desiredAux: newMap, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
 		{name: "general file update -> reload", baseCfg: sc, desiredCfg: sc, baseAux: baseFile, desiredAux: updFile, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
+		{name: "sidecar general file update -> no reload, still reported as changed", baseCfg: sc, desiredCfg: sc, baseAux: baseSidecar, desiredAux: updSidecar, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: false, wantReloadFreeFiles: 1},
+		{name: "sidecar general file create -> no reload", baseCfg: sc, desiredCfg: sc, desiredAux: updSidecar, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: false, wantReloadFreeFiles: 1},
 		{name: "server address change -> runtime", baseCfg: sc, desiredCfg: scIP, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: false},
 		{name: "new backend -> reload", baseCfg: sc, desiredCfg: scBackend, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
 		{name: "map update on v3.0 is still runtime (maps are v3.0+)", baseCfg: sc, desiredCfg: sc, baseAux: baseMap, desiredAux: updMap, caps: CapabilitiesFromVersion(caps30), wantChanged: true, wantReload: false, wantRuntimeMaps: 1},
@@ -75,9 +81,13 @@ func TestComputeReloadImpact(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			imp, err := ComputeReloadImpact(tt.baseCfg, tt.desiredCfg, tt.baseAux, tt.desiredAux, tt.caps)
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantChanged, imp.ConfigChanged || len(imp.MapUpdates) > 0 || len(imp.CertUpdates) > 0 || imp.AuxForcesReload, "changed")
+			// Mirrors the playground's own "changed" expression
+			// (cmd/playground/main.go): a change the preview cannot express
+			// here is a change it renders as "no change" to the user.
+			assert.Equal(t, tt.wantChanged, imp.ConfigChanged || len(imp.MapUpdates) > 0 || len(imp.CertUpdates) > 0 || len(imp.ReloadFreeFileUpdates) > 0 || imp.AuxForcesReload, "changed")
 			assert.Equal(t, tt.wantReload, imp.WouldReload, "wouldReload")
 			assert.Len(t, imp.MapUpdates, tt.wantRuntimeMaps, "runtime map updates")
+			assert.Len(t, imp.ReloadFreeFileUpdates, tt.wantReloadFreeFiles, "reload-free file updates")
 		})
 	}
 }

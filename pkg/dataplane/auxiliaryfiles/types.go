@@ -35,6 +35,19 @@ type GeneralFile struct {
 	// GetContent (used for diffing) ignores it, so it never causes a spurious diff
 	// against the content-keyed current state.
 	IsCaFile bool
+
+	// ReloadOnPush carries the CRD's files[].reloadOnPush (or the 4th argument
+	// to fileRegistry.Register). Nil — the zero value — means true, so a file
+	// built without thinking about this flag keeps reloading. Read it through
+	// ReloadsOnPush. Metadata only: GetContent ignores it, so it never causes a
+	// spurious diff against the content-keyed current state.
+	ReloadOnPush *bool
+}
+
+// ReloadsOnPush reports whether pushing this file's content must reload HAProxy.
+// False only for a sidecar-owned file the config never references.
+func (g GeneralFile) ReloadsOnPush() bool {
+	return g.ReloadOnPush == nil || *g.ReloadOnPush
 }
 
 // GetIdentifier implements the FileItem interface.

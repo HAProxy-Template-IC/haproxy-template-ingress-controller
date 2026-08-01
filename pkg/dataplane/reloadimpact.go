@@ -39,6 +39,10 @@ type ReloadImpact struct {
 	// changed and can be pushed over the runtime socket without a reload.
 	MapUpdates  []string
 	CertUpdates []string
+	// ReloadFreeFileUpdates names the general files written or rewritten without
+	// a reload because they carry reloadOnPush=false — a sidecar owns them and
+	// HAProxy never reads them.
+	ReloadFreeFileUpdates []string
 	// AuxForcesReload is true when an auxiliary change (map/cert create or delete,
 	// a general file, a crt-list, or a cert content update below v3.2) forces the
 	// reload rather than a runtime push.
@@ -71,14 +75,15 @@ func ComputeReloadImpact(baseline, desired *parser.StructuredConfig, baselineAux
 	mapUpd, certUpd, _, auxNeedsReload := aux.runtimeEligibleAuxUpdates(caps)
 
 	return &ReloadImpact{
-		ConfigChanged:      diff.Summary.HasChanges(),
-		WouldReload:        structural > 0 || auxNeedsReload,
-		StructuralOps:      structural,
-		ServerFieldUpdates: serverUpdates,
-		MapUpdates:         fileIdentifiers(mapUpd),
-		CertUpdates:        fileIdentifiers(certUpd),
-		AuxForcesReload:    auxNeedsReload,
-		Summary:            diff.Summary,
+		ConfigChanged:         diff.Summary.HasChanges(),
+		WouldReload:           structural > 0 || auxNeedsReload,
+		StructuralOps:         structural,
+		ServerFieldUpdates:    serverUpdates,
+		MapUpdates:            fileIdentifiers(mapUpd),
+		CertUpdates:           fileIdentifiers(certUpd),
+		ReloadFreeFileUpdates: fileIdentifiers(aux.reloadFreeGeneralFiles()),
+		AuxForcesReload:       auxNeedsReload,
+		Summary:               diff.Summary,
 	}, nil
 }
 

@@ -688,6 +688,21 @@ type GeneralFile struct {
 	// Post-processors run in the order specified and can transform the rendered output.
 	// +optional
 	PostProcessing []PostProcessorConfig `json:"postProcessing,omitempty"`
+
+	// ReloadOnPush controls whether a content change to this file reloads HAProxy.
+	//
+	// Keep it true for anything HAProxy itself reads — error pages, ca-files,
+	// host-match lists — since only a reload makes the new content take effect.
+	// Set it to false for a file a sidecar owns and watches on its own (the
+	// spoa-hub TOML, the Vector config): HAProxy never opens those, so the
+	// reload buys nothing and only costs a worker respawn.
+	//
+	// Deleting the file reloads regardless: the live worker reports no
+	// reloadOnPush, so the controller cannot tell whether the config
+	// referenced it.
+	// +optional
+	// +kubebuilder:default=true
+	ReloadOnPush *bool `json:"reloadOnPush,omitempty"`
 }
 
 // K8sResource defines a template that emits one or more Kubernetes

@@ -549,6 +549,11 @@ type GeneralFile struct {
 	// PostProcessing defines optional post-processors to apply after rendering.
 	// Post-processors are applied in order to transform the rendered output.
 	PostProcessing []PostProcessorConfig `yaml:"post_processing,omitempty"`
+
+	// ReloadOnPush mirrors the CRD's files[].reloadOnPush. Nil means true —
+	// only an explicit false marks the file as sidecar-owned and lets a
+	// content change deploy without reloading HAProxy.
+	ReloadOnPush *bool `yaml:"reload_on_push,omitempty"`
 }
 
 // K8sResource is a Kubernetes-resource-emitting template. The

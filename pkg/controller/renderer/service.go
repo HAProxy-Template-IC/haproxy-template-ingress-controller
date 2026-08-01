@@ -401,9 +401,10 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 		s.config.Files, "file", &auxFiles.GeneralFiles,
 		func(name, content string) auxiliaryfiles.GeneralFile {
 			return auxiliaryfiles.GeneralFile{
-				Filename: name,
-				Path:     path.Join(s.pathResolver.GeneralDir, name),
-				Content:  content,
+				Filename:     name,
+				Path:         path.Join(s.pathResolver.GeneralDir, name),
+				Content:      content,
+				ReloadOnPush: s.config.Files[name].ReloadOnPush,
 			}
 		})
 
