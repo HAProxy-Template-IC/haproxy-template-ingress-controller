@@ -69,7 +69,7 @@ type renderResult struct {
 	DurationMs    int64
 	Bucket        *BucketReport // where each pasted resource landed / why it was dropped
 	Trace         []any         // per-snippet render stats (JS-ready): {name, count, totalMs, avgMs, maxMs}
-	Migration     any           // migrate-check report for pasted Ingresses (nil when no coverage/ingresses)
+	Migration     any           // migration report for pasted Ingresses (nil when no coverage/ingresses)
 	SchemaCheck   string        // per-field schema violation in the rendered config (empty = passed)
 	ReloadImpact  any           // comparator verdict vs the baseline (nil on first render / parse failure)
 	Provenance    any           // output tab -> per-line config-editor line that produced it (0 = none)
@@ -298,7 +298,7 @@ func bucketReportToJS(r *BucketReport) any {
 	return objs
 }
 
-// migrationReportToJS flattens a migrate-check report into js.ValueOf-compatible
+// migrationReportToJS flattens a migration report into js.ValueOf-compatible
 // data for the migration UI tab. Per source, per Ingress, each classified
 // annotation carries its coverage status and note.
 func migrationReportToJS(r *migratecheck.Report) map[string]any {
@@ -639,7 +639,7 @@ func cleanSchemaError(msg string) string {
 }
 
 // migrationReport classifies every pasted Ingress's annotations against the
-// config's spec.migrationCoverage, reusing the exact migrate-check logic
+// config's spec.migrationCoverage, reusing the exact classification logic
 // (migratecheck.Classify) so the playground and the CLI never diverge. Returns
 // nil when the config declares no coverage or no Ingress was pasted — the UI
 // hides the tab then. RenderError is left empty: this is annotation coverage,

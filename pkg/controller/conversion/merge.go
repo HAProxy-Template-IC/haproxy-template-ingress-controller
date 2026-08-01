@@ -30,8 +30,8 @@ const (
 	// migrationCoverageKey is the one spec field that accumulates across a
 	// merged set instead of being overwritten. It is a list of per-source
 	// declarations, one per contributing template library, so an overwrite
-	// would keep only the last library's entry and silently make
-	// `migrate-check` under-report.
+	// would keep only the last library's entry and silently make the
+	// migration report under-report.
 	migrationCoverageKey = "migrationCoverage"
 
 	// templateSnippetsKey names the merged namespace where a duplicate key is

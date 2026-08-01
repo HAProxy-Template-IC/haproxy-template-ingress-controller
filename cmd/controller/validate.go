@@ -323,7 +323,7 @@ func printStrippedTests(res *conversion.SpecResolution) {
 // conversion.ResolveEffectiveSpec from a --schema-dir fetcher. With a nil
 // fetcher both callbacks are nil, which ResolveEffectiveSpec treats as
 // "everything served" (the lenient offline fall-through). Shared between
-// the validate and migrate-check CLIs.
+// commands that accept either a live cluster or a schema directory.
 func dirServedCheckers(dirFetcher *schemafetcher.DirFetcher) (
 	served func(apiVersion, resources string) bool,
 	fieldServed func(apiVersion, resources, fieldPath string) (bool, error),
@@ -770,7 +770,7 @@ func splitConfigDocuments(data []byte) ([]*unstructured.Unstructured, error) {
 
 // parseConfigSpec decodes HAProxyTemplateConfig YAML — either the full
 // Kubernetes resource form or a bare spec — into its spec. Shared between
-// loadConfigFromFile and the migrate-check CLI's in-process chart render.
+// loadConfigFromFile and any in-process chart render.
 func parseConfigSpec(data []byte) (*v1alpha1.HAProxyTemplateConfigSpec, error) {
 	// Parse as Kubernetes resource
 	scheme := runtime.NewScheme()

@@ -40,8 +40,8 @@ import (
 
 // NewClusterSchemaFetcher composes the apiextensions CRD lister and the
 // discovery-backed OpenAPI v3 provider into the live-cluster schema
-// fetcher. The controller's iteration wiring and the `migrate-check` CLI
-// both build their schema access through this single entry point.
+// fetcher. The controller's iteration wiring and the CLI commands that reach
+// a live cluster both build their schema access through this entry point.
 func NewClusterSchemaFetcher(apiext apiextensionsclientset.Interface, d discovery.DiscoveryInterface) schemafetcher.Fetcher {
 	return schemafetcher.NewClusterFetcher(
 		newAPIExtensionsCRDLister(apiext),

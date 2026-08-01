@@ -4,7 +4,7 @@
 
 Validation tests render your templates against fixture resources and assert on the output — broken templates and invalid HAProxy config fail before they reach a cluster. Tests are embedded in the HAProxyTemplateConfig CRD. You run them locally with the CLI (this page), and the controller also runs them automatically before any config reaches HAProxy.
 
-Beyond running the controller (`haptic-controller run`), the controller binary provides `validate` (this page), `benchmark` (template render timing), and `migrate-check` (audit another controller's Ingresses before switching to HAPTIC — see [Migrating: Step 0](migrating.md#step-0-check-what-will-change)).
+Beyond running the controller (`haptic-controller run`), the controller binary provides `validate` (this page) and `benchmark` (template render timing). To audit another controller's Ingresses before switching to HAPTIC, use the migration report in the [playground](/playground/) — see [Migrating: Step 0](migrating.md#step-0-check-what-changes).
 
 !!! note "Tests also run automatically before deployment"
     The same suite runs at two gates besides the CLI, so a config whose tests fail never reaches HAProxy:
