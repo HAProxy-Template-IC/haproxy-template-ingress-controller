@@ -195,6 +195,17 @@ func (c *Component) CoalescesOn() []string {
 // HealthCheck implements the lifecycle.HealthChecker interface.
 // Returns an error if the component appears to be stalled (processing for > timeout).
 // Returns nil when idle (not processing) - idle is always healthy for event-driven components.
+// RecordActivation records (or, with an empty proof, clears) what an apply
+// proved about an endpoint's running config.
+//
+// Exported so the runtime-bypass path — which writes to the same pods through a
+// different component — updates the same per-endpoint state the structural sync
+// reads. Two independent writers to one pod with two independent notions of
+// "what is running" is precisely how a config goes parked unnoticed (#112).
+func (c *Component) RecordActivation(endpointURL, proof string) {
+	c.versionCache.setActivated(endpointURL, proof)
+}
+
 func (c *Component) HealthCheck() error {
 	return c.healthTracker.Check()
 }

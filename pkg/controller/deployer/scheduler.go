@@ -285,6 +285,13 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 	}
 }
 
+// SetActivationRecorder points the runtime-bypass path at the deployer's
+// per-endpoint activation state. Without it the bypass applies silently and the
+// structural sync keeps an activation proof the bypass has since invalidated.
+func (s *DeploymentScheduler) SetActivationRecorder(fn func(endpointURL, proof string)) {
+	s.runtimeBypass.recordActivation = fn
+}
+
 // Name returns the unique identifier for this component.
 // Implements the lifecycle.Component interface.
 func (s *DeploymentScheduler) Name() string {

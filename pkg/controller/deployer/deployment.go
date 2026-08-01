@@ -480,13 +480,28 @@ func (c *Component) deployToSingleEndpoint(
 		opts.LastDeployedChecksum = cachedChecksum
 	}
 
+	// What this endpoint was last PROVEN to be running. Unlike the caches above
+	// this is passed on EVERY sync including drift prevention: it does not skip
+	// work, it decides whether an empty diff may be trusted at all, and drift
+	// prevention is exactly when a stale answer is most costly.
+	opts.LastActivatedConfigChecksum = c.versionCache.activated(endpoint.URL)
+
 	// Sync configuration
 	result, err := client.Sync(ctx, config, auxFiles, opts)
 	if err != nil {
-		// Invalidate cache on failure - pod state is uncertain
+		// Invalidate cache on failure - pod state is uncertain. invalidate()
+		// drops the activation proof with the rest of the entry, which is the
+		// right call: a push that errored may still have written its body to
+		// disk (a skip_version push does so even when its runtime actions
+		// fail), so nothing about this pod's running state is provable now.
 		c.versionCache.invalidate(endpoint.URL)
 		return nil, fmt.Errorf("sync failed: %w", err)
 	}
+
+	// Record what this sync proved, or clear the proof when it proved nothing.
+	// Both directions matter: without the record every sync would force a
+	// reload; without the clear a parked config would keep short-circuiting.
+	c.versionCache.setActivated(endpoint.URL, result.ActivatedConfigChecksum)
 
 	// Update version cache with post-sync state (including content checksum).
 	// Prefer result.PostSyncParsedConfig (the pod's ACTUAL post-sync state,

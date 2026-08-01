@@ -206,6 +206,9 @@ func createReconciliationComponents(
 	minDeploymentInterval := cfg.Dataplane.GetMinDeploymentInterval()
 	deploymentTimeout := cfg.Dataplane.GetDeploymentTimeout()
 	deploymentSchedulerComponent := deployer.NewDeploymentScheduler(setup.Bus, logger, minDeploymentInterval, deploymentTimeout)
+	// The bypass writes to the same pods the deployer syncs, so both must share
+	// one view of what each pod is proven to be running.
+	deploymentSchedulerComponent.SetActivationRecorder(deployerComponent.RecordActivation)
 
 	// Create DriftPreventionMonitor
 	driftPreventionInterval := cfg.Dataplane.GetDriftPreventionInterval()

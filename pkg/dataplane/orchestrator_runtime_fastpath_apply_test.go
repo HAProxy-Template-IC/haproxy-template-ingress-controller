@@ -113,7 +113,7 @@ func buildEndpointTestConfig(addrPort string) string {
 // TestSyncRuntimeFast_RestampVersionHeader pins the header re-stamp: a
 // skip_version push leaves the pod's config headerless, and sync() refuses to
 // trust an empty diff against a headerless config (it forces a reload — see
-// TestSync_HeaderlessNoDiff_ForcesReload). To keep the pure runtime-raw lane
+// TestSync_NoDiff_TrustedOnlyWithActivationProof). To keep the pure runtime-raw lane
 // reload-free across later structural syncs, an AUTHORITATIVE apply
 // (opts.RestampVersionHeader, set only by the deployer's runtime-raw lane
 // dispatch) follows the successful skip_version push with ONE versioned
