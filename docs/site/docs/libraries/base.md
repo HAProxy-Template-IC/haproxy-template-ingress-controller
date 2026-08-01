@@ -291,7 +291,11 @@ controller:
         timeout_connect: "5000"   # ms; also timeout_client / timeout_server / timeout_http_request / timeout_http_keep_alive
 ```
 
-**`option redispatch`** lets a failed TCP connect be retried against a *different* server in the backend rather than the same dead one. Combined with HAProxy's default `retries 3`, this is what closes the pod-termination race during rolling updates — the retry lands on a healthy slot instead of hanging on the dead IP until the client times out. It matches nginx-ingress's default `proxy-next-upstream: "error timeout"` and envoy's default retry policy. See HAProxy's [retries documentation](https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/).
+**`option redispatch`** lets a failed TCP connect be retried against a *different* server in the backend rather than the same dead one. Combined with HAProxy's default `retries 3`, the retry lands on a healthy slot instead of hanging on the dead IP until the client times out. See HAProxy's [retries documentation](https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/).
+
+**`retry-on conn-failure empty-response response-timeout`** covers the rest of the pod-termination race. A connect failure is only half of it: a terminating pod usually still has its listening socket bound after the application has stopped, so the kernel completes the handshake and the application then resets the connection. HAProxy logs that as a 502 with termination state `SH--`, `t_connect 0` and `retries 0` — the default `retry-on conn-failure` doesn't match it, because the connection *succeeded*. `empty-response` is the condition that does, which is what makes `option redispatch` and `retries 3` engage. Override the condition list with `extraContext.retryOn`.
+
+Retries that replay the request are limited to idempotent methods. An L7 retry re-sends a request the server has already received, so retrying a `POST` or `PATCH` can submit it twice; GET, HEAD, PUT, DELETE, OPTIONS and TRACE are idempotent per [RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.2) and are retried. This matches nginx-ingress, which excludes non-idempotent requests from `proxy_next_upstream` unless you add `non_idempotent`. `conn-failure` is an L4 retry and is unaffected, so a failed connect is still sent to another server for every method. Set `extraContext.retryNonIdempotent: true` to retry every method — only when every backend behind the controller is safe to replay.
 
 ### `h2c` cleartext detection
 

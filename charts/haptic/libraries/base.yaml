@@ -1732,6 +1732,14 @@ templateSnippets:
       # same dead one); with the default `retries 3` this closes the pod-termination
       # race during rolling updates. See https://haproxy-haptic.org/docs/latest/libraries/base/#connection-reliability-and-timeouts
       option redispatch
+      # `option redispatch` above covers only a failed CONNECT. A terminating pod
+      # usually still has its socket bound after the app is gone, so the kernel
+      # completes the handshake and the app then RSTs — HAProxy logs 502 `SH--`
+      # with t_connect 0 and retries 0, because the default `retry-on
+      # conn-failure` does not match a connection that succeeded. `empty-response`
+      # is the condition that does. Bounded to idempotent methods by
+      # frontend-filters-095. Override with extraContext.retryOn.
+      retry-on {{ extraContext | dig("retryOn") | fallback("conn-failure empty-response response-timeout") }}
 
   defaults-settings-150-access-log-request-id:
     template: |
@@ -1786,6 +1794,34 @@ templateSnippets:
       errorfile 502 {{ pathResolver.GetPath("502.http", "file") }}
       errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}
       errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
+
+  frontend-filters-095-l7-retry-idempotency:
+    template: |
+      {#-
+        Bound the `retry-on` list in `defaults` to idempotent methods.
+
+        An L7 retry replays a request the server already received, so retrying a
+        POST or PATCH can double-submit it. RFC 9110 §9.2.2 makes GET, HEAD, PUT,
+        DELETE, OPTIONS and TRACE idempotent; everything else is excluded here.
+        Same posture as nginx-ingress, which excludes non-idempotent requests
+        from `proxy_next_upstream` unless the operator adds `non_idempotent`.
+
+        In the FRONTEND, not per backend: `retry-on` sits in `defaults` and so
+        applies to every backend, including the Gateway API ones, which are not
+        rendered through the `backend-directives-*` extension point. A
+        backend-level guard would leave Gateway routes replaying POSTs.
+
+        `conn-failure` is an L4 retry and is unaffected by `disable-l7-retry`, so
+        a failed connect still redispatches for every method.
+
+        extraContext.retryNonIdempotent = true retries every method — only when
+        every backend behind this controller is safe to replay.
+      -#}
+      {%- if extraContext | dig("retryNonIdempotent") | fallback(false) %}
+      {#- Operator opted in: every method may be replayed. -#}
+      {%- else %}
+      http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_PUT !METH_DELETE !METH_OPTIONS !METH_TRACE
+      {%- end %}
 
   frontend-filters-100-server-header:
     template: |
@@ -2849,6 +2885,80 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - type: deterministic
+
+  test-retry-on-covers-pod-termination-reset:
+    description: "A terminating pod accepts the connection then RSTs, which HAProxy reports as 502 SH-- with retries 0. The default retry-on conn-failure does not match it; empty-response does."
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?m)^  retry-on conn-failure empty-response response-timeout$"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?m)^  option redispatch$"
+
+  test-retry-on-idempotent-methods-only:
+    description: "An L7 retry replays the request, so POST and PATCH are excluded by default — matching nginx-ingress, which needs an explicit non_idempotent to retry them. conn-failure is L4 and stays enabled for every method."
+    fixtures:
+      # Trigger the http_frontend: frontend-filters-* only render inside it, and
+      # the frontend is gated on a resource library declaring a listener.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { name: retry-trigger, namespace: default }
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: echo, port: { number: 80 } }
+    assertions:
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_PUT !METH_DELETE !METH_OPTIONS !METH_TRACE"
+
+  test-retry-on-non-idempotent-opt-in:
+    description: "extraContext.retryNonIdempotent drops the idempotency guard so every method may be replayed."
+    extraContext:
+      retryNonIdempotent: true
+    fixtures:
+      # Trigger the http_frontend: frontend-filters-* only render inside it, and
+      # the frontend is gated on a resource library declaring a listener.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { name: retry-trigger, namespace: default }
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service: { name: echo, port: { number: 80 } }
+    assertions:
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "disable-l7-retry"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?m)^  retry-on conn-failure empty-response response-timeout$"
+
+  test-retry-on-override:
+    description: "extraContext.retryOn replaces the retry-on condition list."
+    extraContext:
+      retryOn: "conn-failure"
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?m)^  retry-on conn-failure$"
 
   test-k8s-haproxy-service-default-ports:
     description: "k8sResources.haproxy-service emits whatever ports the chart hands it under `extraContext.haproxyService.ports`. The chart's default builds an http / https / stats triple from `haproxy.service."
