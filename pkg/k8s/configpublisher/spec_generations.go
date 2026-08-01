@@ -176,3 +176,47 @@ func (p *Publisher) currentDeployedPods(ctx context.Context, cfg *haproxyv1alpha
 	}
 	return cfg.Status.DeployedToPods
 }
+
+// generationIfCurrentSpec returns the live spec's generation when checksum is
+// exactly what it carries. An exact match needs no history: that checksum IS
+// this generation. Lister first, API fallback; (0,false) when it does not match
+// or the object is unreadable.
+func (p *Publisher) generationIfCurrentSpec(ctx context.Context, namespace, name, checksum string) (int64, bool) {
+	if checksum == "" {
+		return 0, false
+	}
+	match := func(cfg *haproxyv1alpha1.HAProxyCfg) (int64, bool) {
+		if cfg.Spec.Checksum == checksum && cfg.Generation > 0 {
+			return cfg.Generation, true
+		}
+		return 0, false
+	}
+	// A lister MISS is not an answer, only a cheap "not from here": the cache
+	// can lag the spec write that just happened, and treating its stale
+	// checksum as authoritative would decline the one probe that unpins a pod.
+	// So the lister can only ever confirm, never deny — a non-match falls
+	// through to the API. Affordable because this runs only when the recorded
+	// map already missed, which is the uncommon path.
+	if p.listers != nil && p.listers.HAProxyCfgs != nil {
+		if cfg, err := p.listers.HAProxyCfgs.HAProxyCfgs(namespace).Get(name); err == nil {
+			if gen, ok := match(cfg); ok {
+				return gen, true
+			}
+		}
+	}
+	cfg, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return 0, false
+	}
+	return match(cfg)
+}
+
+// learnSpecGeneration records a checksum→generation pair discovered outside the
+// publish path. Nil-safe on specGens, like recordSpecGeneration.
+func (p *Publisher) learnSpecGeneration(namespace, name, checksum string, generation int64) {
+	if p.specGens == nil {
+		return
+	}
+	p.specGens.record(namespace, name, checksum, generation)
+}
