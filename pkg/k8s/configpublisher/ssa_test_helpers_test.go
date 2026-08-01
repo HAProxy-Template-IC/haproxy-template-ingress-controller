@@ -124,6 +124,9 @@ func extractDeployedToPodsFromPatch(patch map[string]any) []haproxyv1alpha1.PodD
 		if v, ok := entry["consecutiveErrors"].(float64); ok {
 			p.ConsecutiveErrors = int(v)
 		}
+		if v, ok := entry["observedGeneration"].(float64); ok {
+			p.ObservedGeneration = int64(v)
+		}
 		result = append(result, p)
 	}
 	return result

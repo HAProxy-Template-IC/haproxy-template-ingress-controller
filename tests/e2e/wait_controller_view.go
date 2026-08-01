@@ -116,34 +116,36 @@ func waitForControllerForgetNamespace(ctx context.Context, t *testing.T, client 
 // across reconciliation cycles (unlike /debug/vars/pipeline, whose phase status
 // is wiped on every new trigger).
 //
-// Membership, not "== latest spec.Checksum": under the full parallel suite the
-// controller re-renders constantly — every sibling test's Ingress create bumps
-// the whole-config checksum — so the pods run ~1 render behind a target that
-// never stops moving, and an equality check against the latest spec.Checksum
-// can never converge. Instead we accumulate the set of spec.Checksums OBSERVED
-// to contain the marker and pass when every pod is at one of them. A content
-// checksum uniquely identifies the rendered config, so a pod reporting a
-// checksum in that set has provably deployed a config containing the marker.
-// Membership never yields false-positives (a pod cannot be in the set without
-// the marker); its only failure mode is failing to OBSERVE the marker-bearing
-// checksum a pod settled on — so the observed set must be COMPLETE and the read
-// must be FRESH.
+// Two signals, either sufficient — not "== latest spec.Checksum". Under the
+// full parallel suite the controller re-renders constantly (every sibling
+// test's Ingress create bumps the whole-config checksum), so the pods run
+// several renders behind a target that never stops moving and equality against
+// the latest spec.Checksum can never converge.
 //
-// We WATCH the HAProxyCfg rather than poll it, which delivers both guarantees a
-// poll could not:
-//   - Completeness: every spec.Checksum transition arrives as an event, so we
-//     never miss the one a pod sits at. (A poll backing off to seconds sampled
-//     only a fraction — the controller republishes spec.Checksum several times
-//     faster than it deploys — so a pod could settle on a checksum never
-//     sampled-while-live, hanging the wait though the cluster had converged.)
-//   - Freshness: each event carries the current object, eliminating the
-//     stale-read window seen on CI where repeated GETs returned a ~16s-old
-//     checksum while the CR was already correct.
+// A pod passes if EITHER holds:
 //
-// Completeness now rests on the apiserver watch contract (ordered, no missed
-// events within the history window); when our resourceVersion expires (410
-// Gone) we resync via a Get and re-fold current state before re-watching, so an
-// expiry can never drop the transition we needed.
+//   - Its checksum is one we OBSERVED carrying the marker. Exact, and the
+//     permissive half: it recognises the pod wherever it actually is. But it
+//     only knows specs this process received, and a 410 resync re-folds current
+//     state and drops every intermediate for good — after which a pod sitting on
+//     one of those is unrecognisable FOREVER, failing every sibling test at once
+//     since they all watch the same object (issue #122).
+//   - Its ObservedGeneration is at or past the earliest generation we observed
+//     carrying the marker. Complete — a pod past that point provably has the
+//     marker even if we never saw its spec — and immune to watch gaps. But
+//     conservative: when the marker had already rendered before this wait
+//     started watching, the earliest generation we can observe is well past the
+//     one that first carried it, so on its own it demands several extra deploys
+//     per wait (measured: pods sitting at generation 75 against a marker
+//     generation of 76, timing out while genuinely converging).
+//
+// Neither alone is right, and they fail in opposite directions, so take the
+// union — sound because each half is sound independently.
+//
+// status.deployedToPods[].ObservedGeneration is stamped by the publisher, the
+// only party that sees a checksum and the generation it was published as
+// together. The CRD declares subresources.status, so metadata.generation
+// advances only on spec writes — per-pod status SSA does not perturb the order.
 //
 //   - spec.Checksum is what the publisher wrote for a render (config +
 //     auxiliary file content fed through dataplane.ComputeContentChecksum, the
@@ -192,18 +194,31 @@ func waitForControllerDeployed(ctx context.Context, t *testing.T, client klient.
 	ctx, cancel := context.WithTimeout(ctx, controllerDeployedTimeout)
 	defer cancel()
 
-	// Accumulates every spec.Checksum observed (initial Get + every watch event +
-	// across re-establishments) whose spec.Content contained the marker. See the
-	// doc above for why membership — not equality against the latest checksum — is
-	// the convergence test under parallel-suite churn.
+	// Two independent, individually-sound convergence signals; a pod satisfies
+	// the wait if EITHER accepts it.
+	//
+	//   - markerGeneration: the earliest metadata.generation observed to carry
+	//     the marker. Complete (a pod past it provably has the marker even if we
+	//     never saw that spec) but CONSERVATIVE: if the marker had already
+	//     rendered before this wait started watching, the earliest we can
+	//     observe is well past the one that first carried it, and demanding the
+	//     pods reach it makes them travel further than the caller requires.
+	//   - observedMarkerChecksums: spec.Checksums observed to carry the marker.
+	//     Exact where it applies, but only recognises specs this process
+	//     actually received — a 410 resync drops the intermediates for good.
+	//
+	// Neither alone is right: generation-only regressed CI by demanding several
+	// extra deploys per wait, checksum-only is the #122 hang. The union is sound
+	// (each half is) and strictly more permissive than either.
+	var markerGeneration int64
 	observedMarkerChecksums := make(map[string]struct{})
 
 	// lastErr keeps the most recent "why not converged yet" reason so a timeout
 	// fails with the same actionable detail the poll version produced.
 	var lastErr error
 
-	// evaluate folds one observed CR into the accumulator and reports whether the
-	// cluster has fully converged. Identical predicate to the former poll closure.
+	// evaluate folds one observed CR into markerGeneration and reports whether
+	// every pod has reached it.
 	evaluate := func(obj *hapticv1alpha1.HAProxyCfg) (bool, error) {
 		if obj.Spec.Compressed {
 			// Defensive: e2e configs are well under the default 1 MiB
@@ -213,10 +228,18 @@ func waitForControllerDeployed(ctx context.Context, t *testing.T, client klient.
 			// rendered config" failure.
 			return false, fmt.Errorf("HAProxyCfg.spec.content is compressed; e2e wait does not decompress")
 		}
-		if obj.Spec.Checksum != "" && strings.Contains(obj.Spec.Content, marker) {
-			observedMarkerChecksums[obj.Spec.Checksum] = struct{}{}
+		// Keep the EARLIEST marker-bearing generation seen. A later one would
+		// still be sound (the marker persists) but needlessly demands the pods
+		// travel further than the caller's resource actually requires.
+		if strings.Contains(obj.Spec.Content, marker) {
+			if obj.Generation > 0 && (markerGeneration == 0 || obj.Generation < markerGeneration) {
+				markerGeneration = obj.Generation
+			}
+			if obj.Spec.Checksum != "" {
+				observedMarkerChecksums[obj.Spec.Checksum] = struct{}{}
+			}
 		}
-		if len(observedMarkerChecksums) == 0 {
+		if markerGeneration == 0 && len(observedMarkerChecksums) == 0 {
 			return false, fmt.Errorf("marker %q not yet in any observed HAProxyCfg.spec.content", marker)
 		}
 		deployed := obj.Status.DeployedToPods
@@ -224,10 +247,14 @@ func waitForControllerDeployed(ctx context.Context, t *testing.T, client klient.
 			return false, fmt.Errorf("HAProxyCfg.status.deployedToPods empty (controller hasn't reported any pod yet)")
 		}
 		for _, p := range deployed {
-			if _, ok := observedMarkerChecksums[p.Checksum]; !ok {
-				return false, fmt.Errorf("pod %s at checksum %q not yet among %d observed marker-bearing checksums (latest spec %q)",
-					p.PodName, p.Checksum, len(observedMarkerChecksums), obj.Spec.Checksum)
+			if _, seen := observedMarkerChecksums[p.Checksum]; seen {
+				continue
 			}
+			if markerGeneration > 0 && p.ObservedGeneration >= markerGeneration {
+				continue
+			}
+			return false, fmt.Errorf("pod %s not converged: generation %d vs marker generation %d, checksum %q not among %d observed marker-bearing checksums (spec generation %d)",
+				p.PodName, p.ObservedGeneration, markerGeneration, p.Checksum, len(observedMarkerChecksums), obj.Generation)
 		}
 		return true, nil
 	}
