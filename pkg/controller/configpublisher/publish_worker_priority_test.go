@@ -70,7 +70,7 @@ func TestPublishWorker_DrainsDeployedWorkFirst(t *testing.T) {
 		})),
 		renderedConfigs:       make(map[string]*renderedConfigEntry),
 		publishWork:           make(chan *publishWorkItem, 4),
-		deployedPublishWork:   make(chan *publishWorkItem, 4),
+		deployedTrigger:       make(chan struct{}, 1),
 		lastPublishedChecksum: published,
 		publishThrottle:       throttle.New(time.Hour),
 	}
@@ -88,7 +88,7 @@ func TestPublishWorker_DrainsDeployedWorkFirst(t *testing.T) {
 	// validation items would win roughly half the time.
 	c.publishWork <- item("validation-1", false)
 	c.publishWork <- item("validation-2", false)
-	c.deployedPublishWork <- item("deployed:abc", true)
+	c.enqueueDeployed(item("deployed:abc", true))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -120,4 +120,129 @@ func processedOrder(logText string) []string {
 		ids = append(ids, strings.Trim(id, `"`))
 	}
 	return ids
+}
+
+// Every distinct deployed checksum stays queued, even when a newer one arrives
+// behind it.
+//
+// The old size-1 channel coalesced latest-wins, which is right for validation
+// publishes and wrong here: `status.deployedToPods[].checksum` is written by an
+// independent path, so a dropped deployed checksum leaves the CR advertising a
+// config `spec.content` never carried — a checksum no reader and no watcher can
+// resolve. Measured on a real run: 1 checksum in 31 was dropped, which is what
+// strands `waitForControllerDeployed`.
+func TestEnqueueDeployed_KeepsEveryDistinctChecksum(t *testing.T) {
+	c := &Component{
+		logger:          slog.New(slog.NewTextHandler(&syncBuffer{}, nil)),
+		deployedTrigger: make(chan struct{}, 1),
+	}
+
+	deployed := func(checksum string) *publishWorkItem {
+		return &publishWorkItem{
+			correlationID: "deployed:" + checksum,
+			entry:         &renderedConfigEntry{contentChecksum: checksum},
+			deployDriven:  true,
+		}
+	}
+
+	queued := func() []string {
+		c.deployedPendingMu.Lock()
+		defer c.deployedPendingMu.Unlock()
+		out := make([]string, 0, len(c.deployedPending))
+		for _, w := range c.deployedPending {
+			out = append(out, w.entry.contentChecksum)
+		}
+		return out
+	}
+
+	// Three distinct deployed checksums back to back — the shape that
+	// previously dropped the first two.
+	c.enqueueDeployed(deployed("aaa"))
+	c.enqueueDeployed(deployed("bbb"))
+	c.enqueueDeployed(deployed("ccc"))
+	assert.Equal(t, []string{"aaa", "bbb", "ccc"}, queued(),
+		"no distinct deployed checksum may be displaced by a newer one")
+
+	// A repeat replaces in place: repeats still collapse, only distinct
+	// checksums are kept, and the arrival order is preserved.
+	c.enqueueDeployed(deployed("bbb"))
+	assert.Equal(t, []string{"aaa", "bbb", "ccc"}, queued(),
+		"a repeat of a queued checksum must not grow or reorder the queue")
+
+	// takeDeployed pops oldest-first and empties.
+	assert.Equal(t, "aaa", c.takeDeployed().entry.contentChecksum)
+	assert.Equal(t, "bbb", c.takeDeployed().entry.contentChecksum)
+	assert.Equal(t, "ccc", c.takeDeployed().entry.contentChecksum)
+	assert.Nil(t, c.takeDeployed(), "an empty queue yields nil, not a panic")
+}
+
+// A deployed render that arrives while the throttle gate is CLOSED must go back
+// on the queue, not into a one-slot buffer.
+//
+// This is the path the direct-queue test above does not reach, and the one that
+// silently undid the guarantee: draining a burst closes the gate on the first
+// publish, so with a single slot every remaining deployed checksum overwrote it
+// and only the newest survived — reintroducing the drop the queue exists to
+// prevent.
+func TestProcessPublishWork_ThrottledDeployedWorkStaysQueued(t *testing.T) {
+	c := &Component{
+		logger:          slog.New(slog.NewTextHandler(&syncBuffer{}, nil)),
+		renderedConfigs: make(map[string]*renderedConfigEntry),
+		deployedTrigger: make(chan struct{}, 1),
+		// A throttle that has already fired is in its refractory period, so
+		// Available() is false and processPublishWork takes the buffering path.
+		publishThrottle:       throttle.New(time.Hour),
+		lastPublishedChecksum: "none",
+	}
+	c.publishThrottle.MarkFired()
+	require.False(t, c.publishThrottle.Available(), "premise: the gate must be closed")
+
+	deployed := func(checksum string) *publishWorkItem {
+		return &publishWorkItem{
+			correlationID:  "deployed:" + checksum,
+			templateConfig: &v1alpha1.HAProxyTemplateConfig{},
+			entry:          &renderedConfigEntry{contentChecksum: checksum},
+			deployDriven:   true,
+		}
+	}
+
+	// Three distinct deployed checksums hit the closed gate back to back.
+	c.processPublishWork(context.Background(), deployed("aaa"))
+	c.processPublishWork(context.Background(), deployed("bbb"))
+	c.processPublishWork(context.Background(), deployed("ccc"))
+
+	c.deployedPendingMu.Lock()
+	queued := make([]string, 0, len(c.deployedPending))
+	for _, w := range c.deployedPending {
+		queued = append(queued, w.entry.contentChecksum)
+	}
+	c.deployedPendingMu.Unlock()
+
+	assert.ElementsMatch(t, []string{"aaa", "bbb", "ccc"}, queued,
+		"a closed throttle gate must not collapse distinct deployed checksums")
+}
+
+// A leadership loss drops queued deployed work.
+//
+// The Component outlives a leadership transition, so anything queued under the
+// previous term would otherwise publish after the term ended — writing a spec
+// the new leader never deployed. The one-slot buffer this queue replaced was
+// cleared here for exactly that reason.
+func TestHandleLostLeadership_ClearsDeployedQueue(t *testing.T) {
+	c := &Component{
+		logger:          slog.New(slog.NewTextHandler(&syncBuffer{}, nil)),
+		renderedConfigs: make(map[string]*renderedConfigEntry),
+		deployedTrigger: make(chan struct{}, 1),
+	}
+	c.enqueueDeployed(&publishWorkItem{
+		correlationID: "deployed:stale",
+		entry:         &renderedConfigEntry{contentChecksum: "stale"},
+		deployDriven:  true,
+	})
+	require.Equal(t, 1, c.deployedQueueDepth(), "premise: something is queued")
+
+	c.handleLostLeadership(nil)
+
+	assert.Equal(t, 0, c.deployedQueueDepth(),
+		"queued deployed work must not survive a leadership transition")
 }

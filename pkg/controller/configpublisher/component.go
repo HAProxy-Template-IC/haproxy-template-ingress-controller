@@ -131,7 +131,6 @@ type Component struct {
 	// Using channels with small buffers provides natural coalescing:
 	// newer work replaces older pending work when the worker is busy.
 	publishWork          chan *publishWorkItem
-	deployedPublishWork  chan *publishWorkItem
 	validationFailedWork chan *validationFailedWorkItem
 
 	// Status update coalescing.
@@ -142,6 +141,24 @@ type Component struct {
 	statusWorkPending   map[string]*statusWorkItem // Key: namespace/runtimeConfig/podName
 	statusWorkPendingMu sync.Mutex
 	statusWorkTrigger   chan struct{} // Signals worker to process pending updates
+
+	// deployedPending is every deployed render awaiting publication, in arrival
+	// order and deduplicated by content checksum.
+	//
+	// A size-1 channel with latest-wins coalescing was wrong here, unlike for
+	// the validation path: `status.deployedToPods[].checksum` is written by an
+	// independent path, so a dropped deployed checksum leaves the CR
+	// advertising a config that `spec.content` never carried — a checksum no
+	// reader, and no watcher, can resolve. Measured on a real run: 1 checksum
+	// in 31 dropped. Every deployed checksum must therefore reach `spec` at
+	// least transiently, even when a newer one is already queued behind it.
+	//
+	// Bounded in practice: deploys are paced by minDeploymentInterval and
+	// skipIfAlreadyPublished collapses repeats, so this holds a handful of
+	// entries at most. Protected by deployedPendingMu.
+	deployedPending   []*publishWorkItem
+	deployedPendingMu sync.Mutex
+	deployedTrigger   chan struct{} // Wakes publishWorker; cap 1, same as statusWorkTrigger
 
 	// lastPublishedChecksum tracks the checksum of the last successfully published config.
 	// Used to skip redundant CRD updates when config content is unchanged.
@@ -165,12 +182,7 @@ type Component struct {
 	// inside the publish-throttle refractory window. The publish worker
 	// flushes it on publishThrottle.FiredCh(). Protected by pendingMu.
 	pendingPublish *publishWorkItem
-	// pendingDeployedPublish buffers the latest deploy-driven publish that
-	// arrived inside the throttle window. Separate from pendingPublish so a
-	// validation publish never coalesces away a deployed checksum. Flushed
-	// (deploy-first) on publishThrottle.FiredCh(). Protected by pendingMu.
-	pendingDeployedPublish *publishWorkItem
-	pendingMu              sync.Mutex
+	pendingMu      sync.Mutex
 }
 
 // Option configures the Component.
@@ -209,7 +221,7 @@ func New(
 		logger:               logger.With("component", ComponentName),
 		renderedConfigs:      make(map[string]*renderedConfigEntry),
 		publishWork:          make(chan *publishWorkItem, publishWorkChannelSize),
-		deployedPublishWork:  make(chan *publishWorkItem, publishWorkChannelSize),
+		deployedTrigger:      make(chan struct{}, statusWorkTriggerSize),
 		validationFailedWork: make(chan *validationFailedWorkItem, publishWorkChannelSize),
 		statusWorkPending:    make(map[string]*statusWorkItem),
 		statusWorkTrigger:    make(chan struct{}, statusWorkTriggerSize),

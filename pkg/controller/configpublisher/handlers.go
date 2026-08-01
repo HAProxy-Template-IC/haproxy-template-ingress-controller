@@ -188,8 +188,7 @@ func (c *Component) handleDeployedConfigPublishRequest(event *events.DeployedCon
 		deployDriven: true,
 	}
 
-	queueWithCoalesce(c, c.deployedPublishWork, workItem, "deployed-publish", workItem.correlationID,
-		func(w *publishWorkItem) string { return w.correlationID })
+	c.enqueueDeployed(workItem)
 }
 
 // handleValidationFailed queues the invalid configuration for async publishing.
@@ -453,10 +452,86 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
 	c.lastPublishedChecksum = ""
 
-	// Drop any buffered deploy-driven publish so a lost leader doesn't later
-	// flush a stale spec write. (mu is held here; pendingMu is always acquired
-	// after mu, never before, so this nesting can't deadlock.)
+	// Drop every queued deploy-driven publish so a lost leader doesn't later
+	// flush a stale spec write. The Component outlives a leadership transition,
+	// so anything queued under the previous term would otherwise be published
+	// after the term ends — writing a spec the new leader never deployed.
+	// (mu is held here; the queue and pending mutexes are always acquired after
+	// mu, never before, so this nesting can't deadlock.)
+	c.deployedPendingMu.Lock()
+	c.deployedPending = nil
+	c.deployedPendingMu.Unlock()
+
 	c.pendingMu.Lock()
-	c.pendingDeployedPublish = nil
+	c.pendingPublish = nil
 	c.pendingMu.Unlock()
+}
+
+// enqueueDeployed appends a deployed render to the pending queue and wakes the
+// publish worker.
+//
+// Deduplicated by content checksum rather than coalesced: a checksum already
+// queued is replaced in place (keeping its position), but a DIFFERENT checksum
+// never displaces one. Dropping a deployed checksum leaves
+// status.deployedToPods advertising a config spec.content never carried.
+func (c *Component) enqueueDeployed(work *publishWorkItem) {
+	c.deployedPendingMu.Lock()
+	replaced := false
+	for i, pending := range c.deployedPending {
+		if pending.entry.contentChecksum == work.entry.contentChecksum {
+			c.deployedPending[i] = work
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		c.deployedPending = append(c.deployedPending, work)
+	}
+	depth := len(c.deployedPending)
+	c.deployedPendingMu.Unlock()
+
+	c.logger.Debug("Queued deployed config for publishing",
+		"checksum", work.entry.contentChecksum,
+		"correlation_id", work.correlationID,
+		"replaced_same_checksum", replaced,
+		"queue_depth", depth)
+
+	select {
+	case c.deployedTrigger <- struct{}{}:
+	default: // already signalled; the worker drains the whole queue
+	}
+}
+
+// requeueDeployedFront puts a deployed render back at the head of the queue,
+// for the throttle path: the gate closed before it could be published, and it
+// must keep its place ahead of anything queued behind it.
+func (c *Component) requeueDeployedFront(work *publishWorkItem) {
+	c.deployedPendingMu.Lock()
+	defer c.deployedPendingMu.Unlock()
+	for i, pending := range c.deployedPending {
+		if pending.entry.contentChecksum == work.entry.contentChecksum {
+			c.deployedPending[i] = work
+			return
+		}
+	}
+	c.deployedPending = append([]*publishWorkItem{work}, c.deployedPending...)
+}
+
+// takeDeployed pops the oldest pending deployed render, or nil when empty.
+func (c *Component) takeDeployed() *publishWorkItem {
+	c.deployedPendingMu.Lock()
+	defer c.deployedPendingMu.Unlock()
+	if len(c.deployedPending) == 0 {
+		return nil
+	}
+	work := c.deployedPending[0]
+	c.deployedPending = c.deployedPending[1:]
+	return work
+}
+
+// deployedQueueDepth reports how many deployed renders are still queued.
+func (c *Component) deployedQueueDepth() int {
+	c.deployedPendingMu.Lock()
+	defer c.deployedPendingMu.Unlock()
+	return len(c.deployedPending)
 }
