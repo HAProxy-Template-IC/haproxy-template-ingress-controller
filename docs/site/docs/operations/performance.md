@@ -360,22 +360,21 @@ global
 
 ### Response compression
 
-HAProxy can gzip-compress HTTP responses, but no annotation library exposes a compression annotation, and there's no chart value for it. Enable it with HAProxy's own `compression` directives through a template snippet — the same extension point the built-in libraries use.
+Responses are gzip-compressed by default. HAProxy compresses only what the backend left uncompressed, and only for the content types in the list — see [Compression](../libraries/haptic-annotations.md#compression) for the annotations that change the algorithm, the type list, or turn it off for one Ingress.
 
-Add the directives to the `defaults` section (applies to every backend) via a `defaults-settings-*` snippet. User snippets merge with the library-provided ones and win on key collision:
+Compression costs CPU on the HAProxy pods. Two global limits bound that cost, both reachable through the `haproxy-haptic.org/config-global` annotation:
 
 ```yaml
-# values.yaml
-controller:
-  config:
-    templateSnippets:
-      defaults-settings-500-compression:
-        template: |
-          compression algo gzip
-          compression type text/html text/plain text/css application/javascript application/json
+metadata:
+  annotations:
+    haproxy-haptic.org/config-global: |
+      maxcompcpuusage 80
+      tune.comp.maxlevel 1
 ```
 
-To compress only one route's responses instead, emit the same two lines into that `backend` from a `backends-*` snippet, or reference an `extraContext` toggle so it can be flipped without editing the template. `compression algo` also accepts `deflate` and `raw-deflate`; list every content type you want compressed in `compression type` (HAProxy compresses nothing by default).
+`maxcompcpuusage` stops compressing new sessions once compression exceeds that share of process CPU, so a traffic spike degrades to uncompressed responses instead of slowing every request. `tune.comp.maxlevel` is the compression level each session starts at; HAProxy's default of `1` is the cheapest and is what the chart runs with.
+
+To measure the effect before changing anything, watch `haproxy_backend_http_comp_bytes_in_total` against `haproxy_backend_http_comp_bytes_out_total` — the ratio is the bandwidth you're actually saving, per backend.
 
 ### Password hash performance
 

@@ -1,6 +1,6 @@
 # Governance guardrails
 
-Enforce org-wide policy across the resources HAPTIC watches — require an annotation, inject a safe default, or validate a value — without hand-editing a single Ingress. Governance is off by default; you turn it on with a map of named rules under `controller.config.templatingSettings.extraContext.governance`. Rules are keyed by a name you choose, so your rules merge with — rather than replace — any a template library ships, and you switch a single one off with `enabled: false`.
+Enforce org-wide policy across the resources HAPTIC watches — require an annotation, inject a safe default, or validate a value — without hand-editing a single Ingress. The engine is on by default because the annotation library ships one rule (see [The rule the chart ships](#the-rule-the-chart-ships)); you add your own as a map of named rules under `controller.config.templatingSettings.extraContext.governance`. Rules are keyed by a name you choose, so your rules merge with — rather than replace — any a template library ships, and you switch a single one off with `enabled: false`.
 
 This guide shows how to roll a guardrail out safely. For every rule field and its exact meaning, see [Policy guardrails (governance)](../reference.md#policy-guardrails-governance) in the Chart Values Reference.
 
@@ -226,6 +226,17 @@ rules:
     enforcement: audit
 ```
 
+## The rule the chart ships
+
+One governance rule is enabled out of the box: `haptic-compress-enable` injects
+`haproxy-haptic.org/compress-enable: "true"` on any Ingress that doesn't set it,
+which is what makes [response compression](../libraries/haptic-annotations.md#compression)
+on-by-default. It's a plain rule with no special status — inspect it with
+`kubectl get haproxytemplateconfig -o yaml`, and switch it off like any other.
+
+An Ingress that sets the annotation itself keeps its own value, `"true"` or
+`"false"` alike, because an injection only fills a path that's absent.
+
 ## Switch off a single rule
 
 Rules are keyed, so setting one entry's `enabled` to `false` leaves the rest
@@ -239,7 +250,7 @@ controller:
       extraContext:
         governance:
           rules:
-            ingress-tls:
+            haptic-compress-enable:
               enabled: false
 ```
 

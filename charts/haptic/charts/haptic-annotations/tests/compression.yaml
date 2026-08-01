@@ -32,3 +32,120 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "compression type text/html application/json"
+
+  test-haptic-compression-governance-default:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: The bundled rule injects compress-enable on an Ingress that sets no annotations.
+    extraContext:
+      renderMode: reconcile
+      governance:
+        enabled: true
+        rules:
+          haptic-compress-enable:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/compress-enable']
+            default: "true"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: gz-default, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: gzdefault.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: haproxy.cfg, pattern: 'backend default_gz-default_svc_echo_80' }
+      - { type: contains, target: haproxy.cfg, pattern: 'compression algo gzip' }
+      - { type: contains, target: haproxy.cfg, pattern: 'filter compression' }
+
+  test-haptic-compression-governance-optout:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: An explicit compress-enable=false is not overwritten by the injected default.
+    extraContext:
+      renderMode: reconcile
+      governance:
+        enabled: true
+        rules:
+          haptic-compress-enable:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/compress-enable']
+            default: "true"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: gz-optout
+            annotations: { haproxy-haptic.org/compress-enable: "false" }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: gzoptout.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - { type: contains, target: haproxy.cfg, pattern: 'backend default_gz-optout_svc_echo_80' }
+      # The snippet's own marker line carries the Ingress key, so this names one
+      # resource on one line. A `(?s)`-spanning pattern would not: Go's regexp is
+      # RE2, which has no lookahead to stop it at the next `backend` line, so
+      # `.*?^  compression algo` would happily match a LATER backend's block.
+      - { type: not_contains, target: haproxy.cfg, pattern: '# haptic/compression \(default/gz-optout\)' }
+
+  test-haptic-compression-governance-deterministic:
+    _helm_skip_test: '{{ if or (not .Values.controller.templateLibraries.ingressAnnotationsCompat.enabled) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}true{{ end }}'
+    description: >-
+      The injection mutates the memoized resource pointer in place, so a second
+      render must produce byte-identical output — otherwise every reconcile would
+      mint a new config checksum and the fleet would never settle.
+    extraContext:
+      renderMode: reconcile
+      governance:
+        enabled: true
+        rules:
+          haptic-compress-enable:
+            enabled: true
+            resource: ingresses
+            path: metadata.annotations['haproxy-haptic.org/compress-enable']
+            default: "true"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: gz-det-a, annotations: {} }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: gzdeta.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: gz-det-b
+            annotations: { haproxy-haptic.org/compress-enable: "false" }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: gzdetb.example.com
+                http:
+                  paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }]
+    assertions:
+      - type: haproxy_valid
+      - type: deterministic
+      - { type: contains, target: haproxy.cfg, pattern: '# haptic/compression \(default/gz-det-a\)' }
+      - { type: not_contains, target: haproxy.cfg, pattern: '# haptic/compression \(default/gz-det-b\)' }

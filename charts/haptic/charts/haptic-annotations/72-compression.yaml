@@ -4,6 +4,9 @@
 # inherit_context). Only the community-build algorithms are allowed (gzip,
 # deflate, raw-deflate — all zlib); brotli/zstd need a non-community HAProxy
 # build and fail the render loudly rather than silently doing nothing.
+#
+# On by default: the governance rule `haptic-compress-enable` in _index.yaml
+# injects compress-enable when an Ingress does not set it.
 templateSnippets:
 
   backend-directives-802-haptic-compression-filter:
@@ -47,8 +50,13 @@ templateSnippets:
           compression algo <algorithm>
           compression type <t1> <t2> ...
 
-        HAProxy compresses only responses the backend didn't already compress and
-        whose Content-Type is in the list.
+        The `filter compression` line these need is emitted by the 802 snippet
+        above, which runs ahead of the bandwidth and rate-limit filters.
+
+        No `compression offload`: it strips Accept-Encoding from the request so
+        the backend cannot compress, which is the opposite of what this does.
+        HAProxy skips a response that is already encoded, so leaving offload off
+        is what makes "compress only uncompressed responses" true.
       -#}
       {%- if ingress != nil %}
         {%- var key = ingress.Metadata.Namespace + "/" + ingress.Metadata.Name %}

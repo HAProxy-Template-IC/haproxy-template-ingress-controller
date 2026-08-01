@@ -41,6 +41,21 @@ _helm_load:
 # still works if the key is somehow absent.
 templatingSettings:
   extraContext:
+    # Response compression on by default, applied by injecting the annotation an
+    # Ingress did not set — so an Ingress that sets it (to "true" OR "false")
+    # keeps its own value, and `kubectl get ingress` still shows the truth.
+    # Turn it off fleet-wide with rules.haptic-compress-enable.enabled=false.
+    # BREACH tradeoff (docs/site/docs/libraries/haptic-annotations.md#compression):
+    # a route that reflects attacker input alongside a secret over TLS should
+    # opt out with compress-enable: "false".
+    governance:
+      enabled: true
+      rules:
+        haptic-compress-enable:
+          enabled: true
+          resource: ingresses
+          path: metadata.annotations['haproxy-haptic.org/compress-enable']
+          default: "true"
     # Default HSTS max-age (seconds) applied when haproxy-haptic.org/hsts is
     # enabled without an explicit haproxy-haptic.org/hsts-max-age. 63072000 =
     # 2 years (the modern HSTS-preload minimum).
