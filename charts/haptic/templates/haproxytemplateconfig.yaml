@@ -1178,7 +1178,12 @@ spec:
   {{- end }}
   {{- /* Merge template libraries into config */ -}}
   {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-  {{- range $key := concat (include "haptic.libraryShapedKeys" . | fromYamlArray) (list "migrationCoverage") }}
+  {{- /* Emitted only on request: nothing in a cluster reads it. See !1492. */ -}}
+  {{- $libraryKeys := include "haptic.libraryShapedKeys" . | fromYamlArray }}
+  {{- if .Values.controller.config.includeMigrationCoverage }}
+    {{- $libraryKeys = concat $libraryKeys (list "migrationCoverage") }}
+  {{- end }}
+  {{- range $key := $libraryKeys }}
     {{- with index $mergedLibraries $key }}
       {{- $_ := set $config $key . }}
     {{- end }}

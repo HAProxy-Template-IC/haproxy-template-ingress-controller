@@ -156,5 +156,9 @@ func enableAllTemplateLibraries(c *chartv2.Chart) map[string]any {
 			}
 		}
 	}
-	return map[string]any{"controller": map[string]any{"templateLibraries": libs}}
+	return map[string]any{"controller": map[string]any{
+		"templateLibraries": libs,
+		// The chart omits migrationCoverage by default; this render needs it (!1492).
+		"config": map[string]any{"includeMigrationCoverage": true},
+	}}
 }
