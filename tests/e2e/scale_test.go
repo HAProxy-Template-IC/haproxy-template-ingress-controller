@@ -921,13 +921,34 @@ func round2(v float64) float64 {
 // envInt64 mirrors envInt for int64-sized values (byte budgets).
 func envInt64(t *testing.T, key string, def int64) int64 {
 	t.Helper()
+	n, err := parseEnvInt64(key, def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// envInt64OrDefault is envInt64 without a *testing.T, for TestMain — which
+// needs the same budget the assertion will use in order to aim GOMEMLIMIT at
+// it, and has no t to fail on. A malformed value falls back to the default
+// rather than aborting the suite; the assertion re-parses it and reports the
+// error properly.
+func envInt64OrDefault(key string, def int64) int64 {
+	n, err := parseEnvInt64(key, def)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func parseEnvInt64(key string, def int64) (int64, error) {
 	v, ok := lookupEnv(key)
 	if !ok || v == "" {
-		return def
+		return def, nil
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || n < 1 {
-		t.Fatalf("%s=%q: want a positive integer", key, v)
+		return 0, fmt.Errorf("%s=%q: want a positive integer", key, v)
 	}
-	return n
+	return n, nil
 }
