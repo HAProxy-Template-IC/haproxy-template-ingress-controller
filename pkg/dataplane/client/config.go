@@ -184,6 +184,23 @@ func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config strin
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusConflict {
+		// Someone moved the version between our read and this push. On the same
+		// endpoint that is a KNOWN interleaving, not an operator conflict: a
+		// concurrent skip_version bypass resets the configured version to the
+		// headerless sentinel, so the structural push that would activate the
+		// pending render 409s and the render is stranded on disk with no reload
+		// (#112). Re-resolve and retry ONCE. The lock still holds — the retry
+		// carries the freshly-read version, so a writer that moves it again
+		// fails the retry rather than overwriting anyone.
+		retryResp, retryErr := c.retryPushAfterVersionConflict(ctx, config, version, resp)
+		if retryErr != nil {
+			return "", retryErr
+		}
+		defer retryResp.Body.Close()
+		resp = retryResp
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("pushing raw configuration: status %d: %s", resp.StatusCode, string(body))
@@ -194,6 +211,63 @@ func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config strin
 	reloadID := resp.Header.Get("Reload-ID")
 
 	return reloadID, nil
+}
+
+// headerlessConfigVersion is what GetVersion reports when the on-disk config
+// carries no `# _version=N` header — the state a skip_version push leaves
+// behind. It mirrors the constant of the same name in pkg/dataplane; duplicated
+// rather than exported because the two packages reason about it independently.
+const headerlessConfigVersion int64 = 1
+
+// retryPushAfterVersionConflict re-reads the configured version and repeats a
+// force_reload push once. conflicted is the 409 response, read here so its body
+// reaches the error when the retry is not attempted.
+func (c *DataplaneClient) retryPushAfterVersionConflict(
+	ctx context.Context,
+	config string,
+	staleVersion int64,
+	conflicted *http.Response,
+) (*http.Response, error) {
+	body, _ := io.ReadAll(conflicted.Body)
+	conflictBody := strings.TrimSpace(string(body))
+
+	current, err := c.GetVersion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("pushing raw configuration: status %d: %s (re-resolving version failed: %w)",
+			http.StatusConflict, conflictBody, err)
+	}
+	// Retry ONLY into the headerless sentinel. That is the one interleaving
+	// HAPTIC creates against itself (a concurrent skip_version bypass), and it
+	// is the only one where re-pushing is safe: the sentinel means nothing
+	// versioned wrote the file, so there is no other writer's content to lose.
+	//
+	// Any other version means someone bumped it deliberately and their content
+	// is on disk. Re-pushing at their version would clobber it while reporting
+	// success — a silent overwrite is worse than a failed deploy, and the
+	// optimistic lock exists precisely to prevent it. Fail and let the next
+	// reconcile re-diff against what is actually there.
+	if current != headerlessConfigVersion {
+		return nil, fmt.Errorf("pushing raw configuration: status %d: %s (configured version %d is not the headerless sentinel; another writer owns this config)",
+			http.StatusConflict, conflictBody, current)
+	}
+	if current == staleVersion {
+		// The version we pushed is the version the dataplane reports, so
+		// retrying would just repeat the identical request.
+		return nil, fmt.Errorf("pushing raw configuration: status %d: %s",
+			http.StatusConflict, conflictBody)
+	}
+
+	if c.logger != nil {
+		c.logger.Info("Raw config push hit a version conflict; retrying once with the re-resolved version",
+			"stale_version", staleVersion, "current_version", current)
+	}
+
+	forceReload := true
+	resp, err := c.postHAProxyConfiguration(ctx, config, current, nil, &forceReload, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("pushing raw configuration (version-conflict retry): %w", err)
+	}
+	return resp, nil
 }
 
 // PushRawConfigurationSkipReload pushes the full config to disk without triggering a reload.
