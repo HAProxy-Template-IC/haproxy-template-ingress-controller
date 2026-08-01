@@ -47,6 +47,13 @@ type SyncResult struct {
 	// Only set when VerifyReload option is enabled and ReloadTriggered is true.
 	ReloadVerified bool
 
+	// ActivatedConfigChecksum is configTextChecksum() of the config this sync
+	// PROVED the endpoint is running, for the caller to carry into the next
+	// sync's SyncOptions.LastActivatedConfigChecksum. Empty when this sync
+	// proved nothing — a failed push, an unverified reload, or a no-op that
+	// merely inherited an earlier proof.
+	ActivatedConfigChecksum string
+
 	// ReloadVerificationError contains an error message if reload verification failed.
 	// This includes timeout errors or explicit reload failures from HAProxy.
 	ReloadVerificationError string

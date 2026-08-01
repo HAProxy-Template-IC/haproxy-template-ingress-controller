@@ -73,6 +73,15 @@ type runtimeBypass struct {
 	newSyncer func(ctx context.Context, ep *dataplane.Endpoint) (runtimeSyncer, error)
 	eventBus  *busevents.EventBus // publishes RuntimeFastPathResultEvent always, and ConfigAppliedToPodEvent for a complete (pure runtime-raw lane) apply; nil in tests
 
+	// recordActivation reports what an apply proved about the endpoint's running
+	// config: the checksum on success, "" to clear the proof. Clearing on
+	// failure is load-bearing — a skip_version push writes its body to disk even
+	// when the runtime actions fail, so a failed apply leaves content on disk
+	// that no worker ever loaded. Leaving a stale proof behind would let the
+	// next sync short-circuit an empty diff over that parked content, which is
+	// the #112 stall. Nil in tests.
+	recordActivation func(endpointURL, proof string)
+
 	mu      sync.Mutex
 	clients map[string]runtimeSyncer // keyed by endpoint URL; persistent across applies
 }
@@ -191,10 +200,18 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 
 	result, err := syncer.SyncRuntimeFast(ctx, dep.runtimeUpdates, push.body, opts)
 	if err != nil {
+		// The push may have reached disk regardless (the dataplane writes the
+		// body even when the runtime actions 500), so this endpoint's running
+		// state is no longer provable. Drop the proof and let the next sync
+		// force a reload rather than trust an empty diff.
+		b.noteActivation(ep.URL, "")
 		b.publishResult(0, true)
-		b.logger.Debug("Bypass apply failed; scheduled deploy will converge",
+		b.logger.Debug("Bypass apply failed; activation proof cleared, scheduled deploy will converge",
 			"endpoint", ep.URL, "error", err)
 		return
+	}
+	if result != nil {
+		b.noteActivation(ep.URL, result.ActivatedConfigChecksum)
 	}
 	ops := 0
 	if result != nil {
@@ -209,6 +226,15 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 			"ops", ops,
 			"duration_ms", result.Duration.Milliseconds())
 	}
+}
+
+// noteActivation forwards an activation proof (or its removal) to the deployer's
+// cache, if one is wired.
+func (b *runtimeBypass) noteActivation(endpointURL, proof string) {
+	if b.recordActivation == nil {
+		return
+	}
+	b.recordActivation(endpointURL, proof)
 }
 
 // publishConfigApplied advances the pod's status.deployedToPods[].Checksum after

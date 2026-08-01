@@ -154,8 +154,11 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		// diff is only trustworthy when the config was written by a
 		// versioned, reload-coupled push — otherwise force one reload to
 		// activate whatever is on disk, which also re-stamps the header.
-		if currentIsHeaderless {
-			o.logger.Info("No diff against a headerless on-disk config; forcing a reload to activate potentially parked skip_version content")
+		if !o.onDiskIsProvenActivated(currentConfigStr, opts) {
+			o.logger.Info("No diff against an on-disk config whose activation was never proven; forcing a reload to activate potentially parked content",
+				"on_disk_checksum", configTextChecksum(currentConfigStr),
+				"last_activated_checksum", lastActivatedChecksum(opts),
+				"headerless", currentIsHeaderless)
 			version := o.resolveCurrentVersion(ctx, preCachedVersion)
 			if version <= 0 {
 				return nil, &SyncError{
@@ -168,6 +171,11 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		}
 
 		result := o.createNoChangesResult(startTime, &diff.Summary)
+		// Carry the proof forward. This branch was reached BECAUSE the on-disk
+		// config matches a proven activation, so it is still proven — dropping
+		// it here would make the next sync force a reload against a config it
+		// just verified, once per sync forever.
+		result.ActivatedConfigChecksum = lastActivatedChecksum(opts)
 		// Never report the headerless sentinel (1) as a cacheable
 		// version: after a skip_version push (runtime bypass) every
 		// state reads as 1, so a version-1 cache entry could later
@@ -382,10 +390,20 @@ func (o *orchestrator) applyRuntimeOnly(
 		AppliedOperations: appliedOps,
 		ReloadTriggered:   false,
 		SyncMode:          SyncModeRuntime,
-		Duration:          time.Since(startTime),
-		Details:           o.buildDetails(diff, auxDiffs),
-		PostSyncVersion:   version + 1,
-		Message:           fmt.Sprintf("Applied %d runtime operations (%d map, %d cert, %d ca-file updates) without reload", len(appliedOps), len(mapUpdates), len(certUpdates), len(caUpdates)),
+		// The versioned skip_reload push wrote this body AND the live worker
+		// accepted the runtime actions, so the running state matches these bytes
+		// without a reload. The push is versioned, so the dataplane prepends a
+		// header — activationChecksum strips it, which is why checksumming the
+		// pushed body matches what the next sync reads off disk.
+		//
+		// Omitting this does not merely lose an optimisation: the deployer writes
+		// whatever comes back, so an empty value CLEARS the proof and the next
+		// sync reloads against a config this one just activated. Reload per sync.
+		ActivatedConfigChecksum: activationChecksum(desiredConfig),
+		Duration:                time.Since(startTime),
+		Details:                 o.buildDetails(diff, auxDiffs),
+		PostSyncVersion:         version + 1,
+		Message:                 fmt.Sprintf("Applied %d runtime operations (%d map, %d cert, %d ca-file updates) without reload", len(appliedOps), len(mapUpdates), len(certUpdates), len(caUpdates)),
 	}, nil
 }
 
@@ -492,7 +510,7 @@ func (o *orchestrator) applyWithReload(
 	// runtime-bypass push legitimately patches server fields onto this very
 	// body. Runs before the orphan aux-file delete: on divergence the worker's
 	// loaded config is unknown, so deleting files it may reference is unsafe.
-	readBackParsed, readBackErr := o.verifyPostReloadReadBack(ctx, desiredConfig, reloadID, opts)
+	readBackParsed, activatedChecksum, readBackErr := o.verifyPostReloadReadBack(ctx, desiredConfig, reloadID, opts)
 	if readBackErr != nil {
 		o.logger.Error("Post-reload read-back failed; skipping orphan aux-file delete and reporting the deploy failed",
 			"reload_id", reloadID, "error", readBackErr)
@@ -527,7 +545,11 @@ func (o *orchestrator) applyWithReload(
 		// doesn't fetch a second time. Nil when the read-back parse failed
 		// (best-effort — the deferred populate then retries).
 		PostSyncParsedConfig: readBackParsed,
-		Message:              fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
+		// Proof for the next sync: the reload was verified AND the read-back
+		// confirmed these exact bytes are on disk. Without both, an empty diff
+		// against this content must not be trusted.
+		ActivatedConfigChecksum: activatedChecksum,
+		Message:                 fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
 	}, nil
 }
 
@@ -552,7 +574,7 @@ func (o *orchestrator) applyWithReload(
 //
 // Each per-deploy read-back logs the pushed and on-disk checksums so a
 // divergence is diagnosable from the controller log alone.
-func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody, reloadID string, opts *SyncOptions) (parsed *parserconfig.StructuredConfig, err error) {
+func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody, reloadID string, opts *SyncOptions) (parsed *parserconfig.StructuredConfig, onDiskChecksum string, err error) {
 	retry := client.RetryConfig{
 		MaxAttempts: 4,
 		// The reload already succeeded and was verified; this read is purely
@@ -569,7 +591,7 @@ func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody,
 		return o.client.GetRawConfiguration(ctx)
 	})
 	if err != nil {
-		return nil, &SyncError{
+		return nil, "", &SyncError{
 			Stage:   stagePostReloadReadback,
 			Message: "failed to read back on-disk config after reload",
 			Cause:   err,
@@ -581,7 +603,7 @@ func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody,
 	}
 
 	pushedChecksum := configTextChecksum(pushedBody)
-	readBackChecksum := configTextChecksum(stripVersionHeaderLines(readBack))
+	readBackChecksum := activationChecksum(readBack)
 	o.logger.Info("Post-reload config read-back",
 		"pushed_checksum", pushedChecksum,
 		"readback_checksum", readBackChecksum,
@@ -597,13 +619,16 @@ func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody,
 			o.logger.Debug("Post-reload read-back parse failed on byte-identical content",
 				"error", parseErr)
 		}
-		return readBackParsed, nil
+		return readBackParsed, readBackChecksum, nil
 	}
 	if err := o.checkReadBackDivergence(readBackParsed, parseErr, pushedBody, opts, pushedChecksum, readBackChecksum); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	// Byte divergence with structural equality: tolerated (see doc).
-	return readBackParsed, nil
+	// Byte divergence with structural equality: tolerated (see doc). The proof
+	// is taken over what is ACTUALLY on disk, not what we pushed — a concurrent
+	// runtime bypass legitimately patched server fields onto this body, and the
+	// next sync diffs against those bytes.
+	return readBackParsed, readBackChecksum, nil
 }
 
 // checkReadBackDivergence decides whether a byte-divergent read-back is
@@ -646,6 +671,47 @@ func (o *orchestrator) checkReadBackDivergence(readBackParsed *parserconfig.Stru
 			nil)
 	}
 	return nil
+}
+
+// onDiskIsProvenActivated reports whether an empty diff can be trusted: the
+// config sitting on disk is byte-identical to one this endpoint was PROVEN to
+// be running.
+//
+// "Disk == desired" is not that proof. A skip_version push writes the body
+// verbatim with no reload, and the dataplane writes it even when the runtime
+// actions that accompany it fail — so structural content can be parked on disk
+// that no worker ever loaded, while the diff reads empty (#112).
+//
+// With no proof recorded (first sync to this pod, a restarted controller, a
+// cleared entry) the answer is NO. Forcing one reload is cheap and correct;
+// trusting an unproven config is what strands a render indefinitely.
+func (o *orchestrator) onDiskIsProvenActivated(currentConfigStr string, opts *SyncOptions) bool {
+	activated := lastActivatedChecksum(opts)
+	if activated == "" {
+		return false
+	}
+	return activationChecksum(currentConfigStr) == activated
+}
+
+// activationChecksum is the single definition of the bytes an activation proof
+// is taken over. The `# _version=N` / `# _md5hash=` lines a versioned push
+// prepends are stripped, because they change on every versioned write without
+// the config changing — comparing with them included would report every
+// endpoint as unproven and force a reload on every sync.
+//
+// Both the recorder (the post-reload read-back) and the reader (the empty-diff
+// guard) go through here so they cannot drift apart; when they did, the
+// mismatch was silent and cost one reload per sync.
+func activationChecksum(config string) string {
+	return configTextChecksum(stripVersionHeaderLines(config))
+}
+
+// lastActivatedChecksum reads the caller's recorded proof, tolerating nil opts.
+func lastActivatedChecksum(opts *SyncOptions) string {
+	if opts == nil {
+		return ""
+	}
+	return opts.LastActivatedConfigChecksum
 }
 
 // configTextChecksum returns a short sha256 hex digest of the config text with

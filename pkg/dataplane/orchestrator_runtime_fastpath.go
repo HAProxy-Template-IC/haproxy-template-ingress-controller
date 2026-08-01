@@ -103,7 +103,13 @@ func ComputeRuntimeServerUpdates(prev, current *parser.StructuredConfig) (*Runti
 func (o *orchestrator) syncRuntimeRawPush(ctx context.Context, body string, updates *RuntimeServerUpdates, opts *SyncOptions, startTime time.Time) (*SyncResult, error) {
 	actions := buildRuntimeActions(updates.runtimeOps)
 	if actions == "" {
-		return o.createNoChangesResult(startTime, &updates.summary), nil
+		// Nothing was pushed, so the on-disk config is exactly what it was —
+		// whatever was proven before is still proven. Carrying it is required,
+		// not cosmetic: the deployer writes back what it receives, so returning
+		// an empty proof here would clear it and make the next sync reload.
+		noChanges := o.createNoChangesResult(startTime, &updates.summary)
+		noChanges.ActivatedConfigChecksum = lastActivatedChecksum(opts)
+		return noChanges, nil
 	}
 	o.logger.Debug("Runtime fast-path raw-push: shared render-diff actions, no fetch",
 		"server_op_count", len(updates.runtimeOps), "action_count", actionCount(actions))
@@ -131,8 +137,16 @@ func (o *orchestrator) syncRuntimeRawPush(ctx context.Context, body string, upda
 		AppliedOperations: convertOperationsToApplied(updates.runtimeOps),
 		ReloadTriggered:   false,
 		SyncMode:          SyncModeRuntime,
-		Duration:          time.Since(startTime),
-		Details:           convertDiffSummary(&updates.summary),
-		Message:           fmt.Sprintf("Applied %d server updates via raw-push (no fetch)", len(updates.runtimeOps)),
+		// The push returned 2xx, so the dataplane wrote this body AND the live
+		// worker accepted the runtime actions — the running state matches these
+		// bytes without a reload. Recording it is what keeps the reload-free
+		// path reload-free: the guard compares the next sync's on-disk config
+		// against a proof, and a bypass legitimately changes those bytes, so
+		// without this every bypass would make the following sync force a
+		// reload.
+		ActivatedConfigChecksum: activationChecksum(body),
+		Duration:                time.Since(startTime),
+		Details:                 convertDiffSummary(&updates.summary),
+		Message:                 fmt.Sprintf("Applied %d server updates via raw-push (no fetch)", len(updates.runtimeOps)),
 	}, nil
 }

@@ -95,7 +95,7 @@ func newReadBackOrchestrator(t *testing.T, rec *configPostRecorder, version, cur
 // unverified skip_version push, which the dataplane writes to disk even when
 // its runtime actions FAIL — so the file can carry structural content no
 // worker ever loaded. The empty-diff branch already force-reloads
-// (TestSync_HeaderlessNoDiff_ForcesReload); this pins the runtime/aux-delta
+// (TestSync_NoDiff_TrustedOnlyWithActivationProof); this pins the runtime/aux-delta
 // branch, which previously applied reload-free, stamped the version header
 // over the parked content, and reported success while routes 404ed for the
 // full 30s until an unrelated reload. A headerless config with ANY delta must

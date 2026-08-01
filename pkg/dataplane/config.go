@@ -150,6 +150,27 @@ type SyncOptions struct {
 	// sync to this endpoint. Drift prevention syncs leave this empty.
 	LastDeployedChecksum string
 
+	// LastActivatedConfigChecksum is configTextChecksum() of the on-disk config
+	// this endpoint was last PROVEN to be running: written by a reload-coupled
+	// push whose reload was verified, or by a runtime apply whose actions the
+	// live worker accepted. Empty means "never proven", which is not the same as
+	// "unchanged".
+	//
+	// It is what makes an empty diff trustworthy. "Disk == desired" says nothing
+	// about the running worker, because a skip_version push writes the body
+	// VERBATIM without a reload — and the dataplane writes it even when the
+	// accompanying runtime actions fail. Structural content can therefore sit
+	// parked on disk that no worker ever loaded, while desired-vs-disk reads
+	// empty and the deploy reports success (#112: new TCP listeners parked for
+	// 90s, Gateway reported Programmed, every connection refused).
+	//
+	// The previous guard keyed on the `# _version=N` header instead, which is a
+	// proxy for the same question and answers it wrong in both directions: it
+	// misses content parked by a VERSIONED skip_reload push whose follow-up
+	// force_reload failed, and it fires on a headerless config that a runtime
+	// apply did legitimately activate.
+	LastActivatedConfigChecksum string
+
 	// RestampVersionHeader (SyncRuntimeFast only) re-writes the pushed body
 	// WITH a `# _version=N` header after a successful pure-runtime apply, via
 	// one versioned skip_reload push. A skip_version push leaves the on-disk
