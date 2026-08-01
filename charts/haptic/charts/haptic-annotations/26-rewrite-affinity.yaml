@@ -170,8 +170,11 @@ templateSnippets:
           invalid_header -> junk-response ; http_<NNN> -> <NNN> ;
           off -> `retries 0` ; tries N(>0) -> `retries N` ; "0" -> keep default.
         `option redispatch` is set in defaults so a retry lands on a different
-        server. Ignored: non_idempotent — nginx vocabulary with no HAProxy
-        `retry-on` analogue.
+        server. Ignored: non_idempotent — the analogue is `http-request
+        disable-l7-retry`, which base.yaml emits in the frontend for every
+        non-idempotent method, so retries here already match nginx's default of
+        excluding them. Honouring the token per route would need a route-keyed
+        map; extraContext.retryNonIdempotent lifts the restriction globally.
 
         Generated HAProxy Config:
           retry-on <conditions>

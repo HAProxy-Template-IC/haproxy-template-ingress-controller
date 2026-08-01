@@ -57,7 +57,7 @@ migrationCoverage:
         note: $request_uri, $remote_addr, $cookie_*, $http_* and $arg_* translate to HAProxy fetches with consistent hashing; other $variables fail the render; non-$ values pass through as HAProxy fetch expressions.
       nginx.ingress.kubernetes.io/proxy-next-upstream:
         status: different
-        note: Maps to HAProxy retry-on (error→conn-failure, timeout→response-timeout, invalid_header→junk-response, `http_NNN`→`NNN`); `non_idempotent` has no equivalent and is ignored; "off" emits retries 0.
+        note: Maps to HAProxy retry-on (error→conn-failure, timeout→response-timeout, invalid_header→junk-response, `http_NNN`→`NNN`); `non_idempotent` is ignored per route — non-idempotent methods are excluded from L7 retries globally (matching nginx's own default), liftable via extraContext.retryNonIdempotent; "off" emits retries 0.
         doc: annotation-support
       nginx.ingress.kubernetes.io/proxy-next-upstream-tries:
         status: supported
