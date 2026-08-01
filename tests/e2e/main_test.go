@@ -794,10 +794,27 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	// shipped cap, and issue #111 sat ambiguous for a day because a green
 	// nightly proved nothing about it.
 	if os.Getenv(scaleEnableEnv) == "1" {
+		// GOMEMLIMIT must track the BUDGET, not the container limit. The
+		// controller derives it from the cgroup at a 0.9 ratio (automemlimit,
+		// which skips when the env var is already set), so the 2Gi limit above
+		// hands the collector a 1843 MiB target while TestScale asserts 1024
+		// MiB. The GC then has no reason to collect anywhere near the budget
+		// and RSS floats with allocation rate — measured 829-1052 MiB across
+		// six identical runs, i.e. the assertion was a coin flip rather than a
+		// measurement. Aim the collector at the budget and the 2Gi limit goes
+		// back to being pure OOM headroom, so a real breach fails the
+		// assertion instead of being killed by the kubelet.
+		budget := envInt64OrDefault(scaleBudgetRSSEnv, scaleDefaultBudgetRSSBytes)
+		goMemLimit := budget * 90 / 100
 		args = append(args,
 			"--set", "controller.resources.limits.memory=2Gi",
 			"--set", "controller.logLevel=INFO",
 			"--set", "controller.config.logging.level=INFO",
+			// --set-string: env[].value is typed string, and a bare --set
+			// renders the byte count as an integer, which server-side apply
+			// rejects outright.
+			"--set-string", "controller.extraEnv[0].name=GOMEMLIMIT",
+			"--set-string", fmt.Sprintf("controller.extraEnv[0].value=%d", goMemLimit),
 		)
 	}
 	cmd := exec.CommandContext(ctx, "helm", args...)
