@@ -474,7 +474,7 @@ templateSnippets:
             "nginx":          {"enable-cors", "cors-allow-origin", "cors-allow-methods", "cors-allow-headers", "cors-allow-credentials", "cors-expose-headers", "cors-max-age"},
           }},
           {"name": "shared rate limiting", "families": map[string][]string{
-            "haptic":         {"rate-limit-requests", "rate-limit-rps", "rate-limit-rpm", "rate-limit-connections", "rate-limit-period", "rate-limit-size", "rate-limit-status-code", "rate-limit-allowlist", "rate-limit-burst", "rate-limit-algorithm", "rate-limit-key"},
+            "haptic":         {"rate-limit-requests", "rate-limit-rps", "rate-limit-rpm", "rate-limit-connections", "rate-limit-period", "rate-limit-size", "rate-limit-status-code", "rate-limit-allowlist", "rate-limit-burst", "rate-limit-algorithm", "rate-limit-key", "download-bandwidth-limit", "upload-bandwidth-limit", "bandwidth-limit-scope"},
             "haproxyIngress": {"limit-rps", "limit-rpm", "limit-connections", "limit-whitelist"},
             "haproxytech":    {"rate-limit-requests", "rate-limit-period", "rate-limit-size", "rate-limit-status-code", "rate-limit-whitelist"},
             "nginx":          {"limit-rps", "limit-rpm", "limit-connections", "limit-whitelist", "limit-rate", "limit-rate-after"},

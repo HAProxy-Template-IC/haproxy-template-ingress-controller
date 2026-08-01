@@ -88,11 +88,11 @@ migrationCoverage:
         status: supported
         note: Listed CIDRs are exempt from the rate limits; invalid CIDRs fail the render.
       nginx.ingress.kubernetes.io/limit-rate:
-        status: supported
-        note: Per-connection download throttle via an outbound bandwidth-limit filter.
+        status: different
+        note: Download throttle via an outbound bandwidth-limit filter, but applied per stream — an HTTP/2 client gets the limit once per stream, not once per connection.
       nginx.ingress.kubernetes.io/limit-rate-after:
-        status: supported
-        note: Bytes transferred before the limit-rate throttle kicks in.
+        status: different
+        note: "Mapped to the filter's `min-size`, the smallest chunk forwarded at a time — not the start-throttling-after-N-bytes offset nginx applies, which HAProxy can't express. A large value adds latency rather than delaying the throttle."
       # --- Session affinity ---
       nginx.ingress.kubernetes.io/affinity:
         status: supported

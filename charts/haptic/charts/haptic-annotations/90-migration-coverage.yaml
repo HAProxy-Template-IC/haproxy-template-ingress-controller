@@ -291,10 +291,13 @@ migrationCoverage:
         note: "Secret (data key `pubkey.pem`) → asymmetric JWT verification with an alg-confusion guard (token alg must equal the configured alg AND jwt_verify uses the constant configured alg), exp/iss/aud/required-claim checks, and the shared consumer identity from `sub`. Fails closed (503) per route when the Secret is absent; key rotation needs a reload."
       haproxy-haptic.org/download-bandwidth-limit:
         status: supported
-        note: "Throttles the bandwidth (bytes per second) sent toward a single client connection, using a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Independent of the request-rate caps; both can apply to the same Ingress. Byte-size values are validated before interpolation."
-      haproxy-haptic.org/download-bandwidth-limit-after:
+        note: "Caps the bytes per second sent toward the client via a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Byte sizes are validated before interpolation."
+      haproxy-haptic.org/upload-bandwidth-limit:
         status: supported
-        note: "Sets the number of bytes sent on a connection before the download bandwidth limit begins to throttle, via the `bwlim-out` `min-size` parameter. Byte-size values are validated before interpolation."
+        note: "Caps the bytes per second received from the client via a `bwlim-in` filter. Byte sizes are validated before interpolation."
+      haproxy-haptic.org/bandwidth-limit-scope:
+        status: supported
+        note: "Who shares the bandwidth budget: `stream` (default), `client` (per source IP, `key src`) or `service` (whole backend, `key be_id`). The shared scopes add a backend stick-table, so they exclude the per-source rate-limit caps."
       haproxy-haptic.org/load-balance:
         status: supported
         note: "Parameterized algorithms roundrobin|static-rr|leastconn|first|source|random plus uri|url_param(NAME)|hdr(NAME)|rdp-cookie(NAME); invalid value fails the render."

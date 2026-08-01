@@ -116,12 +116,18 @@ Speak TLS to the backend Service — protocol, verification, client certs, SNI, 
 
 ### Rate and bandwidth limiting
 
-Per-source request-rate caps (reload-surviving stick-tables), shared fleet-wide request budgets through the rate-limit SPOA plugin, and per-connection download throttling.
+Per-source request-rate caps (reload-surviving stick-tables), shared fleet-wide request budgets through the rate-limit SPOA plugin, and download/upload bandwidth throttling.
+
+Two facts about bandwidth limits surprise people, so check them against what you intend:
+
+- **The limit applies per stream, not per connection.** An HTTP/2 or HTTP/3 client that opens ten streams gets ten times the configured rate. Use `bandwidth-limit-scope: client` when you want one budget per client regardless of how many streams it opens.
+- **Only the HTTP payload is metered.** Headers are never counted toward the limit.
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
-| `haproxy-haptic.org/download-bandwidth-limit` | ✅ Supported | Throttles the bandwidth (bytes per second) sent toward a single client connection, using a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Independent of the request-rate caps; both can apply to the same Ingress. Byte-size values are validated before interpolation. |
-| `haproxy-haptic.org/download-bandwidth-limit-after` | ✅ Supported | Sets the number of bytes sent on a connection before the download bandwidth limit begins to throttle, via the `bwlim-out` `min-size` parameter. Byte-size values are validated before interpolation. |
+| `haproxy-haptic.org/download-bandwidth-limit` | ✅ Supported | Caps the bytes per second sent toward the client, using a `bwlim-out` filter plus `http-request set-bandwidth-limit`. Independent of the request-rate caps; both can apply to the same Ingress. Byte-size values are validated before interpolation. |
+| `haproxy-haptic.org/upload-bandwidth-limit` | ✅ Supported | Caps the bytes per second received from the client, using a `bwlim-in` filter. Can be combined with `download-bandwidth-limit`; each direction gets its own filter. Byte-size values are validated before interpolation. |
+| `haproxy-haptic.org/bandwidth-limit-scope` | ⚠️ Caveat | Who shares the budget: `stream` (default, each stream gets the full limit), `client` (all streams from one source IP share it, `key src`), or `service` (every stream of this backend shares it, `key be_id`). `client` and `service` add a stick-table to the backend, and HAProxy allows only one per backend — so they can't be combined with `rate-limit-rps`, `rate-limit-rpm`, or `rate-limit-connections`, and the render fails if you try. `service` scopes to one Ingress route to a service, not to a Kubernetes Service shared by several Ingresses. |
 | `haproxy-haptic.org/rate-limit-algorithm` | ✅ Supported | Shared limiter algorithm: `token-bucket` (default, low-latency lease mode) or `gcra` (exact mode, synchronous store check with a short fail-closed timeout). `gcra` is for low-volume contractual limits; use the default token-bucket mode for public-edge DoS protection. Requires `rate-limit-requests`, `rateLimit.shared.enabled=true`, and an effective Redis/Valkey `store_url`/`store_urls`. |
 | `haproxy-haptic.org/rate-limit-burst` | ✅ Supported | Shared limiter burst allowance; defaults to `rate-limit-requests`. Must be a positive integer. |
 | `haproxy-haptic.org/rate-limit-connections` | ✅ Supported | Caps concurrent connections per source IP; ignored when `rate-limit-rps` or `rate-limit-rpm` is set. |
@@ -137,6 +143,8 @@ Per-source request-rate caps (reload-surviving stick-tables), shared fleet-wide 
 ### Compression
 
 HAProxy-side response compression, per Ingress.
+
+Compression runs before the bandwidth limiter, so a `download-bandwidth-limit` on a compressed route meters the compressed bytes that go on the wire, not the larger uncompressed response.
 
 | Annotation | Status | Behaviour |
 |------------|--------|-----------|
@@ -512,7 +520,7 @@ JSON request-body validation is opt-in via `controller.config.templatingSettings
 | `haproxy-haptic.org/require-content-type` | ✅ Supported | Requires an allowed `Content-Type` (comma-separated) on body methods (POST/PUT/PATCH); a disallowed type is rejected with `415` (prefix-matched, so charset suffixes still match). |
 | `haproxy-haptic.org/require-headers` | ✅ Supported | Requires the listed request headers (comma-separated); a request missing any is rejected with `400`. |
 
-<!-- 182 annotations documented -->
+<!-- 181 annotations documented -->
 
 ## Access-log fields
 
