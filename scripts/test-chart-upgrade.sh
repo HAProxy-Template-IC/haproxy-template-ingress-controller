@@ -424,6 +424,22 @@ if helm upgrade "$RELEASE" "$WORK/broken-chart" \
       | grep -iE "component=(webhook|configvalidator)|admission|admitting|could not resolve|version-skewed" \
       | tail -20 | sed "s|^|  ${cp#pod/}: |"
   done
+
+  # WHY the webhook was down, not just that it was. Each teardown/rebind pair
+  # is a ~16 s window in which the listener is unbound while the pod stays
+  # Ready and in the webhook EndpointSlice, so failurePolicy:Ignore admits
+  # silently. The trigger lines are filtered out of the grep above, which is
+  # why the churn has stayed unattributed — print them next to the lifecycle
+  # events so the cause and the hole appear in one timeline. The versions are
+  # the composite resourceVersions the bootstrap guard compares (see
+  # finalizeConfigLoad), so a reinit loop shows up here as a version that
+  # keeps advancing with nothing having changed the spec.
+  echo "--- controller reinitialization triggers + webhook lifecycle ---"
+  for cp in $(k get pods -l app.kubernetes.io/component=controller -o name 2>/dev/null); do
+    k logs "$cp" -c controller --tail=2000 2>/dev/null \
+      | grep -iE "Configuration change detected|Signaling controller reinitialization|Reinitialization triggered|Secret rotation detected|Configuration processed successfully|Config validation succeeded|Webhook server started|Webhook component shutting down" \
+      | tail -40 | sed "s|^|  ${cp#pod/}: |"
+  done
   fail "an upgrade carrying an uncompilable template was ACCEPTED — the gate did not hold"
 fi
 info "rejected, as required"
