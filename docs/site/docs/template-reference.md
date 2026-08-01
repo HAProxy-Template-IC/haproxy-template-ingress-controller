@@ -48,6 +48,7 @@ Every entry below is callable in two equivalent styles: as a plain function (`fn
 | `fail(msg)` | Abort rendering with an error message (surfaces in validation tests and webhooks) | `fail("missing required annotation")` |
 | `b64decode(s)` | Decode base64 strings (Secret `.data` values) | `{{ secret.data.password \| b64decode() }}` |
 | `b64encode(s)` | Encode a value as standard base64 | `{{ configmap.data.schema \| b64encode() }}` |
+| `untar_gz(archive)` | Expand a gzip-compressed tar into a map of entry path to content. Returns `(map[string]string, error)` — a bad archive is reported through the error, never a panic, so the render survives it. All-or-nothing: on any error the map is empty. Entry paths are verbatim (a release tarball keeps its version directory); select with `keys()` + `glob_match()`. Only regular files; guarded against decompression bombs and path traversal | `{%- var files, err = untar_gz(archive) %}` |
 | `glob_match(items, pattern)` | Filter strings by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
 | `group_by(items, keyPath)` | Group items by dotted key path | `{{ ingresses \| group_by("metadata.namespace") }}` |
 | `map_extract(items, keyPath)` | Pluck one field (dotted key path) from each item into a flat slice | `{{ routes \| map_extract("routeId") }}` |

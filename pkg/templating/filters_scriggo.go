@@ -228,6 +228,7 @@ func registerStatusAndEventFunctions(decl native.Declarations) {
 	decl[FuncResource] = scriggoResource
 	decl[FuncJSONPathGet] = scriggoJSONPathGet
 	decl[FuncJSONPathSet] = scriggoJSONPathSet
+	decl[FuncUntarGz] = scriggoUntarGz
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.
