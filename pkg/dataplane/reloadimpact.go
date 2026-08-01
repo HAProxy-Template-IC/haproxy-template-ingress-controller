@@ -60,7 +60,11 @@ type ReloadImpact struct {
 // playground and offline validation can preview the deploy cost of a config
 // change without a live HAProxy. `caps` selects version-dependent runtime
 // support (e.g. runtime SSL-cert updates on v3.2+).
-func ComputeReloadImpact(baseline, desired *parser.StructuredConfig, baselineAux, desiredAux *AuxiliaryFiles, caps Capabilities) (*ReloadImpact, error) {
+//
+// `desiredConfigText` is the rendered configuration `desired` was parsed from.
+// A deleted auxiliary file's name is searched for in it (see fileReferences),
+// so passing "" makes every delete report a reload.
+func ComputeReloadImpact(baseline, desired *parser.StructuredConfig, baselineAux, desiredAux *AuxiliaryFiles, desiredConfigText string, caps Capabilities) (*ReloadImpact, error) {
 	diff, err := comparator.New().Compare(baseline, desired)
 	if err != nil {
 		return nil, err
@@ -72,6 +76,7 @@ func ComputeReloadImpact(baseline, desired *parser.StructuredConfig, baselineAux
 	}
 
 	aux := buildAuxiliaryFileDiffs(baselineAux, desiredAux)
+	aux.references = newFileReferences(desiredConfigText, desiredAux)
 	mapUpd, certUpd, _, auxNeedsReload := aux.runtimeEligibleAuxUpdates(caps)
 
 	return &ReloadImpact{

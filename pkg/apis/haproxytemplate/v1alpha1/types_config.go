@@ -697,9 +697,9 @@ type GeneralFile struct {
 	// spoa-hub TOML, the Vector config): HAProxy never opens those, so the
 	// reload buys nothing and only costs a worker respawn.
 	//
-	// Deleting the file reloads regardless: the live worker reports no
-	// reloadOnPush, so the controller cannot tell whether the config
-	// referenced it.
+	// This governs writes. Removing a file reloads only when the rendered
+	// configuration (or a crt-list) still names it, which no sidecar-owned file
+	// ever does.
 	// +optional
 	// +kubebuilder:default=true
 	ReloadOnPush *bool `json:"reloadOnPush,omitempty"`

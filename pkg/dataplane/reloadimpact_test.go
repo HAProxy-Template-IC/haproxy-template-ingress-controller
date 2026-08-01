@@ -62,6 +62,7 @@ func TestComputeReloadImpact(t *testing.T) {
 		name                    string
 		baseCfg, desiredCfg     *parser.StructuredConfig
 		baseAux, desiredAux     *AuxiliaryFiles
+		desiredCfgText          string
 		caps                    Capabilities
 		wantChanged, wantReload bool
 		wantRuntimeMaps         int
@@ -73,13 +74,18 @@ func TestComputeReloadImpact(t *testing.T) {
 		{name: "general file update -> reload", baseCfg: sc, desiredCfg: sc, baseAux: baseFile, desiredAux: updFile, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
 		{name: "sidecar general file update -> no reload, still reported as changed", baseCfg: sc, desiredCfg: sc, baseAux: baseSidecar, desiredAux: updSidecar, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: false, wantReloadFreeFiles: 1},
 		{name: "sidecar general file create -> no reload", baseCfg: sc, desiredCfg: sc, desiredAux: updSidecar, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: false, wantReloadFreeFiles: 1},
+		// `cfg` names no auxiliary file, so removing one dangles nothing. The
+		// preview must agree with the deployer here or a pinned baseline would
+		// promise a reload the deploy doesn't take.
+		{name: "sidecar general file delete -> no reload", baseCfg: sc, desiredCfg: sc, baseAux: baseSidecar, desiredCfgText: cfg, caps: CapabilitiesFromVersion(caps32), wantChanged: false, wantReload: false},
+		{name: "general file delete with no config text -> reload", baseCfg: sc, desiredCfg: sc, baseAux: baseFile, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
 		{name: "server address change -> runtime", baseCfg: sc, desiredCfg: scIP, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: false},
 		{name: "new backend -> reload", baseCfg: sc, desiredCfg: scBackend, caps: CapabilitiesFromVersion(caps32), wantChanged: true, wantReload: true},
 		{name: "map update on v3.0 is still runtime (maps are v3.0+)", baseCfg: sc, desiredCfg: sc, baseAux: baseMap, desiredAux: updMap, caps: CapabilitiesFromVersion(caps30), wantChanged: true, wantReload: false, wantRuntimeMaps: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			imp, err := ComputeReloadImpact(tt.baseCfg, tt.desiredCfg, tt.baseAux, tt.desiredAux, tt.caps)
+			imp, err := ComputeReloadImpact(tt.baseCfg, tt.desiredCfg, tt.baseAux, tt.desiredAux, tt.desiredCfgText, tt.caps)
 			require.NoError(t, err)
 			// Mirrors the playground's own "changed" expression
 			// (cmd/playground/main.go): a change the preview cannot express

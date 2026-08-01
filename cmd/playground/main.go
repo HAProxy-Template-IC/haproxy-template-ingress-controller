@@ -551,7 +551,7 @@ func reloadImpact(out *renderer.RenderResult, ver *dataplane.Version) any {
 	}
 	var res any
 	if baseline != nil {
-		if imp, ierr := dataplane.ComputeReloadImpact(baseline.cfg, current.cfg, baseline.aux, current.aux, dataplane.CapabilitiesFromVersion(ver)); ierr == nil {
+		if imp, ierr := dataplane.ComputeReloadImpact(baseline.cfg, current.cfg, baseline.aux, current.aux, out.HAProxyConfig, dataplane.CapabilitiesFromVersion(ver)); ierr == nil {
 			res = reloadImpactToJS(imp, pinnedBaseline != nil)
 		}
 	}

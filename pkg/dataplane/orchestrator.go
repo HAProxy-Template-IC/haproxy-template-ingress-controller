@@ -127,7 +127,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 	o.logger.Debug("Sync diff computed", "op_count", len(diff.Operations))
 	logOperationDetail(o.logger, "Sync.diff", diff.Operations)
 
-	auxDiffs, err := o.checkForChanges(ctx, diff, auxFiles, opts)
+	auxDiffs, err := o.checkForChanges(ctx, diff, desiredConfig, auxFiles, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -383,6 +383,20 @@ func (o *orchestrator) applyRuntimeOnly(
 	if err := o.client.PushRawConfigurationSkipReload(ctx, desiredConfig, version, actions); err != nil {
 		return nil, wrapApplyError(err)
 	}
+
+	// Orphan deletes are deferred to post-config on BOTH lanes — the pre-config
+	// phase drops ToDelete — so this lane has to run them too. Without it the
+	// files stay on disk until some unrelated change takes the reload path,
+	// while buildAppliedOps below already reports them deleted.
+	//
+	// Safe without a reload: the only deletes that reach this lane are general
+	// files the desired config does not name (every other auxiliary delete sets
+	// structural and routes to applyWithReload), and this lane runs only when
+	// the config diff is runtime-eligible server fields — which name no
+	// auxiliary file — so the running worker's config cannot name them either.
+	// applyChanges additionally forces the reload path on a headerless config,
+	// so "the worker is running these bytes" holds here.
+	o.deleteUnreferencedFilesPostConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff)
 
 	appliedOps := o.buildAppliedOps(runtimeOps, nil, auxDiffs)
 	return &SyncResult{
