@@ -286,4 +286,10 @@ const (
 	// FuncJSONPathSet writes a concrete JSONPath into a resource item in place.
 	// Syntax: jsonpathSet(item, path, value) bool.
 	FuncJSONPathSet = "jsonpathSet"
+
+	// FuncUntarGz expands a gzip-compressed tar archive into entry path →
+	// entry content. Syntax: untar_gz(archive) (map[string]string, error).
+	// Reports failure through the error return rather than panicking, so a
+	// bad archive costs the caller a fallback and not the whole render.
+	FuncUntarGz = "untar_gz"
 )
