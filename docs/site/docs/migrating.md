@@ -29,21 +29,17 @@ defaults that most often trip up a migration.
 
 ## Step 0: Check what changes
 
-Two ways to see how your current setup fares under HAPTIC, before you change
-anything:
+See how your current setup fares under HAPTIC before you change anything. The
+migration report classifies every source-controller annotation you use as
+supported, different, or dropped, and renders your Ingress through HAPTIC's real
+template pipeline — so you find the surprises now, not mid-cutover.
 
-- **Explore one Ingress interactively** — the live migration report below (or the
-  full [playground](/playground/)) renders an annotated Ingress in your browser and
-  flags every annotation HAPTIC treats differently or can't carry over. Best for
-  understanding a specific annotation — or trying a fix on the spot.
-- **Audit the whole cluster** with `migrate-check`: one command classifies every
-  source-controller annotation in use as supported, different, dropped, or
-  blocking, and renders each Ingress through HAPTIC's real template pipeline to
-  catch anything that would be rejected — so you find the surprises now, not
-  mid-cutover. Read on for how to run it.
+It runs in your browser, on your own manifests. Paste the Ingresses you want to
+audit into the **Resources** panel — `kubectl get ingress -A -o yaml` output
+works as-is — and read the **migration** tab. Nothing leaves your machine and
+nothing touches your cluster.
 
-The same classification runs live below on a preset ingress-nginx setup — the
-**migration** report is the clearest view of what carries over and what doesn't:
+The same report runs live below on a preset ingress-nginx setup:
 
 <div class="pg-embed" markdown data-scenario="nginx-ingress" data-facade="resources" data-tab="migration" data-controls="tabs,resources" data-title="ingress-nginx annotation migration report" data-height="440">
 
@@ -52,60 +48,22 @@ The same classification runs live below on a preset ingress-nginx setup — the
 <details class="pg-hint" markdown>
 <summary>What to expect</summary>
 
-The report gains a red `dropped` badge for `server-snippet` — "nginx server-level directives have no HAProxy equivalent" — and the dropped count rises by one. This is exactly the pre-cutover surprise `migrate-check` surfaces for your whole cluster at once.
+The report gains a red `dropped` badge for `server-snippet` — "nginx server-level directives have no HAProxy equivalent" — and the dropped count rises by one. That's the kind of pre-cutover surprise to find before you switch a class.
 
 </details>
 
 </div>
 
-The controller image carries the tool and the chart, so a read-only audit of the
-live cluster is a single command (it only lists and reads Ingresses — it changes
-nothing):
+Read the verdicts the same way whatever you paste in:
 
-```bash
-docker run --rm \
-  -v ~/.kube/config:/kube/config:ro -e KUBECONFIG=/kube/config \
-  registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4 migrate-check
-```
+- **supported** — works the same after migrating.
+- **different** — carries over, but behaves differently; read the note.
+- **dropped** — has no HAProxy equivalent and doesn't carry over.
+- A **render failure** means HAPTIC can't build a configuration for that
+  Ingress as-is. Fix those before cutover.
 
-The image tag pairs a HAPTIC version with an HAProxy version; `migrate-check`
-behaves the same across HAProxy versions, so any published tag works — pick the
-one matching the version you plan to run.
-
-Read the verdict on the first line. Exit code `0` means every checked annotation
-is fully supported; `1` means there are differences or unknown annotations to
-review; `2` means there are blockers — annotations HAPTIC rejects, or Ingresses
-that fail to render — fix those before cutover.
-
-To audit without cluster access — in CI, or against manifests you keep in Git —
-mount a directory of Ingress manifests and a directory of Kubernetes schemas into
-the same image and point the tool at both:
-
-```bash
-# Export the Ingresses to audit and the schemas the audit renders against.
-# The schemas directory needs the Kubernetes schemas for the resources it
-# renders (at minimum the Ingress type); export them from any cluster that
-# serves them, or reuse a directory you already keep for CI.
-mkdir -p manifests schemas
-kubectl get ingress -A -o yaml > manifests/ingresses.yaml
-
-docker run --rm \
-  -v "$PWD/manifests:/manifests:ro" -v "$PWD/schemas:/schemas:ro" \
-  registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4 migrate-check \
-  --resources /manifests --schema-dir /schemas --output markdown
-```
-
-Useful flags:
-
-- `-n, --namespace <ns>` — audit only one namespace.
-- `-o, --output text|json|markdown` — `text` (default) is the operator report;
-  `json` feeds a script; `markdown` drops into a migration ticket.
-- `-f, --file <config.yaml>` — classify against a specific HAProxyTemplateConfig
-  instead of the image-embedded chart.
-- `--resources <dir>` — read Ingress manifests from a directory instead of the
-  live cluster.
-- `--schema-dir <dir>` — read resource schemas from a directory instead of the
-  live cluster.
+For the full editor — more resources, every template, the rendered HAProxy
+config — open the [playground](/playground/).
 
 ## The cutover, step by step
 

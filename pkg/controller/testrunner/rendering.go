@@ -193,8 +193,8 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 // files, SSL certificates, k8sResources) against stores built from the
 // supplied fixtures, merged with the config's validationTests._global
 // fixtures exactly like a validation test run. This is the real render
-// pipeline behind the `migrate-check` CLI's per-resource hard-failure
-// probe: a template fail() or any other render error surfaces as the
+// pipeline behind the migration report's per-resource hard-failure probe:
+// a template fail() or any other render error surfaces as the
 // returned error, unchanged from what admission or reconciliation would
 // hit.
 //
@@ -207,8 +207,8 @@ func (r *Runner) RenderFixtures(fixtures map[string][]any) (RenderOutput, error)
 		fixtures = MergeFixtures(globalTest.Fixtures, fixtures)
 		httpFixtures = globalTest.HTTPFixtures
 		// Same isolated baseline as a validation-test render (see runSingleTest):
-		// the migrate-check probe renders against synthetic _global values, not
-		// the operator's real default-cert names.
+		// the migration probe renders against synthetic _global values, not the
+		// operator's real default-cert names.
 		globalExtraContext = globalTest.ExtraContext
 	}
 

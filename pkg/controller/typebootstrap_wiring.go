@@ -163,8 +163,8 @@ func runTypeBootstrap(
 // bootstrap: GVK resolution through the supplied discovery interface,
 // schema acquisition through the supplied fetcher. The controller's
 // iteration startup reaches it via runTypeBootstrap (which builds both
-// from the iteration's K8s client); the `migrate-check` CLI calls it
-// directly with clients built from the operator's kubeconfig.
+// from the iteration's K8s client); a CLI can call it directly with clients
+// built from the operator's kubeconfig.
 func RunTypeBootstrap(
 	ctx context.Context,
 	cfg *config.Config,

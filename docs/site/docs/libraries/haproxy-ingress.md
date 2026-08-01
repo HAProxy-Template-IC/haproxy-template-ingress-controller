@@ -1380,7 +1380,7 @@ The library reads only the annotations documented on this page; it ignores any o
 | `auth-tls-strict` | Upstream defaults it to true (fail-closed on a missing/invalid client CA); here a missing CA skips mTLS for the Ingress (fail-open), and this annotation can't restore fail-closed. For soft verification use `auth-tls-verify-client: optional` instead. |
 | `docs` | A pointer to jcmoraisjr/haproxy-ingress documentation, not a configuration key. |
 
-Before cutting over, run `migrate-check` against your manifests to get a per-annotation verdict for exactly the annotations you use — see [Check what changes](../migrating.md#step-0-check-what-will-change).
+Before cutting over, paste your manifests into the [playground](/playground/) migration report to get a per-annotation verdict for exactly the annotations you use — see [Check what changes](../migrating.md#step-0-check-what-changes).
 
 ---
 

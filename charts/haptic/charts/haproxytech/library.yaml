@@ -1917,7 +1917,7 @@ validationTests:
         target: haproxy.cfg
         pattern: "server SRV_6 "
 
-# Consumed by `haptic-controller migrate-check` and the generated tables in
+# Consumed by the playground's migration report and the generated tables in
 # docs/site/docs/migrating.md; scripts/check-migration-coverage.sh pins drift.
 # Upstream haproxytech/kubernetes-ingress also reads many of these on Services and
 # ConfigMaps — HAPTIC reads Ingress annotations only, so those don't carry over.

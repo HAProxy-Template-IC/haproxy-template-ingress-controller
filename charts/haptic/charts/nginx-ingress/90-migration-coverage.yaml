@@ -2,7 +2,7 @@
 #
 # Machine-readable classification of every nginx.ingress.kubernetes.io/*
 # annotation this library reads (plus the known-unsupported ones), consumed
-# by `haptic-controller migrate-check` and by the generated annotation-support
+# by the playground's migration report and by the generated annotation-support
 # tables in docs/site/docs/migrating.md.
 #
 # Status vocabulary:

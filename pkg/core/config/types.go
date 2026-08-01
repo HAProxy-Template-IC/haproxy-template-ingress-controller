@@ -111,8 +111,8 @@ type Config struct {
 
 	// MigrationCoverage declares, per migration source (another ingress
 	// controller whose annotations a template library emulates), how each
-	// of the source's annotations is handled. Opaque data for tooling
-	// (e.g. `migrate-check`); it never influences rendering.
+	// of the source's annotations is handled. Opaque data for the playground's
+	// migration report; it never influences rendering.
 	MigrationCoverage []MigrationCoverageSource `yaml:"migration_coverage,omitempty"`
 }
 
