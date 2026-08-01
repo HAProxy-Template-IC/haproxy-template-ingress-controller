@@ -44,6 +44,10 @@ type Publisher struct {
 	// When set, status updates first check the cache to determine if an update
 	// is needed, avoiding unnecessary API GETs.
 	listers *Listers
+
+	// specGens maps a published spec checksum to the generation it became, so a
+	// pod's status entry can carry an ordering (see specGenerations).
+	specGens *specGenerations
 }
 
 // NewWithListers creates a Publisher with informer-backed listers for cached reads.
@@ -54,6 +58,7 @@ func NewWithListers(k8sClient kubernetes.Interface, crdClient versioned.Interfac
 		crdClient: crdClient,
 		listers:   listers,
 		logger:    logger,
+		specGens:  newSpecGenerations(),
 	}
 }
 

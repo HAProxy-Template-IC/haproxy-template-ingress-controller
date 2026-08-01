@@ -604,14 +604,26 @@ func (o *orchestrator) verifyPostReloadReadBack(ctx context.Context, pushedBody,
 
 	pushedChecksum := configTextChecksum(pushedBody)
 	readBackChecksum := activationChecksum(readBack)
+	// No `match` field: the dataplane re-serialises what it stores (it names an
+	// anonymous `defaults`, reorders directives, drops blank lines), so a
+	// production config essentially never comes back byte-identical — 0 of 78
+	// read-backs in one e2e run. Logging that as a boolean reads like an
+	// anomaly indicator that is permanently tripped, and cost real time during
+	// the #84 investigation before it turned out to be a constant. The
+	// structural comparison below is the actual check; these checksums are here
+	// to identify WHICH bytes diverged, not to flag THAT they did.
 	o.logger.Info("Post-reload config read-back",
 		"pushed_checksum", pushedChecksum,
 		"readback_checksum", readBackChecksum,
-		"match", pushedChecksum == readBackChecksum,
 		"reload_id", reloadID,
 		"endpoint", o.client.Endpoint.URL)
 
 	readBackParsed, parseErr := o.parser.ParseFromString(readBack)
+	// Kept despite seldom firing: both checksums are computed for the log line
+	// anyway, so this costs one string compare, and it is still correct for a
+	// config simple enough to survive re-serialisation unchanged. Normalising
+	// the pushed body to make it fire in general was measured at 11x the cost of
+	// the comparison it would skip (#121) — the fast path is not worth buying.
 	if pushedChecksum == readBackChecksum {
 		if parseErr != nil {
 			// Bytes match the pushed body, so the deploy is truthful; the
