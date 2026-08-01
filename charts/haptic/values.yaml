@@ -2433,12 +2433,20 @@ vector:
   # `excludeMetrics` above, and keep an eye on the label sets of any metrics you
   # generate: a per-route metric labelled by status code AND termination state
   # multiplies out to route_count x codes x states series.
+  #
+  # 1.5Gi, not 1Gi: measured on the 825-backend scale tier, vector's peak across
+  # 8 pod samples ran 481-1024 MiB and one sample reached 1024 MiB EXACTLY — it
+  # survived only by reclaiming at the ceiling (`oom_kill=0`, but zero headroom).
+  # Given the same cap loosened to 2Gi it peaks at 1065-1082 MiB, so 1Gi is what
+  # it can be squeezed into, not what it wants. The asymmetry decides it: this
+  # sidecar's death de-readies the whole pod and takes HAProxy out of the Service
+  # (#111), so it is budgeted with margin rather than to the last megabyte.
   resources:
     requests:
       cpu: 50m
-      memory: 1Gi
+      memory: 1536Mi
     limits:
-      memory: 1Gi
+      memory: 1536Mi
 
   securityContext:
     allowPrivilegeEscalation: false
