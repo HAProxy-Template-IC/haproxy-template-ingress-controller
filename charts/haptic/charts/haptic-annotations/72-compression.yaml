@@ -6,6 +6,31 @@
 # build and fail the render loudly rather than silently doing nothing.
 templateSnippets:
 
+  backend-directives-802-haptic-compression-filter:
+    template: |
+      {#-
+        Explicit compression filter declaration.
+
+        HAProxy makes an explicit `filter` line mandatory for compression as soon as
+        any other filter is declared on the same proxy (manual 9.2); without it the
+        whole config is rejected with "require an explicit filter declaration to use
+        HTTP compression". Several annotations put a filter in the backend —
+        bandwidth limiting (band 815) and consumer rate limiting (band 807) — so the
+        declaration is emitted whenever compression is on rather than tracking who
+        else emitted a filter. It is valid on its own when no other filter is present.
+
+        Band 802 places it ahead of those filters on purpose: filters apply in
+        declaration order, so compression runs first and a download bandwidth limit
+        therefore meters the compressed bytes that actually go on the wire.
+
+        Must be `filter compression`, not `comp-req`/`comp-res`: client-native's
+        config-parser only accepts `compression`, so the alternatives would fail
+        HAPTIC's own parse before HAProxy ever saw them.
+      -#}
+      {%- if ingress != nil && ingress.Metadata.Annotations["haproxy-haptic.org/compress-enable"] == "true" %}
+      {{ "\n" }}filter compression
+      {%- end -%}
+
   backend-directives-872-haptic-compression:
     template: |
       {#-

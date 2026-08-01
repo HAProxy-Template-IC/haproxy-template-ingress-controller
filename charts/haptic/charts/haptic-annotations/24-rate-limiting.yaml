@@ -14,8 +14,9 @@
 #   haproxy-haptic.org/rate-limit-size         stick-table size
 #   haproxy-haptic.org/rate-limit-status-code  deny status
 #   haproxy-haptic.org/rate-limit-allowlist    exempt CIDRs
-#   haproxy-haptic.org/download-bandwidth-limit              per-connection download throttle
-#   haproxy-haptic.org/download-bandwidth-limit-after        bytes before throttle applies
+#   haproxy-haptic.org/download-bandwidth-limit  bytes/sec sent toward the client
+#   haproxy-haptic.org/upload-bandwidth-limit    bytes/sec received from the client
+#   haproxy-haptic.org/bandwidth-limit-scope     stream (default) | client | service
 templateSnippets:
   backend-directives-810-haptic-rate-limiting:
     template: |
@@ -140,47 +141,87 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
-  backend-directives-815-haptic-download-bandwidth-limit:
+  backend-directives-815-haptic-bandwidth-limit:
     template: |
       {#-
-        HAPTIC-native per-connection download throttle (adapted from
-        nginx-ingress limit-rate / limit-rate-after).
+        HAPTIC-native bandwidth limiting (HAProxy bwlim filters, >= 2.7).
 
-        Documentation: docs/site/docs/libraries/haptic-annotations.md#rate-limiting
+        Documentation: docs/site/docs/libraries/haptic-annotations.md#rate-and-bandwidth-limiting
 
         Annotations:
-          - haproxy-haptic.org/download-bandwidth-limit: max bytes/sec sent toward a single
-            client connection (e.g. "100k"). Enables the throttle.
-          - haproxy-haptic.org/download-bandwidth-limit-after: bytes transferred before the
-            throttle applies (e.g. "1m"). Maps to bwlim-out min-size.
+          - haproxy-haptic.org/download-bandwidth-limit: bytes/sec sent toward the
+            client (e.g. "100k"). Emits a bwlim-out filter.
+          - haproxy-haptic.org/upload-bandwidth-limit: bytes/sec received from the
+            client. Emits a bwlim-in filter.
+          - haproxy-haptic.org/bandwidth-limit-scope: what the budget is shared by.
+              stream  (default) each stream gets the full limit  (per-stream filter)
+              client            all streams of one source IP share it (key src)
+              service           every stream of this backend shares it (key be_id)
 
-        HAProxy mapping (per-stream bandwidth limit, HAProxy >= 2.7):
-          filter bwlim-out <name> default-limit <rate> default-period 1s [min-size <after>]
+        HAProxy mapping:
+          filter bwlim-{out,in} <name> default-limit <rate> default-period 1s   (stream)
+          filter bwlim-{out,in} <name> limit <rate> key {src,be_id}             (client/service)
           http-request set-bandwidth-limit <name>
 
-        This is independent of the deny-based rate-limiting block above; both may
-        be set on the same Ingress.
+        The shared scopes need a stick-table storing bytes_{in,out}_rate. `table` is
+        optional and defaults to the current proxy's own stick-table (manual 9.7), so
+        one backend-local table serves both directions and no separate table proxy is
+        needed. HAProxy allows one stick-table per proxy, which is why a shared scope
+        cannot coexist with the per-source rate-limit caps above.
+
+        Operand order must stay `limit … key … table …`: client-native's
+        BandwidthLimit.Result() re-serialises in that order, and any other order makes
+        the desired and current configs normalise differently on every sync.
+
+        No `peers localinstance`: a 1s byte-rate window is stale before the new worker
+        forwards its first byte, unlike the request-rate table where a reset would hand
+        every client a fresh budget.
       -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var rate = ingress.Metadata.Annotations["haproxy-haptic.org/download-bandwidth-limit"] %}
-        {%- var after = ingress.Metadata.Annotations["haproxy-haptic.org/download-bandwidth-limit-after"] %}
-        {%- if rate != "" %}
-          {%- if !regex_search(rate, "^[0-9]+[kKmMgG]?$") %}
-            {{- fail("Invalid value '" + rate + "' for annotation 'haproxy-haptic.org/download-bandwidth-limit' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
+        {%- var down = ingress.Metadata.Annotations["haproxy-haptic.org/download-bandwidth-limit"] %}
+        {%- var up = ingress.Metadata.Annotations["haproxy-haptic.org/upload-bandwidth-limit"] %}
+        {%- if down != "" || up != "" %}
+          {%- var scope = ingress.Metadata.Annotations["haproxy-haptic.org/bandwidth-limit-scope"] %}
+          {%- var tableKey = "" %}
+          {%- var tableType = "" %}
+          {%- if scope == "client" %}
+            {%- tableKey = "src" %}
+            {%- tableType = "ip" %}
+          {%- else if scope == "service" %}
+            {%- tableKey = "be_id" %}
+            {%- tableType = "integer" %}
+          {%- else if scope != "" && scope != "stream" %}
+            {{- fail("Invalid value '" + scope + "' for annotation 'haproxy-haptic.org/bandwidth-limit-scope' on Ingress '" + key + "'. Valid: stream, client, service.") -}}
           {%- end %}
-          {%- var fname = "haptic_limitrate_" + ns + "_" + name %}
-          {%- var filterLine = "filter bwlim-out " + fname + " default-limit " + rate + " default-period 1s" %}
-          {%- if after != "" %}
-            {%- if !regex_search(after, "^[0-9]+[kKmMgG]?$") %}
-              {{- fail("Invalid value '" + after + "' for annotation 'haproxy-haptic.org/download-bandwidth-limit-after' on Ingress '" + key + "'. Expected a byte size like '1m'.") -}}
+          {%- if tableKey != "" && (ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-rps"] != "" || ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-rpm"] != "" || ingress.Metadata.Annotations["haproxy-haptic.org/rate-limit-connections"] != "") %}
+            {{- fail("Ingress '" + key + "' sets bandwidth-limit-scope '" + scope + "' next to a per-source rate-limit cap. HAProxy allows one stick-table per backend, so the config would not start. Use scope 'stream', or rate-limit-requests.") -}}
+          {%- end %}
+      # haptic/bandwidth-limit ({{ key }})
+          {%- if tableKey != "" %}
+      stick-table type {{ tableType }} size 100k expire 60s store bytes_in_rate(1s),bytes_out_rate(1s)
+          {%- end %}
+          {%- for _, direction := range []string{"download", "upload"} %}
+            {%- var rate = down %}
+            {%- var suffix = "out" %}
+            {%- if direction == "upload" %}
+              {%- rate = up %}
+              {%- suffix = "in" %}
             {%- end %}
-            {%- filterLine = filterLine + " min-size " + after %}
-          {%- end %}
-      # haptic/download-bandwidth-limit ({{ key }})
-      {{ filterLine }}
+            {%- if rate != "" %}
+              {%- if !regex_search(rate, "^[0-9]+[kKmMgG]?$") %}
+                {{- fail("Invalid value '" + rate + "' for annotation 'haproxy-haptic.org/" + direction + "-bandwidth-limit' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
+              {%- end %}
+              {%- var fname = "haptic_bwlim_" + suffix + "_" + ns + "_" + name %}
+              {%- var spec = "default-limit " + rate + " default-period 1s" %}
+              {%- if tableKey != "" %}
+                {%- spec = "limit " + rate + " key " + tableKey %}
+              {%- end %}
+      filter bwlim-{{ suffix }} {{ fname }} {{ spec }}
       http-request set-bandwidth-limit {{ fname }}
+            {%- end %}
+          {%- end %}
         {%- end %}
       {%- end -%}

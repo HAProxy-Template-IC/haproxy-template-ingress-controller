@@ -209,7 +209,11 @@ templateSnippets:
 
   backend-directives-725-nginx-ingress-limit-rate:
     template: |
-      {#- bwlim-out throttles data sent toward the client; min-size is the byte offset before throttling starts (= limit-rate-after). -#}
+      {#- bwlim-out throttles data sent toward the client. limit-rate-after maps to
+          min-size, which is HAProxy's forward-chunk size, NOT nginx's "throttle after
+          N bytes" — HAProxy has no equivalent. Kept as the closest available knob and
+          declared `different` in migration coverage rather than silently claimed
+          equivalent; see docs/site/docs/libraries/nginx-ingress.md. -#}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}

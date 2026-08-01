@@ -205,7 +205,7 @@ generated from the library's declared migration coverage, so it can't drift from
 the template code. Anything not listed is fully supported.
 
 <!-- BEGIN generated: migration-coverage ingress-nginx -->
-The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 supported, 29 with behaviour differences, 16 not carried over, 0 failing.
+The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 55 supported, 31 with behaviour differences, 16 not carried over, 0 failing.
 
 | Annotation | Status | What to check |
 |------------|--------|---------------|
@@ -230,6 +230,8 @@ The library classifies 102 `nginx.ingress.kubernetes.io/*` annotations: 57 suppo
 | `nginx.ingress.kubernetes.io/hsts` | Behaviour differs | By default the header is emitted only when the Ingress sets `hsts` to `"true"`, whereas ingress-nginx enables HSTS globally by default. Set extraContext.hstsEnabled=true to send HSTS on all TLS hosts (matching ingress-nginx); a per-Ingress `hsts` annotation still overrides the value for its hosts. |
 | `nginx.ingress.kubernetes.io/hsts-include-subdomains` | Behaviour differs | includeSubDomains is added only when explicitly "true" — ingress-nginx defaults it to true. |
 | `nginx.ingress.kubernetes.io/limit-connections` | Behaviour differs | Rejects with 429, and ignored when limit-rps or limit-rpm is set (one stick-table per backend). |
+| `nginx.ingress.kubernetes.io/limit-rate` | Behaviour differs | Download throttle via an outbound bandwidth-limit filter, but applied per stream — an HTTP/2 client gets the limit once per stream, not once per connection. |
+| `nginx.ingress.kubernetes.io/limit-rate-after` | Behaviour differs | Mapped to the filter's `min-size`, the smallest chunk forwarded at a time — not the start-throttling-after-N-bytes offset nginx applies, which HAProxy can't express. A large value adds latency rather than delaying the throttle. |
 | `nginx.ingress.kubernetes.io/limit-rpm` | Behaviour differs | Same hard-cap/429 semantics as limit-rps, and ignored when limit-rps is also set (HAProxy stores one request-rate counter per backend). |
 | `nginx.ingress.kubernetes.io/limit-rps` | Behaviour differs | Hard per-source-IP cap rejecting with 429 — ingress-nginx allows a 5x burst and rejects with 503. |
 | `nginx.ingress.kubernetes.io/mirror-host` | Not carried over | The mirror plugin forces the mirrored Host header to the target authority. |

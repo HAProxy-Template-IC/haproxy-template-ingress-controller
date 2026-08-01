@@ -50,7 +50,7 @@ The Nginx Ingress library implements these extension points:
 | Backend Directives | `backend-directives-710-nginx-ingress-load-balance` | Load balancing algorithm |
 | Backend Directives | `backend-directives-715-nginx-ingress-next-upstream` | Retry conditions (`proxy-next-upstream`, `proxy-next-upstream-tries`) |
 | Map (body-size) | `map-body-size-720-nginx-ingress` | Request body size limit (per-backend entry in `body-size.map`) |
-| Backend Directives | `backend-directives-725-nginx-ingress-limit-rate` | Per-connection bandwidth throttle (`limit-rate`, `limit-rate-after`) |
+| Backend Directives | `backend-directives-725-nginx-ingress-limit-rate` | Per-stream bandwidth throttle (`limit-rate`, `limit-rate-after`) |
 | Backend Directives | `backend-directives-730-nginx-ingress-backend-protocol` | Backend protocol (HTTPS, gRPC) |
 | Backend Directives | `backend-directives-740-nginx-ingress-proxy-protocol` | PROXY protocol to backend |
 | Backend Directives | `backend-directives-750-nginx-ingress-rewrite-target` | URL rewriting (capture rewrites; literal rewrites go to `path-rewrite.map` via `map-path-rewrite-750-nginx-ingress`) |
@@ -403,16 +403,18 @@ The `peers localinstance` reference carries the per-source counters across HAPro
 
 ### `nginx.ingress.kubernetes.io/limit-rate`
 
-**Status**: ✅ Supported
+**Status**: ⚠️ Caveat
 
-**Description**: Per-connection download throttle — limits the bytes per second HAProxy sends toward a single client connection, via an outbound bandwidth-limit filter.
+**Description**: Download throttle — limits the bytes per second HAProxy sends toward the client, via an outbound bandwidth-limit filter. The limit applies per stream, so an HTTP/2 client that opens several streams gets a multiple of it.
 
 **Related annotations**:
 
 | Annotation | Description |
 |------------|-------------|
-| `limit-rate` | Maximum bytes per second per connection (`k`/`m`/`g` suffixes accepted) |
-| `limit-rate-after` | Bytes transferred before the throttle kicks in |
+| `limit-rate` | Maximum bytes per second per stream (`k`/`m`/`g` suffixes accepted) |
+| `limit-rate-after` | Mapped to the bandwidth filter's `min-size` — the smallest chunk the filter forwards at a time, which trades CPU use against latency. It doesn't delay the throttle the way nginx's offset does, and HAProxy has no equivalent for that. A large value adds latency. Leave it unset unless you want to tune the forward chunk size, where roughly two TCP maximum segment sizes (about 2896 bytes) is HAProxy's suggested starting point. |
+
+For a per-client or per-service budget rather than a per-stream one, the native library's [`bandwidth-limit-scope`](haptic-annotations.md#rate-and-bandwidth-limiting) covers what nginx can't express.
 
 **Usage**:
 
