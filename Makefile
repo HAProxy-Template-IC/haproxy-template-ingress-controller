@@ -141,6 +141,9 @@ lint-chart: ## Run chart linting (ct lint, helm-unittest, kubeconform) via Docke
 			-skip haproxy-haptic.org/v1alpha1/HAProxyTemplateConfig,haproxy-haptic.org/v1alpha1/HAProxyValidationTests,haproxy-haptic.org/v1alpha1/HAProxyConfig,haproxy-haptic.org/v1alpha1/HAProxyMapFile \
 			-summary
 	@echo ""
+	@echo "Checking rendered CRs against the chart's own CRDs..."
+	@$(MAKE) --no-print-directory cr-spec-conformance-check
+	@echo ""
 	@echo "Checking release-Secret size..."
 	@$(MAKE) --no-print-directory chart-size-check
 	@echo ""
@@ -168,6 +171,9 @@ lint-chart-ci: ## Run all chart linting for CI (requires ct, helm-unittest, kube
 			-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
 			-skip haproxy-haptic.org/v1alpha1/HAProxyTemplateConfig,haproxy-haptic.org/v1alpha1/HAProxyValidationTests,haproxy-haptic.org/v1alpha1/HAProxyConfig,haproxy-haptic.org/v1alpha1/HAProxyMapFile \
 			-summary
+	@echo ""
+	@echo "Checking rendered CRs against the chart's own CRDs..."
+	@$(MAKE) --no-print-directory cr-spec-conformance-check
 	@echo ""
 	@echo "Checking release-Secret size..."
 	@$(MAKE) --no-print-directory chart-size-check
@@ -201,6 +207,15 @@ vector-config-check: build ## Assert the chart renders a vector.yaml that vector
 	@# Needs the controller: the check renders chart templates through the engine
 	@# and parses the result, which nothing outside the engine can produce.
 	@bash scripts/check-vector-config.sh
+
+cr-spec-conformance-check: ## Reject a rendered CR carrying a spec field its own CRD does not declare
+	@# kubeconform -skips the chart's own kinds (they are in no public schema
+	@# catalog), so nothing checked the rendered spec against the CRD that
+	@# governs it. `spec` is seeded from controller.config wholesale, so a new
+	@# values key silently becomes an undeclared spec field — and server-side
+	@# apply rejects the object, failing `helm upgrade` for every operator.
+	@python3 scripts/check-cr-spec-conformance.py charts/haptic \
+		--api-versions=gateway.networking.k8s.io/v1/GatewayClass
 
 cr-size-check: ## Check each rendered HAProxyTemplateConfig against etcd's ~1.5 MiB per-object limit
 	@# The OTHER size ceiling, independent of the release Secret: etcd refuses a
