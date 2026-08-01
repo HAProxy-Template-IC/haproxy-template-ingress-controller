@@ -957,7 +957,14 @@ kubeadmConfigPatches:
   # "kubectl logs" (used by the CI after_script diagnostics capture)
   # returns only the newest rotated file — job 15180387459's artifacts
   # carried just ~7s of leader logs, none covering the failure window
-  # (issue #56). 200Mi keeps the whole suite's window retrievable.
+  # (issue #56). 200Mi buys roughly a minute at the observed ~3 MB/s.
+  #
+  # It is NOT sufficient on its own: kubectl logs serves only the CURRENT
+  # rotated file, so a run longer than that minute still loses its earlier
+  # history to this capture path. The CI after_script therefore also reads the
+  # rotated files directly off the node (/var/log/pods) into
+  # debug-logs/_suite/controller-full.log.gz — that, not this cap, is what
+  # makes a whole run retrievable.
   - |
     kind: KubeletConfiguration
     containerLogMaxSize: 200Mi

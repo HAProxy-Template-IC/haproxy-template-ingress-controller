@@ -1659,6 +1659,29 @@ test-acceptance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> debug-logs/_suite/controller.log 2>&1 || true
         done
 
+        # The ROTATED controller logs, straight off the node.
+        #
+        # `kubectl logs` serves only the CURRENT rotated file. The controller
+        # emits ~3 MB/s at DEBUG during e2e, so even the 200Mi cap that issue
+        # #56 raised (tests/e2e/main_test.go) holds barely a minute, and the
+        # capture above has repeatedly come back with a ~7-second window that
+        # ends before the failure it is meant to explain — the exact symptom
+        # #56 was filed for, still reproducing.
+        #
+        # The rotated files are all still on the node under /var/log/pods, so
+        # read them there. Concatenated oldest-first, this is the whole run.
+        for node in $(kind get nodes --name haptic-e2e 2>/dev/null); do
+          docker exec "$node" sh -c '
+            for d in /var/log/pods/*haptic-controller*/controller; do
+              [ -d "$d" ] || continue
+              echo "=== $d ==="
+              ls -1tr "$d"/*.log* 2>/dev/null | while read -r f; do
+                echo "--- $f ---"; cat "$f"
+              done
+            done' >> debug-logs/_suite/controller-full.log 2>&1 || true
+        done
+        gzip -f debug-logs/_suite/controller-full.log 2>/dev/null || true
+
         # Per-pod haproxy / dataplane / spoa-hub / vector logs (current +
         # previous for spoa-hub and vector, which crashloop on config errors
         # and on exceeding their memory limit respectively — and a crashlooping
