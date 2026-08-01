@@ -517,6 +517,21 @@ spec:
         - name: vector
           image: {{ include "haptic.vector.image" . }}
           imagePullPolicy: {{ $vector.image.pullPolicy }}
+          env:
+            # Vector links plain glibc malloc (no jemalloc — verified against
+            # 0.57.0), so it gets glibc's default of up to 8 x ncores per-thread
+            # arenas. Each scrape parses the whole HAProxy exposition in a burst
+            # and frees it again, and freed chunks stay in whichever arena they
+            # came from rather than going back to the OS — so peak RSS grows with
+            # arena count, not with what vector actually holds.
+            #
+            # Measured on an 825-backend fleet, same 163k retained series:
+            # default arenas 1570 MiB peak / 949 MiB steady, ARENA_MAX=2 gives
+            # 1400 / 916. Costs a little allocator contention across vector's
+            # worker threads; buys ~11% of the peak, which is the number the
+            # memory limit has to cover.
+            - name: MALLOC_ARENA_MAX
+              value: "2"
           # Unlink a stale socket before starting. Vector does NOT unlink an
           # existing UNIX datagram socket — it panics with EADDRINUSE — and the
           # socket lives on an emptyDir that SURVIVES a container restart. So

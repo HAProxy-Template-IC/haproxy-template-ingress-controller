@@ -712,6 +712,33 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         "declared by an earlier target" \
         --set-json 'controller.config.templatingSettings.extraContext.accessLog.targets=[{"ring":{"name":"dup","address":"127.0.0.1:6514"}},{"ring":{"name":"dup","address":"127.0.0.1:6515"}}]'
     run_helm_failure_guard \
+        "Vector excludeMetrics guard: reject the pre-0.2.0 list format" \
+        "must be a map of named exclusions" \
+        --set-json 'vector.excludeMetrics=["^haproxy_foo_"]'
+    run_helm_failure_guard \
+        "Vector excludeMetrics guard: reject an unknown field on an entry" \
+        "unknown field" \
+        --set-json 'vector.excludeMetrics={"serverBackendMax":{"enable":true}}'
+    run_helm_failure_guard \
+        "Vector excludeMetrics guard: reject an enabled entry with no pattern" \
+        "is enabled but has no" \
+        --set-json 'vector.excludeMetrics={"mine":{"enabled":true}}'
+    run_helm_failure_guard \
+        "Vector excludeMetrics guard: reject a non-boolean enabled" \
+        "must be a boolean" \
+        --set-json 'vector.excludeMetrics={"mine":{"enabled":"yes","pattern":"^x"}}'
+    run_helm_failure_guard \
+        "Vector excludeMetrics guard: reject a family outside its own pattern" \
+        "does not match that entry" \
+        --set-json 'vector.excludeMetrics={"mine":{"enabled":true,"pattern":"^haproxy_foo_","families":["haproxy_bar_baz"]}}'
+    run_helm_failure_guard \
+        "Vector excludeMetrics guard: reject a family that is not a bare metric name" \
+        "is not a bare metric name" \
+        --set-json 'vector.excludeMetrics={"mine":{"enabled":true,"pattern":"^haproxy_","families":["haproxy_x%"]}}'
+    run_helm_success_guard \
+        "Vector excludeMetrics guard: a disabled entry needs no valid pattern" \
+        --set-json 'vector.excludeMetrics={"backendHttpCompression":{"enabled":false}}'
+    run_helm_failure_guard \
         "Access-log Helm guard: reject an out-of-range log line length" \
         "accessLog.maxLineBytes must be an integer between 1024 and 65535." \
         --set controller.config.templatingSettings.extraContext.accessLog.maxLineBytes=512

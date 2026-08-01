@@ -118,11 +118,38 @@ guard that lives only here would not protect a hand-written CR.
          sidecar, so it has to be caught here. VRL uses the Rust regex crate and
          Go uses RE2; both are RE2-family, so a pattern Go rejects would not have
          worked there either. */ -}}
-  {{- if not (kindIs "slice" ($v.excludeMetrics | default list)) -}}
-    {{- fail "vector.excludeMetrics must be a list of regex strings." -}}
+  {{- if not (kindIs "map" ($v.excludeMetrics | default dict)) -}}
+    {{- fail "vector.excludeMetrics must be a map of named exclusions, each with `pattern` and `enabled`. It was a list until 0.2.0; a list is replaced wholesale by Helm, so disabling one exclusion meant restating every other and silently losing any added later." -}}
   {{- end -}}
-  {{- range $pat := ($v.excludeMetrics | default list) -}}
-    {{- $ps := $pat | toString -}}
+  {{- range $name, $ex := ($v.excludeMetrics | default dict) -}}
+    {{- if not (kindIs "map" $ex) -}}
+      {{- fail (printf "vector.excludeMetrics.%s must be a map with `pattern` and `enabled`, got %T." $name $ex) -}}
+    {{- end -}}
+    {{- range $field, $_ := $ex -}}
+      {{- if not (has $field (list "enabled" "pattern" "families")) -}}
+        {{- fail (printf "vector.excludeMetrics.%s contains unknown field %q. Valid fields: enabled, pattern, families." $name $field) -}}
+      {{- end -}}
+    {{- end -}}
+    {{- /* `enabled` is required, not defaulted. Defaulting it to false means an
+           operator who adds `mine: {pattern: ...}` and forgets the flag gets a
+           silently inert entry: it passes validation, is skipped by the
+           resolution loop, and nothing is ever excluded. The doc says an entry
+           needs `pattern` and `enabled`, so say so at render time. */ -}}
+    {{- if not (hasKey $ex "enabled") -}}
+      {{- fail (printf "vector.excludeMetrics.%s has no `enabled`. It is required, so that an entry cannot sit inert and silently exclude nothing — set `enabled: false` to keep it and turn it off." $name) -}}
+    {{- end -}}
+    {{- if not (kindIs "bool" $ex.enabled) -}}
+      {{- fail (printf "vector.excludeMetrics.%s.enabled must be a boolean." $name) -}}
+    {{- end -}}
+    {{- /* An entry disabled by an operator override keeps its (unused) pattern,
+           so only validate what will actually be rendered. */ -}}
+    {{- if not $ex.enabled -}}
+      {{- continue -}}
+    {{- end -}}
+    {{- if not $ex.pattern -}}
+      {{- fail (printf "vector.excludeMetrics.%s is enabled but has no `pattern`." $name) -}}
+    {{- end -}}
+    {{- $ps := $ex.pattern | toString -}}
     {{- if eq (trim $ps) "" -}}
       {{- fail "vector.excludeMetrics contains an empty pattern. An empty regex matches every metric name and would drop the entire exposition." -}}
     {{- end -}}
@@ -138,6 +165,28 @@ guard that lives only here would not protect a hand-written CR.
            returns false, so `regexMatch $ps ""` validated nothing at all and an
            uncompilable pattern rendered clean, then crash-looped the sidecar. */ -}}
     {{- $_ := mustRegexMatch $ps "" -}}
+    {{- /* families are exact metric names appended to HAProxy's scrape URL as
+           `metrics=-<name>`, so they never reach vector's parser — that is what
+           makes them cut the parse burst rather than only retention.
+           They are an OPTIMISATION: `pattern` is authoritative and still drops
+           anything missing here, one stage later. Two guards:
+             1. every name must match its own entry's pattern, so the two cannot
+                drift and a stale list cannot quietly exclude something else;
+             2. charset, because HAProxy IGNORES an unknown name silently, and a
+                '%' starts a percent-escape that corrupts the whole parameter —
+                measured: one stray '%' took a 204,914-series scrape down to 3. */ -}}
+    {{- if not (kindIs "slice" ($ex.families | default list)) -}}
+      {{- fail (printf "vector.excludeMetrics.%s.families must be a list of exact metric names." $name) -}}
+    {{- end -}}
+    {{- range $fam := ($ex.families | default list) -}}
+      {{- $fs := $fam | toString -}}
+      {{- if not (mustRegexMatch "^[a-zA-Z_][a-zA-Z0-9_]*$" $fs) -}}
+        {{- fail (printf "vector.excludeMetrics.%s.families entry %q is not a bare metric name. It is sent to HAProxy as a scrape-URL parameter, where anything else is either ignored silently or corrupts the parameter." $name $fs) -}}
+      {{- end -}}
+      {{- if not (mustRegexMatch $ps $fs) -}}
+        {{- fail (printf "vector.excludeMetrics.%s.families entry %q does not match that entry's own pattern %q. families is an optimisation for pattern, so a name outside it would be excluded at the source without pattern ever agreeing." $name $fs $ps) -}}
+      {{- end -}}
+    {{- end -}}
   {{- end -}}
   {{- if lt ($v.scrapeIntervalSecs | int) 1 -}}
     {{- fail (printf "vector.scrapeIntervalSecs must be a positive integer, got %v." $v.scrapeIntervalSecs) -}}

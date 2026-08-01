@@ -38,6 +38,9 @@ files:
       {%- var hubPort = vec | dig("spoaHubMetricsPort") | fallback(0) -%}
       {%- var dataDir = vec | dig_string("/var/lib/vector", "dataDir") -%}
       {%- var excludes = vec | dig("excludeMetrics") | fallback([]any{}) | toSlice() -%}
+      {#- Source-side twin of `excludes`: never parsed, so it cuts the scrape
+          burst, not just retention. See values.yaml vector.excludeMetrics. -#}
+      {%- var excludeFams = vec | dig("excludeMetricFamilies") | fallback([]any{}) | toSlice() -%}
       {#- Endpoint lives under extraContext.tracing, not vector: it describes the
           deployment's tracing setup. Empty = no span pipeline. -#}
       {%- var otlpEndpoint = extraContext | dig_string("", "tracing", "otlp", "endpoint") -%}
@@ -92,6 +95,27 @@ files:
             passing it first (as above, for the charset test) compiles nothing.
             regex_search calls env.Fatal on an uncompilable pattern. -#}
         {%- var _ = regex_search("", ps) -%}
+      {%- end -%}
+      {#- Re-validated here because a hand-written CR bypasses Helm: HAProxy drops
+          an unknown name silently and one '%' blanks the whole scrape. -#}
+      {%- var scrapeParams = []string{} -%}
+      {%- if noMaint -%}
+        {%- scrapeParams = append(scrapeParams, "no-maint") -%}
+      {%- end -%}
+      {%- var negFams = []string{} -%}
+      {%- for _, f := range excludeFams -%}
+        {%- var fs = tostring(f) -%}
+        {%- if !regex_search(fs, "^[a-zA-Z_][a-zA-Z0-9_]*$") -%}
+          {%- fail("extraContext.vector.excludeMetricFamilies entry '" + fs + "' is not a bare metric name, so HAProxy would silently drop it or blank the scrape. Use the exact family name.") -%}
+        {%- end -%}
+        {%- negFams = append(negFams, "-" + fs) -%}
+      {%- end -%}
+      {%- if len(negFams) > 0 -%}
+        {%- scrapeParams = append(scrapeParams, "metrics=" + join(negFams, ",")) -%}
+      {%- end -%}
+      {%- var haproxyScrapeQuery = "" -%}
+      {%- if len(scrapeParams) > 0 -%}
+        {%- haproxyScrapeQuery = "?" + join(scrapeParams, "&") -%}
       {%- end -%}
       {#- Mirror of haptic.vector.validateValues in _vector.tpl. Duplicated on
           purpose: the HAProxyTemplateConfig CR is a first-class API that bypasses
@@ -156,7 +180,7 @@ files:
         haproxy_metrics:
           type: prometheus_scrape
           endpoints:
-            - http://127.0.0.1:{{ toint(statsPort) }}/metrics{% if noMaint %}?no-maint{% end %}
+            - http://127.0.0.1:{{ toint(statsPort) }}/metrics{{ haproxyScrapeQuery }}
           scrape_interval_secs: {{ toint(scrapeSecs) }}
           honor_labels: true
       {%- end %}
@@ -807,6 +831,9 @@ validationTests:
         spoaHubMetricsPort: 9101
         dataDir: /var/lib/vector
         excludeMetrics: []
+        # Pinned: per-test extraContext deep-merges, so the chart's default
+        # family list would otherwise land in the URL this test anchors on.
+        excludeMetricFamilies: []
         excludeMaintServerMetrics: true
     assertions:
       - type: haproxy_valid
@@ -838,6 +865,9 @@ validationTests:
         spoaHubMetricsPort: 0
         dataDir: /var/lib/vector
         excludeMetrics: []
+        # Pinned: per-test extraContext deep-merges, so the chart's default
+        # family list would otherwise land in the URL this test anchors on.
+        excludeMetricFamilies: []
         excludeMaintServerMetrics: false
     assertions:
       - type: haproxy_valid
@@ -1015,3 +1045,37 @@ validationTests:
         target: rendering_error
         pattern: 'socketPath must be an absolute path'
         description: HAProxy resolves a relative log path against default-path origin
+
+  test-vector-source-side-metric-exclusions:
+    description: >-
+      excludeMetricFamilies becomes HAProxy's own metrics=-<name> scrape filter,
+      so the excluded families never reach vector's parser. Distinct from
+      excludeMetrics, which filters after the parse and so cuts only retention.
+    fixtures: {}
+    extraContext:
+      vector:
+        socketPath: /run/vector/haproxy.sock
+        metricsPort: 9598
+        scrapeIntervalSecs: 15
+        haproxyStatsPort: 8404
+        spoaHubMetricsPort: 9101
+        dataDir: /var/lib/vector
+        excludeMetrics: []
+        excludeMetricFamilies:
+          - haproxy_backend_agg_check_status
+          - haproxy_server_max_queue
+        excludeMaintServerMetrics: true
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: file:vector.yaml
+        pattern: '(?m)^\s+- http://127\.0\.0\.1:8404/metrics\?no-maint&metrics=-haproxy_backend_agg_check_status,-haproxy_server_max_queue$'
+        description: >-
+          Each family is negated with a leading '-' and joined with commas onto
+          HAProxy's own scrape URL, after ?no-maint.
+      - type: not_contains
+        target: file:vector.yaml
+        # HAProxy-specific: the hub exposes no such filter, and an unknown query
+        # string there would be meaningless.
+        pattern: '(?m)^\s+- http://127\.0\.0\.1:9101/metrics\?'
+        description: The source-side filter must not leak onto the spoa-hub endpoint
